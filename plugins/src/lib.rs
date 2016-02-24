@@ -1,27 +1,55 @@
-// Copyright (C) 2015 Mikkel Kroman <mk@maero.dk>
+// Copyright (c) 2016, Mikkel Kroman <mk@uplink.io>
 // All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#![feature(associated_consts)]
+
+extern crate irc;
+extern crate url;
+extern crate hyper;
+extern crate semver;
 
 use std::any::Any;
-use irc::client::data::Command;
-use irc::client::server::NetIrcServer;
+use irc::client::data::Message;
+use irc::client::server::IrcServer;
 use semver::Version;
 
 pub mod prelude {
     pub use irc::client::data::{Message, Command};
-    pub use irc::client::server::NetIrcServer;
+    pub use irc::client::server::IrcServer;
     pub use irc::client::server::utils::ServerExt;
-    pub use super::{Plugin, PluginDescription};
+    pub use super::{Plugin, PluginDescription, Event};
 }
 
-
-/// Plugin error type and their associated meanings.
-pub enum PluginError {
-    InternalError,
+pub enum Event<'a> {
+    Command(&'a str, Vec<&'a str>),
+    Message(&'a str, &'a str),
+    IrcMessage(Message)
 }
 
 /// Thread-safe plugin instantiator and manager.
 pub struct PluginManager {
-    pub plugins: Vec<Box<Plugin>>,
+    plugins: Vec<Box<Plugin>>,
 }
 
 impl PluginManager {
@@ -32,14 +60,14 @@ impl PluginManager {
         }
     }
 
-    /// Register a new plugin of type T that implements Plugin.
+    /// Registers a new plugin of type T that implements Plugin.
+    /// If the plugin is successfully registered, this will returns a box with the instance plugin.
     pub fn register<'a, T>(&'a mut self) -> Result<(), ()>
         where T: Plugin {
         let plugin = Box::new(T::new());
 
         self.plugins.push(plugin);
 
-        // FIXME: Remove this or return something meaningful
         Ok(())
     }
 
@@ -52,7 +80,11 @@ impl PluginManager {
 /// This is the plugin trait that all plugins must implement.
 pub trait Plugin: PluginDescription + Any + Send + Sync {
     fn new() -> Self where Self: Sized;
-    fn process<'a>(&self, server: &'a NetIrcServer, cmd: &Command) -> Result<(), ()>;
+
+    /// Process an incoming IRC message.
+    fn process(&self, _: &IrcServer, _: &Message, event: Event) -> Result<(), ()> {
+        Ok(())
+    }
 }
 
 pub struct Description {
@@ -87,7 +119,7 @@ macro_rules! plugin {
     ( $t:ty, $n:expr, $v: expr, $d:expr, $($a:expr),+ ) => {
         use std::fmt;
         use semver::Version;
-        use $crate::plugin::Description;
+        use $crate::Description;
 
         impl PluginDescription for $t {
             const DESCRIPTION: Description = Description {
@@ -129,7 +161,7 @@ macro_rules! plugin {
             }
         }
 
-        impl fmt::Debug for Context {
+        impl fmt::Debug for $t {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 write!(f, "Plugin {{ name: {:?}, version: {}, author: {:?}, description: {:?} }}",
                        self.name(), self.version(), self.authors(), self.description())
@@ -138,7 +170,37 @@ macro_rules! plugin {
     }
 }
 
+mod google_search;
+
+pub fn register(plugins: &mut PluginManager) {
+    plugins.register::<google_search::Context>().unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use irc::client::data::Message;
+    use irc::client::server::IrcServer;
+
+    struct SomePlugin;
+
+    impl Plugin for SomePlugin {
+        fn new() -> SomePlugin {
+            SomePlugin
+        }
+
+        fn process(&self, _: &IrcServer, _: &Message) -> Result<(), ()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn register_returns_ok() {
+        plugin!(SomePlugin, "some_plugin", "1.0", "John Doe", "hello");
+
+        let mut plugins = PluginManager::new();
+        let result = plugins.register::<SomePlugin>();
+
+        assert!(result.is_ok());
+    }
 }

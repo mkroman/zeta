@@ -4,10 +4,11 @@ name = "zeta"
 version = "0.1.0"
 
 [dependencies]
-bitflags = "0.3.2"
-# clippy = "*"
-hyper = "0.7"
-irc = "0.9"
 openssl = "0.7"
-semver = "0.2.0"
-shared_library = "0.1.0"
+
+[dependencies.irc]
+features = ["nochanlists"]
+version = "0.10"
+
+[dependencies.plugins]
+path = "./plugins"
