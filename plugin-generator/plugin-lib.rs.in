@@ -38,14 +38,18 @@ pub mod prelude {
     pub use irc::client::data::{Message, Command};
     pub use irc::client::server::IrcServer;
     pub use irc::client::server::utils::ServerExt;
-    pub use super::{Plugin, PluginDescription, Event};
+    pub use super::{Plugin, PluginDescription};
 }
 
-pub enum Event<'a> {
-    Command(&'a str, Vec<&'a str>),
-    Message(&'a str, &'a str),
-    IrcMessage(Message)
+pub enum EventKind<'a> {
+    PRIVMSG(&'a str, &'a str)
 }
+
+pub struct Event<'a> {
+    pub event_type: EventKind<'a>,
+    pub message: &'a Message,
+}
+
 
 /// Thread-safe plugin instantiator and manager.
 pub struct PluginManager {
@@ -82,7 +86,7 @@ pub trait Plugin: PluginDescription + Any + Send + Sync {
     fn new() -> Self where Self: Sized;
 
     /// Process an incoming IRC message.
-    fn process(&self, _: &IrcServer, _: &Message, event: Event) -> Result<(), ()> {
+    fn process(&self, _: &IrcServer, _: &Message) -> Result<(), ()> {
         Ok(())
     }
 }

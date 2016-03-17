@@ -23,19 +23,71 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #![feature(associated_consts)]
+#![feature(question_mark)]
 
 extern crate irc;
-#[macro_use]
-extern crate plugins;
 
-mod zeta;
+use std::io;
+use irc::client::server::IrcServer;
+
+// use plugins::PluginManager;
+use server::Server;
+
 mod server;
-mod route;
+#[allow(dead_code)] mod route;
+pub mod plugin;
 
-use std::thread::spawn;
-use irc::client::prelude::*;
+/// Configuration data and internal state.
+pub struct Zeta {
+    server: Option<IrcServer>,
+}
 
-use zeta::Zeta;
+impl Zeta {
+    /// Create and return a new instance of Zeta.
+    pub fn new() -> Zeta {
+        let zeta = Zeta {
+            server: None,
+        };
+
+        zeta
+    }
+
+    /// Connect to the preconfigured IRC network.
+    pub fn connect(&mut self) -> Result<(), io::Error> {
+        self.server = Some(Server::new("irc.uplink.io", 6667).ssl(true).channel("#test")
+                                .connect()?);
+
+        Ok(())
+    }
+
+    pub fn initialize_plugins(&mut self) -> &mut Zeta {
+        //plugins::register(&mut self.plugins);
+
+        self
+    }
+
+    /// Run the main event-loop and delegate all incoming messages to all initialized plugins.
+    pub fn run(&self) -> Result<(), io::Error> {
+        use irc::client::server::Server;
+
+        let server = self.server.as_ref().unwrap();
+
+        for message in server.iter() {
+            match message {
+                Ok(_message) => {
+                    // for plugin in self.plugins.plugins() {
+                    //     plugin.process(&server, &message);
+                    // }
+                }
+                Err(error) => {
+                    println!("!! {}", error);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
 
 fn main() {
     let mut zeta = Zeta::new();

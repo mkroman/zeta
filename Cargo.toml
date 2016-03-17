@@ -4,11 +4,11 @@ name = "zeta"
 version = "0.1.0"
 
 [dependencies]
+hyper = "0.7.2"
 openssl = "0.7"
+url = "0.5.5"
+plugins = { path = "./target/plugins" }
 
 [dependencies.irc]
 features = ["nochanlists"]
 version = "0.10"
-
-[dependencies.plugins]
-path = "./plugins"

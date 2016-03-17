@@ -23,6 +23,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use std::io;
+
 use irc::client::server::IrcServer;
 use irc::client::server::Server as IrcSrv;
 use irc::client::server::utils::ServerExt;
@@ -55,9 +56,11 @@ impl<'a> Server<'a> {
         }
     }
 
-    /// Set the server password.
+    #[allow(dead_code)]
+    /// Set a server password that is required to connect to the network.
     pub fn password(&'a mut self, pass: Option<&'a str>) -> &'a mut Server {
         self.password = pass;
+
         self
     }
 
@@ -65,7 +68,7 @@ impl<'a> Server<'a> {
     pub fn channel(&'a mut self, name: &'a str) -> &'a mut Server {
         match self.channels {
             Some(ref mut channels) => channels.push(name),
-            None => self.channels = Some(vec![name])
+            None => self.channels = Some(vec![name]),
         }
 
         self
@@ -74,18 +77,23 @@ impl<'a> Server<'a> {
     /// Set whether or not to use SSL/TLS.
     pub fn ssl(&'a mut self, use_ssl: bool) -> &'a mut Server {
         self.use_ssl = use_ssl;
+
         self
     }
 
+    #[allow(dead_code)]
     /// Set the clients real name.
     pub fn real_name(&'a mut self, name: &'a str) -> &'a mut Server {
         self.realname = Some(name);
+
         self
     }
 
+    #[allow(dead_code)]
     /// Set the clients nickname.
     pub fn nick(&'a mut self, nick: &'a str) -> &'a mut Server {
         self.nickname = nick;
+
         self
     }
 
@@ -94,7 +102,7 @@ impl<'a> Server<'a> {
     pub fn connect(&'a mut self) -> Result<IrcServer, io::Error> {
         let channels = match self.channels {
             Some(ref channels) => Some(channels.iter().map(|s| s.to_string()).collect()),
-            None => None 
+            None => None,
         };
 
         let config = Config {
@@ -107,16 +115,13 @@ impl<'a> Server<'a> {
             username: self.username.and_then(|username| Some(username.to_string())),
             realname: self.realname.and_then(|realname| Some(realname.to_string())),
             use_ssl: Some(self.use_ssl), // Why is this an Option<bool>?
-            .. Default::default()
+            ..Default::default()
         };
 
-        let server = match IrcServer::from_config(config) {
-            Ok(server) => server,
-            Err(error) => return Err(error)
-        };
+        let server = IrcServer::from_config(config)?;
 
         // Send NICK, USER and end capability negotiations.
-        try!(server.identify());
+        server.identify()?;
 
         Ok(server)
     }

@@ -22,6 +22,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+extern crate irc;
+extern crate url;
+extern crate hyper;
+
 use url::Url;
 use hyper::Client;
 use super::prelude::*;
@@ -40,42 +44,12 @@ pub struct SearchResult {
 
 impl Plugin for Context {
     fn new() -> Context {
-        Context {
-            http_client: Client::new()
-        }
+        Context { http_client: Client::new() }
     }
 
-    fn process(&self, server: &IrcServer, irc_msg: &Message, event: Event) -> Result<(), ()> {
-        match event {
-            Event::Command(ref cmd, ref args) => {
-                let Command::PRIVMSG(ref target, ref msg) = irc_msg.command;
-
-                if cmd.to_string() == "test" {
-                    server.send_privmsg(target, msg);
-                }
-            }
-        }
-
+    fn process(&self, server: &IrcServer, msg: &Message) -> Result<(), ()> {
         Ok(())
     }
-
-
-    // fn handle_message(&self, server: &IrcServer, user: &str, channel: &str, message: &str) -> Result<(), ()> {
-    //     let parts: Vec<&str> = message.splitn(2, " ").collect();
-    //     let command = parts.get(0).cloned();
-    //     let params = parts.get(1).cloned();
-    //
-    //     match command {
-    //         Some(cmd) if cmd == ".g" => {
-    //             server.send_privmsg(channel, format!("Googling for {:?}", params).as_ref());
-    //         }
-    //         _ => {
-    //             println!("{:?}", command);
-    //         }
-    //     }
-    //
-    //     Ok(())
-    // }
 }
 
 impl Context {
@@ -88,9 +62,7 @@ impl Context {
         Ok(SearchResult {
             title: format!("d"),
             description: format!("d"),
-            url: format!("d")
+            url: format!("d"),
         })
     }
 }
-
-plugin!(Context, "Google Search", "0.1.0", "Send queries to Google", "Mikkel Kroman <mk@maero.dk>");
