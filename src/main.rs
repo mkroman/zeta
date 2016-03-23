@@ -26,20 +26,27 @@
 #![feature(question_mark)]
 
 extern crate irc;
+extern crate log;
+extern crate plugins;
+extern crate zeta_runtime;
+extern crate env_logger;
 
 use std::io;
 use irc::client::server::IrcServer;
+
+use zeta_runtime::PluginManager;
 
 // use plugins::PluginManager;
 use server::Server;
 
 mod server;
+mod user;
 #[allow(dead_code)] mod route;
-pub mod plugin;
 
 /// Configuration data and internal state.
 pub struct Zeta {
     server: Option<IrcServer>,
+    plugins: PluginManager,
 }
 
 impl Zeta {
@@ -47,6 +54,7 @@ impl Zeta {
     pub fn new() -> Zeta {
         let zeta = Zeta {
             server: None,
+            plugins: PluginManager::new(),
         };
 
         zeta
@@ -61,7 +69,7 @@ impl Zeta {
     }
 
     pub fn initialize_plugins(&mut self) -> &mut Zeta {
-        //plugins::register(&mut self.plugins);
+        plugins::register(&mut self.plugins);
 
         self
     }
@@ -74,10 +82,10 @@ impl Zeta {
 
         for message in server.iter() {
             match message {
-                Ok(_message) => {
-                    // for plugin in self.plugins.plugins() {
-                    //     plugin.process(&server, &message);
-                    // }
+                Ok(message) => {
+                    for plugin in self.plugins.plugins() {
+                        plugin.process(&server, &message);
+                    }
                 }
                 Err(error) => {
                     println!("!! {}", error);
@@ -89,7 +97,13 @@ impl Zeta {
     }
 }
 
+fn init_logging() {
+    env_logger::init();
+}
+
 fn main() {
+    init_logging();
+
     let mut zeta = Zeta::new();
 
     zeta.connect().unwrap();

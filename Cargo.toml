@@ -4,11 +4,18 @@ name = "zeta"
 version = "0.1.0"
 
 [dependencies]
+env_logger = "0.3.2"
 hyper = "0.7.2"
+log = "0.3.5"
 openssl = "0.7"
 url = "0.5.5"
-plugins = { path = "./target/plugins" }
 
 [dependencies.irc]
 features = ["nochanlists"]
 version = "0.10"
+
+[dependencies.plugins]
+path = "./target/plugins"
+
+[dependencies.zeta-runtime]
+path = "zeta-runtime"

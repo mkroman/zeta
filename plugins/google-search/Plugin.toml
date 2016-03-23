@@ -7,3 +7,4 @@ authors = ["Mikkel Kroman <mk@uplink.io>"]
 hyper = "0.7"
 url = "0.5.5"
 irc = "0.10"
+semver = "0.2.3"

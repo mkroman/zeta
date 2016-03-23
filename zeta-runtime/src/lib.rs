@@ -25,8 +25,6 @@
 #![feature(associated_consts)]
 
 extern crate irc;
-extern crate url;
-extern crate hyper;
 extern crate semver;
 
 use std::any::Any;
@@ -34,22 +32,14 @@ use irc::client::data::Message;
 use irc::client::server::IrcServer;
 use semver::Version;
 
+pub mod util;
+
 pub mod prelude {
     pub use irc::client::data::{Message, Command};
     pub use irc::client::server::IrcServer;
     pub use irc::client::server::utils::ServerExt;
     pub use super::{Plugin, PluginDescription};
 }
-
-pub enum EventKind<'a> {
-    PRIVMSG(&'a str, &'a str)
-}
-
-pub struct Event<'a> {
-    pub event_type: EventKind<'a>,
-    pub message: &'a Message,
-}
-
 
 /// Thread-safe plugin instantiator and manager.
 pub struct PluginManager {
@@ -66,11 +56,14 @@ impl PluginManager {
 
     /// Registers a new plugin of type T that implements Plugin.
     /// If the plugin is successfully registered, this will returns a box with the instance plugin.
-    pub fn register<'a, T>(&'a mut self) -> Result<(), ()>
-        where T: Plugin {
-        let plugin = Box::new(T::new());
-
+    pub fn register(&mut self, plugin: Box<Plugin>) -> Result<(), ()> {
         self.plugins.push(plugin);
+
+        Ok(())
+    }
+
+    pub fn register_command(&mut self, plugin: &Plugin, command: &str) -> Result<(), ()> {
+        println!("Registered command {:?} for plugin", command);
 
         Ok(())
     }
@@ -119,6 +112,7 @@ pub trait PluginDescription {
 /// plugin!(Context, "Google Search", "0.1", "Allows a user to search google", "Mikkel Kroman <mk@maero.dk>");
 /// // Where Context implements Plugin.
 /// ```
+#[macro_export]
 macro_rules! plugin {
     ( $t:ty, $n:expr, $v: expr, $d:expr, $($a:expr),+ ) => {
         use std::fmt;
@@ -172,12 +166,6 @@ macro_rules! plugin {
             }
         }
     }
-}
-
-mod google_search;
-
-pub fn register(plugins: &mut PluginManager) {
-    plugins.register::<google_search::Context>().unwrap();
 }
 
 #[cfg(test)]
