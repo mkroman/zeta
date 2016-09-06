@@ -22,90 +22,43 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#![feature(associated_consts)]
-#![feature(question_mark)]
-
-extern crate irc;
-extern crate log;
-extern crate plugins;
-extern crate zeta_runtime;
+extern crate zeta;
+extern crate clap;
 extern crate env_logger;
 
-use std::io;
-use irc::client::server::IrcServer;
+use std::error::Error;
 
-use zeta_runtime::PluginManager;
+use clap::{Arg, App};
+use zeta::Zeta;
 
-// use plugins::PluginManager;
-use server::Server;
-
-mod server;
-mod user;
-#[allow(dead_code)] mod route;
-
-/// Configuration data and internal state.
-pub struct Zeta {
-    server: Option<IrcServer>,
-    plugins: PluginManager,
-}
-
-impl Zeta {
-    /// Create and return a new instance of Zeta.
-    pub fn new() -> Zeta {
-        let zeta = Zeta {
-            server: None,
-            plugins: PluginManager::new(),
-        };
-
-        zeta
-    }
-
-    /// Connect to the preconfigured IRC network.
-    pub fn connect(&mut self) -> Result<(), io::Error> {
-        self.server = Some(Server::new("irc.uplink.io", 6667).ssl(true).channel("#test")
-                                .connect()?);
-
-        Ok(())
-    }
-
-    pub fn initialize_plugins(&mut self) -> &mut Zeta {
-        plugins::register(&mut self.plugins);
-
-        self
-    }
-
-    /// Run the main event-loop and delegate all incoming messages to all initialized plugins.
-    pub fn run(&self) -> Result<(), io::Error> {
-        use irc::client::server::Server;
-
-        let server = self.server.as_ref().unwrap();
-
-        for message in server.iter() {
-            match message {
-                Ok(message) => {
-                    for plugin in self.plugins.plugins() {
-                        plugin.process(&server, &message);
-                    }
-                }
-                Err(error) => {
-                    println!("!! {}", error);
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-fn init_logging() {
-    env_logger::init();
+fn parse_options<'a>() -> clap::ArgMatches<'a> {
+    App::with_defaults("zeta")
+        .author(env!("CARGO_PKG_AUTHORS"))
+        .version(env!("CARGO_PKG_VERSION"))
+        .arg(Arg::with_name("config")
+             .long("config")
+             .short("c")
+             .takes_value(true)
+             .help("set configuration file (default: config.json)")
+             .value_name("FILE"))
+        .get_matches()
 }
 
 fn main() {
-    init_logging();
+    env_logger::init().unwrap();
 
-    let mut zeta = Zeta::new();
+    let matches = parse_options();
+    let config_path = matches.value_of("config").unwrap_or("config.json");
 
-    zeta.connect().unwrap();
-    zeta.initialize_plugins().run().unwrap();
+    match Zeta::new(&config_path) {
+        Ok(mut zeta) => {
+            zeta.connect().unwrap();
+            zeta.load_plugins().expect("could not load plugins");
+            zeta.run().unwrap();
+        },
+        Err(e) => {
+            println!("A critical error occurred!");
+            println!("{}: {}", &e, e.description());
+        }
+    }
 }

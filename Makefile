@@ -1,48 +1,18 @@
-# Copyright (c) 2016, Mikkel Kroman <mk@uplink.io>
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# * Redistributions of source code must retain the above copyright notice, this
-#   list of conditions and the following disclaimer.
-#
-# * Redistributions in binary form must reproduce the above copyright notice,
-#   this list of conditions and the following disclaimer in the documentation
-#   and/or other materials provided with the distribution.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-CARGO := cargo
-PROJECT_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
-
 ifeq ($(RELEASE), 1)
 CARGO_FLAGS = --release
-PLUGIN_GEN_BIN = plugin-generator/target/release/plugin-generator
+CARGO_PROFILE = release
 else
-PLUGIN_GEN_BIN = plugin-generator/target/debug/plugin-generator
+CARGO_PROFILE = debug
 endif
 
-OUT_DIR = target/plugins
-
-all: zeta
+all: zeta plugins
 	@echo Build complete.
 
-plugin-generator:
-	cd plugin-generator && $(CARGO) build $(CARGO_FLAGS)
-	mkdir -p target/plugins
-	CARGO_MANIFEST_DIR=. OUT_DIR=target/plugins $(PLUGIN_GEN_BIN)
+plugins: zeta
+	cd ./plugins && cargo build $(CARGO_FLAGS) && \
+	  install -m755 target/$(CARGO_PROFILE)/libzeta_plugins.so ../target/debug
 
-zeta: plugin-generator
-	$(CARGO) build $(CARGO_FLAGS)
+zeta:
+	cargo build $(CARGO_FLAGS)
 
-.PHONY: zeta plugin-generator
+.PHONY: zeta
