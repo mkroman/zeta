@@ -22,11 +22,6 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#![feature(associated_consts)]
-
-extern crate irc;
-extern crate semver;
-
 use std::any::Any;
 use irc::client::data::Message;
 use irc::client::server::IrcServer;
@@ -36,7 +31,7 @@ pub mod prelude {
     pub use irc::client::data::{Message, Command};
     pub use irc::client::server::IrcServer;
     pub use irc::client::server::utils::ServerExt;
-    pub use super::{Plugin, PluginDescription};
+    pub use super::{Plugin, PluginDescription, PluginManager};
 }
 
 pub enum EventKind<'a> {
@@ -64,18 +59,27 @@ impl PluginManager {
 
     /// Registers a new plugin of type T that implements Plugin.
     /// If the plugin is successfully registered, this will returns a box with the instance plugin.
-    pub fn register<'a, T>(&'a mut self) -> Result<(), ()>
+    pub fn register<'a, T>(&'a mut self) -> Result<&Box<Plugin>, ()>
         where T: Plugin {
         let plugin = Box::new(T::new());
 
         self.plugins.push(plugin);
 
-        Ok(())
+        // Is there a better way to get a reference to the boxed plugin once
+        // has been moved?
+        let plugin_ref = &self.plugins[self.plugins.len() - 1];
+
+        Ok(plugin_ref)
     }
 
     /// Return a borrowed reference to the list of plugins.
     pub fn plugins(&self) -> &Vec<Box<Plugin>> {
         &self.plugins
+    }
+
+    /// Clear all plugins.
+    pub fn clear(&mut self) {
+        self.plugins.clear();
     }
 }
 
@@ -117,11 +121,12 @@ pub trait PluginDescription {
 /// plugin!(Context, "Google Search", "0.1", "Allows a user to search google", "Mikkel Kroman <mk@maero.dk>");
 /// // Where Context implements Plugin.
 /// ```
+#[macro_export]
 macro_rules! plugin {
     ( $t:ty, $n:expr, $v: expr, $d:expr, $($a:expr),+ ) => {
         use std::fmt;
-        use semver::Version;
-        use $crate::Description;
+        use $crate::semver::Version;
+        use $crate::plugin::Description;
 
         impl PluginDescription for $t {
             const DESCRIPTION: Description = Description {
@@ -170,10 +175,6 @@ macro_rules! plugin {
             }
         }
     }
-}
-
-pub fn register(plugins: &mut PluginManager) {
-    plugins.register::<google_search::Context>().unwrap();
 }
 
 #[cfg(test)]
