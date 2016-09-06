@@ -4,7 +4,7 @@ pub extern crate irc;
 pub extern crate semver;
 pub extern crate env_logger;
 #[macro_use] extern crate log;
-extern crate libloading as lib;
+extern crate libloading;
 #[macro_use] extern crate quick_error;
 
 use std::io;
@@ -24,7 +24,6 @@ pub struct Zeta {
     server: Option<IrcServer>,
     config: Config,
     plugins: plugin::PluginManager,
-    plugins_handle: Option<lib::Library>,
 }
 
 impl Zeta {
@@ -45,7 +44,6 @@ impl Zeta {
             server: None,
             config: config,
             plugins: plugin::PluginManager::new(),
-            plugins_handle: None,
         })
     }
 
@@ -56,37 +54,6 @@ impl Zeta {
         if let Some(ref server) = self.server {
             try!(server.identify());
         }
-
-        Ok(())
-    }
-
-    pub fn load_plugins(&mut self) -> Result<(), ()> {
-        use lib::Symbol;
-
-        let plugin_lib = lib::Library::new("libzeta_plugins.so").unwrap();
-
-        unsafe {
-            let register_plugins: Symbol<extern fn(&mut plugin::PluginManager)> = 
-                plugin_lib.get(b"register_plugins\0").unwrap();
-
-            register_plugins(&mut self.plugins);
-        }
-
-        self.plugins_handle = Some(plugin_lib);
-
-        Ok(())
-    }
-
-    pub fn unload_plugins(&mut self) -> Result<(), ()> {
-        self.plugins.clear();
-        self.plugins_handle = None;
-
-        Ok(())
-    }
-
-    pub fn reload_plugins(&mut self) -> Result<(), ()> {
-        try!(self.unload_plugins());
-        self.load_plugins();
 
         Ok(())
     }
@@ -102,6 +69,8 @@ impl Zeta {
     }
 
     fn process_commands(&mut self, server: &IrcServer) {
+        let plugins = &mut self.plugins;
+
         for message in server.iter() {
             match message {
                 Ok(ref message) => {
@@ -110,7 +79,7 @@ impl Zeta {
                     match message.command {
                         Command::PRIVMSG(ref target, ref msg) => {
                             if msg == ".reload" {
-                                self.reload_plugins();
+                                plugins.reload();
                             }
                         },
                         _ => {}
