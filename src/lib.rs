@@ -9,6 +9,7 @@ extern crate libloading;
 
 use std::io;
 use std::path::Path;
+use std::cell::RefCell;
 use irc::client::data::Config;
 use irc::client::data::command::Command;
 use irc::client::server::{Server, IrcServer};
@@ -17,13 +18,14 @@ use irc::client::server::utils::ServerExt;
 pub mod plugin;
 pub mod error;
 
+use plugin::PluginManager;
 use error::{Error, ConfigError};
 
 /// Configuration data and internal state.
 pub struct Zeta {
     server: Option<IrcServer>,
     config: Config,
-    plugins: plugin::PluginManager,
+    plugins: RefCell<PluginManager>,
 }
 
 impl Zeta {
@@ -43,7 +45,7 @@ impl Zeta {
         Ok(Zeta {
             server: None,
             config: config,
-            plugins: plugin::PluginManager::new(),
+            plugins: RefCell::new(PluginManager::new()),
         })
     }
 
@@ -61,15 +63,9 @@ impl Zeta {
     /// Run the main event-loop and share all incoming messages with all the
     /// initialized plugins.
     pub fn run(&mut self) -> Result<(), io::Error> {
+        use std::{thread, time};
+
         let server = self.server.as_ref().unwrap();
-
-        self.process_commands(server);
-
-        Ok(())
-    }
-
-    fn process_commands(&mut self, server: &IrcServer) {
-        let plugins = &mut self.plugins;
 
         for message in server.iter() {
             match message {
@@ -77,9 +73,15 @@ impl Zeta {
                     println!("{:?}", message);
 
                     match message.command {
-                        Command::PRIVMSG(ref target, ref msg) => {
-                            if msg == ".reload" {
-                                plugins.reload();
+                        Command::PRIVMSG(_, ref msg) => {
+                            if msg == ".load" {
+                                self.plugins.borrow_mut().load().unwrap();
+                            }
+                            else if msg == ".reload" {
+                                self.plugins.borrow_mut().reload().unwrap();
+                            }
+                            else if msg == ".unload" {
+                                self.plugins.borrow_mut().unload().unwrap();
                             }
                         },
                         _ => {}
@@ -91,5 +93,10 @@ impl Zeta {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn load_plugins(&mut self) -> Result<(), ()> {
+        self.plugins.borrow_mut().load()
     }
 }

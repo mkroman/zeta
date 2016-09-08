@@ -4,13 +4,19 @@ struct GoogleSearch;
 
 impl Plugin for GoogleSearch {
     fn new() -> GoogleSearch {
-        println!("Google Search plugin initialized");
+        debug!("Google Search plugin initialized");
 
         GoogleSearch
     }
 
     fn process(&self, _: &IrcServer, _: &Message) -> Result<(), ()> {
         Ok(())
+    }
+}
+
+impl Drop for GoogleSearch {
+    fn drop(&mut self) {
+        debug!("Google Search plugin uninitialized");
     }
 }
 

@@ -22,6 +22,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+use std::fmt;
 use std::any::Any;
 use irc::client::data::Message;
 use irc::client::server::IrcServer;
@@ -37,9 +38,10 @@ pub mod prelude {
 }
 
 /// Thread-safe plugin instantiator and manager.
+#[derive(Debug)]
 pub struct PluginManager {
     plugins: Vec<Box<Plugin>>,
-    handle: Option<::libloading::Library>,
+    library: Option<::libloading::Library>,
 }
 
 impl PluginManager {
@@ -47,7 +49,7 @@ impl PluginManager {
     pub fn new() -> PluginManager {
         PluginManager {
             plugins: vec![],
-            handle: None,
+            library: None,
         }
     }
 
@@ -71,11 +73,6 @@ impl PluginManager {
         &self.plugins
     }
 
-    /// Clear all plugins.
-    pub fn clear(&mut self) {
-        self.plugins.clear();
-    }
-
     /// Load the plugins library and register all plugins.
     pub fn load(&mut self) -> Result<(), ()> {
         let plugin_lib = lib::Library::new("libzeta_plugins.so").unwrap();
@@ -84,10 +81,12 @@ impl PluginManager {
             let register_plugins: lib::Symbol<extern fn(&mut PluginManager)> = 
                 plugin_lib.get(b"register_plugins\0").unwrap();
 
-            register_plugins(&mut self);
+            register_plugins(self);
         }
 
-        self.handle = Some(plugin_lib);
+        self.library = Some(plugin_lib);
+
+        println!("Plugins: {:?}", self.plugins);
 
         Ok(())
     }
@@ -95,7 +94,9 @@ impl PluginManager {
     /// Unload any loaded plugins and close the handle to the plugins library.
     pub fn unload(&mut self) -> Result<(), ()> {
         self.plugins.clear();
-        self.handle = None;
+        self.library = None;
+
+        debug!("{:?}", self);
 
         Ok(())
     }
@@ -106,6 +107,13 @@ impl PluginManager {
         try!(self.load());
 
         Ok(())
+    }
+}
+
+impl fmt::Debug for Plugin {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Plugin {{ name: {}, author: {}, version: {} }}", self.name(), self.authors(),
+            self.version())
     }
 }
 

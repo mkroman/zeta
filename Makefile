@@ -10,7 +10,7 @@ all: zeta plugins
 
 plugins: zeta
 	cd ./plugins && cargo build $(CARGO_FLAGS) && \
-	  install -m755 target/$(CARGO_PROFILE)/libzeta_plugins.so ../target/debug
+	  install -m755 target/$(CARGO_PROFILE)/libzeta_plugins.so ../target/$(CARGO_PROFILE)
 
 zeta:
 	cargo build $(CARGO_FLAGS)

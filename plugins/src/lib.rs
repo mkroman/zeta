@@ -4,14 +4,13 @@
 #[macro_use] extern crate zeta;
 
 use zeta::env_logger;
-use zeta::plugin::Plugin;
 use zeta::plugin::PluginManager;
 
 mod google_search;
 
 #[no_mangle]
 pub extern fn register_plugins(plugins: &mut PluginManager) {
-    env_logger::init().unwrap();
+    //env_logger::init().unwrap();
 
     let mut count = 0;
 
@@ -24,11 +23,9 @@ pub extern fn register_plugins(plugins: &mut PluginManager) {
     }
 
     register_mod!(google_search);
-
     debug!("Loaded {} plugins", count);
 }
 
 #[no_mangle]
-pub extern fn unregister_plugins(plugins: &mut PluginManager) {
-    plugins.clear();
+pub extern fn unregister_plugins(_: &mut PluginManager) {
 }
