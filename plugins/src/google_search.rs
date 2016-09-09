@@ -1,22 +1,34 @@
 use zeta::plugin::prelude::*;
 
-struct GoogleSearch;
+use ::scraper::{Selector, Html};
+use ::hyper::Client;
+
+struct GoogleSearch {
+    http_client: Client,
+}
 
 impl Plugin for GoogleSearch {
     fn new() -> GoogleSearch {
-        debug!("Google Search plugin initialized");
-
-        GoogleSearch
+        GoogleSearch {
+            http_client: Client::new(),
+        }
     }
 
-    fn process(&self, _: &IrcServer, _: &Message) -> Result<(), ()> {
-        Ok(())
-    }
-}
-
-impl Drop for GoogleSearch {
-    fn drop(&mut self) {
-        debug!("Google Search plugin uninitialized");
+    fn process(&self, server: &IrcServer, message: &Message) {
+        match message.command {
+            Command::PRIVMSG(ref target, ref msg) => {
+                match ::util::split_command(&msg) {
+                    (".g", Some(ref args)) => {
+                        server.send_privmsg(target, &format!("Sending query {:?}", args));
+                    },
+                    (".g", None) => {
+                        server.send_privmsg(target, "> Usage: .g <query>");
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
     }
 }
 

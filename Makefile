@@ -9,7 +9,7 @@ all: zeta plugins
 	@echo Build complete.
 
 plugins: zeta
-	cd ./plugins && cargo build $(CARGO_FLAGS) && \
+	cd ./plugins && cargo rustc -Cprefer-dynamic $(CARGO_FLAGS) && \
 	  install -m755 target/$(CARGO_PROFILE)/libzeta_plugins.so ../target/$(CARGO_PROFILE)
 
 zeta:

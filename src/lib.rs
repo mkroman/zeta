@@ -9,6 +9,7 @@ extern crate libloading;
 
 use std::io;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use irc::client::data::Config;
 use irc::client::data::command::Command;
@@ -23,7 +24,7 @@ use error::{Error, ConfigError};
 
 /// Configuration data and internal state.
 pub struct Zeta {
-    server: Option<IrcServer>,
+    server: Option<Arc<Mutex<IrcServer>>>,
     config: Config,
     plugins: RefCell<PluginManager>,
 }
@@ -51,9 +52,13 @@ impl Zeta {
 
     /// Connect to the preconfigured IRC network.
     pub fn connect(&mut self) -> Result<(), io::Error> {
-        self.server = Some(try!(IrcServer::from_config(self.config.clone())));
+        self.server = Some(Arc::new(Mutex::new(
+                    try!(IrcServer::from_config(self.config.clone())))));
 
         if let Some(ref server) = self.server {
+            let server_ref = server.clone();
+            let server = server_ref.lock().unwrap();
+
             try!(server.identify());
         }
 
@@ -65,13 +70,12 @@ impl Zeta {
     pub fn run(&mut self) -> Result<(), io::Error> {
         use std::{thread, time};
 
-        let server = self.server.as_ref().unwrap();
+        let server_ref = self.server.as_ref().unwrap().clone();
+        let server = server_ref.lock().unwrap();
 
         for message in server.iter() {
             match message {
                 Ok(ref message) => {
-                    println!("{:?}", message);
-
                     match message.command {
                         Command::PRIVMSG(_, ref msg) => {
                             if msg == ".load" {
@@ -86,6 +90,12 @@ impl Zeta {
                         },
                         _ => {}
                     }
+
+                    println!("{:?}", message);
+                    for plugin in self.plugins.borrow_mut().plugins() {
+                        plugin.process(&server, message);
+                    }
+
                 }
                 Err(e) => {
                     println!("!! {}", e);

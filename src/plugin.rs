@@ -86,8 +86,6 @@ impl PluginManager {
 
         self.library = Some(plugin_lib);
 
-        println!("Plugins: {:?}", self.plugins);
-
         Ok(())
     }
 
@@ -95,8 +93,6 @@ impl PluginManager {
     pub fn unload(&mut self) -> Result<(), ()> {
         self.plugins.clear();
         self.library = None;
-
-        debug!("{:?}", self);
 
         Ok(())
     }
@@ -122,8 +118,7 @@ pub trait Plugin: PluginDescription + Any + Send + Sync {
     fn new() -> Self where Self: Sized;
 
     /// Process an incoming IRC message.
-    fn process(&self, _: &IrcServer, _: &Message) -> Result<(), ()> {
-        Ok(())
+    fn process(&self, _: &IrcServer, _: &Message) {
     }
 }
 
