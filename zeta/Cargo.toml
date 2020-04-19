@@ -1,0 +1,10 @@
+[package]
+name = "zeta"
+version = "0.1.0"
+authors = ["Mikkel Kroman <mk@maero.dk>"]
+edition = "2018"
+
+[dependencies]
+failure = "0.1"
+tokio = "0.2"
+zeta-core = { path = "../zeta-core" }
