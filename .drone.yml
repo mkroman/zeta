@@ -1,0 +1,17 @@
+kind: pipeline
+name: rust-stable
+
+steps:
+- name: build
+  image: rust:1.43
+  commands:
+  - cargo build
+
+---
+kind: pipeline
+name: rust-nightly
+steps:
+- name: build
+  image: rustlang/rust:nightly
+  commands:
+  - cargo build
