@@ -1,13 +1,23 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
 use irc::client::prelude::*;
-use irc::proto::message::Tag;
+use log::debug;
 use tokio::stream::StreamExt;
 
+mod channel;
 mod error;
+mod user;
+
+pub use channel::Channel;
 pub use error::Error;
+pub use user::User;
 
 #[derive(Default)]
 pub struct Core {
     client: Option<Client>,
+    channels: HashMap<String, Arc<RwLock<Channel>>>,
+    users: Vec<Arc<User>>,
 }
 
 impl Core {
@@ -32,6 +42,12 @@ impl Core {
         Ok(())
     }
 
+    /// Attempts to find a user on the network with the given `nick` and returns a reference to it.
+    /// If the user is not found, None is returned
+    fn find_user_by_nick(&self, nick: &str) -> Option<Arc<User>> {
+        self.users.iter().find(|user| user.nick() == nick).cloned()
+    }
+
     /// Continually polls for new IRC messages
     pub async fn poll(&mut self) -> Result<(), Error> {
         let mut stream = self
@@ -42,42 +58,35 @@ impl Core {
 
         // Continually poll for new messages
         while let Some(message) = stream.next().await.transpose()? {
-            // Handle the different kinds if commands and call the appropriate handler function
+            debug!("<< {}", message.to_string().trim());
+
             match message.command {
-                Command::PRIVMSG(ref target, ref msg) => {
-                    self.handle_private_message(
-                        message.source_nickname(),
-                        message.tags.as_ref(),
-                        target,
-                        msg,
-                    );
+                Command::PRIVMSG(ref _target, ref _msg) => {
+                    // Find the senders nickname
+                    if let Some(nick) = message.source_nickname() {
+                        // Find the user entry if it exists
+                        if let Some(user) = self.find_user_by_nick(nick) {
+                            debug!("Found existing user: {:?}", user)
+                        } else {
+                            // Create a new user entry
+                        }
+                    }
                 }
-                Command::JOIN(ref channel, _, _) => {
-                    self.handle_join(message.source_nickname(), channel);
+                Command::JOIN(ref chan_name, _, _) => {
+                    if !self.channels.contains_key(chan_name) {
+                        self.channels.insert(
+                            chan_name.into(),
+                            Arc::new(RwLock::new(Channel::new(chan_name))),
+                        );
+                    }
+
+                    let channel = self.channels.get(chan_name);
                 }
                 _ => {}
             }
         }
 
         Ok(())
-    }
-
-    /// Called when a message has been received
-    fn handle_private_message(
-        &self,
-        sender: Option<&str>,
-        _tags: Option<&Vec<Tag>>,
-        target: &str,
-        message: &str,
-    ) -> Option<()> {
-        println!("{} <{}> {}", target, sender.unwrap_or(""), message);
-
-        Some(())
-    }
-
-    /// Handle that a user has entered a channel that we're also in
-    fn handle_join(&self, sender: Option<&str>, channel: &str) {
-        println!("{} joined {}", sender.unwrap_or(""), channel);
     }
 }
 

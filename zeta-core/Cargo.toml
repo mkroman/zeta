@@ -11,3 +11,4 @@ failure = "0.1"
 futures = "0.3"
 irc = { git = "https://github.com/aatxe/irc", branch = "develop", features = ["nochanlists"] }
 tokio = "0.2"
+log = "0.4"

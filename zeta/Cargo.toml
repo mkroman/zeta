@@ -8,3 +8,4 @@ edition = "2018"
 failure = "0.1"
 tokio = "0.2"
 zeta-core = { path = "../zeta-core", version = "*" }
+env_logger = "0.7"
