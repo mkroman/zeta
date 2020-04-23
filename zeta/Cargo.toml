@@ -7,4 +7,4 @@ edition = "2018"
 [dependencies]
 failure = "0.1"
 tokio = "0.2"
-zeta-core = { path = "../zeta-core" }
+zeta-core = { path = "../zeta-core", version = "*" }

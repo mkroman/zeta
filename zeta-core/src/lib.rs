@@ -1,4 +1,5 @@
 use irc::client::prelude::*;
+use irc::proto::message::Tag;
 use tokio::stream::StreamExt;
 
 mod error;
@@ -17,7 +18,6 @@ impl Core {
     }
 
     pub async fn connect(&mut self) -> Result<(), Error> {
-        //if self.client.is_none() {
         let config = Config {
             nickname: Some("zeta".to_owned()),
             server: Some("irc.uplink.io".to_owned()),
@@ -32,6 +32,7 @@ impl Core {
         Ok(())
     }
 
+    /// Continually polls for new IRC messages
     pub async fn poll(&mut self) -> Result<(), Error> {
         let mut stream = self
             .client
@@ -39,11 +40,44 @@ impl Core {
             .ok_or(Error::ClientNotConnectedError)?
             .stream()?;
 
+        // Continually poll for new messages
         while let Some(message) = stream.next().await.transpose()? {
-            print!("{}", message);
+            // Handle the different kinds if commands and call the appropriate handler function
+            match message.command {
+                Command::PRIVMSG(ref target, ref msg) => {
+                    self.handle_private_message(
+                        message.source_nickname(),
+                        message.tags.as_ref(),
+                        target,
+                        msg,
+                    );
+                }
+                Command::JOIN(ref channel, _, _) => {
+                    self.handle_join(message.source_nickname(), channel);
+                }
+                _ => {}
+            }
         }
 
         Ok(())
+    }
+
+    /// Called when a message has been received
+    fn handle_private_message(
+        &self,
+        sender: Option<&str>,
+        _tags: Option<&Vec<Tag>>,
+        target: &str,
+        message: &str,
+    ) -> Option<()> {
+        println!("{} <{}> {}", target, sender.unwrap_or(""), message);
+
+        Some(())
+    }
+
+    /// Handle that a user has entered a channel that we're also in
+    fn handle_join(&self, sender: Option<&str>, channel: &str) {
+        println!("{} joined {}", sender.unwrap_or(""), channel);
     }
 }
 
