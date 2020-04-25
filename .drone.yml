@@ -27,21 +27,10 @@ steps:
   commands:
     - cargo test
     - git rev-parse --short HEAD > .tags
-    - pwd
-- name: build release
-  image: rust:1.43
-  volumes:
-    - name: cargo-cache
-      path: /tmp/cargo-cache
-  environment:
-    CARGO_HOME: /tmp/cargo-cache
-  commands:
-    - cargo build --release
 - name: docker image
   image: plugins/docker
   settings:
     repo: mkroman/zeta
-    context: /drone/src
     username:
       from_secret: docker_username
     password:
@@ -77,6 +66,6 @@ steps:
     - cargo test
 ---
 kind: signature
-hmac: 9514bb3773398c606822baedef7f26549bc5fe41159310209c8b7c383f0db9c7
+hmac: babbfd5136f9ecdbaeabae7d214b07eb83330b683c13cc81a7c2ebb3d2acdbfc
 
 ...
