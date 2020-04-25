@@ -66,6 +66,6 @@ steps:
     - cargo test
 ---
 kind: signature
-hmac: babbfd5136f9ecdbaeabae7d214b07eb83330b683c13cc81a7c2ebb3d2acdbfc
+hmac: a84e3368c3d65a035c85108f4454e9dc5abfd1137eade4d8620bfab00e6811f5
 
 ...
