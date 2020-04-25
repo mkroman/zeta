@@ -2,5 +2,6 @@
 members = [
   "zeta",
   "zeta-core",
+  "zeta-irc",
   "zeta-plugins",
 ]
