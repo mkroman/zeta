@@ -17,6 +17,15 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo build
+- name: test
+  image: rust:1.43
+  volumes:
+    - name: cargo-cache
+      path: /tmp/cargo-cache
+  environment:
+    CARGO_HOME: /tmp/cargo-cache
+  commands:
+    - cargo test
 
 ---
 kind: pipeline
@@ -37,8 +46,17 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo build
+- name: test
+  image: rustlang/rust:nightly
+  volumes:
+    - name: cargo-cache
+      path: /tmp/cargo-cache
+  environment:
+    CARGO_HOME: /tmp/cargo-cache
+  commands:
+    - cargo test
 ---
 kind: signature
-hmac: 2f3d3f5ef28723f26b042e00aa5dd27765e299b6c537dea71349b31e6f16e9e4
+hmac: 9b466babf4cc3a323bc7173d967eef98c569948a6e250591146f375868d67928
 
 ...
