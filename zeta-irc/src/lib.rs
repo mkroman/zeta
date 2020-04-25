@@ -40,7 +40,7 @@ impl SliceExt for &[u8] {
         P: Fn(u8) -> bool,
     {
         for i in 0..self.len() {
-            // Get the byte for this iteration index. We can do this safely because our for loop
+            // Get the byte for this iteration index. We can do this safely because our `for` loop
             // never passes the end of the slice
             let b = unsafe { self.get_unchecked(i) };
 
@@ -78,6 +78,11 @@ impl<'a> Message<'a> {
     /// Returns the command portion as a byte slice
     pub fn command(&self) -> &'a [u8] {
         self.command
+    }
+
+    /// Returns the parameter portion as a byte slice
+    pub fn params(&self) -> Option<&'a [u8]> {
+        self.params
     }
 }
 
@@ -140,7 +145,11 @@ impl IrcParser {
         let command = if let Some(offset) =
             input.find_byte_offset(|b| !b.is_ascii_alphabetic() && !b.is_ascii_digit())
         {
-            &input[..offset]
+            let res = &input[..offset];
+
+            input = &input[res.len()..];
+
+            res
         } else {
             // Edge-case where there might be no command
             if input.len() <= 0 {
@@ -155,9 +164,13 @@ impl IrcParser {
             res
         };
 
-        // Extract params
-        let params = if input.len() > 0 {
-            self.extract_params(&input)?
+        // Extract params - we start from index 1 because there will be a preceding space character
+        let params = if input.len() > 1 {
+            if &input[input.len() - 2..] == b"\r\n" {
+                Some(&input[1..input.len() - 2])
+            } else {
+                Some(&input[1..])
+            }
         } else {
             None
         };
@@ -185,10 +198,5 @@ impl IrcParser {
         }
 
         Ok(Some(std::str::from_utf8(&input[..offset - 1])?))
-    }
-
-    /// Extracts the parameters from an input slice
-    fn extract_params<'a>(&self, _input: &'a [u8]) -> Result<Option<&'a [u8]>, Error> {
-        Ok(Some(b""))
     }
 }

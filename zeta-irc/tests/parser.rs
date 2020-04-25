@@ -74,8 +74,30 @@ fn it_should_extract_command() {
 }
 
 #[test]
+fn it_should_extract_params() {
+    let parser = strict_parser();
+    let res = parser
+        .parse(b"@tag1=hello @tag2=hello2 @tag3=hello3 :nick!user@example.com PRIVMSG #channel :hello, world!")
+        .unwrap();
+
+    assert_eq!(res.params(), Some(&b"#channel :hello, world!"[..]));
+}
+
+#[test]
 fn should_parse_privmsg() {
     let res = strict_parser().parse(b":nick!user@example.com PRIVMSG #channel :hello, world!\r\n");
 
     assert!(res.is_ok());
+}
+
+#[test]
+fn should_parse_all_values() {
+    let res = strict_parser()
+        .parse(b":nick!user@example.com PRIVMSG #channel :hello, world!\r\n")
+        .unwrap();
+
+    assert_eq!(res.prefix(), Some(&b"nick!user@example.com"[..]));
+    assert_eq!(res.command(), b"PRIVMSG");
+    assert_eq!(res.params(), Some(&b"#channel :hello, world!"[..]));
+    assert_eq!(res.tags(), None);
 }
