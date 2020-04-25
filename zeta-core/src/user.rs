@@ -4,7 +4,7 @@ pub use crate::Channel;
 
 /// This struct contains details about a user, such as its nickname, username, hostname, what
 /// channel it is known to be in, etc.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct User {
     // The users nickname
     nick: String,
@@ -17,6 +17,13 @@ pub struct User {
 }
 
 impl User {
+    pub fn new<S: Into<String>>(nick: S) -> User {
+        User {
+            nick: nick.into(),
+            ..Default::default()
+        }
+    }
+
     /// Returns the users nickname
     pub fn nick(&self) -> &str {
         &self.nick

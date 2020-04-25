@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use irc::client::prelude::*;
-use log::debug;
+use log::{debug, info};
 use tokio::stream::StreamExt;
 
 mod channel;
@@ -17,12 +17,15 @@ pub use user::User;
 pub struct Core {
     client: Option<Client>,
     channels: HashMap<String, Arc<RwLock<Channel>>>,
-    users: Vec<Arc<User>>,
+    users: HashMap<String, Arc<RwLock<User>>>,
+    // List of channel types (i.e. channel name prefixes)
+    channel_types: Vec<String>,
 }
 
 impl Core {
     pub fn new() -> Core {
         Core {
+            channel_types: vec!["#".to_string()],
             ..Default::default()
         }
     }
@@ -32,6 +35,7 @@ impl Core {
             nickname: Some("zeta".to_owned()),
             server: Some("irc.uplink.io".to_owned()),
             channels: vec!["#test".to_owned()],
+            ping_time: Some(60),
             ..Config::default()
         };
 
@@ -40,12 +44,6 @@ impl Core {
         self.client = Some(client);
 
         Ok(())
-    }
-
-    /// Attempts to find a user on the network with the given `nick` and returns a reference to it.
-    /// If the user is not found, None is returned
-    fn find_user_by_nick(&self, nick: &str) -> Option<Arc<User>> {
-        self.users.iter().find(|user| user.nick() == nick).cloned()
     }
 
     /// Continually polls for new IRC messages
@@ -58,26 +56,38 @@ impl Core {
 
         // Continually poll for new messages
         while let Some(message) = stream.next().await.transpose()? {
-            debug!("<< {}", message.to_string().trim());
+            debug!("<< {:?}", message.command);
 
             match message.command {
+                Command::Response(Response::RPL_ISUPPORT, ref args) => {
+                    self.handle_isupport(args);
+                }
+                Command::Response(Response::RPL_NAMREPLY, ref args) => {
+                    debug!("NAMES: {:?}", args);
+                }
                 Command::PRIVMSG(ref _target, ref _msg) => {
                     // Find the senders nickname
                     if let Some(nick) = message.source_nickname() {
-                        // Find the user entry if it exists
-                        if let Some(user) = self.find_user_by_nick(nick) {
-                            debug!("Found existing user: {:?}", user)
-                        } else {
-                            // Create a new user entry
+                        // Create an new user instance and insert it if it doesn't already exist
+                        if !self.users.contains_key(nick) {
+                            self.users
+                                .insert(nick.to_string(), Arc::new(RwLock::new(User::new(nick))));
                         }
+
+                        // Find the user entry if it exists
+                        let user = self.users.get(nick);
                     }
                 }
                 Command::JOIN(ref chan_name, _, _) => {
-                    if !self.channels.contains_key(chan_name) {
+                    if message.source_nickname()
+                        == Some(self.client.as_ref().unwrap().current_nickname())
+                    {
                         self.channels.insert(
                             chan_name.into(),
                             Arc::new(RwLock::new(Channel::new(chan_name))),
                         );
+
+                        info!("Joined `{}'", chan_name);
                     }
 
                     let channel = self.channels.get(chan_name);
@@ -87,6 +97,12 @@ impl Core {
         }
 
         Ok(())
+    }
+
+    /// Handles the ISUPPORT message that is sent by the server to inform the
+    /// client about features that might differ across server implementations
+    fn handle_isupport(&mut self, args: &Vec<String>) {
+        println!("ISUPPORT: {:?}", args);
     }
 }
 
