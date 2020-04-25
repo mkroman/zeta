@@ -1,3 +1,4 @@
+---
 kind: pipeline
 name: rust-stable
 
@@ -36,3 +37,8 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo build
+---
+kind: signature
+hmac: 2f3d3f5ef28723f26b042e00aa5dd27765e299b6c537dea71349b31e6f16e9e4
+
+...
