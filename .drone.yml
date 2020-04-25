@@ -1,17 +1,38 @@
 kind: pipeline
 name: rust-stable
 
+volumes:
+  - name: cargo-cache
+    host:
+      path: /var/lib/cargo-cache
+
 steps:
 - name: build
   image: rust:1.43
+  volumes:
+    - name: cargo-cache
+      path: /tmp/cargo-cache
+  environment:
+    CARGO_HOME: /tmp/cargo-cache
   commands:
-  - cargo build
+    - cargo build
 
 ---
 kind: pipeline
 name: rust-nightly
+
+volumes:
+  - name: cargo-cache
+    host:
+      path: /var/lib/cargo-cache
+
 steps:
 - name: build
   image: rustlang/rust:nightly
+  volumes:
+    - name: cargo-cache
+      path: /tmp/cargo-cache
+  environment:
+    CARGO_HOME: /tmp/cargo-cache
   commands:
-  - cargo build
+    - cargo build
