@@ -25,19 +25,54 @@ pub struct IrcParser {
     strictness: Strictness,
 }
 
+trait SliceFindByte {
+    /// Iterates through a slice to find the offset of a single byte
+    ///
+    /// Returns `Some(offset)` if the byte is found, `None` otherwise
+    fn find_byte_offset(&self, byte: u8) -> Option<usize>;
+}
+
+impl SliceFindByte for &[u8] {
+    fn find_byte_offset(&self, byte: u8) -> Option<usize> {
+        for i in 0..self.len() {
+            // Get the byte for this iteration index. We can do this safely because our for loop
+            // never passes the end of the slice
+            let b = unsafe { self.get_unchecked(i) };
+
+            if *b == byte {
+                return Some(i);
+            }
+        }
+
+        None
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct Message<'a> {
     /// The message senders prefix. This is usually a server prefix or a user prefix
     prefix: Option<&'a [u8]>,
     command: &'a [u8],
-    /// A UTF-8 validated string slice that contains the complete message tags prefix
+    /// A validated UTF-8 string slice that contains the complete message tags prefix
     tags: Option<&'a str>,
     params: Option<&'a [u8]>,
 }
 
 impl<'a> Message<'a> {
+    /// Returns the message tags potion as a validated utf-8 string slice if present, `None`
+    /// otherwise
     pub fn tags(&self) -> Option<&'a str> {
         self.tags
+    }
+
+    /// Returns the prefix portion as a byte slice if it's present, otherwise it returns `None`
+    pub fn prefix(&self) -> Option<&'a [u8]> {
+        self.prefix
+    }
+
+    /// Returns the command portion as a byte slice
+    pub fn command(&self) -> &'a [u8] {
+        self.command
     }
 }
 
@@ -69,6 +104,8 @@ impl IrcParser {
 
             // Resize our input slice so that we're no longer looking at the message tags
             if let Some(tags) = tags {
+                // We add 1 to the length because `extract_tags` omits the following space
+                // character
                 input = &input[tags.len() + 1..];
             }
 
@@ -77,11 +114,56 @@ impl IrcParser {
             None
         };
 
+        // Extract the prefix - this can either be a server prefix or a user hostmask prefix
+        let prefix = if input[0] == b':' {
+            let res = input.find_byte_offset(b' ');
+
+            if let Some(offset) = res {
+                let res = &input[1..offset];
+
+                input = &input[offset + 1..];
+
+                Some(res)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Extract the command
+        let command = if let Some((i, _)) = input
+            .iter()
+            .enumerate()
+            .find(|(_, b)| !b.is_ascii_alphabetic() && !b.is_ascii_digit())
+        {
+            &input[..i]
+        } else {
+            // Edge-case where there might be no command
+            if input.len() <= 0 {
+                return Err(Error::ParseError(100));
+            }
+
+            // Consider the remaining data in the input to be a command
+            let res = input;
+
+            input = &input[res.len()..];
+
+            res
+        };
+
+        // Extract params
+        let params = if input.len() > 0 {
+            self.extract_params(&input)?
+        } else {
+            None
+        };
+
         Ok(Message {
-            prefix: Some(b"hi!hi@hi"),
-            command: b"PRIVMSG",
+            prefix,
+            command,
             tags,
-            params: None,
+            params,
         })
     }
 
@@ -100,5 +182,10 @@ impl IrcParser {
         }
 
         Ok(Some(std::str::from_utf8(&input[..offset - 1])?))
+    }
+
+    /// Extracts the parameters from an input slice
+    fn extract_params<'a>(&self, _input: &'a [u8]) -> Result<Option<&'a [u8]>, Error> {
+        Ok(Some(b""))
     }
 }

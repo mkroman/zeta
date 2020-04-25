@@ -18,14 +18,11 @@ pub struct Core {
     client: Option<Client>,
     channels: HashMap<String, Arc<RwLock<Channel>>>,
     users: HashMap<String, Arc<RwLock<User>>>,
-    // List of channel types (i.e. channel name prefixes)
-    channel_types: Vec<String>,
 }
 
 impl Core {
     pub fn new() -> Core {
         Core {
-            channel_types: vec!["#".to_string()],
             ..Default::default()
         }
     }
@@ -75,7 +72,7 @@ impl Core {
                         }
 
                         // Find the user entry if it exists
-                        let user = self.users.get(nick);
+                        let _user = self.users.get(nick);
                     }
                 }
                 Command::JOIN(ref chan_name, _, _) => {
@@ -90,7 +87,7 @@ impl Core {
                         info!("Joined `{}'", chan_name);
                     }
 
-                    let channel = self.channels.get(chan_name);
+                    let _channel = self.channels.get(chan_name);
                 }
                 _ => {}
             }
