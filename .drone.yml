@@ -26,6 +26,7 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo test
+    - git rev-parse --short HEAD > .tags
 - name: docker image
   image: plugins/docker
   settings:
@@ -65,6 +66,6 @@ steps:
     - cargo test
 ---
 kind: signature
-hmac: 9b466babf4cc3a323bc7173d967eef98c569948a6e250591146f375868d67928
+hmac: babbfd5136f9ecdbaeabae7d214b07eb83330b683c13cc81a7c2ebb3d2acdbfc
 
 ...
