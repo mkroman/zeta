@@ -25,21 +25,26 @@ pub struct IrcParser {
     strictness: Strictness,
 }
 
-trait SliceFindByte {
+trait SliceExt {
     /// Iterates through a slice to find the offset of a single byte
     ///
     /// Returns `Some(offset)` if the byte is found, `None` otherwise
-    fn find_byte_offset(&self, byte: u8) -> Option<usize>;
+    fn find_byte_offset<P>(&self, byte: P) -> Option<usize>
+    where
+        P: Fn(u8) -> bool;
 }
 
-impl SliceFindByte for &[u8] {
-    fn find_byte_offset(&self, byte: u8) -> Option<usize> {
+impl SliceExt for &[u8] {
+    fn find_byte_offset<P>(&self, pred: P) -> Option<usize>
+    where
+        P: Fn(u8) -> bool,
+    {
         for i in 0..self.len() {
             // Get the byte for this iteration index. We can do this safely because our for loop
             // never passes the end of the slice
             let b = unsafe { self.get_unchecked(i) };
 
-            if *b == byte {
+            if pred(*b) == true {
                 return Some(i);
             }
         }
@@ -82,7 +87,7 @@ impl IrcParser {
         IrcParser { strictness }
     }
 
-    /// Returns whether the `IrcParser`ss trictness is set to strict
+    /// Returns whether the `IrcParser` strictness is set to strict
     pub fn is_strict(&self) -> bool {
         self.strictness == Strictness::Strict
     }
@@ -116,7 +121,7 @@ impl IrcParser {
 
         // Extract the prefix - this can either be a server prefix or a user hostmask prefix
         let prefix = if input[0] == b':' {
-            let res = input.find_byte_offset(b' ');
+            let res = input.find_byte_offset(|b| b == b' ');
 
             if let Some(offset) = res {
                 let res = &input[1..offset];
@@ -132,12 +137,10 @@ impl IrcParser {
         };
 
         // Extract the command
-        let command = if let Some((i, _)) = input
-            .iter()
-            .enumerate()
-            .find(|(_, b)| !b.is_ascii_alphabetic() && !b.is_ascii_digit())
+        let command = if let Some(offset) =
+            input.find_byte_offset(|b| !b.is_ascii_alphabetic() && !b.is_ascii_digit())
         {
-            &input[..i]
+            &input[..offset]
         } else {
             // Edge-case where there might be no command
             if input.len() <= 0 {
