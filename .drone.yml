@@ -26,6 +26,14 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo test
+- name: docker image
+  image: plugins/docker
+  settings:
+    repo: mkroman/zeta
+    username:
+      from_secret: docker_username
+    password:
+      from_secret: docker_password
 
 ---
 kind: pipeline
