@@ -41,6 +41,7 @@ steps:
   image: plugins/docker
   settings:
     repo: mkroman/zeta
+    context: /drone/src
     username:
       from_secret: docker_username
     password:
@@ -76,6 +77,6 @@ steps:
     - cargo test
 ---
 kind: signature
-hmac: 30d03fbc587f609570c698d11237c0f8df15245fb58ae3f77d3867288e07a3df
+hmac: 9514bb3773398c606822baedef7f26549bc5fe41159310209c8b7c383f0db9c7
 
 ...
