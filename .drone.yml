@@ -28,6 +28,15 @@ steps:
     - cargo test
     - git rev-parse --short HEAD > .tags
     - pwd
+- name: build release
+  image: rust:1.43
+  volumes:
+    - name: cargo-cache
+      path: /tmp/cargo-cache
+  environment:
+    CARGO_HOME: /tmp/cargo-cache
+  commands:
+    - cargo build --release
 - name: docker image
   image: plugins/docker
   settings:
@@ -67,6 +76,6 @@ steps:
     - cargo test
 ---
 kind: signature
-hmac: fe000e73f07e4a04233deed3f5f69274d5701ac479a94e1bdb3a39403bceaabb
+hmac: 30d03fbc587f609570c698d11237c0f8df15245fb58ae3f77d3867288e07a3df
 
 ...
