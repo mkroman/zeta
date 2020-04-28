@@ -3,6 +3,7 @@ production: &base
     - &uplink
       url: irc://znc.zeta:6667
       nickname: zeta
+      password: mk:password
       channels:
         - '#uplink'
 
