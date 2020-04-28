@@ -22,6 +22,8 @@ pub struct Core {
     users: HashMap<String, Arc<RwLock<User>>>,
 }
 
+const GIT_COMMIT_HASH: &str = include_str!(concat!(env!("OUT_DIR"), "/git_commit"));
+
 impl Core {
     pub fn new() -> Core {
         Core {
@@ -79,6 +81,16 @@ impl Core {
                         );
 
                         info!("Joined `{}'", chan_name);
+
+                        self.client.as_ref().unwrap().send_privmsg(
+                            chan_name,
+                            format!(
+                                "Deployed {} v{} ({})",
+                                env!("CARGO_PKG_NAME"),
+                                env!("CARGO_PKG_VERSION"),
+                                GIT_COMMIT_HASH.trim()
+                            ),
+                        )?;
                     }
 
                     let _channel = self.channels.get(chan_name);
