@@ -26,6 +26,15 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo test
+    - git rev-parse --short HEAD > .tags
+- name: docker image
+  image: plugins/docker
+  settings:
+    repo: mkroman/zeta
+    username:
+      from_secret: docker_username
+    password:
+      from_secret: docker_password
 
 ---
 kind: pipeline
@@ -57,6 +66,6 @@ steps:
     - cargo test
 ---
 kind: signature
-hmac: 9b466babf4cc3a323bc7173d967eef98c569948a6e250591146f375868d67928
+hmac: a84e3368c3d65a035c85108f4454e9dc5abfd1137eade4d8620bfab00e6811f5
 
 ...
