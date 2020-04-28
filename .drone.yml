@@ -26,18 +26,35 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo test
-    - git rev-parse --short HEAD > .tags
-- name: docker image
+    - git rev-parse HEAD > .tags
+- name: build image
   image: plugins/docker
   when:
     branch:
       - master
+      - deployment
   settings:
     repo: mkroman/zeta
     username:
       from_secret: docker_username
     password:
       from_secret: docker_password
+- name: deploy image
+  image: danielgormly/drone-plugin-kube:0.2.0
+  when:
+    branch:
+      - master
+      - deployment
+  settings:
+    template: k8s/deployment.yml
+    namespace: zeta
+    build_commit: ${DRONE_COMMIT}
+    ca:
+      from_secret: kubernetes_ca
+    token:
+      from_secret: kubernetes_token
+    server:
+      from_secret: kubernetes_server
 
 ---
 kind: pipeline
@@ -69,6 +86,6 @@ steps:
     - cargo test
 ---
 kind: signature
-hmac: 15f1c2474b12590b9e335a01cd5adad9e7fdc7f8876542de28eecabde2081804
+hmac: 15e635eb8d6faa94f27dc279129ddd6858376f727ebe71a69232bb9ef8becae2
 
 ...

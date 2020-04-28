@@ -14,5 +14,6 @@ RUN apt update && \
   apt install -y openssl ca-certificates
 
 COPY --from=builder /usr/src/target/release/zeta .
+COPY config.yml .
 
 ENTRYPOINT ./zeta
