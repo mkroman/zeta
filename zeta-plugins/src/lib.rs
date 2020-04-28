@@ -9,6 +9,7 @@ use plugin::Plugin;
 
 lazy_static! {}
 
+#[derive(Default)]
 pub struct PluginRegistry {
     plugins: Vec<Box<dyn Plugin>>,
 }

@@ -6,10 +6,12 @@ use log::{debug, info};
 use tokio::stream::StreamExt;
 
 mod channel;
+pub mod config;
 mod error;
 mod user;
 
 pub use channel::Channel;
+pub use config::{Config, NetworkConfig};
 pub use error::Error;
 pub use user::User;
 
@@ -27,16 +29,8 @@ impl Core {
         }
     }
 
-    pub async fn connect(&mut self) -> Result<(), Error> {
-        let config = Config {
-            nickname: Some("zeta".to_owned()),
-            server: Some("irc.uplink.io".to_owned()),
-            channels: vec!["#test".to_owned()],
-            ping_time: Some(60),
-            ..Config::default()
-        };
-
-        let client = Client::from_config(config).await?;
+    pub async fn connect<C: Into<config::IrcConfig>>(&mut self, config: C) -> Result<(), Error> {
+        let client = Client::from_config(config.into().0).await?;
         client.identify()?;
         self.client = Some(client);
 
@@ -98,15 +92,7 @@ impl Core {
 
     /// Handles the ISUPPORT message that is sent by the server to inform the
     /// client about features that might differ across server implementations
-    fn handle_isupport(&mut self, args: &Vec<String>) {
+    fn handle_isupport(&mut self, args: &[String]) {
         println!("ISUPPORT: {:?}", args);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
     }
 }

@@ -44,7 +44,7 @@ impl SliceExt for &[u8] {
             // never passes the end of the slice
             let b = unsafe { self.get_unchecked(i) };
 
-            if pred(*b) == true {
+            if pred(*b) {
                 return Some(i);
             }
         }
@@ -143,7 +143,7 @@ impl IrcParser {
             &input[..offset]
         } else {
             // Edge-case where there might be no command
-            if input.len() <= 0 {
+            if input.is_empty() {
                 return Err(Error::ParseError(100));
             }
 
@@ -156,7 +156,7 @@ impl IrcParser {
         };
 
         // Extract params
-        let params = if input.len() > 0 {
+        let params = if !input.is_empty() {
             self.extract_params(&input)?
         } else {
             None
