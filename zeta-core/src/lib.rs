@@ -29,8 +29,8 @@ impl Core {
         }
     }
 
-    pub async fn connect(&mut self, config: NetworkConfig) -> Result<(), Error> {
-        let client = Client::from_config(config::IrcConfig::from(config).0).await?;
+    pub async fn connect<C: Into<config::IrcConfig>>(&mut self, config: C) -> Result<(), Error> {
+        let client = Client::from_config(config.into().0).await?;
         client.identify()?;
         self.client = Some(client);
 

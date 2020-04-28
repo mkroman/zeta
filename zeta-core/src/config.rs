@@ -21,7 +21,7 @@ pub struct ConfigMap {
 pub struct NetworkConfig {
     /// The URL of the server to connect to (e.g. `ircs://irc.freenode.net/` where the `ircs`
     /// scheme means that the server is using SSL and when no port is given, it defaults to `6667`)
-    url: String,
+    url: Option<url::Url>,
     /// The nickname to use on this network
     nickname: String,
     /// The username to use. If not set, this will default to the nickname
@@ -38,15 +38,11 @@ pub struct IrcConfig(pub irc::client::data::Config);
 
 impl From<NetworkConfig> for IrcConfig {
     fn from(cfg: NetworkConfig) -> IrcConfig {
-        // FIXME: Handle error properly
-        let url = url::Url::parse(&cfg.url).unwrap();
-        let use_ssl = url.scheme() == "ircs";
-
         IrcConfig(irc::client::data::Config {
             nickname: Some(cfg.nickname),
-            server: Some(url.host_str().unwrap().to_owned()),
+            server: cfg.url.as_ref().map(|x| x.host_str().unwrap().to_owned()),
             channels: cfg.channels.unwrap(),
-            use_ssl: Some(use_ssl),
+            use_ssl: cfg.url.as_ref().map(|x| x.scheme() == "ircs"),
             ..Default::default()
         })
     }

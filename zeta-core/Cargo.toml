@@ -13,4 +13,4 @@ irc = { git = "https://github.com/aatxe/irc", branch = "develop", features = ["n
 tokio = "0.2"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
-url = "2.1"
+url = { version = "2.1", features = ["serde"] }
