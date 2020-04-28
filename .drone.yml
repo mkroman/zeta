@@ -29,6 +29,9 @@ steps:
     - git rev-parse --short HEAD > .tags
 - name: docker image
   image: plugins/docker
+  when:
+    branch:
+      - master
   settings:
     repo: mkroman/zeta
     username:
