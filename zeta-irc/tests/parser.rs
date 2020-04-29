@@ -1,13 +1,13 @@
-use zeta_irc::{Error, IrcParser, Strictness};
+use zeta_irc::{Error, IrcParser, Mode};
 
 /// Creates and returns a strict parser
 fn strict_parser() -> IrcParser {
-    IrcParser::new(Strictness::Strict)
+    IrcParser::new(Mode::Strict)
 }
 
 /// Creates and returns a lenient parser
 fn lenient_parser() -> IrcParser {
-    IrcParser::new(Strictness::Lenient)
+    IrcParser::new(Mode::Lenient)
 }
 
 #[test]
@@ -71,6 +71,60 @@ fn it_should_extract_command() {
         .unwrap();
 
     assert_eq!(res.command(), &b"PRIVMSG"[..]);
+}
+
+#[test]
+fn should_parse_freenode_log() {
+    use std::collections::BTreeMap;
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    use std::path::Path;
+
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug)]
+    struct Prefix {
+        host: Option<String>,
+        nick: Option<String>,
+        user: Option<String>,
+    }
+
+    #[derive(Deserialize, Debug)]
+    struct ParsedMessage {
+        command: String,
+        parameters: Vec<String>,
+        tags: Option<BTreeMap<String, String>>,
+        prefix: Prefix,
+    }
+
+    #[derive(Deserialize, Debug)]
+    struct JSONLine {
+        direction: String,
+        data: String,
+        parsed: Option<ParsedMessage>,
+    }
+
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("irc.freenode.net:6697.log");
+
+    let parser = strict_parser();
+
+    let file = BufReader::new(File::open(path).unwrap());
+
+    for line in file.lines() {
+        let json_line: JSONLine =
+            serde_json::from_str(&line.unwrap()).expect("could not deserialize line");
+
+        let result = parser.parse(json_line.data.as_ref()).unwrap();
+
+        if let Some(command) = json_line.parsed.as_ref().map(|x| &x.command) {
+            let bytes: &[u8] = command.as_ref();
+
+            assert_eq!(&result.command(), &bytes);
+        }
+    }
 }
 
 #[test]

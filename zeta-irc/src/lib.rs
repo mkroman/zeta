@@ -1,9 +1,5 @@
-mod client;
 mod error;
 
-pub use client::Client;
-#[cfg(feature = "builder")]
-pub use client::ClientBuilder;
 pub use error::Error;
 
 /// The maximum message length as per the IRCv3 spec.
@@ -12,8 +8,8 @@ pub use error::Error;
 static MAX_MESSAGE_LENGTH: usize = 8191;
 
 #[derive(Eq, PartialEq)]
-/// Defines the strictness of the parser
-pub enum Strictness {
+/// Defines the mode of strictness of the parser
+pub enum Mode {
     /// The parser is strict and will fail on leading whitespace
     Strict,
     /// The parser is lenient and will ignore leading whitespace
@@ -22,7 +18,7 @@ pub enum Strictness {
 
 /// The IRC Parser
 pub struct IrcParser {
-    strictness: Strictness,
+    mode: Mode,
 }
 
 trait SliceExt {
@@ -83,13 +79,13 @@ impl<'a> Message<'a> {
 
 impl IrcParser {
     /// Constructs a new `IrcParser` with the given `strictness`
-    pub fn new(strictness: Strictness) -> IrcParser {
-        IrcParser { strictness }
+    pub fn new(mode: Mode) -> IrcParser {
+        IrcParser { mode }
     }
 
     /// Returns whether the `IrcParser` strictness is set to strict
     pub fn is_strict(&self) -> bool {
-        self.strictness == Strictness::Strict
+        self.mode == Mode::Strict
     }
 
     /// Parses the given input byte slice
