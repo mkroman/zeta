@@ -1,4 +1,4 @@
-use zeta_irc::{Error, IrcParser, Mode};
+use zeta_irc::{Error, IrcParser, Mode, Prefix};
 
 /// Creates and returns a strict parser
 fn strict_parser() -> IrcParser {
@@ -40,34 +40,60 @@ fn it_should_fail_with_iso_8559_1_tags() {
 }
 
 #[test]
-fn it_should_extract_message_tags() {
+fn it_should_parse_user_mask() {
     let res = strict_parser()
-        .parse(b"@tag1=hello @tag2=hello2 @tag3=hello3 :nick!user@example.com PRIVMSG #channel :hello, world!")
+        .parse(b"@tag1=hello;tag2=hello2;tag3=hello3 :nick!user@example.com PRIVMSG #channel :hello, world!")
         .unwrap();
 
-    assert_eq!(res.tags(), Some("@tag1=hello @tag2=hello2 @tag3=hello3"));
+    assert_eq!(
+        res.prefix(),
+        Some(Prefix::UserMask(
+            &b"nick"[..],
+            &b"user"[..],
+            &b"example.com"[..]
+        ))
+    );
 }
 
 #[test]
-fn it_should_extract_prefix() {
+fn it_should_parse_params() {
     let res = strict_parser()
-        .parse(b"@tag1=hello @tag2=hello2 @tag3=hello3 :nick!user@example.com PRIVMSG #channel :hello, world!")
+        .parse(b"@tag1=hello;tag2=hello2;tag3=hello3 :nick!user@example.com PRIVMSG #channel :hello, world!")
         .unwrap();
 
-    assert_eq!(res.prefix(), Some(&b"nick!user@example.com"[..]));
+    assert_eq!(
+        res.params(),
+        Some(&vec![
+            &b"PRIVMSG"[..],
+            &b"#channel"[..],
+            &b"hello, world!"[..]
+        ])
+    );
+}
+
+#[test]
+fn it_should_parse_hostname() {
+    let res = strict_parser()
+        .parse(b"@tag1=hello;tag2=hello2;tag3=hello3 :server.example.com PRIVMSG #channel :hello, world!")
+        .unwrap();
+
+    assert_eq!(
+        res.prefix(),
+        Some(Prefix::HostName(&b"server.example.com"[..]))
+    );
 }
 
 #[test]
 fn it_should_extract_command() {
     let parser = strict_parser();
     let res = parser
-        .parse(b"@tag1=hello @tag2=hello2 @tag3=hello3 :nick!user@example.com PRIVMSG #channel :hello, world!")
+        .parse(b"@tag1=hello;tag2=hello2 :nick!user@example.com PRIVMSG #channel :hello, world!")
         .unwrap();
 
     assert_eq!(res.command(), &b"PRIVMSG"[..]);
 
     let res = parser
-        .parse(b"@tag1=hello @tag2=hello2 @tag3=hello3 :nick!user@example.com PRIVMSG")
+        .parse(b"@tag1=hello;tag2=hello2;tag3=hello3 :nick!user@example.com PRIVMSG")
         .unwrap();
 
     assert_eq!(res.command(), &b"PRIVMSG"[..]);
@@ -132,4 +158,14 @@ fn should_parse_privmsg() {
     let res = strict_parser().parse(b":nick!user@example.com PRIVMSG #channel :hello, world!\r\n");
 
     assert!(res.is_ok());
+}
+
+#[test]
+fn should_parse_params() {
+    let res = IrcParser::parse_params(&b"#channel abcdef :hello world"[..]).unwrap();
+
+    assert_eq!(
+        res,
+        Some(vec![&b"#channel"[..], &b"abcdef"[..], &b"hello world"[..]])
+    );
 }

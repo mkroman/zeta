@@ -17,4 +17,5 @@ builder = []
 [dev-dependencies]
 serde = { version = "1.0.106", features = ["derive"] }
 serde_json = "1.0.52"
+rstest = "0.6.3"
 
