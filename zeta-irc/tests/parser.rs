@@ -11,21 +11,21 @@ fn lenient_parser() -> IrcParser {
 }
 
 #[test]
-fn should_return_length_error() {
+fn it_should_return_length_error() {
     let result = strict_parser().parse(&[0; 16 * 1024]);
 
     assert_eq!(result.err(), Some(Error::LengthError));
 }
 
 #[test]
-fn should_raise_error_when_strict_and_whitespace_prefix() {
+fn it_should_raise_error_when_strict_and_whitespace_prefix() {
     let result = strict_parser().parse(b"   :hi!hi@hi PRIVMSG #test hello");
 
     assert_eq!(result.err().map(|e| e.is_parse_error()), Some(true));
 }
 
 #[test]
-fn should_not_raise_error_when_lenient_and_whitespace_prefix() {
+fn it_should_not_raise_error_when_lenient_and_whitespace_prefix() {
     let result = lenient_parser().parse(b"   :hi!hi@hi PRIVMSG #test hello");
 
     assert_eq!(result.err(), None);
@@ -100,7 +100,7 @@ fn it_should_extract_command() {
 }
 
 #[test]
-fn should_parse_freenode_log() {
+fn it_should_parse_freenode_log() {
     use std::collections::BTreeMap;
     use std::fs::File;
     use std::io::{BufRead, BufReader};
@@ -154,18 +154,8 @@ fn should_parse_freenode_log() {
 }
 
 #[test]
-fn should_parse_privmsg() {
+fn it_should_parse_privmsg() {
     let res = strict_parser().parse(b":nick!user@example.com PRIVMSG #channel :hello, world!\r\n");
 
     assert!(res.is_ok());
-}
-
-#[test]
-fn should_parse_params() {
-    let res = IrcParser::parse_params(&b"#channel abcdef :hello world"[..]).unwrap();
-
-    assert_eq!(
-        res,
-        Some(vec![&b"#channel"[..], &b"abcdef"[..], &b"hello world"[..]])
-    );
 }

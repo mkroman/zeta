@@ -7,7 +7,7 @@ fn parser() -> IrcParser {
 }
 
 #[rstest]
-fn message_tags_should_be_none_if_none_are_provided(parser: IrcParser) {
+fn it_should_parse_message_tags_as_none_if_none_are_provided(parser: IrcParser) {
     let message = parser
         .parse(b":nick!ident@host.com PRIVMSG me :Hello")
         .expect("parsing failed");
@@ -16,7 +16,7 @@ fn message_tags_should_be_none_if_none_are_provided(parser: IrcParser) {
 }
 
 #[rstest]
-fn message_tags_should_be_some_if_provided(parser: IrcParser) {
+fn it_should_parse_message_tags(parser: IrcParser) {
     let message = parser
         .parse(b"@a=a :nick!ident@host.com PRIVMSG me :Hello")
         .expect("parsing failed");
@@ -36,7 +36,7 @@ fn it_should_parse_opaque_tags(parser: IrcParser) {
 }
 
 #[rstest]
-fn should_parse_message_tags_with_values(parser: IrcParser) {
+fn it_should_parse_message_tags_with_values(parser: IrcParser) {
     let message = parser
         .parse(b"@aaa=bbb;ccc;example.com/ddd=eee :nick!ident@host.com PRIVMSG me :Hello")
         .expect("parsing failed");
