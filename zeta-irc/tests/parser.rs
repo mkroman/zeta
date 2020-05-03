@@ -150,6 +150,13 @@ fn it_should_parse_freenode_log() {
 
             assert_eq!(&result.command(), &bytes);
         }
+
+        if let Some(params) = json_line.parsed.as_ref().map(|x| &x.parameters) {
+            let params_u8: Vec<&[u8]> = params.iter().map(|x| x.as_ref()).collect();
+            let parsed_params = result.params().unwrap();
+
+            assert_eq!(parsed_params[1..], params_u8[..]);
+        }
     }
 }
 

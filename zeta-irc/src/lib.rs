@@ -132,7 +132,7 @@ impl IrcParser {
         let mut pos = 0usize;
 
         for part in input.split(|x| *x == b' ') {
-            if part.len() == 0 {
+            if part.is_empty() {
                 break;
             }
 
@@ -152,7 +152,7 @@ impl IrcParser {
     /// Parses the given input byte slice
     pub fn parse<'a>(&self, mut input: &'a [u8]) -> Result<Message<'a>, Error> {
         // Throw an error for any input that is longer than `MAX_MESSAGE_LENGTH`
-        if input.len() > MAX_MESSAGE_LENGTH || input.len() == 0 {
+        if input.len() > MAX_MESSAGE_LENGTH || input.is_empty() {
             return Err(Error::LengthError);
         }
 
@@ -179,7 +179,7 @@ impl IrcParser {
         };
 
         // Extract the prefix - this can either be a server prefix or a user hostmask prefix
-        let prefix = if input.len() > 0 && input[0] == b':' {
+        let prefix = if !input.is_empty() && input[0] == b':' {
             if let Some(pos) = input.iter().position(|x| *x == b' ') {
                 let prefix = &input[1..pos];
 
