@@ -47,11 +47,11 @@ fn it_should_parse_user_mask() {
 
     assert_eq!(
         res.prefix(),
-        Some(Prefix::UserMask(
-            &b"nick"[..],
-            &b"user"[..],
-            &b"example.com"[..]
-        ))
+        Some(Prefix::UserMask {
+            nick: &b"nick"[..],
+            user: &b"user"[..],
+            host: &b"example.com"[..]
+        })
     );
 }
 

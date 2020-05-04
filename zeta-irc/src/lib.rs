@@ -56,8 +56,14 @@ impl SliceExt for &[u8] {
 /// `Prefix::HostName(hostname)`
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Prefix<'a> {
+    /// The servers hostname
     HostName(&'a [u8]),
-    UserMask(&'a [u8], &'a [u8], &'a [u8]),
+    /// The users nickname, username and hostname
+    UserMask {
+        nick: &'a [u8],
+        user: &'a [u8],
+        host: &'a [u8],
+    },
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -127,7 +133,7 @@ impl IrcParser {
     }
 
     /// Parses the input stream for parameters and returns an optional vector
-    pub fn parse_params<'a>(input: &'a [u8]) -> Result<Option<Vec<&'a [u8]>>, Error> {
+    fn parse_params<'a>(input: &'a [u8]) -> Result<Option<Vec<&'a [u8]>>, Error> {
         let mut result = Vec::new();
         let mut pos = 0usize;
 
@@ -199,7 +205,7 @@ impl IrcParser {
                     let user = &prefix[pos..pos + host_start_pos - 1];
                     let host = &prefix[pos + host_start_pos..];
 
-                    Some(Prefix::UserMask(nick, user, host))
+                    Some(Prefix::UserMask { nick, user, host })
                 } else {
                     Some(Prefix::HostName(prefix))
                 }
