@@ -1,9 +1,7 @@
-mod client;
+use std::collections::BTreeMap;
+
 mod error;
 
-pub use client::Client;
-#[cfg(feature = "builder")]
-pub use client::ClientBuilder;
 pub use error::Error;
 
 /// The maximum message length as per the IRCv3 spec.
@@ -12,8 +10,8 @@ pub use error::Error;
 static MAX_MESSAGE_LENGTH: usize = 8191;
 
 #[derive(Eq, PartialEq)]
-/// Defines the strictness of the parser
-pub enum Strictness {
+/// Defines the mode of strictness of the parser
+pub enum Mode {
     /// The parser is strict and will fail on leading whitespace
     Strict,
     /// The parser is lenient and will ignore leading whitespace
@@ -22,7 +20,7 @@ pub enum Strictness {
 
 /// The IRC Parser
 pub struct IrcParser {
-    strictness: Strictness,
+    mode: Mode,
 }
 
 trait SliceExt {
@@ -53,53 +51,119 @@ impl SliceExt for &[u8] {
     }
 }
 
+/// The command prefix - this can either be a hostname or a usermask, where the usermask is in the
+/// format `Prefix::UserMask(nickname, username, hostname)` and the hostname is in the format
+/// `Prefix::HostName(hostname)`
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum Prefix<'a> {
+    /// The servers hostname
+    HostName(&'a [u8]),
+    /// The users nickname, username and hostname
+    UserMask {
+        nick: &'a [u8],
+        user: &'a [u8],
+        host: &'a [u8],
+    },
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct Message<'a> {
     /// The message senders prefix. This is usually a server prefix or a user prefix
-    prefix: Option<&'a [u8]>,
+    prefix: Option<Prefix<'a>>,
     command: &'a [u8],
-    /// A validated UTF-8 string slice that contains the complete message tags prefix
-    tags: Option<&'a str>,
-    params: Option<&'a [u8]>,
+    /// List of message tags that holds references to the relevant message tags
+    tags: Option<BTreeMap<&'a str, Option<&'a str>>>,
+    /// List of parameters
+    params: Option<Vec<&'a [u8]>>,
 }
 
 impl<'a> Message<'a> {
     /// Returns the message tags potion as a validated utf-8 string slice if present, `None`
     /// otherwise
-    pub fn tags(&self) -> Option<&'a str> {
-        self.tags
+    pub fn tags(&self) -> Option<&BTreeMap<&'a str, Option<&'a str>>> {
+        self.tags.as_ref()
     }
 
     /// Returns the prefix portion as a byte slice if it's present, otherwise it returns `None`
-    pub fn prefix(&self) -> Option<&'a [u8]> {
-        self.prefix
+    pub fn prefix(&self) -> Option<Prefix> {
+        self.prefix.clone()
     }
 
     /// Returns the command portion as a byte slice
     pub fn command(&self) -> &'a [u8] {
         self.command
     }
+
+    /// Returns the list of parameters, if any
+    pub fn params(&self) -> Option<&Vec<&'a [u8]>> {
+        self.params.as_ref()
+    }
 }
 
 impl IrcParser {
     /// Constructs a new `IrcParser` with the given `strictness`
-    pub fn new(strictness: Strictness) -> IrcParser {
-        IrcParser { strictness }
+    pub fn new(mode: Mode) -> IrcParser {
+        IrcParser { mode }
     }
 
     /// Returns whether the `IrcParser` strictness is set to strict
     pub fn is_strict(&self) -> bool {
-        self.strictness == Strictness::Strict
+        self.mode == Mode::Strict
+    }
+
+    /// Takes an input string slice that has already been utf-8 validated and parses each key-value
+    /// pair or opaque identifiers and returns a BTreeMap
+    fn parse_tags<'a>(input: &'a str) -> Result<BTreeMap<&'a str, Option<&'a str>>, Error> {
+        // TODO: unescaping of values
+        let mut result = BTreeMap::new();
+
+        for pair in input.split(';') {
+            let (key, value) = if let Some(pos) = pair.bytes().position(|x| x == b'=') {
+                // The tag is in the format of `key=value`
+                (&pair[0..pos], Some(&pair[pos + 1..]))
+            } else {
+                // The tag is an opaque identifier
+                (pair, None)
+            };
+
+            result.insert(key, value);
+        }
+
+        Ok(result)
+    }
+
+    /// Parses the input stream for parameters and returns an optional vector
+    fn parse_params<'a>(input: &'a [u8]) -> Result<Option<Vec<&'a [u8]>>, Error> {
+        let mut result = Vec::new();
+        let mut pos = 0usize;
+
+        for part in input.split(|x| *x == b' ') {
+            if part.is_empty() {
+                break;
+            }
+
+            if part[0] == b':' {
+                result.push(&input[pos + 1..]);
+                break;
+            } else {
+                result.push(&part);
+            }
+
+            pos += part.len() + 1;
+        }
+
+        Ok(Some(result))
     }
 
     /// Parses the given input byte slice
     pub fn parse<'a>(&self, mut input: &'a [u8]) -> Result<Message<'a>, Error> {
-        if input.len() > MAX_MESSAGE_LENGTH {
+        // Throw an error for any input that is longer than `MAX_MESSAGE_LENGTH`
+        if input.len() > MAX_MESSAGE_LENGTH || input.is_empty() {
             return Err(Error::LengthError);
         }
 
         // Return an error if we're doing strict parsing and the message begins with whitespace
-        if self.is_strict() && input[0].is_ascii_whitespace() {
+        if input[0].is_ascii_whitespace() && self.is_strict() {
             return Err(Error::ParseError(0));
         }
 
@@ -107,28 +171,44 @@ impl IrcParser {
         let tags = if input[0] == b'@' {
             let tags = self.extract_tags(input)?;
 
-            // Resize our input slice so that we're no longer looking at the message tags
-            if let Some(tags) = tags {
-                // We add 1 to the length because `extract_tags` omits the following space
-                // character
-                input = &input[tags.len() + 1..];
-            }
+            // Advance the starting point of the input slice
+            //
+            // We add 1 to the length because `extract_tags` omits the following space
+            // character
+            input = &input[tags.len() + 1..];
 
-            tags
+            let tags = IrcParser::parse_tags(&tags[1..])?;
+
+            Some(tags)
         } else {
             None
         };
 
         // Extract the prefix - this can either be a server prefix or a user hostmask prefix
-        let prefix = if input[0] == b':' {
-            let res = input.find_byte_offset(|b| b == b' ');
+        let prefix = if !input.is_empty() && input[0] == b':' {
+            if let Some(pos) = input.iter().position(|x| *x == b' ') {
+                let prefix = &input[1..pos];
 
-            if let Some(offset) = res {
-                let res = &input[1..offset];
+                input = &input[pos + 1..];
 
-                input = &input[offset + 1..];
+                // If the prefix is in the format of nick!user@host, then parse it
+                if let Some(pos) = prefix.iter().position(|x| *x == b'!') {
+                    let nick = &prefix[..pos];
+                    let pos = pos + 1;
 
-                Some(res)
+                    let host_start_pos = prefix[pos..]
+                        .iter()
+                        .position(|x| *x == b'@')
+                        .ok_or_else(|| Error::InvalidPrefixError)?
+                        + 1;
+
+                    let user = &prefix[pos..pos + host_start_pos - 1];
+                    let host = &prefix[pos + host_start_pos..];
+
+                    Some(Prefix::UserMask { nick, user, host })
+                } else {
+                    Some(Prefix::HostName(prefix))
+                }
             } else {
                 None
             }
@@ -137,14 +217,15 @@ impl IrcParser {
         };
 
         // Extract the command
-        let command = if let Some(offset) =
-            input.find_byte_offset(|b| !b.is_ascii_alphabetic() && !b.is_ascii_digit())
+        let command = if let Some(pos) = input
+            .iter()
+            .position(|b| !b.is_ascii_alphabetic() && !b.is_ascii_digit())
         {
-            &input[..offset]
+            &input[..pos]
         } else {
             // Edge-case where there might be no command
             if input.is_empty() {
-                return Err(Error::ParseError(100));
+                return Err(Error::EndOfStreamError);
             }
 
             // Consider the remaining data in the input to be a command
@@ -157,7 +238,7 @@ impl IrcParser {
 
         // Extract params
         let params = if !input.is_empty() {
-            self.extract_params(&input)?
+            IrcParser::parse_params(&input)?
         } else {
             None
         };
@@ -171,24 +252,14 @@ impl IrcParser {
     }
 
     /// Extracts the tags from an input slice and returns a utf-8 validated string slice that
-    /// contains the full string of message tags
-    fn extract_tags<'a>(&self, input: &'a [u8]) -> Result<Option<&'a str>, Error> {
-        // FIXME: I'm not even drunk, and this is the best I could come up with
-        let mut offset = 0;
+    /// contains all the message tags
+    fn extract_tags<'a>(&self, input: &'a [u8]) -> Result<&'a str, Error> {
+        if let Some(pos) = input.iter().position(|x| *x == b' ') {
+            let subslice = &input[..pos];
 
-        for part in input.split(|b| *b == b' ') {
-            if part[0] != b'@' {
-                break;
-            }
-
-            offset += part.len() + 1;
+            Ok(std::str::from_utf8(subslice)?)
+        } else {
+            Err(Error::EndOfStreamError)
         }
-
-        Ok(Some(std::str::from_utf8(&input[..offset - 1])?))
-    }
-
-    /// Extracts the parameters from an input slice
-    fn extract_params<'a>(&self, _input: &'a [u8]) -> Result<Option<&'a [u8]>, Error> {
-        Ok(Some(b""))
     }
 }
