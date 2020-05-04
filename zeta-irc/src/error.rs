@@ -11,6 +11,11 @@ pub enum Error {
     /// Indicates that there was an encoding error, typically during message tags parsing as that
     /// is the only part of the spec that defines a specific encoding
     EncodingError(std::str::Utf8Error),
+    /// Indicates that the input stream ended too early
+    EndOfStreamError,
+    /// Indicates that the message prefix is invalid and thus unable to be parsed
+    InvalidPrefixError,
+    Other(String),
 }
 
 impl Error {
@@ -37,6 +42,9 @@ impl fmt::Display for Error {
             Error::ParseError(size) => write!(f, "failed to parse message at byte offset {}", size),
             Error::LengthError => write!(f, "the length exceeds what is supported by the protocol"),
             Error::EncodingError(ref err) => write!(f, "encoding error: {}", err),
+            Error::EndOfStreamError => write!(f, "unexpected end of stream"),
+            Error::InvalidPrefixError => write!(f, "invalid message prefix"),
+            Error::Other(ref msg) => write!(f, "{}", msg),
         }
     }
 }
