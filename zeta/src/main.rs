@@ -37,6 +37,12 @@ async fn main() -> Result<(), Error> {
         )
         .get_matches();
 
+    println!(
+        "{} v{} running",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    );
+
     let config_path = Path::new(matches.value_of("config").unwrap());
 
     if !config_path.exists() {
@@ -51,17 +57,12 @@ async fn main() -> Result<(), Error> {
         .get(matches.value_of("environment").unwrap())
         .ok_or(Error::NoSuchEnvironmentError)?;
 
-    let network_cfg = config_map.networks.first().expect("No networks defined");
-
-    println!(
-        "{} v{} running",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION")
-    );
-
     let mut core = Core::new();
 
-    core.connect(network_cfg.clone()).await?;
+    for network in config_map.networks.iter() {
+        core.add_network(network.clone())?;
+    }
+
     core.poll().await?;
 
     Ok(())

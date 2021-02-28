@@ -33,18 +33,3 @@ pub struct NetworkConfig {
     /// List of channels to join once connection has been established
     channels: Option<Vec<String>>,
 }
-
-pub struct IrcConfig(pub irc::client::data::Config);
-
-impl From<NetworkConfig> for IrcConfig {
-    fn from(cfg: NetworkConfig) -> IrcConfig {
-        IrcConfig(irc::client::data::Config {
-            nickname: Some(cfg.nickname),
-            password: cfg.password,
-            server: cfg.url.as_ref().map(|x| x.host_str().unwrap().to_owned()),
-            channels: cfg.channels.unwrap(),
-            use_ssl: cfg.url.as_ref().map(|x| x.scheme() == "ircs"),
-            ..Default::default()
-        })
-    }
-}

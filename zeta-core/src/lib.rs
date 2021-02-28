@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use irc::client::prelude::*;
 use log::{debug, info};
-use tokio::stream::StreamExt;
+use tokio_stream::StreamExt;
 
 mod channel;
 pub mod config;
@@ -15,96 +14,47 @@ pub use config::{Config, NetworkConfig};
 pub use error::Error;
 pub use user::User;
 
+pub struct Network {
+    config: NetworkConfig,
+}
+
 #[derive(Default)]
 pub struct Core {
-    client: Option<Client>,
+    networks: Vec<Network>,
     channels: HashMap<String, Arc<RwLock<Channel>>>,
     users: HashMap<String, Arc<RwLock<User>>>,
 }
 
-const GIT_COMMIT_HASH: &str = include_str!(concat!(env!("OUT_DIR"), "/git_commit"));
+// const GIT_COMMIT_HASH: &str = include_str!(concat!(env!("OUT_DIR"), "/git_commit"));
+
+impl Network {
+    /// Constructs a new Network based on the given network `config`
+    pub fn from_config(config: config::NetworkConfig) -> Result<Network, Error> {
+        let network = Network { config };
+
+        Ok(network)
+    }
+}
 
 impl Core {
+    /// Creates a new core reactor
     pub fn new() -> Core {
         Core {
             ..Default::default()
         }
     }
 
-    pub async fn connect<C: Into<config::IrcConfig>>(&mut self, config: C) -> Result<(), Error> {
-        let client = Client::from_config(config.into().0).await?;
-        client.identify()?;
-        self.client = Some(client);
+    /// Adds a new network to the core, automatically connecting and managing the connection
+    pub fn add_network(&mut self, config: config::NetworkConfig) -> Result<(), Error> {
+        let network = Network::from_config(config)?;
+
+        self.networks.push(network);
 
         Ok(())
     }
 
     /// Continually polls for new IRC messages
     pub async fn poll(&mut self) -> Result<(), Error> {
-        let mut stream = self
-            .client
-            .as_mut()
-            .ok_or(Error::ClientNotConnectedError)?
-            .stream()?;
-
-        // Continually poll for new messages
-        while let Some(message) = stream.next().await.transpose()? {
-            debug!("<< {:?}", message.command);
-
-            match message.command {
-                Command::Response(Response::RPL_ISUPPORT, ref args) => {
-                    self.handle_isupport(args);
-                }
-                Command::Response(Response::RPL_NAMREPLY, ref args) => {
-                    debug!("NAMES: {:?}", args);
-                }
-                Command::PRIVMSG(ref _target, ref _msg) => {
-                    // Find the senders nickname
-                    if let Some(nick) = message.source_nickname() {
-                        // Create an new user instance and insert it if it doesn't already exist
-                        if !self.users.contains_key(nick) {
-                            self.users
-                                .insert(nick.to_string(), Arc::new(RwLock::new(User::new(nick))));
-                        }
-
-                        // Find the user entry if it exists
-                        let _user = self.users.get(nick);
-                    }
-                }
-                Command::JOIN(ref chan_name, _, _) => {
-                    if message.source_nickname()
-                        == Some(self.client.as_ref().unwrap().current_nickname())
-                    {
-                        self.channels.insert(
-                            chan_name.into(),
-                            Arc::new(RwLock::new(Channel::new(chan_name))),
-                        );
-
-                        info!("Joined `{}'", chan_name);
-
-                        self.client.as_ref().unwrap().send_privmsg(
-                            chan_name,
-                            format!(
-                                "Deployed {} v{} ({})",
-                                env!("CARGO_PKG_NAME"),
-                                env!("CARGO_PKG_VERSION"),
-                                GIT_COMMIT_HASH.trim()
-                            ),
-                        )?;
-                    }
-
-                    let _channel = self.channels.get(chan_name);
-                }
-                _ => {}
-            }
-        }
-
         Ok(())
-    }
-
-    /// Handles the ISUPPORT message that is sent by the server to inform the
-    /// client about features that might differ across server implementations
-    fn handle_isupport(&mut self, args: &[String]) {
-        println!("ISUPPORT: {:?}", args);
     }
 }
