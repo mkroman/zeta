@@ -1,16 +1,20 @@
-use failure::Fail;
+use std::io;
 
-#[derive(Fail, Debug)]
+use thiserror::Error;
+
+#[derive(Error, Debug)]
 pub enum Error {
-    #[fail(display = "IRC error: {}", _0)]
-    IrcError(#[fail(cause)] irc::error::Error),
     /// Indicates that the client has not been connected
-    #[fail(display = "Client not initialized or connected")]
-    ClientNotConnectedError,
-}
-
-impl From<irc::error::Error> for Error {
-    fn from(err: irc::error::Error) -> Error {
-        Error::IrcError(err)
-    }
+    #[error("Client not initialized or connected")]
+    ClientNotConnected,
+    #[error("Could not resolve the hostname")]
+    HostnameResolutionFailed(#[source] io::Error),
+    #[error("Connection error")]
+    ConnectionError(#[source] io::Error),
+    #[error("TLS error")]
+    TlsError(#[from] tokio_native_tls::native_tls::Error),
+    #[error("Could not find a host to connect to")]
+    ConnectionFailed,
+    #[error("Could not add additional network - the current implentation only supports 1 network")]
+    NetworkLimitError,
 }

@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 
 mod error;
+mod frame;
 
 pub use error::Error;
+pub use frame::Frame;
 
-/// The maximum message length as per the IRCv3 spec.
+/// The maximum message length as per the `IRCv3` spec.
 ///
 /// The maximum length comes from the message tags spec
 static MAX_MESSAGE_LENGTH: usize = 8191;
@@ -21,34 +23,6 @@ pub enum Mode {
 /// The IRC Parser
 pub struct IrcParser {
     mode: Mode,
-}
-
-trait SliceExt {
-    /// Iterates through a slice to find the offset of a single byte
-    ///
-    /// Returns `Some(offset)` if the byte is found, `None` otherwise
-    fn find_byte_offset<P>(&self, byte: P) -> Option<usize>
-    where
-        P: Fn(u8) -> bool;
-}
-
-impl SliceExt for &[u8] {
-    fn find_byte_offset<P>(&self, pred: P) -> Option<usize>
-    where
-        P: Fn(u8) -> bool,
-    {
-        for i in 0..self.len() {
-            // Get the byte for this iteration index. We can do this safely because our for loop
-            // never passes the end of the slice
-            let b = unsafe { self.get_unchecked(i) };
-
-            if pred(*b) {
-                return Some(i);
-            }
-        }
-
-        None
-    }
 }
 
 /// The command prefix - this can either be a hostname or a usermask, where the usermask is in the
@@ -100,6 +74,18 @@ impl<'a> Message<'a> {
     }
 }
 
+/// Extracts the tags from an input slice and returns a utf-8 validated string slice that
+/// contains all the message tags
+fn extract_tags<'a>(input: &'a [u8]) -> Result<&'a str, Error> {
+    if let Some(pos) = input.iter().position(|x| *x == b' ') {
+        let subslice = &input[..pos];
+
+        Ok(std::str::from_utf8(subslice)?)
+    } else {
+        Err(Error::EndOfStream)
+    }
+}
+
 impl IrcParser {
     /// Constructs a new `IrcParser` with the given `strictness`
     pub fn new(mode: Mode) -> IrcParser {
@@ -112,8 +98,8 @@ impl IrcParser {
     }
 
     /// Takes an input string slice that has already been utf-8 validated and parses each key-value
-    /// pair or opaque identifiers and returns a BTreeMap
-    fn parse_tags<'a>(input: &'a str) -> Result<BTreeMap<&'a str, Option<&'a str>>, Error> {
+    /// pair or opaque identifiers and returns a `BTreeMap`
+    fn parse_tags(input: &'_ str) -> BTreeMap<&'_ str, Option<&str>> {
         // TODO: unescaping of values
         let mut result = BTreeMap::new();
 
@@ -129,13 +115,13 @@ impl IrcParser {
             result.insert(key, value);
         }
 
-        Ok(result)
+        result
     }
 
     /// Parses the input stream for parameters and returns an optional vector
-    fn parse_params<'a>(input: &'a [u8]) -> Result<Option<Vec<&'a [u8]>>, Error> {
+    fn parse_params(input: &'_ [u8]) -> Option<Vec<&'_ [u8]>> {
         let mut result = Vec::new();
-        let mut pos = 0usize;
+        let mut pos = 0_usize;
 
         for part in input.split(|x| *x == b' ') {
             if part.is_empty() {
@@ -145,17 +131,20 @@ impl IrcParser {
             if part[0] == b':' {
                 result.push(&input[pos + 1..]);
                 break;
-            } else {
-                result.push(&part);
             }
 
+            result.push(&part);
             pos += part.len() + 1;
         }
 
-        Ok(Some(result))
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
     }
 
-    /// Parses the given input byte slice
+    /// Parses the given input byte slice.
     pub fn parse<'a>(&self, mut input: &'a [u8]) -> Result<Message<'a>, Error> {
         // Throw an error for any input that is longer than `MAX_MESSAGE_LENGTH`
         if input.len() > MAX_MESSAGE_LENGTH || input.is_empty() {
@@ -169,7 +158,7 @@ impl IrcParser {
 
         // Extract the message tags portion if the message begins with '@'
         let tags = if input[0] == b'@' {
-            let tags = self.extract_tags(input)?;
+            let tags = extract_tags(input)?;
 
             // Advance the starting point of the input slice
             //
@@ -177,7 +166,7 @@ impl IrcParser {
             // character
             input = &input[tags.len() + 1..];
 
-            let tags = IrcParser::parse_tags(&tags[1..])?;
+            let tags = IrcParser::parse_tags(&tags[1..]);
 
             Some(tags)
         } else {
@@ -199,7 +188,7 @@ impl IrcParser {
                     let host_start_pos = prefix[pos..]
                         .iter()
                         .position(|x| *x == b'@')
-                        .ok_or_else(|| Error::InvalidPrefixError)?
+                        .ok_or(Error::InvalidPrefix)?
                         + 1;
 
                     let user = &prefix[pos..pos + host_start_pos - 1];
@@ -225,7 +214,7 @@ impl IrcParser {
         } else {
             // Edge-case where there might be no command
             if input.is_empty() {
-                return Err(Error::EndOfStreamError);
+                return Err(Error::EndOfStream);
             }
 
             // Consider the remaining data in the input to be a command
@@ -237,10 +226,10 @@ impl IrcParser {
         };
 
         // Extract params
-        let params = if !input.is_empty() {
-            IrcParser::parse_params(&input)?
-        } else {
+        let params = if input.is_empty() {
             None
+        } else {
+            IrcParser::parse_params(&input)
         };
 
         Ok(Message {
@@ -249,17 +238,5 @@ impl IrcParser {
             tags,
             params,
         })
-    }
-
-    /// Extracts the tags from an input slice and returns a utf-8 validated string slice that
-    /// contains all the message tags
-    fn extract_tags<'a>(&self, input: &'a [u8]) -> Result<&'a str, Error> {
-        if let Some(pos) = input.iter().position(|x| *x == b' ') {
-            let subslice = &input[..pos];
-
-            Ok(std::str::from_utf8(subslice)?)
-        } else {
-            Err(Error::EndOfStreamError)
-        }
     }
 }

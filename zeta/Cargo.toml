@@ -5,10 +5,12 @@ authors = ["Mikkel Kroman <mk@maero.dk>"]
 edition = "2018"
 
 [dependencies]
-clap = "2.33"
-env_logger = "0.7"
-failure = "0.1"
-tokio = "0.2"
-zeta-core = { path = "../zeta-core", version = "*" }
+argh = "0.1.10"
+miette = { version = "5.5.0", features = ["fancy"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_yaml = "0.8"
+serde_yaml = "0.9"
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+zeta-core = { path = "../zeta-core", version = "*" }

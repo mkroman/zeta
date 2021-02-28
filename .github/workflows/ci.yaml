@@ -1,0 +1,79 @@
+name: Continuous Integration
+
+on:
+  push:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check:
+    name: Run Rust check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Run checks on stable and nightly Rust
+        rust: [stable, nightly]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust ${{ matrix.rust }}
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        override: true
+    - name: Run cargo check
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, nightly]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup Rust
+      run: |
+        rustup toolchain add ${{ matrix.rust }} --component llvm-tools-preview
+        rustup override set ${{ matrix.rust }}
+    - name: Cache build/dependency artifacts
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-${{ matrix.rust }}-
+    - name: Run build
+      env:
+        RUSTFLAGS: -C instrument-coverage
+      run: cargo build --all-features
+    - name: Run tests
+      env:
+        RUSTFLAGS: -C instrument-coverage
+        LLVM_PROFILE_FILE: "coverage-%p-%m.profraw"
+      run: cargo test --all-features
+    - name: Download grcov
+      run: curl -L https://github.com/mozilla/grcov/releases/latest/download/grcov-x86_64-unknown-linux-gnu.tar.bz2 | tar jxf -
+    - name: Parse and aggregate coverage report
+      run: |
+        ls -al; \
+        ./grcov $(find . -name "coverage-*.profraw" -print) \
+          --branch \
+          --ignore-not-existing \
+          --binary-path ./target/debug \
+          -t lcov \
+          -o lcov.info
+    - name: Codecov
+      uses: codecov/codecov-action@v3.1.0
+      with:
+        files: ./lcov.info
+        flags: rust-${{ matrix.rust }}
+        verbose: true
+        fail_ci_if_error: true

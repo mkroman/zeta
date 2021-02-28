@@ -1,110 +1,88 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
-use irc::client::prelude::*;
-use log::{debug, info};
-use tokio::stream::StreamExt;
+use slab::Slab;
+use tracing::{debug, trace};
 
 mod channel;
 pub mod config;
+mod connection;
 mod error;
 mod user;
 
 pub use channel::Channel;
 pub use config::{Config, NetworkConfig};
+pub use connection::Connection;
 pub use error::Error;
 pub use user::User;
 
-#[derive(Default)]
-pub struct Core {
-    client: Option<Client>,
-    channels: HashMap<String, Arc<RwLock<Channel>>>,
-    users: HashMap<String, Arc<RwLock<User>>>,
+/// The maximum number of connections to have active at once.
+pub const NUM_MAX_CONNECTIONS: usize = 32;
+
+pub struct Network {
+    config: NetworkConfig,
 }
 
-const GIT_COMMIT_HASH: &str = include_str!(concat!(env!("OUT_DIR"), "/git_commit"));
+#[derive(Default)]
+pub struct Core {
+    networks: Slab<Network>,
+    // channels: HashMap<String, Arc<RwLock<Channel>>>,
+    // users: HashMap<String, Arc<RwLock<User>>>,
+}
+
+impl Network {
+    /// Constructs a new Network based on the given network `config`
+    pub fn from_config(config: config::NetworkConfig) -> Result<Network, Error> {
+        let network = Network { config };
+
+        Ok(network)
+    }
+}
 
 impl Core {
+    /// Creates a new core reactor
     pub fn new() -> Core {
         Core {
-            ..Default::default()
+            networks: Slab::with_capacity(NUM_MAX_CONNECTIONS),
         }
     }
 
-    pub async fn connect<C: Into<config::IrcConfig>>(&mut self, config: C) -> Result<(), Error> {
-        let client = Client::from_config(config.into().0).await?;
-        client.identify()?;
-        self.client = Some(client);
+    /// Returns the number of networks.
+    pub fn num_networks(&self) -> usize {
+        self.networks.len()
+    }
+
+    /// Adds a new network to the core, automatically connecting and managing the connection
+    pub fn add_network(&mut self, config: config::NetworkConfig) -> Result<(), Error> {
+        let network = Network::from_config(config)?;
+        let network_id = self.networks.insert(network);
+
+        debug!(?network_id);
 
         Ok(())
     }
 
     /// Continually polls for new IRC messages
     pub async fn poll(&mut self) -> Result<(), Error> {
-        let mut stream = self
-            .client
-            .as_mut()
-            .ok_or(Error::ClientNotConnectedError)?
-            .stream()?;
+        for (id, network) in &self.networks {
+            let url = &network.config.url;
 
-        // Continually poll for new messages
-        while let Some(message) = stream.next().await.transpose()? {
-            debug!("<< {:?}", message.command);
+            trace!(%id, "Creating connection to network {}", &url);
 
-            match message.command {
-                Command::Response(Response::RPL_ISUPPORT, ref args) => {
-                    self.handle_isupport(args);
-                }
-                Command::Response(Response::RPL_NAMREPLY, ref args) => {
-                    debug!("NAMES: {:?}", args);
-                }
-                Command::PRIVMSG(ref _target, ref _msg) => {
-                    // Find the senders nickname
-                    if let Some(nick) = message.source_nickname() {
-                        // Create an new user instance and insert it if it doesn't already exist
-                        if !self.users.contains_key(nick) {
-                            self.users
-                                .insert(nick.to_string(), Arc::new(RwLock::new(User::new(nick))));
-                        }
+            let host = url.host_str().unwrap_or("");
+            let port = url.port().unwrap_or(6667);
 
-                        // Find the user entry if it exists
-                        let _user = self.users.get(nick);
-                    }
-                }
-                Command::JOIN(ref chan_name, _, _) => {
-                    if message.source_nickname()
-                        == Some(self.client.as_ref().unwrap().current_nickname())
-                    {
-                        self.channels.insert(
-                            chan_name.into(),
-                            Arc::new(RwLock::new(Channel::new(chan_name))),
-                        );
+            let connection = if url.scheme().eq_ignore_ascii_case("ircs") {
+                Connection::connect_secure(host, port).await?
+            } else {
+                Connection::connect(host, port).await?
+            };
 
-                        info!("Joined `{}'", chan_name);
+            connection.split::<u64>();
 
-                        self.client.as_ref().unwrap().send_privmsg(
-                            chan_name,
-                            format!(
-                                "Deployed {} v{} ({})",
-                                env!("CARGO_PKG_NAME"),
-                                env!("CARGO_PKG_VERSION"),
-                                GIT_COMMIT_HASH.trim()
-                            ),
-                        )?;
-                    }
-
-                    let _channel = self.channels.get(chan_name);
-                }
-                _ => {}
-            }
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            //let (tx, mut rx) = mpsc::channel(32);
         }
 
-        Ok(())
-    }
+        trace!("Done connecting to networks");
 
-    /// Handles the ISUPPORT message that is sent by the server to inform the
-    /// client about features that might differ across server implementations
-    fn handle_isupport(&mut self, args: &[String]) {
-        println!("ISUPPORT: {:?}", args);
+        Ok(())
     }
 }

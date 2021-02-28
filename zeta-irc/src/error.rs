@@ -12,27 +12,21 @@ pub enum Error {
     /// is the only part of the spec that defines a specific encoding
     EncodingError(std::str::Utf8Error),
     /// Indicates that the input stream ended too early
-    EndOfStreamError,
+    EndOfStream,
     /// Indicates that the message prefix is invalid and thus unable to be parsed
-    InvalidPrefixError,
+    InvalidPrefix,
     Other(String),
 }
 
 impl Error {
     /// Returns whether this is a `ParseError`
     pub fn is_parse_error(&self) -> bool {
-        match *self {
-            Error::ParseError(_) => true,
-            _ => false,
-        }
+        matches!(*self, Error::ParseError(_))
     }
 
     /// Returns true if this is an encoding error
     pub fn is_encoding_error(&self) -> bool {
-        match *self {
-            Error::EncodingError(_) => true,
-            _ => false,
-        }
+        matches!(*self, Error::EncodingError(_))
     }
 }
 
@@ -42,8 +36,8 @@ impl fmt::Display for Error {
             Error::ParseError(size) => write!(f, "failed to parse message at byte offset {}", size),
             Error::LengthError => write!(f, "the length exceeds what is supported by the protocol"),
             Error::EncodingError(ref err) => write!(f, "encoding error: {}", err),
-            Error::EndOfStreamError => write!(f, "unexpected end of stream"),
-            Error::InvalidPrefixError => write!(f, "invalid message prefix"),
+            Error::EndOfStream => write!(f, "unexpected end of stream"),
+            Error::InvalidPrefix => write!(f, "invalid message prefix"),
             Error::Other(ref msg) => write!(f, "{}", msg),
         }
     }

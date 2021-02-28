@@ -4,54 +4,60 @@ use std::path::Path;
 mod error;
 use error::{ConfigError, Error};
 
-use clap::{crate_authors, crate_version, App, Arg};
+use argh::FromArgs;
+use miette::{IntoDiagnostic, WrapErr};
+use tracing::{trace, warn};
+
+use zeta_core::config::{Config, ConfigMap};
 use zeta_core::Core;
 
+/// Loads the given `path` as a YAML configuration file.
+fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
+    let path = path.as_ref();
+
+    trace!(?path, "Loading config file");
+
+    let file = fs::File::open(path)?;
+    let config: zeta_core::Config = serde_yaml::from_reader(&file)?;
+
+    trace!(?path, "Successfully loaded config file");
+
+    Ok(config)
+}
+
+/// Loads the given `path` as a configuration file while attempting to extract the `ConfigMap` for
+/// the given environment `env`.
+fn load_config_env(path: impl AsRef<Path>, env: &str) -> Result<ConfigMap, Error> {
+    let path = path.as_ref();
+
+    let mut config = load_config(path).map_err(|e| Error::LoadConfigError {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+
+    let config_map = config.remove(env).ok_or(Error::NoSuchEnvironmentError)?;
+
+    Ok(config_map)
+}
+
+/// Hello
+#[derive(Debug, FromArgs)]
+struct Opts {
+    /// path to config file
+    #[argh(option, default = "String::from(\"config.yaml\")")]
+    config_path: String,
+    /// the configuration environment to use
+    #[argh(option, default = "String::from(\"development\")")]
+    environment: String,
+}
+
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> miette::Result<()> {
     // Initialize logging
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     // Parse command-line arguments
-    let matches = App::new("Zeta")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about("World's best IRC bot")
-        .arg(
-            Arg::with_name("config")
-                .default_value("config.yml")
-                .env("ZETA_CONFIG_PATH")
-                .help("Path to config file")
-                .long("config")
-                .required(true)
-                .short("c")
-                .value_name("FILE"),
-        )
-        .arg(
-            Arg::with_name("environment")
-                .default_value("development")
-                .env("ZETA_ENV")
-                .help("The configuration environment to run")
-                .long("env")
-                .short("e"),
-        )
-        .get_matches();
-
-    let config_path = Path::new(matches.value_of("config").unwrap());
-
-    if !config_path.exists() {
-        panic!("Config path does not exist");
-    }
-
-    let file = fs::File::open(config_path).expect("Could not open config file");
-    let parsed_config: zeta_core::Config =
-        serde_yaml::from_reader(&file).map_err(ConfigError::YamlError)?;
-
-    let config_map = parsed_config
-        .get(matches.value_of("environment").unwrap())
-        .ok_or(Error::NoSuchEnvironmentError)?;
-
-    let network_cfg = config_map.networks.first().expect("No networks defined");
+    let opts: Opts = argh::from_env();
 
     println!(
         "{} v{} running",
@@ -59,10 +65,37 @@ async fn main() -> Result<(), Error> {
         env!("CARGO_PKG_VERSION")
     );
 
+    // Load the config file and extract the environment-specific values from it
+    let config_path = std::path::PathBuf::from(opts.config_path);
+    let config_map = load_config_env(config_path, &opts.environment).into_diagnostic()?;
+
+    // Create the core and add the networks
     let mut core = Core::new();
 
-    core.connect(network_cfg.clone()).await?;
-    core.poll().await?;
+    trace!(
+        "Adding {} network(s) to the core",
+        config_map.networks.len()
+    );
 
-    Ok(())
+    for network in config_map.networks.iter() {
+        trace!(%network.url, "Adding network");
+
+        core.add_network(network.clone()).into_diagnostic()?;
+    }
+
+    trace!(
+        num_networks = core.num_networks(),
+        "Successfully added network(s)"
+    );
+    trace!("Booting up the core");
+
+    let err = core
+        .poll()
+        .await
+        .into_diagnostic()
+        .with_context(|| "Polling main core");
+
+    warn!("The core stopped polling");
+
+    err.map(|_| ())
 }

@@ -11,8 +11,13 @@ development:
   <<: *base
 
   networks:
-    - &uplink
-      url: ircs://irc.uplink.io:6667
+    - &test
+      url: irc://localhost:6667
       nickname: zeta-test
+      channels:
+        - '#test'
+    - &test2
+      url: irc://localhost:6667
+      nickname: zeta-test2
       channels:
         - '#test'
