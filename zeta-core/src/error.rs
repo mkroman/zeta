@@ -1,8 +1,8 @@
-use failure::Fail;
+use thiserror::Error;
 
-#[derive(Fail, Debug)]
+#[derive(Error, Debug)]
 pub enum Error {
     /// Indicates that the client has not been connected
-    #[fail(display = "Client not initialized or connected")]
+    #[error("Client not initialized or connected")]
     ClientNotConnectedError,
 }

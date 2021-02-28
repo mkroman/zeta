@@ -21,7 +21,7 @@ pub struct ConfigMap {
 pub struct NetworkConfig {
     /// The URL of the server to connect to (e.g. `ircs://irc.freenode.net/` where the `ircs`
     /// scheme means that the server is using SSL and when no port is given, it defaults to `6667`)
-    url: Option<url::Url>,
+    pub url: url::Url,
     /// The nickname to use on this network
     nickname: String,
     /// The username to use. If not set, this will default to the nickname

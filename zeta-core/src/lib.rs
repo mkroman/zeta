@@ -44,6 +44,11 @@ impl Core {
         }
     }
 
+    /// Returns the number of networks.
+    pub fn num_networks(&self) -> usize {
+        self.networks.len()
+    }
+
     /// Adds a new network to the core, automatically connecting and managing the connection
     pub fn add_network(&mut self, config: config::NetworkConfig) -> Result<(), Error> {
         let network = Network::from_config(config)?;
@@ -55,6 +60,8 @@ impl Core {
 
     /// Continually polls for new IRC messages
     pub async fn poll(&mut self) -> Result<(), Error> {
+        loop {}
+
         Ok(())
     }
 }

@@ -2,15 +2,16 @@ use std::fs;
 use std::path::Path;
 
 mod error;
-use error::{ConfigError, Error};
+use error::Error;
 
 use clap::{crate_authors, crate_version, App, Arg};
+use log::{debug, trace, warn};
 use zeta_core::Core;
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<(), anyhow::Error> {
     // Initialize logging
-    env_logger::init();
+    pretty_env_logger::init_timed();
 
     // Parse command-line arguments
     let matches = App::new("Zeta")
@@ -45,13 +46,20 @@ async fn main() -> Result<(), Error> {
 
     let config_path = Path::new(matches.value_of("config").unwrap());
 
-    if !config_path.exists() {
-        panic!("Config path does not exist");
-    }
+    trace!("Loading config file `{}'", config_path.display());
 
-    let file = fs::File::open(config_path).expect("Could not open config file");
+    let file = fs::File::open(config_path).map_err(|e| Error::LoadConfigError {
+        path: config_path.display().to_string(),
+        source: e.into(),
+    })?;
+
     let parsed_config: zeta_core::Config =
-        serde_yaml::from_reader(&file).map_err(ConfigError::YamlError)?;
+        serde_yaml::from_reader(&file).map_err(|e| Error::LoadConfigError {
+            path: config_path.display().to_string(),
+            source: e.into(),
+        })?;
+
+    trace!("Successfully loaded config file");
 
     let config_map = parsed_config
         .get(matches.value_of("environment").unwrap())
@@ -59,11 +67,24 @@ async fn main() -> Result<(), Error> {
 
     let mut core = Core::new();
 
+    trace!(
+        "Adding {} network(s) to the core",
+        config_map.networks.len()
+    );
+
     for network in config_map.networks.iter() {
+        trace!("Adding network {}", network.url);
+
         core.add_network(network.clone())?;
     }
 
+    trace!("Successfully added {} network(s)", core.num_networks());
+
+    trace!("Booting up the core");
+
     core.poll().await?;
+
+    warn!("The core stopped polling");
 
     Ok(())
 }
