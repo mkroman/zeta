@@ -2,29 +2,14 @@
 kind: pipeline
 name: rust-stable
 
-volumes:
-  - name: cargo-cache
-    host:
-      path: /var/lib/cargo-cache
-
 steps:
 - name: build
   image: rust:1.50
-  volumes:
-    - name: cargo-cache
-      path: /tmp/cargo-cache
-  environment:
-    CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo build
 
 - name: test
   image: rust:1.50
-  volumes:
-    - name: cargo-cache
-      path: /tmp/cargo-cache
-  environment:
-    CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo test
     - git rev-parse HEAD > .tags
@@ -46,29 +31,14 @@ steps:
 kind: pipeline
 name: rust-nightly
 
-volumes:
-  - name: cargo-cache
-    host:
-      path: /var/lib/cargo-cache
-
 steps:
 - name: build
   image: rustlang/rust:nightly
-  volumes:
-    - name: cargo-cache
-      path: /tmp/cargo-cache
-  environment:
-    CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo build
 
 - name: test
   image: rustlang/rust:nightly
-  volumes:
-    - name: cargo-cache
-      path: /tmp/cargo-cache
-  environment:
-    CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo test
 ---
