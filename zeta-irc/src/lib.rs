@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
 mod error;
+mod frame;
 
 pub use error::Error;
+pub use frame::Frame;
 
 /// The maximum message length as per the IRCv3 spec.
 ///
@@ -113,7 +115,7 @@ impl IrcParser {
 
     /// Takes an input string slice that has already been utf-8 validated and parses each key-value
     /// pair or opaque identifiers and returns a BTreeMap
-    fn parse_tags<'a>(input: &'a str) -> Result<BTreeMap<&'a str, Option<&'a str>>, Error> {
+    fn parse_tags(input: &'_ str) -> BTreeMap<&'_ str, Option<&str>> {
         // TODO: unescaping of values
         let mut result = BTreeMap::new();
 
@@ -129,11 +131,11 @@ impl IrcParser {
             result.insert(key, value);
         }
 
-        Ok(result)
+        result
     }
 
     /// Parses the input stream for parameters and returns an optional vector
-    fn parse_params<'a>(input: &'a [u8]) -> Result<Option<Vec<&'a [u8]>>, Error> {
+    fn parse_params(input: &'_ [u8]) -> Option<Vec<&'_ [u8]>> {
         let mut result = Vec::new();
         let mut pos = 0usize;
 
@@ -152,7 +154,11 @@ impl IrcParser {
             pos += part.len() + 1;
         }
 
-        Ok(Some(result))
+        if !result.is_empty() {
+            Some(result)
+        } else {
+            None
+        }
     }
 
     /// Parses the given input byte slice
@@ -177,7 +183,7 @@ impl IrcParser {
             // character
             input = &input[tags.len() + 1..];
 
-            let tags = IrcParser::parse_tags(&tags[1..])?;
+            let tags = IrcParser::parse_tags(&tags[1..]);
 
             Some(tags)
         } else {
@@ -199,7 +205,7 @@ impl IrcParser {
                     let host_start_pos = prefix[pos..]
                         .iter()
                         .position(|x| *x == b'@')
-                        .ok_or_else(|| Error::InvalidPrefixError)?
+                        .ok_or(Error::InvalidPrefixError)?
                         + 1;
 
                     let user = &prefix[pos..pos + host_start_pos - 1];
@@ -238,7 +244,7 @@ impl IrcParser {
 
         // Extract params
         let params = if !input.is_empty() {
-            IrcParser::parse_params(&input)?
+            IrcParser::parse_params(&input)
         } else {
             None
         };

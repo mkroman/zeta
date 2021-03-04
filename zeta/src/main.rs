@@ -2,11 +2,42 @@ use std::fs;
 use std::path::Path;
 
 mod error;
-use error::Error;
+use error::{ConfigError, Error};
 
+use anyhow::Context;
 use clap::{crate_authors, crate_version, App, Arg};
-use log::{debug, trace, warn};
+use log::{trace, warn};
+use zeta_core::config::{Config, ConfigMap};
 use zeta_core::Core;
+
+/// Loads the given `path` as a YAML configuration file.
+fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
+    let path = path.as_ref();
+
+    trace!("Loading config file `{}'", path.display());
+
+    let file = fs::File::open(path)?;
+    let config: zeta_core::Config = serde_yaml::from_reader(&file)?;
+
+    trace!("Successfully loaded config file");
+
+    Ok(config)
+}
+
+/// Loads the given `path` as a configuration file while attempting to extract the `ConfigMap` for
+/// the given environment `env`.
+fn load_config_env(path: impl AsRef<Path>, env: &str) -> Result<ConfigMap, Error> {
+    let path = path.as_ref();
+
+    let mut config = load_config(path).map_err(|e| Error::LoadConfigError {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+
+    let config_map = config.remove(env).ok_or(Error::NoSuchEnvironmentError)?;
+
+    Ok(config_map)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -44,27 +75,11 @@ async fn main() -> Result<(), anyhow::Error> {
         env!("CARGO_PKG_VERSION")
     );
 
+    // Load the config file and extract the environment-specific values from it
     let config_path = Path::new(matches.value_of("config").unwrap());
+    let config_map = load_config_env(config_path, matches.value_of("environment").unwrap())?;
 
-    trace!("Loading config file `{}'", config_path.display());
-
-    let file = fs::File::open(config_path).map_err(|e| Error::LoadConfigError {
-        path: config_path.display().to_string(),
-        source: e.into(),
-    })?;
-
-    let parsed_config: zeta_core::Config =
-        serde_yaml::from_reader(&file).map_err(|e| Error::LoadConfigError {
-            path: config_path.display().to_string(),
-            source: e.into(),
-        })?;
-
-    trace!("Successfully loaded config file");
-
-    let config_map = parsed_config
-        .get(matches.value_of("environment").unwrap())
-        .ok_or(Error::NoSuchEnvironmentError)?;
-
+    // Create the core and add the networks
     let mut core = Core::new();
 
     trace!(
@@ -79,12 +94,11 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     trace!("Successfully added {} network(s)", core.num_networks());
-
     trace!("Booting up the core");
 
-    core.poll().await?;
+    let err = core.poll().await.with_context(|| "Polling main core");
 
     warn!("The core stopped polling");
 
-    Ok(())
+    err.map(|_| ())
 }

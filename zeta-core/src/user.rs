@@ -40,7 +40,7 @@ impl User {
     }
 
     /// Returns a list of channels that the user is currently known to be in
-    pub fn channels(&self) -> &Vec<Arc<Channel>> {
+    pub fn channels(&self) -> &[Arc<Channel>] {
         &self.channels
     }
 }

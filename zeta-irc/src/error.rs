@@ -21,18 +21,12 @@ pub enum Error {
 impl Error {
     /// Returns whether this is a `ParseError`
     pub fn is_parse_error(&self) -> bool {
-        match *self {
-            Error::ParseError(_) => true,
-            _ => false,
-        }
+        matches!(*self, Error::ParseError(_))
     }
 
     /// Returns true if this is an encoding error
     pub fn is_encoding_error(&self) -> bool {
-        match *self {
-            Error::EncodingError(_) => true,
-            _ => false,
-        }
+        matches!(*self, Error::EncodingError(_))
     }
 }
 
