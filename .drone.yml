@@ -9,7 +9,7 @@ volumes:
 
 steps:
 - name: build
-  image: rust:1.43
+  image: rust:1.50
   volumes:
     - name: cargo-cache
       path: /tmp/cargo-cache
@@ -17,8 +17,9 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo build
+
 - name: test
-  image: rust:1.43
+  image: rust:1.50
   volumes:
     - name: cargo-cache
       path: /tmp/cargo-cache
@@ -27,6 +28,7 @@ steps:
   commands:
     - cargo test
     - git rev-parse HEAD > .tags
+
 - name: build image
   image: plugins/docker
   when:
@@ -39,22 +41,6 @@ steps:
       from_secret: docker_username
     password:
       from_secret: docker_password
-- name: deploy image
-  image: danielgormly/drone-plugin-kube:0.2.0
-  when:
-    branch:
-      - master
-      - deployment
-  settings:
-    template: k8s/deployment.yml
-    namespace: zeta
-    build_commit: ${DRONE_COMMIT}
-    ca:
-      from_secret: kubernetes_ca
-    token:
-      from_secret: kubernetes_token
-    server:
-      from_secret: kubernetes_server
 
 ---
 kind: pipeline
@@ -75,6 +61,7 @@ steps:
     CARGO_HOME: /tmp/cargo-cache
   commands:
     - cargo build
+
 - name: test
   image: rustlang/rust:nightly
   volumes:
