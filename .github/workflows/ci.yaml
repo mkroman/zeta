@@ -51,8 +51,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-${{ matrix.rust }}-
     - name: Run build
-      env:
-        RUSTFLAGS: -C instrument-coverage
       run: cargo build --all-features
     - name: Run tests
       env:
