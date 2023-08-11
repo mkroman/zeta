@@ -76,7 +76,7 @@ impl<'a> Message<'a> {
 
 /// Extracts the tags from an input slice and returns a utf-8 validated string slice that
 /// contains all the message tags
-fn extract_tags<'a>(input: &'a [u8]) -> Result<&'a str, Error> {
+fn extract_tags(input: &[u8]) -> Result<&str, Error> {
     if let Some(pos) = input.iter().position(|x| *x == b' ') {
         let subslice = &input[..pos];
 
@@ -133,7 +133,7 @@ impl IrcParser {
                 break;
             }
 
-            result.push(&part);
+            result.push(part);
             pos += part.len() + 1;
         }
 
@@ -229,7 +229,7 @@ impl IrcParser {
         let params = if input.is_empty() {
             None
         } else {
-            IrcParser::parse_params(&input)
+            IrcParser::parse_params(input)
         };
 
         Ok(Message {
