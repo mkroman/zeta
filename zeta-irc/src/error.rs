@@ -33,12 +33,12 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::ParseError(size) => write!(f, "failed to parse message at byte offset {}", size),
+            Error::ParseError(size) => write!(f, "failed to parse message at byte offset {size}"),
             Error::LengthError => write!(f, "the length exceeds what is supported by the protocol"),
-            Error::EncodingError(ref err) => write!(f, "encoding error: {}", err),
+            Error::EncodingError(ref err) => write!(f, "encoding error: {err}"),
             Error::EndOfStream => write!(f, "unexpected end of stream"),
             Error::InvalidPrefix => write!(f, "invalid message prefix"),
-            Error::Other(ref msg) => write!(f, "{}", msg),
+            Error::Other(ref msg) => write!(f, "{msg}"),
         }
     }
 }
