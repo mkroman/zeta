@@ -2,12 +2,18 @@ use std::sync::Mutex;
 
 use lazy_static::lazy_static;
 
-mod google_search;
-mod plugin;
+pub struct GoogleSearch;
 
-use plugin::Plugin;
-
-lazy_static! {}
+impl Plugin for GoogleSearch {
+    fn new() -> GoogleSearch {
+        GoogleSearch {}
+    }
+}
+pub trait Plugin: Send + Sync {
+    fn new() -> Self
+    where
+        Self: Sized;
+}
 
 #[derive(Default)]
 pub struct PluginRegistry {

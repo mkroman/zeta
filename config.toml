@@ -1,0 +1,17 @@
+[irc]
+username = "zeta"
+nickname = "zeta"
+realname = "zeta"
+# password = ""
+
+hostname = "irc.rwx.im"
+port = 6667
+tls = true
+
+channels = ["#zeta-dev"]
+
+[plugins.dig]
+# Enable the plugin.
+enabled = true
+# List of nameservers to use for queries.
+nameservers = ["1.1.1.1", "1.0.0.1"]
