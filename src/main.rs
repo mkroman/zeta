@@ -1,101 +1,41 @@
-use std::fs;
-use std::path::Path;
+use ::tracing::{debug, trace, warn};
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
+use miette::IntoDiagnostic;
 
+mod cli;
+mod config;
+mod database;
 mod error;
-use error::{ConfigError, Error};
+mod tracing;
 
-use argh::FromArgs;
-use miette::{IntoDiagnostic, WrapErr};
-use tracing::{trace, warn};
-
-use zeta_core::config::{Config, ConfigMap};
-use zeta_core::Core;
-
-/// Loads the given `path` as a YAML configuration file.
-fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
-    let path = path.as_ref();
-
-    trace!(?path, "Loading config file");
-
-    let file = fs::File::open(path)?;
-    let config: zeta_core::Config = serde_yaml::from_reader(&file)?;
-
-    trace!(?path, "Successfully loaded config file");
-
-    Ok(config)
-}
-
-/// Loads the given `path` as a configuration file while attempting to extract the `ConfigMap` for
-/// the given environment `env`.
-fn load_config_env(path: impl AsRef<Path>, env: &str) -> Result<ConfigMap, Error> {
-    let path = path.as_ref();
-
-    let mut config = load_config(path).map_err(|e| Error::LoadConfigError {
-        path: path.display().to_string(),
-        source: e,
-    })?;
-
-    let config_map = config.remove(env).ok_or(Error::NoSuchEnvironmentError)?;
-
-    Ok(config_map)
-}
-
-/// Hello
-#[derive(Debug, FromArgs)]
-struct Opts {
-    /// path to config file
-    #[argh(option, default = "String::from(\"config.yaml\")")]
-    config_path: String,
-    /// the configuration environment to use
-    #[argh(option, default = "String::from(\"development\")")]
-    environment: String,
-}
+use config::Config;
+use error::Error;
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
+    let opts: cli::Opts = argh::from_env();
+    let config: Config = Figment::new()
+        .merge(Toml::file(opts.config_path))
+        .merge(Env::prefixed("ZETA_").lowercase(false).split("__"))
+        .extract()
+        .into_diagnostic()?;
 
-    // Parse command-line arguments
-    let opts: Opts = argh::from_env();
+    tracing::init(&opts.format, &config.tracing)?;
 
-    println!(
-        "{} v{} running",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION")
-    );
+    debug!("connecting to database");
+    let db = database::connect(config.database.url.as_str(), &config.database).await?;
+    debug!("connected to database");
 
-    // Load the config file and extract the environment-specific values from it
-    let config_path = std::path::PathBuf::from(opts.config_path);
-    let config_map = load_config_env(config_path, &opts.environment).into_diagnostic()?;
+    debug!("running database migrations");
+    database::migrate(db.clone()).await?;
+    debug!("database migrations complete");
 
-    // Create the core and add the networks
-    let mut core = Core::new();
-
-    trace!(
-        "Adding {} network(s) to the core",
-        config_map.networks.len()
-    );
-
-    for network in config_map.networks.iter() {
-        trace!(%network.url, "Adding network");
-
-        core.add_network(network.clone()).into_diagnostic()?;
-    }
-
-    trace!(
-        num_networks = core.num_networks(),
-        "Successfully added network(s)"
-    );
     trace!("Booting up the core");
-
-    let err = core
-        .poll()
-        .await
-        .into_diagnostic()
-        .with_context(|| "Polling main core");
 
     warn!("The core stopped polling");
 
-    err.map(|_| ())
+    Ok(())
 }

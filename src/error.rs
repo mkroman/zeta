@@ -1,23 +1,17 @@
-use std::io;
+//! Error types
 
+use miette::Diagnostic;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum ConfigError {
-    #[error("yaml parsing error")]
-    YamlError(#[from] serde_yaml::Error),
-    #[error("i/o error")]
-    IoError(#[from] io::Error),
-}
-
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 pub enum Error {
-    #[error("could not load config file `{path}'")]
-    LoadConfigError { path: String, source: ConfigError },
-    /// An error occurred that was propagated from the core
-    #[error("Zeta error")]
-    InternalError(#[from] zeta_core::Error),
-    /// There was no configuration entry for the provided environment
-    #[error("No configuration map for given environment")]
-    NoSuchEnvironmentError,
+    #[error("Cannot connect to database database")]
+    #[diagnostic(code(zeta::db_open))]
+    OpenDatabase(#[source] sqlx::Error),
+    #[error("Could not acquire a connection from the connection pool")]
+    AcquireDatabaseConnection(#[source] sqlx::Error),
+    #[error("Database migration failed")]
+    DatabaseMigration(#[source] sqlx::migrate::MigrateError),
+    #[error("Database query failed")]
+    DatabaseQueryFailed(#[from] sqlx::Error),
 }
