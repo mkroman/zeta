@@ -21,10 +21,11 @@ tracing-opentelemetry = { version = "0.28.0", features = ["thiserror"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 humantime-serde = "1.1.1"
 opentelemetry-stdout = "0.27.0"
+irc = { version = "1.0.0", default-features = false, features = ["serde", "tls-rust", "ctcp", "channel-lists"] }
 
 [profile.release]
 lto = "fat"
 strip = "debuginfo"
 panic = "abort"
-opt-level = "z"
+opt-level = "s"
 codegen-units = 1

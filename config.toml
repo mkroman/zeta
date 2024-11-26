@@ -1,12 +1,10 @@
 [database]
+# The connection string to the database.
 url = "postgresql://user:changeme@localhost/zeta_development"
 # The maximum idle duration for individual connections.
-idle_timeout = 30
+idle_timeout = "30s"
 # The maximum number of connections that the database pool should maintain.
 max_connections = 5
-
-[tracing]
-enabled = true
 
 [irc]
 # A list of the owners of the client by nickname (for bots).
@@ -15,6 +13,9 @@ enabled = true
 
 # The client's nickname.
 nickname = "my-bot"
+
+[irc.channels."#zeta.dev"]
+key = "hello.world"
 
 # The client's NICKSERV password.
 #
@@ -154,3 +155,6 @@ key = "changeme"
   enabled = true
   # List of nameservers to use for queries.
   nameservers = ["1.1.1.1", "1.0.0.1"]
+
+[tracing]
+enabled = true

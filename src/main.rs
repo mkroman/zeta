@@ -1,4 +1,4 @@
-use ::tracing::{debug, trace, warn};
+use ::tracing::debug;
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
@@ -10,9 +10,11 @@ mod config;
 mod database;
 mod error;
 mod tracing;
+mod zeta;
 
 use config::Config;
 use error::Error;
+use zeta::Zeta;
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
@@ -33,9 +35,7 @@ async fn main() -> miette::Result<()> {
     database::migrate(db.clone()).await?;
     debug!("database migrations complete");
 
-    trace!("Booting up the core");
-
-    warn!("The core stopped polling");
+    let z = Zeta::from_config(config);
 
     Ok(())
 }
