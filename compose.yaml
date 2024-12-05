@@ -1,6 +1,6 @@
 services:
   ircd:
-    image: inspircd/inspircd-docker:3.10
+    image: inspircd/inspircd-docker:3.17.1
     ports:
     - '6667:6667'
 

@@ -14,7 +14,7 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cli::Format;
-use crate::config;
+use zeta::config;
 
 // Create a Resource that captures information about the entity for which telemetry is recorded.
 fn resource() -> Resource {
@@ -51,7 +51,7 @@ pub fn init(stdout_format: &Format, _tracing: &config::TracingConfig) -> miette:
     let base = tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "zeta=debug".into()),
+                .unwrap_or_else(|_| "zeta=trace".into()),
         )
         .with(telemetry);
 

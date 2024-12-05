@@ -60,7 +60,7 @@ pub struct IrcConfig {
     /// The port number of the server to connect to.
     pub port: Option<u16>,
     /// TLS configuration.
-    pub tls: IrcTlsConfig,
+    pub tls: Option<IrcTlsConfig>,
     /// List of channels to automatically manage.
     pub channels: HashMap<String, Option<IrcChannelConfig>>,
 }
@@ -74,8 +74,8 @@ impl IrcConfig {
     }
 
     /// Return the port number to use based on whether the connection requires TLS or not.
-    const fn fallback_port(&self) -> u16 {
-        if self.tls.enabled {
+    fn fallback_port(&self) -> u16 {
+        if self.tls.as_ref().map(|tls| tls.enabled) == Some(true) {
             6697
         } else {
             6667
@@ -84,13 +84,17 @@ impl IrcConfig {
 }
 
 impl From<IrcConfig> for irc::client::data::Config {
-    fn from(value: IrcConfig) -> Self {
-        let port = value.port();
+    fn from(config: IrcConfig) -> Self {
+        let port = config.port();
+        let channels = config.channels.into_keys().collect::<Vec<_>>().to_owned();
+        let use_tls = config.tls.map(|x| x.enabled);
 
         irc::client::data::Config {
-            nickname: Some(value.nickname),
-            server: Some(value.hostname),
+            nickname: Some(config.nickname),
+            server: Some(config.hostname),
             port: Some(port),
+            use_tls,
+            channels,
             ..Default::default()
         }
     }

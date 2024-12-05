@@ -22,6 +22,14 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 humantime-serde = "1.1.1"
 opentelemetry-stdout = "0.27.0"
 irc = { version = "1.0.0", default-features = false, features = ["serde", "tls-rust", "ctcp", "channel-lists"] }
+futures = "0.3.31"
+
+[lib]
+crate-type = ["lib"]
+
+[[bin]]
+name = "zeta"
+path = "src/main.rs"
 
 [profile.release]
 lto = "fat"

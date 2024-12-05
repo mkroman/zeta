@@ -7,19 +7,21 @@ idle_timeout = "30s"
 max_connections = 5
 
 [irc]
-# A list of the owners of the client by nickname (for bots).
-#
-# owners = ["owner1", "owner2"]
 
 # The client's nickname.
-nickname = "my-bot"
+nickname = "zeta"
 
-[irc.channels."#zeta.dev"]
-key = "hello.world"
+# The hostname to connect to.
+hostname = "localhost"
 
-# The client's NICKSERV password.
-#
-# nick_password = "password"
+#The port number to connect on.
+port = 6667
+
+alt_nicks = []
+
+channels = { "#zeta.dev" = {} }
+
+# [irc.channels."#zeta.dev"]
 
 # Alternative nicknames for the client, if the default is taken.
 #
@@ -66,8 +68,8 @@ key = "hello.world"
 # proxy_password = "proxy-password"
 
 # Whether or not to use TLS.
-# [tls]
-# use_tls = true
+[irc.tls]
+enabled = false
 
 # The path to the TLS certificate for this server in DER format.
 #
@@ -140,10 +142,6 @@ key = "hello.world"
 # A map of additional options to be stored in config.
 #
 # options = { "option1" = "value1", "option2" = "value2" }
-
-# List of IRC channels.
-[irc.channels."#zeta"]
-key = "changeme"
 
 [plugins]
   [plugins.health]

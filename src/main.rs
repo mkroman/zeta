@@ -6,15 +6,10 @@ use figment::{
 use miette::IntoDiagnostic;
 
 mod cli;
-mod config;
-mod database;
-mod error;
 mod tracing;
-mod zeta;
 
-use config::Config;
-use error::Error;
-use zeta::Zeta;
+use zeta::database;
+use zeta::{Config, Zeta};
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
@@ -35,7 +30,8 @@ async fn main() -> miette::Result<()> {
     database::migrate(db.clone()).await?;
     debug!("database migrations complete");
 
-    let z = Zeta::from_config(config);
+    let mut z = Zeta::from_config(config)?;
+    z.run().await?;
 
     Ok(())
 }
