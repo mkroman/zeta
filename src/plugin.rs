@@ -37,7 +37,7 @@ impl Registry {
     }
 
     /// Constructs and returns a new plugin registry with initialized plugins.
-    pub fn loaded() -> Registry {
+    pub fn preloaded() -> Registry {
         let mut registry = Self::new();
         trace!("Registering plugins");
         registry.register::<GoogleSearch>();

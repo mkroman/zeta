@@ -1,6 +1,7 @@
 //! The main process for communicating over IRC and managing state.
 use futures::stream::StreamExt;
 use irc::client::prelude::{Client, Command};
+use irc::proto::Message;
 use tracing::debug;
 
 use crate::config::Config;
@@ -18,7 +19,7 @@ pub struct Zeta {
 
 impl Zeta {
     pub fn from_config(config: Config) -> Result<Self, Error> {
-        let registry = Registry::loaded();
+        let registry = Registry::preloaded();
 
         Ok(Zeta {
             client: None,
@@ -33,24 +34,31 @@ impl Zeta {
             .await
             .map_err(Error::IrcClientError)?;
 
-        // self.irc = Some(client);
-
-        // identify comes from ClientExt
         client.identify().map_err(Error::IrcRegistrationError)?;
 
         let mut stream = client.stream()?;
 
-        while let Some(message) = stream.next().await.transpose()? {
-            debug!(?message);
+        self.client = Some(client);
 
-            if let Command::PRIVMSG(channel, message) = message.command {
-                if message.contains(client.current_nickname()) {
-                    // send_privmsg comes from ClientExt
-                    client.send_privmsg(&channel, "beep boop").unwrap();
-                }
+        if let Some(client) = &self.client {
+            while let Some(message) = stream.next().await.transpose()? {
+                self.handle_message(client, message).await?;
             }
         }
 
+        Ok(())
+    }
+
+    async fn handle_message(&self, client: &Client, message: Message) -> Result<(), Error> {
+        debug!(?message);
+
+        if let Command::PRIVMSG(channel, message) = message.command {
+            if message.contains(client.current_nickname()) {
+                client
+                    .send_privmsg(&channel, "beep boop")
+                    .map_err(Error::IrcClientError)?;
+            }
+        }
         Ok(())
     }
 }
