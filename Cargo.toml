@@ -24,6 +24,8 @@ opentelemetry-stdout = "0.27.0"
 irc = { version = "1.0.0", default-features = false, features = ["serde", "tls-rust", "ctcp", "channel-lists"] }
 futures = "0.3.31"
 async-trait = "0.1.83"
+reqwest = "0.12.9"
+url = "2.5.4"
 
 [lib]
 crate-type = ["lib"]
