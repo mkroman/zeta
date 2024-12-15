@@ -1,0 +1,37 @@
+services:
+  ircd:
+    image: inspircd/inspircd-docker:3.17.1
+    ports:
+    - '6667:6667'
+
+  jaeger:
+    image: jaegertracing/jaeger:2.0.0
+    ports:
+    - '6831:6831/udp'
+    - '6832:6832/udp'
+    - '4317:4317'
+    - '4318:4318'
+    - '16686:16686'
+    - '14268:14268'
+    command:
+    - --set
+    - receivers.otlp.protocols.http.endpoint=0.0.0.0:4318
+    - --set
+    - receivers.otlp.protocols.grpc.endpoint=0.0.0.0:4317
+
+  postgres:
+    image: 'postgres:17'
+    ports:
+    - '5432:5432'
+    restart: always
+    environment:
+    - POSTGRES_USER=user
+    - POSTGRES_PASSWORD=changeme
+    - POSTGRES_DB=zeta_development
+    - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+    - postgres_data:/var/lib/postgresql/data
+
+
+volumes:
+  postgres_data:
