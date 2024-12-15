@@ -1,6 +1,6 @@
 //! The main process for communicating over IRC and managing state.
 use futures::stream::StreamExt;
-use irc::client::prelude::{Client, Command};
+use irc::client::prelude::Client;
 use irc::proto::Message;
 use tracing::debug;
 
@@ -52,13 +52,10 @@ impl Zeta {
     async fn handle_message(&self, client: &Client, message: Message) -> Result<(), Error> {
         debug!(?message);
 
-        if let Command::PRIVMSG(channel, message) = message.command {
-            if message.contains(client.current_nickname()) {
-                client
-                    .send_privmsg(&channel, "beep boop")
-                    .map_err(Error::IrcClientError)?;
-            }
+        for plugin in &self.registry.plugins {
+            plugin.handle_message(&message, client).await?;
         }
+
         Ok(())
     }
 }

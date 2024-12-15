@@ -66,6 +66,7 @@ pub struct IrcConfig {
 }
 
 impl IrcConfig {
+    #[must_use]
     pub fn port(&self) -> u16 {
         match self.port {
             Some(port) => port,
@@ -86,7 +87,7 @@ impl IrcConfig {
 impl From<IrcConfig> for irc::client::data::Config {
     fn from(config: IrcConfig) -> Self {
         let port = config.port();
-        let channels = config.channels.into_keys().collect::<Vec<_>>().to_owned();
+        let channels = config.channels.into_keys().collect::<Vec<_>>().clone();
         let use_tls = config.tls.map(|x| x.enabled);
 
         irc::client::data::Config {
@@ -100,10 +101,12 @@ impl From<IrcConfig> for irc::client::data::Config {
     }
 }
 
+#[must_use]
 pub const fn default_max_db_connections() -> u32 {
     crate::database::DEFAULT_MAX_CONNECTIONS
 }
 
+#[must_use]
 pub const fn default_db_idle_timeout() -> Duration {
     crate::database::DEFAULT_IDLE_TIMEOUT
 }

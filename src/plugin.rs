@@ -1,33 +1,80 @@
-use std::cell::OnceCell;
-use std::sync::{Mutex, OnceLock};
-
+use async_trait::async_trait;
+use irc::client::Client;
+use irc::proto::{Command, Message};
 use tracing::{debug, trace};
 
-pub struct GoogleSearch;
+use crate::Error;
 
+/// The name of a plugin.
+pub struct Name(&'static str);
+/// The author of a plugin.
+pub struct Author(&'static str);
+/// The version of a plugin.
+pub struct Version(&'static str);
+
+pub struct GoogleSearch {}
+
+#[async_trait]
 impl Plugin for GoogleSearch {
     fn new() -> GoogleSearch {
         GoogleSearch {}
     }
 
-    fn name() -> &'static str {
-        "google_search"
+    fn name() -> Name {
+        Name("google_search")
+    }
+
+    fn author() -> Author {
+        Author("Mikkel Kroman <mk@maero.dk>")
+    }
+
+    fn version() -> Version {
+        Version("0.1")
+    }
+
+    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), Error> {
+        if let Command::PRIVMSG(ref channel, ref message) = message.command {
+            if let Some(query) = message.strip_prefix(".g ") {
+                debug!("user requested google search");
+
+                client.send_privmsg(channel, format!("searching for {query}"))?;
+            }
+        }
+
+        Ok(())
     }
 }
 
+#[async_trait]
 pub trait Plugin: Send + Sync {
-    fn name() -> &'static str
+    /// The name of the plugin.
+    fn name() -> Name
     where
         Self: Sized;
 
+    /// The author of the plugin.
+    fn author() -> Author
+    where
+        Self: Sized;
+
+    /// The version of the plugin.
+    fn version() -> Version
+    where
+        Self: Sized;
+
+    /// The constructor for a new plugin.
     fn new() -> Self
     where
         Self: Sized;
+
+    async fn handle_message(&self, _message: &Message, _client: &Client) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
 pub struct Registry {
-    plugins: Vec<Box<dyn Plugin>>,
+    pub plugins: Vec<Box<dyn Plugin>>,
 }
 
 impl Registry {
