@@ -16,13 +16,13 @@ async fn main() -> miette::Result<()> {
     let opts: cli::Opts = argh::from_env();
     let config: Config = Figment::new()
         .merge(Toml::file(opts.config_path))
-        .merge(Env::prefixed("ZETA_").lowercase(false).split("__"))
+        .merge(Env::prefixed("ZETA_").lowercase(false).split("_"))
         .extract()
         .into_diagnostic()?;
 
     tracing::init(&opts.format, &config.tracing)?;
 
-    debug!("connecting to database");
+    debug!(url = %config.database.url.as_str(), "connecting to database");
     let db = database::connect(config.database.url.as_str(), &config.database).await?;
     debug!("connected to database");
 

@@ -15,6 +15,7 @@ pub struct Author(&'static str);
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Version(&'static str);
 
+pub mod choices;
 pub mod dig;
 pub mod health;
 
@@ -60,11 +61,14 @@ impl Registry {
     pub fn preloaded() -> Registry {
         let mut registry = Self::new();
         trace!("Registering plugins");
+
         registry.register::<health::Health>();
         registry.register::<dig::Dig>();
+        registry.register::<choices::Choices>();
 
         let num_plugins = registry.plugins.len();
         trace!(%num_plugins, "Done registering plugins");
+
         registry
     }
 
