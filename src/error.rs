@@ -18,6 +18,8 @@ pub enum Error {
     DatabaseMigration(#[source] sqlx::migrate::MigrateError),
     #[error("Database query failed")]
     DatabaseQueryFailed(#[from] sqlx::Error),
-    #[error("`IRC error")]
+    #[error("IRC error")]
     IrcError(#[from] irc::error::Error),
+    #[error("Plugin error: {0}")]
+    PluginError(Box<dyn std::error::Error + Send + Sync>),
 }
