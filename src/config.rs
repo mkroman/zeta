@@ -96,6 +96,7 @@ impl From<IrcConfig> for irc::client::data::Config {
             port: Some(port),
             use_tls,
             channels,
+            alt_nicks: config.alt_nicks,
             ..Default::default()
         }
     }

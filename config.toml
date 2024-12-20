@@ -9,7 +9,7 @@ max_connections = 5
 [irc]
 
 # The client's nickname.
-nickname = "zeta-dev"
+nickname = "zeta"
 
 # The hostname to connect to.
 hostname = "irc.rwx.im"
@@ -17,7 +17,7 @@ hostname = "irc.rwx.im"
 #The port number to connect on.
 port = 6667
 
-alt_nicks = []
+alt_nicks = ["zeta_"]
 
 channels = { "#zeta.dev" = {} }
 
@@ -34,10 +34,6 @@ channels = { "#zeta.dev" = {} }
 # The client's real name.
 #
 # realname = "My Bot"
-
-# The server to connect to.
-#
-# server = "irc.example.com"
 
 # The port to connect on.
 #
