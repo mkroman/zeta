@@ -2,7 +2,7 @@ FROM rust:latest AS cache
 
 WORKDIR /usr/src/zeta
 
-COPY Cargo.toml Cargo.lock .
+COPY zeta/Cargo.toml Cargo.lock .
 
 RUN mkdir src && echo '' > src/lib.rs && cargo fetch
 
