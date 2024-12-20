@@ -40,3 +40,5 @@ jobs:
       uses: clechasseur/rs-clippy-check@50a0fd6f2f1a33307d603ee50d91eadbb2561120 # v3.0.6
       with:
         args: --all-features
+    - name: Run tests
+      run: cargo test

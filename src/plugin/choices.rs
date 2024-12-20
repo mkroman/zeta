@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
@@ -10,12 +8,6 @@ use crate::Error as ZetaError;
 use super::{Author, Name, Plugin, Version};
 
 pub struct Choices;
-
-impl Display for Choices {
-    fn fmt(&self, _fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
-    }
-}
 
 #[async_trait]
 impl Plugin for Choices {
