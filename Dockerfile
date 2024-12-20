@@ -1,19 +1,20 @@
-# Copyright (C) 2020, Mikkel Kroman <mk@maero.dk>
-FROM rust:latest as builder
+FROM rust:latest AS cache
 
-WORKDIR /usr/src
+WORKDIR /usr/src/zeta
+
+COPY Cargo.toml Cargo.lock .
+
+RUN mkdir src && echo '' > src/lib.rs && cargo fetch
+
+FROM cache AS builder
 
 COPY . .
 
 RUN cargo build --release
-RUN strip --strip-all target/release/zeta
 
-FROM debian:buster
+FROM gcr.io/distroless/cc-debian12
 
-RUN apt update && \
-  apt install -y openssl ca-certificates
+COPY --from=builder /usr/src/zeta/target/release/zeta .
+COPY config.toml .
 
-COPY --from=builder /usr/src/target/release/zeta .
-COPY config.yml .
-
-ENTRYPOINT ./zeta
+ENTRYPOINT ["./zeta"]

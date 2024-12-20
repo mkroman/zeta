@@ -1,8 +1,10 @@
 services:
   ircd:
-    image: inspircd/inspircd-docker:3.17.1
+    image: inspircd/inspircd-docker:3
     ports:
     - '6667:6667'
+    environment:
+    - INSP_ENABLE_DNSBL=no
 
   jaeger:
     image: jaegertracing/jaeger:2.0.0

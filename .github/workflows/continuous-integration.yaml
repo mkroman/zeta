@@ -9,15 +9,15 @@ on:
     - main
 
 jobs:
-  check:
-    name: Run Rust check
+  test:
+    name: Test
     runs-on: ubuntu-latest
     strategy:
       matrix:
         # Run checks on stable and nightly Rust
         rust: [stable, nightly]
     steps:
-    - name: Checkout source codecov
+    - name: Checkout source
       uses: actions/checkout@v4
     - name: Install Rust ${{ matrix.rust }}
       uses: dtolnay/rust-toolchain@a54c7afa936fefeb4456b2dd8068152669aa8203 # master
@@ -40,3 +40,5 @@ jobs:
       uses: clechasseur/rs-clippy-check@50a0fd6f2f1a33307d603ee50d91eadbb2561120 # v3.0.6
       with:
         args: --all-features
+    - name: Run tests
+      run: cargo test

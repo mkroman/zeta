@@ -1,6 +1,6 @@
 # Zeta
 
-Zeta is an IRC bot with a bunch of opinionated plugins.
+Zeta is an opinionated IRC bot with a bunch of plugins.
 
 It is also an excercise in futility.
 

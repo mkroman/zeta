@@ -9,10 +9,10 @@ max_connections = 5
 [irc]
 
 # The client's nickname.
-nickname = "zeta"
+nickname = "zeta-dev"
 
 # The hostname to connect to.
-hostname = "localhost"
+hostname = "irc.rwx.im"
 
 #The port number to connect on.
 port = 6667
@@ -69,7 +69,7 @@ channels = { "#zeta.dev" = {} }
 
 # Whether or not to use TLS.
 [irc.tls]
-enabled = false
+enabled = true
 
 # The path to the TLS certificate for this server in DER format.
 #
