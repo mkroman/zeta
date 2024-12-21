@@ -3,10 +3,14 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 use rand::prelude::IteratorRandom;
 
+use crate::plugin;
 use crate::Error as ZetaError;
+use zeta_derive::Plugin;
 
 use super::{Author, Name, Plugin, Version};
 
+#[derive(Plugin)]
+#[plugin(name("choices"), version("0.1"), author("Mikkel Kroman <mk@maero.dk>"))]
 pub struct Choices;
 
 #[async_trait]

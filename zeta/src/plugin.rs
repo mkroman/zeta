@@ -46,6 +46,25 @@ pub trait Plugin: Send + Sync {
     }
 }
 
+#[macro_export]
+macro_rules! plugin {
+    ($type:ty, $name:literal, $version:literal, $author:literal) => {
+        impl $crate::plugin::Plugin for $type {
+            fn name() -> Name {
+                Name($name)
+            }
+
+            fn version() -> Version {
+                Version($version)
+            }
+
+            fn author() -> Author {
+                Author($author)
+            }
+        }
+    };
+}
+
 #[derive(Default)]
 pub struct Registry {
     pub plugins: Vec<Box<dyn Plugin>>,

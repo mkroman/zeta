@@ -3618,4 +3618,13 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
+ "zeta-derive",
+]
+
+[[package]]
+name = "zeta-derive"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
 ]
