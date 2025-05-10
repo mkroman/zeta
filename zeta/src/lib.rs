@@ -1,4 +1,5 @@
 pub mod config;
+pub mod consts;
 pub mod database;
 mod error;
 mod plugin;

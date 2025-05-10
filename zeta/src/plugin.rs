@@ -17,6 +17,7 @@ pub struct Version(&'static str);
 
 pub mod choices;
 pub mod dig;
+pub mod google_search;
 pub mod health;
 
 #[async_trait]
@@ -65,6 +66,7 @@ impl Registry {
         registry.register::<health::Health>();
         registry.register::<dig::Dig>();
         registry.register::<choices::Choices>();
+        registry.register::<google_search::GoogleSearch>();
 
         let num_plugins = registry.plugins.len();
         trace!(%num_plugins, "Done registering plugins");
