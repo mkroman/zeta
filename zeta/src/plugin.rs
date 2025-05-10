@@ -15,6 +15,7 @@ pub struct Author(&'static str);
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Version(&'static str);
 
+pub mod calculator;
 pub mod choices;
 pub mod dig;
 pub mod google_search;
@@ -67,6 +68,7 @@ impl Registry {
         registry.register::<dig::Dig>();
         registry.register::<choices::Choices>();
         registry.register::<google_search::GoogleSearch>();
+        registry.register::<calculator::Calculator>();
 
         let num_plugins = registry.plugins.len();
         trace!(%num_plugins, "Done registering plugins");
