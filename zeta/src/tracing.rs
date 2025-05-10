@@ -59,7 +59,7 @@ pub fn init(stdout_format: &Format, _tracing: &config::TracingConfig) -> miette:
         Format::Json => base.with(tracing_subscriber::fmt::layer().json()).init(),
         Format::Pretty => base.with(tracing_subscriber::fmt::layer().pretty()).init(),
         Format::Compact => base.with(tracing_subscriber::fmt::layer().compact()).init(),
-    };
+    }
 
     info!("tracing initialized");
 
