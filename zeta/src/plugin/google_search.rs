@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
@@ -11,21 +9,49 @@ use crate::Error as ZetaError;
 
 use super::{Author, Name, Plugin, Version};
 
+/// Represents a single search result obtained from the search operation.
+pub struct SearchResult {
+    /// The title of the search result.
+    pub title: String,
+    /// The URL of the search result.
+    pub url: String,
+    /// A brief snippet or description from the search result.
+    #[allow(dead_code)]
+    pub snippet: String,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("server returned invalid response")]
+    InvalidResponse,
+    #[error("unable to read contents")]
+    ReadContents,
+    #[error("missing expected HTML element: {0}")]
+    MissingElement(String),
+}
+
 pub struct GoogleSearch {
-    http_client: reqwest::Client,
+    client: reqwest::Client,
 }
 
 #[async_trait]
 impl Plugin for GoogleSearch {
+    /// Creates a new instance of the [`GoogleSearch`] plugin.
+    ///
+    /// Initializes an HTTP client with a specific user agent, no redirects, and a timeout.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be built.
     fn new() -> GoogleSearch {
-        let http_client = reqwest::ClientBuilder::new()
-            .user_agent(consts::USER_AGENT)
+        let client = reqwest::ClientBuilder::new()
+            .user_agent(consts::HTTP_USER_AGENT)
             .redirect(Policy::none())
-            .timeout(Duration::from_secs(30))
+            .timeout(consts::HTTP_TIMEOUT)
             .build()
             .expect("could not build http client");
 
-        GoogleSearch { http_client }
+        GoogleSearch { client }
     }
 
     fn name() -> Name {
@@ -44,7 +70,7 @@ impl Plugin for GoogleSearch {
         if let Command::PRIVMSG(ref channel, ref inner_message) = message.command {
             if let Some(query) = inner_message.strip_prefix(".g ") {
                 let results = self
-                    .search(query)
+                    .search(query.trim())
                     .await
                     .map_err(|err| ZetaError::PluginError(Box::new(err)))?;
 
@@ -67,39 +93,24 @@ impl Plugin for GoogleSearch {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct SearchResult {
-    pub title: String,
-    pub url: String,
-    pub snippet: String,
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("server returned invalid response")]
-    InvalidResponse,
-    #[error("unable to read contents")]
-    ReadContents,
-}
-
 impl GoogleSearch {
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>, Error> {
         let params = [("q", query), ("engine", "google")];
         let request = self
-            .http_client
+            .client
             .get("https://leta.mullvad.net/search")
             .query(&params);
         let response = request.send().await.map_err(|_| Error::InvalidResponse)?;
-        let html = response.text().await.map_err(|_| Error::ReadContents)?;
-        let document = Html::parse_document(&html);
-        let mut results = vec![];
+        let html_content = response.text().await.map_err(|_| Error::ReadContents)?;
+        let document = Html::parse_document(&html_content);
+        let mut results = Vec::new();
 
         let article_selector = Selector::parse("main article").unwrap();
         let a_selector = Selector::parse("a[href]").unwrap();
         let p_selector = Selector::parse("p").unwrap();
         let h3_selector = Selector::parse("h3").unwrap();
 
+        // Iterate over each search result article in the parsed document
         for article in document.select(&article_selector) {
             let link = article.select(&a_selector).next();
             let title = link.and_then(|x| x.select(&h3_selector).next());
@@ -108,10 +119,14 @@ impl GoogleSearch {
             if let (Some(title), Some(link), Some(snippet)) = (title, link, snippet) {
                 let url = link
                     .attr("href")
-                    .expect("title link does not have a href attribute")
+                    .ok_or_else(|| {
+                        Error::MissingElement(
+                            "href attribute missing from link element".to_string(),
+                        )
+                    })?
                     .to_string();
-                let title_text = title.text().map(str::trim).collect::<String>();
-                let snippet_text = snippet.text().map(str::trim).collect::<String>();
+                let title_text: String = title.text().map(str::trim).collect();
+                let snippet_text: String = snippet.text().map(str::trim).collect();
 
                 let result = SearchResult {
                     url,

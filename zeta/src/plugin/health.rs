@@ -42,8 +42,8 @@ impl Plugin for Health {
 }
 
 impl Display for Health {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\x0310>\x02\x03 Health:\x02\x0310 ")?;
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(fmt, "\x0310>\x02\x03 Health:\x02\x0310 ")?;
 
         if let Ok(proc) = Process::current() {
             if let Ok(memory) = proc.memory_info() {
@@ -52,9 +52,8 @@ impl Display for Health {
                 let shared_mib = memory.shared() as f64 / 1024. / 1024.;
 
                 write!(
-                    f,
-                    "Memory usage:\x0f {:.2} MiB\x0310 (VMS:\x0f {:.2} MiB\x0310 Shared:\x0f {:.2} MiB\x0310) ",
-                    rss_mib, vms_mib, shared_mib
+                    fmt,
+                    "Memory usage:\x0f {rss_mib:.2} MiB\x0310 (VMS:\x0f {vms_mib:.2} MiB\x0310 Shared:\x0f {shared_mib:.2} MiB\x0310)",
                 )?;
             }
         }
@@ -64,9 +63,9 @@ impl Display for Health {
         let num_alive_tasks = metrics.num_alive_tasks();
         let global_queue_depth = metrics.global_queue_depth();
 
-        write!(f, "Workers:\x0f {num_workers}\x0310 ")?;
-        write!(f, "Tasks:\x0f {num_alive_tasks}\x0310 ")?;
-        write!(f, "(\x0f{global_queue_depth}\x0310 scheduled) ")?;
+        write!(fmt, "Workers:\x0f {num_workers}\x0310 ")?;
+        write!(fmt, "Tasks:\x0f {num_alive_tasks}\x0310 ")?;
+        write!(fmt, "(\x0f{global_queue_depth}\x0310 scheduled) ")?;
 
         Ok(())
     }

@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::Message;
+use reqwest::redirect::Policy;
 use tracing::trace;
 
-use crate::Error;
+use crate::{consts, Error};
 
 /// The name of a plugin.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -18,8 +19,10 @@ pub struct Version(&'static str);
 pub mod calculator;
 pub mod choices;
 pub mod dig;
+pub mod geoip;
 pub mod google_search;
 pub mod health;
+pub mod youtube;
 
 #[async_trait]
 pub trait Plugin: Send + Sync {
@@ -69,6 +72,8 @@ impl Registry {
         registry.register::<choices::Choices>();
         registry.register::<google_search::GoogleSearch>();
         registry.register::<calculator::Calculator>();
+        registry.register::<geoip::GeoIp>();
+        registry.register::<youtube::YouTube>();
 
         let num_plugins = registry.plugins.len();
         trace!(%num_plugins, "Done registering plugins");
@@ -84,4 +89,19 @@ impl Registry {
 
         true
     }
+}
+
+/// Creates a default HTTP client.
+pub fn build_http_client() -> reqwest::Client {
+    default_http_client_builder()
+        .build()
+        .expect("could not build http client")
+}
+
+/// Creates a default HTTP client builder.
+pub fn default_http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::ClientBuilder::new()
+        .user_agent(consts::HTTP_USER_AGENT)
+        .redirect(Policy::none())
+        .timeout(consts::HTTP_TIMEOUT)
 }
