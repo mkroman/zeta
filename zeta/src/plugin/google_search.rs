@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
-use reqwest::redirect::Policy;
 use scraper::{Html, Selector};
 
-use crate::consts;
+use crate::plugin;
 use crate::Error as ZetaError;
 
 use super::{Author, Name, Plugin, Version};
@@ -32,6 +31,10 @@ pub enum Error {
 
 pub struct GoogleSearch {
     client: reqwest::Client,
+    article_selector: Selector,
+    a_selector: Selector,
+    p_selector: Selector,
+    h3_selector: Selector,
 }
 
 #[async_trait]
@@ -44,14 +47,9 @@ impl Plugin for GoogleSearch {
     ///
     /// Panics if the HTTP client cannot be built.
     fn new() -> GoogleSearch {
-        let client = reqwest::ClientBuilder::new()
-            .user_agent(consts::HTTP_USER_AGENT)
-            .redirect(Policy::none())
-            .timeout(consts::HTTP_TIMEOUT)
-            .build()
-            .expect("could not build http client");
+        let client = plugin::build_http_client();
 
-        GoogleSearch { client }
+        GoogleSearch::with_client(client)
     }
 
     fn name() -> Name {
@@ -94,6 +92,16 @@ impl Plugin for GoogleSearch {
 }
 
 impl GoogleSearch {
+    pub fn with_client(client: reqwest::Client) -> Self {
+        Self {
+            client,
+            article_selector: Selector::parse("main article").unwrap(),
+            a_selector: Selector::parse("a[href]").unwrap(),
+            p_selector: Selector::parse("p").unwrap(),
+            h3_selector: Selector::parse("h3").unwrap(),
+        }
+    }
+
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>, Error> {
         let params = [("q", query), ("engine", "google")];
         let request = self
@@ -105,16 +113,11 @@ impl GoogleSearch {
         let document = Html::parse_document(&html_content);
         let mut results = Vec::new();
 
-        let article_selector = Selector::parse("main article").unwrap();
-        let a_selector = Selector::parse("a[href]").unwrap();
-        let p_selector = Selector::parse("p").unwrap();
-        let h3_selector = Selector::parse("h3").unwrap();
-
         // Iterate over each search result article in the parsed document
-        for article in document.select(&article_selector) {
-            let link = article.select(&a_selector).next();
-            let title = link.and_then(|x| x.select(&h3_selector).next());
-            let snippet = article.select(&p_selector).next();
+        for article in document.select(&self.article_selector) {
+            let link = article.select(&self.a_selector).next();
+            let title = link.and_then(|x| x.select(&self.h3_selector).next());
+            let snippet = article.select(&self.p_selector).next();
 
             if let (Some(title), Some(link), Some(snippet)) = (title, link, snippet) {
                 let url = link
