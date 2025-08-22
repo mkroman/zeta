@@ -11,19 +11,37 @@ use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
 
+use super::{Author, Name, Plugin, Version};
 use crate::{plugin, Error as ZetaError};
 
-use super::{Author, Name, Plugin, Version};
+/// YouTube Data API v3 base endpoint URL.
+pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
 
-pub const API_BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
-
+/// IRC bot plugin for YouTube URL detection and metadata retrieval.
+///
+/// This plugin monitors IRC messages for YouTube URLs and automatically responds
+/// with video metadata including title, category, channel name, and view count.
+/// It maintains a cache of YouTube video categories to reduce API calls and
+/// uses async/await for non-blocking operation.
+///
+/// # Features
+/// - Automatic URL detection in IRC messages
+/// - Video metadata extraction via YouTube Data API v3
+/// - Thread-safe category caching with expiration
+/// - Support for multiple YouTube URL formats
+/// - Formatted output with IRC color codes
 pub struct YouTube {
+    /// YouTube Data API v3 authentication key
     api_key: String,
+    /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
-    video_categories: RwLock<Arc<HashMap<String, VideoCategory>>>,
+    /// Thread-safe cache of video categories mapped by category ID
+    video_categories: RwLock<Arc<HashMap<String, Category>>>,
+    /// Timestamp tracking when video categories were last fetched for cache invalidation
     video_categories_updated_at: RwLock<Option<Instant>>,
 }
 
+/// YouTube API and plugin-specific error types.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("server returned invalid response")]
@@ -39,6 +57,8 @@ pub enum Error {
 pub enum UrlKind {
     /// Direct link to a video (e.g., `youtube.com/watch?v=VIDEO_ID` or `youtu.be/VIDEO_ID`)
     Video(String),
+    /// Link to a short video (e.g., `youtube.com/shorts/VIDEO_ID`)
+    Short(String),
     /// Direct link to a channel using channel ID (e.g., `youtube.com/channel/CHANNEL_ID`)
     Channel(String),
     /// Link to a channel using the @ handle (e.g., `youtube.com/@ChannelName`)
@@ -47,62 +67,71 @@ pub enum UrlKind {
     Playlist(String),
 }
 
+/// Basic details about the video, such as its title, description, and category.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
-pub struct VideoSnippet {
+pub struct Snippet {
     pub title: String,
     pub description: String,
     pub channel_title: String,
     pub category_id: String,
 }
 
+/// Statistics about a video.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
-pub struct VideoStatistics {
+pub struct Statistics {
     pub view_count: String,
 }
 
+/// A YouTube video.
 #[derive(Clone, Debug, Deserialize)]
 #[allow(unused)]
 pub struct Video {
     pub kind: String,
     pub etag: String,
     pub id: String,
-    pub snippet: Option<VideoSnippet>,
-    pub statistics: Option<VideoStatistics>,
+    pub snippet: Option<Snippet>,
+    pub statistics: Option<Statistics>,
 }
 
+/// Details about a video category.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
-pub struct VideoCategorySnippet {
+pub struct CategorySnippet {
     pub channel_id: String,
     pub title: String,
     pub assignable: bool,
 }
 
+/// A video category result.
 #[derive(Clone, Debug, Deserialize)]
 #[allow(unused)]
 #[serde(rename_all = "camelCase")]
-pub struct VideoCategory {
+pub struct Category {
     pub kind: String,
     pub etag: String,
     pub id: String,
-    pub snippet: VideoCategorySnippet,
+    pub snippet: CategorySnippet,
 }
 
+/// Generic response type for list results.
 #[derive(Deserialize, Debug)]
 #[allow(unused)]
-pub struct ListResponse<R> {
+pub struct ApiListResponse<R> {
     pub kind: String,
     pub etag: String,
     pub items: Vec<R>,
 }
 
-pub type VideoListResponse = ListResponse<Video>;
-pub type VideoCategoryListResponse = ListResponse<VideoCategory>;
+/// Response with a list of YouTube videos.
+pub type VideosResponse = ApiListResponse<Video>;
+
+/// Response with a list of YouTube video categories.
+pub type CategoriesResponse = ApiListResponse<Category>;
 
 #[async_trait]
 impl Plugin for YouTube {
@@ -165,7 +194,9 @@ impl YouTube {
         client: &Client,
     ) -> Result<(), ZetaError> {
         for ref url in urls {
-            if let Some(UrlKind::Video(video_id)) = YouTube::parse_youtube_url(url) {
+            if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
+                YouTube::parse_youtube_url(url)
+            {
                 match self.get_video(&video_id).await {
                     Ok(video) => {
                         let snippet = video.snippet.as_ref();
@@ -200,7 +231,7 @@ impl YouTube {
     }
 
     /// Fetches video categories.
-    async fn video_categories(&self) -> Result<HashMap<String, VideoCategory>, Error> {
+    async fn video_categories(&self) -> Result<HashMap<String, Category>, Error> {
         debug!("fetching video categories");
 
         let params = [
@@ -210,18 +241,18 @@ impl YouTube {
         ];
         let request = self
             .client
-            .get(format!("{API_BASE_URL}/videoCategories"))
+            .get(format!("{BASE_URL}/videoCategories"))
             .query(&params);
         let response = request
             .send()
             .await
             .map_err(|_| Error::InvalidResponse)?
             .error_for_status()?;
-        let list: VideoCategoryListResponse = response.json().await?;
+        let list: CategoriesResponse = response.json().await?;
 
         debug!("fetched video category list");
 
-        let map: HashMap<String, VideoCategory> =
+        let map: HashMap<String, Category> =
             list.items.into_iter().map(|c| (c.id.clone(), c)).collect();
 
         if map.is_empty() {
@@ -231,7 +262,7 @@ impl YouTube {
         }
     }
 
-    async fn cached_video_categories(&self) -> Result<Arc<HashMap<String, VideoCategory>>, Error> {
+    async fn cached_video_categories(&self) -> Result<Arc<HashMap<String, Category>>, Error> {
         if let Some(instant) = *self.video_categories_updated_at.read().await {
             debug!("using cached video categories");
 
@@ -263,22 +294,20 @@ impl YouTube {
     ///
     /// Returns `Err(Error::NoResults)` if no video is found with the given ID.
     async fn get_video(&self, video_id: &str) -> Result<Video, Error> {
+        debug!(%video_id, "fetching video metadata");
+
         let params = [
             ("id", video_id),
             ("key", &self.api_key),
             ("part", "snippet,statistics,liveStreamingDetails"),
         ];
-        let request = self
-            .client
-            .get(format!("{API_BASE_URL}/videos"))
-            .query(&params);
-        debug!("fetching metadata for video");
+        let request = self.client.get(format!("{BASE_URL}/videos")).query(&params);
         let response = request
             .send()
             .await
             .map_err(|_| Error::InvalidResponse)?
             .error_for_status()?;
-        let list: VideoListResponse = response.json().await?;
+        let list: VideosResponse = response.json().await?;
         debug!("fetched metadata for video");
 
         if let Some(video) = list.items.first() {
@@ -322,6 +351,9 @@ fn parse_youtube_com_url(url: &Url) -> Option<UrlKind> {
         // `/channel/<channel_id>`
         ["channel", channel_id] if !channel_id.is_empty() => {
             Some(UrlKind::Channel((*channel_id).to_string()))
+        }
+        ["shorts", video_id] if !video_id.is_empty() => {
+            Some(UrlKind::Short((*video_id).to_string()))
         }
         // `/*`
         [path] if path.starts_with('@') && path.len() > 1 => {
@@ -367,6 +399,26 @@ mod tests {
             (
                 "https://youtube.com/watch?v=dQw4w9WgXcQ",
                 Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
+            ),
+        ];
+
+        for (url_str, expected) in test_cases {
+            let url = Url::parse(url_str).unwrap();
+
+            assert_eq!(YouTube::parse_youtube_url(&url), expected);
+        }
+    }
+
+    #[test]
+    fn test_parse_youtube_com_shorts_urls() {
+        let test_cases = [
+            (
+                "https://www.youtube.com/shorts/l4s8y-O_ols",
+                Some(UrlKind::Short("l4s8y-O_ols".to_string())),
+            ),
+            (
+                "https://youtube.com/shorts/l4s8y-O_ols",
+                Some(UrlKind::Short("l4s8y-O_ols".to_string())),
             ),
         ];
 
