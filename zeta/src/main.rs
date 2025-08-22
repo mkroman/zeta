@@ -22,7 +22,7 @@ async fn main() -> miette::Result<()> {
 
     tracing::init(&opts.format, &config.tracing)?;
 
-    debug!(url = %config.database.url.as_str(), "connecting to database");
+    debug!("connecting to database");
     let db = database::connect(config.database.url.as_str(), &config.database).await?;
     debug!("connected to database");
 

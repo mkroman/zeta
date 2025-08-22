@@ -1,6 +1,7 @@
 pub mod config;
 pub mod consts;
 pub mod database;
+mod dns;
 mod error;
 mod plugin;
 mod zeta;

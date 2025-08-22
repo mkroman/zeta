@@ -26,6 +26,14 @@ pub struct DbConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DnsConfig {
+    /// Number of records the cache can hold
+    pub cache_size: Option<usize>,
+    /// Number of retries after lookup failure before giving up
+    pub attempts: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TracingConfig {
     /// Enable tracing
     pub enabled: bool,

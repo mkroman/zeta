@@ -9,7 +9,7 @@ max_connections = 5
 [irc]
 
 # The client's nickname.
-nickname = "zeta"
+nickname = "zeta[dev]"
 
 # The hostname to connect to.
 hostname = "irc.rwx.im"
@@ -17,7 +17,7 @@ hostname = "irc.rwx.im"
 #The port number to connect on.
 port = 6667
 
-alt_nicks = ["zeta_"]
+alt_nicks = ["zeta[[dev]]"]
 
 channels = { "#zeta.dev" = {} }
 
@@ -138,6 +138,13 @@ enabled = true
 # A map of additional options to be stored in config.
 #
 # options = { "option1" = "value1", "option2" = "value2" }
+
+[dns]
+# The size in number of records the cache can hold.
+# cache_size = 32
+
+# The number of retries after lookup failure before giving up.
+# attempts = 2
 
 [plugins]
   [plugins.health]
