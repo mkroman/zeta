@@ -1,3 +1,4 @@
+use std::env;
 use std::fmt::Display;
 
 use argh::FromArgs;
@@ -5,10 +6,10 @@ use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
 use reqwest::redirect::Policy;
-use reqwest::StatusCode;
 use serde::Deserialize;
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::{debug, error, info};
+use url::Host;
 
 use crate::consts::HTTP_TIMEOUT;
 use crate::Error as ZetaError;
@@ -33,7 +34,11 @@ pub enum Error {
     Deserialize(#[source] reqwest::Error),
     #[error("http request failed")]
     Request(#[from] reqwest::Error),
-    #[error("invalid IP address or domain")]
+    #[error("could not resolve domain: {0}")]
+    Resolve(#[source] hickory_resolver::ResolveError),
+    #[error("domain resolved no records")]
+    NoDomainRecords,
+    #[error("invalid input")]
     InvalidInput,
 }
 
@@ -88,7 +93,7 @@ impl Plugin for GeoIp {
             .expect("could not build http client");
 
         let api_key =
-            std::env::var("GEOIP_API_KEY").expect("missing GEOIP_API_KEY environment variable");
+            env::var("GEOIP_API_KEY").expect("missing GEOIP_API_KEY environment variable");
 
         GeoIp { client, api_key }
     }
@@ -191,8 +196,32 @@ impl Display for LookupResult {
 }
 
 impl GeoIp {
+    async fn resolve_domain(domain: &str) -> Result<String, Error> {
+        match Host::parse(domain) {
+            Ok(Host::Ipv4(addr)) => Ok(addr.to_string()),
+            Ok(Host::Ipv6(addr)) => Ok(addr.to_string()),
+            Ok(Host::Domain(domain)) => {
+                let resolver = crate::dns::resolver();
+                debug!(%domain, "resolving domain");
+
+                resolver
+                    .lookup_ip(domain)
+                    .await
+                    .map_err(Error::Resolve)
+                    .map(|lookup| lookup.iter().next().ok_or_else(|| Error::NoDomainRecords))?
+                    .map(|ip| ip.to_string())
+            }
+            Err(_) => Err(Error::InvalidInput),
+        }
+    }
+
     pub async fn resolve(&self, name: &str) -> Result<LookupResult, Error> {
-        let params = [("ip", name), ("key", &self.api_key), ("format", "json")];
+        let ip = GeoIp::resolve_domain(name).await?;
+        let params = [
+            ("ip", ip.as_str()),
+            ("key", &self.api_key),
+            ("format", "json"),
+        ];
         let request = self.client.get(BASE_URL).query(&params);
         let response = request.send().await?;
 

@@ -3,11 +3,13 @@ use std::str::FromStr;
 
 use argh::FromArgs;
 use async_trait::async_trait;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::error::ResolveError;
-use hickory_resolver::lookup::Lookup;
-use hickory_resolver::proto::rr::RecordType;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::{
+    config::{ResolveHosts, ResolverConfig, ResolverOpts},
+    lookup::Lookup,
+    name_server::TokioConnectionProvider,
+    proto::rr::RecordType,
+    ResolveError, Resolver, TokioResolver,
+};
 use irc::client::Client;
 use irc::proto::{Command, Message};
 use miette::Diagnostic;
@@ -34,18 +36,14 @@ pub struct Opts {
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum Error {
-    #[error("Unsupported record type: {0}")]
-    InvalidRecordType(#[from] hickory_resolver::proto::error::ProtoError),
-    #[error("No records found")]
-    NoRecordsFound,
-    #[error("Could not parse arguments")]
+    #[error("could not parse arguments")]
     ParseArguments,
-    #[error("Could not resolve domain")]
+    #[error("could not resolve domain: {0}")]
     Resolve(#[source] ResolveError),
 }
 
 pub struct Dig {
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
 }
 
 pub struct LookupResult(Lookup);
@@ -60,13 +58,11 @@ impl Display for LookupResult {
             let record_type = lookup.record_type().to_string();
             let data = lookup.data();
 
-            if let Some(data) = data {
-                write!(fmt, "\x0310>\x0f\x02 Dig:\x02\x0310 ")?;
-                writeln!(
-                    fmt,
-                    "{name:<25} {ttl:<7} {dns_class:<7} {record_type:<7} {data}"
-                )?;
-            }
+            write!(fmt, "\x0310>\x0f\x02 Dig:\x02\x0310 ")?;
+            writeln!(
+                fmt,
+                "{name:<25} {ttl:<7} {dns_class:<7} {record_type:<7} {data}"
+            )?;
         }
 
         Ok(())
@@ -76,13 +72,12 @@ impl Display for LookupResult {
 #[async_trait]
 impl Plugin for Dig {
     fn new() -> Dig {
-        // TODO: Use TLS/DoH
         let config = ResolverConfig::cloudflare();
-
         let mut opts = ResolverOpts::default();
-        opts.use_hosts_file = false;
-
-        let resolver = TokioAsyncResolver::tokio(config, opts);
+        opts.use_hosts_file = ResolveHosts::Never;
+        let resolver = Resolver::builder_with_config(config, TokioConnectionProvider::default())
+            .with_options(opts)
+            .build();
 
         Dig { resolver }
     }
@@ -155,14 +150,7 @@ impl Dig {
 
         match result {
             Ok(result) => Ok(LookupResult(result)),
-            Err(err) => {
-                if let hickory_resolver::error::ResolveErrorKind::NoRecordsFound { .. } = err.kind()
-                {
-                    Err(Error::NoRecordsFound)
-                } else {
-                    Err(Error::Resolve(err))
-                }
-            }
+            Err(err) => Err(Error::Resolve(err)),
         }
     }
 }

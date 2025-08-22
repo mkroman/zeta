@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::Message;
 use reqwest::redirect::Policy;
-use tracing::trace;
+use tracing::debug;
 
 use crate::{consts, Error};
 
@@ -26,17 +26,17 @@ pub mod youtube;
 
 #[async_trait]
 pub trait Plugin: Send + Sync {
-    /// The name of the plugin.
+    /// Returns the name of the plugin.
     fn name() -> Name
     where
         Self: Sized;
 
-    /// The author of the plugin.
+    /// Returns the author of the plugin.
     fn author() -> Author
     where
         Self: Sized;
 
-    /// The version of the plugin.
+    /// Returns the version of the plugin.
     fn version() -> Version
     where
         Self: Sized;
@@ -65,7 +65,7 @@ impl Registry {
     /// Constructs and returns a new plugin registry with initialized plugins.
     pub fn preloaded() -> Registry {
         let mut registry = Self::new();
-        trace!("Registering plugins");
+        debug!("registering plugins");
 
         registry.register::<health::Health>();
         registry.register::<dig::Dig>();
@@ -76,7 +76,7 @@ impl Registry {
         registry.register::<youtube::YouTube>();
 
         let num_plugins = registry.plugins.len();
-        trace!(%num_plugins, "Done registering plugins");
+        debug!(%num_plugins, "finished registering plugins");
 
         registry
     }
@@ -91,15 +91,15 @@ impl Registry {
     }
 }
 
-/// Creates a default HTTP client.
+/// Returns a default HTTP client.
 pub fn build_http_client() -> reqwest::Client {
-    default_http_client_builder()
+    http_client_builder()
         .build()
         .expect("could not build http client")
 }
 
-/// Creates a default HTTP client builder.
-pub fn default_http_client_builder() -> reqwest::ClientBuilder {
+/// Returns a default HTTP client builder.
+pub fn http_client_builder() -> reqwest::ClientBuilder {
     reqwest::ClientBuilder::new()
         .user_agent(consts::HTTP_USER_AGENT)
         .redirect(Policy::none())
