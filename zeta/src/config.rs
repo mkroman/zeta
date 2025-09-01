@@ -3,6 +3,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::consts::{DEFAULT_DB_IDLE_TIMEOUT, DEFAULT_MAX_DB_CONNECTIONS};
+
+/// Main application configuration structure.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     /// Database configuration
@@ -13,6 +16,7 @@ pub struct Config {
     pub irc: IrcConfig,
 }
 
+/// Database connection configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DbConfig {
     /// Connection URL
@@ -25,6 +29,7 @@ pub struct DbConfig {
     pub idle_timeout: Duration,
 }
 
+/// DNS resolution configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DnsConfig {
     /// Number of records the cache can hold
@@ -33,25 +38,29 @@ pub struct DnsConfig {
     pub attempts: Option<usize>,
 }
 
+/// Tracing and logging configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TracingConfig {
     /// Enable tracing
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+/// Configuration for an individual IRC channel.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcChannelConfig {
     /// The shared key to access the channel.
     pub key: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+/// TLS configuration for IRC connection.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcTlsConfig {
     /// Enable TLS.
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+/// IRC client configuration.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcConfig {
     /// The client's nickname.
     pub nickname: String,
@@ -74,31 +83,30 @@ pub struct IrcConfig {
 }
 
 impl IrcConfig {
+    /// Returns the port number to use for this IRC connection.
     #[must_use]
     pub fn port(&self) -> u16 {
-        match self.port {
-            Some(port) => port,
-            None => self.fallback_port(),
-        }
+        self.port.map_or_else(|| self.fallback_port(), |port| port)
+    }
+
+    /// Returns whether TLS is enabled for this IRC connection.
+    fn is_tls_enabled(&self) -> bool {
+        self.tls.as_ref().map(|x| x.enabled) == Some(true)
     }
 
     /// Return the port number to use based on whether the connection requires TLS or not.
     fn fallback_port(&self) -> u16 {
-        if self.tls.as_ref().map(|tls| tls.enabled) == Some(true) {
-            6697
-        } else {
-            6667
-        }
+        if self.is_tls_enabled() { 6697 } else { 6667 }
     }
 }
 
 impl From<IrcConfig> for irc::client::data::Config {
     fn from(config: IrcConfig) -> Self {
         let port = config.port();
-        let channels = config.channels.into_keys().collect::<Vec<_>>().clone();
+        let channels = config.channels.into_keys().collect::<Vec<_>>();
         let use_tls = config.tls.map(|x| x.enabled);
 
-        irc::client::data::Config {
+        Self {
             nickname: Some(config.nickname),
             server: Some(config.hostname),
             port: Some(port),
@@ -110,12 +118,12 @@ impl From<IrcConfig> for irc::client::data::Config {
     }
 }
 
-#[must_use]
-pub const fn default_max_db_connections() -> u32 {
-    crate::database::DEFAULT_MAX_CONNECTIONS
+/// Returns the default value for number of maximum database connections.
+const fn default_max_db_connections() -> u32 {
+    DEFAULT_MAX_DB_CONNECTIONS
 }
 
-#[must_use]
-pub const fn default_db_idle_timeout() -> Duration {
-    crate::database::DEFAULT_IDLE_TIMEOUT
+/// Returns the default duration a connection can be idle before it is dropped.
+const fn default_db_idle_timeout() -> Duration {
+    DEFAULT_DB_IDLE_TIMEOUT
 }

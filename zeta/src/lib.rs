@@ -1,5 +1,12 @@
+//! Zeta is an opinionated IRC bot with a bunch of plugins.
+
+#![allow(clippy::use_self)]
+
+/// Configuration loading and validation
 pub mod config;
+/// Commonly used constants
 pub mod consts;
+/// Database integration
 pub mod database;
 mod dns;
 mod error;

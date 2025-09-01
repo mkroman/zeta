@@ -3,8 +3,8 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 use scraper::{Html, Selector};
 
-use crate::plugin;
 use crate::Error as ZetaError;
+use crate::plugin;
 
 use super::{Author, Name, Plugin, Version};
 
@@ -65,25 +65,25 @@ impl Plugin for GoogleSearch {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref inner_message) = message.command {
-            if let Some(query) = inner_message.strip_prefix(".g ") {
-                let results = self
-                    .search(query.trim())
-                    .await
-                    .map_err(|err| ZetaError::PluginError(Box::new(err)))?;
+        if let Command::PRIVMSG(ref channel, ref inner_message) = message.command
+            && let Some(query) = inner_message.strip_prefix(".g ")
+        {
+            let results = self
+                .search(query.trim())
+                .await
+                .map_err(|err| ZetaError::PluginError(Box::new(err)))?;
 
-                if let Some(result) = results.first() {
-                    client
-                        .send_privmsg(
-                            channel,
-                            format!("\x0310> {} - {}", result.title, result.url),
-                        )
-                        .map_err(ZetaError::IrcClientError)?;
-                } else {
-                    client
-                        .send_privmsg(channel, "\x0310> No results")
-                        .map_err(ZetaError::IrcClientError)?;
-                }
+            if let Some(result) = results.first() {
+                client
+                    .send_privmsg(
+                        channel,
+                        format!("\x0310> {} - {}", result.title, result.url),
+                    )
+                    .map_err(ZetaError::IrcClientError)?;
+            } else {
+                client
+                    .send_privmsg(channel, "\x0310> No results")
+                    .map_err(ZetaError::IrcClientError)?;
             }
         }
 

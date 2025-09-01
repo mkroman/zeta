@@ -1,7 +1,9 @@
+//! Zeta is an opinionated IRC bot with a bunch of plugins.
+
 use ::tracing::debug;
 use figment::{
-    providers::{Env, Format, Toml},
     Figment,
+    providers::{Env, Format, Toml},
 };
 use miette::IntoDiagnostic;
 

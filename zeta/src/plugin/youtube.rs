@@ -12,7 +12,7 @@ use tracing::debug;
 use url::Url;
 
 use super::{Author, Name, Plugin, Version};
-use crate::{plugin, Error as ZetaError};
+use crate::{Error as ZetaError, plugin};
 
 /// YouTube Data API v3 base endpoint URL.
 pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
@@ -155,10 +155,10 @@ impl Plugin for YouTube {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
-            if let Some(urls) = extract_urls(user_message) {
-                self.process_urls(urls, channel, client).await?;
-            }
+        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
+            && let Some(urls) = extract_urls(user_message)
+        {
+            self.process_urls(urls, channel, client).await?;
         }
 
         Ok(())
@@ -263,7 +263,8 @@ impl YouTube {
     }
 
     async fn cached_video_categories(&self) -> Result<Arc<HashMap<String, Category>>, Error> {
-        if let Some(instant) = *self.video_categories_updated_at.read().await {
+        let categories_updated_at = *self.video_categories_updated_at.read().await;
+        if let Some(instant) = categories_updated_at {
             debug!("using cached video categories");
 
             if instant.elapsed() < Duration::from_secs(30 * 60) {
@@ -325,11 +326,7 @@ fn extract_urls(s: &str) -> Option<Vec<Url>> {
         .filter_map(|word| Url::parse(word).ok())
         .collect();
 
-    if urls.is_empty() {
-        None
-    } else {
-        Some(urls)
-    }
+    if urls.is_empty() { None } else { Some(urls) }
 }
 
 /// Extracts a query parameter value from a URL
@@ -382,10 +379,9 @@ mod tests {
     fn it_should_extract_https_urls() {
         assert_eq!(
             extract_urls("nice nok https://github.com/dani-garcia/vaultwarden/pull/3899"),
-            Some(vec![Url::parse(
-                "https://github.com/dani-garcia/vaultwarden/pull/3899"
-            )
-            .unwrap()])
+            Some(vec![
+                Url::parse("https://github.com/dani-garcia/vaultwarden/pull/3899").unwrap()
+            ])
         );
     }
 

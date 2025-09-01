@@ -11,8 +11,8 @@ use thiserror::Error;
 use tracing::{debug, error, info};
 use url::Host;
 
-use crate::consts::HTTP_TIMEOUT;
 use crate::Error as ZetaError;
+use crate::consts::HTTP_TIMEOUT;
 
 use super::{Author, Name, Plugin, Version};
 
@@ -111,38 +111,38 @@ impl Plugin for GeoIp {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref message) = message.command {
-            if let Some(args) = message.strip_prefix(".geoip ") {
-                let sub_args = shlex::split(args)
-                    .ok_or_else(|| ZetaError::PluginError(Box::new(Error::ParseArguments)))?;
-                let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
+        if let Command::PRIVMSG(ref channel, ref message) = message.command
+            && let Some(args) = message.strip_prefix(".geoip ")
+        {
+            let sub_args = shlex::split(args)
+                .ok_or_else(|| ZetaError::PluginError(Box::new(Error::ParseArguments)))?;
+            let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
 
-                match Opts::from_args(&[".geoip"], &sub_args_ref) {
-                    Ok(opts) => match self.resolve(&opts.name).await {
-                        Ok(result) => {
-                            for line in result.to_string().lines() {
-                                client
-                                    .send_privmsg(channel, line)
-                                    .map_err(ZetaError::IrcClientError)?;
-                            }
-                        }
-                        Err(err) => {
+            match Opts::from_args(&[".geoip"], &sub_args_ref) {
+                Ok(opts) => match self.resolve(&opts.name).await {
+                    Ok(result) => {
+                        for line in result.to_string().lines() {
                             client
-                                .send_privmsg(
-                                    channel,
-                                    format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"),
-                                )
+                                .send_privmsg(channel, line)
                                 .map_err(ZetaError::IrcClientError)?;
                         }
-                    },
+                    }
                     Err(err) => {
                         client
                             .send_privmsg(
                                 channel,
-                                format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {}", err.output),
+                                format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"),
                             )
                             .map_err(ZetaError::IrcClientError)?;
                     }
+                },
+                Err(err) => {
+                    client
+                        .send_privmsg(
+                            channel,
+                            format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {}", err.output),
+                        )
+                        .map_err(ZetaError::IrcClientError)?;
                 }
             }
         }
