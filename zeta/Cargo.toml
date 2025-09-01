@@ -2,7 +2,7 @@
 name = "zeta"
 version = "0.1.0"
 authors = ["Mikkel Kroman <mk@maero.dk>"]
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["lib"]
@@ -41,3 +41,19 @@ tracing = "0.1.40"
 tracing-opentelemetry = { version = "0.28.0", features = ["thiserror"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 url = "2.5.4"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+rust_2018_idioms = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_import_braces = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+cargo = "allow"
+doc_markdown = "allow"

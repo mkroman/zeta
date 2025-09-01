@@ -3,6 +3,7 @@
 use miette::Diagnostic;
 use thiserror::Error;
 
+/// General application error.
 #[derive(Error, Debug, Diagnostic)]
 pub enum Error {
     #[error("Cannot connect to database database")]

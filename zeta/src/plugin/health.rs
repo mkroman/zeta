@@ -31,10 +31,10 @@ impl Plugin for Health {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref message) = message.command {
-            if message.starts_with(".health") {
-                client.send_privmsg(channel, self.to_string())?;
-            }
+        if let Command::PRIVMSG(ref channel, ref message) = message.command
+            && message.starts_with(".health")
+        {
+            client.send_privmsg(channel, self.to_string())?;
         }
 
         Ok(())
@@ -45,17 +45,17 @@ impl Display for Health {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(fmt, "\x0310>\x02\x03 Health:\x02\x0310 ")?;
 
-        if let Ok(proc) = Process::current() {
-            if let Ok(memory) = proc.memory_info() {
-                let rss_mib = memory.rss() as f64 / 1024. / 1024.;
-                let vms_mib = memory.vms() as f64 / 1024. / 1024.;
-                let shared_mib = memory.shared() as f64 / 1024. / 1024.;
+        if let Ok(proc) = Process::current()
+            && let Ok(memory) = proc.memory_info()
+        {
+            let rss_mib = memory.rss() as f64 / 1024. / 1024.;
+            let vms_mib = memory.vms() as f64 / 1024. / 1024.;
+            let shared_mib = memory.shared() as f64 / 1024. / 1024.;
 
-                write!(
-                    fmt,
-                    "Memory usage:\x0f {rss_mib:.2} MiB\x0310 (VMS:\x0f {vms_mib:.2} MiB\x0310 Shared:\x0f {shared_mib:.2} MiB\x0310)",
-                )?;
-            }
+            write!(
+                fmt,
+                "Memory usage:\x0f {rss_mib:.2} MiB\x0310 (VMS:\x0f {vms_mib:.2} MiB\x0310 Shared:\x0f {shared_mib:.2} MiB\x0310)",
+            )?;
         }
 
         let metrics = Handle::current().metrics();

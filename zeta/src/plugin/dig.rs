@@ -4,11 +4,11 @@ use std::str::FromStr;
 use argh::FromArgs;
 use async_trait::async_trait;
 use hickory_resolver::{
+    ResolveError, Resolver, TokioResolver,
     config::{ResolveHosts, ResolverConfig, ResolverOpts},
     lookup::Lookup,
     name_server::TokioConnectionProvider,
     proto::rr::RecordType,
-    ResolveError, Resolver, TokioResolver,
 };
 use irc::client::Client;
 use irc::proto::{Command, Message};
@@ -95,38 +95,35 @@ impl Plugin for Dig {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref message) = message.command {
-            if let Some(args) = message.strip_prefix(".dig ") {
-                let sub_args = shlex::split(args)
-                    .ok_or_else(|| ZetaError::PluginError(Box::new(Error::ParseArguments)))?;
-                let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
+        if let Command::PRIVMSG(ref channel, ref message) = message.command
+            && let Some(args) = message.strip_prefix(".dig ")
+        {
+            let sub_args = shlex::split(args)
+                .ok_or_else(|| ZetaError::PluginError(Box::new(Error::ParseArguments)))?;
+            let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
 
-                match Opts::from_args(&[".dig"], &sub_args_ref) {
-                    Ok(opts) => match self.resolve(&opts.name, opts.record_type).await {
-                        Ok(result) => {
-                            for line in result.to_string().lines() {
-                                client
-                                    .send_privmsg(channel, line)
-                                    .map_err(ZetaError::IrcClientError)?;
-                            }
-                        }
-                        Err(err) => {
+            match Opts::from_args(&[".dig"], &sub_args_ref) {
+                Ok(opts) => match self.resolve(&opts.name, opts.record_type).await {
+                    Ok(result) => {
+                        for line in result.to_string().lines() {
                             client
-                                .send_privmsg(
-                                    channel,
-                                    format!("\x0310>\x03\x02 Dig:\x02\x0310 {err}"),
-                                )
+                                .send_privmsg(channel, line)
                                 .map_err(ZetaError::IrcClientError)?;
                         }
-                    },
+                    }
                     Err(err) => {
                         client
-                            .send_privmsg(
-                                channel,
-                                format!("\x0310>\x03\x02 Dig:\x02\x0310 {}", err.output),
-                            )
+                            .send_privmsg(channel, format!("\x0310>\x03\x02 Dig:\x02\x0310 {err}"))
                             .map_err(ZetaError::IrcClientError)?;
                     }
+                },
+                Err(err) => {
+                    client
+                        .send_privmsg(
+                            channel,
+                            format!("\x0310>\x03\x02 Dig:\x02\x0310 {}", err.output),
+                        )
+                        .map_err(ZetaError::IrcClientError)?;
                 }
             }
         }

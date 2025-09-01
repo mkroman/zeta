@@ -31,16 +31,16 @@ impl Plugin for Choices {
         if let Command::PRIVMSG(ref channel, ref inner_message) = message.command {
             let current_nickname = client.current_nickname();
 
-            if let Some(msg) = strip_nick_prefix(inner_message, current_nickname) {
-                if let Some(options) = extract_options(msg) {
-                    let source_nickname = message.source_nickname().unwrap_or("");
-                    let mut rng = rand::thread_rng();
-                    let selection = options.iter().choose(&mut rng).unwrap();
+            if let Some(msg) = strip_nick_prefix(inner_message, current_nickname)
+                && let Some(options) = extract_options(msg)
+            {
+                let source_nickname = message.source_nickname().unwrap_or("");
+                let mut rng = rand::thread_rng();
+                let selection = options.iter().choose(&mut rng).unwrap();
 
-                    client
-                        .send_privmsg(channel, format!("{source_nickname}: {selection}",))
-                        .map_err(ZetaError::IrcClientError)?;
-                }
+                client
+                    .send_privmsg(channel, format!("{source_nickname}: {selection}",))
+                    .map_err(ZetaError::IrcClientError)?;
             }
         }
 

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use sqlx::{
     migrate::Migrator,
     postgres::{PgPool, PgPoolOptions},
@@ -8,11 +6,15 @@ use sqlx::{
 use crate::Error;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
-pub const DEFAULT_MAX_CONNECTIONS: u32 = 5;
-pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Database connection pool.,
 pub type Database = PgPool;
 
+/// Connects to the database using the provided url and configuration.
+///
+/// # Errors
+///
+/// If unable to establish connection to the database, `Err(Error::OpenDatabase)` is returned.
 pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Database, Error> {
     let pool = PgPoolOptions::new()
         .max_connections(config.max_connections)
@@ -24,6 +26,14 @@ pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Data
     Ok(pool)
 }
 
+/// Applies migrations to the database.
+///
+/// # Errors
+///
+/// If a connection cannot be acquired from the connection pool, `Error::AcquireDatabaseConnection`
+/// is returned.
+///
+/// If an error occurs during migration, `Error::DatabaseMigration` is returned.
 pub async fn migrate(pool: Database) -> Result<(), Error> {
     let mut conn = pool
         .acquire()

@@ -4,7 +4,7 @@ use irc::proto::Message;
 use reqwest::redirect::Policy;
 use tracing::debug;
 
-use crate::{consts, Error};
+use crate::{Error, consts};
 
 /// The name of a plugin.
 #[derive(Debug, Clone, Eq, PartialEq)]

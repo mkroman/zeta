@@ -6,3 +6,10 @@ pub const HTTP_USER_AGENT: &str =
 
 /// The duration before a HTTP request times out.
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The default value for the maximum number of connections the database connection pool will keep
+/// open at once.
+pub const DEFAULT_MAX_DB_CONNECTIONS: u32 = 5;
+
+/// The default value for the duration the connection pool will keep an idle connection open.
+pub const DEFAULT_DB_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
