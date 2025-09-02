@@ -7,18 +7,13 @@ idle_timeout = "30s"
 max_connections = 5
 
 [irc]
-
 # The client's nickname.
 nickname = "zeta[dev]"
-
 # The hostname to connect to.
 hostname = "irc.rwx.im"
-
-#The port number to connect on.
+# The port number to connect on.
 port = 6667
-
 alt_nicks = ["zeta[[dev]]"]
-
 channels = { "#zeta.dev" = {} }
 
 # [irc.channels."#zeta.dev"]
@@ -147,15 +142,25 @@ enabled = true
 # attempts = 2
 
 [plugins]
-  [plugins.health]
-  # Enable the plugin.
-  enabled = true
+# Enable the calculator plugin.
+calculator = { enabled = true }
+# Enable the choices plugin.
+choices = { enabled = false }
+# Enable the dig plugin.
+dig = { enabled = true, name_servers = ["1.1.1.1:53", "1.0.0.1:53"] }
+# Enable the geoip plugin.
+geoip = { enabled = true }
+# Enable the google search plugin.
+google_search = { enabled = true }
+# Enable the health plugin.
+health = { enabled = true }
 
-  [plugins.dig]
-  # Enable the plugin.
-  enabled = true
-  # List of nameservers to use for queries.
-  nameservers = ["1.1.1.1", "1.0.0.1"]
+[plugin.youtube]
+# Enable the youtube plugin.
+enabled = true
+# The interval, in seconds, before the cache of video categories is considered
+# expired and therefore updated.
+category_update_interval = 86400
 
 [tracing]
 enabled = true

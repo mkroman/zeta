@@ -14,6 +14,8 @@ pub struct Config {
     pub tracing: TracingConfig,
     /// IRC client configuration
     pub irc: IrcConfig,
+    /// Configuration of individual plugins
+    pub plugins: HashMap<String, figment::value::Value>,
 }
 
 /// Database connection configuration.
@@ -80,6 +82,16 @@ pub struct IrcConfig {
     pub tls: Option<IrcTlsConfig>,
     /// List of channels to automatically manage.
     pub channels: HashMap<String, Option<IrcChannelConfig>>,
+}
+
+/// Configuration of individual plugins.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct PluginConfig {
+    /// Whether or not the plugins is enabled.
+    pub enabled: bool,
+    /// Extra fields
+    #[serde(flatten)]
+    pub extra: HashMap<String, figment::value::Value>,
 }
 
 impl IrcConfig {

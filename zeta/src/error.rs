@@ -23,4 +23,6 @@ pub enum Error {
     IrcError(#[from] irc::error::Error),
     #[error("Plugin error: {0}")]
     PluginError(Box<dyn std::error::Error + Send + Sync>),
+    #[error("invalid configuration for plugin {0}: {1}")]
+    PluginConfig(&'static str, #[source] Box<figment::Error>),
 }

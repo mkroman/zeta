@@ -31,7 +31,7 @@ impl Zeta {
     /// * `Ok(Zeta)` - Successfully created bot instance
     /// * `Err(Error)` - If plugin registry initialization fails
     pub fn from_config(config: Config) -> Result<Self, Error> {
-        let registry = Registry::preloaded();
+        let registry = Registry::new();
 
         Ok(Zeta {
             client: None,
@@ -80,6 +80,14 @@ impl Zeta {
         for plugin in &self.registry.plugins {
             plugin.handle_message(&message, client).await?;
         }
+
+        Ok(())
+    }
+
+    pub async fn load_plugins(&mut self) -> Result<(), Error> {
+        let plugin_configs = &self.config.plugins;
+
+        self.registry.load_plugins(plugin_configs)?;
 
         Ok(())
     }

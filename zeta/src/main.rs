@@ -33,6 +33,7 @@ async fn main() -> miette::Result<()> {
     debug!("database migrations complete");
 
     let mut z = Zeta::from_config(config)?;
+    z.load_plugins().await?;
     z.run().await?;
 
     Ok(())

@@ -1,10 +1,13 @@
+use std::{collections::HashMap, fmt::Display};
+
 use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::Message;
 use reqwest::redirect::Policy;
+use serde::de::DeserializeOwned;
 use tracing::debug;
 
-use crate::{Error, consts};
+use crate::{Error, config::PluginConfig, consts};
 
 /// The name of a plugin.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -23,6 +26,28 @@ pub mod geoip;
 pub mod google_search;
 pub mod health;
 pub mod youtube;
+
+#[async_trait]
+pub trait NewPlugin: Send + Sync {
+    /// The name of the plugin.
+    const NAME: &'static str;
+    /// The author of the plugin.
+    const AUTHOR: Author;
+    /// The version of the plugin.
+    const VERSION: Version;
+
+    type Err: std::error::Error;
+    type Config: DeserializeOwned;
+
+    /// The constructor for a new plugin.
+    fn with_config(config: &Self::Config) -> Self
+    where
+        Self: Sized;
+
+    async fn handle_message(&self, _message: &Message, _client: &Client) -> Result<(), Error> {
+        Ok(())
+    }
+}
 
 #[async_trait]
 pub trait Plugin: Send + Sync {
@@ -51,9 +76,11 @@ pub trait Plugin: Send + Sync {
     }
 }
 
+type Plugins = Vec<Box<dyn NewPlugin>>;
+
 #[derive(Default)]
 pub struct Registry {
-    pub plugins: Vec<Box<dyn Plugin>>,
+    pub plugins: Plugins,
 }
 
 impl Registry {
@@ -62,23 +89,23 @@ impl Registry {
         Registry { plugins: vec![] }
     }
 
-    /// Constructs and returns a new plugin registry with initialized plugins.
-    pub fn preloaded() -> Registry {
-        let mut registry = Self::new();
+    pub fn load_plugin<P: NewPlugin + 'static, E, C>(&mut self, config: P::Config) {
+        debug!(name = P::NAME, "registering plugin");
+
+        let plugin = Box::new(P::with_config(&config));
+
+        self.plugins.push(plugin);
+    }
+
+    pub fn load_plugins(
+        &mut self,
+        configs: &HashMap<String, figment::value::Value>,
+    ) -> Result<(), Error> {
+        self.plugins.clear();
+
         debug!("registering plugins");
 
-        registry.register::<health::Health>();
-        registry.register::<dig::Dig>();
-        registry.register::<choices::Choices>();
-        registry.register::<google_search::GoogleSearch>();
-        registry.register::<calculator::Calculator>();
-        registry.register::<geoip::GeoIp>();
-        registry.register::<youtube::YouTube>();
-
-        let num_plugins = registry.plugins.len();
-        debug!(%num_plugins, "finished registering plugins");
-
-        registry
+        Ok(())
     }
 
     /// Registers a new plugin based on its type.
@@ -88,6 +115,18 @@ impl Registry {
         self.plugins.push(plugin);
 
         true
+    }
+}
+
+impl Display for Author {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(fmt, "{}", self.0)
+    }
+}
+
+impl Display for Version {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(fmt, "{}", self.0)
     }
 }
 

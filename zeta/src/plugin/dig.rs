@@ -1,11 +1,11 @@
-use std::fmt::Display;
 use std::str::FromStr;
+use std::{fmt::Display, net::IpAddr};
 
 use argh::FromArgs;
 use async_trait::async_trait;
 use hickory_resolver::{
     ResolveError, Resolver, TokioResolver,
-    config::{ResolveHosts, ResolverConfig, ResolverOpts},
+    config::{NameServerConfigGroup, ResolveHosts, ResolverConfig, ResolverOpts},
     lookup::Lookup,
     name_server::TokioConnectionProvider,
     proto::rr::RecordType,
@@ -13,11 +13,12 @@ use hickory_resolver::{
 use irc::client::Client;
 use irc::proto::{Command, Message};
 use miette::Diagnostic;
+use serde::Deserialize;
 use thiserror::Error;
+use tracing::debug;
 
-use crate::Error as ZetaError;
-
-use super::{Author, Name, Plugin, Version};
+use super::{Author, Version};
+use crate::{Error as ZetaError, plugin::NewPlugin};
 
 /// DNS lookup utility
 #[derive(FromArgs, Debug)]
@@ -46,6 +47,12 @@ pub struct Dig {
     resolver: TokioResolver,
 }
 
+#[derive(Deserialize)]
+pub struct DigConfig {
+    /// List of nameserver addresses to use.
+    pub name_servers: Vec<IpAddr>,
+}
+
 pub struct LookupResult(Lookup);
 
 impl Display for LookupResult {
@@ -70,9 +77,20 @@ impl Display for LookupResult {
 }
 
 #[async_trait]
-impl Plugin for Dig {
-    fn new() -> Dig {
-        let config = ResolverConfig::cloudflare();
+impl NewPlugin for Dig {
+    const NAME: &str = "dig";
+    const AUTHOR: Author = Author("Mikkel Kroman <mk@maero.dk>");
+    const VERSION: Version = Version("0.1.0");
+
+    type Err = Error;
+    type Config = DigConfig;
+
+    fn with_config(config: &Self::Config) -> Dig {
+        debug!(name_servers = ?config.name_servers, "using nameservers");
+        let domain = None;
+        let search = vec![];
+        let ns_group = NameServerConfigGroup::from_ips_clear(&config.name_servers, 53, true);
+        let config = ResolverConfig::from_parts(domain, search, ns_group);
         let mut opts = ResolverOpts::default();
         opts.use_hosts_file = ResolveHosts::Never;
         let resolver = Resolver::builder_with_config(config, TokioConnectionProvider::default())
@@ -80,18 +98,6 @@ impl Plugin for Dig {
             .build();
 
         Dig { resolver }
-    }
-
-    fn name() -> Name {
-        Name("dig")
-    }
-
-    fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
