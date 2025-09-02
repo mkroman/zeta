@@ -2,29 +2,37 @@ use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
 use rand::prelude::IteratorRandom;
+use serde::Deserialize;
+use thiserror::Error;
 
 use crate::Error as ZetaError;
 
-use super::{Author, Name, Plugin, Version};
+use super::{Author, Version, NewPlugin};
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("no valid options found")]
+    NoOptions,
+}
+
+#[derive(Deserialize)]
+pub struct ChoicesConfig {
+    // No specific config needed for choices, but we need the struct
+}
 
 pub struct Choices;
 
 #[async_trait]
-impl Plugin for Choices {
-    fn new() -> Choices {
-        Choices {}
-    }
+impl NewPlugin for Choices {
+    const NAME: &'static str = "choices";
+    const AUTHOR: Author = Author("Mikkel Kroman <mk@maero.dk>");
+    const VERSION: Version = Version("0.1.0");
 
-    fn name() -> Name {
-        Name("choices")
-    }
+    type Err = Error;
+    type Config = ChoicesConfig;
 
-    fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version("0.1")
+    fn with_config(_config: &Self::Config) -> Self {
+        Choices
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {

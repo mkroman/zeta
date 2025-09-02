@@ -4,30 +4,38 @@ use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
 use psutil::process::Process;
+use serde::Deserialize;
+use thiserror::Error;
 use tokio::runtime::Handle;
 
 use crate::Error as ZetaError;
 
-use super::{Author, Name, Plugin, Version};
+use super::{Author, Version, NewPlugin};
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("health check failed")]
+    HealthCheck,
+}
+
+#[derive(Deserialize)]
+pub struct HealthConfig {
+    // No specific config needed for health, but we need the struct
+}
 
 pub struct Health;
 
 #[async_trait]
-impl Plugin for Health {
-    fn new() -> Health {
+impl NewPlugin for Health {
+    const NAME: &'static str = "health";
+    const AUTHOR: Author = Author("Mikkel Kroman <mk@maero.dk>");
+    const VERSION: Version = Version("0.1.0");
+
+    type Err = Error;
+    type Config = HealthConfig;
+
+    fn with_config(_config: &Self::Config) -> Self {
         Health
-    }
-
-    fn name() -> Name {
-        Name("health")
-    }
-
-    fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {

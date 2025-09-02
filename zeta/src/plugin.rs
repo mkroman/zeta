@@ -7,7 +7,7 @@ use reqwest::redirect::Policy;
 use serde::de::DeserializeOwned;
 use tracing::debug;
 
-use crate::{Error, config::PluginConfig, consts};
+use crate::{Error, consts};
 
 /// The name of a plugin.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -49,52 +49,90 @@ pub trait NewPlugin: Send + Sync {
     }
 }
 
+/// A trait for plugins that can be used as trait objects
 #[async_trait]
-pub trait Plugin: Send + Sync {
-    /// Returns the name of the plugin.
-    fn name() -> Name
-    where
-        Self: Sized;
+pub trait DynPlugin: Send + Sync {
+    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), Error>;
+}
 
-    /// Returns the author of the plugin.
-    fn author() -> Author
-    where
-        Self: Sized;
-
-    /// Returns the version of the plugin.
-    fn version() -> Version
-    where
-        Self: Sized;
-
-    /// The constructor for a new plugin.
-    fn new() -> Self
-    where
-        Self: Sized;
-
-    async fn handle_message(&self, _message: &Message, _client: &Client) -> Result<(), Error> {
-        Ok(())
+// Implement DynPlugin for all NewPlugin types
+#[async_trait]
+impl<T: NewPlugin> DynPlugin for T {
+    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), Error> {
+        NewPlugin::handle_message(self, message, client).await
     }
 }
 
-type Plugins = Vec<Box<dyn NewPlugin>>;
+type Plugins = Vec<Box<dyn DynPlugin>>;
+
+/// A trait for creating plugins dynamically from configuration
+pub trait PluginFactory: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn create(&self, config: &figment::value::Value) -> Result<Box<dyn DynPlugin>, Error>;
+}
+
+/// A factory for creating plugins of a specific type
+pub struct TypedPluginFactory<P: NewPlugin + 'static> {
+    _phantom: std::marker::PhantomData<P>,
+}
+
+impl<P: NewPlugin + 'static> TypedPluginFactory<P> {
+    pub fn new() -> Self {
+        Self {
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<P: NewPlugin + 'static> PluginFactory for TypedPluginFactory<P> {
+    fn name(&self) -> &'static str {
+        P::NAME
+    }
+
+    fn create(&self, config_value: &figment::value::Value) -> Result<Box<dyn DynPlugin>, Error> {
+        let config: P::Config = config_value.deserialize().map_err(|e| {
+            Error::ConfigurationError(format!(
+                "Failed to deserialize config for {}: {}",
+                P::NAME,
+                e
+            ))
+        })?;
+
+        let plugin = P::with_config(&config);
+        Ok(Box::new(plugin))
+    }
+}
 
 #[derive(Default)]
 pub struct Registry {
     pub plugins: Plugins,
+    factories: HashMap<String, Box<dyn PluginFactory>>,
 }
 
 impl Registry {
     /// Constructs and returns a new, empty plugin registry.
     pub fn new() -> Registry {
-        Registry { plugins: vec![] }
+        let mut registry = Registry {
+            plugins: vec![],
+            factories: HashMap::new(),
+        };
+
+        // Register all available plugin factories
+        registry.register_factory(TypedPluginFactory::<dig::Dig>::new());
+        registry.register_factory(TypedPluginFactory::<calculator::Calculator>::new());
+        registry.register_factory(TypedPluginFactory::<choices::Choices>::new());
+        registry.register_factory(TypedPluginFactory::<geoip::GeoIp>::new());
+        registry.register_factory(TypedPluginFactory::<google_search::GoogleSearch>::new());
+        registry.register_factory(TypedPluginFactory::<health::Health>::new());
+        registry.register_factory(TypedPluginFactory::<youtube::YouTube>::new());
+
+        registry
     }
 
-    pub fn load_plugin<P: NewPlugin + 'static, E, C>(&mut self, config: P::Config) {
-        debug!(name = P::NAME, "registering plugin");
-
-        let plugin = Box::new(P::with_config(&config));
-
-        self.plugins.push(plugin);
+    /// Registers a plugin factory
+    pub fn register_factory<F: PluginFactory + 'static>(&mut self, factory: F) {
+        let name = factory.name().to_string();
+        self.factories.insert(name, Box::new(factory));
     }
 
     pub fn load_plugins(
@@ -105,16 +143,25 @@ impl Registry {
 
         debug!("registering plugins");
 
+        // Load each plugin based on its configuration
+        for (plugin_name, config_value) in configs {
+            if let Some(factory) = self.factories.get(plugin_name) {
+                match factory.create(config_value) {
+                    Ok(plugin) => {
+                        debug!(name = plugin_name, "successfully registered plugin");
+                        self.plugins.push(plugin);
+                    }
+                    Err(err) => {
+                        debug!(name = plugin_name, error = %err, "failed to register plugin");
+                        return Err(err);
+                    }
+                }
+            } else {
+                debug!(name = plugin_name, "unknown plugin, skipping");
+            }
+        }
+
         Ok(())
-    }
-
-    /// Registers a new plugin based on its type.
-    pub fn register<P: Plugin + 'static>(&mut self) -> bool {
-        let plugin = Box::new(P::new());
-
-        self.plugins.push(plugin);
-
-        true
     }
 }
 

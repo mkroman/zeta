@@ -147,9 +147,9 @@ calculator = { enabled = true }
 # Enable the choices plugin.
 choices = { enabled = false }
 # Enable the dig plugin.
-dig = { enabled = true, name_servers = ["1.1.1.1:53", "1.0.0.1:53"] }
+dig = { enabled = true, name_servers = ["1.1.1.1", "1.0.0.1"] }
 # Enable the geoip plugin.
-geoip = { enabled = true }
+geoip = { enabled = true, api_key = "DDF2A8B42AA33C08344AE90D17B8CA6B" }
 # Enable the google search plugin.
 google_search = { enabled = true }
 # Enable the health plugin.

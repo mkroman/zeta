@@ -3,35 +3,45 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
+use serde::Deserialize;
+use thiserror::Error;
 
 use crate::Error as ZetaError;
 
-use super::{Author, Name, Plugin, Version};
+use super::{Author, Version, NewPlugin};
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("evaluation error: {0}")]
+    Evaluation(String),
+    #[error("could not create rink context")]
+    Context,
+}
+
+#[derive(Deserialize)]
+pub struct CalculatorConfig {
+    // No specific config needed for calculator, but we need the struct
+}
 
 pub struct Calculator {
     ctx: Mutex<rink_core::Context>,
 }
 
 #[async_trait]
-impl Plugin for Calculator {
-    fn new() -> Calculator {
+impl NewPlugin for Calculator {
+    const NAME: &'static str = "calculator";
+    const AUTHOR: Author = Author("Mikkel Kroman <mk@maero.dk>");
+    const VERSION: Version = Version("0.1.0");
+
+    type Err = Error;
+    type Config = CalculatorConfig;
+
+    fn with_config(_config: &Self::Config) -> Self {
         let ctx = rink_core::simple_context().expect("could not create rink-rs context");
 
         Calculator {
             ctx: Mutex::new(ctx),
         }
-    }
-
-    fn name() -> Name {
-        Name("calculator")
-    }
-
-    fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -57,9 +67,9 @@ impl Plugin for Calculator {
 }
 
 impl Calculator {
-    pub fn eval(&self, line: &str) -> Result<String, String> {
+    pub fn eval(&self, line: &str) -> Result<String, Error> {
         let mut ctx = self.ctx.lock().unwrap();
 
-        rink_core::one_line(&mut ctx, line)
+        rink_core::one_line(&mut ctx, line).map_err(Error::Evaluation)
     }
 }

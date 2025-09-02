@@ -25,4 +25,6 @@ pub enum Error {
     PluginError(Box<dyn std::error::Error + Send + Sync>),
     #[error("invalid configuration for plugin {0}: {1}")]
     PluginConfig(&'static str, #[source] Box<figment::Error>),
+    #[error("configuration error: {0}")]
+    ConfigurationError(String),
 }

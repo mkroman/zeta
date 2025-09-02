@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
 
-use super::{Author, Name, Plugin, Version};
+use super::{Author, Version, NewPlugin};
 use crate::{Error as ZetaError, plugin};
 
 /// YouTube Data API v3 base endpoint URL.
@@ -133,25 +133,23 @@ pub type VideosResponse = ApiListResponse<Video>;
 /// Response with a list of YouTube video categories.
 pub type CategoriesResponse = ApiListResponse<Category>;
 
+#[derive(Deserialize)]
+pub struct YoutubeConfig {
+    /// YouTube Data API v3 authentication key
+    pub api_key: String,
+}
+
 #[async_trait]
-impl Plugin for YouTube {
-    fn new() -> YouTube {
-        let api_key =
-            std::env::var("YOUTUBE_API_KEY").expect("missing YOUTUBE_API_KEY environment variable");
+impl NewPlugin for YouTube {
+    const NAME: &'static str = "youtube";
+    const AUTHOR: Author = Author("Mikkel Kroman <mk@maero.dk>");
+    const VERSION: Version = Version("0.1.0");
 
-        YouTube::with_config(api_key)
-    }
+    type Err = Error;
+    type Config = YoutubeConfig;
 
-    fn name() -> Name {
-        Name("youtube")
-    }
-
-    fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version("0.1")
+    fn with_config(config: &Self::Config) -> Self {
+        YouTube::with_config(config.api_key.clone())
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {

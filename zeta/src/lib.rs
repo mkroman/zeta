@@ -15,5 +15,5 @@ mod zeta;
 
 pub use config::Config;
 pub use error::Error;
-pub use plugin::{Plugin, Registry};
+pub use plugin::Registry;
 pub use zeta::Zeta;

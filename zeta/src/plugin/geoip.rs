@@ -1,4 +1,3 @@
-use std::env;
 use std::fmt::Display;
 
 use argh::FromArgs;
@@ -14,9 +13,15 @@ use url::Host;
 use crate::Error as ZetaError;
 use crate::consts::HTTP_TIMEOUT;
 
-use super::{Author, Name, Plugin, Version};
+use super::{Author, Version, NewPlugin};
 
 const BASE_URL: &str = "https://api.ip2location.io";
+
+#[derive(Deserialize)]
+pub struct GeoIpConfig {
+    /// API key for IP2Location service
+    pub api_key: String,
+}
 
 pub struct GeoIp {
     pub client: reqwest::Client,
@@ -84,30 +89,25 @@ pub struct IpInfo {
 }
 
 #[async_trait]
-impl Plugin for GeoIp {
-    fn new() -> GeoIp {
+impl NewPlugin for GeoIp {
+    const NAME: &'static str = "geoip";
+    const AUTHOR: Author = Author("Mikkel Kroman <mk@maero.dk>");
+    const VERSION: Version = Version("0.1.0");
+
+    type Err = Error;
+    type Config = GeoIpConfig;
+
+    fn with_config(config: &Self::Config) -> Self {
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
             .timeout(HTTP_TIMEOUT)
             .build()
             .expect("could not build http client");
 
-        let api_key =
-            env::var("GEOIP_API_KEY").expect("missing GEOIP_API_KEY environment variable");
-
-        GeoIp { client, api_key }
-    }
-
-    fn name() -> Name {
-        Name("geoip")
-    }
-
-    fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version("0.1")
+        GeoIp {
+            client,
+            api_key: config.api_key.clone(),
+        }
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {

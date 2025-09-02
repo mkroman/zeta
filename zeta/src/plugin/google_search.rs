@@ -2,11 +2,12 @@ use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
 use scraper::{Html, Selector};
+use serde::Deserialize;
 
 use crate::Error as ZetaError;
 use crate::plugin;
 
-use super::{Author, Name, Plugin, Version};
+use super::{Author, Version, NewPlugin};
 
 /// Represents a single search result obtained from the search operation.
 pub struct SearchResult {
@@ -29,6 +30,11 @@ pub enum Error {
     MissingElement(String),
 }
 
+#[derive(Deserialize)]
+pub struct GoogleSearchConfig {
+    // No specific config needed for Google search, but we need the struct
+}
+
 pub struct GoogleSearch {
     client: reqwest::Client,
     article_selector: Selector,
@@ -38,30 +44,21 @@ pub struct GoogleSearch {
 }
 
 #[async_trait]
-impl Plugin for GoogleSearch {
+impl NewPlugin for GoogleSearch {
+    const NAME: &'static str = "google_search";
+    const AUTHOR: Author = Author("Mikkel Kroman <mk@maero.dk>");
+    const VERSION: Version = Version("0.1.0");
+
+    type Err = Error;
+    type Config = GoogleSearchConfig;
+
     /// Creates a new instance of the [`GoogleSearch`] plugin.
     ///
     /// Initializes an HTTP client with a specific user agent, no redirects, and a timeout.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the HTTP client cannot be built.
-    fn new() -> GoogleSearch {
+    fn with_config(_config: &Self::Config) -> Self {
         let client = plugin::build_http_client();
 
         GoogleSearch::with_client(client)
-    }
-
-    fn name() -> Name {
-        Name("google_search")
-    }
-
-    fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
