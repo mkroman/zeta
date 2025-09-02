@@ -10,7 +10,7 @@ use tokio::runtime::Handle;
 
 use crate::Error as ZetaError;
 
-use super::{Author, Version, NewPlugin, PluginActor, MessageEnvelope, MessageResponse};
+use super::{Author, Version, NewPlugin, MessageEnvelope, MessageResponse, PluginContext};
 use super::messages::{HealthCheckRequest, HealthCheckResponse, HealthStatus};
 
 #[derive(Error, Debug)]
@@ -39,7 +39,7 @@ impl NewPlugin for Health {
         Health
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(&self, message: &Message, client: &Client, _ctx: &PluginContext) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref message) = message.command
             && message.starts_with(".health")
         {
@@ -52,7 +52,7 @@ impl NewPlugin for Health {
 
 #[async_trait]
 impl PluginActor for Health {
-    async fn handle_actor_message(&self, envelope: MessageEnvelope) -> MessageResponse {
+    async fn handle_actor_message(&self, envelope: MessageEnvelope, _ctx: &PluginContext) -> MessageResponse {
         // Handle health check requests from other plugins
         if let Some(health_request) = envelope.message.as_any().downcast_ref::<HealthCheckRequest>() {
             let response = self.create_health_response(health_request);
@@ -62,7 +62,7 @@ impl PluginActor for Health {
         MessageResponse::NotHandled
     }
     
-    fn message_subscriptions(&self) -> Vec<&'static str> {
+    fn subscriptions() -> Vec<&'static str> {
         vec!["health_check_request"]
     }
 }

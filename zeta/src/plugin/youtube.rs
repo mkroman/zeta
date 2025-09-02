@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
 
-use super::{Author, Version, NewPlugin};
+use super::{Author, Version, NewPlugin, MessageEnvelope, MessageResponse, PluginContext};
 use crate::{Error as ZetaError, plugin};
 
 /// YouTube Data API v3 base endpoint URL.
@@ -152,7 +152,7 @@ impl NewPlugin for YouTube {
         YouTube::with_config(config.api_key.clone())
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(&self, message: &Message, client: &Client, _ctx: &super::PluginContext) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = extract_urls(user_message)
         {
@@ -160,6 +160,77 @@ impl NewPlugin for YouTube {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl PluginActor for YouTube {
+    async fn handle_actor_message(&self, envelope: MessageEnvelope, _ctx: &PluginContext) -> MessageResponse {
+        use crate::plugin::messages::{FunctionCallRequest, FunctionCallResponse, YouTubeSearchArgs, YouTubeVideoResult};
+        
+        // Handle function call requests
+        if let Some(request) = envelope.message.as_any().downcast_ref::<FunctionCallRequest>() {
+            let start_time = Instant::now();
+            
+            let result = match request.function_name.as_str() {
+                "get_video_info" => {
+                    // Parse arguments 
+                    match serde_json::from_value::<YouTubeSearchArgs>(request.args.clone()) {
+                        Ok(args) => {
+                            // Extract video ID from query (assuming it's a video ID)
+                            let video_id = &args.query;
+                            
+                            // Get video information
+                            match self.get_video(video_id).await {
+                                Ok(video) => {
+                                    let snippet = video.snippet.as_ref();
+                                    let statistics = video.statistics.as_ref();
+                                    let title = snippet.map_or("Unknown".to_string(), |s| s.title.clone());
+                                    let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
+                                    let categories = self.cached_video_categories().await.unwrap_or_default();
+                                    let category = categories
+                                        .get(&category_id)
+                                        .map_or("unknown".to_string(), |s| s.snippet.title.clone());
+                                    let channel_name = snippet
+                                        .map_or("unknown".to_string(), |s| s.channel_title.clone());
+                                    let view_count = statistics
+                                        .and_then(|s| str::parse::<u64>(&s.view_count).ok())
+                                        .unwrap_or(0);
+                                    
+                                    let video_result = YouTubeVideoResult {
+                                        title,
+                                        channel: channel_name,
+                                        view_count,
+                                        category,
+                                        video_id: video.id.clone(),
+                                    };
+                                    
+                                    Ok(serde_json::to_value(video_result).unwrap())
+                                }
+                                Err(e) => Err(format!("Failed to get video info: {}", e))
+                            }
+                        }
+                        Err(e) => Err(format!("Invalid arguments for get_video_info: {}", e))
+                    }
+                }
+                _ => Err(format!("Unknown function: {}", request.function_name))
+            };
+            
+            let duration = start_time.elapsed();
+            let response = FunctionCallResponse {
+                request_id: request.request_id.clone(),
+                result,
+                duration_ms: duration.as_millis() as u64,
+            };
+            
+            return MessageResponse::Reply(Box::new(response));
+        }
+        
+        MessageResponse::NotHandled
+    }
+    
+    fn subscriptions() -> Vec<&'static str> {
+        vec!["function_call_request"]
     }
 }
 

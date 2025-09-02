@@ -35,7 +35,7 @@ impl NewPlugin for Choices {
         Choices
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(&self, message: &Message, client: &Client, _ctx: &super::PluginContext) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref inner_message) = message.command {
             let current_nickname = client.current_nickname();
 

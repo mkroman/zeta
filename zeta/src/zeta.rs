@@ -77,9 +77,8 @@ impl Zeta {
     async fn handle_message(&self, client: &Client, message: Message) -> Result<(), Error> {
         debug!(?message, "processing irc message");
 
-        for plugin in &self.registry.plugins {
-            plugin.handle_message(&message, client).await?;
-        }
+        // Use the new unified message handling
+        self.registry.handle_irc_message(&message, client).await?;
 
         Ok(())
     }

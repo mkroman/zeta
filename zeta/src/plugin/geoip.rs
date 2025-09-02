@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::time::Instant;
 
 use argh::FromArgs;
 use async_trait::async_trait;
@@ -13,7 +14,7 @@ use url::Host;
 use crate::Error as ZetaError;
 use crate::consts::HTTP_TIMEOUT;
 
-use super::{Author, Version, NewPlugin};
+use super::{Author, Version, NewPlugin, MessageEnvelope, MessageResponse, PluginContext};
 
 const BASE_URL: &str = "https://api.ip2location.io";
 
@@ -110,7 +111,7 @@ impl NewPlugin for GeoIp {
         }
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(&self, message: &Message, client: &Client, _ctx: &super::PluginContext) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref message) = message.command
             && let Some(args) = message.strip_prefix(".geoip ")
         {
@@ -148,6 +149,62 @@ impl NewPlugin for GeoIp {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl PluginActor for GeoIp {
+    async fn handle_actor_message(&self, envelope: MessageEnvelope, _ctx: &PluginContext) -> MessageResponse {
+        use crate::plugin::messages::{FunctionCallRequest, FunctionCallResponse, GeoIpArgs, GeoIpResult};
+        
+        // Handle function call requests
+        if let Some(request) = envelope.message.as_any().downcast_ref::<FunctionCallRequest>() {
+            let start_time = Instant::now();
+            
+            let result = match request.function_name.as_str() {
+                "lookup" => {
+                    // Parse arguments
+                    match serde_json::from_value::<GeoIpArgs>(request.args.clone()) {
+                        Ok(args) => {
+                            // Perform the GeoIP lookup
+                            match self.resolve(&args.target).await {
+                                Ok(lookup_result) => {
+                                    let info = &lookup_result.0;
+                                    let geoip_result = GeoIpResult {
+                                        ip: info.ip.clone(),
+                                        country: info.country_name.clone(),
+                                        region: info.region_name.clone(),
+                                        city: info.city_name.clone(),
+                                        asn: info.asn.clone(),
+                                        asn_name: info.asn_name.clone(),
+                                    };
+                                    
+                                    Ok(serde_json::to_value(geoip_result).unwrap())
+                                }
+                                Err(e) => Err(format!("GeoIP lookup failed: {}", e))
+                            }
+                        }
+                        Err(e) => Err(format!("Invalid arguments for lookup: {}", e))
+                    }
+                }
+                _ => Err(format!("Unknown function: {}", request.function_name))
+            };
+            
+            let duration = start_time.elapsed();
+            let response = FunctionCallResponse {
+                request_id: request.request_id.clone(),
+                result,
+                duration_ms: duration.as_millis() as u64,
+            };
+            
+            return MessageResponse::Reply(Box::new(response));
+        }
+        
+        MessageResponse::NotHandled
+    }
+    
+    fn subscriptions() -> Vec<&'static str> {
+        vec!["function_call_request"]
     }
 }
 

@@ -3,11 +3,12 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 use scraper::{Html, Selector};
 use serde::Deserialize;
+use std::time::Instant;
 
 use crate::Error as ZetaError;
 use crate::plugin;
 
-use super::{Author, Version, NewPlugin};
+use super::{Author, Version, NewPlugin, MessageEnvelope, MessageResponse, PluginContext};
 
 /// Represents a single search result obtained from the search operation.
 pub struct SearchResult {
@@ -61,7 +62,7 @@ impl NewPlugin for GoogleSearch {
         GoogleSearch::with_client(client)
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(&self, message: &Message, client: &Client, _ctx: &super::PluginContext) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref inner_message) = message.command
             && let Some(query) = inner_message.strip_prefix(".g ")
         {
@@ -85,6 +86,63 @@ impl NewPlugin for GoogleSearch {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl PluginActor for GoogleSearch {
+    async fn handle_actor_message(&self, envelope: MessageEnvelope, _ctx: &PluginContext) -> MessageResponse {
+        use crate::plugin::messages::{FunctionCallRequest, FunctionCallResponse, GoogleSearchArgs, GoogleSearchResult};
+        
+        // Handle function call requests
+        if let Some(request) = envelope.message.as_any().downcast_ref::<FunctionCallRequest>() {
+            let start_time = Instant::now();
+            
+            let result = match request.function_name.as_str() {
+                "search" => {
+                    // Parse arguments
+                    match serde_json::from_value::<GoogleSearchArgs>(request.args.clone()) {
+                        Ok(args) => {
+                            // Perform the search
+                            match self.search(&args.query).await {
+                                Ok(results) => {
+                                    let limit = args.limit.unwrap_or(results.len());
+                                    let limited_results: Vec<GoogleSearchResult> = results
+                                        .into_iter()
+                                        .take(limit)
+                                        .map(|r| GoogleSearchResult {
+                                            title: r.title,
+                                            url: r.url,
+                                            snippet: r.snippet,
+                                        })
+                                        .collect();
+                                    
+                                    Ok(serde_json::to_value(limited_results).unwrap())
+                                }
+                                Err(e) => Err(format!("Search failed: {}", e))
+                            }
+                        }
+                        Err(e) => Err(format!("Invalid arguments for search: {}", e))
+                    }
+                }
+                _ => Err(format!("Unknown function: {}", request.function_name))
+            };
+            
+            let duration = start_time.elapsed();
+            let response = FunctionCallResponse {
+                request_id: request.request_id.clone(),
+                result,
+                duration_ms: duration.as_millis() as u64,
+            };
+            
+            return MessageResponse::Reply(Box::new(response));
+        }
+        
+        MessageResponse::NotHandled
+    }
+    
+    fn subscriptions() -> Vec<&'static str> {
+        vec!["function_call_request"]
     }
 }
 

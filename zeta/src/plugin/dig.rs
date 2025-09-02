@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use std::{fmt::Display, net::IpAddr};
+use std::{fmt::Display, net::IpAddr, time::Instant};
 
 use argh::FromArgs;
 use async_trait::async_trait;
@@ -17,7 +17,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use tracing::debug;
 
-use super::{Author, Version};
+use super::{Author, Version, MessageEnvelope, MessageResponse, PluginContext};
 use crate::{Error as ZetaError, plugin::NewPlugin};
 
 /// DNS lookup utility
@@ -100,7 +100,7 @@ impl NewPlugin for Dig {
         Dig { resolver }
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(&self, message: &Message, client: &Client, _ctx: &super::PluginContext) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref message) = message.command
             && let Some(args) = message.strip_prefix(".dig ")
         {
@@ -135,6 +135,75 @@ impl NewPlugin for Dig {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl PluginActor for Dig {
+    async fn handle_actor_message(&self, envelope: MessageEnvelope, _ctx: &PluginContext) -> MessageResponse {
+        use crate::plugin::messages::{FunctionCallRequest, FunctionCallResponse, DigArgs, DigResult};
+        
+        // Handle function call requests
+        if let Some(request) = envelope.message.as_any().downcast_ref::<FunctionCallRequest>() {
+            let start_time = Instant::now();
+            
+            let result = match request.function_name.as_str() {
+                "lookup" => {
+                    // Parse arguments
+                    match serde_json::from_value::<DigArgs>(request.args.clone()) {
+                        Ok(args) => {
+                            // Determine record type
+                            let record_type = args.record_type.as_ref()
+                                .and_then(|rt| RecordType::from_str(&rt.to_uppercase()).ok())
+                                .unwrap_or(RecordType::A);
+                            
+                            // Perform the DNS lookup
+                            match self.resolve(&args.domain, record_type).await {
+                                Ok(lookup_result) => {
+                                    // Convert lookup results to DigResult format
+                                    let mut records = Vec::new();
+                                    let mut ttl = None;
+                                    
+                                    for record in lookup_result.0.record_iter() {
+                                        records.push(record.data().to_string());
+                                        if ttl.is_none() {
+                                            ttl = Some(record.ttl());
+                                        }
+                                    }
+                                    
+                                    let dig_result = DigResult {
+                                        domain: args.domain.clone(),
+                                        record_type: record_type.to_string(),
+                                        records,
+                                        ttl,
+                                    };
+                                    
+                                    Ok(serde_json::to_value(dig_result).unwrap())
+                                }
+                                Err(e) => Err(format!("DNS lookup failed: {}", e))
+                            }
+                        }
+                        Err(e) => Err(format!("Invalid arguments for lookup: {}", e))
+                    }
+                }
+                _ => Err(format!("Unknown function: {}", request.function_name))
+            };
+            
+            let duration = start_time.elapsed();
+            let response = FunctionCallResponse {
+                request_id: request.request_id.clone(),
+                result,
+                duration_ms: duration.as_millis() as u64,
+            };
+            
+            return MessageResponse::Reply(Box::new(response));
+        }
+        
+        MessageResponse::NotHandled
+    }
+    
+    fn subscriptions() -> Vec<&'static str> {
+        vec!["function_call_request"]
     }
 }
 
