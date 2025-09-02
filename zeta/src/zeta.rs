@@ -87,7 +87,7 @@ impl Zeta {
     pub async fn load_plugins(&mut self) -> Result<(), Error> {
         let plugin_configs = &self.config.plugins;
 
-        self.registry.load_plugins(plugin_configs)?;
+        self.registry.load_plugins(plugin_configs).await?;
 
         Ok(())
     }

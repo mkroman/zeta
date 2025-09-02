@@ -8,7 +8,8 @@ use thiserror::Error;
 
 use crate::Error as ZetaError;
 
-use super::{Author, Version, NewPlugin};
+use super::{Author, Version, NewPlugin, PluginActor, MessageEnvelope, MessageResponse, PluginBus, ActorId};
+use super::messages::{EventMessage, HealthCheckRequest};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -25,6 +26,7 @@ pub struct CalculatorConfig {
 
 pub struct Calculator {
     ctx: Mutex<rink_core::Context>,
+    bus: Option<PluginBus>,
 }
 
 #[async_trait]
@@ -41,6 +43,7 @@ impl NewPlugin for Calculator {
 
         Calculator {
             ctx: Mutex::new(ctx),
+            bus: None,
         }
     }
 
@@ -53,6 +56,9 @@ impl NewPlugin for Calculator {
                     client
                         .send_privmsg(channel, format!("\x0310> {result}"))
                         .map_err(ZetaError::IrcClientError)?;
+                    
+                    // Send calculation event to other plugins
+                    self.send_calculation_event(query, &result).await;
                 }
                 Err(err) => {
                     client
@@ -66,10 +72,69 @@ impl NewPlugin for Calculator {
     }
 }
 
+#[async_trait]
+impl PluginActor for Calculator {
+    async fn handle_actor_message(&self, envelope: MessageEnvelope) -> MessageResponse {
+        // Calculator can respond to health check requests
+        if envelope.message.message_type() == "health_check_request" {
+            // Send a health check to the health plugin as a demonstration
+            if let Some(bus) = &self.bus {
+                let health_request = HealthCheckRequest {
+                    requester: Self::NAME.to_string(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                };
+                
+                let _ = bus.send_to(
+                    ActorId::new(Self::NAME),
+                    ActorId::new("health"),
+                    Box::new(health_request),
+                ).await;
+            }
+            return MessageResponse::Handled;
+        }
+        
+        MessageResponse::NotHandled
+    }
+    
+    fn message_subscriptions(&self) -> Vec<&'static str> {
+        vec!["health_check_request"]
+    }
+}
+
 impl Calculator {
     pub fn eval(&self, line: &str) -> Result<String, Error> {
         let mut ctx = self.ctx.lock().unwrap();
 
         rink_core::one_line(&mut ctx, line).map_err(Error::Evaluation)
+    }
+    
+    pub fn set_bus(&mut self, bus: PluginBus) {
+        self.bus = Some(bus);
+    }
+    
+    async fn send_calculation_event(&self, query: &str, result: &str) {
+        if let Some(bus) = &self.bus {
+            let mut event_data = serde_json::Map::new();
+            event_data.insert("query".to_string(), serde_json::Value::String(query.to_string()));
+            event_data.insert("result".to_string(), serde_json::Value::String(result.to_string()));
+            
+            let event = EventMessage {
+                event_type: "calculation_performed".to_string(),
+                source: Self::NAME.to_string(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                data: serde_json::Value::Object(event_data),
+            };
+            
+            let _ = bus.broadcast(
+                ActorId::new(Self::NAME),
+                Box::new(event),
+            ).await;
+        }
     }
 }

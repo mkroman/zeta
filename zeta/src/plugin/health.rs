@@ -10,7 +10,8 @@ use tokio::runtime::Handle;
 
 use crate::Error as ZetaError;
 
-use super::{Author, Version, NewPlugin};
+use super::{Author, Version, NewPlugin, PluginActor, MessageEnvelope, MessageResponse};
+use super::messages::{HealthCheckRequest, HealthCheckResponse, HealthStatus};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -46,6 +47,50 @@ impl NewPlugin for Health {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl PluginActor for Health {
+    async fn handle_actor_message(&self, envelope: MessageEnvelope) -> MessageResponse {
+        // Handle health check requests from other plugins
+        if let Some(health_request) = envelope.message.as_any().downcast_ref::<HealthCheckRequest>() {
+            let response = self.create_health_response(health_request);
+            return MessageResponse::Reply(Box::new(response));
+        }
+        
+        MessageResponse::NotHandled
+    }
+    
+    fn message_subscriptions(&self) -> Vec<&'static str> {
+        vec!["health_check_request"]
+    }
+}
+
+impl Health {
+    fn create_health_response(&self, _request: &HealthCheckRequest) -> HealthCheckResponse {
+        let (memory_usage, status) = if let Ok(proc) = Process::current()
+            && let Ok(memory) = proc.memory_info()
+        {
+            let rss_mib = memory.rss() as f64 / 1024. / 1024.;
+            (rss_mib, HealthStatus::Healthy)
+        } else {
+            (0.0, HealthStatus::Unhealthy)
+        };
+
+        let metrics = Handle::current().metrics();
+        let mut custom_metrics = std::collections::HashMap::new();
+        custom_metrics.insert("num_workers".to_string(), metrics.num_workers() as f64);
+        custom_metrics.insert("alive_tasks".to_string(), metrics.num_alive_tasks() as f64);
+        custom_metrics.insert("global_queue_depth".to_string(), metrics.global_queue_depth() as f64);
+
+        HealthCheckResponse {
+            plugin_name: Self::NAME.to_string(),
+            status,
+            uptime_seconds: 0, // TODO: track actual uptime
+            memory_usage_mb: memory_usage,
+            custom_metrics,
+        }
     }
 }
 
