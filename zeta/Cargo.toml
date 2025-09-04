@@ -30,7 +30,7 @@ psutil = "3.3.0"
 rand = "0.8.5"
 reqwest = { version = "0.12.15", features = ["json"] }
 rink-core = { version = "0.8.0", features = ["bundle-files"] }
-scraper = "0.23.1"
+scraper = "0.24.0"
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.140"
 shlex = "1.3.0"
