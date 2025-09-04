@@ -3,5 +3,11 @@
   "extends": [
     "config:recommended",
     "config:best-practices"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": "tracing-opentelemetry",
+      "groupName": "opentelemetry-rust monorepo"
+    }
   ]
 }
