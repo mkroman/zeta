@@ -27,7 +27,7 @@ opentelemetry-semantic-conventions = "0.27.0"
 opentelemetry-stdout = "0.27.0"
 opentelemetry_sdk = { version = "0.27.0", features = ["rt-tokio"] }
 psutil = "3.3.0"
-rand = "0.8.5"
+rand = "0.9.0"
 reqwest = { version = "0.12.15", features = ["json"] }
 rink-core = { version = "0.8.0", features = ["bundle-files"] }
 scraper = "0.23.1"
