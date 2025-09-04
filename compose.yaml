@@ -1,6 +1,6 @@
 services:
   ircd:
-    image: inspircd/inspircd-docker:3
+    image: inspircd/inspircd-docker:4@sha256:fb9775ddb9ac2ba883d1a4e24b8f8afa99ca67c246378c70a386caac552605fb
     ports:
     - '6667:6667'
     environment:
