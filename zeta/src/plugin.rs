@@ -22,8 +22,10 @@ pub mod dig;
 pub mod geoip;
 pub mod google_search;
 pub mod health;
+pub mod tvmaze;
 pub mod youtube;
 
+/// The base trait that all plugins must implement.
 #[async_trait]
 pub trait Plugin: Send + Sync {
     /// Returns the name of the plugin.
@@ -51,13 +53,16 @@ pub trait Plugin: Send + Sync {
     }
 }
 
+/// Plugin registry.
 #[derive(Default)]
 pub struct Registry {
+    /// List of loaded plugins.
     pub plugins: Vec<Box<dyn Plugin>>,
 }
 
 impl Registry {
     /// Constructs and returns a new, empty plugin registry.
+    #[must_use]
     pub fn new() -> Registry {
         Registry { plugins: vec![] }
     }
@@ -74,6 +79,7 @@ impl Registry {
         registry.register::<calculator::Calculator>();
         registry.register::<geoip::GeoIp>();
         registry.register::<youtube::YouTube>();
+        registry.register::<tvmaze::Tvmaze>();
 
         let num_plugins = registry.plugins.len();
         debug!(%num_plugins, "finished registering plugins");
