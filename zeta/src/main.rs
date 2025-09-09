@@ -12,6 +12,7 @@ mod tracing;
 
 use zeta::database;
 use zeta::{Config, Zeta};
+pub use zeta::{Error, config};
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
@@ -22,7 +23,7 @@ async fn main() -> miette::Result<()> {
         .extract()
         .into_diagnostic()?;
 
-    tracing::init(&opts.format, &config.tracing)?;
+    tracing::try_init(&config.tracing)?;
 
     debug!("connecting to database");
     let db = database::connect(config.database.url.as_str(), &config.database).await?;

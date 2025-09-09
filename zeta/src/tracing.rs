@@ -1,65 +1,74 @@
-use miette::IntoDiagnostic;
-use opentelemetry::{
-    trace::{TraceError, TracerProvider},
-    KeyValue,
+use std::env;
+
+use miette::{IntoDiagnostic, WrapErr};
+use opentelemetry::InstrumentationScope;
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_resource_detectors::{
+    HostResourceDetector, K8sResourceDetector, OsResourceDetector,
 };
-use opentelemetry_sdk::export::trace::SpanExporter;
-use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
-use opentelemetry_sdk::{runtime, Resource};
-use opentelemetry_semantic_conventions::{
-    resource::{SERVICE_NAME, SERVICE_VERSION},
-    SCHEMA_URL,
-};
-use tracing::info;
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
+use tracing::{debug, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::cli::Format;
-use zeta::config;
+use crate::config;
 
-// Create a Resource that captures information about the entity for which telemetry is recorded.
-fn resource() -> Resource {
-    Resource::from_schema_url(
-        [
-            KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
-            KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
-        ],
-        SCHEMA_URL,
-    )
+/// Returns a list of resource detectors to use to enrich OTel attributes.
+fn otel_resource_detectors() -> Vec<Box<dyn ResourceDetector>> {
+    vec![
+        Box::new(EnvResourceDetector::default()),
+        Box::new(OsResourceDetector),
+        Box::new(HostResourceDetector::default()),
+        Box::new(K8sResourceDetector),
+    ]
 }
 
-fn init_tracer_provider() -> Result<SdkTracerProvider, TraceError> {
-    let mut exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .build()?;
-
-    exporter.set_resource(&resource());
-
-    Ok(SdkTracerProvider::builder()
-        .with_batch_exporter(exporter, runtime::Tokio)
-        .build())
-}
-
-pub fn init(stdout_format: &Format, _tracing: &config::TracingConfig) -> miette::Result<()> {
+pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
     // Create a tracing layer with the configured tracer
-    let tracer_provider = init_tracer_provider().into_diagnostic()?;
+    let telemetry_layer = if tracing.enabled {
+        // Set up the OTLP exporter
+        let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .build()
+            .into_diagnostic()
+            .wrap_err("building otlp http exporter failed")?;
+        // Set up resource detectors to enrich otel attributes
+        let res_detectors = otel_resource_detectors();
+        // Resource detectors for tracing context
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_batch_exporter(otlp_exporter)
+            .with_resource(
+                Resource::builder_empty()
+                    .with_service_name(env!("CARGO_PKG_NAME"))
+                    .with_detectors(&res_detectors)
+                    .build(),
+            )
+            .build();
+        let scope = InstrumentationScope::builder(env!("CARGO_PKG_NAME"))
+            .with_version(env!("CARGO_PKG_VERSION"))
+            .with_schema_url("https://opentelemetry.io/schema/1.0.0")
+            .build();
+        let tracer = provider.tracer_with_scope(scope);
+        let layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    // Create a tracing layer with the configured tracer
-    let tracer = tracer_provider.tracer(env!("CARGO_PKG_NAME"));
-    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        Some(layer)
+    } else {
+        None
+    };
+
+    let stdout_layer = tracing_subscriber::fmt::layer().json();
 
     // initialize tracing
-    let base = tracing_subscriber::registry()
+    tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "zeta=trace".into()),
+                .unwrap_or_else(|_| "zeta=debug".into()),
         )
-        .with(telemetry);
-
-    match stdout_format {
-        Format::Json => base.with(tracing_subscriber::fmt::layer().json()).init(),
-        Format::Pretty => base.with(tracing_subscriber::fmt::layer().pretty()).init(),
-        Format::Compact => base.with(tracing_subscriber::fmt::layer().compact()).init(),
-    }
+        .with(telemetry_layer)
+        .with(stdout_layer)
+        .try_init()
+        .into_diagnostic()
+        .wrap_err("could not init registry")?;
 
     info!("tracing initialized");
 

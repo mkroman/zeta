@@ -1,6 +1,9 @@
 [workspace]
-resolver = "2"
-members = ["zeta"]
+resolver = "3"
+members = [ "zeta"]
+
+[patch.crates-io]
+darwin-libproc = { path = "stub/darwin-libproc" }
 
 [profile.release]
 lto = "fat"
