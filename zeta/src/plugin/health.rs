@@ -51,7 +51,10 @@ impl Plugin for Health {
             && message.starts_with(".health")
             && let Some(snapshot) = Snapshot::capture()
         {
-            client.send_privmsg(channel, format!("\x0310> Health:\x0f {snapshot}"))?;
+            client.send_privmsg(
+                channel,
+                format!("\x0310>\x0f\x02 Health\x02\x0310: {snapshot}"),
+            )?;
         }
 
         Ok(())
@@ -104,5 +107,23 @@ impl Display for Snapshot {
         write!(fmt, "(\x0f{}\x0310 scheduled)", self.global_queue_depth)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use irc::proto::FormattedStringExt;
+    use wildmatch::WildMatch;
+
+    #[tokio::test]
+    async fn it_should_format_message() {
+        let snapshot = Snapshot::capture().expect("could not capture");
+        let snapshot_message = snapshot.to_string().strip_formatting();
+        let wildmatcher = WildMatch::new(
+            "Memory usage: * MiB (VMS: * MiB Shared: * MiB) Workers: * Tasks: * (* scheduled)",
+        );
+        assert!(wildmatcher.matches(&snapshot_message));
     }
 }

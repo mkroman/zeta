@@ -59,3 +59,6 @@ pedantic = "warn"
 nursery = "warn"
 cargo = "allow"
 doc_markdown = "allow"
+
+[dev-dependencies]
+wildmatch = "2.4.0"
