@@ -5,9 +5,16 @@
     "config:best-practices"
   ],
   "packageRules": [
+    // Bundle opentelemetry packages in a single PR
     {
       "matchPackageNames": "tracing-opentelemetry",
       "groupName": "opentelemetry-rust monorepo"
+    },
+    {
+      "matchManagers": ["docker-compose"],
+      "matchPackageNames": "inspircd/inspircd-docker",
+      "versioning": "semver",
+      "pinDigests": false
     }
   ]
 }
