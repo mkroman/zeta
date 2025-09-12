@@ -10,10 +10,22 @@
       "matchPackageNames": "tracing-opentelemetry",
       "groupName": "opentelemetry-rust monorepo"
     },
+    // Don't pin digest in inspircd image tag
     {
       "matchManagers": ["docker-compose"],
-      "matchPackageNames": "inspircd/inspircd-docker",
+      "matchPackageNames": ["inspircd/inspircd-docker"],
       "versioning": "semver",
+      "pinDigests": false
+    },
+    // Don't pin official GitHub Actions versions
+    {
+      "matchDepTypes": ["action"],
+      "matchPackageNames": ["actions/cache", "actions/checkout"],
+      "pinDigests": false,
+    },
+    // Don't pin the images used in the Dockerfile
+    {
+      "matchDatasources": ["docker"],
       "pinDigests": false
     }
   ]
