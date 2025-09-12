@@ -37,7 +37,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-${{ matrix.rust }}-
     - name: Run Clippy check
-      uses: clechasseur/rs-clippy-check@50a0fd6f2f1a33307d603ee50d91eadbb2561120 # v3.0.6
+      uses: clechasseur/rs-clippy-check@69da786488ddcceb16285b0219841750089369ba # v5.0.1
       with:
         args: --all-features
     - name: Run tests
