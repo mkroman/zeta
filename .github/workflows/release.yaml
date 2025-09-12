@@ -17,7 +17,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v4
     - name: Install Rust ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@a54c7afa936fefeb4456b2dd8068152669aa8203 # master
+      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
       with:
         toolchain: ${{ matrix.rust }}
         components: clippy
