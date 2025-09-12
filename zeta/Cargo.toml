@@ -62,4 +62,4 @@ cargo = "allow"
 doc_markdown = "allow"
 
 [dev-dependencies]
-wildmatch = "2.4.0"
+wildmatch = "=2.4.0"
