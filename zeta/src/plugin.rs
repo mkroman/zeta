@@ -22,6 +22,7 @@ pub mod dig;
 pub mod geoip;
 pub mod google_search;
 pub mod health;
+pub mod reddit;
 pub mod tvmaze;
 pub mod youtube;
 
@@ -80,6 +81,7 @@ impl Registry {
         registry.register::<geoip::GeoIp>();
         registry.register::<youtube::YouTube>();
         registry.register::<tvmaze::Tvmaze>();
+        registry.register::<reddit::Reddit>();
 
         let num_plugins = registry.plugins.len();
         debug!(%num_plugins, "finished registering plugins");

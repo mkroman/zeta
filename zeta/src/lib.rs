@@ -11,6 +11,7 @@ pub mod database;
 mod dns;
 mod error;
 mod plugin;
+mod utils;
 mod zeta;
 
 pub use config::Config;
