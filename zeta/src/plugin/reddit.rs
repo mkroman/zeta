@@ -3,10 +3,16 @@ use std::fmt::Write;
 use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
+use reqwest::StatusCode;
+use serde::Deserialize;
+use tracing::{debug, error, info};
 use url::Url;
 
 use super::{Author, Name, Plugin, Version};
+use crate::utils::Truncatable;
 use crate::{Error as ZetaError, plugin};
+
+pub const REDDIT_BASE_URL: &str = "https://www.reddit.com";
 
 pub struct Reddit {
     client: reqwest::Client,
@@ -16,24 +22,24 @@ pub struct Reddit {
 pub enum Error {
     #[error("request error: {0}")]
     Reqwest(#[source] reqwest::Error),
+    #[error("could not deserialize comments json: {0}")]
+    DeserializeComments(#[source] serde_path_to_error::Error<serde_json::Error>),
+    #[error("could not deserialize subreddit json: {0}")]
+    DeserializeSubreddit(#[source] serde_path_to_error::Error<serde_json::Error>),
+    #[error("subreddit was not found")]
+    SubredditNotFound,
+    #[error("submission not found")]
+    SubmissionNotFound,
+    #[error("http error: {0}")]
+    Http(#[source] reqwest::Error),
+    #[error("could not deserialize response as it is in unexpected format")]
+    InvalidResponse,
 }
 
 /// A link to a Reddit resource.
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Link {
-    /// Link to a specific subreddit.
-    Subreddit(String),
-    /// Link to a specific submission in a specific subreddit.
-    ///
-    /// E.g.: `/r/europe/comments/1ngmbks/a_street_in_bologna/`
-    /// Where the fields are: `/r/<subreddit>/comments/<id>`
-    Submission {
-        /// The unique id of the submission.
-        id: String,
-        /// The name of the subreddit the submission is in.
-        subreddit: String,
-    },
     /// Link to a comment.
     ///
     /// E.g.: `/r/europe/comments/1ngmbks/a_street_in_bologna/ne581kz/`
@@ -46,12 +52,13 @@ pub enum Link {
         /// The subreddit of the submission with the comment.
         subreddit: String,
     },
-    /// Link to a users profile.
-    ///
-    /// E.g.: `/user/EcstaticYesterday605`
-    User(String),
-    /// Link to a video via v.redd.it.
-    Video(String),
+    /// A link that redirects the user to the comments page for the relevant submission.
+    Comments {
+        /// The submission id.
+        id: String,
+    },
+    /// Link to a gallery with multiple images.
+    Gallery(String),
     /// Link to an image via i.redd.it.
     Image(String),
     /// Link to an image via preview.redd.it.
@@ -63,11 +70,91 @@ pub enum Link {
         /// The subreddit.
         subreddit: String,
     },
-    /// A link that redirects the user to the comments page for the relevant submission.
-    Comments {
-        /// The submission id.
+    /// Link to a specific submission in a specific subreddit.
+    ///
+    /// E.g.: `/r/europe/comments/1ngmbks/a_street_in_bologna/`
+    /// Where the fields are: `/r/<subreddit>/comments/<id>`
+    Submission {
+        /// The unique id of the submission.
         id: String,
+        /// The name of the subreddit the submission is in.
+        subreddit: String,
     },
+    /// Link to a specific subreddit.
+    Subreddit(String),
+    /// Link to a users profile.
+    ///
+    /// E.g.: `/user/EcstaticYesterday605`
+    User(String),
+    /// Link to a video via v.redd.it.
+    Video(String),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+#[allow(unused)]
+pub enum Item {
+    #[serde(rename = "t1")]
+    Comment(Comment),
+    #[serde(rename = "t5")]
+    Subreddit(Subreddit),
+    #[serde(rename = "t3")]
+    Submission(Submission),
+    #[serde(rename = "Listing")]
+    Listing(Listing),
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct Listing {
+    // Not sure what this is.
+    pub dist: Option<usize>,
+    pub after: Option<String>,
+    pub before: Option<String>,
+    pub modhash: Option<String>,
+    pub geo_filter: Option<String>,
+    pub children: Vec<Item>,
+}
+
+/// Details about a Subreddit.
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct Submission {
+    pub subreddit: String,
+    pub title: String,
+    /// Number of upvotes.
+    pub ups: u32,
+    /// Upvote ratio.
+    pub upvote_ratio: f32,
+    /// The main selftext.
+    pub selftext: String,
+    pub url: String,
+}
+
+/// Details about a Subreddit.
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct Subreddit {
+    /// Display name of the subreddit.
+    pub display_name: String,
+    /// Title of the subreddit.
+    pub title: String,
+    /// Public description.
+    pub public_description: String,
+    /// Number of subscribers.
+    pub subscribers: u32,
+    /// Relative URL.
+    pub url: String,
+}
+
+/// Details about a comment.
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct Comment {
+    pub id: String,
+    pub body: String,
+    pub body_html: String,
+    pub subreddit: String,
 }
 
 #[async_trait]
@@ -110,7 +197,7 @@ impl Reddit {
     ) -> Result<(), Error> {
         for url in urls {
             if let Some(link) = Reddit::parse_reddit_url(url) {
-                let () = self.process_url(link, channel, client).await?;
+                self.process_url(link, channel, client).await?;
             }
         }
 
@@ -119,15 +206,127 @@ impl Reddit {
 
     async fn process_url(&self, link: Link, channel: &str, client: &Client) -> Result<(), Error> {
         match link {
-            Link::Subreddit(subreddit) => {
-                client
-                    .send_privmsg(channel, format!("fetching subreddit {subreddit}"))
-                    .unwrap();
-            }
+            Link::Gallery(id)
+            | Link::Comment { id, .. }
+            | Link::Comments { id }
+            | Link::Submission { id, .. } => match self.submission(&id).await {
+                Ok(submission) => {
+                    let title = submission.title;
+                    let subreddit = submission.subreddit;
+
+                    client
+                        .send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))
+                        .unwrap();
+                }
+                Err(err) => {
+                    client
+                        .send_privmsg(
+                            channel,
+                            format!("\x0310> could not fetch submission details: {err}"),
+                        )
+                        .unwrap();
+                }
+            },
+            Link::Subreddit(subreddit) => match self.subreddit_about_info(&subreddit).await {
+                Ok(subreddit) => {
+                    let title = subreddit.title;
+                    let description = subreddit.public_description.truncate_with_suffix(250, "…");
+
+                    client
+                        .send_privmsg(
+                            channel,
+                            format!("\x0310>\x03\x02 {title}:\x02\x0310 {description}"),
+                        )
+                        .unwrap();
+                }
+                Err(err) => {
+                    client
+                        .send_privmsg(
+                            channel,
+                            format!("\x0310> could not fetch subreddit details: {err}"),
+                        )
+                        .unwrap();
+                }
+            },
             _ => {}
         }
 
         Ok(())
+    }
+
+    /// Fetches and returns details about a given submission.
+    async fn submission(&self, article: &str) -> Result<Submission, Error> {
+        let request = self
+            .client
+            .get(format!("{REDDIT_BASE_URL}/comments/{article}.json"));
+        debug!(%article, "requesting comments");
+        let response = request.send().await.map_err(Error::Reqwest)?;
+
+        match response.error_for_status() {
+            Ok(response) => {
+                debug!("response is ok, parsing comments");
+
+                let text = response.text().await.map_err(Error::Reqwest)?;
+                let jd = &mut serde_json::Deserializer::from_str(&text);
+                // The request returns 2 Listing ojects
+                let (submission, comments): (Item, Item) = serde_path_to_error::deserialize(jd)
+                    .inspect_err(|err| error!(?err, %text, "could not parse comments response"))
+                    .map_err(Error::DeserializeComments)?;
+                debug!(x = ?(&submission, comments), "finished parsing item");
+
+                match submission {
+                    Item::Listing(listing) => listing
+                        .children
+                        .into_iter()
+                        .find_map(|x| match x {
+                            Item::Submission(s) => Some(s),
+                            _ => None,
+                        })
+                        .ok_or_else(|| Error::InvalidResponse),
+                    _ => Err(Error::InvalidResponse),
+                }
+            }
+            Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
+                info!(%article, %err, "could not fetch comments for article");
+
+                Err(Error::SubmissionNotFound)
+            }
+            Err(err) => Err(Error::Http(err)),
+        }
+    }
+
+    /// Fetches and returns details about the subreddit.
+    #[tracing::instrument(skip(self))]
+    async fn subreddit_about_info(&self, name: &str) -> Result<Subreddit, Error> {
+        let request = self
+            .client
+            .get(format!("{REDDIT_BASE_URL}/r/{name}/about.json"));
+        debug!(%name, "requesting subreddit details");
+        let response = request.send().await.map_err(Error::Reqwest)?;
+
+        match response.error_for_status() {
+            Ok(response) => {
+                debug!("response is ok, parsing subreddit");
+
+                let text = response.text().await.map_err(Error::Reqwest)?;
+                let jd = &mut serde_json::Deserializer::from_str(&text);
+                let item: Item = serde_path_to_error::deserialize(jd)
+                    .inspect_err(|err| error!(?err, %text, "could not parse subreddit response"))
+                    .map_err(Error::DeserializeSubreddit)?;
+                debug!(?item, "finished parsing item");
+
+                match item {
+                    Item::Subreddit(subreddit) => Ok(subreddit),
+                    _ => Err(Error::InvalidResponse),
+                }
+            }
+            Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
+                info!(%name, %err, "subreddit not found");
+
+                Err(Error::SubredditNotFound)
+            }
+            Err(err) => Err(Error::Http(err)),
+        }
     }
 
     /// Attempts to parse the given `url` as a reddit URL.
@@ -181,6 +380,8 @@ fn parse_reddit_com_url(url: &Url) -> Option<Link> {
         ["comments", id] | ["comments", id, ""] => Some(Link::Comments {
             id: (*id).to_string(),
         }),
+        // /gallery/<id>
+        ["gallery", id] => Some(Link::Gallery((*id).to_string())),
         // /user/<name>[/]
         ["user", username] | ["user", username, ""] => Some(Link::User((*username).to_string())),
         _ => None,
@@ -384,5 +585,34 @@ mod tests {
                 assert_eq!(Reddit::parse_reddit_url(&url), expected);
             }
         }
+    }
+
+    #[test]
+    fn parse_gallery_urls() {
+        let test_cases = [(
+            &["https://www.reddit.com/gallery/1nj9601"],
+            Some(Link::Gallery("1nj9601".to_string())),
+        )];
+
+        for (url_strs, expected) in test_cases {
+            for url_str in url_strs {
+                let url = Url::parse(url_str).unwrap();
+
+                assert_eq!(Reddit::parse_reddit_url(&url), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn parse_comments_listing_json() -> Result<(), Box<dyn std::error::Error>> {
+        let text = include_str!("../../tests/fixtures/reddit/comments/1niz1ru.json");
+        let jd = &mut serde_json::Deserializer::from_str(text);
+        let (item1, item2): (Item, Item) = serde_path_to_error::deserialize(jd)
+            .inspect_err(|err| error!(?err, %text, "could not parse comments response"))?;
+
+        assert!(matches!(item1, Item::Listing(_)));
+        assert!(matches!(item2, Item::Listing(_)));
+
+        Ok(())
     }
 }

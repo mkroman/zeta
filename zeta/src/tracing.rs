@@ -8,7 +8,7 @@ use opentelemetry_resource_detectors::{
 };
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
-use tracing::{debug, info};
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config;
