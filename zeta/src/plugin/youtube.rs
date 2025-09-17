@@ -7,8 +7,9 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
+use time::{OffsetDateTime, UtcDateTime};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, error};
 use url::Url;
 
 use super::{Author, Name, Plugin, Version};
@@ -35,6 +36,8 @@ pub struct YouTube {
     api_key: String,
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
+    /// The `.yt` IRC command
+    command: crate::command::Command,
     /// Thread-safe cache of video categories mapped by category ID
     video_categories: RwLock<Arc<HashMap<String, Category>>>,
     /// Timestamp tracking when video categories were last fetched for cache invalidation
@@ -46,10 +49,12 @@ pub struct YouTube {
 pub enum Error {
     #[error("server returned invalid response")]
     InvalidResponse,
-    #[error("request error")]
+    #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
     #[error("no results")]
     NoResults,
+    #[error("deserialization error: {0}")]
+    Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -88,6 +93,7 @@ pub struct Statistics {
 
 /// A YouTube video.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct Video {
     pub kind: String,
@@ -95,6 +101,51 @@ pub struct Video {
     pub id: String,
     pub snippet: Option<Snippet>,
     pub statistics: Option<Statistics>,
+}
+
+/// Search Result.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+pub struct Search {
+    pub kind: String,
+    pub etag: String,
+    pub id: SearchId,
+    pub snippet: SearchSnippet,
+}
+
+// TODO: rework this so it uses an enum
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+pub struct SearchId {
+    pub kind: String,
+    pub video_id: Option<String>,
+    pub channel_id: Option<String>,
+    pub playlist_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+pub struct SearchSnippet {
+    pub title: String,
+    pub description: String,
+    pub channel_id: String,
+    pub channel_title: String,
+    pub thumbnails: HashMap<String, SearchSnippetThumbnail>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub published_at: OffsetDateTime,
+    pub live_broadcast_content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+pub struct SearchSnippetThumbnail {
+    pub url: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Details about a video category.
@@ -120,6 +171,7 @@ pub struct Category {
 
 /// Generic response type for list results.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct ApiListResponse<R> {
     pub kind: String,
@@ -132,6 +184,8 @@ pub type VideosResponse = ApiListResponse<Video>;
 
 /// Response with a list of YouTube video categories.
 pub type CategoriesResponse = ApiListResponse<Category>;
+
+pub type SearchListResponse = ApiListResponse<Search>;
 
 #[async_trait]
 impl Plugin for YouTube {
@@ -155,10 +209,26 @@ impl Plugin for YouTube {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = extract_urls(user_message)
-        {
-            self.process_urls(urls, channel, client).await?;
+        if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
+            if let Some(urls) = extract_urls(user_message) {
+                self.process_urls(urls, channel, client).await?;
+            } else if let Some(args) = self.command.parse(user_message) {
+                match self.search(args).await {
+                    Ok(results) => {
+                        if let Some(result) = results.first() {
+                            let id = result.id.video_id.as_ref().unwrap();
+                            let title = &result.snippet.title;
+
+                            client.send_privmsg(channel, format!("\x0310>\x03\x02 YouTube:\x02\x0310 {title} - https://www.youtube.com/watch?v={id}"))?;
+                        } else {
+                            client.send_privmsg(channel, "\x0310> No results")?;
+                        }
+                    }
+                    Err(err) => {
+                        client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -168,10 +238,12 @@ impl Plugin for YouTube {
 impl YouTube {
     pub fn with_config(api_key: String) -> Self {
         let client = plugin::build_http_client();
+        let command = crate::command::Command::new(".yt");
 
         Self {
             api_key,
             client,
+            command,
             video_categories: RwLock::new(Arc::new(HashMap::new())),
             video_categories_updated_at: RwLock::new(None),
         }
@@ -289,6 +361,41 @@ impl YouTube {
 
         let vc = self.video_categories.read().await;
         Ok(vc.clone())
+    }
+
+    /// Searches for videos using the given query.
+    async fn search(&self, query: &str) -> Result<Vec<Search>, Error> {
+        debug!(%query, "searching for videos");
+
+        let params = [
+            ("q", query),
+            ("key", &self.api_key),
+            ("part", "snippet"),
+            ("type", "video"),
+            ("safeSearch", "none"),
+        ];
+
+        debug!(?params, "searching for videos");
+
+        let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
+        let response = request.send().await.map_err(Error::Request)?;
+
+        match response.error_for_status() {
+            Ok(response) => {
+                debug!("response is ok, parsing as json");
+                let text = response.text().await.map_err(Error::Request)?;
+                let de = &mut serde_json::Deserializer::from_str(&text);
+                let result: SearchListResponse = serde_path_to_error::deserialize(de)
+                    .inspect_err(|err| error!(?err, %text, "could not parse response"))
+                    .map_err(Error::Deserialize)?;
+                let items = result.items;
+
+                debug!(?items, "returning items");
+
+                Ok(items)
+            }
+            Err(err) => Err(Error::Request(err)),
+        }
     }
 
     /// Fetches metadata for a YouTube video using its video ID.

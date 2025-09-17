@@ -5,10 +5,12 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 
 use crate::Error as ZetaError;
+use crate::command::Command as ZetaCommand;
 
 use super::{Author, Name, Plugin, Version};
 
 pub struct Calculator {
+    command: ZetaCommand,
     ctx: Mutex<rink_core::Context>,
 }
 
@@ -16,8 +18,10 @@ pub struct Calculator {
 impl Plugin for Calculator {
     fn new() -> Calculator {
         let ctx = rink_core::simple_context().expect("could not create rink-rs context");
+        let command = ZetaCommand::new(".r");
 
         Calculator {
+            command,
             ctx: Mutex::new(ctx),
         }
     }
@@ -35,8 +39,8 @@ impl Plugin for Calculator {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref inner_message) = message.command
-            && let Some(query) = inner_message.strip_prefix(".r ")
+        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
+            && let Some(query) = self.command.parse(user_message)
         {
             match self.eval(query) {
                 Ok(result) => {

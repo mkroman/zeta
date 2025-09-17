@@ -4,6 +4,7 @@ use irc::proto::{Command, Message};
 use scraper::{Html, Selector};
 
 use crate::Error as ZetaError;
+use crate::command::Command as ZetaCommand;
 use crate::plugin;
 
 use super::{Author, Name, Plugin, Version};
@@ -31,6 +32,7 @@ pub enum Error {
 
 pub struct GoogleSearch {
     client: reqwest::Client,
+    command: ZetaCommand,
     article_selector: Selector,
     a_selector: Selector,
     p_selector: Selector,
@@ -65,8 +67,8 @@ impl Plugin for GoogleSearch {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref inner_message) = message.command
-            && let Some(query) = inner_message.strip_prefix(".g ")
+        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
+            && let Some(query) = self.command.parse(user_message)
         {
             let results = self
                 .search(query.trim())
@@ -93,8 +95,11 @@ impl Plugin for GoogleSearch {
 
 impl GoogleSearch {
     pub fn with_client(client: reqwest::Client) -> Self {
+        let command = ZetaCommand::new(".g");
+
         Self {
             client,
+            command,
             article_selector: Selector::parse("main article").unwrap(),
             a_selector: Selector::parse("a[href]").unwrap(),
             p_selector: Selector::parse("p").unwrap(),
