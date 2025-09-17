@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use argh::FromArgs;
 
-/// Masked mails server
+/// Zeta IRC bot
 #[derive(FromArgs, Debug)]
 pub struct Opts {
     /// the path to the config file

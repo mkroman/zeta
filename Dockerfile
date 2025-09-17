@@ -1,10 +1,12 @@
-FROM rust:latest AS cache
+FROM rust:1.89-bookworm AS cache
 
 WORKDIR /usr/src/zeta
 
-COPY zeta/Cargo.toml Cargo.lock .
+ADD zeta/Cargo.toml zeta/Cargo.toml
+COPY Cargo.toml Cargo.lock .
+COPY stub stub
 
-RUN mkdir src && echo '' > src/lib.rs && cargo fetch
+RUN mkdir -p zeta/src && echo '' > zeta/src/lib.rs && cargo fetch
 
 FROM cache AS builder
 
