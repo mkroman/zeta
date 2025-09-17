@@ -7,6 +7,7 @@ use time::Duration;
 use tracing::{debug, error, info};
 
 use crate::Error as ZetaError;
+use crate::command::Command as ZetaCommand;
 use crate::plugin;
 
 use super::{Author, Name, Plugin, Version};
@@ -25,6 +26,7 @@ pub enum Error {
 
 pub struct Tvmaze {
     client: reqwest::Client,
+    command: ZetaCommand,
 }
 
 #[allow(dead_code)]
@@ -119,9 +121,9 @@ impl Plugin for Tvmaze {
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(query) = user_message.strip_prefix(".next ")
+            && let Some(args) = self.command.parse(user_message)
         {
-            match self.single_search(query).await {
+            match self.single_search(args).await {
                 Ok(show) => {
                     if let Some(episode) = show.embedded.and_then(|e| e.next_episode) {
                         let title = episode.name;
@@ -167,8 +169,9 @@ impl Plugin for Tvmaze {
 impl Tvmaze {
     pub fn new() -> Self {
         let client = plugin::build_http_client();
+        let command = ZetaCommand::new(".next");
 
-        Tvmaze { client }
+        Tvmaze { client, command }
     }
 
     /// Looks up a single show using the `/singlesearch` endpoint.

@@ -15,7 +15,7 @@ use irc::proto::{Command, Message};
 use miette::Diagnostic;
 use thiserror::Error;
 
-use crate::Error as ZetaError;
+use crate::{Error as ZetaError, command::Command as ZetaCommand};
 
 use super::{Author, Name, Plugin, Version};
 
@@ -43,6 +43,7 @@ pub enum Error {
 }
 
 pub struct Dig {
+    command: ZetaCommand,
     resolver: TokioResolver,
 }
 
@@ -78,8 +79,9 @@ impl Plugin for Dig {
         let resolver = Resolver::builder_with_config(config, TokioConnectionProvider::default())
             .with_options(opts)
             .build();
+        let command = ZetaCommand::new(".dig");
 
-        Dig { resolver }
+        Dig { command, resolver }
     }
 
     fn name() -> Name {
@@ -95,8 +97,8 @@ impl Plugin for Dig {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref message) = message.command
-            && let Some(args) = message.strip_prefix(".dig ")
+        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
+            && let Some(args) = self.command.parse(user_message)
         {
             let sub_args = shlex::split(args)
                 .ok_or_else(|| ZetaError::PluginError(Box::new(Error::ParseArguments)))?;

@@ -2,6 +2,7 @@
 
 #![allow(clippy::use_self)]
 
+pub mod command;
 /// Configuration loading and validation
 pub mod config;
 /// Commonly used constants

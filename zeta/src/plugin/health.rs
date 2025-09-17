@@ -7,10 +7,14 @@ use psutil::process::Process;
 use tokio::runtime::Handle;
 
 use crate::Error as ZetaError;
+use crate::command::Command as ZetaCommand;
 
 use super::{Author, Name, Plugin, Version};
 
-pub struct Health;
+pub struct Health {
+    /// The `.health` command parser.
+    command: ZetaCommand,
+}
 
 /// Process telemetry snapshot.
 pub struct Snapshot {
@@ -31,7 +35,9 @@ pub struct Snapshot {
 #[async_trait]
 impl Plugin for Health {
     fn new() -> Health {
-        Health
+        let command = ZetaCommand::new(".health");
+
+        Health { command }
     }
 
     fn name() -> Name {
@@ -47,8 +53,8 @@ impl Plugin for Health {
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref message) = message.command
-            && message.starts_with(".health")
+        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
+            && let Some(_) = self.command.parse(user_message)
             && let Some(snapshot) = Snapshot::capture()
         {
             client.send_privmsg(

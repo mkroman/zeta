@@ -12,6 +12,7 @@ use tracing::{debug, error, info};
 use url::Host;
 
 use crate::Error as ZetaError;
+use crate::command::Command as ZetaCommand;
 use crate::consts::HTTP_TIMEOUT;
 
 use super::{Author, Name, Plugin, Version};
@@ -21,6 +22,7 @@ const BASE_URL: &str = "https://api.ip2location.io";
 pub struct GeoIp {
     pub client: reqwest::Client,
     api_key: String,
+    command: ZetaCommand,
 }
 
 #[derive(Default)]
@@ -86,16 +88,22 @@ pub struct IpInfo {
 #[async_trait]
 impl Plugin for GeoIp {
     fn new() -> GeoIp {
+        let api_key =
+            env::var("GEOIP_API_KEY").expect("missing GEOIP_API_KEY environment variable");
+
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
             .timeout(HTTP_TIMEOUT)
             .build()
             .expect("could not build http client");
 
-        let api_key =
-            env::var("GEOIP_API_KEY").expect("missing GEOIP_API_KEY environment variable");
+        let command = ZetaCommand::new(".geoip");
 
-        GeoIp { client, api_key }
+        GeoIp {
+            client,
+            api_key,
+            command,
+        }
     }
 
     fn name() -> Name {
@@ -112,7 +120,7 @@ impl Plugin for GeoIp {
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref message) = message.command
-            && let Some(args) = message.strip_prefix(".geoip ")
+            && let Some(args) = self.command.parse(message)
         {
             let sub_args = shlex::split(args)
                 .ok_or_else(|| ZetaError::PluginError(Box::new(Error::ParseArguments)))?;
