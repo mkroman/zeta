@@ -25,6 +25,7 @@ pub mod health;
 pub mod reddit;
 pub mod string_utils;
 pub mod tvmaze;
+pub mod urban_dictionary;
 pub mod youtube;
 
 /// The base trait that all plugins must implement.
@@ -84,6 +85,7 @@ impl Registry {
         registry.register::<tvmaze::Tvmaze>();
         registry.register::<reddit::Reddit>();
         registry.register::<string_utils::StringUtils>();
+        registry.register::<urban_dictionary::UrbanDictionary>();
 
         let num_plugins = registry.plugins.len();
         debug!(%num_plugins, "finished registering plugins");
