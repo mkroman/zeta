@@ -23,6 +23,7 @@ pub mod geoip;
 pub mod google_search;
 pub mod health;
 pub mod reddit;
+pub mod string_utils;
 pub mod tvmaze;
 pub mod youtube;
 
@@ -82,6 +83,7 @@ impl Registry {
         registry.register::<youtube::YouTube>();
         registry.register::<tvmaze::Tvmaze>();
         registry.register::<reddit::Reddit>();
+        registry.register::<string_utils::StringUtils>();
 
         let num_plugins = registry.plugins.len();
         debug!(%num_plugins, "finished registering plugins");
