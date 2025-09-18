@@ -24,6 +24,7 @@ pub mod google_search;
 pub mod health;
 pub mod reddit;
 pub mod string_utils;
+pub mod tiktok;
 pub mod tvmaze;
 pub mod urban_dictionary;
 pub mod youtube;
@@ -86,6 +87,7 @@ impl Registry {
         registry.register::<reddit::Reddit>();
         registry.register::<string_utils::StringUtils>();
         registry.register::<urban_dictionary::UrbanDictionary>();
+        registry.register::<tiktok::Tiktok>();
 
         let num_plugins = registry.plugins.len();
         debug!(%num_plugins, "finished registering plugins");
@@ -113,7 +115,7 @@ pub fn build_http_client() -> reqwest::Client {
 /// Returns a default HTTP client builder.
 pub fn http_client_builder() -> reqwest::ClientBuilder {
     reqwest::ClientBuilder::new()
-        .user_agent(consts::HTTP_USER_AGENT)
         .redirect(Policy::none())
         .timeout(consts::HTTP_TIMEOUT)
+        .user_agent(consts::HTTP_USER_AGENT)
 }
