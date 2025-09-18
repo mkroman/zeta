@@ -6,8 +6,8 @@ members = [ "zeta"]
 darwin-libproc = { path = "stub/darwin-libproc" }
 
 [profile.release]
-lto = "fat"
-strip = "debuginfo"
+lto = true
+strip = "symbols"
 panic = "abort"
-opt-level = "s"
+opt-level = "z"
 codegen-units = 1
