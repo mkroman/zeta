@@ -11,6 +11,7 @@
 /// let command = Command::new(".hello");
 /// assert_eq!(command.parse(".hello"), Some(""));
 /// assert_eq!(command.parse(".hello world"), Some("world"));
+/// assert_eq!(command.parse(".hellogoodbye world"), None);
 /// assert_eq!(command.parse(".goodbye world"), None);
 /// ```
 pub struct Command {
@@ -32,11 +33,15 @@ impl Command {
     #[must_use]
     pub fn parse<'a>(&self, input: &'a str) -> Option<&'a str> {
         if let Some(suffix) = input.strip_prefix(&self.prefix) {
-            if suffix.chars().nth(0) == Some(' ') {
-                return Some(&suffix[1..]);
-            }
-
-            return Some("");
+            return match suffix.chars().nth(0) {
+                // The proceeding character is a whitespace, so we return a slice skipping it
+                Some(' ') => Some(&suffix[1..]),
+                // There's a proceeding character and it's not whitespace, so it's most likely part
+                // of a word and thus is longer than our command prefix.
+                Some(_) => None,
+                // The input is identical to the command prefix, so return an empty string.
+                None => Some(""),
+            };
         }
 
         None
@@ -66,5 +71,12 @@ mod tests {
         let command = Command::new("!test");
 
         assert_eq!(command.parse("!test   --help"), Some("  --help"));
+    }
+
+    #[test]
+    fn skip_on_non_whitespace_chars() {
+        let command = Command::new("!test");
+
+        assert_eq!(command.parse("!testing --help"), None);
     }
 }
