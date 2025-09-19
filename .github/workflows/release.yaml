@@ -29,7 +29,7 @@ jobs:
     - name: Run Clippy check
       uses: clechasseur/rs-clippy-check@69da786488ddcceb16285b0219841750089369ba # v5.0.1
       with:
-        args: --all-features
+        args: --no-deps --all-features
     - name: Run tests
       run: cargo test
 
