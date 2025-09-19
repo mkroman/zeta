@@ -20,7 +20,7 @@
     // Don't pin official GitHub Actions versions
     {
       "matchDepTypes": ["action"],
-      "matchPackageNames": ["actions/cache", "actions/checkout"],
+      "matchPackageNames": ["actions/*"],
       "pinDigests": false,
     },
     // Don't pin the images used in the Dockerfile
