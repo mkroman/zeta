@@ -11,6 +11,7 @@ pub mod consts;
 pub mod database;
 mod dns;
 mod error;
+mod http;
 mod plugin;
 mod utils;
 mod zeta;

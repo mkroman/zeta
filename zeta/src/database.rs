@@ -35,10 +35,7 @@ pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Data
 ///
 /// If an error occurs during migration, `Error::DatabaseMigration` is returned.
 pub async fn migrate(pool: Database) -> Result<(), Error> {
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(Error::AcquireDatabaseConnection)?;
+    let mut conn = pool.acquire().await.map_err(Error::DatabasePool)?;
 
     MIGRATOR
         .run(&mut conn)

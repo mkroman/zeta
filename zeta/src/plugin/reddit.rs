@@ -10,7 +10,7 @@ use url::Url;
 
 use super::{Author, Name, Plugin, Version};
 use crate::utils::Truncatable;
-use crate::{Error as ZetaError, plugin};
+use crate::{Error as ZetaError, http, plugin};
 
 pub const REDDIT_BASE_URL: &str = "https://www.reddit.com";
 
@@ -102,21 +102,8 @@ pub enum Item {
     Submission(Submission),
     #[serde(rename = "Listing")]
     Listing(Listing),
-    #[serde(rename = "more")]
-    More(More),
-}
-
-/// More comments.
-#[derive(Debug, Deserialize)]
-#[allow(unused)]
-pub struct More {
-    /// Number of more comments.
-    pub count: u32,
-    pub name: String,
-    pub id: String,
-    pub parent_id: String,
-    pub depth: u32,
-    pub children: Vec<String>,
+    #[serde(untagged)]
+    Other(serde_json::Value),
 }
 
 #[derive(Debug, Deserialize)]
@@ -176,7 +163,7 @@ pub struct Comment {
 impl Plugin for Reddit {
     fn new() -> Self {
         Reddit {
-            client: plugin::build_http_client(),
+            client: http::build_client(),
         }
     }
 
@@ -271,10 +258,10 @@ impl Reddit {
 
     /// Fetches and returns details about a given submission.
     async fn submission(&self, article: &str) -> Result<Submission, Error> {
+        debug!(%article, "requesting comments");
         let request = self
             .client
             .get(format!("{REDDIT_BASE_URL}/comments/{article}.json"));
-        debug!(%article, "requesting comments");
         let response = request.send().await.map_err(Error::Reqwest)?;
 
         match response.error_for_status() {

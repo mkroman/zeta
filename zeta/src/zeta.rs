@@ -23,30 +23,36 @@ impl Zeta {
     ///
     /// This initializes the plugin registry with preloaded plugins but doesn't
     /// establish the IRC connection yet. Call `run()` to start the bot.
-    ///
-    /// # Arguments
-    /// * `config` - The bot configuration containing IRC server details and settings
-    ///
-    /// # Returns
-    /// * `Ok(Zeta)` - Successfully created bot instance
-    /// * `Err(Error)` - If plugin registry initialization fails
-    pub fn from_config(config: Config) -> Result<Self, Error> {
+    #[must_use]
+    pub fn from_config(config: Config) -> Self {
         let registry = Registry::preloaded();
 
-        Ok(Zeta {
+        Zeta {
             client: None,
             registry,
             config,
-        })
+        }
     }
 
     /// Starts the bot and begins processing IRC messages.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations:
+    ///
+    /// - [`Error::IrcClient`] - if the instantiation of the IRC client fails (e.g. due to
+    ///   configuration issues.)
+    /// - [`Error::IrcRegistration`] - if user registration fails (e.g. if the nickname is already taken.)
+    /// - [`Error::Irc`] - if a protocol or communication error occurred.
+    /// - [`Error::Plugin`] - if a plugins [`handle_message`] function returns an error
+    ///
+    /// [`handle_message`]: crate::plugin::Plugin::handle_message
     pub async fn run(&mut self) -> Result<(), Error> {
         let mut client = Client::from_config(self.config.irc.clone().into())
             .await
-            .map_err(Error::IrcClientError)?;
+            .map_err(Error::IrcClient)?;
 
-        client.identify().map_err(Error::IrcRegistrationError)?;
+        client.identify().map_err(Error::IrcRegistration)?;
 
         let mut stream = client.stream()?;
 

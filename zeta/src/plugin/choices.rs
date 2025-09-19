@@ -35,12 +35,12 @@ impl Plugin for Choices {
                 && let Some(options) = extract_options(msg)
             {
                 let source_nickname = message.source_nickname().unwrap_or("");
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 let selection = options.iter().choose(&mut rng).unwrap();
 
                 client
                     .send_privmsg(channel, format!("{source_nickname}: {selection}",))
-                    .map_err(ZetaError::IrcClientError)?;
+                    .map_err(ZetaError::IrcClient)?;
             }
         }
 
@@ -49,15 +49,13 @@ impl Plugin for Choices {
 }
 
 fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a str> {
-    if let Some(s) = s.strip_prefix(current_nickname) {
+    s.strip_prefix(current_nickname).and_then(|s| {
         if s.starts_with(", ") || s.starts_with(": ") {
             Some(&s[2..])
         } else {
             None
         }
-    } else {
-        None
-    }
+    })
 }
 
 fn extract_options(s: &str) -> Option<Vec<&str>> {

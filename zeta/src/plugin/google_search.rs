@@ -3,9 +3,7 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 use scraper::{Html, Selector};
 
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
-use crate::plugin;
+use crate::{Error as ZetaError, command::Command as ZetaCommand, http};
 
 use super::{Author, Name, Plugin, Version};
 
@@ -49,7 +47,7 @@ impl Plugin for GoogleSearch {
     ///
     /// Panics if the HTTP client cannot be built.
     fn new() -> GoogleSearch {
-        let client = plugin::build_http_client();
+        let client = http::build_client();
 
         GoogleSearch::with_client(client)
     }
@@ -73,7 +71,7 @@ impl Plugin for GoogleSearch {
             let results = self
                 .search(query.trim())
                 .await
-                .map_err(|err| ZetaError::PluginError(Box::new(err)))?;
+                .map_err(|err| ZetaError::Plugin(Box::new(err)))?;
 
             if let Some(result) = results.first() {
                 client
@@ -81,11 +79,11 @@ impl Plugin for GoogleSearch {
                         channel,
                         format!("\x0310> {} - {}", result.title, result.url),
                     )
-                    .map_err(ZetaError::IrcClientError)?;
+                    .map_err(ZetaError::IrcClient)?;
             } else {
                 client
                     .send_privmsg(channel, "\x0310> No results")
-                    .map_err(ZetaError::IrcClientError)?;
+                    .map_err(ZetaError::IrcClient)?;
             }
         }
 

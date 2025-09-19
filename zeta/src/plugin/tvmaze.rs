@@ -6,9 +6,7 @@ use serde::Deserialize;
 use time::Duration;
 use tracing::{debug, error, info};
 
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
-use crate::plugin;
+use crate::{Error as ZetaError, command::Command as ZetaCommand, http};
 
 use super::{Author, Name, Plugin, Version};
 
@@ -144,20 +142,20 @@ impl Plugin for Tvmaze {
 
                         client
                             .send_privmsg(channel, formatted(Some(show.name), &format!("Next episode “\x0f{title}\x0310” (\x0f{season}x{number}\x0310) airs in\x0f {dotiw}")))
-                            .map_err(ZetaError::IrcClientError)?;
+                            .map_err(ZetaError::IrcClient)?;
                     } else {
                         let name = show.name;
                         let status = show.status;
 
                         client
                             .send_privmsg(channel, formatted(None, &format!("\x0f{name}\x0310 is currently marked as\x0f {status}\x0310 and there is no next episode")))
-                            .map_err(ZetaError::IrcClientError)?;
+                            .map_err(ZetaError::IrcClient)?;
                     }
                 }
                 Err(err) => {
                     client
                         .send_privmsg(channel, formatted(None, &format!("{err}")))
-                        .map_err(ZetaError::IrcClientError)?;
+                        .map_err(ZetaError::IrcClient)?;
                 }
             }
         }
@@ -168,7 +166,7 @@ impl Plugin for Tvmaze {
 
 impl Tvmaze {
     pub fn new() -> Self {
-        let client = plugin::build_http_client();
+        let client = http::build_client();
         let command = ZetaCommand::new(".next");
 
         Tvmaze { client, command }

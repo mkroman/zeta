@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::Message;
-use reqwest::redirect::Policy;
 use tracing::debug;
 use url::Url;
 
-use crate::{Error, consts};
+use crate::Error;
 
 /// The name of a plugin.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -75,6 +74,7 @@ pub trait Plugin: Send + Sync {
     where
         Self: Sized;
 
+    /// Process an IRC protocol message.
     async fn handle_message(&self, _message: &Message, _client: &Client) -> Result<(), Error> {
         Ok(())
     }
@@ -126,26 +126,6 @@ impl Registry {
 
         true
     }
-}
-
-/// Returns a default HTTP client.
-///
-/// # Panics
-///
-/// Panics if the default HTTP client fails to build.
-#[must_use]
-pub fn build_http_client() -> reqwest::Client {
-    http_client_builder()
-        .build()
-        .expect("could not build http client")
-}
-
-/// Returns a default HTTP client builder.
-pub fn http_client_builder() -> reqwest::ClientBuilder {
-    reqwest::ClientBuilder::new()
-        .redirect(Policy::none())
-        .timeout(consts::HTTP_TIMEOUT)
-        .user_agent(consts::HTTP_USER_AGENT)
 }
 
 /// Extracts HTTP(s) URLs from a string.

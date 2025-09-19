@@ -13,7 +13,7 @@ use tracing::{debug, error};
 use url::Url;
 
 use super::{Author, Name, Plugin, Version};
-use crate::{Error as ZetaError, plugin};
+use crate::{Error as ZetaError, http, plugin};
 
 /// YouTube Data API v3 base endpoint URL.
 pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
@@ -237,7 +237,7 @@ impl Plugin for YouTube {
 
 impl YouTube {
     pub fn with_config(api_key: String) -> Self {
-        let client = plugin::build_http_client();
+        let client = http::build_client();
         let command = crate::command::Command::new(".yt");
 
         Self {
@@ -273,14 +273,17 @@ impl YouTube {
                     Ok(video) => {
                         let snippet = video.snippet.as_ref();
                         let statistics = video.statistics.as_ref();
-                        let title = snippet.map_or("‽".to_string(), |s| s.title.clone());
+                        let title = snippet.map_or_else(|| "‽".to_string(), |s| s.title.clone());
                         let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
                         let categories = self.cached_video_categories().await.unwrap();
-                        let category = categories
-                            .get(&category_id)
-                            .map_or("unknown category".to_string(), |s| s.snippet.title.clone());
-                        let channel_name = snippet
-                            .map_or("unknown channel".to_string(), |s| s.channel_title.clone());
+                        let category = categories.get(&category_id).map_or_else(
+                            || "unknown category".to_string(),
+                            |s| s.snippet.title.clone(),
+                        );
+                        let channel_name = snippet.map_or_else(
+                            || "unknown channel".to_string(),
+                            |s| s.channel_title.clone(),
+                        );
                         let view_count = statistics
                             .and_then(|s| str::parse::<u64>(&s.view_count).ok())
                             .unwrap_or(0);
@@ -288,12 +291,12 @@ impl YouTube {
 
                         client
                         .send_privmsg(channel, format!("\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 video by\x0f {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views"))
-                        .map_err(ZetaError::IrcClientError)?;
+                        .map_err(ZetaError::IrcClient)?;
                     }
                     Err(e) => {
                         client
                             .send_privmsg(channel, format!("Error: {e}"))
-                            .map_err(ZetaError::IrcClientError)?;
+                            .map_err(ZetaError::IrcClient)?;
                     }
                 }
             }
