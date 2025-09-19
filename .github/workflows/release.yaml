@@ -42,3 +42,45 @@ jobs:
       push: true
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { os: ubuntu-latest, platform: linux, arch: amd64 }
+        - { os: ubuntu-latest, platform: linux, arch: arm64 }
+        - { os: ubuntu-24.04-arm, platform: linux, arch: arm64 }
+        - { os: macos-latest, platform: darwin, arch: aarch64 }
+        - { os: macos-latest-large, platform: darwin, arch: amd64 }
+        - { os: macos-26, platform: darwin, arch: aarch64 }
+        - { os: windows-latest, platform: windows, arch: amd64 }
+        - { os: windows-11-arm, platform: windows, arch: arm64 }
+    outputs:
+      zeta_version: ${{ steps.artifact.outputs.version }}
+    needs:
+    - test
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v5
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      with:
+        toolchain: stable
+    - name: Install cargo-auditable
+      run: cargo install cargo-auditable
+      # Note that we're deliberately avoiding reusing the build cache.
+    - name: Build
+      run: cargo auditable build --release
+    - name: Determine version
+      id: artifact
+      run: |-
+        VERSION="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "zeta") | .version')"
+        echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+    - name: Upload executable
+      uses: actions/upload-artifact@4
+      with:
+        name: zeta-${{ matrix.platform }}-${{ matrix.arch }}
+        path: target/release/zeta${{ matrix.os == 'windows-latest' && '.exe' || '' }}

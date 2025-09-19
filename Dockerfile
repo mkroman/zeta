@@ -1,4 +1,5 @@
-FROM rust:1.90-bookworm AS cache
+ARG RUST_VERSION=1.90-bookworm
+FROM rust:${RUST_VERSION} AS cache
 
 WORKDIR /usr/src/zeta
 
@@ -10,9 +11,11 @@ RUN mkdir -p zeta/src && echo '' > zeta/src/lib.rs && cargo fetch
 
 FROM cache AS builder
 
+RUN cargo install cargo-auditable
+
 COPY . .
 
-RUN cargo build --release
+RUN cargo auditable build --release
 
 FROM gcr.io/distroless/cc-debian12
 
