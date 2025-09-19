@@ -102,6 +102,21 @@ pub enum Item {
     Submission(Submission),
     #[serde(rename = "Listing")]
     Listing(Listing),
+    #[serde(rename = "more")]
+    More(More),
+}
+
+/// More comments.
+#[derive(Debug, Deserialize)]
+#[allow(unused)]
+pub struct More {
+    /// Number of more comments.
+    pub count: u32,
+    pub name: String,
+    pub id: String,
+    pub parent_id: String,
+    pub depth: u32,
+    pub children: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,7 +194,7 @@ impl Plugin for Reddit {
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = extract_urls(user_message)
+            && let Some(urls) = plugin::extract_urls(user_message)
         {
             self.process_urls(&urls, channel, client).await.unwrap();
         }
@@ -337,17 +352,6 @@ impl Reddit {
             _ => None,
         }
     }
-}
-
-/// Parses youtube.com URLs
-fn extract_urls(s: &str) -> Option<Vec<Url>> {
-    let urls: Vec<Url> = s
-        .split(' ')
-        .filter(|word| word.to_ascii_lowercase().starts_with("http"))
-        .filter_map(|word| Url::parse(word).ok())
-        .collect();
-
-    if urls.is_empty() { None } else { Some(urls) }
 }
 
 /// Parses reddit.com URLs
