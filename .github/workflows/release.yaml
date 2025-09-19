@@ -34,6 +34,7 @@ jobs:
       run: cargo test
 
   container_image:
+    name: Container Image
     needs:
     - test
     uses: ./.github/workflows/container-image.yaml
@@ -44,7 +45,7 @@ jobs:
       password: ${{ secrets.GITHUB_TOKEN }}
 
   build:
-    name: Build Release
+    name: Build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -80,7 +81,7 @@ jobs:
         VERSION="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "zeta") | .version')"
         echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
     - name: Upload executable
-      uses: actions/upload-artifact@4
+      uses: actions/upload-artifact@v4
       with:
         name: zeta-${{ matrix.platform }}-${{ matrix.arch }}
         path: target/release/zeta${{ matrix.os == 'windows-latest' && '.exe' || '' }}
