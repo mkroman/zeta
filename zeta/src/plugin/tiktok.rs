@@ -98,7 +98,7 @@ impl Plugin for Tiktok {
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = extract_urls(user_message)
+            && let Some(urls) = plugin::extract_urls(user_message)
         {
             self.process_urls(urls, channel, client)
                 .await
@@ -222,16 +222,6 @@ impl Tiktok {
 
 fn formatted(s: &str) -> String {
     format!("\x0310> {s}")
-}
-
-fn extract_urls(s: &str) -> Option<Vec<Url>> {
-    let urls: Vec<Url> = s
-        .split(' ')
-        .filter(|word| word.to_ascii_lowercase().starts_with("http"))
-        .filter_map(|word| Url::parse(word).ok())
-        .collect();
-
-    (!urls.is_empty()).then_some(urls)
 }
 
 /// Parses the given `url` and returns a [`UrlKind`] depending on the type of Tiktok URL.

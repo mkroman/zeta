@@ -7,7 +7,7 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
-use time::{OffsetDateTime, UtcDateTime};
+use time::OffsetDateTime;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 use url::Url;
@@ -210,7 +210,7 @@ impl Plugin for YouTube {
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
-            if let Some(urls) = extract_urls(user_message) {
+            if let Some(urls) = plugin::extract_urls(user_message) {
                 self.process_urls(urls, channel, client).await?;
             } else if let Some(args) = self.command.parse(user_message) {
                 match self.search(args).await {
@@ -426,16 +426,6 @@ impl YouTube {
     }
 }
 
-fn extract_urls(s: &str) -> Option<Vec<Url>> {
-    let urls: Vec<Url> = s
-        .split(' ')
-        .filter(|word| word.to_ascii_lowercase().starts_with("http"))
-        .filter_map(|word| Url::parse(word).ok())
-        .collect();
-
-    if urls.is_empty() { None } else { Some(urls) }
-}
-
 /// Extracts a query parameter value from a URL
 fn extract_query_param(url: &Url, param: &str) -> Option<String> {
     url.query_pairs()
@@ -481,16 +471,6 @@ fn parse_youtu_be_url(url: &Url) -> Option<UrlKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn it_should_extract_https_urls() {
-        assert_eq!(
-            extract_urls("nice nok https://github.com/dani-garcia/vaultwarden/pull/3899"),
-            Some(vec![
-                Url::parse("https://github.com/dani-garcia/vaultwarden/pull/3899").unwrap()
-            ])
-        );
-    }
 
     #[test]
     fn test_parse_youtube_com_video_urls() {
