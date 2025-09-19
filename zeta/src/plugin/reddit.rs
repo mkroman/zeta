@@ -102,21 +102,8 @@ pub enum Item {
     Submission(Submission),
     #[serde(rename = "Listing")]
     Listing(Listing),
-    #[serde(rename = "more")]
-    More(More),
-}
-
-/// More comments.
-#[derive(Debug, Deserialize)]
-#[allow(unused)]
-pub struct More {
-    /// Number of more comments.
-    pub count: u32,
-    pub name: String,
-    pub id: String,
-    pub parent_id: String,
-    pub depth: u32,
-    pub children: Vec<String>,
+    #[serde(untagged)]
+    Other(serde_json::Value),
 }
 
 #[derive(Debug, Deserialize)]
