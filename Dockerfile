@@ -1,4 +1,4 @@
-FROM rust:1.89-bookworm AS cache
+FROM rust:1.90-bookworm AS cache
 
 WORKDIR /usr/src/zeta
 
