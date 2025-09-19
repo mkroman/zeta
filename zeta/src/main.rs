@@ -33,7 +33,7 @@ async fn main() -> miette::Result<()> {
     database::migrate(db.clone()).await?;
     debug!("database migrations complete");
 
-    let mut z = Zeta::from_config(config)?;
+    let mut z = Zeta::from_config(config);
     z.run().await?;
 
     Ok(())

@@ -23,21 +23,15 @@ impl Zeta {
     ///
     /// This initializes the plugin registry with preloaded plugins but doesn't
     /// establish the IRC connection yet. Call `run()` to start the bot.
-    ///
-    /// # Arguments
-    /// * `config` - The bot configuration containing IRC server details and settings
-    ///
-    /// # Returns
-    /// * `Ok(Zeta)` - Successfully created bot instance
-    /// * `Err(Error)` - If plugin registry initialization fails
-    pub fn from_config(config: Config) -> Result<Self, Error> {
+    #[must_use]
+    pub fn from_config(config: Config) -> Self {
         let registry = Registry::preloaded();
 
-        Ok(Zeta {
+        Zeta {
             client: None,
             registry,
             config,
-        })
+        }
     }
 
     /// Starts the bot and begins processing IRC messages.
