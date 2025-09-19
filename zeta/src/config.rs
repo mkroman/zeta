@@ -91,7 +91,7 @@ impl IrcConfig {
 
     /// Returns whether TLS is enabled for this IRC connection.
     fn is_tls_enabled(&self) -> bool {
-        self.tls.as_ref().map(|x| x.enabled) == Some(true)
+        self.tls.as_ref().is_some_and(|x| x.enabled)
     }
 
     /// Return the port number to use based on whether the connection requires TLS or not.

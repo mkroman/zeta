@@ -75,6 +75,7 @@ pub trait Plugin: Send + Sync {
     where
         Self: Sized;
 
+    /// Process an IRC protocol message.
     async fn handle_message(&self, _message: &Message, _client: &Client) -> Result<(), Error> {
         Ok(())
     }

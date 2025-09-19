@@ -273,14 +273,17 @@ impl YouTube {
                     Ok(video) => {
                         let snippet = video.snippet.as_ref();
                         let statistics = video.statistics.as_ref();
-                        let title = snippet.map_or("‽".to_string(), |s| s.title.clone());
+                        let title = snippet.map_or_else(|| "‽".to_string(), |s| s.title.clone());
                         let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
                         let categories = self.cached_video_categories().await.unwrap();
-                        let category = categories
-                            .get(&category_id)
-                            .map_or("unknown category".to_string(), |s| s.snippet.title.clone());
-                        let channel_name = snippet
-                            .map_or("unknown channel".to_string(), |s| s.channel_title.clone());
+                        let category = categories.get(&category_id).map_or_else(
+                            || "unknown category".to_string(),
+                            |s| s.snippet.title.clone(),
+                        );
+                        let channel_name = snippet.map_or_else(
+                            || "unknown channel".to_string(),
+                            |s| s.channel_title.clone(),
+                        );
                         let view_count = statistics
                             .and_then(|s| str::parse::<u64>(&s.view_count).ok())
                             .unwrap_or(0);

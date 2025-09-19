@@ -35,6 +35,18 @@ impl Zeta {
     }
 
     /// Starts the bot and begins processing IRC messages.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations:
+    ///
+    /// - [`Error::IrcClient`] - if the instantiation of the IRC client fails (e.g. due to
+    ///   configuration issues.)
+    /// - [`Error::IrcRegistration`] - if user registration fails (e.g. if the nickname is already taken.)
+    /// - [`Error::Irc`] - if a protocol or communication error occurred.
+    /// - [`Error::Plugin`] - if a plugins [`handle_message`] function returns an error
+    ///
+    /// [`handle_message`]: crate::plugin::Plugin::handle_message
     pub async fn run(&mut self) -> Result<(), Error> {
         let mut client = Client::from_config(self.config.irc.clone().into())
             .await
