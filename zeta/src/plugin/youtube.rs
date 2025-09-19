@@ -13,7 +13,7 @@ use tracing::{debug, error};
 use url::Url;
 
 use super::{Author, Name, Plugin, Version};
-use crate::{Error as ZetaError, plugin};
+use crate::{Error as ZetaError, http, plugin};
 
 /// YouTube Data API v3 base endpoint URL.
 pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
@@ -237,7 +237,7 @@ impl Plugin for YouTube {
 
 impl YouTube {
     pub fn with_config(api_key: String) -> Self {
-        let client = plugin::build_http_client();
+        let client = http::build_client();
         let command = crate::command::Command::new(".yt");
 
         Self {

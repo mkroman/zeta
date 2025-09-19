@@ -3,9 +3,7 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 use scraper::{Html, Selector};
 
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
-use crate::plugin;
+use crate::{Error as ZetaError, command::Command as ZetaCommand, http};
 
 use super::{Author, Name, Plugin, Version};
 
@@ -49,7 +47,7 @@ impl Plugin for GoogleSearch {
     ///
     /// Panics if the HTTP client cannot be built.
     fn new() -> GoogleSearch {
-        let client = plugin::build_http_client();
+        let client = http::build_client();
 
         GoogleSearch::with_client(client)
     }

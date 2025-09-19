@@ -10,7 +10,7 @@ use url::Url;
 
 use super::{Author, Name, Plugin, Version};
 use crate::utils::Truncatable;
-use crate::{Error as ZetaError, plugin};
+use crate::{Error as ZetaError, http, plugin};
 
 /// The URL to the oEmbed endpoint.
 const TIKTOK_OEMBED_API: &str = "https://www.tiktok.com/oembed";
@@ -111,7 +111,7 @@ impl Plugin for Tiktok {
 
 impl Tiktok {
     pub fn new() -> Self {
-        let client = plugin::build_http_client();
+        let client = http::build_client();
 
         Self { client }
     }

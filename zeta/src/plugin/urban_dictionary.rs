@@ -8,8 +8,7 @@ use time::OffsetDateTime;
 use tracing::debug;
 
 use super::{Author, Name, Plugin, Version};
-use crate::plugin;
-use crate::{Error as ZetaError, command::Command as ZetaCommand};
+use crate::{Error as ZetaError, command::Command as ZetaCommand, http};
 
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
@@ -131,7 +130,7 @@ fn formatted(s: &str) -> String {
 
 impl UrbanDictionary {
     pub fn new() -> Self {
-        let client = plugin::build_http_client();
+        let client = http::build_client();
         let command = ZetaCommand::new(".ud");
 
         UrbanDictionary { client, command }

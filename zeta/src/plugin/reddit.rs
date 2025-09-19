@@ -10,7 +10,7 @@ use url::Url;
 
 use super::{Author, Name, Plugin, Version};
 use crate::utils::Truncatable;
-use crate::{Error as ZetaError, plugin};
+use crate::{Error as ZetaError, http, plugin};
 
 pub const REDDIT_BASE_URL: &str = "https://www.reddit.com";
 
@@ -163,7 +163,7 @@ pub struct Comment {
 impl Plugin for Reddit {
     fn new() -> Self {
         Reddit {
-            client: plugin::build_http_client(),
+            client: http::build_client(),
         }
     }
 
@@ -258,10 +258,10 @@ impl Reddit {
 
     /// Fetches and returns details about a given submission.
     async fn submission(&self, article: &str) -> Result<Submission, Error> {
+        debug!(%article, "requesting comments");
         let request = self
             .client
             .get(format!("{REDDIT_BASE_URL}/comments/{article}.json"));
-        debug!(%article, "requesting comments");
         let response = request.send().await.map_err(Error::Reqwest)?;
 
         match response.error_for_status() {

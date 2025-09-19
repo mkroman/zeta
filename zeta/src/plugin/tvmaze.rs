@@ -6,9 +6,7 @@ use serde::Deserialize;
 use time::Duration;
 use tracing::{debug, error, info};
 
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
-use crate::plugin;
+use crate::{Error as ZetaError, command::Command as ZetaCommand, http};
 
 use super::{Author, Name, Plugin, Version};
 
@@ -168,7 +166,7 @@ impl Plugin for Tvmaze {
 
 impl Tvmaze {
     pub fn new() -> Self {
-        let client = plugin::build_http_client();
+        let client = http::build_client();
         let command = ZetaCommand::new(".next");
 
         Tvmaze { client, command }
