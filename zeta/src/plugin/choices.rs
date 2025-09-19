@@ -40,7 +40,7 @@ impl Plugin for Choices {
 
                 client
                     .send_privmsg(channel, format!("{source_nickname}: {selection}",))
-                    .map_err(ZetaError::IrcClientError)?;
+                    .map_err(ZetaError::IrcClient)?;
             }
         }
 

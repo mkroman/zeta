@@ -123,7 +123,7 @@ impl Plugin for GeoIp {
             && let Some(args) = self.command.parse(message)
         {
             let sub_args = shlex::split(args)
-                .ok_or_else(|| ZetaError::PluginError(Box::new(Error::ParseArguments)))?;
+                .ok_or_else(|| ZetaError::Plugin(Box::new(Error::ParseArguments)))?;
             let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
 
             match Opts::from_args(&[".geoip"], &sub_args_ref) {
@@ -132,7 +132,7 @@ impl Plugin for GeoIp {
                         for line in result.to_string().lines() {
                             client
                                 .send_privmsg(channel, line)
-                                .map_err(ZetaError::IrcClientError)?;
+                                .map_err(ZetaError::IrcClient)?;
                         }
                     }
                     Err(err) => {
@@ -141,7 +141,7 @@ impl Plugin for GeoIp {
                                 channel,
                                 format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"),
                             )
-                            .map_err(ZetaError::IrcClientError)?;
+                            .map_err(ZetaError::IrcClient)?;
                     }
                 },
                 Err(err) => {
@@ -150,7 +150,7 @@ impl Plugin for GeoIp {
                             channel,
                             format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {}", err.output),
                         )
-                        .map_err(ZetaError::IrcClientError)?;
+                        .map_err(ZetaError::IrcClient)?;
                 }
             }
         }

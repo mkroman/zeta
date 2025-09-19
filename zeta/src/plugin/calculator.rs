@@ -46,12 +46,12 @@ impl Plugin for Calculator {
                 Ok(result) => {
                     client
                         .send_privmsg(channel, format!("\x0310> {result}"))
-                        .map_err(ZetaError::IrcClientError)?;
+                        .map_err(ZetaError::IrcClient)?;
                 }
                 Err(err) => {
                     client
                         .send_privmsg(channel, format!("\x0310> Error: {err}"))
-                        .map_err(ZetaError::IrcClientError)?;
+                        .map_err(ZetaError::IrcClient)?;
                 }
             }
         }

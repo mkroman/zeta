@@ -288,12 +288,12 @@ impl YouTube {
 
                         client
                         .send_privmsg(channel, format!("\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 video by\x0f {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views"))
-                        .map_err(ZetaError::IrcClientError)?;
+                        .map_err(ZetaError::IrcClient)?;
                     }
                     Err(e) => {
                         client
                             .send_privmsg(channel, format!("Error: {e}"))
-                            .map_err(ZetaError::IrcClientError)?;
+                            .map_err(ZetaError::IrcClient)?;
                     }
                 }
             }

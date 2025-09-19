@@ -38,9 +38,9 @@ impl Zeta {
     pub async fn run(&mut self) -> Result<(), Error> {
         let mut client = Client::from_config(self.config.irc.clone().into())
             .await
-            .map_err(Error::IrcClientError)?;
+            .map_err(Error::IrcClient)?;
 
-        client.identify().map_err(Error::IrcRegistrationError)?;
+        client.identify().map_err(Error::IrcRegistration)?;
 
         let mut stream = client.stream()?;
 

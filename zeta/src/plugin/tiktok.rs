@@ -102,7 +102,7 @@ impl Plugin for Tiktok {
         {
             self.process_urls(urls, channel, client)
                 .await
-                .map_err(|e| ZetaError::PluginError(Box::new(e)))?;
+                .map_err(|e| ZetaError::Plugin(Box::new(e)))?;
         }
 
         Ok(())
