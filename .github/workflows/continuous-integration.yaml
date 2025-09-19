@@ -13,8 +13,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        # Run checks on stable and nightly Rust
         rust: [stable, nightly]
     steps:
     - name: Checkout source
@@ -24,21 +24,24 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
         components: clippy
-    - name: Cache Cargo
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-${{ matrix.rust }}-
+    - name: Enable type layout randomization
+      run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
+      if: matrix.rust == 'nightly'
+    - name: Cache 
+      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
     - name: Run Clippy check
       uses: clechasseur/rs-clippy-check@69da786488ddcceb16285b0219841750089369ba # v5.0.1
       with:
         args: --all-features
     - name: Run tests
       run: cargo test
+
+  container_image:
+    needs:
+    - test
+    uses: ./.github/workflows/container-image.yaml
+    with:
+      images: ghcr.io/${{ github.repository }}
+      push: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    secrets:
+      password: ${{ secrets.GITHUB_TOKEN }}

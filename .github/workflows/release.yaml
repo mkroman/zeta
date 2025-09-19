@@ -10,8 +10,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        # Run checks on stable and nightly Rust
         rust: [stable, nightly]
     steps:
     - name: Checkout source
@@ -21,48 +21,24 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
         components: clippy
-    - name: Cache Cargo
-      uses: actions/cache@v4
+    - name: Enable type layout randomization
+      run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
+      if: matrix.rust == 'nightly'
+    - name: Cache 
+      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+    - name: Run Clippy check
+      uses: clechasseur/rs-clippy-check@69da786488ddcceb16285b0219841750089369ba # v5.0.1
       with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-${{ matrix.rust }}-
+        args: --all-features
     - name: Run tests
-      run: cargo test --all-features
+      run: cargo test
 
-  build:
-    name: Build
-    runs-on: ${{ matrix.os }}
+  container_image:
     needs:
     - test
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-    steps:
-    - name: Checkout source
-      uses: actions/checkout@v5
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
-    - name: Docker meta
-      id: meta
-      uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5
-      with:
-        images: ghcr.io/${{ github.repository }}
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    - name: Build and push
-      uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
-      with:
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+    uses: ./.github/workflows/container-image.yaml
+    with:
+      images: ghcr.io/${{ github.repository }}
+      push: true
+    secrets:
+      password: ${{ secrets.GITHUB_TOKEN }}
