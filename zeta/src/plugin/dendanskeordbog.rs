@@ -28,6 +28,10 @@ impl Display for MessageFormatter {
                 write!(fmt, " Bøjning:\x0f {inflection}\x0310")?;
             }
 
+            if let Some(etymology) = &entry.etymology {
+                write!(fmt, " Oprindelse:\x0f {etymology}\x0310")?;
+            }
+
             if let Some(definition) = &entry.definitions.first() {
                 let description = &definition.description;
                 write!(fmt, " Definition:\x0f {description}\x0310")?;
