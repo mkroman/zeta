@@ -1,0 +1,19 @@
+[package]
+name = "dendanskeordbog"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+serde = ["dep:serde"]
+client = ["dep:reqwest", "dep:tokio", "reqwest/gzip"]
+default = ["serde", "client"]
+
+[dependencies]
+reqwest = { workspace = true, optional = true }
+scraper = { workspace = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+thiserror = "2.0.16"
+tokio = { workspace = true, features = ["net"], optional = true }

@@ -20,6 +20,8 @@ pub struct Version(&'static str);
 pub mod calculator;
 /// Plugin that helps the user make a choice
 pub mod choices;
+/// Query the danish dictionary
+pub mod dendanskeordbog;
 /// Query nameservers
 pub mod dig;
 /// Query geolocation of addresses and hostnames
@@ -101,6 +103,7 @@ impl Registry {
 
         registry.register::<calculator::Calculator>();
         registry.register::<choices::Choices>();
+        registry.register::<dendanskeordbog::DenDanskeOrdbog>();
         registry.register::<dig::Dig>();
         registry.register::<geoip::GeoIp>();
         registry.register::<google_search::GoogleSearch>();

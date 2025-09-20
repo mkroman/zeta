@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = [ "zeta"]
+members = ["dendanskeordbog", "zeta"]
+
+[workspace.dependencies]
+reqwest = { version = "0.12.15", features = ["json"] }
+scraper = "0.24.0"
+serde = { version = "1.0.215", features = ["derive"] }
+tokio = { version = "1.41.1", features = ["full"] }
 
 [patch.crates-io]
 darwin-libproc = { path = "stub/darwin-libproc" }
