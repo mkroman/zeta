@@ -42,6 +42,11 @@ pub struct DictionaryEntry {
     /// Parsed from `<span class="def">` elements with hierarchical structure
     pub definitions: Vec<Definition>,
 
+    /// Etymology information (word origin and history)
+    /// Usually only present on the top-level definition
+    /// Parsed from `<span class="etym">` element
+    pub etymology: Option<String>,
+
     /// Idiomatic expressions and phrases containing this word
     /// Parsed from `<span class="idiom">` elements
     pub idioms: Vec<Idiom>,
@@ -104,11 +109,6 @@ pub struct Definition {
     /// Examples: "han hos visse drøvtyggere" (male of certain ruminants)
     /// Parsed from `<span class="dtrn">` element
     pub description: String,
-
-    /// Etymology information (word origin and history)
-    /// Usually only present on the top-level definition
-    /// Parsed from `<span class="etym">` element
-    pub etymology: Option<String>,
 
     /// Nested sub-definitions under this definition
     /// Represents the hierarchical structure like 1 → 1.a → 1.b
@@ -187,7 +187,6 @@ impl Definition {
         let level_selector = Selector::parse(":scope > span.l").expect("level selector");
         let description_selector =
             Selector::parse(":scope > span.dtrn").expect("description selector");
-        let etymology_selector = Selector::parse(":scope > span.etym").expect("etymology selector");
         let example_selector = Selector::parse(":scope > span.ex").expect("example selector");
 
         let level = element
@@ -200,7 +199,6 @@ impl Definition {
             .next()
             .map(element_text)
             .ok_or_else(|| Error::MissingElement("description"))?;
-        let etymology = element.select(&etymology_selector).next().map(element_text);
         // TODO: let subdefinitions: Vec<Definition> = element.select(&definitions_selector);
         let subdefinitions = vec![];
         let examples: Vec<String> = element
@@ -211,9 +209,85 @@ impl Definition {
         Ok(Definition {
             level,
             description,
-            etymology,
             subdefinitions,
             examples,
+        })
+    }
+}
+
+impl DictionaryDocument {
+    pub fn from_html(html: impl AsRef<str>) -> Result<DictionaryDocument, Error> {
+        let html = html.as_ref();
+        let article_selector = Selector::parse("body > span.ar").unwrap();
+
+        let document = Html::parse_document(html);
+        let entries: Vec<DictionaryEntry> = document
+            .select(&article_selector)
+            .filter_map(|ref elem| DictionaryEntry::from_html(elem).ok())
+            .collect();
+
+        Ok(DictionaryDocument { entries })
+    }
+}
+
+// Implementation with parsing logic (would require scraper or similar crate)
+impl DictionaryEntry {
+    /// Parse a dictionary entry from HTML element
+    pub fn from_html(element: &scraper::ElementRef) -> Result<Self, Error> {
+        let head_selector = Selector::parse(":scope > .head").expect("head selector");
+        let pos_selector = Selector::parse(":scope > .pos").expect("pos selector");
+        let morphology_selector = Selector::parse(":scope > .m").expect("morphology selector");
+        let phonetic_selector = Selector::parse(":scope > .phon").expect("phonetic selector");
+        let definition_selector =
+            Selector::parse(":scope > span.def > span.def").expect("definition selector");
+        let idiom_selector = Selector::parse(":scope > .idiom > .idiom").expect("idiom selector");
+        let etymology_selector =
+            Selector::parse(":scope > span.def > span.etym").expect("etymology selector");
+
+        let id = element
+            .attr("id")
+            .ok_or_else(|| Error::MissingElement("idiom id"))?
+            .to_string();
+        let head = element
+            .select(&head_selector)
+            .next()
+            .map(|ref elem| Head::from_html(elem))
+            .ok_or_else(|| Error::MissingElement("head"))??;
+        let pos = element
+            .select(&pos_selector)
+            .next()
+            .map(element_text)
+            .ok_or_else(|| Error::MissingElement("pos span"))?;
+        let morphology = element
+            .select(&morphology_selector)
+            .next()
+            .map(element_text);
+        let phonetic = element
+            .select(&phonetic_selector)
+            .next()
+            .map(|elem| elem.text().map(str::trim).collect());
+        let definitions: Vec<Definition> = element
+            .select(&definition_selector)
+            .filter_map(|ref elem| Definition::from_html(elem).ok())
+            .collect();
+        let idioms: Vec<Idiom> = element
+            .select(&idiom_selector)
+            .filter_map(|ref elem| Idiom::from_html(elem).ok())
+            .collect();
+        let etymology = element
+            .select(&etymology_selector)
+            .next()
+            .map(|elem| elem.text().collect());
+
+        Ok(DictionaryEntry {
+            id,
+            head,
+            pos,
+            etymology,
+            morphology,
+            phonetic,
+            definitions,
+            idioms,
         })
     }
 }
@@ -254,76 +328,6 @@ impl Idiom {
             id,
             phrase,
             definition: String::new(),
-        })
-    }
-}
-
-impl DictionaryDocument {
-    pub fn from_html(html: impl AsRef<str>) -> Result<DictionaryDocument, Error> {
-        let html = html.as_ref();
-        let article_selector = Selector::parse("body > span.ar").unwrap();
-
-        let document = Html::parse_document(html);
-        let entries: Vec<DictionaryEntry> = document
-            .select(&article_selector)
-            .filter_map(|ref elem| DictionaryEntry::from_html(elem).ok())
-            .collect();
-
-        Ok(DictionaryDocument { entries })
-    }
-}
-
-// Implementation with parsing logic (would require scraper or similar crate)
-impl DictionaryEntry {
-    /// Parse a dictionary entry from HTML element
-    pub fn from_html(element: &scraper::ElementRef) -> Result<Self, Error> {
-        let head_selector = Selector::parse(":scope > .head").expect("head selector");
-        let pos_selector = Selector::parse(":scope > .pos").expect("pos selector");
-        let morphology_selector = Selector::parse(":scope > .m").expect("morphology selector");
-        let phonetic_selector = Selector::parse(":scope > .phon").expect("phonetic selector");
-        let definition_selector =
-            Selector::parse(":scope > span.def > span.def").expect("definition selector");
-        let idiom_selector = Selector::parse(":scope > .idiom > .idiom").expect("idiom selector");
-
-        let id = element
-            .attr("id")
-            .ok_or_else(|| Error::MissingElement("idiom id"))?
-            .to_string();
-        let head = element
-            .select(&head_selector)
-            .next()
-            .map(|ref elem| Head::from_html(elem))
-            .ok_or_else(|| Error::MissingElement("head"))??;
-        let pos = element
-            .select(&pos_selector)
-            .next()
-            .map(element_text)
-            .ok_or_else(|| Error::MissingElement("pos span"))?;
-        let morphology = element
-            .select(&morphology_selector)
-            .next()
-            .map(element_text);
-        let phonetic = element
-            .select(&phonetic_selector)
-            .next()
-            .map(|elem| elem.text().map(str::trim).collect());
-        let definitions: Vec<Definition> = element
-            .select(&definition_selector)
-            .filter_map(|ref elem| Definition::from_html(elem).ok())
-            .collect();
-        let idioms: Vec<Idiom> = element
-            .select(&idiom_selector)
-            .filter_map(|ref elem| Idiom::from_html(elem).ok())
-            .collect();
-
-        Ok(DictionaryEntry {
-            id,
-            head,
-            pos,
-            morphology,
-            phonetic,
-            definitions,
-            idioms,
         })
     }
 }
@@ -371,6 +375,7 @@ mod tests {
             example,
             "Rytterne standsede, da den forreste af dem hævede hånden. Hans hest stejlede og vrinskede"
         );
+        assert_eq!(entry.etymology, Some("norrønt hestr; med oprindelig betydning 'den bedst springende' og oprindelig kun om 'hingst', muligvis erstatningsord for det mere udbredte indoeuropæiske ord for dyret, fx i latin equus".to_string()));
     }
 
     fn query_fixture_paths() -> Vec<PathBuf> {
