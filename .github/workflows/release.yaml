@@ -17,7 +17,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v5
     - name: Install Rust ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # master
       with:
         toolchain: ${{ matrix.rust }}
         components: clippy
@@ -66,7 +66,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v5
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # master
       with:
         toolchain: stable
     - name: Install cargo-auditable
