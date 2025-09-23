@@ -62,24 +62,31 @@ pub struct IrcTlsConfig {
 /// IRC client configuration.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcConfig {
-    /// The client's nickname.
-    pub nickname: String,
     /// Alternative nicknames for the client, if the default is taken.
     pub alt_nicks: Vec<String>,
-    /// The client's username.
-    pub username: Option<String>,
-    /// The client's real name.
-    pub realname: Option<String>,
+    /// List of channels to automatically manage.
+    pub channels: HashMap<String, Option<IrcChannelConfig>>,
+    /// The encoding type used for this connection. This is typically UTF-8, but could be something
+    /// else.
+    pub encoding: Option<String>,
     /// The hostname of the server to connect to.
     pub hostname: String,
+    /// The client’s NICKSERV password.
+    pub nick_password: Option<String>,
+    /// The client's nickname.
+    pub nickname: String,
     /// The password to connect to the server.
     pub password: Option<String>,
     /// The port number of the server to connect to.
     pub port: Option<u16>,
+    /// The client's real name.
+    pub realname: Option<String>,
+    /// Whether the client should use NickServ GHOST to reclaim its primary nickname if it is in use.
+    pub should_ghost: bool,
     /// TLS configuration.
     pub tls: Option<IrcTlsConfig>,
-    /// List of channels to automatically manage.
-    pub channels: HashMap<String, Option<IrcChannelConfig>>,
+    /// The client's username.
+    pub username: Option<String>,
 }
 
 impl IrcConfig {
@@ -108,11 +115,13 @@ impl From<IrcConfig> for irc::client::data::Config {
 
         Self {
             nickname: Some(config.nickname),
+            nick_password: config.nick_password,
             server: Some(config.hostname),
             port: Some(port),
             use_tls,
             channels,
             alt_nicks: config.alt_nicks,
+            should_ghost: config.should_ghost,
             ..Default::default()
         }
     }
