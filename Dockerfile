@@ -6,7 +6,6 @@ WORKDIR /usr/src/zeta
 ADD zeta/Cargo.toml zeta/Cargo.toml
 ADD dendanskeordbog/Cargo.toml dendanskeordbog/Cargo.toml
 COPY Cargo.toml Cargo.lock .
-COPY stub stub
 
 RUN mkdir -p zeta/src dendanskeordbog/src && echo '' > zeta/src/lib.rs && echo '' > dendanskeordbog/src/lib.rs && cargo fetch --locked
 
