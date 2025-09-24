@@ -19,7 +19,7 @@ async fn main() -> miette::Result<()> {
     let opts: cli::Opts = argh::from_env();
     let config: Config = Figment::new()
         .merge(Toml::file(opts.config_path))
-        .merge(Env::prefixed("ZETA_").lowercase(false).split("_"))
+        .merge(Env::prefixed("ZETA_").lowercase(false).split("__"))
         .extract()
         .into_diagnostic()?;
 

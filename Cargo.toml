@@ -8,9 +8,6 @@ scraper = "0.24.0"
 serde = { version = "1.0.215", features = ["derive"] }
 tokio = { version = "1.41.1", features = ["full"] }
 
-[patch.crates-io]
-darwin-libproc = { path = "stub/darwin-libproc" }
-
 [profile.release]
 lto = true
 strip = "symbols"

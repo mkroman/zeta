@@ -1,29 +1,20 @@
 use std::fmt::Display;
 
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
-use psutil::process::Process;
 use tokio::runtime::Handle;
 
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
-
-use super::{Author, Name, Plugin, Version};
+use crate::{command::Command as ZetaCommand, plugin::prelude::*};
 
 pub struct Health {
-    /// The `.health` command parser.
+    /// The `.health` command trigger.
     command: ZetaCommand,
 }
 
 /// Process telemetry snapshot.
 pub struct Snapshot {
-    /// The RSS memory usage, as MiB.
-    pub rss_mib: f64,
-    /// The VMS memory usage, as MiB.
-    pub vms_mib: f64,
-    /// The shared memory usage, as MiB.
-    pub shared_mib: f64,
+    /// The RSS memory usage, as bytes.
+    pub phys_mem: f64,
+    /// The VMS memory usage, as bytes.
+    pub virt_mem: f64,
     /// The number of tasks currently scheduled in the runtime's global queue.
     pub global_queue_depth: usize,
     /// The current number of alive tasks in the runtime.
@@ -70,13 +61,10 @@ impl Plugin for Health {
 impl Snapshot {
     #[allow(clippy::cast_precision_loss)]
     pub fn capture() -> Option<Snapshot> {
-        if let Ok(proc) = Process::current()
-            && let Ok(memory) = proc.memory_info()
-        {
+        if let Some(memory) = memory_stats::memory_stats() {
             // Capture memory information
-            let rss_mib = memory.rss() as f64 / 1024. / 1024.;
-            let vms_mib = memory.vms() as f64 / 1024. / 1024.;
-            let shared_mib = memory.shared() as f64 / 1024. / 1024.;
+            let phys_mem = memory.physical_mem as f64 / 1024.0 / 1024.0;
+            let virt_mem = memory.virtual_mem as f64 / 1024.0 / 1024.0;
 
             // Capture tokio runtime information
             let metrics = Handle::current().metrics();
@@ -85,9 +73,8 @@ impl Snapshot {
             let global_queue_depth = metrics.global_queue_depth();
 
             return Some(Snapshot {
-                rss_mib,
-                vms_mib,
-                shared_mib,
+                phys_mem,
+                virt_mem,
                 global_queue_depth,
                 num_alive_tasks,
                 num_workers,
@@ -100,13 +87,11 @@ impl Snapshot {
 
 impl Display for Snapshot {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let rss_mib = self.rss_mib;
-        let vms_mib = self.vms_mib;
-        let shared_mib = self.shared_mib;
+        let phys_mem = self.phys_mem;
+        let virt_mem = self.virt_mem;
 
-        write!(fmt, "Memory usage:\x0f {rss_mib:.2} MiB\x0310 ")?;
-        write!(fmt, "(VMS:\x0f {vms_mib:.2} MiB\x0310 ")?;
-        write!(fmt, "Shared:\x0f {shared_mib:.2} MiB\x0310) ")?;
+        write!(fmt, "Memory usage:\x0f {phys_mem:.2} MiB\x0310 ")?;
+        write!(fmt, "(\x0f{virt_mem:.2} MiB\x0310 virtual) ")?;
 
         write!(fmt, "Workers:\x0f {}\x0310 ", self.num_workers)?;
         write!(fmt, "Tasks:\x0f {}\x0310 ", self.num_alive_tasks)?;
@@ -127,9 +112,8 @@ mod tests {
     async fn it_should_format_message() {
         let snapshot = Snapshot::capture().expect("could not capture");
         let snapshot_message = snapshot.to_string().strip_formatting();
-        let wildmatcher = WildMatch::new(
-            "Memory usage: * MiB (VMS: * MiB Shared: * MiB) Workers: * Tasks: * (* scheduled)",
-        );
+        let wildmatcher =
+            WildMatch::new("Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled)");
         assert!(wildmatcher.matches(&snapshot_message));
     }
 }

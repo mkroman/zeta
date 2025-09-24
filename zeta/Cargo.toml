@@ -20,6 +20,7 @@ futures = "0.3.31"
 hickory-resolver = { version = "0.25.2", features = ["h3-aws-lc-rs"] }
 humantime-serde = "1.1.1"
 irc = { version = "1.0.0", default-features = false, features = ["serde", "tls-native", "ctcp", "channel-lists"] }
+memory-stats = "1.2.0"
 miette = { version = "7.2.0", features = ["fancy"] }
 num-format = "0.4.4"
 opentelemetry = "0.30.0"
@@ -28,7 +29,6 @@ opentelemetry-resource-detectors = "0.9.0"
 opentelemetry-semantic-conventions = "0.30.0"
 opentelemetry-stdout = "0.30.0"
 opentelemetry_sdk = { version = "0.30.0", features = ["rt-tokio"] }
-psutil = "5.4.0"
 rand = "0.9.2"
 reqwest = { workspace = true, features = ["json"] }
 rink-core = { version = "0.8.0", features = ["bundle-files"] }
@@ -49,18 +49,30 @@ url = "2.5.4"
 [dev-dependencies]
 wildmatch = "=2.5.0"
 
-[lints.rust]
-unsafe_code = "forbid"
-missing_docs = "warn"
-rust_2018_idioms = "warn"
-trivial_casts = "warn"
-trivial_numeric_casts = "warn"
-unused_import_braces = "warn"
-unused_qualifications = "warn"
-
 [lints.clippy]
+# Enable all basic clippy lints
 all = "warn"
+# Enable pedantic lints for stricter code quality
 pedantic = "warn"
+# Enable experimental/unstable lints that may have false positives
 nursery = "warn"
+# Disable cargo-related lints (often too noisy for dependencies)
 cargo = "allow"
+# Disable markdown formatting enforcement in doc comments
 doc_markdown = "allow"
+
+[lints.rust]
+# Completely disallow unsafe code - no unsafe blocks, functions, or traits
+unsafe_code = "forbid"
+# Require documentation for public items
+missing_docs = "warn"
+# Enforce modern Rust 2018+ idioms and patterns
+rust_2018_idioms = "warn"
+# Catch unnecessary casts between identical types
+trivial_casts = "warn"
+# Catch unnecessary numeric type casts (e.g., u32 as u32)
+trivial_numeric_casts = "warn"
+# Warn when import braces are used unnecessarily (use foo::{bar} vs use foo::bar)
+unused_import_braces = "warn"
+# Catch redundant path qualifications (self::foo when foo would suffice)
+unused_qualifications = "warn"

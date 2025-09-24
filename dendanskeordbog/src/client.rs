@@ -45,7 +45,7 @@ impl Client {
 
     /// Constructs a dictionary client that uses the given http client.
     #[must_use]
-    pub fn with_client(client: reqwest::Client) -> Client {
+    pub const fn with_client(client: reqwest::Client) -> Client {
         Client { client }
     }
 

@@ -11,5 +11,5 @@ pub enum Error {
     Request(#[source] reqwest::Error),
     #[cfg(feature = "client")]
     #[error("could not find element using selector: {0}")]
-    MissingElement(&'static str),
+    MissingElement(String),
 }

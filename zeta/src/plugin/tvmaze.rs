@@ -29,6 +29,7 @@ pub struct Tvmaze {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
+#[serde(rename = "camelCase")]
 pub struct Show {
     /// The unique TVmaze id of the show.
     id: u64,
@@ -47,14 +48,12 @@ pub struct Show {
     /// The runtime of episodes in minutes.
     runtime: Option<u64>,
     /// The average runtime of episodes in minutes.
-    #[serde(rename = "averageRuntime")]
-    average_runtime: u64,
+    average_runtime: Option<u64>,
     /// The date when the show premiered.
     premiered: Option<String>,
     /// The date when the show ended.
     ended: Option<String>,
     /// URL to an official site.
-    #[serde(rename = "officialSite")]
     official_site: String,
     /// IDs to external services.
     externals: Option<Externals>,
