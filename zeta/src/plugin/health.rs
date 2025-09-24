@@ -1,25 +1,19 @@
 use std::fmt::Display;
 
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use tokio::runtime::Handle;
 
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
-
-use super::{Author, Name, Plugin, Version};
+use crate::{command::Command as ZetaCommand, plugin::prelude::*};
 
 pub struct Health {
-    /// The `.health` command parser.
+    /// The `.health` command trigger.
     command: ZetaCommand,
 }
 
 /// Process telemetry snapshot.
 pub struct Snapshot {
-    /// The RSS memory usage, as MiB.
+    /// The RSS memory usage, as bytes.
     pub phys_mem: f64,
-    /// The VMS memory usage, as MiB.
+    /// The VMS memory usage, as bytes.
     pub virt_mem: f64,
     /// The number of tasks currently scheduled in the runtime's global queue.
     pub global_queue_depth: usize,
@@ -118,9 +112,8 @@ mod tests {
     async fn it_should_format_message() {
         let snapshot = Snapshot::capture().expect("could not capture");
         let snapshot_message = snapshot.to_string().strip_formatting();
-        let wildmatcher = WildMatch::new(
-            "Memory usage: * MiB (VMS: * MiB Shared: * MiB) Workers: * Tasks: * (* scheduled)",
-        );
+        let wildmatcher =
+            WildMatch::new("Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled)");
         assert!(wildmatcher.matches(&snapshot_message));
     }
 }
