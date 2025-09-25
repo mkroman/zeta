@@ -54,7 +54,7 @@ pub struct Show {
     /// The date when the show ended.
     ended: Option<String>,
     /// URL to an official site.
-    official_site: String,
+    official_site: Option<String>,
     /// IDs to external services.
     externals: Option<Externals>,
     /// Optional embedded response data.
