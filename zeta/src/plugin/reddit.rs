@@ -208,10 +208,27 @@ impl Reddit {
 
     async fn process_url(&self, link: Link, channel: &str, client: &Client) -> Result<(), Error> {
         match link {
-            Link::Gallery(id)
-            | Link::Comment { id, .. }
-            | Link::Comments { id }
-            | Link::Submission { id, .. } => match self.submission(&id).await {
+            Link::Gallery(id) | Link::Comments { id } | Link::Submission { id, .. } => {
+                match self.submission(&id).await {
+                    Ok(submission) => {
+                        let title = submission.title;
+                        let subreddit = submission.subreddit;
+
+                        client
+                            .send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))
+                            .unwrap();
+                    }
+                    Err(err) => {
+                        client
+                            .send_privmsg(
+                                channel,
+                                format!("\x0310> could not fetch submission details: {err}"),
+                            )
+                            .unwrap();
+                    }
+                }
+            }
+            Link::Comment { submission, .. } => match self.submission(&submission).await {
                 Ok(submission) => {
                     let title = submission.title;
                     let subreddit = submission.subreddit;
