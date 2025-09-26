@@ -1,84 +1,61 @@
-//! Structured types
+//! Structured types for representing scraped data from Den Danske Ordbog.
+//!
+//! This module provides the data structures and parsers used to extract dictionary entries
+//! from HTML sources. The main entry point is `DictionaryDocument` which contains all parsed data.
 use scraper::{ElementRef, Html, Selector};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "log")]
+use tracing::warn;
 
-use crate::Error;
+use crate::{Error, FromHtml, Selectors};
 
-/// Represents a complete dictionary entry from Den Danske Ordbog (The Danish Dictionary)
+/// Represents a complete dictionary entry from Den Danske Ordbog (The Danish Dictionary).
 ///
 /// This is the main struct that contains all information about a single word entry,
 /// including its definitions, pronunciation, etymology, and related terms.
-///
-/// # HTML Source
-/// Parsed from `<span class="ar" id="...">` elements
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DictionaryEntry {
     /// Unique identifier for this dictionary entry (e.g., "11006626")
-    /// Found in the `id` attribute of the root `<span class="ar">` element
     pub id: String,
     /// Header information containing the main word, variants, and pronunciation audio
-    /// Parsed from `<span class="head">` element
     pub head: Head,
     /// Part of speech and grammatical information
-    /// Examples: "substantiv, fælleskøn" (noun, common gender)
-    /// Parsed from `<span class="pos">` element
     pub pos: String,
     /// Morphological information showing word inflections
     /// Examples: "-ken, -ke, -kene" (showing singular/plural forms)
-    /// Parsed from `<span class="m">` element, may be absent for some entries
     pub morphology: Option<String>,
     /// Phonetic transcription in IPA notation
     /// Examples: "\[ˈbɔg\]"
-    /// Parsed from `<span class="phon">` element
     pub phonetic: Option<String>,
     /// All definitions for this word, including nested sub-definitions
-    /// Parsed from `<span class="def">` elements with hierarchical structure
     pub definitions: Vec<Definition>,
     /// Etymology information (word origin and history)
-    /// Usually only present on the top-level definition
-    /// Parsed from `<span class="etym">` element
     pub etymology: Option<String>,
     /// Idiomatic expressions and phrases containing this word
-    /// Parsed from `<span class="idiom">` elements
     pub idioms: Vec<Idiom>,
 }
 
 /// Header section of a dictionary entry containing the main word and pronunciation
-///
-/// # HTML Source
-/// Parsed from `<span class="head">` element
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Head {
     /// The main dictionary word being defined
-    ///
     /// Examples: `buk`, `løbe`, `hus`
-    ///
-    /// Parsed from `<span class="k">` element within the head
     pub keyword: String,
     /// Audio pronunciation information if available
-    /// Contains both the audio file URL and player controls
     pub audio: Option<Audio>,
 }
 
 /// Audio pronunciation data for a dictionary entry
-///
-/// # HTML Source
-/// Parsed from `<span class="audio">` containing `<audio>` and link elements
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Audio {
     /// Unique identifier for the audio element (e.g., "`11006626_1`")
-    ///
-    /// Found in the `id` attribute of the `<audio>` element
     pub id: String,
-    /// URL to the MP3 pronunciation file
-    ///
-    /// Examples: `http://static.ordnet.dk/mp3/11006/11006626_1.mp3`
-    ///
-    /// Found in the `src` attribute of the `<audio>` element
+    /// URL to the pronunciation audio file
+    /// Example: `http://static.ordnet.dk/mp3/11006/11006626_1.mp3`
     pub src: String,
 }
 
@@ -86,75 +63,57 @@ pub struct Audio {
 ///
 /// This struct represents the hierarchical nature of dictionary definitions,
 /// where a main definition can have numbered sub-definitions (1.a, 1.b, etc.)
-///
-/// # HTML Source
-/// Parsed from `<span class="def">` elements, which can be nested
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Definition {
     /// The hierarchical level of this definition
     /// Examples: "1", "1.a", "1.b", "2", "2.a"
-    /// Parsed from `<span class="l">` element, may be empty for root definitions
     pub level: String,
     /// The actual definition text explaining the word's meaning
     /// Examples: "han hos visse drøvtyggere" (male of certain ruminants)
-    /// Parsed from `<span class="dtrn">` element
     pub description: String,
     /// Nested sub-definitions under this definition
-    /// Represents the hierarchical structure like 1 → 1.a → 1.b
     pub subdefinitions: Vec<Definition>,
     /// Example sentences or phrases demonstrating usage
-    /// Parsed from `<span class="ex">` elements
     pub examples: Vec<String>,
 }
 
 /// An idiomatic expression or phrase containing the defined word
-///
-/// # HTML Source
-/// Parsed from `<span class="idiom">` elements with their own IDs
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Idiom {
-    /// Unique identifier for this idiom (e.g., "59002923")
-    /// Found in the `id` attribute of the idiom span
+    /// Unique identifier for this idiom (e.g., "`59002923`")
     pub id: String,
     /// The idiomatic phrase or expression
     /// Examples: "skille fårene fra bukkene" (separate the sheep from the goats)
-    /// Parsed from the first `<span class="k">` element within the idiom
     pub phrase: String,
-    /// Definition and examples for this idiomatic expression
-    pub definition: String, // IdiomaticDefinition,
+    // Definition and examples for this idiomatic expression
+    // pub definition: IdiomaticDefinition,
 }
 
 /// Definition structure specifically for idiomatic expressions
-///
-/// Similar to regular definitions but tailored for phrases and idioms
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdiomaticDefinition {
     /// Explanation of what the idiom means
     /// Examples: "sortere de(t) gode fra de(t) dårlige" (sort the good from the bad)
-    /// Parsed from `<span class="dtrn">` within the idiom definition
     pub description: String,
     /// Example sentences showing the idiom in use
-    /// Parsed from `<span class="ex">` elements within the idiom
     pub examples: Vec<String>,
 }
 
-/// Complete dictionary document structure including metadata
+/// A complete dictionary document containing one or more entries.
 ///
-/// This represents the entire HTML document, not just the dictionary entry
-///
-/// # HTML Source
-/// Parsed from the complete HTML document structure
+/// This struct represents the entire parsed HTML document from a dictionary query.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DictionaryDocument {
-    /// The main dictionary entry content
+    /// A list of all dictionary entries found on the page.
     pub entries: Vec<DictionaryEntry>,
 }
 
 impl Audio {
+    /// Parses an `Audio` struct from an `<audio>` HTML element.
     fn from_html(elem: &ElementRef<'_>) -> Result<Audio, Error> {
         let id = extract_required_attribute(elem, "id", "audio id")?;
         let src = extract_required_attribute(elem, "src", "audio src")?;
@@ -163,19 +122,18 @@ impl Audio {
     }
 }
 
-impl Definition {
-    pub fn from_html(element: &ElementRef<'_>) -> Result<Self, Error> {
-        let level_selector = Selector::parse(":scope > span.l").expect("level selector");
-        let description_selector =
-            Selector::parse(":scope > span.dtrn").expect("description selector");
-        let example_selector = Selector::parse(":scope > span.ex").expect("example selector");
-
-        let level = extract_required_text(element, &level_selector, "level")?;
-        let description = extract_required_text(element, &description_selector, "description")?;
+impl FromHtml for Definition {
+    /// Parses a `Definition` from a `<span class="def">` element.
+    fn from_html_with_selectors(
+        element: &ElementRef<'_>,
+        selectors: &Selectors,
+    ) -> Result<Self, Error> {
+        let level = extract_required_text(element, &selectors.level, "level")?;
+        let description = extract_required_text(element, &selectors.description, "description")?;
         // TODO: let subdefinitions: Vec<Definition> = element.select(&definitions_selector);
         let subdefinitions = vec![];
         let examples: Vec<String> = element
-            .select(&example_selector)
+            .select(&selectors.example)
             .map(extract_element_text)
             .collect();
 
@@ -189,53 +147,85 @@ impl Definition {
 }
 
 impl DictionaryDocument {
-    pub fn from_html<S: AsRef<str>>(html: S) -> Result<DictionaryDocument, Error> {
+    /// Parses a `DictionaryDocument` from an HTML string.
+    ///
+    /// This is the main entry point for parsing a complete HTML response body into a structured
+    /// `DictionaryDocument`.
+    ///
+    /// # Arguments
+    ///
+    /// * `html` - A string slice or `String` containing the full HTML document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` if parsing fails, though the current implementation gracefully handles
+    /// missing entries by returning an empty list.
+    pub fn from_html<S: AsRef<str>>(html: S) -> Result<Self, Error> {
         let html = html.as_ref();
-        let article_selector = Selector::parse("body > span.ar").unwrap();
-
+        let selectors = Selectors::default();
         let document = Html::parse_document(html);
-        let entries: Vec<DictionaryEntry> = document
-            .select(&article_selector)
-            .filter_map(|ref elem| DictionaryEntry::from_html(elem).ok())
-            .collect();
+        let entries = Self::parse_entries(&document, &selectors)?;
 
-        Ok(DictionaryDocument { entries })
+        Ok(Self { entries })
+    }
+
+    /// Parse all dictionary entries from the document.
+    ///
+    /// This method collects parsing errors for individual entries but continues processing,
+    /// allowing partial success when some entries fail to parse.
+    fn parse_entries(
+        document: &Html,
+        selectors: &Selectors,
+    ) -> Result<Vec<DictionaryEntry>, Error> {
+        let mut entries = Vec::new();
+        let mut parse_errors = Vec::new();
+
+        for element in document.select(&selectors.article) {
+            match DictionaryEntry::from_html_with_selectors(&element, selectors) {
+                Ok(entry) => entries.push(entry),
+                Err(err) => {
+                    // Log the error but continue processing other entries
+                    #[cfg(feature = "log")]
+                    warn!(?err, "failed to parse dictionary entry");
+
+                    parse_errors.push(err);
+                }
+            }
+        }
+
+        // If no entries were parsed successfully and we have errors, return the first error
+        if entries.is_empty() && !parse_errors.is_empty() {
+            return Err(parse_errors.into_iter().next().unwrap());
+        }
+
+        Ok(entries)
     }
 }
 
-// Implementation with parsing logic (would require scraper or similar crate)
-impl DictionaryEntry {
-    /// Parse a dictionary entry from HTML element
-    pub fn from_html(element: &ElementRef<'_>) -> Result<Self, Error> {
-        let head_selector = Selector::parse(":scope > .head").expect("head selector");
-        let pos_selector = Selector::parse(":scope > .pos").expect("pos selector");
-        let morphology_selector = Selector::parse(":scope > .m").expect("morphology selector");
-        let phonetic_selector = Selector::parse(":scope > .phon").expect("phonetic selector");
-        let definition_selector =
-            Selector::parse(":scope > span.def > span.def").expect("definition selector");
-        let idiom_selector = Selector::parse(":scope > .idiom > .idiom").expect("idiom selector");
-        let etymology_selector =
-            Selector::parse(":scope > span.def > span.etym").expect("etymology selector");
-
+impl FromHtml for DictionaryEntry {
+    /// Parses a `DictionaryEntry` from a `<span class="ar">` element.
+    fn from_html_with_selectors(
+        element: &ElementRef<'_>,
+        selectors: &Selectors,
+    ) -> Result<Self, Error> {
         let id = extract_required_attribute(element, "id", "entry id")?;
-        // TODO: refactor
         let head = element
-            .select(&head_selector)
+            .select(&selectors.head)
             .next()
-            .map(|ref elem| Head::from_html(elem))
-            .ok_or_else(|| Error::MissingElement("head".to_string()))??;
-        let pos = extract_required_text(element, &pos_selector, "pos")?;
-        let morphology = extract_optional_text(element, &morphology_selector);
+            .ok_or_else(|| Error::MissingElement("head".to_string()))
+            .and_then(|elem| Head::from_html_with_selectors(&elem, selectors))?;
+        let pos = extract_required_text(element, &selectors.pos, "pos")?;
+        let morphology = extract_optional_text(element, &selectors.morphology);
         let phonetic =
-            extract_optional_text(element, &phonetic_selector).map(|x| x.trim().to_owned());
-        let etymology = extract_optional_text(element, &etymology_selector);
+            extract_optional_text(element, &selectors.phonetic).map(|x| x.trim().to_owned());
+        let etymology = extract_optional_text(element, &selectors.etymology);
         let definitions: Vec<Definition> = element
-            .select(&definition_selector)
-            .filter_map(|ref elem| Definition::from_html(elem).ok())
+            .select(&selectors.definition)
+            .filter_map(|ref elem| Definition::from_html_with_selectors(elem, selectors).ok())
             .collect();
         let idioms: Vec<Idiom> = element
-            .select(&idiom_selector)
-            .filter_map(|ref elem| Idiom::from_html(elem).ok())
+            .select(&selectors.idiom)
+            .filter_map(|ref elem| Idiom::from_html_with_selectors(elem, selectors).ok())
             .collect();
 
         Ok(DictionaryEntry {
@@ -252,14 +242,14 @@ impl DictionaryEntry {
 }
 
 impl Head {
-    fn from_html(elem: &ElementRef<'_>) -> Result<Head, Error> {
-        let keyword_selector = Selector::parse(":scope > span.k").expect("keyword span selector");
-        let audio_selector =
-            Selector::parse(":scope > span.audio audio").expect("audio span selector");
-
-        let keyword = extract_required_text(elem, &keyword_selector, "keyword")?;
+    /// Parses a `Head` struct from a `<span class="head">` HTML element.
+    fn from_html_with_selectors(
+        elem: &ElementRef<'_>,
+        selectors: &Selectors,
+    ) -> Result<Head, Error> {
+        let keyword = extract_required_text(elem, &selectors.keyword, "keyword")?;
         let audio = elem
-            .select(&audio_selector)
+            .select(&selectors.audio)
             .next()
             .and_then(|elem| Audio::from_html(&elem).ok());
 
@@ -267,28 +257,29 @@ impl Head {
     }
 }
 
-impl Idiom {
-    pub fn from_html(element: &ElementRef<'_>) -> Result<Self, Error> {
-        let phrase_selector = Selector::parse(":scope > span.k").expect("phrase selector");
-
+impl FromHtml for Idiom {
+    /// Parses an `Idiom` from a `<span class="idiom">` element.
+    fn from_html_with_selectors(
+        element: &ElementRef<'_>,
+        selectors: &Selectors,
+    ) -> Result<Self, Error> {
         let id = extract_required_attribute(element, "id", "idiom id")?;
-        let phrase = element
-            .select(&phrase_selector)
-            .map(extract_element_text)
-            .collect();
+        let phrase = extract_required_text(element, &selectors.phrase, "phrase")?;
 
-        Ok(Idiom {
-            id,
-            phrase,
-            definition: String::new(),
-        })
+        Ok(Idiom { id, phrase })
     }
 }
 
+/// Extracts and concatenates all text nodes from an element into a single string.
 fn extract_element_text(elem: ElementRef<'_>) -> String {
     elem.text().collect()
 }
 
+/// Extracts a required attribute from an element.
+///
+/// # Errors
+///
+/// Returns `Error::MissingElement` with the given `context` if the attribute is not found.
 fn extract_required_attribute(
     elem: &ElementRef<'_>,
     attr: &str,
@@ -299,7 +290,11 @@ fn extract_required_attribute(
         .ok_or_else(|| Error::MissingElement(context.to_string()))
 }
 
-/// Extract required text from element using selector
+/// Finds the first matching child element and extracts its text content.
+///
+/// # Errors
+///
+/// Returns `Error::MissingElement` if no element matches the selector.
 fn extract_required_text(
     elem: &ElementRef<'_>,
     selector: &Selector,
@@ -308,7 +303,11 @@ fn extract_required_text(
     extract_required_element(elem, selector, context).map(extract_element_text)
 }
 
-/// Extract required element using selector
+/// Finds and returns the first required child element matching a selector.
+///
+/// # Errors
+///
+/// Returns `Error::MissingElement` if no element matches the selector.
 fn extract_required_element<'a>(
     elem: &'a ElementRef<'_>,
     selector: &Selector,
@@ -319,7 +318,7 @@ fn extract_required_element<'a>(
         .ok_or_else(|| Error::MissingElement(context.to_string()))
 }
 
-/// Extract optional text from element using selector
+/// Finds the first matching child element and extracts its text content, if it exists.
 fn extract_optional_text(elem: &ElementRef<'_>, selector: &Selector) -> Option<String> {
     elem.select(selector).next().map(extract_element_text)
 }
