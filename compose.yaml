@@ -22,7 +22,7 @@ services:
     - receivers.otlp.protocols.grpc.endpoint=0.0.0.0:4317
 
   postgres:
-    image: 'postgres:17'
+    image: 'postgres:18'
     ports:
     - '5432:5432'
     restart: always
