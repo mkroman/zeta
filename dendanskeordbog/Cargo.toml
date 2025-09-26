@@ -2,14 +2,22 @@
 name = "dendanskeordbog"
 version = "0.1.0"
 edition = "2024"
+description = "A client and parser for the Danish Dictionary (Den Danske Ordbog)."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+readme = "README.md"
+keywords = ["dictionary", "danish", "scraper", "ordnet", "ddo"]
+categories = ["api-bindings", "parser", "text-processing"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [features]
-serde = ["dep:serde"]
 client = ["dep:reqwest", "dep:tokio", "reqwest/gzip"]
 default = ["serde", "client"]
+# Logging events using `tracing`
+log = ["dep:tracing"]
+serde = ["dep:serde"]
 
 [dependencies]
 reqwest = { workspace = true, optional = true }
@@ -17,6 +25,7 @@ scraper = { workspace = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 thiserror = "2.0.16"
 tokio = { workspace = true, features = ["net"], optional = true }
+tracing = { workspace = true, optional = true }
 
 [lints.clippy]
 # Enable all basic clippy lints
