@@ -3,10 +3,17 @@
 This is a Rust crate that implements a client and parser for the Danish
 Dictionary (Den Danske Ordbog).
 
-It relies on the mobile-oriented HTTP + HTML endpoint that has been
-reverse-engineered from [the official DDO app].
+It relies on the mobile-oriented text/html http endpoint that has been
+reverse-engineered from the [official DDO app][ddo app].
 
-[the official DDO app]: https://ordnet.dk/ddo/app
+[ddo app]: https://ordnet.dk/ddo/app
+
+## Features
+
+* Efficiently reuse data structures (CSS selectors are parsed and cached during
+  each invocation)
+* Optional `client` feature for Client HTTP API
+* Optional `serde` feature for serialization/deserialization.
 
 ## Quick Start
 
