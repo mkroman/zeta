@@ -14,6 +14,37 @@ crate-type = ["lib"]
 name = "zeta"
 path = "src/main.rs"
 
+[features]
+default = ["plugins-all"]
+plugin-calculator = []
+plugin-choices = []
+plugin-dendanskeordbog = []
+plugin-dig = []
+plugin-geoip = []
+plugin-google-search = []
+plugin-health = []
+plugin-reddit = []
+plugin-string-utils = []
+plugin-tiktok = []
+plugin-tvmaze = []
+plugin-urban-dictionary = []
+plugin-youtube = []
+plugins-all = [
+    "plugin-calculator",
+    "plugin-choices",
+    "plugin-dendanskeordbog",
+    "plugin-dig",
+    "plugin-geoip",
+    "plugin-google-search",
+    "plugin-health",
+    "plugin-reddit",
+    "plugin-string-utils",
+    "plugin-tiktok",
+    "plugin-tvmaze",
+    "plugin-urban-dictionary",
+    "plugin-youtube",
+]
+
 [dependencies]
 argh = "0.1.12"
 async-trait = "0.1.83"

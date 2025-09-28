@@ -17,30 +17,42 @@ pub struct Author(&'static str);
 pub struct Version(&'static str);
 
 /// Calculator plugin based on rink
+#[cfg(feature = "plugin-calculator")]
 pub mod calculator;
 /// Plugin that helps the user make a choice
+#[cfg(feature = "plugin-choices")]
 pub mod choices;
 /// Query the danish dictionary
+#[cfg(feature = "plugin-dendanskeordbog")]
 pub mod dendanskeordbog;
 /// Query nameservers
+#[cfg(feature = "plugin-dig")]
 pub mod dig;
 /// Query geolocation of addresses and hostnames
+#[cfg(feature = "plugin-geoip")]
 pub mod geoip;
 /// Search google
+#[cfg(feature = "plugin-google-search")]
 pub mod google_search;
 /// Process health information
+#[cfg(feature = "plugin-health")]
 pub mod health;
 /// Reddit plugin integration
+#[cfg(feature = "plugin-reddit")]
 pub mod reddit;
 /// Generic string utilliy plugin
+#[cfg(feature = "plugin-string-utils")]
 pub mod string_utils;
 /// TikTok integration
+#[cfg(feature = "plugin-tiktok")]
 pub mod tiktok;
-/// TVmaze integration
+#[cfg(feature = "plugin-tvmaze")]
 pub mod tvmaze;
 /// Urban Dictionary integration
+#[cfg(feature = "plugin-urban-dictionary")]
 pub mod urban_dictionary;
 /// YouTube integration
+#[cfg(feature = "plugin-youtube")]
 pub mod youtube;
 
 /// Common includes used in plugins.
@@ -102,18 +114,31 @@ impl Registry {
         let mut registry = Self::new();
         debug!("registering plugins");
 
+        #[cfg(feature = "plugin-calculator")]
         registry.register::<calculator::Calculator>();
+        #[cfg(feature = "plugin-choices")]
         registry.register::<choices::Choices>();
+        #[cfg(feature = "plugin-dendanskeordbog")]
         registry.register::<dendanskeordbog::DenDanskeOrdbog>();
+        #[cfg(feature = "plugin-dig")]
         registry.register::<dig::Dig>();
+        #[cfg(feature = "plugin-geoip")]
         registry.register::<geoip::GeoIp>();
+        #[cfg(feature = "plugin-google-search")]
         registry.register::<google_search::GoogleSearch>();
+        #[cfg(feature = "plugin-health")]
         registry.register::<health::Health>();
+        #[cfg(feature = "plugin-reddit")]
         registry.register::<reddit::Reddit>();
+        #[cfg(feature = "plugin-string-utils")]
         registry.register::<string_utils::StringUtils>();
+        #[cfg(feature = "plugin-tiktok")]
         registry.register::<tiktok::Tiktok>();
+        #[cfg(feature = "plugin-tvmaze")]
         registry.register::<tvmaze::Tvmaze>();
+        #[cfg(feature = "plugin-urban-dictionary")]
         registry.register::<urban_dictionary::UrbanDictionary>();
+        #[cfg(feature = "plugin-youtube")]
         registry.register::<youtube::YouTube>();
 
         let num_plugins = registry.plugins.len();

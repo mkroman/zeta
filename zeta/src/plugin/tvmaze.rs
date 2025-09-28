@@ -1,3 +1,7 @@
+//! TVmaze API integration plugin.
+//!
+//! This plugin provides functionality to search for TV shows and display information
+//! about upcoming episodes using the TVmaze API.
 use reqwest::{Response, StatusCode, Url};
 use serde::{Deserialize, de::DeserializeOwned};
 use time::Duration;
