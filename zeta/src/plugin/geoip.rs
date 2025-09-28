@@ -2,20 +2,13 @@ use std::env;
 use std::fmt::Display;
 
 use argh::FromArgs;
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
 use thiserror::Error;
 use tracing::{debug, error, info};
 use url::Host;
 
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
-use crate::consts::HTTP_TIMEOUT;
-
-use super::{Author, Name, Plugin, Version};
+use crate::{consts::HTTP_TIMEOUT, plugin::prelude::*};
 
 const BASE_URL: &str = "https://api.ip2location.io";
 

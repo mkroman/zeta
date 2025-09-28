@@ -48,6 +48,7 @@ pub mod youtube;
 mod prelude {
     pub use super::{Author, Name, Plugin, Version};
     pub use crate::Error as ZetaError;
+    pub use crate::command::Command as ZetaCommand;
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};

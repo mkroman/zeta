@@ -1,14 +1,10 @@
 use std::fmt::Display;
 
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use serde::Deserialize;
 use time::OffsetDateTime;
 use tracing::debug;
 
-use super::{Author, Name, Plugin, Version};
-use crate::{Error as ZetaError, command::Command as ZetaCommand, http};
+use crate::{http, plugin::prelude::*};
 
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
 pub const BASE_URL: &str = "https://api.urbandictionary.com";

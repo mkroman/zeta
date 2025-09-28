@@ -2,7 +2,6 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use argh::FromArgs;
-use async_trait::async_trait;
 use hickory_resolver::{
     ResolveError, Resolver, TokioResolver,
     config::{ResolveHosts, ResolverConfig, ResolverOpts},
@@ -10,14 +9,10 @@ use hickory_resolver::{
     name_server::TokioConnectionProvider,
     proto::rr::RecordType,
 };
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use miette::Diagnostic;
 use thiserror::Error;
 
-use crate::{Error as ZetaError, command::Command as ZetaCommand};
-
-use super::{Author, Name, Plugin, Version};
+use crate::plugin::prelude::*;
 
 /// DNS lookup utility
 #[derive(FromArgs, Debug)]

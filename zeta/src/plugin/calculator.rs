@@ -1,13 +1,6 @@
 use std::sync::Mutex;
 
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
-
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
-
-use super::{Author, Name, Plugin, Version};
+use crate::plugin::prelude::*;
 
 pub struct Calculator {
     command: ZetaCommand,

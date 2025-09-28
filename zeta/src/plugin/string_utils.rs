@@ -1,12 +1,6 @@
 use std::fmt::Write;
 
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
-
-use super::{Author, Name, Plugin, Version};
-use crate::Error as ZetaError;
-use crate::command::Command as ZetaCommand;
+use crate::plugin::prelude::*;
 
 #[allow(clippy::struct_field_names)]
 pub struct StringUtils {
