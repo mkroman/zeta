@@ -37,6 +37,8 @@ pub mod google_search;
 /// Process health information
 #[cfg(feature = "plugin-health")]
 pub mod health;
+#[cfg(feature = "plugin-pornhub")]
+pub mod pornhub;
 /// Reddit plugin integration
 #[cfg(feature = "plugin-reddit")]
 pub mod reddit;
@@ -128,6 +130,8 @@ impl Registry {
         registry.register::<google_search::GoogleSearch>();
         #[cfg(feature = "plugin-health")]
         registry.register::<health::Health>();
+        #[cfg(feature = "plugin-pornhub")]
+        registry.register::<pornhub::PornHub>();
         #[cfg(feature = "plugin-reddit")]
         registry.register::<reddit::Reddit>();
         #[cfg(feature = "plugin-string-utils")]
