@@ -1,16 +1,15 @@
 use std::fmt::Write;
 
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use reqwest::header::LOCATION;
 use serde::Deserialize;
-use tracing::{debug, error};
+use tracing::debug;
 use url::Url;
 
-use super::{Author, Name, Plugin, Version};
-use crate::utils::Truncatable;
-use crate::{Error as ZetaError, http, plugin};
+use crate::{
+    http,
+    plugin::{self, prelude::*},
+    utils::Truncatable,
+};
 
 /// The URL to the oEmbed endpoint.
 const TIKTOK_OEMBED_API: &str = "https://www.tiktok.com/oembed";

@@ -1,16 +1,15 @@
 use std::fmt::Write;
 
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use tracing::{debug, error, info};
 use url::Url;
 
-use super::{Author, Name, Plugin, Version};
-use crate::utils::Truncatable;
-use crate::{Error as ZetaError, http, plugin};
+use crate::{
+    http,
+    plugin::{self, prelude::*},
+    utils::Truncatable,
+};
 
 pub const REDDIT_BASE_URL: &str = "https://www.reddit.com";
 

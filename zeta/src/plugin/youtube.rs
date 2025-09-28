@@ -2,9 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -12,8 +9,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, error};
 use url::Url;
 
-use super::{Author, Name, Plugin, Version};
-use crate::{Error as ZetaError, http, plugin};
+use crate::{
+    http,
+    plugin::{self, prelude::*},
+};
 
 /// YouTube Data API v3 base endpoint URL.
 pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
@@ -37,7 +36,7 @@ pub struct YouTube {
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
     /// The `.yt` IRC command
-    command: crate::command::Command,
+    command: ZetaCommand,
     /// Thread-safe cache of video categories mapped by category ID
     video_categories: RwLock<Arc<HashMap<String, Category>>>,
     /// Timestamp tracking when video categories were last fetched for cache invalidation
@@ -276,6 +275,7 @@ impl YouTube {
                         let title = snippet.map_or_else(|| "‽".to_string(), |s| s.title.clone());
                         let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
                         let categories = self.cached_video_categories().await.unwrap();
+                        // TODO: use indefinite form: https://crates.io/crates/indefinite
                         let category = categories.get(&category_id).map_or_else(
                             || "unknown category".to_string(),
                             |s| s.snippet.title.clone(),

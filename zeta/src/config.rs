@@ -1,9 +1,10 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::consts::{DEFAULT_DB_IDLE_TIMEOUT, DEFAULT_MAX_DB_CONNECTIONS};
+use crate::consts::{
+    DEFAULT_DB_IDLE_TIMEOUT, DEFAULT_IRC_PORT, DEFAULT_IRC_TLS_PORT, DEFAULT_MAX_DB_CONNECTIONS,
+};
 
 /// Main application configuration structure.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -48,6 +49,8 @@ pub struct TracingConfig {
 /// Configuration for an individual IRC channel.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcChannelConfig {
+    /// Name of the channel.
+    pub name: String,
     /// The shared key to access the channel.
     pub key: Option<String>,
 }
@@ -55,7 +58,7 @@ pub struct IrcChannelConfig {
 /// TLS configuration for IRC connection.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcTlsConfig {
-    /// Enable TLS.
+    /// Toggle TLS.
     pub enabled: bool,
 }
 
@@ -65,7 +68,7 @@ pub struct IrcConfig {
     /// Alternative nicknames for the client, if the default is taken.
     pub alt_nicks: Vec<String>,
     /// List of channels to automatically manage.
-    pub channels: HashMap<String, Option<IrcChannelConfig>>,
+    pub channels: Vec<IrcChannelConfig>,
     /// The encoding type used for this connection. This is typically UTF-8, but could be something
     /// else.
     pub encoding: Option<String>,
@@ -81,7 +84,9 @@ pub struct IrcConfig {
     pub port: Option<u16>,
     /// The client's real name.
     pub realname: Option<String>,
-    /// Whether the client should use NickServ GHOST to reclaim its primary nickname if it is in use.
+    /// Whether the client should use NickServ GHOST to reclaim its primary nickname if it is in
+    /// use.
+    #[serde(default)]
     pub should_ghost: bool,
     /// TLS configuration.
     pub tls: Option<IrcTlsConfig>,
@@ -103,14 +108,23 @@ impl IrcConfig {
 
     /// Return the port number to use based on whether the connection requires TLS or not.
     fn fallback_port(&self) -> u16 {
-        if self.is_tls_enabled() { 6697 } else { 6667 }
+        if self.is_tls_enabled() {
+            DEFAULT_IRC_TLS_PORT
+        } else {
+            DEFAULT_IRC_PORT
+        }
     }
 }
 
 impl From<IrcConfig> for irc::client::data::Config {
     fn from(config: IrcConfig) -> Self {
         let port = config.port();
-        let channels = config.channels.into_keys().collect::<Vec<_>>();
+        let channels: Vec<String> = config
+            .channels
+            .iter()
+            .map(|channel| channel.name.clone())
+            .collect();
+        // TODO: channel keys
         let use_tls = config.tls.map(|x| x.enabled);
 
         Self {

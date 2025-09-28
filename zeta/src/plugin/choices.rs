@@ -1,11 +1,6 @@
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use rand::prelude::IteratorRandom;
 
-use crate::Error as ZetaError;
-
-use super::{Author, Name, Plugin, Version};
+use crate::plugin::prelude::*;
 
 pub struct Choices;
 

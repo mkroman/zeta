@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use tokio::runtime::Handle;
 
-use crate::{command::Command as ZetaCommand, plugin::prelude::*};
+use crate::plugin::prelude::*;
 
 pub struct Health {
     /// The `.health` command trigger.

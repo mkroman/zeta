@@ -4,6 +4,9 @@ version = "0.2.5"
 authors = ["Mikkel Kroman <mk@maero.dk>"]
 edition = "2024"
 
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]
+
 [lib]
 crate-type = ["lib"]
 
@@ -26,11 +29,11 @@ num-format = "0.4.4"
 opentelemetry = "0.30.0"
 opentelemetry-otlp = "0.30.0"
 opentelemetry-resource-detectors = "0.9.0"
-opentelemetry-semantic-conventions = "0.30.0"
-opentelemetry-stdout = "0.30.0"
+# opentelemetry-semantic-conventions = "0.30.0"
+# opentelemetry-stdout = "0.30.0"
 opentelemetry_sdk = { version = "0.30.0", features = ["rt-tokio"] }
 rand = "0.9.2"
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
 rink-core = { version = "0.8.0", features = ["bundle-files"] }
 scraper = { workspace = true }
 serde = { version = "1.0.215", features = ["derive"] }
@@ -60,6 +63,8 @@ nursery = "warn"
 cargo = "allow"
 # Disable markdown formatting enforcement in doc comments
 doc_markdown = "allow"
+# Allow for higher complexity since it's not a reliable estimate
+cognitive_complexity = "allow"
 
 [lints.rust]
 # Completely disallow unsafe code - no unsafe blocks, functions, or traits

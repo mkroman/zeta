@@ -1,11 +1,6 @@
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::{Command, Message};
 use scraper::{Html, Selector};
 
-use crate::{Error as ZetaError, command::Command as ZetaCommand, http};
-
-use super::{Author, Name, Plugin, Version};
+use crate::{http, plugin::prelude::*};
 
 /// Represents a single search result obtained from the search operation.
 pub struct SearchResult {

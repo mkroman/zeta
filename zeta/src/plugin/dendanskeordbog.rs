@@ -2,7 +2,7 @@ use std::fmt::{self, Display};
 
 use dendanskeordbog::DictionaryDocument;
 
-use crate::{command::Command as ZetaCommand, http, plugin::prelude::*};
+use crate::{http, plugin::prelude::*};
 
 pub struct DenDanskeOrdbog {
     client: dendanskeordbog::Client,

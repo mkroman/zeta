@@ -11,7 +11,7 @@ tracing = "0.1.41"
 
 [profile.release]
 lto = true
-strip = "symbols"
-panic = "abort"
-opt-level = "z"
+strip = "debuginfo"
+panic = "unwind"
+opt-level = "s"
 codegen-units = 1
