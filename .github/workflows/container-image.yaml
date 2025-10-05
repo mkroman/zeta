@@ -19,6 +19,12 @@ on:
       push:
         default: false
         type: boolean
+      cache-from:
+        required: false
+        type: string
+      cache-to:
+        required: false
+        type: string
     secrets:
       password:
         required: true
@@ -57,3 +63,5 @@ jobs:
         push: ${{ inputs.push }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+        cache-from: ${{ inputs.cache-from }}
+        cache-to: ${{ inputs.cache-to }}

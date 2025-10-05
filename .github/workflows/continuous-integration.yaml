@@ -44,5 +44,7 @@ jobs:
     with:
       images: ghcr.io/${{ github.repository }}
       push: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+      cache-from: type=gha
+      cache-to: type=gha,mode=max
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
