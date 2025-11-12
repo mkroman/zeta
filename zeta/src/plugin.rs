@@ -3,9 +3,6 @@ use url::Url;
 
 pub use zeta_plugin::{Author, Name, Plugin, Version};
 
-/// Calculator plugin based on rink
-#[cfg(feature = "plugin-calculator")]
-pub mod calculator;
 /// Plugin that helps the user make a choice
 #[cfg(feature = "plugin-choices")]
 pub mod choices;
@@ -29,6 +26,9 @@ pub mod pornhub;
 /// Reddit plugin integration
 #[cfg(feature = "plugin-reddit")]
 pub mod reddit;
+/// Calculator plugin based on rink
+#[cfg(feature = "plugin-rink")]
+pub mod rink;
 /// Generic string utilliy plugin
 #[cfg(feature = "plugin-string-utils")]
 pub mod string_utils;
@@ -75,8 +75,8 @@ impl Registry {
         let mut registry = Self::new();
         debug!("registering plugins");
 
-        #[cfg(feature = "plugin-calculator")]
-        registry.register::<calculator::Calculator>();
+        #[cfg(feature = "plugin-rink")]
+        registry.register::<rink::Rink>();
         #[cfg(feature = "plugin-choices")]
         registry.register::<choices::Choices>();
         #[cfg(feature = "plugin-dendanskeordbog")]

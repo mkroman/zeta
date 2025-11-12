@@ -1,4 +1,4 @@
-//! Helpful calculator features.
+//! Helpful calculator features based on rink.
 
 use std::sync::Mutex;
 
@@ -7,7 +7,7 @@ use rink_core::Context;
 use crate::plugin::prelude::*;
 
 /// Calculator plugin using rink-rs.
-pub struct Calculator {
+pub struct Rink {
     /// Handle to our rink context
     ctx: Mutex<Context>,
     /// Handler for the `.r` command
@@ -15,12 +15,12 @@ pub struct Calculator {
 }
 
 #[async_trait]
-impl Plugin for Calculator {
-    fn new() -> Calculator {
+impl Plugin for Rink {
+    fn new() -> Rink {
         let ctx = rink_core::simple_context().expect("could not create rink context");
         let command = ZetaCommand::new(".r");
 
-        Calculator {
+        Rink {
             ctx: Mutex::new(ctx),
             command,
         }
@@ -54,7 +54,7 @@ impl Plugin for Calculator {
     }
 }
 
-impl Calculator {
+impl Rink {
     pub fn eval(&self, line: &str) -> Result<String, String> {
         let mut ctx = self.ctx.lock().unwrap();
 
