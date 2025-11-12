@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 async-trait = { workspace = true }
-irc = { workspace = true , default-features = false, features = ["serde", "tls-native", "ctcp", "channel-lists"] }
+irc = { workspace = true, default-features = false, features = ["serde", "tls-native", "ctcp", "channel-lists"] }
 thiserror = { workspace = true }

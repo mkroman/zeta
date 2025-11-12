@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [features]
 default = ["plugins-all"]
-plugin-calculator = []
+plugin-rink = []
 plugin-choices = []
 plugin-dendanskeordbog = []
 plugin-dig = []
@@ -31,7 +31,6 @@ plugin-tvmaze = []
 plugin-urban-dictionary = []
 plugin-youtube = []
 plugins-all = [
-    "plugin-calculator",
     "plugin-choices",
     "plugin-dendanskeordbog",
     "plugin-dig",
@@ -40,6 +39,7 @@ plugins-all = [
     "plugin-health",
     "plugin-pornhub",
     "plugin-reddit",
+    "plugin-rink",
     "plugin-string-utils",
     "plugin-tiktok",
     "plugin-tvmaze",
