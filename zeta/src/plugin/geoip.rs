@@ -100,15 +100,15 @@ impl Plugin for GeoIp {
     }
 
     fn name() -> Name {
-        Name("geoip")
+        Name::from("geoip")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -123,27 +123,21 @@ impl Plugin for GeoIp {
                 Ok(opts) => match self.resolve(&opts.name).await {
                     Ok(result) => {
                         for line in result.to_string().lines() {
-                            client
-                                .send_privmsg(channel, line)
-                                .map_err(ZetaError::IrcClient)?;
+                            client.send_privmsg(channel, line)?;
                         }
                     }
                     Err(err) => {
-                        client
-                            .send_privmsg(
-                                channel,
-                                format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"),
-                            )
-                            .map_err(ZetaError::IrcClient)?;
+                        client.send_privmsg(
+                            channel,
+                            format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"),
+                        )?;
                     }
                 },
                 Err(err) => {
-                    client
-                        .send_privmsg(
-                            channel,
-                            format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {}", err.output),
-                        )
-                        .map_err(ZetaError::IrcClient)?;
+                    client.send_privmsg(
+                        channel,
+                        format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {}", err.output),
+                    )?;
                 }
             }
         }

@@ -48,15 +48,15 @@ impl Plugin for GoogleSearch {
     }
 
     fn name() -> Name {
-        Name("google_search")
+        Name::from("google_search")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -69,16 +69,12 @@ impl Plugin for GoogleSearch {
                 .map_err(|err| ZetaError::Plugin(Box::new(err)))?;
 
             if let Some(result) = results.first() {
-                client
-                    .send_privmsg(
-                        channel,
-                        format!("\x0310> {} - {}", result.title, result.url),
-                    )
-                    .map_err(ZetaError::IrcClient)?;
+                client.send_privmsg(
+                    channel,
+                    format!("\x0310> {} - {}", result.title, result.url),
+                )?;
             } else {
-                client
-                    .send_privmsg(channel, "\x0310> No results")
-                    .map_err(ZetaError::IrcClient)?;
+                client.send_privmsg(channel, "\x0310> No results")?;
             }
         }
 

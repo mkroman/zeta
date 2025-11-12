@@ -133,15 +133,15 @@ impl Plugin for Tvmaze {
     }
 
     fn name() -> Name {
-        Name("tvmaze")
+        Name::from("tvmaze")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -221,16 +221,12 @@ impl Tvmaze {
             Ok(show) => {
                 let message = Self::format_show_message(&show);
 
-                client
-                    .send_privmsg(channel, message)
-                    .map_err(ZetaError::IrcClient)?;
+                client.send_privmsg(channel, message)?;
             }
             Err(err) => {
                 let error_message = Self::format_error_message(&err);
 
-                client
-                    .send_privmsg(channel, &error_message)
-                    .map_err(ZetaError::IrcClient)?;
+                client.send_privmsg(channel, &error_message)?;
             }
         }
 

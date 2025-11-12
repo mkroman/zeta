@@ -98,7 +98,7 @@ impl IrcConfig {
     /// Returns the port number to use for this IRC connection.
     #[must_use]
     pub fn port(&self) -> u16 {
-        self.port.map_or_else(|| self.fallback_port(), |port| port)
+        self.port.unwrap_or_else(|| self.fallback_port())
     }
 
     /// Returns whether TLS is enabled for this IRC connection.

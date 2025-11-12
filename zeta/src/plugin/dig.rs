@@ -80,15 +80,15 @@ impl Plugin for Dig {
     }
 
     fn name() -> Name {
-        Name("dig")
+        Name::from("dig")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -103,24 +103,21 @@ impl Plugin for Dig {
                 Ok(opts) => match self.resolve(&opts.name, opts.record_type).await {
                     Ok(result) => {
                         for line in result.to_string().lines() {
-                            client
-                                .send_privmsg(channel, line)
-                                .map_err(ZetaError::IrcClient)?;
+                            client.send_privmsg(channel, line)?;
                         }
                     }
                     Err(err) => {
-                        client
-                            .send_privmsg(channel, format!("\x0310>\x03\x02 Dig:\x02\x0310 {err}"))
-                            .map_err(ZetaError::IrcClient)?;
+                        client.send_privmsg(
+                            channel,
+                            format!("\x0310>\x03\x02 Dig:\x02\x0310 {err}"),
+                        )?;
                     }
                 },
                 Err(err) => {
-                    client
-                        .send_privmsg(
-                            channel,
-                            format!("\x0310>\x03\x02 Dig:\x02\x0310 {}", err.output),
-                        )
-                        .map_err(ZetaError::IrcClient)?;
+                    client.send_privmsg(
+                        channel,
+                        format!("\x0310>\x03\x02 Dig:\x02\x0310 {}", err.output),
+                    )?;
                 }
             }
         }

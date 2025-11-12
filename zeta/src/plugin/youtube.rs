@@ -196,15 +196,15 @@ impl Plugin for YouTube {
     }
 
     fn name() -> Name {
-        Name("youtube")
+        Name::from("youtube")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -290,13 +290,10 @@ impl YouTube {
                         let view_count_formatted = view_count.to_formatted_string(&Locale::en);
 
                         client
-                        .send_privmsg(channel, format!("\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 video by\x0f {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views"))
-                        .map_err(ZetaError::IrcClient)?;
+                        .send_privmsg(channel, format!("\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 video by\x0f {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views"))?;
                     }
                     Err(e) => {
-                        client
-                            .send_privmsg(channel, format!("Error: {e}"))
-                            .map_err(ZetaError::IrcClient)?;
+                        client.send_privmsg(channel, format!("Error: {e}"))?;
                     }
                 }
             }
