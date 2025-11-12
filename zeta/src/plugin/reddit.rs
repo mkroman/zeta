@@ -167,15 +167,15 @@ impl Plugin for Reddit {
     }
 
     fn name() -> Name {
-        Name("reddit")
+        Name::from("reddit")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {

@@ -11,15 +11,15 @@ impl Plugin for Choices {
     }
 
     fn name() -> Name {
-        Name("choices")
+        Name::from("choices")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -33,9 +33,7 @@ impl Plugin for Choices {
                 let mut rng = rand::rng();
                 let selection = options.iter().choose(&mut rng).unwrap();
 
-                client
-                    .send_privmsg(channel, format!("{source_nickname}: {selection}",))
-                    .map_err(ZetaError::IrcClient)?;
+                client.send_privmsg(channel, format!("{source_nickname}: {selection}"))?;
             }
         }
 

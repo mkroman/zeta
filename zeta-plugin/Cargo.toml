@@ -1,0 +1,9 @@
+[package]
+name = "zeta-plugin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = { workspace = true }
+irc = { workspace = true , default-features = false, features = ["serde", "tls-native", "ctcp", "channel-lists"] }
+thiserror = { workspace = true }

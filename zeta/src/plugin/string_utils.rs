@@ -23,15 +23,15 @@ impl Plugin for StringUtils {
     }
 
     fn name() -> Name {
-        Name("string_utils")
+        Name::from("string_utils")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {

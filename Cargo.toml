@@ -1,11 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["dendanskeordbog", "zeta"]
+members = ["dendanskeordbog", "zeta", "zeta-plugin"]
 
 [workspace.dependencies]
+argh = { version = "0.1.12" } 
+async-trait = "0.1.89"
+futures = "0.3.31"
+irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-native", "ctcp", "channel-lists"] }
 reqwest = { version = "0.12.15", features = ["json"] }
 scraper = "0.24.0"
 serde = { version = "1.0.215", features = ["derive"] }
+thiserror = "2.0"
 tokio = { version = "1.41.1", features = ["full"] }
 tracing = "0.1.41"
 

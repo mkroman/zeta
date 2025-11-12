@@ -1,20 +1,7 @@
-use async_trait::async_trait;
-use irc::client::Client;
-use irc::proto::Message;
 use tracing::debug;
 use url::Url;
 
-use crate::Error;
-
-/// The name of a plugin.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Name(&'static str);
-/// The author of a plugin.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Author(&'static str);
-/// The version of a plugin.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Version(&'static str);
+pub use zeta_plugin::{Author, Name, Plugin, Version};
 
 /// Calculator plugin based on rink
 #[cfg(feature = "plugin-calculator")]
@@ -61,40 +48,12 @@ pub mod youtube;
 #[allow(unused)]
 mod prelude {
     pub use super::{Author, Name, Plugin, Version};
-    pub use crate::Error as ZetaError;
     pub use crate::command::Command as ZetaCommand;
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
-}
-
-/// The base trait that all plugins must implement.
-#[async_trait]
-pub trait Plugin: Send + Sync {
-    /// Returns the name of the plugin.
-    fn name() -> Name
-    where
-        Self: Sized;
-
-    /// Returns the author of the plugin.
-    fn author() -> Author
-    where
-        Self: Sized;
-
-    /// Returns the version of the plugin.
-    fn version() -> Version
-    where
-        Self: Sized;
-
-    /// The constructor for a new plugin.
-    fn new() -> Self
-    where
-        Self: Sized;
-
-    /// Process an IRC protocol message.
-    async fn handle_message(&self, _message: &Message, _client: &Client) -> Result<(), Error> {
-        Ok(())
-    }
+    pub use irc::proto::{Command as IrcCommand, Message as IrcMessage};
+    pub use zeta_plugin::Error as ZetaError;
 }
 
 /// Plugin registry.

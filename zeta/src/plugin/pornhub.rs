@@ -139,15 +139,15 @@ impl Plugin for PornHub {
     }
 
     fn name() -> Name {
-        Name("pornhub")
+        Name::from("pornhub")
     }
 
     fn author() -> Author {
-        Author("Mikkel Kroman <mk@maero.dk>")
+        Author::from("Mikkel Kroman <mk@maero.dk>")
     }
 
     fn version() -> Version {
-        Version("0.1")
+        Version::from("0.1")
     }
 
     // Handles incoming messages and processes any PornHub URLs found.
