@@ -82,7 +82,7 @@ url = "2.5.4"
 zeta-plugin = { path = "../zeta-plugin" }
 
 [dev-dependencies]
-wildmatch = "=2.6.0"
+wildmatch = "=2.6.1"
 
 [lints.clippy]
 # Enable all basic clippy lints
