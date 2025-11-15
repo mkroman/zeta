@@ -1,6 +1,9 @@
 use std::fmt::Write;
 
-use reqwest::StatusCode;
+use reqwest::{
+    StatusCode,
+    header::{LOCATION, ToStrError},
+};
 use serde::Deserialize;
 use tracing::{debug, error, info};
 use url::Url;
@@ -33,6 +36,12 @@ pub enum Error {
     Http(#[source] reqwest::Error),
     #[error("could not deserialize response as it is in unexpected format")]
     InvalidResponse,
+    #[error("the shortened link did not return a usable redirect url")]
+    InvalidRedirect,
+    #[error("the response redirect url is using an invalid encoding: {0}")]
+    RedirectUrlEncoding(ToStrError),
+    #[error("expected the short link to redirect to a submission or comment")]
+    RedirectRedditLink,
 }
 
 /// A link to a Reddit resource.
@@ -245,6 +254,19 @@ impl Reddit {
                         .unwrap();
                 }
             },
+            Link::Shortened { id, subreddit } => {
+                match self.resolve_shortened_link(&subreddit, &id).await {
+                    Ok(link) => Box::pin(self.process_url(link, channel, client)).await?,
+                    Err(err) => {
+                        client
+                            .send_privmsg(
+                                channel,
+                                format!("\x0310> could not resolve shortened link: {err}"),
+                            )
+                            .unwrap();
+                    }
+                }
+            }
             Link::Subreddit(subreddit) => match self.subreddit_about_info(&subreddit).await {
                 Ok(subreddit) => {
                     let title = subreddit.title;
@@ -344,6 +366,28 @@ impl Reddit {
                 Err(Error::SubredditNotFound)
             }
             Err(err) => Err(Error::Http(err)),
+        }
+    }
+
+    pub async fn resolve_shortened_link(&self, subreddit: &str, id: &str) -> Result<Link, Error> {
+        let request = self
+            .client
+            .head(format!("{REDDIT_BASE_URL}/r/{subreddit}/s/{id}"));
+        debug!(%subreddit, %id, "requesting short link to find redirect location");
+        let response = request.send().await.map_err(Error::Reqwest)?;
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .ok_or_else(|| Error::InvalidRedirect)?
+            .to_str()
+            .map_err(Error::RedirectUrlEncoding)?;
+
+        debug!(%location, "parsing the url");
+        let url = Url::parse(location).map_err(|_| Error::InvalidRedirect)?;
+
+        match parse_reddit_com_url(&url) {
+            Some(x @ (Link::Comment { .. } | Link::Submission { .. })) => Ok(x),
+            _ => Err(Error::RedirectRedditLink),
         }
     }
 
