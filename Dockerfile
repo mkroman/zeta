@@ -39,4 +39,4 @@ COPY --from=builder /usr/src/app/config.toml .
 
 USER nonroot
 
-ENTRYPOINT ["./zeta"]
+ENTRYPOINT ["/app/zeta"]
