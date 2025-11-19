@@ -30,7 +30,7 @@ jobs:
     - name: Cache 
       uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
     - name: Run Clippy check
-      uses: clechasseur/rs-clippy-check@69da786488ddcceb16285b0219841750089369ba # v5.0.1
+      uses: clechasseur/rs-clippy-check@286fd9545eb133adad54b4af34bcb642e266ddd1 # v5.0.2
       with:
         args: --no-deps --all-features
     - name: Run tests
