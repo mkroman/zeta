@@ -15,7 +15,7 @@ jobs:
         rust: [stable, nightly]
     steps:
     - name: Checkout source
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
     - name: Install Rust ${{ matrix.rust }}
       uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # master
       with:
@@ -64,7 +64,7 @@ jobs:
     - test
     steps:
     - name: Checkout source
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
     - name: Install Rust
       uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # master
       with:
