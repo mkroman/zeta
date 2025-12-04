@@ -7,7 +7,7 @@ services:
     - INSP_ENABLE_DNSBL=no
 
   jaeger:
-    image: jaegertracing/jaeger:2.12.0@sha256:4c8423cd8fa8b727bd632f0acda2cc39118f21a4bdcef322a6c9ddbeb6dcd424
+    image: jaegertracing/jaeger:2.13.0@sha256:d5e5fe1c2b2f663b07c28c6f7cc5a6e61aef076752dab8df8eeb6b0f5494c94b
     ports:
     - '6831:6831/udp'
     - '6832:6832/udp'
