@@ -21,6 +21,7 @@ plugin-choices = []
 plugin-dendanskeordbog = []
 plugin-dig = []
 plugin-geoip = []
+plugin-google-images = []
 plugin-google-search = []
 plugin-health = []
 plugin-howlongtobeat = []
@@ -38,6 +39,7 @@ plugins-all = [
     "plugin-dendanskeordbog",
     "plugin-dig",
     "plugin-geoip",
+    "plugin-google-images",
     "plugin-google-search",
     "plugin-health",
     "plugin-howlongtobeat",

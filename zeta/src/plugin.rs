@@ -15,7 +15,10 @@ pub mod dig;
 /// Query geolocation of addresses and hostnames
 #[cfg(feature = "plugin-geoip")]
 pub mod geoip;
-/// Search google
+/// Google images integration
+#[cfg(feature = "plugin-google-images")]
+pub mod google_images;
+/// Google search integration
 #[cfg(feature = "plugin-google-search")]
 pub mod google_search;
 /// Process health information
@@ -94,6 +97,8 @@ impl Registry {
         registry.register::<dig::Dig>();
         #[cfg(feature = "plugin-geoip")]
         registry.register::<geoip::GeoIp>();
+        #[cfg(feature = "plugin-google-images")]
+        registry.register::<google_images::GoogleImages>();
         #[cfg(feature = "plugin-google-search")]
         registry.register::<google_search::GoogleSearch>();
         #[cfg(feature = "plugin-health")]
