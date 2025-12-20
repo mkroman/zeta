@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [features]
 default = ["plugins-all"]
+database = []
 plugin-rink = []
 plugin-choices = []
 plugin-dendanskeordbog = []

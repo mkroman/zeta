@@ -1,6 +1,5 @@
 //! Zeta is an opinionated IRC bot with a bunch of plugins.
 
-use ::tracing::debug;
 use figment::{
     Figment,
     providers::{Env, Format, Toml},
@@ -10,6 +9,7 @@ use miette::IntoDiagnostic;
 mod cli;
 mod tracing;
 
+#[cfg(feature = "database")]
 use zeta::database;
 use zeta::{Config, Zeta};
 pub use zeta::{Error, config};
@@ -25,13 +25,18 @@ async fn main() -> miette::Result<()> {
 
     tracing::try_init(&config.tracing)?;
 
-    debug!("connecting to database");
-    let db = database::connect(config.database.url.as_str(), &config.database).await?;
-    debug!("connected to database");
+    #[cfg(feature = "database")]
+    {
+        use ::tracing::debug;
 
-    debug!("running database migrations");
-    database::migrate(db.clone()).await?;
-    debug!("database migrations complete");
+        debug!("connecting to database");
+        let db = database::connect(config.database.url.as_str(), &config.database).await?;
+        debug!("connected to database");
+
+        debug!("running database migrations");
+        database::migrate(db.clone()).await?;
+        debug!("database migrations complete");
+    }
 
     let mut z = Zeta::from_config(config);
     z.run().await?;
