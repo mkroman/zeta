@@ -18,11 +18,14 @@ static RE_IS_OPEN: OnceLock<Regex> = OnceLock::new();
 static RE_IS_CLOSED: OnceLock<Regex> = OnceLock::new();
 
 /// Plugin that allows users to query opening hours for places using the Google Maps API.
+///
+/// It supports natural language queries in Danish, such as "hvornår åbner X?" or "er X åben?".
 pub struct IsItOpen {
     client: reqwest::Client,
     api_key: String,
 }
 
+/// Errors that can occur during plugin execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("request error: {0}")]
@@ -33,23 +36,27 @@ pub enum Error {
     Api(String),
 }
 
+/// Response from the Text Search API.
 #[derive(Debug, Deserialize)]
 struct PlaceSearchResponse {
     results: Vec<PlaceSearchResult>,
     status: String,
 }
 
+/// A single result from a place search.
 #[derive(Debug, Deserialize)]
 struct PlaceSearchResult {
     place_id: String,
 }
 
+/// Response from the Place Details API.
 #[derive(Debug, Deserialize)]
 struct PlaceDetailsResponse {
     result: PlaceDetails,
     status: String,
 }
 
+/// Detailed information about a specific place.
 #[derive(Debug, Deserialize)]
 struct PlaceDetails {
     name: String,
@@ -58,22 +65,27 @@ struct PlaceDetails {
     utc_offset: Option<i32>,
 }
 
+/// Container for opening hours information.
 #[derive(Debug, Deserialize)]
 struct OpeningHours {
     open_now: Option<bool>,
     periods: Option<Vec<Period>>,
 }
 
+/// Represents a single opening period (e.g., Monday 9:00 - 17:00).
 #[derive(Debug, Deserialize, Clone)]
 struct Period {
     open: TimePoint,
     close: Option<TimePoint>,
 }
 
+/// A specific point in time consisting of a day of the week and a time string.
 #[derive(Debug, Deserialize, Clone)]
 struct TimePoint {
+    /// 0 = Sunday, 1 = Monday, ..., 6 = Saturday.
     day: u8,
-    time: String, // "HHMM"
+    /// Time in 24-hour "HHMM" format.
+    time: String,
 }
 
 impl PlaceDetails {
@@ -87,6 +99,7 @@ impl PlaceDetails {
         })
     }
 
+    /// Checks if the place is currently open based on the `open_now` field.
     fn is_open_now(&self) -> bool {
         self.opening_hours
             .as_ref()
@@ -94,13 +107,16 @@ impl PlaceDetails {
             .unwrap_or(false)
     }
 
+    /// Checks if the place is open 24/7.
+    ///
+    /// This is determined by a specific pattern in the API response:
+    /// a single period starting at day 0, time "0000" with no close time.
     fn is_always_open(&self) -> bool {
         if let Some(oh) = &self.opening_hours
             && let Some(periods) = &oh.periods
             && periods.len() == 1
         {
             let p = &periods[0];
-            // Day 0, Time "0000" and no close time implies always open
             return p.open.day == 0 && p.open.time == "0000" && p.close.is_none();
         }
         false
@@ -114,11 +130,11 @@ impl PlaceDetails {
             .and_then(|periods| {
                 // The API can return multiple periods for a day, but the reference impl
                 // assumes a single relevant period or just takes the one matching the day.
-                // We'll find the one where the open day matches.
                 periods.iter().find(|p| p.open.day == day)
             })
     }
 
+    /// Formats the opening time for the date's day of the week.
     fn opening_time(&self, date: OffsetDateTime) -> Option<String> {
         let weekday = date.weekday().number_days_from_sunday();
         let period = self.period_for_day(weekday)?;
@@ -126,6 +142,7 @@ impl PlaceDetails {
         format_time_string(&period.open.time)
     }
 
+    /// Formats the closing time for the date's day of the week.
     fn closing_time(&self, date: OffsetDateTime) -> Option<String> {
         let weekday = date.weekday().number_days_from_sunday();
         let period = self.period_for_day(weekday)?;
@@ -151,10 +168,12 @@ impl PlaceDetails {
 
 const HHMM_FORMAT: &[FormatItem<'_>] = format_description!("[hour][minute]");
 
+/// Parses a "HHMM" string into a `Time` object.
 fn parse_hhmm(s: &str) -> Option<Time> {
     Time::parse(s, HHMM_FORMAT).ok()
 }
 
+/// Formats a "HHMM" string into "HH:MM".
 fn format_time_string(s: &str) -> Option<String> {
     let time = parse_hhmm(s)?;
 
@@ -212,6 +231,7 @@ impl Plugin for IsItOpen {
 }
 
 impl IsItOpen {
+    /// Determines the type of query and processes it.
     async fn process_query(
         &self,
         channel: &str,
@@ -222,6 +242,7 @@ impl IsItOpen {
         let mut place_name = None;
         let mut action = QueryAction::None;
 
+        // Determine intent based on regex matches
         if let Some(caps) = RE_OPENING_TIME.get().unwrap().captures(query) {
             place_name = Some(caps["place"].to_string());
             action = QueryAction::OpeningTime;
@@ -261,6 +282,7 @@ impl IsItOpen {
         Ok(())
     }
 
+    /// Performs a two-step search: first finding the Place ID, then fetching details.
     async fn find_place(&self, query: &str) -> Result<PlaceDetails, Error> {
         debug!(%query, "searching for place");
 
@@ -421,6 +443,7 @@ impl IsItOpen {
     }
 }
 
+/// Helper enum to map regex matches to actions.
 enum QueryAction {
     None,
     OpeningTime,
@@ -429,10 +452,12 @@ enum QueryAction {
     IsClosed,
 }
 
+/// Applies IRC teal color formatting.
 fn formatted(s: &str) -> String {
     format!("\x0310{s}")
 }
 
+/// Helper to strip the bot's nickname from the message start.
 fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a str> {
     s.strip_prefix(current_nickname).and_then(|s| {
         if s.starts_with(", ") || s.starts_with(": ") {
@@ -441,4 +466,58 @@ fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a st
             None
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_hhmm() {
+        let time = parse_hhmm("0930").unwrap();
+        assert_eq!(time.hour(), 9);
+        assert_eq!(time.minute(), 30);
+
+        let time = parse_hhmm("1700").unwrap();
+        assert_eq!(time.hour(), 17);
+        assert_eq!(time.minute(), 0);
+
+        assert!(parse_hhmm("2500").is_none());
+    }
+
+    #[test]
+    fn test_format_time_string() {
+        assert_eq!(format_time_string("0805"), Some("08:05".to_string()));
+        assert_eq!(format_time_string("2359"), Some("23:59".to_string()));
+        assert_eq!(format_time_string("invalid"), None);
+    }
+
+    #[test]
+    fn test_place_details_is_always_open() {
+        let json = r#"{
+            "name": "7-Eleven",
+            "opening_hours": {
+                "open_now": true,
+                "periods": [
+                    { "open": { "day": 0, "time": "0000" } }
+                ]
+            }
+        }"#;
+        let place: PlaceDetails = serde_json::from_str(json).unwrap();
+        assert!(place.is_always_open());
+    }
+
+    #[test]
+    fn test_place_details_is_open_now() {
+        let json = r#"{
+            "name": "SuperBrugsen",
+            "opening_hours": {
+                "open_now": true,
+                "periods": []
+            }
+        }"#;
+        let place: PlaceDetails = serde_json::from_str(json).unwrap();
+        assert!(place.is_open_now());
+        assert!(!place.is_always_open());
+    }
 }
