@@ -6,7 +6,10 @@ use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
 use tracing::{debug, warn};
 
-use crate::{http, plugin::prelude::*};
+use crate::{
+    http,
+    plugin::{self, prelude::*},
+};
 
 /// The base URL for the Trustpilot API.
 const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
@@ -92,7 +95,7 @@ impl Plugin for Trustpilot {
     }
 
     fn version() -> Version {
-        Version::from("0.1")
+        Version::from("0.2")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -100,7 +103,7 @@ impl Plugin for Trustpilot {
             && let Some(query) = self.command.parse(user_message)
         {
             if query.trim().is_empty() {
-                client.send_privmsg(channel, "\x0310> Usage: .tp\x0f <domain>")?;
+                client.send_privmsg(channel, "\x0310> Usage: .tp\x0f <domain name>")?;
                 return Ok(());
             }
 
@@ -113,6 +116,7 @@ impl Plugin for Trustpilot {
                 }
                 Err(e) => {
                     warn!(error = ?e, "trustpilot error");
+                    // The error is already safe for display
                     client.send_privmsg(channel, format!("\x0310> Error: {e}"))?;
                 }
             }
@@ -133,11 +137,17 @@ impl Trustpilot {
     /// Returns `Error::NotFound` if the API returns a 404, or `Error::Request` for other HTTP errors.
     async fn search(&self, query: &str) -> Result<BusinessUnit, Error> {
         let url = format!("{API_BASE_URL}/business-units/find");
-        let params = [("apikey", &self.api_key), ("name", &query.to_string())];
+        let params = [("name", &query.to_string())];
 
         debug!(%url, ?params, "searching trustpilot");
 
-        let response = self.client.get(&url).query(&params).send().await?;
+        let response = self
+            .client
+            .get(&url)
+            .header("apikey", &self.api_key)
+            .query(&params)
+            .send()
+            .await?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(Error::NotFound);
@@ -204,7 +214,7 @@ mod tests {
 
         assert_eq!(business.display_name, "Test Company");
         assert_eq!(business.name.identifying, "test.com");
-        assert_eq!(business.score.trust_score, 4.5f64);
+        assert_eq!(business.score.trust_score, 4.5);
         assert_eq!(business.number_of_reviews.total, 100);
     }
 }
