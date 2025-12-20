@@ -23,6 +23,7 @@ plugin-dig = []
 plugin-geoip = []
 plugin-google-search = []
 plugin-health = []
+plugin-howlongtobeat = []
 plugin-pornhub = []
 plugin-reddit = []
 plugin-string-utils = []
@@ -37,6 +38,7 @@ plugins-all = [
     "plugin-geoip",
     "plugin-google-search",
     "plugin-health",
+    "plugin-howlongtobeat",
     "plugin-pornhub",
     "plugin-reddit",
     "plugin-rink",

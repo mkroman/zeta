@@ -21,6 +21,9 @@ pub mod google_search;
 /// Process health information
 #[cfg(feature = "plugin-health")]
 pub mod health;
+/// Howlongtobeat.com integration
+#[cfg(feature = "plugin-howlongtobeat")]
+pub mod howlongtobeat;
 #[cfg(feature = "plugin-pornhub")]
 pub mod pornhub;
 /// Reddit plugin integration
@@ -89,6 +92,8 @@ impl Registry {
         registry.register::<google_search::GoogleSearch>();
         #[cfg(feature = "plugin-health")]
         registry.register::<health::Health>();
+        #[cfg(feature = "plugin-howlongtobeat")]
+        registry.register::<howlongtobeat::HowLongToBeat>();
         #[cfg(feature = "plugin-pornhub")]
         registry.register::<pornhub::PornHub>();
         #[cfg(feature = "plugin-reddit")]
