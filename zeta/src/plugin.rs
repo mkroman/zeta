@@ -24,6 +24,9 @@ pub mod health;
 /// Howlongtobeat.com integration
 #[cfg(feature = "plugin-howlongtobeat")]
 pub mod howlongtobeat;
+/// Is it open
+#[cfg(feature = "plugin-isitopen")]
+pub mod isitopen;
 #[cfg(feature = "plugin-pornhub")]
 pub mod pornhub;
 /// Reddit plugin integration
@@ -94,6 +97,8 @@ impl Registry {
         registry.register::<health::Health>();
         #[cfg(feature = "plugin-howlongtobeat")]
         registry.register::<howlongtobeat::HowLongToBeat>();
+        #[cfg(feature = "plugin-isitopen")]
+        registry.register::<isitopen::IsItOpen>();
         #[cfg(feature = "plugin-pornhub")]
         registry.register::<pornhub::PornHub>();
         #[cfg(feature = "plugin-reddit")]
