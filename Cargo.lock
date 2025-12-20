@@ -4472,6 +4472,7 @@ dependencies = [
  "opentelemetry-resource-detectors",
  "opentelemetry_sdk",
  "rand 0.9.2",
+ "regex",
  "reqwest",
  "rink-core",
  "scraper",

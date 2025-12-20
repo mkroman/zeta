@@ -24,6 +24,7 @@ plugin-geoip = []
 plugin-google-search = []
 plugin-health = []
 plugin-howlongtobeat = []
+plugin-isitopen = []
 plugin-pornhub = []
 plugin-reddit = []
 plugin-string-utils = []
@@ -39,6 +40,7 @@ plugins-all = [
     "plugin-google-search",
     "plugin-health",
     "plugin-howlongtobeat",
+    "plugin-isitopen",
     "plugin-pornhub",
     "plugin-reddit",
     "plugin-rink",
@@ -66,6 +68,7 @@ opentelemetry-otlp = "0.31.0"
 opentelemetry-resource-detectors = "0.10.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
 rand = "0.9.2"
+regex = "1.12.2"
 reqwest = { workspace = true, features = ["json", "stream"] }
 rink-core = { git = "https://github.com/tiffany352/rink-rs", features = ["bundle-files", "serde_json"] }
 scraper.workspace = true
