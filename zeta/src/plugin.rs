@@ -41,6 +41,9 @@ pub mod string_utils;
 /// TikTok integration
 #[cfg(feature = "plugin-tiktok")]
 pub mod tiktok;
+/// Trustpilot integration
+#[cfg(feature = "plugin-trustpilot")]
+pub mod trustpilot;
 #[cfg(feature = "plugin-tvmaze")]
 pub mod tvmaze;
 /// Urban Dictionary integration
@@ -107,6 +110,8 @@ impl Registry {
         registry.register::<string_utils::StringUtils>();
         #[cfg(feature = "plugin-tiktok")]
         registry.register::<tiktok::Tiktok>();
+        #[cfg(feature = "plugin-trustpilot")]
+        registry.register::<trustpilot::Trustpilot>();
         #[cfg(feature = "plugin-tvmaze")]
         registry.register::<tvmaze::Tvmaze>();
         #[cfg(feature = "plugin-urban-dictionary")]

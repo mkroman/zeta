@@ -29,6 +29,7 @@ plugin-pornhub = []
 plugin-reddit = []
 plugin-string-utils = []
 plugin-tiktok = []
+plugin-trustpilot = []
 plugin-tvmaze = []
 plugin-urban-dictionary = []
 plugin-youtube = []
@@ -46,6 +47,7 @@ plugins-all = [
     "plugin-rink",
     "plugin-string-utils",
     "plugin-tiktok",
+    "plugin-trustpilot",
     "plugin-tvmaze",
     "plugin-urban-dictionary",
     "plugin-youtube",
