@@ -220,10 +220,11 @@ fn format_weather(w: &WeatherResponse) -> String {
     let temp = w.main.temp - KELVIN;
     let feels_like = w.main.feels_like - KELVIN;
 
-    let location = match &w.sys.country {
-        Some(c) => format!("{}, {}", w.name, c),
-        None => w.name.clone(),
-    };
+    let location = w
+        .sys
+        .country
+        .as_ref()
+        .map_or_else(|| w.name.clone(), |c| format!("{}, {}", w.name, c));
 
     let conditions = if w.weather.is_empty() {
         "unknown conditions".to_string()
@@ -241,7 +242,7 @@ fn format_weather(w: &WeatherResponse) -> String {
     };
 
     let mut extra_info = Vec::new();
-    extra_info.push(format!("Wind: \x0f{}\x0310", wind_info));
+    extra_info.push(format!("Wind: \x0f{wind_info}\x0310"));
     extra_info.push(format!("Humidity: \x0f{}%\x0310", w.main.humidity));
     extra_info.push(format!("Pressure: \x0f{} hPa\x0310", w.main.pressure));
 
