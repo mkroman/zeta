@@ -27,6 +27,7 @@ plugin-google-search = []
 plugin-health = []
 plugin-howlongtobeat = []
 plugin-isitopen = []
+plugin-openweathermap = []
 plugin-pornhub = []
 plugin-reddit = []
 plugin-string-utils = []
@@ -45,6 +46,7 @@ plugins-all = [
     "plugin-health",
     "plugin-howlongtobeat",
     "plugin-isitopen",
+    "plugin-openweathermap",
     "plugin-pornhub",
     "plugin-reddit",
     "plugin-rink",

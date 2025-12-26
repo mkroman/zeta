@@ -6,10 +6,7 @@ use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
 use tracing::{debug, warn};
 
-use crate::{
-    http,
-    plugin::{self, prelude::*},
-};
+use crate::{http, plugin::prelude::*};
 
 /// The base URL for the Trustpilot API.
 const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
