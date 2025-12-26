@@ -51,12 +51,23 @@ struct GeocodingResult {
 struct WeatherResponse {
     /// City name.
     name: String,
+    /// System parameters.
+    sys: Sys,
     /// Main weather data (temperature, etc.).
     main: Main,
     /// Weather condition descriptions.
     weather: Vec<WeatherDescription>,
     /// Wind data.
     wind: Wind,
+    /// Cloud coverage.
+    clouds: Option<Clouds>,
+}
+
+/// System parameters (country, timestamps, etc.).
+#[derive(Deserialize, Debug)]
+struct Sys {
+    /// Country code (e.g. "DK", "US").
+    country: Option<String>,
 }
 
 /// Main weather parameters.
@@ -66,6 +77,10 @@ struct Main {
     temp: f64,
     /// Feels-like temperature in Kelvin.
     feels_like: f64,
+    /// Humidity percentage.
+    humidity: u8,
+    /// Atmospheric pressure in hPa.
+    pressure: u16,
 }
 
 /// Weather condition description.
@@ -82,6 +97,13 @@ struct Wind {
     speed: f64,
     /// Wind gust in m/s.
     gust: Option<f64>,
+}
+
+/// Cloud coverage.
+#[derive(Deserialize, Debug)]
+struct Clouds {
+    /// Cloudiness, %.
+    all: u8,
 }
 
 #[async_trait]
@@ -108,7 +130,7 @@ impl Plugin for OpenWeatherMap {
     }
 
     fn version() -> Version {
-        Version::from("1.0")
+        Version::from("1.1")
     }
 
     async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
@@ -170,12 +192,14 @@ impl OpenWeatherMap {
 
     /// Fetches current weather data for specific coordinates.
     async fn current_weather(&self, lat: f64, lon: f64) -> Result<WeatherResponse, Error> {
-        debug!(lat = &lat, lon = &lon, "fetching current weather");
+        debug!(lat, lon, "fetching current weather");
         let url = format!("{API_BASE_URL}/data/2.5/weather");
+        let lat_s = lat.to_string();
+        let lon_s = lon.to_string();
         let params = [
-            ("lat", lat.to_string()),
-            ("lon", lon.to_string()),
-            ("appid", self.app_id.clone()),
+            ("lat", lat_s.as_str()),
+            ("lon", lon_s.as_str()),
+            ("appid", self.app_id.as_str()),
         ];
 
         let response = self.client.get(&url).query(&params).send().await?;
@@ -191,33 +215,46 @@ impl OpenWeatherMap {
     }
 }
 
-/// Formats the weather response into an IRC-friendly string.
+/// Formats the weather response into a natural language string.
 fn format_weather(w: &WeatherResponse) -> String {
     let temp = w.main.temp - KELVIN;
     let feels_like = w.main.feels_like - KELVIN;
-    let wind_speed = w.wind.speed;
-    let wind_gust = w.wind.gust.unwrap_or(0.0);
 
-    let mut result = format!(
-        "Right now in\x0f {}\x0310 it's\x0f {:.1} °C\x0310 (feels like\x0f {:.1} °C\x0310)",
-        w.name, temp, feels_like
-    );
+    let location = match &w.sys.country {
+        Some(c) => format!("{}, {}", w.name, c),
+        None => w.name.clone(),
+    };
 
-    if !w.weather.is_empty() {
-        let weather_string = w
-            .weather
+    let conditions = if w.weather.is_empty() {
+        "unknown conditions".to_string()
+    } else {
+        w.weather
             .iter()
-            .map(|weather| format!("\x0f{}\x0310", weather.description))
+            .map(|d| d.description.as_str())
             .collect::<Vec<_>>()
-            .join(" and ");
-        result.push_str(" with ");
-        result.push_str(&weather_string);
+            .join(", ")
+    };
+
+    let wind_info = match w.wind.gust {
+        Some(g) if g > 0.0 => format!("{:.1} m/s (gusts: {:.1} m/s)", w.wind.speed, g),
+        _ => format!("{:.1} m/s", w.wind.speed),
+    };
+
+    let mut extra_info = Vec::new();
+    extra_info.push(format!("Wind: \x0f{}\x0310", wind_info));
+    extra_info.push(format!("Humidity: \x0f{}%\x0310", w.main.humidity));
+    extra_info.push(format!("Pressure: \x0f{} hPa\x0310", w.main.pressure));
+
+    if let Some(clouds) = &w.clouds {
+        extra_info.push(format!("Cloud coverage: \x0f{}%\x0310", clouds.all));
     }
 
-    result.push_str(&format!(
-        ". Wind:\x0f {:.1} m/s\x0310, gusts:\x0f {:.1} m/s\x0310",
-        wind_speed, wind_gust
-    ));
-
-    format!("\x0310> {}", result)
+    format!(
+        "\x0310> Right now in \x0f{}\x0310 it's \x0f{:.1} °C\x0310 (feels like \x0f{:.1} °C\x0310) with \x0f{}\x0310. {}",
+        location,
+        temp,
+        feels_like,
+        conditions,
+        extra_info.join(". ")
+    )
 }
