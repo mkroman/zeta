@@ -15,6 +15,9 @@ pub mod dig;
 /// Query geolocation of addresses and hostnames
 #[cfg(feature = "plugin-geoip")]
 pub mod geoip;
+/// GitHub integration
+#[cfg(feature = "plugin-github")]
+pub mod github;
 /// Google images integration
 #[cfg(feature = "plugin-google-images")]
 pub mod google_images;
@@ -100,6 +103,8 @@ impl Registry {
         registry.register::<dig::Dig>();
         #[cfg(feature = "plugin-geoip")]
         registry.register::<geoip::GeoIp>();
+        #[cfg(feature = "plugin-github")]
+        registry.register::<github::GitHubPlugin>();
         #[cfg(feature = "plugin-google-images")]
         registry.register::<google_images::GoogleImages>();
         #[cfg(feature = "plugin-google-search")]
