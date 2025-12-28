@@ -1,6 +1,6 @@
 //! HTTP features
 
-mod client {
+pub mod client {
     use crate::consts;
 
     pub use reqwest::Client;

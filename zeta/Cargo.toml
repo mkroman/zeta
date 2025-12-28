@@ -22,6 +22,7 @@ plugin-choices = []
 plugin-dendanskeordbog = []
 plugin-dig = []
 plugin-geoip = []
+plugin-github = []
 plugin-google-images = []
 plugin-google-search = []
 plugin-health = []
@@ -41,6 +42,7 @@ plugins-all = [
     "plugin-dendanskeordbog",
     "plugin-dig",
     "plugin-geoip",
+    "plugin-github",
     "plugin-google-images",
     "plugin-google-search",
     "plugin-health",
