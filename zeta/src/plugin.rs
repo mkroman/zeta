@@ -33,6 +33,9 @@ pub mod howlongtobeat;
 /// Is it open
 #[cfg(feature = "plugin-isitopen")]
 pub mod isitopen;
+/// Kagi search integration
+#[cfg(feature = "plugin-kagi")]
+pub mod kagi;
 /// Weather service integration
 #[cfg(feature = "plugin-openweathermap")]
 pub mod openweathermap;
@@ -115,6 +118,8 @@ impl Registry {
         registry.register::<howlongtobeat::HowLongToBeat>();
         #[cfg(feature = "plugin-isitopen")]
         registry.register::<isitopen::IsItOpen>();
+        #[cfg(feature = "plugin-kagi")]
+        registry.register::<kagi::KagiPlugin>();
         #[cfg(feature = "plugin-openweathermap")]
         registry.register::<openweathermap::OpenWeatherMap>();
         #[cfg(feature = "plugin-pornhub")]
