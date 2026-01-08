@@ -24,7 +24,6 @@ plugin-dig = []
 plugin-geoip = []
 plugin-github = []
 plugin-google-images = []
-plugin-google-search = []
 plugin-health = []
 plugin-howlongtobeat = []
 plugin-isitopen = []
@@ -45,7 +44,6 @@ plugins-all = [
     "plugin-geoip",
     "plugin-github",
     "plugin-google-images",
-    "plugin-google-search",
     "plugin-health",
     "plugin-howlongtobeat",
     "plugin-isitopen",

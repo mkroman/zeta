@@ -21,9 +21,6 @@ pub mod github;
 /// Google images integration
 #[cfg(feature = "plugin-google-images")]
 pub mod google_images;
-/// Google search integration
-#[cfg(feature = "plugin-google-search")]
-pub mod google_search;
 /// Process health information
 #[cfg(feature = "plugin-health")]
 pub mod health;
@@ -110,8 +107,6 @@ impl Registry {
         registry.register::<github::GitHubPlugin>();
         #[cfg(feature = "plugin-google-images")]
         registry.register::<google_images::GoogleImages>();
-        #[cfg(feature = "plugin-google-search")]
-        registry.register::<google_search::GoogleSearch>();
         #[cfg(feature = "plugin-health")]
         registry.register::<health::Health>();
         #[cfg(feature = "plugin-howlongtobeat")]
