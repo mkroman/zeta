@@ -7,7 +7,7 @@ argh = { version = "0.1.12" }
 async-trait = "0.1.89"
 futures = "0.3.31"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-native", "ctcp", "channel-lists"] }
-reqwest = { version = "0.12.15", features = ["json"] }
+reqwest = { version = "0.13.1", features = ["json", "query"] }
 scraper = "0.25.0"
 serde = { version = "1.0.215", features = ["derive"] }
 thiserror = "2.0"
