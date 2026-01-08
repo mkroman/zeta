@@ -331,8 +331,10 @@ mod tests {
 
     #[test]
     fn test_parse_document() {
-        let html = include_str!("../tests/fixtures/queries/hest.html");
-        let document = DictionaryDocument::from_html(html).expect("dictionary document");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/queries/hest.html");
+        let html = fs::read_to_string(path).unwrap();
+        let document = DictionaryDocument::from_html(&html).expect("dictionary document");
         let entries = &document.entries;
 
         assert_eq!(entries.len(), 1);
