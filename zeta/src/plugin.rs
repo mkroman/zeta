@@ -44,6 +44,9 @@ pub mod reddit;
 /// Calculator plugin based on rink
 #[cfg(feature = "plugin-rink")]
 pub mod rink;
+/// Rust Playgroudn integration
+#[cfg(feature = "plugin-rust-playground")]
+pub mod rust_playground;
 /// Spotify integration
 #[cfg(feature = "plugin-spotify")]
 pub mod spotify;
@@ -130,6 +133,8 @@ impl Registry {
         registry.register::<pornhub::PornHub>();
         #[cfg(feature = "plugin-reddit")]
         registry.register::<reddit::Reddit>();
+        #[cfg(feature = "plugin-rust-playground")]
+        registry.register::<rust_playground::RustPlayground>();
         #[cfg(feature = "plugin-spotify")]
         registry.register::<spotify::Spotify>();
         #[cfg(feature = "plugin-string-utils")]
