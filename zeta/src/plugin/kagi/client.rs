@@ -1,10 +1,11 @@
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use regex::Regex;
 use reqwest::header::{ACCEPT, SET_COOKIE};
 use scraper::{ElementRef, Html, Node, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::RwLock;
 use tracing::{debug, error};
 
 use crate::http;
@@ -25,15 +26,27 @@ struct KagiMessage {
     pub kagi_version: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+struct Session {
+    /// The nonce used for the first search request.
+    nonce: String,
+    /// When the nonce was created.
+    created_at: Instant,
+}
+
 pub struct Client {
     /// HTTP client with a cookie jar.
     http: reqwest::Client,
     /// Kagi login token.
     token: String,
-    /// The instant the current session started.
-    session_started_at: Option<Instant>,
-    /// The nonce used for the current session.
-    nonce: Option<String>,
+    /// Session details.
+    session: Arc<RwLock<Option<Session>>>,
+}
+
+impl Session {
+    fn is_valid(&self) -> bool {
+        self.created_at.elapsed() < KAGI_SESSION_DURATION
+    }
 }
 
 impl Client {
@@ -46,12 +59,11 @@ impl Client {
         Client {
             http: client,
             token,
-            nonce: None,
-            session_started_at: None,
+            session: Arc::new(RwLock::new(None)),
         }
     }
 
-    pub async fn init_session(&mut self) -> Result<(), Error> {
+    async fn fetch_new_session_data(&self) -> Result<String, Error> {
         // Issue a request with the login token to receive session cookies.
         let req = self
             .http
@@ -62,7 +74,6 @@ impl Client {
         let res = req.send().await.map_err(Error::RequestSession)?;
         if !res.headers().contains_key(SET_COOKIE) {
             error!("the response does not include set-cookie headers!");
-
             return Err(Error::SessionCookies);
         }
 
@@ -72,27 +83,44 @@ impl Client {
         let res = req.send().await.map_err(Error::RequestNonce)?;
         let body = res.text().await.map_err(Error::ReadNonce)?;
 
-        match extract_nonce(&body) {
-            Some(nonce) => {
-                debug!(nonce, "started session");
-
-                self.nonce = Some(nonce);
-                self.session_started_at = Some(Instant::now());
-
-                Ok(())
-            }
-            None => Err(Error::Nonce),
-        }
+        extract_nonce(&body).ok_or(Error::Nonce)
     }
 
-    pub async fn search(&mut self, query: &str) -> Result<Vec<SearchResult>, Error> {
-        if let Some(instant) = self.session_started_at {
-            if instant.elapsed() > KAGI_SESSION_DURATION {
-                self.init_session().await?;
+    async fn get_valid_nonce(&self) -> Result<String, Error> {
+        // Optimistic read of a current session
+        {
+            let guard = self.session.read().await;
+
+            if let Some(session) = guard.as_ref().filter(|s| s.is_valid()) {
+                return Ok(session.nonce.clone());
             }
-        } else {
-            self.init_session().await?;
         }
+
+        let new_nonce = {
+            let mut guard = self.session.write().await;
+
+            // Double check and return the current session if it was changed while we were waiting
+            // for the lock.
+            if let Some(session) = guard.as_ref().filter(|s| s.is_valid()) {
+                return Ok(session.nonce.clone());
+            }
+
+            debug!("session expired or missing, refreshing...");
+            let new_nonce = self.fetch_new_session_data().await?;
+
+            *guard = Some(Session {
+                nonce: new_nonce.clone(),
+                created_at: Instant::now(),
+            });
+
+            new_nonce
+        };
+
+        Ok(new_nonce)
+    }
+
+    pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>, Error> {
+        let _nonce = self.get_valid_nonce().await?;
 
         let req = self
             .http
