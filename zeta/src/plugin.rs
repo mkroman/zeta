@@ -44,6 +44,9 @@ pub mod reddit;
 /// Calculator plugin based on rink
 #[cfg(feature = "plugin-rink")]
 pub mod rink;
+/// Spotify integration
+#[cfg(feature = "plugin-spotify")]
+pub mod spotify;
 /// Generic string utilliy plugin
 #[cfg(feature = "plugin-string-utils")]
 pub mod string_utils;
@@ -121,6 +124,8 @@ impl Registry {
         registry.register::<pornhub::PornHub>();
         #[cfg(feature = "plugin-reddit")]
         registry.register::<reddit::Reddit>();
+        #[cfg(feature = "plugin-spotify")]
+        registry.register::<spotify::Spotify>();
         #[cfg(feature = "plugin-string-utils")]
         registry.register::<string_utils::StringUtils>();
         #[cfg(feature = "plugin-tiktok")]
