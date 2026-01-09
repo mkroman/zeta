@@ -1,8 +1,6 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use thiserror::Error;
-use tokio::sync::Mutex;
 
 use crate::plugin::prelude::*;
 
@@ -42,7 +40,7 @@ pub enum Error {
 
 pub struct KagiPlugin {
     /// Kagi search client.
-    client: Arc<Mutex<client::Client>>,
+    client: client::Client,
     /// `.g` search command.
     search_command: ZetaCommand,
 }
@@ -53,7 +51,7 @@ impl Plugin for KagiPlugin {
         let token = std::env::var("KAGI_SESSION_TOKEN")
             .expect("missing KAGI_SESSION_TOKEN environment variable");
         let search_command = ZetaCommand::new(".g");
-        let client = Arc::new(Mutex::new(client::Client::with_token(token)));
+        let client = client::Client::with_token(token);
 
         KagiPlugin {
             client,
@@ -77,7 +75,7 @@ impl Plugin for KagiPlugin {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(query) = self.search_command.parse(user_message)
         {
-            let results = self.client.lock().await.search(query).await;
+            let results = self.client.search(query).await;
 
             match results {
                 Ok(results) => {
