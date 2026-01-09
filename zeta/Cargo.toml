@@ -31,6 +31,7 @@ plugin-kagi = []
 plugin-openweathermap = []
 plugin-pornhub = []
 plugin-reddit = []
+plugin-spotify = []
 plugin-string-utils = []
 plugin-tiktok = []
 plugin-trustpilot = []
@@ -52,6 +53,7 @@ plugins-all = [
     "plugin-pornhub",
     "plugin-reddit",
     "plugin-rink",
+    "plugin-spotify",
     "plugin-string-utils",
     "plugin-tiktok",
     "plugin-trustpilot",
@@ -63,6 +65,7 @@ plugins-all = [
 [dependencies]
 argh.workspace = true
 async-trait.workspace = true
+base64 = "0.22.1"
 dendanskeordbog = { path = "../dendanskeordbog", features = ["client"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
@@ -78,7 +81,7 @@ opentelemetry-resource-detectors = "0.10.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
 rand = "0.9.2"
 regex = "1.12.2"
-reqwest = { workspace = true, features = ["json", "stream", "cookies"] }
+reqwest = { workspace = true, features = ["json", "stream", "cookies", "form"] }
 rink-core = { git = "https://github.com/tiffany352/rink-rs", features = ["bundle-files", "serde_json"] }
 scraper.workspace = true
 serde = { version = "1.0.215", features = ["derive"] }
