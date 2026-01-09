@@ -58,6 +58,9 @@ pub mod tiktok;
 pub mod trustpilot;
 #[cfg(feature = "plugin-tvmaze")]
 pub mod tvmaze;
+// Twitch integration
+#[cfg(feature = "plugin-twitch")]
+pub mod twitch;
 /// Urban Dictionary integration
 #[cfg(feature = "plugin-urban-dictionary")]
 pub mod urban_dictionary;
@@ -134,6 +137,8 @@ impl Registry {
         registry.register::<trustpilot::Trustpilot>();
         #[cfg(feature = "plugin-tvmaze")]
         registry.register::<tvmaze::Tvmaze>();
+        #[cfg(feature = "plugin-twitch")]
+        registry.register::<twitch::Twitch>();
         #[cfg(feature = "plugin-urban-dictionary")]
         registry.register::<urban_dictionary::UrbanDictionary>();
         #[cfg(feature = "plugin-youtube")]
