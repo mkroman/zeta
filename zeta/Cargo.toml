@@ -36,6 +36,7 @@ plugin-string-utils = []
 plugin-tiktok = []
 plugin-trustpilot = []
 plugin-tvmaze = []
+plugin-twitch = []
 plugin-urban-dictionary = []
 plugin-youtube = []
 plugins-all = [
@@ -58,6 +59,7 @@ plugins-all = [
     "plugin-tiktok",
     "plugin-trustpilot",
     "plugin-tvmaze",
+    "plugin-twitch",
     "plugin-urban-dictionary",
     "plugin-youtube",
 ]
