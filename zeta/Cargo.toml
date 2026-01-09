@@ -33,6 +33,7 @@ plugin-pornhub = []
 plugin-reddit = []
 plugin-spotify = []
 plugin-string-utils = []
+plugin-thingiverse = []
 plugin-tiktok = []
 plugin-trustpilot = []
 plugin-tvmaze = []
@@ -56,6 +57,7 @@ plugins-all = [
     "plugin-rink",
     "plugin-spotify",
     "plugin-string-utils",
+    "plugin-thingiverse",
     "plugin-tiktok",
     "plugin-trustpilot",
     "plugin-tvmaze",

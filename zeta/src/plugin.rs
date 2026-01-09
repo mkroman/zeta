@@ -52,6 +52,9 @@ pub mod spotify;
 pub mod string_utils;
 /// TikTok integration
 #[cfg(feature = "plugin-tiktok")]
+pub mod thingiverse;
+/// Thingiverse integration
+#[cfg(feature = "plugin-thingiverse")]
 pub mod tiktok;
 /// Trustpilot integration
 #[cfg(feature = "plugin-trustpilot")]
@@ -131,6 +134,8 @@ impl Registry {
         registry.register::<spotify::Spotify>();
         #[cfg(feature = "plugin-string-utils")]
         registry.register::<string_utils::StringUtils>();
+        #[cfg(feature = "plugin-thingiverse")]
+        registry.register::<thingiverse::Thingiverse>();
         #[cfg(feature = "plugin-tiktok")]
         registry.register::<tiktok::Tiktok>();
         #[cfg(feature = "plugin-trustpilot")]
