@@ -173,6 +173,18 @@ impl Tiktok {
             .fetch_oembed_data(url.as_str())
             .await
             .map_err(|_| Error::InvalidOEmbed)?;
+
+        // The oembed endpoint is weird and returns these values when the video is private, so we
+        // return early.
+        if embed.author_name.as_ref().filter(|s| *s == "@").is_some()
+            && embed
+                .author_url
+                .filter(|s| *s == "https://www.tiktok.com/")
+                .is_some()
+        {
+            return Ok(());
+        }
+
         let mut buf = String::new();
 
         if let Some(title) = embed.title {
