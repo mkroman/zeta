@@ -12,13 +12,13 @@ mod client;
 pub const KAGI_SESSION_DURATION: Duration = Duration::from_mins(15);
 
 /// Represents a single search result obtained from the search operation.
-#[allow(dead_code)]
 pub struct SearchResult {
     /// The title of the search result.
     pub title: String,
     /// The URL of the search result.
     pub url: String,
     /// The description.
+    #[allow(dead_code)]
     pub description: String,
 }
 
