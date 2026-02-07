@@ -3,77 +3,6 @@ use url::Url;
 
 pub use zeta_plugin::{Author, Name, Plugin, Version};
 
-/// Plugin that helps the user make a choice
-#[cfg(feature = "plugin-choices")]
-pub mod choices;
-/// Query the danish dictionary
-#[cfg(feature = "plugin-dendanskeordbog")]
-pub mod dendanskeordbog;
-/// Query nameservers
-#[cfg(feature = "plugin-dig")]
-pub mod dig;
-/// Query geolocation of addresses and hostnames
-#[cfg(feature = "plugin-geoip")]
-pub mod geoip;
-/// GitHub integration
-#[cfg(feature = "plugin-github")]
-pub mod github;
-/// Google images integration
-#[cfg(feature = "plugin-google-images")]
-pub mod google_images;
-/// Process health information
-#[cfg(feature = "plugin-health")]
-pub mod health;
-/// Howlongtobeat.com integration
-#[cfg(feature = "plugin-howlongtobeat")]
-pub mod howlongtobeat;
-/// Is it open
-#[cfg(feature = "plugin-isitopen")]
-pub mod isitopen;
-/// Kagi search integration
-#[cfg(feature = "plugin-kagi")]
-pub mod kagi;
-/// Weather service integration
-#[cfg(feature = "plugin-openweathermap")]
-pub mod openweathermap;
-#[cfg(feature = "plugin-pornhub")]
-pub mod pornhub;
-/// Reddit plugin integration
-#[cfg(feature = "plugin-reddit")]
-pub mod reddit;
-/// Calculator plugin based on rink
-#[cfg(feature = "plugin-rink")]
-pub mod rink;
-/// Rust Playgroudn integration
-#[cfg(feature = "plugin-rust-playground")]
-pub mod rust_playground;
-/// Spotify integration
-#[cfg(feature = "plugin-spotify")]
-pub mod spotify;
-/// Generic string utilliy plugin
-#[cfg(feature = "plugin-string-utils")]
-pub mod string_utils;
-/// TikTok integration
-#[cfg(feature = "plugin-tiktok")]
-pub mod thingiverse;
-/// Thingiverse integration
-#[cfg(feature = "plugin-thingiverse")]
-pub mod tiktok;
-/// Trustpilot integration
-#[cfg(feature = "plugin-trustpilot")]
-pub mod trustpilot;
-#[cfg(feature = "plugin-tvmaze")]
-pub mod tvmaze;
-// Twitch integration
-#[cfg(feature = "plugin-twitch")]
-pub mod twitch;
-/// Urban Dictionary integration
-#[cfg(feature = "plugin-urban-dictionary")]
-pub mod urban_dictionary;
-/// YouTube integration
-#[cfg(feature = "plugin-youtube")]
-pub mod youtube;
-
 /// Common includes used in plugins.
 #[allow(unused)]
 mod prelude {
@@ -84,6 +13,137 @@ mod prelude {
     pub use irc::proto::{Command, Message};
     pub use irc::proto::{Command as IrcCommand, Message as IrcMessage};
     pub use zeta_plugin::Error as ZetaError;
+}
+
+/// Declares plugin modules and generates a registry helper to avoid boilerplate.
+///
+/// For each entry, it generates:
+/// 1. `pub mod $mod_name;` (with feature gates and docs).
+/// 2. A call to `register::<$mod_name::$struct_name>()` inside `Registry::register_bundled_plugins`.
+macro_rules! declare_plugins {
+    (
+        $(
+            $(#[doc = $doc:expr])*
+            #[cfg(feature = $feature:literal)]
+            $mod_name:ident :: $struct_name:ident
+        ),* $(,)?
+    ) => {
+        // Generate module declarations
+        $(
+            $(#[doc = $doc])*
+            #[cfg(feature = $feature)]
+            pub mod $mod_name;
+        )*
+
+        // Generate a helper extension to register these specific plugins
+        impl Registry {
+            fn register_bundled_plugins(&mut self) {
+                $(
+                    #[cfg(feature = $feature)]
+                    {
+                        // Explicitly uses the module and struct passed in
+                        self.register::<$mod_name::$struct_name>();
+                    }
+                )*
+            }
+        }
+    }
+}
+
+declare_plugins! {
+    /// Plugin that helps the user make a choice
+    #[cfg(feature = "plugin-choices")]
+    choices::Choices,
+
+    /// Query the danish dictionary
+    #[cfg(feature = "plugin-dendanskeordbog")]
+    dendanskeordbog::DenDanskeOrdbog,
+
+    /// Query nameservers
+    #[cfg(feature = "plugin-dig")]
+    dig::Dig,
+
+    /// Query geolocation of addresses and hostnames
+    #[cfg(feature = "plugin-geoip")]
+    geoip::GeoIp,
+
+    /// GitHub integration
+    #[cfg(feature = "plugin-github")]
+    github::GitHubPlugin,
+
+    /// Google images integration
+    #[cfg(feature = "plugin-google-images")]
+    google_images::GoogleImages,
+
+    /// Process health information
+    #[cfg(feature = "plugin-health")]
+    health::Health,
+
+    /// Howlongtobeat.com integration
+    #[cfg(feature = "plugin-howlongtobeat")]
+    howlongtobeat::HowLongToBeat,
+
+    /// Is it open
+    #[cfg(feature = "plugin-isitopen")]
+    isitopen::IsItOpen,
+
+    /// Kagi search integration
+    #[cfg(feature = "plugin-kagi")]
+    kagi::KagiPlugin,
+
+    /// Weather service integration
+    #[cfg(feature = "plugin-openweathermap")]
+    openweathermap::OpenWeatherMap,
+
+    #[cfg(feature = "plugin-pornhub")]
+    pornhub::PornHub,
+
+    /// Reddit plugin integration
+    #[cfg(feature = "plugin-reddit")]
+    reddit::Reddit,
+
+    /// Calculator plugin based on rink
+    #[cfg(feature = "plugin-rink")]
+    rink::Rink,
+
+    /// Rust Playground integration
+    #[cfg(feature = "plugin-rust-playground")]
+    rust_playground::RustPlayground,
+
+    /// Spotify integration
+    #[cfg(feature = "plugin-spotify")]
+    spotify::Spotify,
+
+    /// Generic string utility plugin
+    #[cfg(feature = "plugin-string-utils")]
+    string_utils::StringUtils,
+
+    /// Thingiverse integration
+    #[cfg(feature = "plugin-thingiverse")]
+    thingiverse::Thingiverse,
+
+    /// TikTok integration
+    #[cfg(feature = "plugin-tiktok")]
+    tiktok::Tiktok,
+
+    /// Trustpilot integration
+    #[cfg(feature = "plugin-trustpilot")]
+    trustpilot::Trustpilot,
+
+    #[cfg(feature = "plugin-tvmaze")]
+    tvmaze::Tvmaze,
+
+    // Twitch integration
+    #[cfg(feature = "plugin-twitch")]
+    twitch::Twitch,
+
+    /// Urban Dictionary integration
+    #[cfg(feature = "plugin-urban-dictionary")]
+    urban_dictionary::UrbanDictionary,
+
+    /// YouTube integration
+    #[cfg(feature = "plugin-youtube")]
+    youtube::YouTube,
 }
 
 /// Plugin registry.
@@ -105,54 +165,7 @@ impl Registry {
         let mut registry = Self::new();
         debug!("registering plugins");
 
-        #[cfg(feature = "plugin-rink")]
-        registry.register::<rink::Rink>();
-        #[cfg(feature = "plugin-choices")]
-        registry.register::<choices::Choices>();
-        #[cfg(feature = "plugin-dendanskeordbog")]
-        registry.register::<dendanskeordbog::DenDanskeOrdbog>();
-        #[cfg(feature = "plugin-dig")]
-        registry.register::<dig::Dig>();
-        #[cfg(feature = "plugin-geoip")]
-        registry.register::<geoip::GeoIp>();
-        #[cfg(feature = "plugin-github")]
-        registry.register::<github::GitHubPlugin>();
-        #[cfg(feature = "plugin-google-images")]
-        registry.register::<google_images::GoogleImages>();
-        #[cfg(feature = "plugin-health")]
-        registry.register::<health::Health>();
-        #[cfg(feature = "plugin-howlongtobeat")]
-        registry.register::<howlongtobeat::HowLongToBeat>();
-        #[cfg(feature = "plugin-isitopen")]
-        registry.register::<isitopen::IsItOpen>();
-        #[cfg(feature = "plugin-kagi")]
-        registry.register::<kagi::KagiPlugin>();
-        #[cfg(feature = "plugin-openweathermap")]
-        registry.register::<openweathermap::OpenWeatherMap>();
-        #[cfg(feature = "plugin-pornhub")]
-        registry.register::<pornhub::PornHub>();
-        #[cfg(feature = "plugin-reddit")]
-        registry.register::<reddit::Reddit>();
-        #[cfg(feature = "plugin-rust-playground")]
-        registry.register::<rust_playground::RustPlayground>();
-        #[cfg(feature = "plugin-spotify")]
-        registry.register::<spotify::Spotify>();
-        #[cfg(feature = "plugin-string-utils")]
-        registry.register::<string_utils::StringUtils>();
-        #[cfg(feature = "plugin-thingiverse")]
-        registry.register::<thingiverse::Thingiverse>();
-        #[cfg(feature = "plugin-tiktok")]
-        registry.register::<tiktok::Tiktok>();
-        #[cfg(feature = "plugin-trustpilot")]
-        registry.register::<trustpilot::Trustpilot>();
-        #[cfg(feature = "plugin-tvmaze")]
-        registry.register::<tvmaze::Tvmaze>();
-        #[cfg(feature = "plugin-twitch")]
-        registry.register::<twitch::Twitch>();
-        #[cfg(feature = "plugin-urban-dictionary")]
-        registry.register::<urban_dictionary::UrbanDictionary>();
-        #[cfg(feature = "plugin-youtube")]
-        registry.register::<youtube::YouTube>();
+        registry.register_bundled_plugins();
 
         let num_plugins = registry.plugins.len();
         debug!(%num_plugins, "finished registering plugins");
