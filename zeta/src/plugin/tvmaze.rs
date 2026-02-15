@@ -127,8 +127,8 @@ impl EndpointUrls {
 }
 
 #[async_trait]
-impl Plugin for Tvmaze {
-    fn new() -> Self {
+impl Plugin<Context> for Tvmaze {
+    fn new(_ctx: &Context) -> Self {
         Tvmaze::new()
     }
 
@@ -144,7 +144,12 @@ impl Plugin for Tvmaze {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(args) = self.command.parse(user_message)
         {

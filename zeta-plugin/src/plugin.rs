@@ -6,9 +6,9 @@ use crate::{Author, Error, Name, Version};
 
 /// The base trait that all plugins must implement.
 #[async_trait]
-pub trait Plugin: Send + Sync {
+pub trait Plugin<C = ()>: Send + Sync {
     /// The constructor for a new plugin.
-    fn new() -> Self
+    fn new(_ctx: &C) -> Self
     where
         Self: Sized;
 
@@ -28,7 +28,12 @@ pub trait Plugin: Send + Sync {
         Self: Sized;
 
     /// Handles IRC protocol messages.
-    async fn handle_message(&self, _message: &Message, _client: &Client) -> Result<(), Error> {
+    async fn handle_message(
+        &self,
+        _ctx: &C,
+        _client: &Client,
+        _message: &Message,
+    ) -> Result<(), Error> {
         Ok(())
     }
 }

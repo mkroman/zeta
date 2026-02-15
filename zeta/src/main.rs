@@ -26,7 +26,7 @@ async fn main() -> miette::Result<()> {
     tracing::try_init(&config.tracing)?;
 
     #[cfg(feature = "database")]
-    {
+    let db = {
         use ::tracing::debug;
 
         debug!("connecting to database");
@@ -36,9 +36,17 @@ async fn main() -> miette::Result<()> {
         debug!("running database migrations");
         database::migrate(db.clone()).await?;
         debug!("database migrations complete");
-    }
+        db
+    };
 
-    let mut z = Zeta::from_config(config);
+    let dns = zeta::dns::new();
+
+    let mut z = Zeta::new(
+        config,
+        #[cfg(feature = "database")]
+        db,
+        dns,
+    );
     z.run().await?;
 
     Ok(())

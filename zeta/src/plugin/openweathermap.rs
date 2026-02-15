@@ -107,8 +107,8 @@ struct Clouds {
 }
 
 #[async_trait]
-impl Plugin for OpenWeatherMap {
-    fn new() -> Self {
+impl Plugin<Context> for OpenWeatherMap {
+    fn new(_ctx: &Context) -> Self {
         let app_id = std::env::var("OPENWEATHERMAP_APP_ID")
             .expect("missing OPENWEATHERMAP_APP_ID environment variable");
         let client = http::build_client();
@@ -133,7 +133,12 @@ impl Plugin for OpenWeatherMap {
         Version::from("1.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(args) = self.command.parse(user_message)
         {

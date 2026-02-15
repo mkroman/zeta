@@ -56,8 +56,8 @@ struct RepoItem {
 }
 
 #[async_trait]
-impl Plugin for GitHubPlugin {
-    fn new() -> Self {
+impl Plugin<Context> for GitHubPlugin {
+    fn new(_ctx: &Context) -> Self {
         GitHubPlugin::new().expect("could not create github plugin")
     }
 
@@ -73,7 +73,12 @@ impl Plugin for GitHubPlugin {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(args) = self.command.parse(user_message)
         {

@@ -79,8 +79,8 @@ pub struct IpInfo {
 }
 
 #[async_trait]
-impl Plugin for GeoIp {
-    fn new() -> GeoIp {
+impl Plugin<Context> for GeoIp {
+    fn new(_ctx: &Context) -> GeoIp {
         let api_key =
             env::var("GEOIP_API_KEY").expect("missing GEOIP_API_KEY environment variable");
 
@@ -111,7 +111,12 @@ impl Plugin for GeoIp {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref message) = message.command
             && let Some(args) = self.command.parse(message)
         {

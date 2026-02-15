@@ -71,8 +71,8 @@ struct OriginalImage {
 }
 
 #[async_trait]
-impl Plugin for GoogleImages {
-    fn new() -> Self {
+impl Plugin<Context> for GoogleImages {
+    fn new(_ctx: &Context) -> Self {
         let client = http::build_client();
         let command = ZetaCommand::new(".gis");
 
@@ -91,7 +91,12 @@ impl Plugin for GoogleImages {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(query) = self.command.parse(user_message)
         {

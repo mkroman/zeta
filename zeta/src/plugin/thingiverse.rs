@@ -68,8 +68,8 @@ struct Creator {
 }
 
 #[async_trait]
-impl Plugin for Thingiverse {
-    fn new() -> Self {
+impl Plugin<Context> for Thingiverse {
+    fn new(_ctx: &Context) -> Self {
         let app_token = env::var("THINGIVERSE_APP_TOKEN")
             .expect("missing THINGIVERSE_APP_TOKEN environment variable");
         let client = http::build_client();
@@ -95,7 +95,12 @@ impl Plugin for Thingiverse {
         Version::from("1.0")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {

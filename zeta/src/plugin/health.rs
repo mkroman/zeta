@@ -24,8 +24,8 @@ pub struct Snapshot {
 }
 
 #[async_trait]
-impl Plugin for Health {
-    fn new() -> Health {
+impl Plugin<Context> for Health {
+    fn new(_ctx: &Context) -> Health {
         let command = ZetaCommand::new(".health");
 
         Health { command }
@@ -43,7 +43,12 @@ impl Plugin for Health {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(_) = self.command.parse(user_message)
             && let Some(snapshot) = Snapshot::capture()

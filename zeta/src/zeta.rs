@@ -1,4 +1,6 @@
 //! The main process for communicating over IRC and managing state.
+use std::sync::Arc;
+
 use futures::stream::StreamExt;
 use irc::client::prelude::Client;
 use irc::proto::Message;
@@ -7,6 +9,7 @@ use tracing::debug;
 use crate::Error;
 use crate::Registry;
 use crate::config::Config;
+use crate::plugin::Context;
 
 /// The main IRC bot struct that manages connection state and message handling.
 pub struct Zeta {
@@ -16,6 +19,8 @@ pub struct Zeta {
     client: Option<Client>,
     /// The plugin containing all loaded plugins
     registry: Registry,
+    /// The shared context for plugins
+    context: Arc<Context>,
 }
 
 impl Zeta {
@@ -24,13 +29,24 @@ impl Zeta {
     /// This initializes the plugin registry with preloaded plugins but doesn't
     /// establish the IRC connection yet. Call `run()` to start the bot.
     #[must_use]
-    pub fn from_config(config: Config) -> Self {
-        let registry = Registry::preloaded();
+    pub fn new(
+        config: Config,
+        #[cfg(feature = "database")] db: crate::database::Database,
+        dns: hickory_resolver::TokioResolver,
+    ) -> Self {
+        let context = Arc::new(Context::new(
+            #[cfg(feature = "database")]
+            db,
+            dns,
+            config.clone(),
+        ));
+        let registry = Registry::preloaded(&context);
 
         Zeta {
             client: None,
             registry,
             config,
+            context,
         }
     }
 
@@ -84,7 +100,9 @@ impl Zeta {
         debug!(?message, "processing irc message");
 
         for plugin in &self.registry.plugins {
-            plugin.handle_message(&message, client).await?;
+            plugin
+                .handle_message(&self.context, client, &message)
+                .await?;
         }
 
         Ok(())

@@ -46,8 +46,8 @@ pub struct KagiPlugin {
 }
 
 #[async_trait]
-impl Plugin for KagiPlugin {
-    fn new() -> KagiPlugin {
+impl Plugin<Context> for KagiPlugin {
+    fn new(_ctx: &Context) -> KagiPlugin {
         let token = std::env::var("KAGI_SESSION_TOKEN")
             .expect("missing KAGI_SESSION_TOKEN environment variable");
         let search_command = ZetaCommand::new(".g");
@@ -71,7 +71,12 @@ impl Plugin for KagiPlugin {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(query) = self.search_command.parse(user_message)
         {

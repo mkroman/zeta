@@ -7,9 +7,12 @@ pub mod command;
 pub mod config;
 /// Commonly used constants
 pub mod consts;
+/// Shared context for plugins
+pub mod context;
 /// Database integration
 pub mod database;
-mod dns;
+/// DNS resolution
+pub mod dns;
 mod error;
 mod http;
 mod plugin;

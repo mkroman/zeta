@@ -17,8 +17,8 @@ pub struct StringUtils {
 }
 
 #[async_trait]
-impl Plugin for StringUtils {
-    fn new() -> StringUtils {
+impl Plugin<Context> for StringUtils {
+    fn new(_ctx: &Context) -> StringUtils {
         StringUtils::new()
     }
 
@@ -34,7 +34,12 @@ impl Plugin for StringUtils {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
             if let Some(args) = self.bytes_command.parse(user_message) {
                 if args.is_empty() {
