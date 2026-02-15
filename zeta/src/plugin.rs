@@ -1,12 +1,14 @@
 use tracing::debug;
 use url::Url;
 
+pub use crate::context::Context;
+
 pub use zeta_plugin::{Author, Name, Plugin, Version};
 
 /// Common includes used in plugins.
 #[allow(unused)]
 mod prelude {
-    pub use super::{Author, Name, Plugin, Version};
+    pub use super::{Author, Context, Name, Plugin, Version};
     pub use crate::command::Command as ZetaCommand;
     pub use async_trait::async_trait;
     pub use irc::client::Client;
@@ -37,12 +39,12 @@ macro_rules! declare_plugins {
 
         // Generate a helper extension to register these specific plugins
         impl Registry {
-            fn register_bundled_plugins(&mut self) {
+            fn register_bundled_plugins(&mut self, ctx: &Context) {
                 $(
                     #[cfg(feature = $feature)]
                     {
                         // Explicitly uses the module and struct passed in
-                        self.register::<$mod_name::$struct_name>();
+                        self.register::<$mod_name::$struct_name>(ctx);
                     }
                 )*
             }
@@ -150,7 +152,7 @@ declare_plugins! {
 #[derive(Default)]
 pub struct Registry {
     /// List of loaded plugins.
-    pub plugins: Vec<Box<dyn Plugin>>,
+    pub plugins: Vec<Box<dyn Plugin<Context>>>,
 }
 
 impl Registry {
@@ -161,11 +163,11 @@ impl Registry {
     }
 
     /// Constructs and returns a new plugin registry with initialized plugins.
-    pub fn preloaded() -> Registry {
+    pub fn preloaded(ctx: &Context) -> Registry {
         let mut registry = Self::new();
         debug!("registering plugins");
 
-        registry.register_bundled_plugins();
+        registry.register_bundled_plugins(ctx);
 
         let num_plugins = registry.plugins.len();
         debug!(%num_plugins, "finished registering plugins");
@@ -174,8 +176,8 @@ impl Registry {
     }
 
     /// Registers a new plugin based on its type.
-    pub fn register<P: Plugin + 'static>(&mut self) -> bool {
-        let plugin = Box::new(P::new());
+    pub fn register<P: Plugin<Context> + 'static>(&mut self, ctx: &Context) -> bool {
+        let plugin = Box::new(P::new(ctx));
 
         self.plugins.push(plugin);
 

@@ -181,8 +181,8 @@ fn format_time_string(s: &str) -> Option<String> {
 }
 
 #[async_trait]
-impl Plugin for IsItOpen {
-    fn new() -> Self {
+impl Plugin<Context> for IsItOpen {
+    fn new(_ctx: &Context) -> Self {
         let api_key = env::var("GOOGLE_MAPS_API_KEY")
             .expect("missing GOOGLE_MAPS_API_KEY environment variable");
         let client = http::build_client();
@@ -215,7 +215,12 @@ impl Plugin for IsItOpen {
         Version::from("0.2")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref inner_message) = message.command {
             let current_nickname = client.current_nickname();
 

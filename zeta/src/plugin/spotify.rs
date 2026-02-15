@@ -114,8 +114,8 @@ struct PlaylistTracks {
 }
 
 #[async_trait]
-impl Plugin for Spotify {
-    fn new() -> Self {
+impl Plugin<Context> for Spotify {
+    fn new(_ctx: &Context) -> Self {
         let client_id =
             env::var("SPOTIFY_CLIENT_ID").expect("missing SPOTIFY_CLIENT_ID environment variable");
         let client_secret = env::var("SPOTIFY_CLIENT_SECRET")
@@ -144,7 +144,12 @@ impl Plugin for Spotify {
         Version::from("0.3")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
             // 1. Handle Spotify URIs (spotify:type:id)
             for cap in self.uri_regex.captures_iter(user_message) {

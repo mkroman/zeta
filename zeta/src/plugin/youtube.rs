@@ -187,8 +187,8 @@ pub type CategoriesResponse = ApiListResponse<Category>;
 pub type SearchListResponse = ApiListResponse<Search>;
 
 #[async_trait]
-impl Plugin for YouTube {
-    fn new() -> YouTube {
+impl Plugin<Context> for YouTube {
+    fn new(_ctx: &Context) -> YouTube {
         let api_key =
             std::env::var("YOUTUBE_API_KEY").expect("missing YOUTUBE_API_KEY environment variable");
 
@@ -207,7 +207,12 @@ impl Plugin for YouTube {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
             if let Some(urls) = plugin::extract_urls(user_message) {
                 self.process_urls(urls, channel, client).await?;

@@ -108,8 +108,8 @@ enum UrlKind {
 }
 
 #[async_trait]
-impl Plugin for Twitch {
-    fn new() -> Self {
+impl Plugin<Context> for Twitch {
+    fn new(_ctx: &Context) -> Self {
         let client_id =
             env::var("TWITCH_CLIENT_ID").expect("missing TWITCH_CLIENT_ID environment variable");
         let client_secret = env::var("TWITCH_CLIENT_SECRET")
@@ -136,7 +136,12 @@ impl Plugin for Twitch {
         Version::from("1.0")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {

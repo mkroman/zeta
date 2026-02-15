@@ -168,8 +168,8 @@ pub struct Comment {
 }
 
 #[async_trait]
-impl Plugin for Reddit {
-    fn new() -> Self {
+impl Plugin<Context> for Reddit {
+    fn new(_ctx: &Context) -> Self {
         Reddit {
             client: http::build_client(),
         }
@@ -187,7 +187,12 @@ impl Plugin for Reddit {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {

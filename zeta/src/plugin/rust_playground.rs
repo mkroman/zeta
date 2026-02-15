@@ -47,8 +47,8 @@ struct ExecuteResponse {
 }
 
 #[async_trait]
-impl Plugin for RustPlayground {
-    fn new() -> Self {
+impl Plugin<Context> for RustPlayground {
+    fn new(_ctx: &Context) -> Self {
         let client = http::build_client();
         let command = ZetaCommand::new(".rs");
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
@@ -73,7 +73,12 @@ impl Plugin for RustPlayground {
         Version::from("1.0")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(expr) = self.command.parse(user_message)
         {

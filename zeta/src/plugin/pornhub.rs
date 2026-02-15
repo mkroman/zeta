@@ -130,9 +130,9 @@ pub struct Category {
 }
 
 #[async_trait]
-impl Plugin for PornHub {
+impl Plugin<Context> for PornHub {
     /// Creates a new instance of the PornHub plugin.
-    fn new() -> Self {
+    fn new(_ctx: &Context) -> Self {
         let client = http::build_client();
 
         PornHub { client }
@@ -151,7 +151,12 @@ impl Plugin for PornHub {
     }
 
     // Handles incoming messages and processes any PornHub URLs found.
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {

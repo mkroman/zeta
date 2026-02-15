@@ -78,8 +78,8 @@ pub struct OEmbed {
 }
 
 #[async_trait]
-impl Plugin for Tiktok {
-    fn new() -> Tiktok {
+impl Plugin<Context> for Tiktok {
+    fn new(_ctx: &Context) -> Tiktok {
         Tiktok::new()
     }
 
@@ -95,7 +95,12 @@ impl Plugin for Tiktok {
         Version::from("0.1")
     }
 
-    async fn handle_message(&self, message: &Message, client: &Client) -> Result<(), ZetaError> {
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        message: &Message,
+    ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {
