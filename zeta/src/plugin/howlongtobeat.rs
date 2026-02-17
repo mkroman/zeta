@@ -235,7 +235,7 @@ impl HowLongToBeat {
 
     /// Forces a refresh of the auth token from the API.
     async fn refresh_token(&self) -> Result<String, Error> {
-        let url = format!("{BASE_URL}/api/search/init");
+        let url = format!("{BASE_URL}/api/finder/init");
         debug!("refreshing hltb token");
 
         let response = self
@@ -278,7 +278,7 @@ impl HowLongToBeat {
     }
 
     async fn perform_search_request(&self, token: &str, query: &str) -> Result<Vec<Game>, Error> {
-        let url = format!("{BASE_URL}/api/search");
+        let url = format!("{BASE_URL}/api/finder");
         let search_terms: Vec<&str> = query.split_whitespace().collect();
 
         let body = SearchRequest {
