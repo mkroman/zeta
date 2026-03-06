@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG RUST_VERSION=1.93-bookworm
+ARG RUST_VERSION=1.94-bookworm
 
 # Base layer with build tools
 FROM rust:${RUST_VERSION} AS chef
