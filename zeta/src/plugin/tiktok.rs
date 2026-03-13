@@ -181,11 +181,11 @@ impl Tiktok {
 
         // The oembed endpoint is weird and returns these values when the video is private, so we
         // return early.
-        if embed.author_name.as_ref().filter(|s| *s == "@").is_some()
+        if embed.author_name.as_ref().is_some_and(|s| *s == "@")
             && embed
                 .author_url
-                .filter(|s| *s == "https://www.tiktok.com/")
-                .is_some()
+                .as_ref()
+                .is_some_and(|s| *s == "https://www.tiktok.com/")
         {
             return Ok(());
         }
