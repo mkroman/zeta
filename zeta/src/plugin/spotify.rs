@@ -184,7 +184,7 @@ impl Spotify {
     async fn get_token(&self) -> Result<String, Error> {
         // Check cache
         if let Some(token) = self.token.read().await.as_ref()
-            && token.expires_at > Instant::now() + Duration::from_secs(60)
+            && token.expires_at > Instant::now() + Duration::from_mins(1)
         {
             return Ok(token.access_token.clone());
         }

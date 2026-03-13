@@ -146,7 +146,7 @@ impl Plugin<Context> for Twitch {
             && let Some(urls) = plugin::extract_urls(user_message)
         {
             for url in urls {
-                if let Some(kind) = self.parse_url(&url) {
+                if let Some(kind) = Self::parse_url(&url) {
                     let result = match kind {
                         UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
                         UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
@@ -172,7 +172,7 @@ impl Twitch {
         // Check if we have a valid cached token.
         if let Some(token) = self.token.read().await.as_ref() {
             // Add a 60 second buffer to the expiration time check.
-            if token.expires_at > Instant::now() + Duration::from_secs(60) {
+            if token.expires_at > Instant::now() + Duration::from_mins(1) {
                 return Ok(token.access_token.clone());
             }
         }
@@ -223,7 +223,7 @@ impl Twitch {
     }
 
     /// Parses a Twitch URL and determines the resource type.
-    fn parse_url(&self, url: &Url) -> Option<UrlKind> {
+    fn parse_url(url: &Url) -> Option<UrlKind> {
         let host = url.host_str()?;
         let segments: Vec<&str> = url.path_segments()?.collect();
 

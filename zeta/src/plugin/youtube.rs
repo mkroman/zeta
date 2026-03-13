@@ -344,7 +344,7 @@ impl YouTube {
         if let Some(instant) = categories_updated_at {
             debug!("using cached video categories");
 
-            if instant.elapsed() < Duration::from_secs(30 * 60) {
+            if instant.elapsed() < Duration::from_mins(30) {
                 let vc = self.video_categories.read().await;
 
                 return Ok(vc.clone());
