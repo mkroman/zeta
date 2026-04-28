@@ -78,7 +78,7 @@ base64 = "0.22.1"
 dendanskeordbog = { path = "../dendanskeordbog", features = ["client"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
-hickory-resolver = { version = "0.25.2" }
+hickory-resolver = { version = "0.26.0" }
 humantime-serde = "1.1.1"
 irc.workspace = true
 memory-stats = "1.2.0"
