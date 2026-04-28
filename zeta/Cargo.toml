@@ -85,10 +85,10 @@ memory-stats = "1.2.0"
 miette = { version = "7.2.0", features = ["fancy"] }
 num-format = "0.4.4"
 opentelemetry = "0.31.0"
-opentelemetry-otlp = "0.31.0"
+opentelemetry-otlp = "0.31.1"
 opentelemetry-resource-detectors = "0.10.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
-rand = "0.10.0"
+rand = "0.10.1"
 regex = "1.12.2"
 reqwest = { workspace = true, features = ["json", "stream", "cookies", "form", "query"] }
 rink-core = { git = "https://github.com/tiffany352/rink-rs", features = ["bundle-files", "serde_json"] }
@@ -103,7 +103,7 @@ time = { version = "0.3.43", features = ["formatting", "parsing", "serde"] }
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 tracing-opentelemetry = { version = "0.32.0" }
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
 zeta-plugin = { path = "../zeta-plugin" }
 
