@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use reqwest::{
     StatusCode,
     header::{CONTENT_TYPE, REFERER},
@@ -11,14 +14,20 @@ use crate::{http, plugin::prelude::*};
 const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
 
-/// HowLongToBeat plugin.
+/// The HowLongToBeat IRC plugin.
+///
+/// This plugin allows users to query the HowLongToBeat database
+/// to retrieve average completion times for video games.
 pub struct HowLongToBeat {
+    /// The HTTP client used for requests.
     client: reqwest::Client,
+    /// The parsed trigger command for the plugin.
     command: ZetaCommand,
-    /// Cached authentication token.
-    token: RwLock<Option<String>>,
+    /// Cached authentication data (token and homepage key/value).
+    auth: RwLock<Option<AuthData>>,
 }
 
+/// Errors that can occur during API interactions.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("request error: {0}")]
@@ -27,11 +36,28 @@ pub enum Error {
     Deserialize(#[source] reqwest::Error),
 }
 
+/// Cached authentication credentials required by the API.
+#[derive(Debug, Clone)]
+struct AuthData {
+    /// The standard authorization token.
+    token: String,
+    /// The dynamically generated homepage key.
+    hp_key: String,
+    /// The dynamically generated homepage value.
+    hp_val: String,
+}
+
+/// The response payload received from the initialization endpoint.
 #[derive(Debug, Deserialize)]
 struct InitResponse {
     token: String,
+    #[serde(rename = "hpKey")]
+    hp_key: String,
+    #[serde(rename = "hpVal")]
+    hp_val: String,
 }
 
+/// The request body sent to the `/api/find` endpoint to search for games.
 #[derive(Debug, Serialize)]
 struct SearchRequest<'a> {
     #[serde(rename = "searchType")]
@@ -45,8 +71,12 @@ struct SearchRequest<'a> {
     search_options: SearchOptions,
     #[serde(rename = "useCache")]
     use_cache: bool,
+    /// Dynamically injects the homepage key/value into the root of the JSON payload.
+    #[serde(flatten)]
+    homepage_data: HashMap<String, String>,
 }
 
+/// Comprehensive configuration options for the search query.
 #[derive(Debug, Serialize)]
 struct SearchOptions {
     games: GamesOptions,
@@ -57,6 +87,7 @@ struct SearchOptions {
     randomizer: u32,
 }
 
+/// Filtering and sorting options specific to game searches.
 #[derive(Debug, Serialize)]
 struct GamesOptions {
     #[serde(rename = "userId")]
@@ -74,18 +105,21 @@ struct GamesOptions {
     modifier: String,
 }
 
+/// Time range filters for completion data.
 #[derive(Debug, Serialize)]
 struct RangeTime {
     min: Option<u32>,
     max: Option<u32>,
 }
 
+/// Release year filters for games.
 #[derive(Debug, Serialize)]
 struct RangeYear {
     min: String,
     max: String,
 }
 
+/// Options filtering by gameplay styles and genres.
 #[derive(Debug, Serialize)]
 struct GameplayOptions {
     perspective: String,
@@ -94,32 +128,37 @@ struct GameplayOptions {
     difficulty: String,
 }
 
+/// Options filtering by user data.
 #[derive(Debug, Serialize)]
 struct UsersOptions {
     #[serde(rename = "sortCategory")]
     sort_category: String,
 }
 
+/// Options filtering by user lists.
 #[derive(Debug, Serialize)]
 struct ListsOptions {
     #[serde(rename = "sortCategory")]
     sort_category: String,
 }
 
+/// The response payload containing search results.
 #[derive(Debug, Deserialize)]
 struct SearchResponse {
     data: Vec<Game>,
 }
 
+/// Represents a single game result and its completion statistics.
 #[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
 struct Game {
+    /// The name of the game.
     game_name: String,
-    /// Main Story time in seconds
+    /// Main Story time in seconds.
     comp_main: u32,
-    /// Main + Extra time in seconds
+    /// Main + Extra time in seconds.
     comp_plus: u32,
-    /// Completionist time in seconds
+    /// Completionist (100%) time in seconds.
     comp_100: u32,
 }
 
@@ -169,7 +208,7 @@ impl Plugin<Context> for HowLongToBeat {
         Self {
             client,
             command,
-            token: RwLock::new(None),
+            auth: RwLock::new(None),
         }
     }
 
@@ -182,7 +221,7 @@ impl Plugin<Context> for HowLongToBeat {
     }
 
     fn version() -> Version {
-        Version::from("0.1")
+        Version::from("0.2")
     }
 
     async fn handle_message(
@@ -220,23 +259,26 @@ impl Plugin<Context> for HowLongToBeat {
 }
 
 impl HowLongToBeat {
-    /// Acquires a valid auth token.
+    /// Acquires valid API authentication credentials.
     ///
-    /// If a cached token exists, it is returned. Otherwise, a new token is fetched.
-    async fn get_token(&self) -> Result<String, Error> {
-        // Check cache first
-        if let Some(token) = self.token.read().await.as_ref() {
-            return Ok(token.clone());
+    /// Returns the cached data if it exists, otherwise requests new data from the initialization endpoint.
+    async fn get_auth(&self) -> Result<AuthData, Error> {
+        if let Some(auth) = self.auth.read().await.as_ref() {
+            return Ok(auth.clone());
         }
 
-        // Fetch new token
-        self.refresh_token().await
+        self.refresh_auth().await
     }
 
-    /// Forces a refresh of the auth token from the API.
-    async fn refresh_token(&self) -> Result<String, Error> {
-        let url = format!("{BASE_URL}/api/finder/init");
-        debug!("refreshing hltb token");
+    /// Fetches a fresh authorization token and homepage key/value pair from the API.
+    async fn refresh_auth(&self) -> Result<AuthData, Error> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        let url = format!("{BASE_URL}/api/find/init?t={timestamp}");
+        debug!("refreshing hltb token and homepage data");
 
         let response = self
             .client
@@ -251,35 +293,50 @@ impl HowLongToBeat {
             .await
             .map_err(Error::Deserialize)?;
 
+        let auth_data = AuthData {
+            token: init.token,
+            hp_key: init.hp_key,
+            hp_val: init.hp_val,
+        };
+
         {
-            let mut token_lock = self.token.write().await;
-            *token_lock = Some(init.token.clone());
+            let mut auth_lock = self.auth.write().await;
+            *auth_lock = Some(auth_data.clone());
         }
 
-        Ok(init.token)
+        Ok(auth_data)
     }
 
-    /// Performs a search for the given game.
+    /// Performs a search for a specific game query.
     ///
-    /// Handles token expiration by retrying once if a 403 Forbidden is encountered.
+    /// If the request returns a `403 Forbidden`, it assumes the token has expired,
+    /// refreshes the credentials, and automatically retries the request once.
     async fn search(&self, query: &str) -> Result<Vec<Game>, Error> {
-        // First attempt
-        let token = self.get_token().await?;
-        match self.perform_search_request(&token, query).await {
+        let auth = self.get_auth().await?;
+
+        match self.perform_search_request(&auth, query).await {
             Ok(results) => Ok(results),
             Err(Error::Request(e)) if e.status() == Some(StatusCode::FORBIDDEN) => {
-                // Token likely expired, refresh and retry once
                 warn!("hltb token expired, refreshing...");
-                let new_token = self.refresh_token().await?;
-                self.perform_search_request(&new_token, query).await
+                let new_auth = self.refresh_auth().await?;
+                self.perform_search_request(&new_auth, query).await
             }
             Err(e) => Err(e),
         }
     }
 
-    async fn perform_search_request(&self, token: &str, query: &str) -> Result<Vec<Game>, Error> {
-        let url = format!("{BASE_URL}/api/finder");
+    /// Executes the HTTP POST request to the API with the necessary headers and payload.
+    async fn perform_search_request(
+        &self,
+        auth: &AuthData,
+        query: &str,
+    ) -> Result<Vec<Game>, Error> {
+        let url = format!("{BASE_URL}/api/find");
         let search_terms: Vec<&str> = query.split_whitespace().collect();
+
+        // Inject the homepage key/value dynamically into the JSON root.
+        let mut homepage_data = HashMap::new();
+        homepage_data.insert(auth.hp_key.clone(), auth.hp_val.clone());
 
         let body = SearchRequest {
             search_type: "games",
@@ -288,13 +345,16 @@ impl HowLongToBeat {
             size: 20,
             search_options: SearchOptions::default(),
             use_cache: true,
+            homepage_data,
         };
 
         let response = self
             .client
             .post(&url)
             .header(REFERER, REFERER_URL)
-            .header("x-auth-token", token)
+            .header("x-auth-token", &auth.token)
+            .header("x-hp-key", &auth.hp_key)
+            .header("x-hp-val", &auth.hp_val)
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -310,6 +370,7 @@ impl HowLongToBeat {
     }
 }
 
+/// Formats a parsed `Game` struct into an IRC-friendly text string.
 fn format_game(game: &Game) -> String {
     let main = format_seconds(game.comp_main);
     let main_extra = format_seconds(game.comp_plus);
@@ -321,6 +382,7 @@ fn format_game(game: &Game) -> String {
     )
 }
 
+/// Converts a duration in seconds into a human-readable hours and minutes string.
 fn format_seconds(seconds: u32) -> String {
     if seconds == 0 {
         return "--".to_string();
