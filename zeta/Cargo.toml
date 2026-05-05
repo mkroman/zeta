@@ -21,6 +21,7 @@ native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx/runtime-tokio-native
 native-tls-vendored = ["reqwest/native-tls-vendored", "irc/tls-native", "sqlx/runtime-tokio-native-tls"]
 rustls = ["reqwest/rustls", "irc/tls-rust", "sqlx/runtime-tokio-rustls"]
 plugin-rink = []
+plugin-chaturbate = []
 plugin-choices = []
 plugin-dendanskeordbog = []
 plugin-dig = []
@@ -45,6 +46,7 @@ plugin-twitch = []
 plugin-urban-dictionary = []
 plugin-youtube = []
 plugins-all = [
+    "plugin-chaturbate",
     "plugin-choices",
     "plugin-dendanskeordbog",
     "plugin-dig",

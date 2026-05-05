@@ -53,6 +53,10 @@ macro_rules! declare_plugins {
 }
 
 declare_plugins! {
+   /// Chaturbate platform integration.
+   #[cfg(feature = "plugin-chaturbate")]
+    chaturbate::Chaturbate,
+
     /// Plugin that helps the user make a choice
     #[cfg(feature = "plugin-choices")]
     choices::Choices,
