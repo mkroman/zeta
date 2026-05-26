@@ -1,4 +1,8 @@
-target/
-.git
 .dockerignore
+.git/
+.github/
+hack/
+target/
 Dockerfile
+renovate.json5
+compose.yaml
