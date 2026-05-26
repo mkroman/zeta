@@ -3,10 +3,22 @@ name: Continuous Integration
 on:
   push:
     branches:
-    - main
+      - main
   pull_request:
     branches:
-    - main
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: short
+
+# Cancel superseded runs to free up cache writers
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
@@ -17,34 +29,41 @@ jobs:
       matrix:
         rust: [stable, nightly]
     steps:
-    - name: Checkout source
-      uses: actions/checkout@v6
-    - name: Install Rust ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
-      with:
-        toolchain: ${{ matrix.rust }}
-        components: clippy
-    - name: Enable type layout randomization
-      run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
-      if: matrix.rust == 'nightly'
-    - name: Cache 
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-    - name: Run Clippy check
-      uses: clechasseur/rs-clippy-check@1e16925ceec49b64803a6abc5f6bbe79044c3bd4 # v6.0.4
-      with:
-        args: --no-deps --all-features
-    - name: Run tests
-      run: cargo test
+      - name: Checkout source
+        uses: actions/checkout@v6
+      - name: Install Rust ${{ matrix.rust }}
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy
+      - name: Enable type layout randomization
+        run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
+        if: matrix.rust == 'nightly'
+      - name: Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "ci-${{ matrix.rust }}"
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: true
+      - name: Run Clippy check
+        uses: clechasseur/rs-clippy-check@1e16925ceec49b64803a6abc5f6bbe79044c3bd4 # v6.0.4
+        with:
+          args: --all-targets --all-features --no-deps
+      - name: Run tests
+        run: cargo test --all-features --no-fail-fast
 
   container_image:
     name: Container Image
     needs:
-    - test
+      - test
     uses: ./.github/workflows/container-image.yaml
     with:
       images: ghcr.io/${{ github.repository }}
       push: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
-      cache-from: type=gha
-      cache-to: type=gha,mode=max
+      cache-from: |
+        type=gha,scope=buildkit-${{ github.ref_name }}
+        type=gha,scope=buildkit-main
+      cache-to: type=gha,mode=max,scope=buildkit-${{ github.ref_name }}
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
