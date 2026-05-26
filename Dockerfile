@@ -5,23 +5,48 @@ ARG RUST_VERSION=1.95-bookworm
 # Base layer with build tools
 FROM rust:${RUST_VERSION} AS chef
 WORKDIR /usr/src/app
-RUN cargo install cargo-chef cargo-auditable --locked
+ENV CARGO_TERM_COLOR=always \
+    CARGO_INCREMENTAL=0 \
+    CARGO_NET_RETRY=10 \
+    RUSTUP_MAX_RETRIES=10
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo install cargo-chef cargo-auditable --locked
 
 # Analyze project dependencies
 FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
 
-# Build and cache dependencies separately from source code
-FROM chef AS dependencies
-COPY --from=planner /usr/src/app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+COPY --parents \
+    Cargo.toml \
+    Cargo.lock \
+    zeta/Cargo.toml \
+    zeta/src/lib.rs \
+    zeta-plugin/Cargo.toml \
+    zeta-plugin/src/lib.rs \
+    dendanskeordbog/Cargo.toml \
+    dendanskeordbog/src/lib.rs \
+    ./
+
+RUN cargo chef prepare --recipe-path recipe.json
 
 # Build application binary
 FROM chef AS builder
-COPY --from=dependencies /usr/src/app/target target
-COPY --from=dependencies /usr/local/cargo /usr/local/cargo
+COPY --from=planner /usr/src/app/recipe.json recipe.json
+
+# Cook dependencies — cached as long as recipe.json is unchanged.
+# Cache mounts speed up cold builds and partial cache hits.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json
+
+# Now bring in real sources and build the app.
 COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo auditable build --release --locked --bin zeta && \
+    cp target/release/zeta /usr/local/bin/zeta
+
 RUN cargo auditable build --release --locked
 
 # Minimal runtime image with security hardening
@@ -34,7 +59,7 @@ LABEL org.opencontainers.image.title="zeta" \
 
 WORKDIR /app
 
-COPY --from=builder /usr/src/app/target/release/zeta .
+COPY --from=builder /usr/local/bin/zeta .
 COPY --from=builder /usr/src/app/config.toml .
 
 USER nonroot
