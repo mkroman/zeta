@@ -30,7 +30,7 @@ pub enum Error {
     #[error("http request failed")]
     Request(#[from] reqwest::Error),
     #[error("could not resolve domain: {0}")]
-    Resolve(#[source] hickory_resolver::ResolveError),
+    Resolve(#[source] hickory_resolver::net::NetError),
     #[error("domain resolved no records")]
     NoDomainRecords,
     #[error("invalid input")]

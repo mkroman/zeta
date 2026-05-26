@@ -3,10 +3,10 @@ use std::str::FromStr;
 
 use argh::FromArgs;
 use hickory_resolver::{
-    ResolveError, Resolver, TokioResolver,
-    config::{ResolveHosts, ResolverConfig, ResolverOpts},
+    Resolver, TokioResolver,
+    config::{CLOUDFLARE, LookupIpStrategy, ResolveHosts, ResolverConfig, ResolverOpts},
     lookup::Lookup,
-    name_server::TokioConnectionProvider,
+    net::{NetError, runtime::TokioRuntimeProvider},
     proto::rr::RecordType,
 };
 use miette::Diagnostic;
@@ -34,7 +34,7 @@ pub enum Error {
     #[error("could not parse arguments")]
     ParseArguments,
     #[error("could not resolve domain: {0}")]
-    Resolve(#[source] ResolveError),
+    Resolve(#[source] NetError),
 }
 
 pub struct Dig {
@@ -46,13 +46,13 @@ pub struct LookupResult(Lookup);
 
 impl Display for LookupResult {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for lookup in self.0.record_iter() {
+        for lookup in self.0.answers() {
             // We need to convert the fields to strings for string padding to work.
-            let name = lookup.name().to_string();
-            let ttl = lookup.ttl().to_string();
-            let dns_class = lookup.dns_class().to_string();
+            let name = lookup.name.to_string();
+            let ttl = lookup.ttl.to_string();
+            let dns_class = lookup.dns_class.to_string();
             let record_type = lookup.record_type().to_string();
-            let data = lookup.data();
+            let data = &lookup.data;
 
             write!(fmt, "\x0310>\x0f\x02 Dig:\x02\x0310 ")?;
             writeln!(
@@ -68,12 +68,15 @@ impl Display for LookupResult {
 #[async_trait]
 impl Plugin<Context> for Dig {
     fn new(_ctx: &Context) -> Dig {
-        let config = ResolverConfig::cloudflare();
+        let config = ResolverConfig::udp_and_tcp(&CLOUDFLARE);
         let mut opts = ResolverOpts::default();
         opts.use_hosts_file = ResolveHosts::Never;
-        let resolver = Resolver::builder_with_config(config, TokioConnectionProvider::default())
+        opts.attempts = 5;
+        opts.ip_strategy = LookupIpStrategy::Ipv6thenIpv4;
+        let resolver = Resolver::builder_with_config(config, TokioRuntimeProvider::default())
             .with_options(opts)
-            .build();
+            .build()
+            .expect("could not build resolver");
         let command = ZetaCommand::new(".dig");
 
         Dig { command, resolver }
