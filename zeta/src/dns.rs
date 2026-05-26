@@ -1,7 +1,9 @@
 use std::sync::OnceLock;
 
 use hickory_resolver::{
-    Resolver, TokioResolver, config::ResolverConfig, name_server::TokioConnectionProvider,
+    Resolver, TokioResolver,
+    config::{CLOUDFLARE, ResolverConfig},
+    net::runtime::TokioRuntimeProvider,
 };
 
 static RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
@@ -14,7 +16,9 @@ pub fn resolver() -> &'static TokioResolver {
 /// Creates and returns a new DNS resolver using cloudflare.
 #[must_use]
 pub fn new() -> TokioResolver {
-    let config = ResolverConfig::cloudflare();
+    let config = ResolverConfig::tls(&CLOUDFLARE);
 
-    Resolver::builder_with_config(config, TokioConnectionProvider::default()).build()
+    Resolver::builder_with_config(config, TokioRuntimeProvider::default())
+        .build()
+        .expect("couldn't create default dns resolver")
 }
