@@ -5,10 +5,16 @@
     "config:best-practices"
   ],
   "packageRules": [
-    // Bundle opentelemetry packages in a single PR
+    // Bundle opentelemetry dependencies in a single update
     {
-      "matchPackageNames": "tracing-opentelemetry",
-      "groupName": "opentelemetry-rust monorepo"
+      "matchPackageNames": [
+        "opentelemetry",
+        "opentelemetry-otlp",
+        "opentelemetry_sdk",
+        "opentelemetry-resource-detectors",
+        "tracing-opentelemetry",
+      ],
+      "groupName": "opentelemetry"
     },
     // Don't pin digest in inspircd image tag
     {
