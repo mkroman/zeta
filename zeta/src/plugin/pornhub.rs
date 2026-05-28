@@ -138,16 +138,11 @@ impl Plugin<Context> for PornHub {
         PornHub { client }
     }
 
-    fn name() -> Name {
-        Name::from("pornhub")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.1")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "pornhub".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     // Handles incoming messages and processes any PornHub URLs found.

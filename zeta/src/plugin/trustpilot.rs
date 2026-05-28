@@ -83,16 +83,11 @@ impl Plugin<Context> for Trustpilot {
         }
     }
 
-    fn name() -> Name {
-        Name::from("trustpilot")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.2")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "trustpilot".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

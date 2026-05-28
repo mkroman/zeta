@@ -54,16 +54,11 @@ impl Plugin<Context> for DenDanskeOrdbog {
         DenDanskeOrdbog::new()
     }
 
-    fn name() -> Name {
-        Name::from("dendanskeordbog")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.1")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "dendanskeordbog".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

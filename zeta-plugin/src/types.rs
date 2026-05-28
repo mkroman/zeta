@@ -45,6 +45,12 @@ macro_rules! metadata_type {
     };
 }
 
+pub struct Metadata {
+    /// Name of the plugin.
+    pub name: Name,
+    /// List of authors that maintains or contributes to the plugin.
+    pub authors: Vec<Author>,
+}
+
 metadata_type!(Name, "Name of a plugin");
 metadata_type!(Author, "Author of a plugin");
-metadata_type!(Version, "Version of a plugin");

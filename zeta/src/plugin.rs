@@ -3,18 +3,18 @@ use url::Url;
 
 pub use crate::context::Context;
 
-pub use zeta_plugin::{Author, Name, Plugin, Version};
+pub use zeta_plugin::{Author, Metadata, Name, Plugin};
 
 /// Common includes used in plugins.
 #[allow(unused)]
 mod prelude {
-    pub use super::{Author, Context, Name, Plugin, Version};
-    pub use crate::command::Command as ZetaCommand;
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
-    pub use irc::proto::{Command as IrcCommand, Message as IrcMessage};
     pub use zeta_plugin::Error as ZetaError;
+
+    pub use super::{Author, Context, Metadata, Name, Plugin};
+    pub use crate::command::Command as ZetaCommand;
 }
 
 /// Declares plugin modules and generates a registry helper to avoid boilerplate.

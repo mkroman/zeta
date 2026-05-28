@@ -63,16 +63,11 @@ impl Plugin<Context> for UrbanDictionary {
         UrbanDictionary::new()
     }
 
-    fn name() -> Name {
-        Name::from("urban_dictionary")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.1")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "urban_dictionary".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

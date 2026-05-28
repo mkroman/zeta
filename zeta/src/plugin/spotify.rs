@@ -132,16 +132,11 @@ impl Plugin<Context> for Spotify {
         }
     }
 
-    fn name() -> Name {
-        Name::from("spotify")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.3")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "spotify".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

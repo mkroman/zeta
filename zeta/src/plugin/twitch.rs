@@ -124,16 +124,11 @@ impl Plugin<Context> for Twitch {
         }
     }
 
-    fn name() -> Name {
-        Name::from("twitch")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("1.0")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "twitch".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

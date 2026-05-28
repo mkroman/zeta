@@ -195,16 +195,11 @@ impl Plugin<Context> for YouTube {
         YouTube::with_config(api_key)
     }
 
-    fn name() -> Name {
-        Name::from("youtube")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.1")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "youtube".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

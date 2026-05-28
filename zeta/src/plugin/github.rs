@@ -61,16 +61,11 @@ impl Plugin<Context> for GitHubPlugin {
         GitHubPlugin::new().expect("could not create github plugin")
     }
 
-    fn name() -> Name {
-        Name::from("github")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.1")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "github".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

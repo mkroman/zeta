@@ -82,16 +82,11 @@ impl Plugin<Context> for Dig {
         Dig { command, resolver }
     }
 
-    fn name() -> Name {
-        Name::from("dig")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.1")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "dig".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(
