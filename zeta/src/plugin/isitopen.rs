@@ -203,16 +203,11 @@ impl Plugin<Context> for IsItOpen {
         IsItOpen { client, api_key }
     }
 
-    fn name() -> Name {
-        Name::from("isitopen")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.2")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "isitopen".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

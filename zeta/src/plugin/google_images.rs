@@ -79,16 +79,11 @@ impl Plugin<Context> for GoogleImages {
         Self { client, command }
     }
 
-    fn name() -> Name {
-        Name::from("google_images")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.1")
+    fn metadata() -> zeta_plugin::Metadata {
+        zeta_plugin::Metadata {
+            name: "google_images".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

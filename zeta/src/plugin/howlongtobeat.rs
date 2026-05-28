@@ -212,16 +212,11 @@ impl Plugin<Context> for HowLongToBeat {
         }
     }
 
-    fn name() -> Name {
-        Name::from("hltb")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("0.2")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "hltb".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

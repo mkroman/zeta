@@ -61,16 +61,11 @@ impl Plugin<Context> for RustPlayground {
         }
     }
 
-    fn name() -> Name {
-        Name::from("rust_playground")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("1.0")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "rust_playground".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

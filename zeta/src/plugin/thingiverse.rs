@@ -83,16 +83,11 @@ impl Plugin<Context> for Thingiverse {
         }
     }
 
-    fn name() -> Name {
-        Name::from("thingiverse")
-    }
-
-    fn author() -> Author {
-        Author::from("Mikkel Kroman <mk@maero.dk>")
-    }
-
-    fn version() -> Version {
-        Version::from("1.0")
+    fn metadata() -> Metadata {
+        Metadata {
+            name: "thingiverse".into(),
+            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
+        }
     }
 
     async fn handle_message(

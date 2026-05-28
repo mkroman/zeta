@@ -6,4 +6,10 @@ mod types;
 
 pub use error::Error;
 pub use plugin::Plugin;
-pub use types::{Author, Name, Version};
+pub use types::{Author, Metadata, Name};
+
+pub mod prelude {
+    pub use async_trait::async_trait;
+
+    pub use super::{Author, Metadata, Name, Plugin};
+}
