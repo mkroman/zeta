@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use reqwest::header::LOCATION;
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, error};
 use url::Url;
 
 use crate::{
@@ -98,10 +98,9 @@ impl Plugin<Context> for Tiktok {
     ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
+            && let Err(err) = self.process_urls(urls, channel, client).await
         {
-            self.process_urls(urls, channel, client)
-                .await
-                .map_err(|e| ZetaError::Plugin(Box::new(e)))?;
+            error!("could not process urls: {err}");
         }
 
         Ok(())
@@ -122,15 +121,14 @@ impl Tiktok {
         client: &Client,
     ) -> Result<(), Error> {
         for url in urls {
-            debug!(%url, "processing url");
             self.process_url(&url, channel, client).await?;
-            debug!(%url, "finished processing url");
         }
 
         Ok(())
     }
 
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
+        debug!(%url, "processing url");
         match classify_tiktok_url(url) {
             Some(UrlKind::Video(channel_slug, video_id)) => {
                 debug!(%video_id, "processing video");
@@ -155,6 +153,8 @@ impl Tiktok {
             }
             _ => {}
         }
+
+        debug!(%url, "finished processing url");
 
         Ok(())
     }
