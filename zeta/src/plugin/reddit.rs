@@ -191,7 +191,10 @@ impl Plugin<Context> for Reddit {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {
-            self.process_urls(&urls, channel, client).await.unwrap();
+            let _ = self
+                .process_urls(&urls, channel, client)
+                .await
+                .inspect_err(|e| error!("error when processing urls: {e}"));
         }
 
         Ok(())
