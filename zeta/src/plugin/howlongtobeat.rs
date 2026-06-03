@@ -201,15 +201,15 @@ impl Default for SearchOptions {
 
 #[async_trait]
 impl Plugin<Context> for HowLongToBeat {
-    fn new(_ctx: &Context) -> Self {
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
         let client = http::build_client();
         let command = ZetaCommand::new(".hltb");
 
-        Self {
+        Ok(Self {
             client,
             command,
             auth: RwLock::new(None),
-        }
+        })
     }
 
     fn metadata() -> Metadata {

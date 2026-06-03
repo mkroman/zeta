@@ -70,17 +70,16 @@ pub enum Error {
 
 #[async_trait]
 impl Plugin<Context> for Trustpilot {
-    fn new(_ctx: &Context) -> Self {
-        let api_key = std::env::var("TRUSTPILOT_API_KEY")
-            .expect("missing TRUSTPILOT_API_KEY environment variable");
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+        let api_key = std::env::var("TRUSTPILOT_API_KEY")?;
         let client = http::build_client();
         let command = ZetaCommand::new(".tp");
 
-        Self {
+        Ok(Self {
             client,
             api_key,
             command,
-        }
+        })
     }
 
     fn metadata() -> Metadata {

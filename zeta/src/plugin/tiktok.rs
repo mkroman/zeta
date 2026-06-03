@@ -79,8 +79,8 @@ pub struct OEmbed {
 
 #[async_trait]
 impl Plugin<Context> for Tiktok {
-    fn new(_ctx: &Context) -> Tiktok {
-        Tiktok::new()
+    fn new(_ctx: &Context) -> Result<Tiktok, BoxError> {
+        Ok(Tiktok::new())
     }
 
     fn metadata() -> Metadata {

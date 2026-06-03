@@ -16,14 +16,14 @@ pub struct Rink {
 
 #[async_trait]
 impl Plugin<Context> for Rink {
-    fn new(_ctx: &Context) -> Rink {
-        let ctx = rink_core::simple_context().expect("could not create rink context");
+    fn new(_ctx: &Context) -> Result<Rink, BoxError> {
+        let ctx = rink_core::simple_context()?;
         let command = ZetaCommand::new(".r");
 
-        Rink {
+        Ok(Rink {
             ctx: Mutex::new(ctx),
             command,
-        }
+        })
     }
 
     fn metadata() -> Metadata {

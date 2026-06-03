@@ -169,10 +169,10 @@ pub struct Comment {
 
 #[async_trait]
 impl Plugin<Context> for Reddit {
-    fn new(_ctx: &Context) -> Self {
-        Reddit {
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+        Ok(Reddit {
             client: http::build_client(),
-        }
+        })
     }
 
     fn metadata() -> Metadata {
@@ -225,17 +225,21 @@ impl Reddit {
                         let title = submission.title;
                         let subreddit = submission.subreddit;
 
-                        client
+                        if let Err(e) = client
                             .send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))
-                            .unwrap();
+                    {
+                        error!("failed to send message: {e}");
+                    }
                     }
                     Err(err) => {
-                        client
+                        if let Err(e) = client
                             .send_privmsg(
                                 channel,
                                 format!("\x0310> could not fetch submission details: {err}"),
                             )
-                            .unwrap();
+                    {
+                        error!("failed to send message: {e}");
+                    }
                     }
                 }
             }
@@ -244,29 +248,39 @@ impl Reddit {
                     let title = submission.title;
                     let subreddit = submission.subreddit;
 
-                    client
+                    if let Err(e) = client
                         .send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))
-                        .unwrap();
+                {
+                    error!("failed to send message: {e}");
+                }
                 }
                 Err(err) => {
-                    client
+                    if let Err(e) = client
                         .send_privmsg(
                             channel,
                             format!("\x0310> could not fetch submission details: {err}"),
                         )
-                        .unwrap();
+                {
+                    error!("failed to send message: {e}");
+                }
                 }
             },
             Link::Shortened { id, subreddit } => {
                 match self.resolve_shortened_link(&subreddit, &id).await {
-                    Ok(link) => Box::pin(self.process_url(link, channel, client)).await?,
+                    Ok(link) => {
+                        if let Err(e) = Box::pin(self.process_url(link, channel, client)).await {
+                            error!("failed to process resolved link: {e}");
+                        }
+                    }
                     Err(err) => {
-                        client
+                        if let Err(e) = client
                             .send_privmsg(
                                 channel,
                                 format!("\x0310> could not resolve shortened link: {err}"),
                             )
-                            .unwrap();
+                    {
+                        error!("failed to send message: {e}");
+                    }
                     }
                 }
             }
@@ -275,20 +289,24 @@ impl Reddit {
                     let title = subreddit.title;
                     let description = subreddit.public_description.truncate_with_suffix(250, "…");
 
-                    client
+                    if let Err(e) = client
                         .send_privmsg(
                             channel,
                             format!("\x0310>\x03\x02 {title}:\x02\x0310 {description}"),
                         )
-                        .unwrap();
+                    {
+                        error!("failed to send message: {e}");
+                    }
                 }
                 Err(err) => {
-                    client
+                    if let Err(e) = client
                         .send_privmsg(
                             channel,
                             format!("\x0310> could not fetch subreddit details: {err}"),
                         )
-                        .unwrap();
+                {
+                    error!("failed to send message: {e}");
+                }
                 }
             },
             _ => {}

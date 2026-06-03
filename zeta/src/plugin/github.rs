@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{fmt::Write, io};
 
 use miette::{Diagnostic, Result};
 use reqwest::{
@@ -57,8 +57,10 @@ struct RepoItem {
 
 #[async_trait]
 impl Plugin<Context> for GitHubPlugin {
-    fn new(_ctx: &Context) -> Self {
-        GitHubPlugin::new().expect("could not create github plugin")
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+        let plugin = GitHubPlugin::new()
+            .map_err(|e| -> BoxError { Box::new(io::Error::other(e.to_string())) })?;
+        Ok(plugin)
     }
 
     fn metadata() -> Metadata {

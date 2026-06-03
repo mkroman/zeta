@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::Message;
 
-use crate::{Error, Metadata};
+use crate::{BoxError, Error, Metadata};
 
 /// The base trait that all plugins must implement.
 ///
@@ -17,8 +17,8 @@ use crate::{Error, Metadata};
 ///
 ///#[async_trait]
 /// impl Plugin for MyPlugin {
-///     fn new(_: &()) -> MyPlugin {
-///         MyPlugin
+///     fn new(_: &()) -> Result<MyPlugin, BoxError> {
+///         Ok(MyPlugin)
 ///     }
 ///
 ///     fn metadata() -> Metadata {
@@ -45,7 +45,11 @@ use crate::{Error, Metadata};
 #[async_trait]
 pub trait Plugin<C = ()>: Send + Sync {
     /// The constructor for a new plugin.
-    fn new(_ctx: &C) -> Self
+    ///
+    /// Returns `Err` if initialization fails (e.g., missing environment
+    /// variables, failed HTTP client creation). The registry will log
+    /// the error and skip loading the plugin.
+    fn new(_ctx: &C) -> Result<Self, BoxError>
     where
         Self: Sized;
 

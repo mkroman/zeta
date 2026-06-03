@@ -25,10 +25,10 @@ pub struct Snapshot {
 
 #[async_trait]
 impl Plugin<Context> for Health {
-    fn new(_ctx: &Context) -> Health {
+    fn new(_ctx: &Context) -> Result<Health, BoxError> {
         let command = ZetaCommand::new(".health");
 
-        Health { command }
+        Ok(Health { command })
     }
 
     fn metadata() -> Metadata {

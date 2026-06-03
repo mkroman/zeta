@@ -47,16 +47,15 @@ pub struct KagiPlugin {
 
 #[async_trait]
 impl Plugin<Context> for KagiPlugin {
-    fn new(_ctx: &Context) -> KagiPlugin {
-        let token = std::env::var("KAGI_SESSION_TOKEN")
-            .expect("missing KAGI_SESSION_TOKEN environment variable");
+    fn new(_ctx: &Context) -> Result<KagiPlugin, BoxError> {
+        let token = std::env::var("KAGI_SESSION_TOKEN")?;
         let search_command = ZetaCommand::new(".g");
         let client = client::Client::with_token(token);
 
-        KagiPlugin {
+        Ok(KagiPlugin {
             client,
             search_command,
-        }
+        })
     }
 
     fn metadata() -> Metadata {

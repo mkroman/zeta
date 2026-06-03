@@ -62,8 +62,8 @@ pub struct RoomDossier {
 
 #[async_trait]
 impl Plugin<Context> for Chaturbate {
-    fn new(_ctx: &Context) -> Self {
-        Chaturbate::new()
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+        Ok(Self::new())
     }
 
     fn metadata() -> Metadata {

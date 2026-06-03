@@ -50,8 +50,8 @@ impl Display for MessageFormatter {
 
 #[async_trait]
 impl Plugin<Context> for DenDanskeOrdbog {
-    fn new(_ctx: &Context) -> DenDanskeOrdbog {
-        DenDanskeOrdbog::new()
+    fn new(_ctx: &Context) -> Result<DenDanskeOrdbog, BoxError> {
+        Ok(DenDanskeOrdbog::new())
     }
 
     fn metadata() -> Metadata {

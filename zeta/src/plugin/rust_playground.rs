@@ -48,17 +48,17 @@ struct ExecuteResponse {
 
 #[async_trait]
 impl Plugin<Context> for RustPlayground {
-    fn new(_ctx: &Context) -> Self {
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
         let client = http::build_client();
         let command = ZetaCommand::new(".rs");
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
 
-        Self {
+        Ok(Self {
             client,
             command,
             error_regex,
-        }
+        })
     }
 
     fn metadata() -> Metadata {

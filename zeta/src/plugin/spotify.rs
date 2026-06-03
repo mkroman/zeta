@@ -115,21 +115,19 @@ struct PlaylistTracks {
 
 #[async_trait]
 impl Plugin<Context> for Spotify {
-    fn new(_ctx: &Context) -> Self {
-        let client_id =
-            env::var("SPOTIFY_CLIENT_ID").expect("missing SPOTIFY_CLIENT_ID environment variable");
-        let client_secret = env::var("SPOTIFY_CLIENT_SECRET")
-            .expect("missing SPOTIFY_CLIENT_SECRET environment variable");
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+        let client_id = env::var("SPOTIFY_CLIENT_ID")?;
+        let client_secret = env::var("SPOTIFY_CLIENT_SECRET")?;
         let client = http::build_client();
         let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)").unwrap();
 
-        Self {
+        Ok(Self {
             client,
             client_id,
             client_secret,
             token: RwLock::new(None),
             uri_regex,
-        }
+        })
     }
 
     fn metadata() -> Metadata {

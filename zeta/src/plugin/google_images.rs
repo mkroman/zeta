@@ -72,11 +72,11 @@ struct OriginalImage {
 
 #[async_trait]
 impl Plugin<Context> for GoogleImages {
-    fn new(_ctx: &Context) -> Self {
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
         let client = http::build_client();
         let command = ZetaCommand::new(".gis");
 
-        Self { client, command }
+        Ok(Self { client, command })
     }
 
     fn metadata() -> zeta_plugin::Metadata {

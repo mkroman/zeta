@@ -128,8 +128,8 @@ impl EndpointUrls {
 
 #[async_trait]
 impl Plugin<Context> for Tvmaze {
-    fn new(_ctx: &Context) -> Self {
-        Tvmaze::new()
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+        Ok(Tvmaze::new())
     }
 
     fn metadata() -> Metadata {

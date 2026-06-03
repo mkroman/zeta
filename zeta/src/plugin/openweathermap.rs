@@ -108,17 +108,16 @@ struct Clouds {
 
 #[async_trait]
 impl Plugin<Context> for OpenWeatherMap {
-    fn new(_ctx: &Context) -> Self {
-        let app_id = std::env::var("OPENWEATHERMAP_APP_ID")
-            .expect("missing OPENWEATHERMAP_APP_ID environment variable");
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+        let app_id = std::env::var("OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client();
         let command = ZetaCommand::new(".w");
 
-        Self {
+        Ok(Self {
             client,
             command,
             app_id,
-        }
+        })
     }
 
     fn metadata() -> Metadata {

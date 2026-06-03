@@ -69,18 +69,17 @@ struct Creator {
 
 #[async_trait]
 impl Plugin<Context> for Thingiverse {
-    fn new(_ctx: &Context) -> Self {
-        let app_token = env::var("THINGIVERSE_APP_TOKEN")
-            .expect("missing THINGIVERSE_APP_TOKEN environment variable");
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+        let app_token = env::var("THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client();
         // Regex to match /thing:<id>
         let path_regex = Regex::new(r"^/thing:(?P<id>\d+)/?$").expect("invalid regex");
 
-        Self {
+        Ok(Self {
             client,
             app_token,
             path_regex,
-        }
+        })
     }
 
     fn metadata() -> Metadata {

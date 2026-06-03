@@ -67,7 +67,7 @@ impl Display for LookupResult {
 
 #[async_trait]
 impl Plugin<Context> for Dig {
-    fn new(_ctx: &Context) -> Dig {
+    fn new(_ctx: &Context) -> Result<Dig, BoxError> {
         let config = ResolverConfig::udp_and_tcp(&CLOUDFLARE);
         let mut opts = ResolverOpts::default();
         opts.use_hosts_file = ResolveHosts::Never;
@@ -75,11 +75,10 @@ impl Plugin<Context> for Dig {
         opts.ip_strategy = LookupIpStrategy::Ipv6thenIpv4;
         let resolver = Resolver::builder_with_config(config, TokioRuntimeProvider::default())
             .with_options(opts)
-            .build()
-            .expect("could not build resolver");
+            .build()?;
         let command = ZetaCommand::new(".dig");
 
-        Dig { command, resolver }
+        Ok(Dig { command, resolver })
     }
 
     fn metadata() -> Metadata {

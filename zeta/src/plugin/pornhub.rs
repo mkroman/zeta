@@ -132,10 +132,10 @@ pub struct Category {
 #[async_trait]
 impl Plugin<Context> for PornHub {
     /// Creates a new instance of the PornHub plugin.
-    fn new(_ctx: &Context) -> Self {
+    fn new(_ctx: &Context) -> Result<Self, BoxError> {
         let client = http::build_client();
 
-        PornHub { client }
+        Ok(PornHub { client })
     }
 
     fn metadata() -> Metadata {
