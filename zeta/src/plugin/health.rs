@@ -6,7 +6,7 @@ use crate::plugin::prelude::*;
 
 pub struct Health {
     /// The `.health` command trigger.
-    command: ZetaCommand,
+    command: Prefix,
 }
 
 /// Process telemetry snapshot.
@@ -26,7 +26,7 @@ pub struct Snapshot {
 #[async_trait]
 impl Plugin<Context> for Health {
     fn new(_ctx: &Context) -> Result<Health, ZetaError> {
-        let command = ZetaCommand::new(".health");
+        let command = Prefix::new(".health");
 
         Ok(Health { command })
     }

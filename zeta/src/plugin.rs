@@ -17,7 +17,7 @@ mod prelude {
     pub use zeta_plugin::Error as ZetaError;
 
     pub use super::{Author, Context, Metadata, Name, Plugin};
-    pub use crate::command::Command as ZetaCommand;
+    pub use crate::command::Prefix;
 }
 
 /// Declares plugin modules and generates a registry helper to avoid boilerplate.

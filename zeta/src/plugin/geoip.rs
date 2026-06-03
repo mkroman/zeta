@@ -15,7 +15,7 @@ const BASE_URL: &str = "https://api.ip2location.io";
 pub struct GeoIp {
     pub client: reqwest::Client,
     api_key: String,
-    command: ZetaCommand,
+    command: Prefix,
 }
 
 #[derive(Default)]
@@ -88,7 +88,7 @@ impl Plugin<Context> for GeoIp {
             .timeout(HTTP_TIMEOUT)
             .build().map_err(plugin_err)?;
 
-        let command = ZetaCommand::new(".geoip");
+        let command = Prefix::new(".geoip");
 
         Ok(GeoIp {
             client,

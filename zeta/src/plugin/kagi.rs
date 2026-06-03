@@ -42,14 +42,14 @@ pub struct KagiPlugin {
     /// Kagi search client.
     client: client::Client,
     /// `.g` search command.
-    search_command: ZetaCommand,
+    search_command: Prefix,
 }
 
 #[async_trait]
 impl Plugin<Context> for KagiPlugin {
     fn new(_ctx: &Context) -> Result<KagiPlugin, ZetaError> {
         let token = require_env("KAGI_SESSION_TOKEN")?;
-        let search_command = ZetaCommand::new(".g");
+        let search_command = Prefix::new(".g");
         let client = client::Client::with_token(token);
 
         Ok(KagiPlugin {

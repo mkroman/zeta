@@ -6,7 +6,7 @@ use crate::{http, plugin::prelude::*};
 
 pub struct DenDanskeOrdbog {
     client: dendanskeordbog::Client,
-    command: ZetaCommand,
+    command: Prefix,
 }
 
 struct MessageFormatter(DictionaryDocument);
@@ -92,7 +92,7 @@ impl DenDanskeOrdbog {
     pub fn new() -> DenDanskeOrdbog {
         let http_client = http::build_client();
         let client = dendanskeordbog::Client::with_client(http_client);
-        let command = ZetaCommand::new(".ddo");
+        let command = Prefix::new(".ddo");
 
         DenDanskeOrdbog { client, command }
     }

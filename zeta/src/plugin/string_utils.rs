@@ -5,15 +5,15 @@ use crate::plugin::prelude::*;
 #[allow(clippy::struct_field_names)]
 pub struct StringUtils {
     /// The `.b` string to bytes command trigger
-    bytes_command: ZetaCommand,
+    bytes_command: Prefix,
     /// The `.len` string length command trigger
-    length_command: ZetaCommand,
+    length_command: Prefix,
     /// The `.ord` command trigger
-    ord_command: ZetaCommand,
+    ord_command: Prefix,
     /// The `.rev` string reverse command trigger
-    reverse_command: ZetaCommand,
+    reverse_command: Prefix,
     /// The `.uni` command trigger
-    unicode_command: ZetaCommand,
+    unicode_command: Prefix,
 }
 
 #[async_trait]
@@ -88,12 +88,12 @@ fn str_to_hex_string(s: &str) -> String {
 }
 
 impl StringUtils {
-    pub fn new() -> StringUtils {
-        let unicode_command = ZetaCommand::new(".uni");
-        let bytes_command = ZetaCommand::new(".b");
-        let ord_command = ZetaCommand::new(".ord");
-        let length_command = ZetaCommand::new(".len");
-        let reverse_command = ZetaCommand::new(".rev");
+    pub const fn new() -> StringUtils {
+        let unicode_command = Prefix::new(".uni");
+        let bytes_command = Prefix::new(".b");
+        let ord_command = Prefix::new(".ord");
+        let length_command = Prefix::new(".len");
+        let reverse_command = Prefix::new(".rev");
 
         StringUtils {
             bytes_command,

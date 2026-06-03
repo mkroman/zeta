@@ -24,7 +24,7 @@ pub struct HowLongToBeat {
     /// The HTTP client used for requests.
     client: reqwest::Client,
     /// The parsed trigger command for the plugin.
-    command: ZetaCommand,
+    command: Prefix,
     /// Cached authentication data (token and homepage key/value).
     auth: RwLock<Option<AuthData>>,
 }
@@ -205,7 +205,7 @@ impl Default for SearchOptions {
 impl Plugin<Context> for HowLongToBeat {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
-        let command = ZetaCommand::new(".hltb");
+        let command = Prefix::new(".hltb");
 
         Ok(Self {
             client,
