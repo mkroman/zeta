@@ -57,8 +57,10 @@ struct RepoItem {
 
 #[async_trait]
 impl Plugin<Context> for GitHubPlugin {
-    fn new(_ctx: &Context) -> Self {
-        GitHubPlugin::new().expect("could not create github plugin")
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+        let plugin = GitHubPlugin::new()
+            .map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
+        Ok(plugin)
     }
 
     fn metadata() -> Metadata {

@@ -1,4 +1,6 @@
-use std::env;
+#![allow(clippy::doc_markdown)]
+
+
 use std::time::{Duration, Instant};
 
 use num_format::{Locale, ToFormattedString};
@@ -109,19 +111,17 @@ enum UrlKind {
 
 #[async_trait]
 impl Plugin<Context> for Twitch {
-    fn new(_ctx: &Context) -> Self {
-        let client_id =
-            env::var("TWITCH_CLIENT_ID").expect("missing TWITCH_CLIENT_ID environment variable");
-        let client_secret = env::var("TWITCH_CLIENT_SECRET")
-            .expect("missing TWITCH_CLIENT_SECRET environment variable");
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+        let client_id = require_env("TWITCH_CLIENT_ID")?;
+        let client_secret = require_env("TWITCH_CLIENT_SECRET")?;
         let client = http::build_client();
 
-        Self {
+        Ok(Self {
             client,
             client_id,
             client_secret,
             token: RwLock::new(None),
-        }
+        })
     }
 
     fn metadata() -> Metadata {

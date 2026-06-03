@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)]
+
 //! TVmaze API integration plugin.
 //!
 //! This plugin provides functionality to search for TV shows and display information
@@ -128,8 +130,8 @@ impl EndpointUrls {
 
 #[async_trait]
 impl Plugin<Context> for Tvmaze {
-    fn new(_ctx: &Context) -> Self {
-        Tvmaze::new()
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+        Ok(Tvmaze::new())
     }
 
     fn metadata() -> Metadata {

@@ -1,4 +1,4 @@
-use std::env;
+
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -182,9 +182,8 @@ fn format_time_string(s: &str) -> Option<String> {
 
 #[async_trait]
 impl Plugin<Context> for IsItOpen {
-    fn new(_ctx: &Context) -> Self {
-        let api_key = env::var("GOOGLE_MAPS_API_KEY")
-            .expect("missing GOOGLE_MAPS_API_KEY environment variable");
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+        let api_key = require_env("GOOGLE_MAPS_API_KEY")?;
         let client = http::build_client();
 
         // Initialize regexes (case insensitive)
@@ -200,7 +199,7 @@ impl Plugin<Context> for IsItOpen {
         let _ = RE_IS_CLOSED
             .get_or_init(|| Regex::new(r"(?i)^(?:har|er) (?P<place>.*?) lukket\?$").unwrap());
 
-        IsItOpen { client, api_key }
+        Ok(IsItOpen { client, api_key })
     }
 
     fn metadata() -> Metadata {

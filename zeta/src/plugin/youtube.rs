@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -188,11 +190,10 @@ pub type SearchListResponse = ApiListResponse<Search>;
 
 #[async_trait]
 impl Plugin<Context> for YouTube {
-    fn new(_ctx: &Context) -> YouTube {
-        let api_key =
-            std::env::var("YOUTUBE_API_KEY").expect("missing YOUTUBE_API_KEY environment variable");
+    fn new(_ctx: &Context) -> Result<YouTube, ZetaError> {
+        let api_key = require_env("YOUTUBE_API_KEY")?;
 
-        YouTube::with_config(api_key)
+        Ok(YouTube::with_config(api_key))
     }
 
     fn metadata() -> Metadata {

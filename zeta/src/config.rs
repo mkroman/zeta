@@ -84,7 +84,7 @@ pub struct IrcConfig {
     pub port: Option<u16>,
     /// The client's real name.
     pub realname: Option<String>,
-    /// Whether the client should use NickServ GHOST to reclaim its primary nickname if it is in
+    /// Whether the client should use `NickServ` GHOST to reclaim its primary nickname if it is in
     /// use.
     #[serde(default)]
     pub should_ghost: bool,

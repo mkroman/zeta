@@ -1,19 +1,19 @@
 use std::env;
 
 use miette::{IntoDiagnostic, WrapErr};
-use opentelemetry::InstrumentationScope;
 use opentelemetry::trace::TracerProvider;
+use opentelemetry::InstrumentationScope;
 use opentelemetry_resource_detectors::{
     HostResourceDetector, K8sResourceDetector, OsResourceDetector,
 };
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
+use opentelemetry_sdk::Resource;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config;
 
-/// Returns a list of resource detectors to use to enrich OTel attributes.
+/// Returns a list of resource detectors to use to enrich OpenTelemetry attributes.
 fn otel_resource_detectors() -> Vec<Box<dyn ResourceDetector>> {
     vec![
         Box::new(EnvResourceDetector::default()),

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures::stream::StreamExt;
 use irc::client::prelude::Client;
 use irc::proto::Message;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::Error;
 use crate::Registry;
@@ -60,9 +60,8 @@ impl Zeta {
     ///   configuration issues.)
     /// - [`Error::IrcRegistration`] - if user registration fails (e.g. if the nickname is already taken.)
     /// - [`Error::Irc`] - if a protocol or communication error occurred.
-    /// - [`Error::Plugin`] - if a plugins [`handle_message`] function returns an error
     ///
-    /// [`handle_message`]: crate::plugin::Plugin::handle_message
+    /// Plugin errors are logged but not propagated — one failing plugin won't block others.
     pub async fn run(&mut self) -> Result<(), Error> {
         let mut client = Client::from_config(self.config.irc.clone().into())
             .await
@@ -89,20 +88,23 @@ impl Zeta {
     /// to each plugin in the registry for processing. Plugins can respond to
     /// messages, update state, or perform other actions as needed.
     ///
+    /// If a plugin fails to handle a message, the error is logged but processing
+    /// continues for remaining plugins. This prevents one misbehaving plugin from
+    /// blocking all others.
+    ///
     /// # Arguments
     /// * `client` - Reference to the IRC client for sending responses
     /// * `message` - The IRC message to process
     ///
     /// # Returns
-    /// * `Ok(())` - Message processed successfully by all plugins
-    /// * `Err(Error)` - One or more plugins failed to process the message
+    /// * `Ok(())` - Message processed (individual plugin errors are logged, not propagated)
     async fn handle_message(&self, client: &Client, message: Message) -> Result<(), Error> {
         debug!(?message, "processing irc message");
 
-        for plugin in &self.registry.plugins {
-            plugin
-                .handle_message(&self.context, client, &message)
-                .await?;
+        for (plugin_name, plugin) in &self.registry.plugins {
+            if let Err(e) = plugin.handle_message(&self.context, client, &message).await {
+                warn!(plugin = %plugin_name, error = %e, "plugin error during message handling");
+            }
         }
 
         Ok(())

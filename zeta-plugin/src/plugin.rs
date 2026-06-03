@@ -17,8 +17,8 @@ use crate::{Error, Metadata};
 ///
 ///#[async_trait]
 /// impl Plugin for MyPlugin {
-///     fn new(_: &()) -> MyPlugin {
-///         MyPlugin
+///     fn new(_: &()) -> Result<MyPlugin, Error> {
+///         Ok(MyPlugin)
 ///     }
 ///
 ///     fn metadata() -> Metadata {
@@ -45,7 +45,14 @@ use crate::{Error, Metadata};
 #[async_trait]
 pub trait Plugin<C = ()>: Send + Sync {
     /// The constructor for a new plugin.
-    fn new(_ctx: &C) -> Self
+    ///
+    /// Returns `Err` if initialization fails (e.g., missing environment
+    /// variables, failed HTTP client creation). The registry will log
+    /// the error and skip loading the plugin.
+    /// # Errors
+    ///
+    /// Returns an error if the plugin cannot be initialized.
+    fn new(_ctx: &C) -> Result<Self, Error>
     where
         Self: Sized;
 

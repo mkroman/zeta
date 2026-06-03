@@ -1,9 +1,11 @@
-use tracing::debug;
+#![allow(clippy::doc_markdown)]
+
+use tracing::{debug, warn};
 use url::Url;
 
 pub use crate::context::Context;
 
-pub use zeta_plugin::{Author, Metadata, Name, Plugin};
+pub use zeta_plugin::{Author, Error, Metadata, Name, Plugin};
 
 /// Common includes used in plugins.
 #[allow(unused)]
@@ -11,6 +13,7 @@ mod prelude {
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
+    pub use zeta_plugin::prelude::{plugin_err, require_env, BoxError};
     pub use zeta_plugin::Error as ZetaError;
 
     pub use super::{Author, Context, Metadata, Name, Plugin};
@@ -155,15 +158,20 @@ declare_plugins! {
 /// Plugin registry.
 #[derive(Default)]
 pub struct Registry {
-    /// List of loaded plugins.
-    pub plugins: Vec<Box<dyn Plugin<Context>>>,
+    /// List of loaded plugins (name, plugin).
+    pub plugins: Vec<(String, Box<dyn Plugin<Context>>)>,
+    /// List of plugins that failed to initialize.
+    pub failed: Vec<(String, Error)>,
 }
 
 impl Registry {
     /// Constructs and returns a new, empty plugin registry.
     #[must_use]
     pub fn new() -> Registry {
-        Registry { plugins: vec![] }
+        Registry {
+            plugins: vec![],
+            failed: vec![],
+        }
     }
 
     /// Constructs and returns a new plugin registry with initialized plugins.
@@ -174,18 +182,36 @@ impl Registry {
         registry.register_bundled_plugins(ctx);
 
         let num_plugins = registry.plugins.len();
-        debug!(%num_plugins, "finished registering plugins");
+        let num_failed = registry.failed.len();
+        debug!(%num_plugins, %num_failed, "finished registering plugins");
+
+        if num_failed > 0 {
+            warn!(%num_failed, "some plugins failed to initialize");
+        }
 
         registry
     }
 
     /// Registers a new plugin based on its type.
+    ///
+    /// Returns `true` if the plugin was successfully initialized and registered,
+    /// `false` if initialization failed. Failed plugins are tracked in `self.failed`
+    /// and logged with their name and error.
     pub fn register<P: Plugin<Context> + 'static>(&mut self, ctx: &Context) -> bool {
-        let plugin = Box::new(P::new(ctx));
+        let name = P::metadata().name.to_string();
 
-        self.plugins.push(plugin);
-
-        true
+        match P::new(ctx) {
+            Ok(plugin) => {
+                debug!(plugin = %name, "registered plugin");
+                self.plugins.push((name, Box::new(plugin)));
+                true
+            }
+            Err(e) => {
+                warn!(plugin = %name, error = %e, "failed to initialize plugin");
+                self.failed.push((name, e));
+                false
+            }
+        }
     }
 }
 

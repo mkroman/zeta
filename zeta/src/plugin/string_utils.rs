@@ -18,8 +18,8 @@ pub struct StringUtils {
 
 #[async_trait]
 impl Plugin<Context> for StringUtils {
-    fn new(_ctx: &Context) -> StringUtils {
-        StringUtils::new()
+    fn new(_ctx: &Context) -> Result<StringUtils, ZetaError> {
+        Ok(StringUtils::new())
     }
 
     fn metadata() -> Metadata {

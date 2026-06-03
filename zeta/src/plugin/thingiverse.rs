@@ -3,7 +3,7 @@
 //! This plugin detects Thingiverse URLs in messages and fetches information
 //! about the linked "thing" using the Thingiverse API.
 
-use std::env;
+
 use std::fmt::{self, Display};
 
 use num_format::{Locale, ToFormattedString};
@@ -69,18 +69,17 @@ struct Creator {
 
 #[async_trait]
 impl Plugin<Context> for Thingiverse {
-    fn new(_ctx: &Context) -> Self {
-        let app_token = env::var("THINGIVERSE_APP_TOKEN")
-            .expect("missing THINGIVERSE_APP_TOKEN environment variable");
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+        let app_token = require_env("THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client();
         // Regex to match /thing:<id>
         let path_regex = Regex::new(r"^/thing:(?P<id>\d+)/?$").expect("invalid regex");
 
-        Self {
+        Ok(Self {
             client,
             app_token,
             path_regex,
-        }
+        })
     }
 
     fn metadata() -> Metadata {

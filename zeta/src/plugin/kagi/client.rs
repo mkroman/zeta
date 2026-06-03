@@ -145,11 +145,11 @@ fn extract_nonce(html: &str) -> Option<String> {
         .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()))
 }
 
-/// Parses a raw stream response body into a vector of KagiMessages.
+/// Parses a raw stream response body into a vector of `KagiMessage`s.
 ///
 /// This handles the specific Kagi wire format:
 /// 1. Splits by `\0\n` delimiter.
-/// 2. Splits each chunk at the first `:` into (WireTag, JsonBody).
+/// 2. Splits each chunk at the first `:` into (`WireTag`, `JsonBody`).
 /// 3. Deserializes the JSON body.
 /// 4. Ensures the `tag` field is populated.
 fn parse_kagi_stream(raw_body: &str) -> Vec<KagiMessage> {

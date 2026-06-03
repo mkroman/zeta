@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)]
+
 use std::fmt::Write;
 
 use reqwest::header::LOCATION;
@@ -79,8 +81,8 @@ pub struct OEmbed {
 
 #[async_trait]
 impl Plugin<Context> for Tiktok {
-    fn new(_ctx: &Context) -> Tiktok {
-        Tiktok::new()
+    fn new(_ctx: &Context) -> Result<Tiktok, ZetaError> {
+        Ok(Tiktok::new())
     }
 
     fn metadata() -> Metadata {
