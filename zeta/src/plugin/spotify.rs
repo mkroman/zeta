@@ -115,9 +115,9 @@ struct PlaylistTracks {
 
 #[async_trait]
 impl Plugin<Context> for Spotify {
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
-        let client_id = env::var("SPOTIFY_CLIENT_ID")?;
-        let client_secret = env::var("SPOTIFY_CLIENT_SECRET")?;
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+        let client_id = env::var("SPOTIFY_CLIENT_ID").map_err(plugin_err)?;
+        let client_secret = env::var("SPOTIFY_CLIENT_SECRET").map_err(plugin_err)?;
         let client = http::build_client();
         let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)").unwrap();
 

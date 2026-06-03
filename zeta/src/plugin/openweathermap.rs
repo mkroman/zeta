@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)]
+
 //! OpenWeatherMap integration plugin.
 //!
 //! This plugin allows users to query current weather information via the OpenWeatherMap API
@@ -108,8 +110,8 @@ struct Clouds {
 
 #[async_trait]
 impl Plugin<Context> for OpenWeatherMap {
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
-        let app_id = std::env::var("OPENWEATHERMAP_APP_ID")?;
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+        let app_id = std::env::var("OPENWEATHERMAP_APP_ID").map_err(plugin_err)?;
         let client = http::build_client();
         let command = ZetaCommand::new(".w");
 

@@ -59,7 +59,7 @@ pub struct Definition {
 
 #[async_trait]
 impl Plugin<Context> for UrbanDictionary {
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         Ok(UrbanDictionary::new())
     }
 

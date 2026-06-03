@@ -80,13 +80,13 @@ pub struct IpInfo {
 
 #[async_trait]
 impl Plugin<Context> for GeoIp {
-    fn new(_ctx: &Context) -> Result<GeoIp, BoxError> {
-        let api_key = env::var("GEOIP_API_KEY")?;
+    fn new(_ctx: &Context) -> Result<GeoIp, ZetaError> {
+        let api_key = env::var("GEOIP_API_KEY").map_err(plugin_err)?;
 
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
             .timeout(HTTP_TIMEOUT)
-            .build()?;
+            .build().map_err(plugin_err)?;
 
         let command = ZetaCommand::new(".geoip");
 

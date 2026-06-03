@@ -6,7 +6,7 @@ pub struct Choices;
 
 #[async_trait]
 impl Plugin<Context> for Choices {
-    fn new(_ctx: &Context) -> Result<Choices, BoxError> {
+    fn new(_ctx: &Context) -> Result<Choices, ZetaError> {
         Ok(Choices {})
     }
 

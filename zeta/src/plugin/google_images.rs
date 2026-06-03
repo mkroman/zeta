@@ -72,7 +72,7 @@ struct OriginalImage {
 
 #[async_trait]
 impl Plugin<Context> for GoogleImages {
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
         let command = ZetaCommand::new(".gis");
 

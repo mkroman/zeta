@@ -1,9 +1,11 @@
+#![allow(clippy::doc_markdown)]
+
 use tracing::{debug, warn};
 use url::Url;
 
 pub use crate::context::Context;
 
-pub use zeta_plugin::{Author, BoxError, Metadata, Name, Plugin};
+pub use zeta_plugin::{Author, Error, Metadata, Name, Plugin};
 
 /// Common includes used in plugins.
 #[allow(unused)]
@@ -11,7 +13,7 @@ mod prelude {
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
-    pub use zeta_plugin::BoxError;
+    pub use zeta_plugin::prelude::{plugin_err, plugin_err_display, BoxError};
     pub use zeta_plugin::Error as ZetaError;
 
     pub use super::{Author, Context, Metadata, Name, Plugin};
@@ -159,7 +161,7 @@ pub struct Registry {
     /// List of loaded plugins (name, plugin).
     pub plugins: Vec<(String, Box<dyn Plugin<Context>>)>,
     /// List of plugins that failed to initialize.
-    pub failed: Vec<(String, BoxError)>,
+    pub failed: Vec<(String, Error)>,
 }
 
 impl Registry {

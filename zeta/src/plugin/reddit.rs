@@ -169,7 +169,7 @@ pub struct Comment {
 
 #[async_trait]
 impl Plugin<Context> for Reddit {
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         Ok(Reddit {
             client: http::build_client(),
         })

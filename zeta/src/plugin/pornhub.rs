@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)]
+
 //! PornHub platform integration.
 //!
 //! This plugin provides functionality to display information about linked PornHub videos.
@@ -132,7 +134,7 @@ pub struct Category {
 #[async_trait]
 impl Plugin<Context> for PornHub {
     /// Creates a new instance of the PornHub plugin.
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
 
         Ok(PornHub { client })

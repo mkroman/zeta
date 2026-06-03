@@ -182,8 +182,8 @@ fn format_time_string(s: &str) -> Option<String> {
 
 #[async_trait]
 impl Plugin<Context> for IsItOpen {
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
-        let api_key = env::var("GOOGLE_MAPS_API_KEY")?;
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+        let api_key = env::var("GOOGLE_MAPS_API_KEY").map_err(plugin_err)?;
         let client = http::build_client();
 
         // Initialize regexes (case insensitive)

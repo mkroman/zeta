@@ -25,7 +25,7 @@ pub struct Snapshot {
 
 #[async_trait]
 impl Plugin<Context> for Health {
-    fn new(_ctx: &Context) -> Result<Health, BoxError> {
+    fn new(_ctx: &Context) -> Result<Health, ZetaError> {
         let command = ZetaCommand::new(".health");
 
         Ok(Health { command })

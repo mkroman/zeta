@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)]
+
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -201,7 +203,7 @@ impl Default for SearchOptions {
 
 #[async_trait]
 impl Plugin<Context> for HowLongToBeat {
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
         let command = ZetaCommand::new(".hltb");
 

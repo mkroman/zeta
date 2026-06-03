@@ -62,7 +62,7 @@ pub struct RoomDossier {
 
 #[async_trait]
 impl Plugin<Context> for Chaturbate {
-    fn new(_ctx: &Context) -> Result<Self, BoxError> {
+    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         Ok(Self::new())
     }
 

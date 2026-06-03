@@ -50,7 +50,7 @@ impl Display for MessageFormatter {
 
 #[async_trait]
 impl Plugin<Context> for DenDanskeOrdbog {
-    fn new(_ctx: &Context) -> Result<DenDanskeOrdbog, BoxError> {
+    fn new(_ctx: &Context) -> Result<DenDanskeOrdbog, ZetaError> {
         Ok(DenDanskeOrdbog::new())
     }
 
