@@ -1,5 +1,4 @@
 use std::error::Error as StdError;
-use std::fmt::Display;
 
 use thiserror::Error;
 
@@ -28,23 +27,29 @@ impl From<BoxError> for Error {
 ///
 /// Accepts errors that implement [`StdError + Send + Sync`] and boxes them
 /// into a [`BoxError`], then wraps into [`Error::Plugin`].
+pub fn plugin_err<E: StdError + Send + Sync + 'static>(e: E) -> Error {
+    Error::Plugin(Box::new(e))
+}
+
+/// Reads a required environment variable, returning a descriptive error on failure.
+///
+/// # Errors
+///
+/// Returns [`Error::Plugin`] if the variable is not set or contains invalid
+/// UTF-8. The error message includes the variable name.
 ///
 /// # Example
 ///
 /// ```ignore
 /// fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-///     let api_key = env::var("API_KEY").map_err(plugin_err)?;
+///     let api_key = require_env("API_KEY")?;
 ///     Ok(Self { api_key })
 /// }
 /// ```
-pub fn plugin_err<E: StdError + Send + Sync + 'static>(e: E) -> Error {
-    Error::Plugin(Box::new(e))
-}
-
-/// Wraps any displayable error value into [`Error::Plugin`].
-///
-/// For types that only implement [`Display`] but not [`StdError`],
-/// this converts the error message into an [`std::io::Error`] before boxing.
-pub fn plugin_err_display<E: Display + Send + Sync + 'static>(e: E) -> Error {
-    Error::Plugin(Box::new(std::io::Error::other(e.to_string())))
+pub fn require_env(name: &str) -> Result<String, Error> {
+    std::env::var(name).map_err(|e| {
+        Error::Plugin(Box::new(std::io::Error::other(format!(
+            "environment variable `{name}`: {e}"
+        ))))
+    })
 }

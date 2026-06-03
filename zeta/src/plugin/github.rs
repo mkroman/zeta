@@ -59,7 +59,7 @@ struct RepoItem {
 impl Plugin<Context> for GitHubPlugin {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let plugin = GitHubPlugin::new()
-            .map_err(plugin_err_display)?;
+            .map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
         Ok(plugin)
     }
 

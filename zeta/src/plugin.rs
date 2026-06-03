@@ -13,7 +13,7 @@ mod prelude {
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
-    pub use zeta_plugin::prelude::{plugin_err, plugin_err_display, BoxError};
+    pub use zeta_plugin::prelude::{plugin_err, require_env, BoxError};
     pub use zeta_plugin::Error as ZetaError;
 
     pub use super::{Author, Context, Metadata, Name, Plugin};

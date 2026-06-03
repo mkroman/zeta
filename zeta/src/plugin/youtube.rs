@@ -191,7 +191,7 @@ pub type SearchListResponse = ApiListResponse<Search>;
 #[async_trait]
 impl Plugin<Context> for YouTube {
     fn new(_ctx: &Context) -> Result<YouTube, ZetaError> {
-        let api_key = std::env::var("YOUTUBE_API_KEY").map_err(plugin_err)?;
+        let api_key = require_env("YOUTUBE_API_KEY")?;
 
         Ok(YouTube::with_config(api_key))
     }

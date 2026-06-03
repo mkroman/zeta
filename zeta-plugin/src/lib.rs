@@ -11,6 +11,6 @@ pub use types::{Author, Metadata, Name};
 pub mod prelude {
     pub use async_trait::async_trait;
 
-    pub use super::error::{BoxError, plugin_err, plugin_err_display};
+    pub use super::error::{BoxError, plugin_err, require_env};
     pub use super::{Author, Error, Metadata, Name, Plugin};
 }

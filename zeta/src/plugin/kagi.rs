@@ -48,7 +48,7 @@ pub struct KagiPlugin {
 #[async_trait]
 impl Plugin<Context> for KagiPlugin {
     fn new(_ctx: &Context) -> Result<KagiPlugin, ZetaError> {
-        let token = std::env::var("KAGI_SESSION_TOKEN").map_err(plugin_err)?;
+        let token = require_env("KAGI_SESSION_TOKEN")?;
         let search_command = ZetaCommand::new(".g");
         let client = client::Client::with_token(token);
 

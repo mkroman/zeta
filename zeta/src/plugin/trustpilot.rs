@@ -71,7 +71,7 @@ pub enum Error {
 #[async_trait]
 impl Plugin<Context> for Trustpilot {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let api_key = std::env::var("TRUSTPILOT_API_KEY").map_err(plugin_err)?;
+        let api_key = require_env("TRUSTPILOT_API_KEY")?;
         let client = http::build_client();
         let command = ZetaCommand::new(".tp");
 

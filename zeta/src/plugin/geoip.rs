@@ -1,4 +1,4 @@
-use std::env;
+
 use std::fmt::Display;
 
 use argh::FromArgs;
@@ -81,7 +81,7 @@ pub struct IpInfo {
 #[async_trait]
 impl Plugin<Context> for GeoIp {
     fn new(_ctx: &Context) -> Result<GeoIp, ZetaError> {
-        let api_key = env::var("GEOIP_API_KEY").map_err(plugin_err)?;
+        let api_key = require_env("GEOIP_API_KEY")?;
 
         let client = reqwest::Client::builder()
             .redirect(Policy::none())

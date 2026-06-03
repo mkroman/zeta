@@ -111,7 +111,7 @@ struct Clouds {
 #[async_trait]
 impl Plugin<Context> for OpenWeatherMap {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let app_id = std::env::var("OPENWEATHERMAP_APP_ID").map_err(plugin_err)?;
+        let app_id = require_env("OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client();
         let command = ZetaCommand::new(".w");
 

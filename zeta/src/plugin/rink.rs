@@ -17,7 +17,7 @@ pub struct Rink {
 #[async_trait]
 impl Plugin<Context> for Rink {
     fn new(_ctx: &Context) -> Result<Rink, ZetaError> {
-        let ctx = rink_core::simple_context().map_err(plugin_err_display)?;
+        let ctx = rink_core::simple_context().map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
         let command = ZetaCommand::new(".r");
 
         Ok(Rink {
