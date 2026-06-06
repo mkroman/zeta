@@ -17,11 +17,11 @@
 
 /// A zero-sized prefix matcher for IRC bot commands.
 ///
-/// Stores a `&'static str` prefix and provides [`parse`](Prefix::parse) to check
-/// whether a message starts with the prefix and extract the trailing arguments.
+/// Stores a `&'static str` prefix and provides [`parse`](Prefix::parse) to check whether a message
+/// starts with the prefix and extract the trailing arguments.
 ///
-/// Because the prefix is a static reference, `Prefix` is [`Copy`], requires no
-/// heap allocation, and can be constructed in `const` context.
+/// Because the prefix is a static reference, `Prefix` is [`Copy`], requires no heap allocation, and
+/// can be constructed in `const` context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Prefix(&'static str);
 
@@ -38,12 +38,11 @@ impl Prefix {
         self.0
     }
 
-    /// Checks if the input starts with the command prefix, returning the trailing
-    /// arguments (with leading whitespace stripped) if it matches.
+    /// Checks if the input starts with the command prefix, returning the trailing arguments (with
+    /// leading whitespace stripped) if it matches.
     ///
-    /// Returns `None` if the input does not start with the prefix, or if the
-    /// character immediately following the prefix is not whitespace (i.e. it is
-    /// part of a longer word).
+    /// Returns `None` if the input does not start with the prefix, or if the character immediately
+    /// following the prefix is not whitespace (i.e. it is part of a longer word).
     #[must_use]
     pub fn parse<'a>(&self, input: &'a str) -> Option<&'a str> {
         let suffix = input.strip_prefix(self.0)?;
