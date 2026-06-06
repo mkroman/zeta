@@ -13,7 +13,7 @@ const BASE_URL: &str = "https://play.rust-lang.org/execute";
 /// Plugin for evaluating Rust code.
 pub struct RustPlayground {
     client: reqwest::Client,
-    command: ZetaCommand,
+    command: Prefix,
     error_regex: Regex,
 }
 
@@ -50,7 +50,7 @@ struct ExecuteResponse {
 impl Plugin<Context> for RustPlayground {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
-        let command = ZetaCommand::new(".rs");
+        let command = Prefix::new(".rs");
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
 

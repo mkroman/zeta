@@ -38,7 +38,7 @@ pub struct YouTube {
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
     /// The `.yt` IRC command
-    command: ZetaCommand,
+    command: Prefix,
     /// Thread-safe cache of video categories mapped by category ID
     video_categories: RwLock<Arc<HashMap<String, Category>>>,
     /// Timestamp tracking when video categories were last fetched for cache invalidation
@@ -238,7 +238,7 @@ impl Plugin<Context> for YouTube {
 impl YouTube {
     pub fn with_config(api_key: String) -> Self {
         let client = http::build_client();
-        let command = crate::command::Command::new(".yt");
+        let command = Prefix::new(".yt");
 
         Self {
             api_key,

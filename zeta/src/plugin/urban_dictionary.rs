@@ -12,7 +12,7 @@ pub const BASE_URL: &str = "https://api.urbandictionary.com";
 /// Urban Dictionary plugin.
 pub struct UrbanDictionary {
     client: reqwest::Client,
-    command: ZetaCommand,
+    command: Prefix,
 }
 
 /// Errors that can occur during execution.
@@ -127,7 +127,7 @@ fn formatted(s: &str) -> String {
 impl UrbanDictionary {
     pub fn new() -> Self {
         let client = http::build_client();
-        let command = ZetaCommand::new(".ud");
+        let command = Prefix::new(".ud");
 
         UrbanDictionary { client, command }
     }

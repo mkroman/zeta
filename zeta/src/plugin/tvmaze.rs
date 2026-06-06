@@ -30,7 +30,7 @@ pub struct Tvmaze {
     /// HTTP client for API requests.
     client: reqwest::Client,
     /// Command handler for the `.next` command.
-    command: ZetaCommand,
+    command: Prefix,
     /// Cached endpoint URLs for performance.
     urls: EndpointUrls,
 }
@@ -161,7 +161,7 @@ impl Tvmaze {
     /// Creates a new TVmaze plugin instance.
     pub fn new() -> Self {
         let client = http::build_client();
-        let command = ZetaCommand::new(".next");
+        let command = Prefix::new(".next");
         let urls = EndpointUrls::new();
 
         Tvmaze {

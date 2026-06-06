@@ -35,7 +35,7 @@ pub enum Error {
 /// Holds the HTTP client to reuse connection pools.
 pub struct GitHubPlugin {
     http: reqwest::Client,
-    command: ZetaCommand,
+    command: Prefix,
 }
 
 /// Represents the top-level search response from GitHub API.
@@ -93,7 +93,7 @@ impl GitHubPlugin {
     /// Create a new instance of the GitHub plugin.
     /// Initializes a generic HTTP client with standard timeouts.
     pub fn new() -> Result<Self> {
-        let cmd = ZetaCommand::new(".gh");
+        let cmd = Prefix::new(".gh");
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,

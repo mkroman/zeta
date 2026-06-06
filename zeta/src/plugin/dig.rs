@@ -38,7 +38,7 @@ pub enum Error {
 }
 
 pub struct Dig {
-    command: ZetaCommand,
+    command: Prefix,
     resolver: TokioResolver,
 }
 
@@ -76,7 +76,7 @@ impl Plugin<Context> for Dig {
         let resolver = Resolver::builder_with_config(config, TokioRuntimeProvider::default())
             .with_options(opts)
             .build().map_err(plugin_err)?;
-        let command = ZetaCommand::new(".dig");
+        let command = Prefix::new(".dig");
 
         Ok(Dig { command, resolver })
     }

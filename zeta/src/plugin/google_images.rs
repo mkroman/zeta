@@ -13,7 +13,7 @@ pub struct GoogleImages {
     /// HTTP client for making requests.
     client: reqwest::Client,
     /// Command handler for the `.gis` command.
-    command: ZetaCommand,
+    command: Prefix,
 }
 
 /// Errors that can occur during the execution of the Google Images plugin.
@@ -74,7 +74,7 @@ struct OriginalImage {
 impl Plugin<Context> for GoogleImages {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
-        let command = ZetaCommand::new(".gis");
+        let command = Prefix::new(".gis");
 
         Ok(Self { client, command })
     }

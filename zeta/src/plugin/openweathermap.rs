@@ -20,7 +20,7 @@ pub struct OpenWeatherMap {
     /// HTTP client for making API requests.
     client: reqwest::Client,
     /// Command handler for the `.w` command.
-    command: ZetaCommand,
+    command: Prefix,
     /// OpenWeatherMap API key.
     app_id: String,
 }
@@ -113,7 +113,7 @@ impl Plugin<Context> for OpenWeatherMap {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let app_id = require_env("OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client();
-        let command = ZetaCommand::new(".w");
+        let command = Prefix::new(".w");
 
         Ok(Self {
             client,

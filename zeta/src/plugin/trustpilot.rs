@@ -18,7 +18,7 @@ pub struct Trustpilot {
     /// Trustpilot API key.
     api_key: String,
     /// Command handler.
-    command: ZetaCommand,
+    command: Prefix,
 }
 
 /// Represents a business unit response from the Trustpilot API.
@@ -73,7 +73,7 @@ impl Plugin<Context> for Trustpilot {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let api_key = require_env("TRUSTPILOT_API_KEY")?;
         let client = http::build_client();
-        let command = ZetaCommand::new(".tp");
+        let command = Prefix::new(".tp");
 
         Ok(Self {
             client,
