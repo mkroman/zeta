@@ -1,5 +1,22 @@
 use std::borrow::Cow;
 
+/// Deserializes a JSON string, attaching the path to the failing field on error
+/// and logging the offending body.
+#[cfg(any(
+    feature = "plugin-pornhub",
+    feature = "plugin-reddit",
+    feature = "plugin-tvmaze",
+    feature = "plugin-youtube",
+))]
+pub fn parse_json<T: serde::de::DeserializeOwned>(
+    text: &str,
+) -> Result<T, serde_path_to_error::Error<serde_json::Error>> {
+    let deserializer = &mut serde_json::Deserializer::from_str(text);
+
+    serde_path_to_error::deserialize(deserializer)
+        .inspect_err(|err| tracing::error!(?err, body = %text, "failed to parse json response"))
+}
+
 /// Helpers for truncating text.
 pub trait Truncatable {
     fn truncate_with_suffix(&self, len: usize, suffix: &str) -> Cow<'_, str>;

@@ -319,11 +319,8 @@ impl Tvmaze {
 /// Returns `Error::Deserialize` if parsing the JSON fails.
 async fn deserialize_response<T: DeserializeOwned>(response: Response) -> Result<T, Error> {
     let text = response.text().await.map_err(Error::Request)?;
-    let deserializer = &mut serde_json::Deserializer::from_slice(text.as_bytes());
 
-    serde_path_to_error::deserialize(deserializer)
-        .inspect_err(|err| error!(?err, body = %text, "failed to parse json response"))
-        .map_err(Error::Deserialize)
+    crate::utils::parse_json(&text).map_err(Error::Deserialize)
 }
 
 fn duration_in_words(duration: Duration) -> String {

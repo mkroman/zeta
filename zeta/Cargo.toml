@@ -76,7 +76,6 @@ plugins-all = [
 [dependencies]
 argh.workspace = true
 async-trait.workspace = true
-base64 = "0.22.1"
 dendanskeordbog = { path = "../dendanskeordbog", features = ["client"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"

@@ -6,7 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use crate::{http, plugin::prelude::*, utils::Truncatable};
+use crate::{http, plugin, plugin::prelude::*, utils::Truncatable};
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
 
@@ -146,7 +146,7 @@ impl RustPlayground {
 
 /// Applies IRC formatting to the message.
 fn formatted(msg: &str) -> String {
-    format!("\x0310>\x0F\x02 Rust Playground:\x02\x0310 {msg}")
+    plugin::prefixed("Rust Playground", msg)
 }
 
 /// Sanitizes output by removing control characters (0x00-0x19, 0x7F).

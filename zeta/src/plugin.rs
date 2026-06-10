@@ -20,6 +20,10 @@ mod prelude {
     pub use crate::command::Prefix;
 }
 
+/// OAuth2 client-credentials token caching shared by API plugins.
+#[cfg(any(feature = "plugin-spotify", feature = "plugin-twitch"))]
+pub mod oauth;
+
 /// Declares plugin modules and generates a registry helper to avoid boilerplate.
 ///
 /// For each entry, it generates:
@@ -213,6 +217,18 @@ impl Registry {
             }
         }
     }
+}
+
+/// Formats an IRC message with the standard colored `> Name:` plugin prefix.
+#[cfg(any(
+    feature = "plugin-github",
+    feature = "plugin-rust-playground",
+    feature = "plugin-spotify",
+    feature = "plugin-twitch",
+))]
+#[must_use]
+pub fn prefixed(name: &str, message: &str) -> String {
+    format!("\x0310>\x0f\x02 {name}:\x02\x0310 {message}")
 }
 
 /// Extracts HTTP(s) URLs from a string.
