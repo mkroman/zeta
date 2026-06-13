@@ -9,7 +9,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use tracing::{error, info};
 
-use crate::{http, plugin::prelude::*};
+use crate::{http, plugin, plugin::prelude::*};
 
 /// Custom error types for the GitHub plugin.
 #[derive(Debug, Error, Diagnostic)]
@@ -213,6 +213,6 @@ impl GitHubPlugin {
     /// Formats the final message with the standard Zeta/Blur prefix.
     /// Ruby: %(\x0310>\x0F\x02 GitHub:\x02\x0310 #{message})
     fn format_message(message: &str) -> String {
-        format!("\x0310>\x0F\x02 GitHub:\x02\x0310 {message}")
+        plugin::prefixed("GitHub", message)
     }
 }

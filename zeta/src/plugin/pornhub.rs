@@ -7,7 +7,7 @@
 use num_format::{Locale, ToFormattedString};
 use reqwest::Response;
 use serde::{Deserialize, de::DeserializeOwned};
-use tracing::{debug, error};
+use tracing::debug;
 use url::Url;
 
 use crate::{
@@ -254,9 +254,6 @@ fn extract_video_id(url: &Url) -> Option<String> {
 /// Returns `Error::Deserialize` if parsing the JSON fails.
 async fn deserialize_response<T: DeserializeOwned>(response: Response) -> Result<T, Error> {
     let text = response.text().await.map_err(Error::Request)?;
-    let deserializer = &mut serde_json::Deserializer::from_slice(text.as_bytes());
 
-    serde_path_to_error::deserialize(deserializer)
-        .inspect_err(|err| error!(?err, body = %text, "failed to parse json response"))
-        .map_err(Error::Deserialize)
+    crate::utils::parse_json(&text).map_err(Error::Deserialize)
 }

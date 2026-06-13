@@ -2,13 +2,10 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use num_format::{Locale, ToFormattedString};
-use serde::Deserialize;
-use time::OffsetDateTime;
 use tokio::sync::RwLock;
-use tracing::{debug, error};
 use url::Url;
 
 use crate::{
@@ -16,8 +13,12 @@ use crate::{
     plugin::{self, prelude::*},
 };
 
-/// YouTube Data API v3 base endpoint URL.
-pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
+mod api;
+mod types;
+mod urls;
+
+use types::Category;
+use urls::UrlKind;
 
 /// IRC bot plugin for YouTube URL detection and metadata retrieval.
 ///
@@ -57,136 +58,6 @@ pub enum Error {
     #[error("deserialization error: {0}")]
     Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
 }
-
-#[derive(Eq, PartialEq, Debug)]
-#[non_exhaustive]
-pub enum UrlKind {
-    /// Direct link to a video (e.g., `youtube.com/watch?v=VIDEO_ID` or `youtu.be/VIDEO_ID`)
-    Video(String),
-    /// Link to a short video (e.g., `youtube.com/shorts/VIDEO_ID`)
-    Short(String),
-    /// Direct link to a channel using channel ID (e.g., `youtube.com/channel/CHANNEL_ID`)
-    Channel(String),
-    /// Link to a channel using the @ handle (e.g., `youtube.com/@ChannelName`)
-    ChannelHandle(String),
-    /// Direct link to a playlist (e.g., `youtube.com/playlist?list=PLAYLIST_ID`)
-    Playlist(String),
-}
-
-/// Basic details about the video, such as its title, description, and category.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct Snippet {
-    pub title: String,
-    pub description: String,
-    pub channel_title: String,
-    pub category_id: String,
-}
-
-/// Statistics about a video.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct Statistics {
-    pub view_count: String,
-}
-
-/// A YouTube video.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct Video {
-    pub kind: String,
-    pub etag: String,
-    pub id: String,
-    pub snippet: Option<Snippet>,
-    pub statistics: Option<Statistics>,
-}
-
-/// Search Result.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct Search {
-    pub kind: String,
-    pub etag: String,
-    pub id: SearchId,
-    pub snippet: SearchSnippet,
-}
-
-// TODO: rework this so it uses an enum
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct SearchId {
-    pub kind: String,
-    pub video_id: Option<String>,
-    pub channel_id: Option<String>,
-    pub playlist_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct SearchSnippet {
-    pub title: String,
-    pub description: String,
-    pub channel_id: String,
-    pub channel_title: String,
-    pub thumbnails: HashMap<String, SearchSnippetThumbnail>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub published_at: OffsetDateTime,
-    pub live_broadcast_content: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct SearchSnippetThumbnail {
-    pub url: String,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// Details about a video category.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct CategorySnippet {
-    pub channel_id: String,
-    pub title: String,
-    pub assignable: bool,
-}
-
-/// A video category result.
-#[derive(Clone, Debug, Deserialize)]
-#[allow(unused)]
-#[serde(rename_all = "camelCase")]
-pub struct Category {
-    pub kind: String,
-    pub etag: String,
-    pub id: String,
-    pub snippet: CategorySnippet,
-}
-
-/// Generic response type for list results.
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct ApiListResponse<R> {
-    pub kind: String,
-    pub etag: String,
-    pub items: Vec<R>,
-}
-
-/// Response with a list of YouTube videos.
-pub type VideosResponse = ApiListResponse<Video>;
-
-/// Response with a list of YouTube video categories.
-pub type CategoriesResponse = ApiListResponse<Category>;
-
-pub type SearchListResponse = ApiListResponse<Search>;
 
 #[async_trait]
 impl Plugin<Context> for YouTube {
@@ -249,15 +120,6 @@ impl YouTube {
         }
     }
 
-    /// Parses the given `url` and returns a [`UrlKind`] depending on the type of YouTube URL.
-    fn parse_youtube_url(url: &Url) -> Option<UrlKind> {
-        match url.host_str()? {
-            "youtu.be" => parse_youtu_be_url(url),
-            "youtube.com" | "www.youtube.com" => parse_youtube_com_url(url),
-            _ => None,
-        }
-    }
-
     /// Processes URLs found in a message
     async fn process_urls(
         &self,
@@ -267,7 +129,7 @@ impl YouTube {
     ) -> Result<(), ZetaError> {
         for ref url in urls {
             if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
-                YouTube::parse_youtube_url(url)
+                urls::parse_youtube_url(url)
             {
                 match self.get_video(&video_id).await {
                     Ok(video) => {
@@ -301,277 +163,5 @@ impl YouTube {
         }
 
         Ok(())
-    }
-
-    /// Fetches video categories.
-    async fn video_categories(&self) -> Result<HashMap<String, Category>, Error> {
-        debug!("fetching video categories");
-
-        let params = [
-            ("key", self.api_key.as_str()),
-            ("part", "snippet"),
-            ("regionCode", "US"),
-        ];
-        let request = self
-            .client
-            .get(format!("{BASE_URL}/videoCategories"))
-            .query(&params);
-        let response = request
-            .send()
-            .await
-            .map_err(|_| Error::InvalidResponse)?
-            .error_for_status()?;
-        let list: CategoriesResponse = response.json().await?;
-
-        debug!("fetched video category list");
-
-        let map: HashMap<String, Category> =
-            list.items.into_iter().map(|c| (c.id.clone(), c)).collect();
-
-        if map.is_empty() {
-            Err(Error::NoResults)
-        } else {
-            Ok(map)
-        }
-    }
-
-    async fn cached_video_categories(&self) -> Result<Arc<HashMap<String, Category>>, Error> {
-        let categories_updated_at = *self.video_categories_updated_at.read().await;
-        if let Some(instant) = categories_updated_at {
-            debug!("using cached video categories");
-
-            if instant.elapsed() < Duration::from_mins(30) {
-                let vc = self.video_categories.read().await;
-
-                return Ok(vc.clone());
-            }
-        }
-
-        debug!("refreshing cached video categories");
-        let new_categories = self.video_categories().await?;
-        let categories_arc = Arc::new(new_categories);
-
-        {
-            let mut categories_guard = self.video_categories.write().await;
-            *categories_guard = categories_arc.clone();
-        }
-        {
-            let mut updated_at_guard = self.video_categories_updated_at.write().await;
-            *updated_at_guard = Some(Instant::now());
-        }
-
-        let vc = self.video_categories.read().await;
-        Ok(vc.clone())
-    }
-
-    /// Searches for videos using the given query.
-    async fn search(&self, query: &str) -> Result<Vec<Search>, Error> {
-        debug!(%query, "searching for videos");
-
-        let params = [
-            ("q", query),
-            ("key", &self.api_key),
-            ("part", "snippet"),
-            ("type", "video"),
-            ("safeSearch", "none"),
-        ];
-
-        debug!(?params, "searching for videos");
-
-        let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
-        let response = request.send().await.map_err(Error::Request)?;
-
-        match response.error_for_status() {
-            Ok(response) => {
-                debug!("response is ok, parsing as json");
-                let text = response.text().await.map_err(Error::Request)?;
-                let de = &mut serde_json::Deserializer::from_str(&text);
-                let result: SearchListResponse = serde_path_to_error::deserialize(de)
-                    .inspect_err(|err| error!(?err, %text, "could not parse response"))
-                    .map_err(Error::Deserialize)?;
-                let items = result.items;
-
-                debug!(?items, "returning items");
-
-                Ok(items)
-            }
-            Err(err) => Err(Error::Request(err)),
-        }
-    }
-
-    /// Fetches metadata for a YouTube video using its video ID.
-    ///
-    /// Returns `Err(Error::NoResults)` if no video is found with the given ID.
-    async fn get_video(&self, video_id: &str) -> Result<Video, Error> {
-        debug!(%video_id, "fetching video metadata");
-
-        let params = [
-            ("id", video_id),
-            ("key", &self.api_key),
-            ("part", "snippet,statistics,liveStreamingDetails"),
-        ];
-        let request = self.client.get(format!("{BASE_URL}/videos")).query(&params);
-        let response = request
-            .send()
-            .await
-            .map_err(|_| Error::InvalidResponse)?
-            .error_for_status()?;
-        let list: VideosResponse = response.json().await?;
-        debug!("fetched metadata for video");
-
-        if let Some(video) = list.items.first() {
-            return Ok(video.clone());
-        }
-
-        Err(Error::NoResults)
-    }
-}
-
-/// Extracts a query parameter value from a URL
-fn extract_query_param(url: &Url, param: &str) -> Option<String> {
-    url.query_pairs()
-        .find(|(key, _)| key == param)
-        .map(|(_, value)| value.to_string())
-}
-
-/// Parses youtube.com URLs
-fn parse_youtube_com_url(url: &Url) -> Option<UrlKind> {
-    let segments: Vec<&str> = url.path_segments()?.collect();
-
-    match segments.as_slice() {
-        // `/watch?v=<video_id>`
-        ["watch"] => extract_query_param(url, "v").map(UrlKind::Video),
-        // `/playlist?list=<playlist_id>`
-        ["playlist"] => extract_query_param(url, "list").map(UrlKind::Playlist),
-        // `/channel/<channel_id>`
-        ["channel", channel_id] if !channel_id.is_empty() => {
-            Some(UrlKind::Channel((*channel_id).to_string()))
-        }
-        ["shorts", video_id] if !video_id.is_empty() => {
-            Some(UrlKind::Short((*video_id).to_string()))
-        }
-        // `/*`
-        [path] if path.starts_with('@') && path.len() > 1 => {
-            Some(UrlKind::ChannelHandle(path[1..].to_string()))
-        }
-        _ => None,
-    }
-}
-
-/// Parses youtu.be URLs
-fn parse_youtu_be_url(url: &Url) -> Option<UrlKind> {
-    let path = url.path();
-
-    if path.len() > 1 {
-        return Some(UrlKind::Video(path[1..].to_owned()));
-    }
-
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_youtube_com_video_urls() {
-        let test_cases = [
-            (
-                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
-            ),
-            (
-                "https://youtube.com/watch?v=dQw4w9WgXcQ",
-                Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
-            ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
-        }
-    }
-
-    #[test]
-    fn test_parse_youtube_com_shorts_urls() {
-        let test_cases = [
-            (
-                "https://www.youtube.com/shorts/l4s8y-O_ols",
-                Some(UrlKind::Short("l4s8y-O_ols".to_string())),
-            ),
-            (
-                "https://youtube.com/shorts/l4s8y-O_ols",
-                Some(UrlKind::Short("l4s8y-O_ols".to_string())),
-            ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
-        }
-    }
-
-    #[test]
-    fn test_parse_youtu_be_video_urls() {
-        let test_cases = [(
-            "https://youtu.be/dQw4w9WgXcQ",
-            Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
-        )];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
-        }
-    }
-
-    #[test]
-    fn test_parse_playlist_urls() {
-        let test_cases = [(
-            "https://www.youtube.com/playlist?list=PLF37D334894B07EEA",
-            Some(UrlKind::Playlist("PLF37D334894B07EEA".to_string())),
-        )];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
-        }
-    }
-
-    #[test]
-    fn test_invalid_urls() {
-        let invalid_urls = [
-            "https://example.com/watch?v=test",
-            "https://youtube.com/channel/",
-            "https://youtu.be/",
-        ];
-
-        for url_str in invalid_urls {
-            let url = Url::parse(url_str).unwrap();
-            assert_eq!(YouTube::parse_youtube_url(&url), None);
-        }
-    }
-
-    #[test]
-    fn it_should_parse_channel_urls() {
-        let test_cases = [
-            (
-                "https://www.youtube.com/channel/UChuZAo1RKL85gev3Eal9_zg",
-                Some(UrlKind::Channel("UChuZAo1RKL85gev3Eal9_zg".to_string())),
-            ),
-            (
-                "https://www.youtube.com/@BreakingTaps",
-                Some(UrlKind::ChannelHandle("BreakingTaps".to_string())),
-            ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
-        }
     }
 }

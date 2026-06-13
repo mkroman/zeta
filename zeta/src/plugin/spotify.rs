@@ -1,19 +1,20 @@
 
 use std::fmt::Write;
-use std::time::{Duration, Instant};
 
-use base64::prelude::*;
 use num_format::{Locale, ToFormattedString};
 use regex::Regex;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::AUTHORIZATION;
 use serde::Deserialize;
-use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
     http,
-    plugin::{self, prelude::*},
+    plugin::{
+        self,
+        oauth::{AuthStyle, ClientCredentials},
+        prelude::*,
+    },
 };
 
 const AUTH_URL: &str = "https://accounts.spotify.com/api/token";
@@ -22,32 +23,16 @@ const API_BASE_URL: &str = "https://api.spotify.com/v1";
 /// Spotify integration plugin.
 pub struct Spotify {
     client: reqwest::Client,
-    client_id: String,
-    client_secret: String,
-    token: RwLock<Option<Token>>,
+    credentials: ClientCredentials,
     uri_regex: Regex,
-}
-
-#[derive(Clone, Debug)]
-struct Token {
-    access_token: String,
-    expires_at: Instant,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
-    #[error("json error: {0}")]
-    Json(#[from] serde_json::Error),
     #[error("api error: {0}")]
     Api(String),
-}
-
-#[derive(Deserialize)]
-struct AuthResponse {
-    access_token: String,
-    expires_in: u64,
 }
 
 #[derive(Deserialize)]
@@ -120,12 +105,12 @@ impl Plugin<Context> for Spotify {
         let client_secret = require_env("SPOTIFY_CLIENT_SECRET")?;
         let client = http::build_client();
         let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)").unwrap();
+        let credentials =
+            ClientCredentials::new(AUTH_URL, client_id, client_secret, AuthStyle::BasicHeader);
 
         Ok(Self {
             client,
-            client_id,
-            client_secret,
-            token: RwLock::new(None),
+            credentials,
             uri_regex,
         })
     }
@@ -173,38 +158,6 @@ impl Plugin<Context> for Spotify {
 }
 
 impl Spotify {
-    /// Authenticates with Spotify using Client Credentials Flow.
-    async fn get_token(&self) -> Result<String, Error> {
-        // Check cache
-        if let Some(token) = self.token.read().await.as_ref()
-            && token.expires_at > Instant::now() + Duration::from_mins(1)
-        {
-            return Ok(token.access_token.clone());
-        }
-
-        debug!("refreshing spotify token");
-        let creds = format!("{}:{}", self.client_id, self.client_secret);
-        let encoded = BASE64_STANDARD.encode(creds);
-        let response = self
-            .client
-            .post(AUTH_URL)
-            .header(AUTHORIZATION, format!("Basic {encoded}"))
-            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .form(&[("grant_type", "client_credentials")])
-            .send()
-            .await?;
-
-        let auth: AuthResponse = response.json().await?;
-        let token = Token {
-            access_token: auth.access_token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(auth.expires_in),
-        };
-
-        *self.token.write().await = Some(token);
-
-        Ok(auth.access_token)
-    }
-
     async fn handle_spotify_resource(
         &self,
         channel: &str,
@@ -238,7 +191,7 @@ impl Spotify {
     }
 
     async fn fetch<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, Error> {
-        let token = self.get_token().await?;
+        let token = self.credentials.access_token(&self.client).await?;
         let url = format!("{API_BASE_URL}/{path}");
 
         let response = self
@@ -375,7 +328,7 @@ impl Spotify {
 }
 
 fn formatted(message: &str) -> String {
-    format!("\x0310>\x0f\x02 Spotify:\x02\x0310 {message}")
+    plugin::prefixed("Spotify", message)
 }
 
 fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), ZetaError> {

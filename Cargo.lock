@@ -4531,7 +4531,6 @@ version = "0.5.0"
 dependencies = [
  "argh",
  "async-trait",
- "base64",
  "dendanskeordbog",
  "figment",
  "futures",

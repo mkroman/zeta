@@ -1,17 +1,18 @@
 #![allow(clippy::doc_markdown)]
 
 
-use std::time::{Duration, Instant};
-
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
-use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::warn;
 use url::Url;
 
 use crate::{
     http,
-    plugin::{self, prelude::*},
+    plugin::{
+        self,
+        oauth::{AuthStyle, ClientCredentials},
+        prelude::*,
+    },
 };
 
 /// Twitch OAuth2 token endpoint.
@@ -26,21 +27,8 @@ const BASE_URL: &str = "https://api.twitch.tv/helix";
 pub struct Twitch {
     /// HTTP client used for requests.
     client: reqwest::Client,
-    /// Twitch application client ID.
-    client_id: String,
-    /// Twitch application client secret.
-    client_secret: String,
-    /// Cached access token.
-    token: RwLock<Option<Token>>,
-}
-
-/// A Twitch OAuth2 access token.
-#[derive(Clone, Debug)]
-struct Token {
-    /// The access token string.
-    access_token: String,
-    /// The time at which the token expires.
-    expires_at: Instant,
+    /// Twitch application credentials and cached access token.
+    credentials: ClientCredentials,
 }
 
 /// Errors that can occur during Twitch plugin execution.
@@ -52,13 +40,6 @@ pub enum Error {
     Api(String),
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
-}
-
-/// Response from the Twitch OAuth2 token endpoint.
-#[derive(Deserialize)]
-struct AuthResponse {
-    access_token: String,
-    expires_in: u64,
 }
 
 /// Generic response wrapper for Twitch Helix API endpoints.
@@ -115,12 +96,12 @@ impl Plugin<Context> for Twitch {
         let client_id = require_env("TWITCH_CLIENT_ID")?;
         let client_secret = require_env("TWITCH_CLIENT_SECRET")?;
         let client = http::build_client();
+        let credentials =
+            ClientCredentials::new(AUTH_URL, client_id, client_secret, AuthStyle::FormBody);
 
         Ok(Self {
             client,
-            client_id,
-            client_secret,
-            token: RwLock::new(None),
+            credentials,
         })
     }
 
@@ -160,51 +141,19 @@ impl Plugin<Context> for Twitch {
 }
 
 impl Twitch {
-    /// Authenticates with Twitch using Client Credentials Flow.
-    ///
-    /// Returns a valid access token, refreshing it if necessary.
-    async fn get_token(&self) -> Result<String, Error> {
-        // Check if we have a valid cached token.
-        if let Some(token) = self.token.read().await.as_ref() {
-            // Add a 60 second buffer to the expiration time check.
-            if token.expires_at > Instant::now() + Duration::from_mins(1) {
-                return Ok(token.access_token.clone());
-            }
-        }
-
-        debug!("refreshing twitch access token");
-        let params = [
-            ("client_id", self.client_id.as_str()),
-            ("client_secret", self.client_secret.as_str()),
-            ("grant_type", "client_credentials"),
-        ];
-
-        let response = self.client.post(AUTH_URL).form(&params).send().await?;
-        let auth: AuthResponse = response.error_for_status()?.json().await?;
-
-        let token = Token {
-            access_token: auth.access_token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(auth.expires_in),
-        };
-
-        *self.token.write().await = Some(token);
-
-        Ok(auth.access_token)
-    }
-
     /// Helper to make authenticated GET requests to the Helix API.
     async fn get<T: for<'de> Deserialize<'de>>(
         &self,
         endpoint: &str,
         query: &[(&str, &str)],
     ) -> Result<Response<T>, Error> {
-        let token = self.get_token().await?;
+        let token = self.credentials.access_token(&self.client).await?;
         let url = format!("{BASE_URL}/{endpoint}");
 
         let response = self
             .client
             .get(&url)
-            .header("Client-ID", &self.client_id)
+            .header("Client-ID", self.credentials.client_id())
             .header("Authorization", format!("Bearer {token}"))
             .query(query)
             .send()
@@ -323,7 +272,7 @@ impl Twitch {
 
 /// Formats a message with the Twitch prefix and colors.
 fn formatted(message: &str) -> String {
-    format!("\x0310>\x0F\x02 Twitch:\x02\x0310 {message}")
+    plugin::prefixed("Twitch", message)
 }
 
 /// Checks if a string looks like a valid Twitch username.
