@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::{EventType, UrlFilter};
+
 /// A newtype wrapper for plugin metadata strings.
 macro_rules! metadata_type {
     ($name:ident, $doc:expr) => {
@@ -45,6 +47,19 @@ macro_rules! metadata_type {
     };
 }
 
+/// Plugin descriptor that contains metadata about a plugin.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Descriptor {
+    /// Name of the plugin.
+    pub name: Name,
+    /// List of authors of the plugin.
+    pub authors: Vec<Author>,
+    /// List of events that the plugin cares about.
+    pub events: Vec<EventType>,
+    /// List of URL events that the plugin wants to receive.
+    pub url_matchers: Vec<UrlFilter>,
+}
+
 pub struct Metadata {
     /// Name of the plugin.
     pub name: Name,
@@ -54,3 +69,42 @@ pub struct Metadata {
 
 metadata_type!(Name, "Name of a plugin");
 metadata_type!(Author, "Author of a plugin");
+
+impl Descriptor {
+    pub fn new(name: impl Into<Name>) -> Descriptor {
+        let name = name.into();
+
+        Descriptor {
+            name,
+            authors: vec![],
+            events: vec![],
+            url_matchers: vec![],
+        }
+    }
+
+    /// Adds the given `author` to the list of authors of this plugin.
+    pub fn author(mut self, author: impl Into<Author>) -> Descriptor {
+        self.authors.push(author.into());
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn descriptor_should_have_authors() {
+        let descriptor = Descriptor::new("my_plugin")
+            .author("John Doe <john.doe@example.com>")
+            .author("Jane Doe <jane.doe@example.com>");
+
+        assert_eq!(
+            &descriptor.authors,
+            &vec![
+                Author::from("John Doe <john.doe@example.com>"),
+                Author::from("Jane Doe <jane.doe@example.com>")
+            ]
+        );
+    }
+}

@@ -46,9 +46,9 @@ use crate::{Error, Metadata};
 pub trait Plugin<C = ()>: Send + Sync {
     /// The constructor for a new plugin.
     ///
-    /// Returns `Err` if initialization fails (e.g., missing environment
-    /// variables, failed HTTP client creation). The registry will log
-    /// the error and skip loading the plugin.
+    /// Returns `Err` if initialization fails (e.g., missing environment variables, failed HTTP
+    /// client creation). The registry will log the error and skip loading the plugin.
+    ///
     /// # Errors
     ///
     /// Returns an error if the plugin cannot be initialized.
