@@ -1,9 +1,11 @@
 //! HTTP features
 
+/// HTTP client integration
 pub mod client {
     use crate::consts;
 
     pub use reqwest::Client;
+    use reqwest::redirect::Policy;
 
     /// Returns a default HTTP client.
     ///
@@ -18,7 +20,7 @@ pub mod client {
     /// Returns a default HTTP client builder.
     pub fn builder() -> reqwest::ClientBuilder {
         reqwest::ClientBuilder::new()
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(Policy::none())
             .timeout(consts::HTTP_TIMEOUT)
             .user_agent(consts::HTTP_USER_AGENT)
     }
@@ -27,6 +29,7 @@ pub mod client {
 /// Builds a default HTTP client.
 ///
 /// This is equivalent to calling [`client::build`].
+#[must_use]
 pub fn build_client() -> client::Client {
     client::build()
 }

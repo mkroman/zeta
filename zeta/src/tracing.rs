@@ -1,13 +1,13 @@
 use std::env;
 
 use miette::{IntoDiagnostic, WrapErr};
-use opentelemetry::trace::TracerProvider;
 use opentelemetry::InstrumentationScope;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_resource_detectors::{
     HostResourceDetector, K8sResourceDetector, OsResourceDetector,
 };
-use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -62,7 +62,7 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "zeta=debug".into()),
+                .unwrap_or_else(|_| "zeta=debug,reddit=debug,dendanskeordbog=debug".into()),
         )
         .with(telemetry_layer)
         .with(stdout_layer)

@@ -13,8 +13,8 @@ mod prelude {
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
-    pub use zeta_plugin::prelude::{plugin_err, require_env, BoxError};
     pub use zeta_plugin::Error as ZetaError;
+    pub use zeta_plugin::prelude::{BoxError, plugin_err, require_env};
 
     pub use super::{Author, Context, Metadata, Name, Plugin};
     pub use crate::command::Prefix;
@@ -194,9 +194,9 @@ impl Registry {
 
     /// Registers a new plugin based on its type.
     ///
-    /// Returns `true` if the plugin was successfully initialized and registered,
-    /// `false` if initialization failed. Failed plugins are tracked in `self.failed`
-    /// and logged with their name and error.
+    /// Returns `true` if the plugin was successfully initialized and registered, `false` if
+    /// initialization failed. Failed plugins are tracked in `self.failed` and logged with their
+    /// name and error.
     pub fn register<P: Plugin<Context> + 'static>(&mut self, ctx: &Context) -> bool {
         let name = P::metadata().name.to_string();
 
