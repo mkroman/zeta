@@ -1,0 +1,15 @@
+[package]
+name = "reddit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+reqwest = { workspace = true, features = ["json", "query"] }
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+url.workspace = true

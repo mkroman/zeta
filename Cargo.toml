@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["dendanskeordbog", "zeta", "zeta-plugin"]
+members = ["dendanskeordbog", "reddit", "zeta", "zeta-plugin"]
 
 [workspace.dependencies]
 argh = { version = "0.1.12" } 
@@ -9,10 +9,14 @@ futures = "0.3.31"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-native"] }
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
 scraper = "0.27.0"
+secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.149"
+serde_path_to_error = "0.1.17"
 thiserror = "2.0"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1.41"
+url = "2.5.8"
 
 [profile.release]
 lto = true
