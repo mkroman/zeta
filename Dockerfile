@@ -26,6 +26,8 @@ COPY --parents \
     zeta-plugin/src/lib.rs \
     dendanskeordbog/Cargo.toml \
     dendanskeordbog/src/lib.rs \
+    reddit/Cargo.toml \
+    reddit/src/lib.rs \
     ./
 
 RUN cargo chef prepare --recipe-path recipe.json
