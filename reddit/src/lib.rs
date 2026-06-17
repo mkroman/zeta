@@ -417,8 +417,8 @@ mod tests {
     #[test]
     fn parse_comments_listing_json() -> Result<(), Box<dyn std::error::Error>> {
         use tracing::error;
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/reddit/comments/1niz1ru.json");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/comments/1niz1ru.json");
         let text = std::fs::read_to_string(path).unwrap();
         let jd = &mut serde_json::Deserializer::from_str(&text);
         let (item1, item2): (Item, Item) = serde_path_to_error::deserialize(jd)

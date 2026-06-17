@@ -51,7 +51,7 @@ impl Client {
     /// ```
     /// let client_id = "reddit client id";
     /// let client_secret = "reddit client secret";
-    /// let client = reddit::Client::new(client_id, client_secret, None, None);
+    /// let client = reddit::Client::new(client_id, client_secret, None);
     /// ```
     pub fn new(
         client_id: impl Into<String>,
