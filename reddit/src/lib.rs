@@ -2,13 +2,13 @@ use std::fmt::Write;
 use std::time::Duration;
 
 use serde::Deserialize;
+use url::Url;
 
 mod client;
 mod error;
 
 pub use client::Client;
 pub use error::Error;
-use url::Url;
 
 /// Reddit API base URL.
 pub const BASE_URL: &str = "https://www.reddit.com";
@@ -142,16 +142,18 @@ pub struct Comment {
 }
 
 /// Attempts to parse the given `url` as a reddit URL.
-pub fn parse_reddit_url(url: &Url) -> Option<Link> {
+pub fn classify_reddit_url(url: &Url) -> Option<Link> {
     match url.host_str() {
-        Some("v.redd.it" | "i.redd.it" | "preview.redd.it") => parse_redd_it_url(url),
-        Some("reddit.com" | "www.reddit.com" | "old.reddit.com") => parse_reddit_com_url(url),
+        Some("v.redd.it" | "i.redd.it" | "preview.redd.it") => classify_redd_it_url(url),
+        Some("reddit.com" | "www.reddit.com" | "old.reddit.com" | "oauth.reddit.com") => {
+            classify_reddit_com_url(url)
+        }
         _ => None,
     }
 }
 
 /// Parses reddit.com URLs
-fn parse_reddit_com_url(url: &Url) -> Option<Link> {
+fn classify_reddit_com_url(url: &Url) -> Option<Link> {
     let segments: Vec<&str> = url.path_segments()?.collect();
 
     match segments.as_slice() {
@@ -191,6 +193,8 @@ fn parse_reddit_com_url(url: &Url) -> Option<Link> {
         }),
         // /gallery/<id>
         ["gallery", id] => Some(Link::Gallery((*id).to_string())),
+        // /video/<id>
+        ["video", id] => Some(Link::Video((*id).to_string())),
         // /user/<name>[/]
         ["user", username] | ["user", username, ""] => Some(Link::User((*username).to_string())),
         _ => None,
@@ -198,10 +202,13 @@ fn parse_reddit_com_url(url: &Url) -> Option<Link> {
 }
 
 /// Parses redd.it URLs
-fn parse_redd_it_url(url: &Url) -> Option<Link> {
+fn classify_redd_it_url(url: &Url) -> Option<Link> {
     match url.host_str() {
         Some("i.redd.it") => Some(Link::Image(url.path().to_string())),
-        Some("v.redd.it") => Some(Link::Video(url.path().to_string())),
+        Some("v.redd.it") => url
+            .path_segments()
+            .and_then(|mut segment| segment.next())
+            .map(|id| Link::Video(id.to_string())),
         Some("preview.redd.it") => {
             let mut request_uri = url.path().to_string();
 
@@ -235,7 +242,7 @@ mod tests {
             for url_str in url_strs {
                 let url = Url::parse(url_str).unwrap();
 
-                assert_eq!(parse_reddit_url(&url), expected);
+                assert_eq!(classify_reddit_url(&url), expected);
             }
         }
     }
@@ -259,7 +266,7 @@ mod tests {
             for url_str in url_strs {
                 let url = Url::parse(url_str).unwrap();
 
-                assert_eq!(parse_reddit_url(&url), expected);
+                assert_eq!(classify_reddit_url(&url), expected);
             }
         }
     }
@@ -282,7 +289,7 @@ mod tests {
             for url_str in url_strs {
                 let url = Url::parse(url_str).unwrap();
 
-                assert_eq!(parse_reddit_url(&url), expected);
+                assert_eq!(classify_reddit_url(&url), expected);
             }
         }
     }
@@ -301,29 +308,7 @@ mod tests {
             for url_str in url_strs {
                 let url = Url::parse(url_str).unwrap();
 
-                assert_eq!(parse_reddit_url(&url), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn parse_shortened_video_urls() {
-        let test_cases = [
-            (
-                &["https://v.redd.it/n4p472c4u7pf1"],
-                Some(Link::Video("/n4p472c4u7pf1".to_string())),
-            ),
-            (
-                &["https://v.redd.it/n4p472c4u7pf1/"],
-                Some(Link::Video("/n4p472c4u7pf1/".to_string())),
-            ),
-        ];
-
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
-
-                assert_eq!(parse_reddit_url(&url), expected);
+                assert_eq!(classify_reddit_url(&url), expected);
             }
         }
     }
@@ -339,7 +324,7 @@ mod tests {
             for url_str in url_strs {
                 let url = Url::parse(url_str).unwrap();
 
-                assert_eq!(parse_reddit_url(&url), expected);
+                assert_eq!(classify_reddit_url(&url), expected);
             }
         }
     }
@@ -355,7 +340,7 @@ mod tests {
             for url_str in url_strs {
                 let url = Url::parse(url_str).unwrap();
 
-                assert_eq!(parse_reddit_url(&url), expected);
+                assert_eq!(classify_reddit_url(&url), expected);
             }
         }
     }
@@ -373,7 +358,31 @@ mod tests {
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(parse_reddit_url(&url), expected);
+            assert_eq!(classify_reddit_url(&url), expected);
+        }
+    }
+
+    #[test]
+    fn classify_video_urls() {
+        let test_cases = [
+            (
+                "https://www.reddit.com/video/b2l87x1pyn7h1",
+                Some(Link::Video("b2l87x1pyn7h1".to_string())),
+            ),
+            (
+                "https://v.redd.it/b2l87x1pyn7h1",
+                Some(Link::Video("b2l87x1pyn7h1".to_string())),
+            ),
+            (
+                "https://v.redd.it/b2l87x1pyn7h1/",
+                Some(Link::Video("b2l87x1pyn7h1".to_string())),
+            ),
+        ];
+
+        for (url_str, expected) in test_cases {
+            let url = Url::parse(url_str).unwrap();
+
+            assert_eq!(classify_reddit_url(&url), expected);
         }
     }
 
@@ -393,7 +402,7 @@ mod tests {
             for url_str in url_strs {
                 let url = Url::parse(url_str).unwrap();
 
-                assert_eq!(parse_reddit_url(&url), expected);
+                assert_eq!(classify_reddit_url(&url), expected);
             }
         }
     }
@@ -409,7 +418,7 @@ mod tests {
             for url_str in url_strs {
                 let url = Url::parse(url_str).unwrap();
 
-                assert_eq!(parse_reddit_url(&url), expected);
+                assert_eq!(classify_reddit_url(&url), expected);
             }
         }
     }
