@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use reqwest::header::{AUTHORIZATION, LOCATION};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION};
 use reqwest::{StatusCode, redirect::Policy};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -136,23 +136,23 @@ impl Client {
 
         let request = self
             .client
-            .get(format!("{OAUTH_BASE_URL}/comments/{article}.json"))
-            .header(AUTHORIZATION, format!("bearer {access_token}"));
+            .get(format!("{OAUTH_BASE_URL}/by_id/t3_{article}"))
+            .header(AUTHORIZATION, format!("bearer {access_token}"))
+            .header(CONTENT_TYPE, "application/json");
         let response = request.send().await.map_err(Error::Reqwest)?;
 
         match response.error_for_status() {
             Ok(response) => {
-                trace!("response is ok, parsing comments");
+                trace!("response is ok, parsing list");
 
                 let text = response.text().await.map_err(Error::Reqwest)?;
                 let jd = &mut serde_json::Deserializer::from_str(&text);
-                // The request returns 2 Listing ojects
-                let (submission, comments): (Item, Item) = serde_path_to_error::deserialize(jd)
-                    .inspect_err(|err| error!(?err, %text, "could not parse comments response"))
+                let listing: Item = serde_path_to_error::deserialize(jd)
+                    .inspect_err(|err| error!(?err, %text, "could not parse list"))
                     .map_err(Error::DeserializeComments)?;
-                trace!(x = ?(&submission, comments), "finished parsing item");
+                trace!(x = ?(&listing), "finished parsing list");
 
-                match submission {
+                match listing {
                     Item::Listing(listing) => listing
                         .children
                         .into_iter()
@@ -165,11 +165,28 @@ impl Client {
                 }
             }
             Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
-                info!(%article, %err, "could not fetch comments for article");
+                info!(%article, %err, "could not fetch details for article");
 
                 Err(Error::SubmissionNotFound)
             }
             Err(err) => Err(Error::Http(err)),
+        }
+    }
+
+    /// Fetches and returns details about a given video submission.
+    #[instrument(skip(self))]
+    pub async fn video(&self, id: &str) -> Result<Submission, Error> {
+        debug!("requesting video redirect location");
+        let Ok(url) = self
+            .get_redirect_location(&format!("{BASE_URL}/video/{id}"))
+            .await
+        else {
+            return Err(Error::VideoRedirect);
+        };
+
+        match crate::classify_reddit_com_url(&url) {
+            Some(Link::Submission { id, .. }) => self.submission(&id).await,
+            _ => Err(Error::VideoRedirectsToNonSubmission),
         }
     }
 
@@ -181,10 +198,11 @@ impl Client {
 
         let request = self
             .client
-            .get(format!("{OAUTH_BASE_URL}/r/{name}/about.json"))
-            .header(AUTHORIZATION, format!("bearer {access_token}"));
+            .get(format!("{OAUTH_BASE_URL}/r/{name}/about"))
+            .header(AUTHORIZATION, format!("bearer {access_token}"))
+            .header(CONTENT_TYPE, "application/json");
 
-        debug!(%name, "requesting subreddit details");
+        debug!("requesting subreddit details");
         let response = request.send().await.map_err(Error::Reqwest)?;
 
         match response.error_for_status() {
@@ -213,22 +231,29 @@ impl Client {
     }
 
     pub async fn resolve_shortened_link(&self, subreddit: &str, id: &str) -> Result<Link, Error> {
-        let request = self.client.head(format!("{BASE_URL}/r/{subreddit}/s/{id}"));
         debug!(%subreddit, %id, "requesting short link to find redirect location");
+        let url = self
+            .get_redirect_location(&format!("{BASE_URL}/r/{subreddit}/s/{id}"))
+            .await?;
+
+        match crate::classify_reddit_com_url(&url) {
+            Some(x @ (Link::Comment { .. } | Link::Submission { .. })) => Ok(x),
+            _ => Err(Error::RedirectRedditLink),
+        }
+    }
+
+    async fn get_redirect_location(&self, url: &str) -> Result<Url, Error> {
+        debug!("fetching redirect location for url {url}");
+        let request = self.client.head(url);
         let response = request.send().await.map_err(Error::Reqwest)?;
         let location = response
             .headers()
             .get(LOCATION)
-            .ok_or_else(|| Error::InvalidRedirect)?
-            .to_str()
-            .map_err(Error::RedirectUrlEncoding)?;
+            .ok_or_else(|| Error::LocationHeaderMissing)?
+            .as_bytes();
+        let location = str::from_utf8(location).map_err(Error::LocationHeaderEncoding)?;
+        let location = Url::parse(location).map_err(Error::LocationHeaderUrl)?;
 
-        debug!(%location, "parsing the url");
-        let url = Url::parse(location).map_err(|_| Error::InvalidRedirect)?;
-
-        match crate::parse_reddit_com_url(&url) {
-            Some(x @ (Link::Comment { .. } | Link::Submission { .. })) => Ok(x),
-            _ => Err(Error::RedirectRedditLink),
-        }
+        Ok(location)
     }
 }

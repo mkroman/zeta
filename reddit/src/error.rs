@@ -1,6 +1,9 @@
+use std::str::Utf8Error;
+
 use reqwest::header::ToStrError;
 use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
+use url::ParseError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -28,4 +31,14 @@ pub enum Error {
     RequestAuthToken(#[source] reqwest::Error),
     #[error("invalid auth token response")]
     InvalidAuthTokenResponse(#[source] reqwest::Error),
+    #[error("the response did not contain a location header as expected")]
+    LocationHeaderMissing,
+    #[error("the response location header contains invalid encoding")]
+    LocationHeaderEncoding(#[source] Utf8Error),
+    #[error("the response location header is not a valid url")]
+    LocationHeaderUrl(#[source] ParseError),
+    #[error("video did not redirect to a reddit submission")]
+    VideoRedirect,
+    #[error("the video link redirects to something other than a submission")]
+    VideoRedirectsToNonSubmission,
 }

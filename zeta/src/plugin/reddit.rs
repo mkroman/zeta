@@ -71,7 +71,7 @@ impl Reddit {
         client: &Client,
     ) -> Result<(), Error> {
         for url in urls {
-            if let Some(link) = reddit::parse_reddit_url(url) {
+            if let Some(link) = reddit::classify_reddit_url(url) {
                 self.process_url(link, channel, client).await?;
             }
         }
@@ -87,19 +87,13 @@ impl Reddit {
                         let title = submission.title;
                         let subreddit = submission.subreddit;
 
-                        if let Err(e) =
-                            client.send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))
-                        {
-                            error!("failed to send message: {e}");
-                        }
+                        client.send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))?;
                     }
                     Err(err) => {
-                        if let Err(e) = client.send_privmsg(
+                        client.send_privmsg(
                             channel,
                             format!("\x0310> could not fetch submission details: {err}"),
-                        ) {
-                            error!("failed to send message: {e}");
-                        }
+                        )?;
                     }
                 }
             }
@@ -108,19 +102,25 @@ impl Reddit {
                     let title = submission.title;
                     let subreddit = submission.subreddit;
 
-                    if let Err(e) =
-                        client.send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))
-                    {
-                        error!("failed to send message: {e}");
-                    }
+                    client.send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))?;
+                }
+                Err(err) => client.send_privmsg(
+                    channel,
+                    format!("\x0310> could not fetch submission details: {err}"),
+                )?,
+            },
+            Link::Video(id) => match self.client.video(&id).await {
+                Ok(submission) => {
+                    let title = submission.title;
+                    let subreddit = submission.subreddit;
+
+                    client.send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))?;
                 }
                 Err(err) => {
-                    if let Err(e) = client.send_privmsg(
+                    client.send_privmsg(
                         channel,
-                        format!("\x0310> could not fetch submission details: {err}"),
-                    ) {
-                        error!("failed to send message: {e}");
-                    }
+                        format!("\x0310> could not resolve video link: {err}"),
+                    )?;
                 }
             },
             Link::Shortened { id, subreddit } => {
@@ -131,12 +131,10 @@ impl Reddit {
                         }
                     }
                     Err(err) => {
-                        if let Err(e) = client.send_privmsg(
+                        client.send_privmsg(
                             channel,
                             format!("\x0310> could not resolve shortened link: {err}"),
-                        ) {
-                            error!("failed to send message: {e}");
-                        }
+                        )?;
                     }
                 }
             }
@@ -147,20 +145,16 @@ impl Reddit {
                         let description =
                             subreddit.public_description.truncate_with_suffix(250, "…");
 
-                        if let Err(e) = client.send_privmsg(
+                        client.send_privmsg(
                             channel,
                             format!("\x0310>\x03\x02 {title}:\x02\x0310 {description}"),
-                        ) {
-                            error!("failed to send message: {e}");
-                        }
+                        )?;
                     }
                     Err(err) => {
-                        if let Err(e) = client.send_privmsg(
+                        client.send_privmsg(
                             channel,
                             format!("\x0310> could not fetch subreddit details: {err}"),
-                        ) {
-                            error!("failed to send message: {e}");
-                        }
+                        )?;
                     }
                 }
             }
