@@ -217,7 +217,7 @@ impl Plugin<Context> for YouTube {
                     Ok(results) => {
                         if let Some(result) = results.first() {
                             let id = result.id.video_id.as_ref().unwrap();
-                            let title = &result.snippet.title;
+                            let title = htmlize::unescape(&result.snippet.title);
 
                             client.send_privmsg(channel, format!("\x0310>\x03\x02 YouTube:\x02\x0310 {title} - https://www.youtube.com/watch?v={id}"))?;
                         } else {
