@@ -2620,11 +2620,11 @@ dependencies = [
 [[package]]
 name = "rink-core"
 version = "0.9.0"
-source = "git+https://codeberg.org/tiffany/rink?rev=82bdff8b0bd4e8f18d9f6f6a3b800bd9625feab9#82bdff8b0bd4e8f18d9f6f6a3b800bd9625feab9"
+source = "git+https://codeberg.org/tiffany/rink?rev=4e61b681ef48886e3af6bc805f94ae069c8c055c#4e61b681ef48886e3af6bc805f94ae069c8c055c"
 dependencies = [
- "indexmap",
  "jiff",
  "num-bigint",
+ "num-integer",
  "num-rational",
  "num-traits",
  "serde",
