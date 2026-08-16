@@ -47,7 +47,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-targets: true
       - name: Run Clippy check
-        uses: clechasseur/rs-clippy-check@e198ae0533dc69d707c383951d90dc356a692026 # v6.0.6
+        uses: clechasseur/rs-clippy-check@20f338ad6648dedb921c00b023bc30c971ab9ed7 # v6.0.7
         with:
           args: --all-targets --all-features --no-deps
       - name: Run tests
