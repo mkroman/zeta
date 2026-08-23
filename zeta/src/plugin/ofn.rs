@@ -83,7 +83,7 @@ impl Plugin<Context> for Ofn {
 
         let urls: Vec<Url> = msg.urls().collect();
         let origin = ChannelMessageOrigin {
-            channel: "#uplink".to_owned(),
+            channel: channel.to_owned(),
             // TODO: support multiple networks
             network: "irc.rwx.im:6697".to_owned(),
             nickname: nickname.to_owned(),
