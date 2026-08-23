@@ -1,9 +1,9 @@
 use std::sync::OnceLock;
 
 use hickory_resolver::{
-    config::{ResolverConfig, CLOUDFLARE},
-    net::runtime::TokioRuntimeProvider,
     Resolver, TokioResolver,
+    config::{CLOUDFLARE, ResolverConfig},
+    net::runtime::TokioRuntimeProvider,
 };
 
 static RESOLVER: OnceLock<TokioResolver> = OnceLock::new();

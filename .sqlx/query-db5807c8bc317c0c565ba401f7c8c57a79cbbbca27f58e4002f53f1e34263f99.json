@@ -1,0 +1,177 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM url_records\nWHERE\n    scheme = $1\n    AND host = $2\n    AND path IS NOT DISTINCT FROM $3\n    AND query IS NOT DISTINCT FROM $4\n    AND channel = $5\n    AND network_id = $6\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "scheme",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "scheme"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "host",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "host"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "port",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "port"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "path"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "query",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "query"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "fragment",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "fragment"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "nickname",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "nickname"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "hostname",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "hostname"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "channel",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "channel"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "network_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "url_records",
+            "name": "network_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "db5807c8bc317c0c565ba401f7c8c57a79cbbbca27f58e4002f53f1e34263f99"
+}

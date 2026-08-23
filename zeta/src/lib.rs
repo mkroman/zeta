@@ -16,6 +16,8 @@ pub mod dns;
 mod error;
 mod http;
 mod plugin;
+/// URL helper utillities
+pub mod url;
 mod utils;
 mod zeta;
 
