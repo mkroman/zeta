@@ -1,0 +1,2 @@
+DROP INDEX url_records_host_path_query_channel_network_id_index;
+DROP TABLE url_records;

@@ -18,6 +18,14 @@ mod model;
 
 use model::UrlRecord;
 
+const IGNORED_QUERY_PARAMS: [&str; 5] = [
+    "utm_medium",
+    "utm_source",
+    "utm_content",
+    "utm_campaign",
+    "utm_term",
+];
+
 pub struct Ofn {}
 
 /// Holds information about the origin of a URL, i.e. where it was posted and by whom.
@@ -171,6 +179,7 @@ impl Ofn {
             "queries/find_url_record.sql",
             url.scheme(),
             host,
+            url.port_or_known_default().map(i32::from),
             url.path(),
             url.query(),
             origin.channel,
@@ -193,13 +202,15 @@ impl Ofn {
         origin: &ChannelMessageOrigin,
         url: &Url,
     ) -> Result<InsertUrlRecord, Error> {
+        let host = url
+            .host_str()
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| Error::InsertUrlNoHost)?;
+
         let insert = InsertUrlRecord {
             scheme: url.scheme().to_owned(),
-            host: url
-                .host_str()
-                .map(ToOwned::to_owned)
-                .ok_or_else(|| Error::InsertUrlNoHost)?,
-            port: i32::from(url.port().unwrap_or(443)),
+            host,
+            port: url.port_or_known_default().map(i32::from),
             path: url.path().to_owned(),
             query: url.query().map(ToOwned::to_owned),
             fragment: url.fragment().map(ToOwned::to_owned),
@@ -214,17 +225,17 @@ impl Ofn {
 
         sqlx::query_file!(
             "queries/insert_url_record.sql",
-            url.scheme(),
-            url.host_str(),
-            url.port().map_or(443, |n| i32::from(n)),
-            url.path(),
-            url.query(),
-            url.fragment(),
-            origin.nickname,
-            origin.username,
-            origin.hostname,
-            origin.channel,
-            origin.network
+            insert.scheme,
+            insert.host,
+            insert.port,
+            insert.path,
+            insert.query,
+            insert.fragment,
+            insert.nickname,
+            insert.username,
+            insert.hostname,
+            insert.channel,
+            insert.network_id
         )
         .fetch_one(&ctx.db)
         .await

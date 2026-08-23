@@ -2,7 +2,7 @@ CREATE TABLE url_records (
     id SERIAL,
     scheme TEXT NOT NULL,
     host TEXT NOT NULL,
-    port INTEGER NOT NULL DEFAULT 443,
+    port INTEGER,
     path TEXT,
     query TEXT,
     fragment TEXT,

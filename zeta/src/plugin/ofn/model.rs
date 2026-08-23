@@ -9,7 +9,7 @@ pub struct UrlRecord {
     pub id: i32,
     pub scheme: String,
     pub host: String,
-    pub port: i32,
+    pub port: Option<i32>,
     pub path: Option<String>,
     pub query: Option<String>,
     pub fragment: Option<String>,
@@ -26,7 +26,7 @@ pub struct UrlRecord {
 pub struct InsertUrlRecord {
     pub scheme: String,
     pub host: String,
-    pub port: i32,
+    pub port: Option<i32>,
     pub path: String,
     pub query: Option<String>,
     pub fragment: Option<String>,
