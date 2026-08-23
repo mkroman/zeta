@@ -3,8 +3,6 @@
 //! This plugin tracks URLs that are posted in channels and notifies when the URL has been posted
 //! before.
 
-use std::borrow::ToOwned;
-
 use irc::client::prelude::Prefix;
 use tracing::{debug, error};
 use url::Url;
@@ -18,30 +16,22 @@ mod model;
 
 use model::UrlRecord;
 
-const IGNORED_QUERY_PARAMS: [&str; 5] = [
-    "utm_medium",
-    "utm_source",
-    "utm_content",
-    "utm_campaign",
-    "utm_term",
-];
-
 pub struct Ofn {}
 
 /// Holds information about the origin of a URL, i.e. where it was posted and by whom.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct ChannelMessageOrigin {
+pub struct ChannelMessageOrigin<'a> {
     /// The name of the channel.
-    channel: String,
+    channel: &'a str,
     /// The identifier of the network.
-    network: String,
+    network: &'a str,
     /// The nickname of the sender.
-    nickname: String,
+    nickname: &'a str,
     /// The username of the sender.
-    username: String,
+    username: &'a str,
     /// The hostname of the sender.
-    hostname: String,
+    hostname: &'a str,
 }
 
 pub struct Report {
@@ -80,23 +70,22 @@ impl Plugin<Context> for Ofn {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(ref channel, ref msg) = message.command else {
+        let Command::PRIVMSG(channel, msg) = &message.command else {
             return Ok(());
         };
 
-        let Some(Prefix::Nickname(ref nickname, ref username, ref hostname)) = message.prefix
-        else {
+        let Some(Prefix::Nickname(nickname, username, hostname)) = &message.prefix else {
             return Ok(());
         };
 
         let urls: Vec<Url> = msg.urls().collect();
         let origin = ChannelMessageOrigin {
-            channel: channel.to_owned(),
+            channel,
             // TODO: support multiple networks
-            network: "irc.rwx.im:6697".to_owned(),
-            nickname: nickname.to_owned(),
-            username: username.to_owned(),
-            hostname: hostname.to_owned(),
+            network: "irc.rwx.im:6697",
+            nickname,
+            username,
+            hostname,
         };
 
         match self.process_urls(ctx, &origin, &urls).await {
@@ -116,12 +105,20 @@ impl Plugin<Context> for Ofn {
                 }
             }
             Err(error) => {
-                client.send_privmsg(channel, error)?;
+                client.send_privmsg(channel, formatted_err(&error.to_string()))?;
             }
         }
 
         Ok(())
     }
+}
+
+fn formatted(s: &str) -> String {
+    format!("\x0310>\x0f\x02 OFN\x02\x0310: {s}")
+}
+
+fn formatted_err(s: &str) -> String {
+    formatted(&format!("Error:\x0f {s}"))
 }
 
 impl Ofn {
@@ -134,10 +131,21 @@ impl Ofn {
     ///
     /// Returns a [`Report`] that contains information about URLs that were already known and URLs
     /// that were added to the database.
+    #[tracing::instrument(
+        skip_all,
+        err,
+        fields(
+            irc.user.nick = %origin.nickname,
+            irc.user.name = %origin.username,
+            irc.user.host = %origin.hostname,
+            irc.channel = %origin.channel,
+            irc.network = %origin.network
+        )
+    )]
     async fn process_urls(
         &self,
         ctx: &Context,
-        origin: &ChannelMessageOrigin,
+        origin: &ChannelMessageOrigin<'_>,
         urls: &[Url],
     ) -> Result<Report, Error> {
         let mut found = vec![];
@@ -166,10 +174,15 @@ impl Ofn {
     /// database.
     ///
     /// Returns `Ok(None)` if not present.
+    #[tracing::instrument(
+        skip_all,
+        err,
+        fields(url.full = %url)
+    )]
     async fn find_url(
         &self,
         ctx: &Context,
-        origin: &ChannelMessageOrigin,
+        origin: &ChannelMessageOrigin<'_>,
         url: &Url,
     ) -> Result<Option<UrlRecord>, Error> {
         let host = url.host_str().ok_or_else(|| Error::InsertUrlNoHost)?;
@@ -196,15 +209,20 @@ impl Ofn {
     ///
     /// Returns the [`InsertUrlRecord`] used for the operation if the insert was successful used for
     /// the operation if the insert was successful.
+    #[tracing::instrument(
+        skip_all,
+        err,
+        fields(url.full = %url)
+    )]
     async fn insert_url(
         &self,
         ctx: &Context,
-        origin: &ChannelMessageOrigin,
+        origin: &ChannelMessageOrigin<'_>,
         url: &Url,
     ) -> Result<InsertUrlRecord, Error> {
         let host = url
             .host_str()
-            .map(ToOwned::to_owned)
+            .map(String::from)
             .ok_or_else(|| Error::InsertUrlNoHost)?;
 
         let insert = InsertUrlRecord {
@@ -212,16 +230,16 @@ impl Ofn {
             host,
             port: url.port_or_known_default().map(i32::from),
             path: url.path().to_owned(),
-            query: url.query().map(ToOwned::to_owned),
-            fragment: url.fragment().map(ToOwned::to_owned),
-            nickname: origin.nickname.clone(),
-            username: origin.username.clone(),
-            hostname: origin.hostname.clone(),
-            channel: origin.channel.clone(),
-            network_id: origin.network.clone(),
+            query: url.query().map(String::from),
+            fragment: url.fragment().map(String::from),
+            nickname: origin.nickname.to_owned(),
+            username: origin.username.to_owned(),
+            hostname: origin.hostname.to_owned(),
+            channel: origin.channel.to_owned(),
+            network_id: origin.network.to_owned(),
         };
 
-        debug!(?insert, "inserting url to database");
+        debug!("inserting url into database");
 
         sqlx::query_file!(
             "queries/insert_url_record.sql",

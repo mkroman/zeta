@@ -14,6 +14,6 @@ CREATE TABLE url_records (
     network_id TEXT
 );
 
-CREATE INDEX url_records_host_path_query_channel_network_id_index ON url_records (
-    host, path, query, channel, network_id
+CREATE UNIQUE INDEX url_records_host_path_query_channel_network_id_index ON url_records (
+    scheme, host, port, path, query, channel, network_id
 );
