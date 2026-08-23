@@ -14,10 +14,6 @@ crate-type = ["lib"]
 name = "zeta"
 path = "src/main.rs"
 
-[[bench]]
-name = "url_extraction"
-harness = false
-
 [features]
 default = ["plugins-all", "native-tls", "database"]
 database = ["dep:sqlx"]
@@ -119,7 +115,6 @@ url = "2.5.8"
 zeta-plugin = { path = "../zeta-plugin" }
 
 [dev-dependencies]
-divan = "0.1.21"
 wildmatch = "=2.6.1"
 
 [lints.clippy]
