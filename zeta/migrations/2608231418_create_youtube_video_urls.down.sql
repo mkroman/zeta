@@ -1,0 +1,2 @@
+DROP INDEX youtube_video_channel_network_id_idx;
+DROP TABLE youtube_video_urls;

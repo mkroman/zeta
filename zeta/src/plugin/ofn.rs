@@ -8,11 +8,18 @@ mod model;
 use argh::FromArgs;
 use irc::client::prelude::Prefix as IrcPrefix;
 use num_format::{Locale, ToFormattedString};
-use sqlx::types::chrono::Utc;
+use sqlx::types::chrono::{DateTime, Utc};
 use tracing::{debug, error};
 use url::Url;
 
-use crate::{plugin::prelude::*, url::ExtractUrlsExt};
+use crate::{
+    plugin::{
+        ofn::model::{InsertYouTubeRecord, YouTubeRecord},
+        prelude::*,
+        youtube::{self, UrlKind},
+    },
+    url::ExtractUrlsExt,
+};
 use model::{InsertUrlRecord, UrlRecord};
 
 /// The prefix for the plugin command.
@@ -29,8 +36,8 @@ impl Ofn {
         }
     }
 
-    /// Find an return a [`UrlRecord`] for the given `url` and associated `origin` if present in the
-    /// database.
+    /// Find and return a [`UrlRecord`] for the given `url` and associated `origin` if present in
+    /// the database.
     ///
     /// Returns `Ok(None)` if not present.
     #[tracing::instrument(
@@ -45,7 +52,6 @@ impl Ofn {
         url: &Url,
     ) -> Result<Option<UrlRecord>, Error> {
         let host = url.host_str().ok_or_else(|| Error::InsertUrlNoHost)?;
-
         let result = sqlx::query_file_as!(
             UrlRecord,
             "queries/find_url_record.sql",
@@ -64,10 +70,33 @@ impl Ofn {
         Ok(result)
     }
 
+    /// Find and return a [`YouTubeRecord`] for the given `video_id` and associated `origin` if
+    /// present in the database.
+    ///
+    /// Returns `Ok(None)` if not present.
+    async fn find_youtube_video(
+        &self,
+        ctx: &Context,
+        origin: &ChannelMessageOrigin<'_>,
+        video_id: &str,
+    ) -> Result<Option<YouTubeRecord>, Error> {
+        let result = sqlx::query_file_as!(
+            YouTubeRecord,
+            "queries/find_youtube_video_url.sql",
+            video_id,
+            origin.channel,
+            origin.network
+        )
+        .fetch_optional(&ctx.db)
+        .await
+        .map_err(Error::QueryDatabase)?;
+
+        Ok(result)
+    }
+
     /// Inserts the given `url` into the database with the associated `origin`.
     ///
-    /// Returns the [`InsertUrlRecord`] used for the operation if the insert was successful used for
-    /// the operation if the insert was successful.
+    /// Returns the [`InsertUrlRecord`] used for the operation if the insert was successful.
     #[tracing::instrument(
         skip_all,
         err,
@@ -121,6 +150,43 @@ impl Ofn {
         Ok(insert)
     }
 
+    /// Inserts the given YouTube `video_id` into the database with the associated `origin`.
+    ///
+    /// Returns the [`InsertYouTubeRecord`] used for the operation if the insert was succesful.
+    #[tracing::instrument(skip(self, ctx, origin), err)]
+    async fn insert_youtube_video(
+        &self,
+        ctx: &Context,
+        origin: &ChannelMessageOrigin<'_>,
+        video_id: &str,
+    ) -> Result<InsertYouTubeRecord, Error> {
+        let insert = InsertYouTubeRecord {
+            video_id: video_id.to_string(),
+            nickname: origin.nickname.to_owned(),
+            username: origin.username.to_owned(),
+            hostname: origin.hostname.to_owned(),
+            channel: origin.channel.to_owned(),
+            network_id: origin.network.to_owned(),
+        };
+
+        debug!("inserting youtube video into database");
+
+        sqlx::query_file!(
+            "queries/insert_youtube_video_url.sql",
+            insert.video_id,
+            insert.nickname,
+            insert.username,
+            insert.hostname,
+            insert.channel,
+            insert.network_id
+        )
+        .fetch_one(&ctx.db)
+        .await
+        .map_err(Error::InsertUrl)?;
+
+        Ok(insert)
+    }
+
     /// Returns statistics about the number of rows in the database.
     pub async fn stats(&self, ctx: &Context) -> Result<Statistics, Error> {
         let today = Utc::now().date_naive();
@@ -135,9 +201,22 @@ impl Ofn {
         .await
         .map_err(Error::QueryDatabase)?;
 
+        let (num_yt_ids, num_yt_ids_today): (i64, i64) = sqlx::query_as(
+            "SELECT 
+                COUNT(id) AS num_urls,
+                COUNT(id) FILTER (WHERE created_at >= $1) AS num_urls_today
+            FROM youtube_video_urls",
+        )
+        .bind(today)
+        .fetch_one(&ctx.db)
+        .await
+        .map_err(Error::QueryDatabase)?;
+
         Ok(Statistics {
             num_urls,
             num_urls_today,
+            num_yt_ids,
+            num_yt_ids_today,
         })
     }
 
@@ -156,18 +235,20 @@ impl Ofn {
 
         match self.process_urls(ctx, origin, &urls).await {
             Ok(report) => {
-                for url in report.found {
+                for resource in report.found {
                     client.send_privmsg(
                         origin.channel,
                         format!(
                             "{}: OFN - posted by {} @ {}",
-                            origin.nickname, url.nickname, url.created_at
+                            origin.nickname,
+                            resource.nickname(),
+                            resource.created_at()
                         ),
                     )?;
                 }
 
-                if !report.inserted.is_empty() {
-                    debug!("inserted {} new urls", report.inserted.len());
+                if report.num_inserted > 0 {
+                    debug!("inserted {} new urls", report.num_inserted);
                 }
             }
             Err(error) => {
@@ -191,12 +272,14 @@ impl Ofn {
 
         match Opts::from_args(&[COMMAND_PREFIX], &sub_args_ref) {
             Ok(opts) => match opts.command {
-                SubCommand::Stats(_) => {
+                Subcommand::Stats(_) => {
                     let stats = self.stats(ctx).await.map_err(plugin_err)?;
                     let output = format!(
-                        "URLs:\x0f {}\x0310 Recorded today:\x0f {}",
+                        "URLs:\x0f {}\x0310 YouTube Videos:\x0f {}\x0310 Recorded today:\x0f {}\x0310/\x0f{}",
                         stats.num_urls.to_formatted_string(&Locale::en),
-                        stats.num_urls_today.to_formatted_string(&Locale::en)
+                        stats.num_yt_ids.to_formatted_string(&Locale::en),
+                        stats.num_urls_today.to_formatted_string(&Locale::en),
+                        stats.num_yt_ids_today.to_formatted_string(&Locale::en)
                     );
 
                     client.send_privmsg(channel, formatted(&output))?;
@@ -235,87 +318,49 @@ impl Ofn {
         urls: &[Url],
     ) -> Result<Report, Error> {
         let mut found = vec![];
-        let mut inserted = vec![];
+        let mut num_inserted = 0;
 
         for url in urls {
-            if let Some(record) = self.find_url(ctx, origin, url).await? {
-                found.push(record);
-            } else {
-                match self.insert_url(ctx, origin, url).await {
-                    Ok(insert) => {
-                        debug!(?origin, ?url, "inserted url");
-                        inserted.push(insert);
+            if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
+                youtube::parse_youtube_url(url)
+            {
+                if let Some(video) = self.find_youtube_video(ctx, origin, &video_id).await? {
+                    found.push(Resource::YouTubeRecord(video));
+                } else {
+                    debug!(%video_id, "inserting youtube record");
+
+                    match self.insert_youtube_video(ctx, origin, &video_id).await {
+                        Ok(_record) => {
+                            debug!(?origin, %video_id, "inserted youtube record");
+                            num_inserted += 1;
+                        }
+                        Err(error) => {
+                            error!("could not insert youtube record: {error}");
+                        }
                     }
-                    Err(error) => {
-                        error!("could not insert url: {error}");
+                }
+            } else {
+                if let Some(record) = self.find_url(ctx, origin, url).await? {
+                    found.push(Resource::UrlRecord(record));
+                } else {
+                    match self.insert_url(ctx, origin, url).await {
+                        Ok(_) => {
+                            debug!(?origin, ?url, "inserted url record");
+                            num_inserted += 1;
+                        }
+                        Err(error) => {
+                            error!("could not insert url record: {error}");
+                        }
                     }
                 }
             }
         }
 
-        Ok(Report { found, inserted })
+        Ok(Report {
+            found,
+            num_inserted,
+        })
     }
-}
-
-/// Holds information about the origin of a URL, i.e. where it was posted and by whom.
-#[derive(Debug)]
-pub struct ChannelMessageOrigin<'a> {
-    /// The name of the channel.
-    channel: &'a str,
-    /// The identifier of the network.
-    network: &'a str,
-    /// The nickname of the sender.
-    nickname: &'a str,
-    /// The username of the sender.
-    username: &'a str,
-    /// The hostname of the sender.
-    hostname: &'a str,
-}
-
-/// Statistics for database rows.
-#[derive(Debug)]
-pub struct Statistics {
-    /// The number of URLs in total.
-    pub num_urls: i64,
-    /// The number of URLs that were added today.
-    pub num_urls_today: i64,
-}
-
-/// Old Fucking News (URL history)
-#[derive(FromArgs, Debug, PartialEq, Eq)]
-pub struct Opts {
-    #[argh(subcommand)]
-    command: SubCommand,
-}
-
-#[derive(FromArgs, Debug, PartialEq, Eq)]
-#[argh(subcommand)]
-enum SubCommand {
-    Stats(Stats),
-}
-
-/// Display database statistics
-#[derive(FromArgs, Debug, PartialEq, Eq)]
-#[argh(subcommand, name = "stats")]
-pub struct Stats {}
-
-pub struct Report {
-    /// List of URL records that were found in the database.
-    found: Vec<UrlRecord>,
-    /// List of URLs that weren't found and thus inserted into the database.
-    inserted: Vec<InsertUrlRecord>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("could not query database: {0}")]
-    QueryDatabase(#[source] sqlx::Error),
-    #[error("could not insert url in database: {0}")]
-    InsertUrl(#[source] sqlx::Error),
-    #[error("can't insert url with no host")]
-    InsertUrlNoHost,
-    #[error("could not parse arguments")]
-    ParseArguments,
 }
 
 #[async_trait]
@@ -357,6 +402,95 @@ impl Plugin<Context> for Ofn {
             };
 
             self.handle_urls(ctx, client, &origin, msg).await
+        }
+    }
+}
+
+/// Holds information about the origin of a URL, i.e., where it was posted and by whom.
+#[derive(Debug)]
+pub struct ChannelMessageOrigin<'a> {
+    /// The name of the channel.
+    channel: &'a str,
+    /// The identifier of the network.
+    network: &'a str,
+    /// The nickname of the sender.
+    nickname: &'a str,
+    /// The username of the sender.
+    username: &'a str,
+    /// The hostname of the sender.
+    hostname: &'a str,
+}
+
+/// Statistics for database rows.
+#[derive(Debug)]
+#[allow(clippy::struct_field_names)]
+pub struct Statistics {
+    /// The number of URLs in total.
+    pub num_urls: i64,
+    /// The number of URLs that were added today.
+    pub num_urls_today: i64,
+    /// The number of YouTube videos in total.
+    pub num_yt_ids: i64,
+    /// The number of YouTube videos that have been added today.
+    pub num_yt_ids_today: i64,
+}
+
+/// Old Fucking News (URL history)
+#[derive(FromArgs, Debug, PartialEq, Eq)]
+pub struct Opts {
+    #[argh(subcommand)]
+    command: Subcommand,
+}
+
+#[derive(FromArgs, Debug, PartialEq, Eq)]
+#[argh(subcommand)]
+enum Subcommand {
+    Stats(Stats),
+}
+
+/// Display database statistics
+#[derive(FromArgs, Debug, PartialEq, Eq)]
+#[argh(subcommand, name = "stats")]
+pub struct Stats {}
+
+pub struct Report {
+    /// List of URL records that were found in the database.
+    found: Vec<Resource>,
+    /// Number of resources that were added to the database.
+    num_inserted: usize,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("could not query database: {0}")]
+    QueryDatabase(#[source] sqlx::Error),
+    #[error("could not insert url in database: {0}")]
+    InsertUrl(#[source] sqlx::Error),
+    #[error("can't insert url with no host")]
+    InsertUrlNoHost,
+    #[error("could not parse arguments")]
+    ParseArguments,
+}
+
+pub enum Resource {
+    /// A YouTube video.
+    YouTubeRecord(YouTubeRecord),
+    /// A URL record.
+    UrlRecord(UrlRecord),
+}
+
+impl Resource {
+    const fn nickname(&self) -> &str {
+        match self {
+            Resource::YouTubeRecord(rec) => rec.nickname.as_str(),
+            Resource::UrlRecord(rec) => rec.nickname.as_str(),
+        }
+    }
+
+    const fn created_at(&self) -> DateTime<Utc> {
+        match self {
+            Resource::YouTubeRecord(rec) => rec.created_at,
+            Resource::UrlRecord(rec) => rec.created_at,
         }
     }
 }

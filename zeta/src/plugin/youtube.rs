@@ -249,15 +249,6 @@ impl YouTube {
         }
     }
 
-    /// Parses the given `url` and returns a [`UrlKind`] depending on the type of YouTube URL.
-    fn parse_youtube_url(url: &Url) -> Option<UrlKind> {
-        match url.host_str()? {
-            "youtu.be" => parse_youtu_be_url(url),
-            "youtube.com" | "www.youtube.com" => parse_youtube_com_url(url),
-            _ => None,
-        }
-    }
-
     /// Processes URLs found in a message
     async fn process_urls(
         &self,
@@ -267,7 +258,7 @@ impl YouTube {
     ) -> Result<(), ZetaError> {
         for ref url in urls {
             if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
-                YouTube::parse_youtube_url(url)
+                parse_youtube_url(url)
             {
                 match self.get_video(&video_id).await {
                     Ok(video) => {
@@ -434,6 +425,15 @@ fn extract_query_param(url: &Url, param: &str) -> Option<String> {
         .map(|(_, value)| value.to_string())
 }
 
+/// Parses the given `url` and returns a [`UrlKind`] depending on the type of YouTube URL.
+pub fn parse_youtube_url(url: &Url) -> Option<UrlKind> {
+    match url.host_str()? {
+        "youtu.be" => parse_youtu_be_url(url),
+        "youtube.com" | "www.youtube.com" => parse_youtube_com_url(url),
+        _ => None,
+    }
+}
+
 /// Parses youtube.com URLs
 fn parse_youtube_com_url(url: &Url) -> Option<UrlKind> {
     let segments: Vec<&str> = url.path_segments()?.collect();
@@ -489,7 +489,7 @@ mod tests {
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
+            assert_eq!(parse_youtube_url(&url), expected);
         }
     }
 
@@ -509,7 +509,7 @@ mod tests {
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
+            assert_eq!(parse_youtube_url(&url), expected);
         }
     }
 
@@ -523,7 +523,7 @@ mod tests {
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
+            assert_eq!(parse_youtube_url(&url), expected);
         }
     }
 
@@ -537,7 +537,7 @@ mod tests {
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
+            assert_eq!(parse_youtube_url(&url), expected);
         }
     }
 
@@ -551,7 +551,7 @@ mod tests {
 
         for url_str in invalid_urls {
             let url = Url::parse(url_str).unwrap();
-            assert_eq!(YouTube::parse_youtube_url(&url), None);
+            assert_eq!(parse_youtube_url(&url), None);
         }
     }
 
@@ -571,7 +571,7 @@ mod tests {
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(YouTube::parse_youtube_url(&url), expected);
+            assert_eq!(parse_youtube_url(&url), expected);
         }
     }
 }

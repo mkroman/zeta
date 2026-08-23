@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO youtube_video_urls (\n    video_id,\n    nickname,\n    username,\n    hostname,\n    channel,\n    network_id\n) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "youtube_video_urls",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2e8b1d1466a57efe687966977b121135ecf24b42a4632e8f55759598b27d4ae0"
+}
