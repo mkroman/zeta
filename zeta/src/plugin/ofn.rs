@@ -79,6 +79,10 @@ impl Plugin<Context> for Ofn {
         };
 
         let urls: Vec<Url> = msg.urls().collect();
+        if urls.is_empty() {
+            return Ok(());
+        }
+
         let origin = ChannelMessageOrigin {
             channel,
             // TODO: support multiple networks
