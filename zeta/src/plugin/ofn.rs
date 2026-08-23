@@ -3,20 +3,21 @@
 //! This plugin tracks URLs that are posted in channels and notifies when the URL has been posted
 //! before.
 
-use irc::client::prelude::Prefix;
+use argh::FromArgs;
+use irc::client::prelude::Prefix as IrcPrefix;
+use sqlx::types::chrono::Utc;
 use tracing::{debug, error};
 use url::Url;
 
-use crate::{
-    plugin::{ofn::model::InsertUrlRecord, prelude::*},
-    url::ExtractUrlsExt,
-};
+use crate::{plugin::prelude::*, url::ExtractUrlsExt};
 
 mod model;
 
-use model::UrlRecord;
+use model::{InsertUrlRecord, UrlRecord};
 
-pub struct Ofn {}
+pub struct Ofn {
+    command: Prefix,
+}
 
 /// Holds information about the origin of a URL, i.e. where it was posted and by whom.
 #[derive(Debug)]
@@ -34,6 +35,33 @@ pub struct ChannelMessageOrigin<'a> {
     hostname: &'a str,
 }
 
+/// Statistics for database rows.
+#[derive(Debug)]
+pub struct Statistics {
+    /// The number of URLs in total.
+    pub num_urls: i64,
+    /// The number of URLs that were added today.
+    pub num_urls_today: i64,
+}
+
+/// Old Fucking News (URL history)
+#[derive(FromArgs, Debug, PartialEq, Eq)]
+pub struct Opts {
+    #[argh(subcommand)]
+    command: SubCommand,
+}
+
+#[derive(FromArgs, Debug, PartialEq, Eq)]
+#[argh(subcommand)]
+enum SubCommand {
+    Stats(Stats),
+}
+
+/// Display database statistics
+#[derive(FromArgs, Debug, PartialEq, Eq)]
+#[argh(subcommand, name = "stats")]
+pub struct Stats {}
+
 pub struct Report {
     /// List of URL records that were found in the database.
     found: Vec<UrlRecord>,
@@ -49,6 +77,8 @@ pub enum Error {
     InsertUrl(#[source] sqlx::Error),
     #[error("can't insert url with no host")]
     InsertUrlNoHost,
+    #[error("could not parse arguments")]
+    ParseArguments,
 }
 
 #[async_trait]
@@ -74,42 +104,71 @@ impl Plugin<Context> for Ofn {
             return Ok(());
         };
 
-        let Some(Prefix::Nickname(nickname, username, hostname)) = &message.prefix else {
+        let Some(IrcPrefix::Nickname(nickname, username, hostname)) = &message.prefix else {
             return Ok(());
         };
 
-        let urls: Vec<Url> = msg.urls().collect();
-        if urls.is_empty() {
-            return Ok(());
-        }
+        if let Some(args) = self.command.parse(msg) {
+            let Some(sub_args) = shlex::split(args) else {
+                return Err(plugin_err(Error::ParseArguments));
+            };
+            let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
 
-        let origin = ChannelMessageOrigin {
-            channel,
-            // TODO: support multiple networks
-            network: "irc.rwx.im:6697",
-            nickname,
-            username,
-            hostname,
-        };
+            match Opts::from_args(&[".ofn"], &sub_args_ref) {
+                Ok(opts) => match opts.command {
+                    SubCommand::Stats(_) => {
+                        let stats = self.stats(ctx).await.map_err(plugin_err)?;
+                        let output = format!(
+                            "URLs:\x0f {num_urls}\x0310 Recorded today:\x0f {num_records_today}",
+                            num_urls = stats.num_urls,
+                            num_records_today = stats.num_urls_today
+                        );
 
-        match self.process_urls(ctx, &origin, &urls).await {
-            Ok(report) => {
-                for url in report.found {
-                    let nick = url.nickname;
-                    let created_at = url.created_at;
+                        client.send_privmsg(channel, formatted(&output))?;
+                    }
+                },
+                Err(err) => {
+                    for line in err.output.lines().filter(|s| !s.is_empty()) {
+                        client.send_privmsg(channel, formatted(line))?;
+                    }
 
-                    client.send_privmsg(
-                        channel,
-                        format!("{nickname}: OFN - posted by {nick} @ {created_at}"),
-                    )?;
-                }
-
-                if !report.inserted.is_empty() {
-                    debug!("inserted {} new urls", report.inserted.len());
+                    error!(?err, "error when parsing ofn opts");
                 }
             }
-            Err(error) => {
-                client.send_privmsg(channel, formatted_err(&error.to_string()))?;
+        } else {
+            let urls: Vec<Url> = msg.urls().collect();
+            if urls.is_empty() {
+                return Ok(());
+            }
+
+            let origin = ChannelMessageOrigin {
+                channel,
+                // TODO: support multiple networks
+                network: "irc.rwx.im:6697",
+                nickname,
+                username,
+                hostname,
+            };
+
+            match self.process_urls(ctx, &origin, &urls).await {
+                Ok(report) => {
+                    for url in report.found {
+                        let nick = url.nickname;
+                        let created_at = url.created_at;
+
+                        client.send_privmsg(
+                            channel,
+                            format!("{nickname}: OFN - posted by {nick} @ {created_at}"),
+                        )?;
+                    }
+
+                    if !report.inserted.is_empty() {
+                        debug!("inserted {} new urls", report.inserted.len());
+                    }
+                }
+                Err(error) => {
+                    client.send_privmsg(channel, formatted_err(&error.to_string()))?;
+                }
             }
         }
 
@@ -127,7 +186,9 @@ fn formatted_err(s: &str) -> String {
 
 impl Ofn {
     pub const fn new() -> Ofn {
-        Ofn {}
+        Ofn {
+            command: Prefix::new(".ofn"),
+        }
     }
 
     /// Processes the given list of `urls` with the associated `origin` by querying them from the
@@ -264,5 +325,25 @@ impl Ofn {
         .map_err(Error::InsertUrl)?;
 
         Ok(insert)
+    }
+
+    /// Returns statistics about the number of rows in the database.
+    pub async fn stats(&self, ctx: &Context) -> Result<Statistics, Error> {
+        let today = Utc::now().date_naive();
+        let (num_urls, num_recorded_today): (i64, i64) = sqlx::query_as(
+            "SELECT 
+                COUNT(id) AS num_urls,
+                COUNT(id) FILTER (WHERE created_at >= $1) AS num_urls_today
+            FROM url_records",
+        )
+        .bind(today)
+        .fetch_one(&ctx.db)
+        .await
+        .map_err(Error::QueryDatabase)?;
+
+        Ok(Statistics {
+            num_urls,
+            num_urls_today: num_recorded_today,
+        })
     }
 }
