@@ -56,103 +56,107 @@ macro_rules! declare_plugins {
 }
 
 declare_plugins! {
-   /// Chaturbate platform integration.
-   #[cfg(feature = "plugin-chaturbate")]
-    chaturbate::Chaturbate,
+  /// Chaturbate platform integration.
+  #[cfg(feature = "plugin-chaturbate")]
+  chaturbate::Chaturbate,
 
-    /// Plugin that helps the user make a choice
-    #[cfg(feature = "plugin-choices")]
-    choices::Choices,
+  /// Plugin that helps the user make a choice
+  #[cfg(feature = "plugin-choices")]
+  choices::Choices,
 
-    /// Query the danish dictionary
-    #[cfg(feature = "plugin-dendanskeordbog")]
-    dendanskeordbog::DenDanskeOrdbog,
+  /// Query the danish dictionary
+  #[cfg(feature = "plugin-dendanskeordbog")]
+  dendanskeordbog::DenDanskeOrdbog,
 
-    /// Query nameservers
-    #[cfg(feature = "plugin-dig")]
-    dig::Dig,
+  /// Query nameservers
+  #[cfg(feature = "plugin-dig")]
+  dig::Dig,
 
-    /// Query geolocation of addresses and hostnames
-    #[cfg(feature = "plugin-geoip")]
-    geoip::GeoIp,
+  /// Query geolocation of addresses and hostnames
+  #[cfg(feature = "plugin-geoip")]
+  geoip::GeoIp,
 
-    /// GitHub integration
-    #[cfg(feature = "plugin-github")]
-    github::GitHubPlugin,
+  /// GitHub integration
+  #[cfg(feature = "plugin-github")]
+  github::GitHubPlugin,
 
-    /// Google images integration
-    #[cfg(feature = "plugin-google-images")]
-    google_images::GoogleImages,
+  /// Google images integration
+  #[cfg(feature = "plugin-google-images")]
+  google_images::GoogleImages,
 
-    /// Process health information
-    #[cfg(feature = "plugin-health")]
-    health::Health,
+  /// Process health information
+  #[cfg(feature = "plugin-health")]
+  health::Health,
 
-    /// Howlongtobeat.com integration
-    #[cfg(feature = "plugin-howlongtobeat")]
-    howlongtobeat::HowLongToBeat,
+  /// Howlongtobeat.com integration
+  #[cfg(feature = "plugin-howlongtobeat")]
+  howlongtobeat::HowLongToBeat,
 
-    /// Is it open
-    #[cfg(feature = "plugin-isitopen")]
-    isitopen::IsItOpen,
+  /// Is it open
+  #[cfg(feature = "plugin-isitopen")]
+  isitopen::IsItOpen,
 
-    /// Kagi search integration
-    #[cfg(feature = "plugin-kagi")]
-    kagi::KagiPlugin,
+  /// Kagi search integration
+  #[cfg(feature = "plugin-kagi")]
+  kagi::KagiPlugin,
 
-    /// Weather service integration
-    #[cfg(feature = "plugin-openweathermap")]
-    openweathermap::OpenWeatherMap,
+  /// URL history
+  #[cfg(feature = "plugin-ofn")]
+  ofn::Ofn,
 
-    #[cfg(feature = "plugin-pornhub")]
-    pornhub::PornHub,
+  /// Weather service integration
+  #[cfg(feature = "plugin-openweathermap")]
+  openweathermap::OpenWeatherMap,
 
-    /// Reddit plugin integration
-    #[cfg(feature = "plugin-reddit")]
-    reddit::Reddit,
+  #[cfg(feature = "plugin-pornhub")]
+  pornhub::PornHub,
 
-    /// Calculator plugin based on rink
-    #[cfg(feature = "plugin-rink")]
-    rink::Rink,
+  /// Reddit plugin integration
+  #[cfg(feature = "plugin-reddit")]
+  reddit::Reddit,
 
-    /// Rust Playground integration
-    #[cfg(feature = "plugin-rust-playground")]
-    rust_playground::RustPlayground,
+  /// Calculator plugin based on rink
+  #[cfg(feature = "plugin-rink")]
+  rink::Rink,
 
-    /// Spotify integration
-    #[cfg(feature = "plugin-spotify")]
-    spotify::Spotify,
+  /// Rust Playground integration
+  #[cfg(feature = "plugin-rust-playground")]
+  rust_playground::RustPlayground,
 
-    /// Generic string utility plugin
-    #[cfg(feature = "plugin-string-utils")]
-    string_utils::StringUtils,
+  /// Spotify integration
+  #[cfg(feature = "plugin-spotify")]
+  spotify::Spotify,
 
-    /// Thingiverse integration
-    #[cfg(feature = "plugin-thingiverse")]
-    thingiverse::Thingiverse,
+  /// Generic string utility plugin
+  #[cfg(feature = "plugin-string-utils")]
+  string_utils::StringUtils,
 
-    /// TikTok integration
-    #[cfg(feature = "plugin-tiktok")]
-    tiktok::Tiktok,
+  /// Thingiverse integration
+  #[cfg(feature = "plugin-thingiverse")]
+  thingiverse::Thingiverse,
 
-    /// Trustpilot integration
-    #[cfg(feature = "plugin-trustpilot")]
-    trustpilot::Trustpilot,
+  /// TikTok integration
+  #[cfg(feature = "plugin-tiktok")]
+  tiktok::Tiktok,
 
-    #[cfg(feature = "plugin-tvmaze")]
-    tvmaze::Tvmaze,
+  /// Trustpilot integration
+  #[cfg(feature = "plugin-trustpilot")]
+  trustpilot::Trustpilot,
 
-    // Twitch integration
-    #[cfg(feature = "plugin-twitch")]
-    twitch::Twitch,
+  #[cfg(feature = "plugin-tvmaze")]
+  tvmaze::Tvmaze,
 
-    /// Urban Dictionary integration
-    #[cfg(feature = "plugin-urban-dictionary")]
-    urban_dictionary::UrbanDictionary,
+  // Twitch integration
+  #[cfg(feature = "plugin-twitch")]
+  twitch::Twitch,
 
-    /// YouTube integration
-    #[cfg(feature = "plugin-youtube")]
-    youtube::YouTube,
+  /// Urban Dictionary integration
+  #[cfg(feature = "plugin-urban-dictionary")]
+  urban_dictionary::UrbanDictionary,
+
+  /// YouTube integration
+  #[cfg(feature = "plugin-youtube")]
+  youtube::YouTube,
 }
 
 /// Plugin registry.

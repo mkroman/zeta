@@ -274,7 +274,7 @@ impl HowLongToBeat {
             .unwrap_or_default()
             .as_millis();
 
-        let url = format!("{BASE_URL}/api/find/init?t={timestamp}");
+        let url = format!("{BASE_URL}/api/bleed/init?t={timestamp}");
         debug!("refreshing hltb token and homepage data");
 
         let response = self
@@ -328,7 +328,7 @@ impl HowLongToBeat {
         auth: &AuthData,
         query: &str,
     ) -> Result<Vec<Game>, Error> {
-        let url = format!("{BASE_URL}/api/find");
+        let url = format!("{BASE_URL}/api/bleed");
         let search_terms: Vec<&str> = query.split_whitespace().collect();
 
         // Inject the homepage key/value dynamically into the JSON root.

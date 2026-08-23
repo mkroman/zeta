@@ -1,5 +1,4 @@
 use std::fmt::Display;
-use std::str::FromStr;
 
 use argh::FromArgs;
 use hickory_resolver::{
@@ -7,7 +6,7 @@ use hickory_resolver::{
     config::{CLOUDFLARE, LookupIpStrategy, ResolveHosts, ResolverConfig, ResolverOpts},
     lookup::Lookup,
     net::{NetError, runtime::TokioRuntimeProvider},
-    proto::rr::RecordType,
+    proto::{rr::RecordType, serialize::binary::DecodeError},
 };
 use miette::Diagnostic;
 use thiserror::Error;
@@ -70,12 +69,15 @@ impl Plugin<Context> for Dig {
     fn new(_ctx: &Context) -> Result<Dig, ZetaError> {
         let config = ResolverConfig::udp_and_tcp(&CLOUDFLARE);
         let mut opts = ResolverOpts::default();
-        opts.use_hosts_file = ResolveHosts::Never;
+
         opts.attempts = 5;
         opts.ip_strategy = LookupIpStrategy::Ipv6thenIpv4;
+        opts.use_hosts_file = ResolveHosts::Never;
+
         let resolver = Resolver::builder_with_config(config, TokioRuntimeProvider::default())
             .with_options(opts)
-            .build().map_err(plugin_err)?;
+            .build()
+            .map_err(plugin_err)?;
         let command = Prefix::new(".dig");
 
         Ok(Dig { command, resolver })
@@ -94,33 +96,30 @@ impl Plugin<Context> for Dig {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(args) = self.command.parse(user_message)
-        {
-            let sub_args = shlex::split(args)
-                .ok_or_else(|| ZetaError::Plugin(Box::new(Error::ParseArguments)))?;
-            let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
+        let Command::PRIVMSG(channel, user_message) = &message.command else {
+            return Ok(());
+        };
+        let Some(args) = self.command.parse(user_message) else {
+            return Ok(());
+        };
+        let Some(sub_args) = shlex::split(args) else {
+            return Err(plugin_err(Error::ParseArguments));
+        };
+        let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
 
-            match Opts::from_args(&[".dig"], &sub_args_ref) {
-                Ok(opts) => match self.resolve(&opts.name, opts.record_type).await {
-                    Ok(result) => {
-                        for line in result.to_string().lines() {
-                            client.send_privmsg(channel, line)?;
-                        }
+        match Opts::from_args(&[".dig"], &sub_args_ref) {
+            Ok(opts) => match self.resolve(&opts.name, opts.record_type).await {
+                Ok(result) => {
+                    for line in result.to_string().lines() {
+                        client.send_privmsg(channel, line)?;
                     }
-                    Err(err) => {
-                        client.send_privmsg(
-                            channel,
-                            format!("\x0310>\x03\x02 Dig:\x02\x0310 {err}"),
-                        )?;
-                    }
-                },
-                Err(err) => {
-                    client.send_privmsg(
-                        channel,
-                        format!("\x0310>\x03\x02 Dig:\x02\x0310 {}", err.output),
-                    )?;
                 }
+                Err(err) => {
+                    client.send_privmsg(channel, formatted(&err.to_string()))?;
+                }
+            },
+            Err(err) => {
+                client.send_privmsg(channel, formatted(&err.output))?;
             }
         }
 
@@ -129,8 +128,13 @@ impl Plugin<Context> for Dig {
 }
 
 fn record_type_from_str(s: &str) -> Result<RecordType, String> {
-    let record = s.to_uppercase();
-    RecordType::from_str(&record).map_err(|_| format!("Invalid record type `{record}`"))
+    s.to_uppercase()
+        .parse()
+        .map_err(|err: DecodeError| err.to_string())
+}
+
+fn formatted(message: &str) -> String {
+    format!("\x0310>\x03\x02 Dig:\x02\x0310 {message}")
 }
 
 impl Dig {
@@ -139,11 +143,10 @@ impl Dig {
         name: &str,
         record_type: RecordType,
     ) -> Result<LookupResult, Error> {
-        let result = self.resolver.lookup(name, record_type).await;
-
-        match result {
-            Ok(result) => Ok(LookupResult(result)),
-            Err(err) => Err(Error::Resolve(err)),
-        }
+        self.resolver
+            .lookup(name, record_type)
+            .await
+            .map(LookupResult)
+            .map_err(Error::Resolve)
     }
 }
