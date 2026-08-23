@@ -17,7 +17,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v7
     - name: Install Rust ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
       with:
         toolchain: ${{ matrix.rust }}
         components: clippy
@@ -25,9 +25,9 @@ jobs:
       run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
       if: matrix.rust == 'nightly'
     - name: Cache 
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
     - name: Run Clippy check
-      uses: clechasseur/rs-clippy-check@e198ae0533dc69d707c383951d90dc356a692026 # v6.0.6
+      uses: clechasseur/rs-clippy-check@20f338ad6648dedb921c00b023bc30c971ab9ed7 # v6.0.7
       with:
         args: --no-deps --all-features
     - name: Run tests
@@ -66,7 +66,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v7
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
       with:
         toolchain: stable
     - name: Install cargo-auditable
