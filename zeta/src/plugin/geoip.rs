@@ -15,7 +15,6 @@ const BASE_URL: &str = "https://api.ip2location.io";
 pub struct GeoIp {
     pub client: reqwest::Client,
     api_key: String,
-    command: Prefix,
 }
 
 #[derive(Default)]
@@ -23,8 +22,6 @@ pub struct LookupResult(IpInfo);
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("could not parse arguments")]
-    ParseArguments,
     #[error("could not deserialize response: {0}")]
     Deserialize(#[source] reqwest::Error),
     #[error("http request failed")]
@@ -88,12 +85,9 @@ impl Plugin<Context> for GeoIp {
             .timeout(HTTP_TIMEOUT)
             .build().map_err(plugin_err)?;
 
-        let command = Prefix::new(".geoip");
-
         Ok(GeoIp {
             client,
             api_key,
-            command,
         })
     }
 
@@ -104,39 +98,37 @@ impl Plugin<Context> for GeoIp {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".geoip")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        command: &Prefix,
+        args: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref message) = message.command
-            && let Some(args) = self.command.parse(message)
-        {
-            let sub_args = shlex::split(args)
-                .ok_or_else(|| ZetaError::Plugin(Box::new(Error::ParseArguments)))?;
-            let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
+        let opts = match command.parse_args::<Opts>(args) {
+            Ok(opts) => opts,
+            Err(err) => {
+                client.send_privmsg(channel, err.to_string())?;
+                return Ok(());
+            }
+        };
 
-            match Opts::from_args(&[".geoip"], &sub_args_ref) {
-                Ok(opts) => match self.resolve(&opts.name).await {
-                    Ok(result) => {
-                        for line in result.to_string().lines() {
-                            client.send_privmsg(channel, line)?;
-                        }
-                    }
-                    Err(err) => {
-                        client.send_privmsg(
-                            channel,
-                            format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"),
-                        )?;
-                    }
-                },
-                Err(err) => {
-                    client.send_privmsg(
-                        channel,
-                        format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {}", err.output),
-                    )?;
+        match self.resolve(&opts.name).await {
+            Ok(result) => {
+                for line in result.to_string().lines() {
+                    client.send_privmsg(channel, line)?;
                 }
+            }
+            Err(err) => {
+                client.send_privmsg(
+                    channel,
+                    format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"),
+                )?;
             }
         }
 

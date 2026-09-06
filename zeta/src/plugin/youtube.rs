@@ -37,8 +37,6 @@ pub struct YouTube {
     api_key: String,
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
-    /// The `.yt` IRC command
-    command: Prefix,
     /// Thread-safe cache of video categories mapped by category ID
     video_categories: RwLock<Arc<HashMap<String, Category>>>,
     /// Timestamp tracking when video categories were last fetched for cache invalidation
@@ -203,31 +201,50 @@ impl Plugin<Context> for YouTube {
         }
     }
 
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".yt")] }
+    }
+
     async fn handle_message(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
-            if let Some(urls) = plugin::extract_urls(user_message) {
-                self.process_urls(urls, channel, client).await?;
-            } else if let Some(args) = self.command.parse(user_message) {
-                match self.search(args).await {
-                    Ok(results) => {
-                        if let Some(result) = results.first() {
-                            let id = result.id.video_id.as_ref().unwrap();
-                            let title = htmlize::unescape(&result.snippet.title);
+        let Command::PRIVMSG(ref channel, ref user_message) = message.command else {
+            return Ok(());
+        };
 
-                            client.send_privmsg(channel, format!("\x0310>\x03\x02 YouTube:\x02\x0310 {title} - https://www.youtube.com/watch?v={id}"))?;
-                        } else {
-                            client.send_privmsg(channel, "\x0310> No results")?;
-                        }
-                    }
-                    Err(err) => {
-                        client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
-                    }
+        if let Some(urls) = plugin::extract_urls(user_message) {
+            self.process_urls(urls, channel, client).await?;
+        } else {
+            self.dispatch_command(ctx, client, message).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_command(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        channel: &str,
+        _command: &Prefix,
+        args: &str,
+    ) -> Result<(), ZetaError> {
+        match self.search(args).await {
+            Ok(results) => {
+                if let Some(result) = results.first() {
+                    let id = result.id.video_id.as_ref().unwrap();
+                    let title = htmlize::unescape(&result.snippet.title);
+
+                    client.send_privmsg(channel, format!("\x0310>\x03\x02 YouTube:\x02\x0310 {title} - https://www.youtube.com/watch?v={id}"))?;
+                } else {
+                    client.send_privmsg(channel, "\x0310> No results")?;
                 }
+            }
+            Err(err) => {
+                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
             }
         }
 
@@ -238,12 +255,10 @@ impl Plugin<Context> for YouTube {
 impl YouTube {
     pub fn with_config(api_key: String) -> Self {
         let client = http::build_client();
-        let command = Prefix::new(".yt");
 
         Self {
             api_key,
             client,
-            command,
             video_categories: RwLock::new(Arc::new(HashMap::new())),
             video_categories_updated_at: RwLock::new(None),
         }

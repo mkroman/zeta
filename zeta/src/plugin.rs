@@ -14,7 +14,7 @@ mod prelude {
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
     pub use zeta_plugin::Error as ZetaError;
-    pub use zeta_plugin::prelude::{BoxError, plugin_err, require_env};
+    pub use zeta_plugin::prelude::{ArgsError, BoxError, plugin_err, require_env};
 
     pub use super::{Author, Context, Metadata, Name, Plugin};
     pub use crate::command::Prefix;

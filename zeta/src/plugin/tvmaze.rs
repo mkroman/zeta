@@ -29,8 +29,6 @@ pub enum Error {
 pub struct Tvmaze {
     /// HTTP client for API requests.
     client: reqwest::Client,
-    /// Command handler for the `.next` command.
-    command: Prefix,
     /// Cached endpoint URLs for performance.
     urls: EndpointUrls,
 }
@@ -141,19 +139,19 @@ impl Plugin<Context> for Tvmaze {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".next")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        args: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(args) = self.command.parse(user_message)
-        {
-            self.handle_show_search(args, channel, client).await?;
-        }
-
-        Ok(())
+        self.handle_show_search(args, channel, client).await
     }
 }
 
@@ -161,14 +159,9 @@ impl Tvmaze {
     /// Creates a new TVmaze plugin instance.
     pub fn new() -> Self {
         let client = http::build_client();
-        let command = Prefix::new(".next");
         let urls = EndpointUrls::new();
 
-        Tvmaze {
-            client,
-            command,
-            urls,
-        }
+        Tvmaze { client, urls }
     }
 
     /// Searches for a single show using the TVmaze API.

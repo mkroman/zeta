@@ -173,9 +173,7 @@ impl PornHub {
         client: &Client,
     ) -> Result<(), Error> {
         for url in &urls {
-            debug!(%url, "processing url");
             self.process_url(url, channel, client).await?;
-            debug!(%url, "finished processing url");
         }
 
         Ok(())

@@ -30,14 +30,11 @@ pub struct Opts {
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum Error {
-    #[error("could not parse arguments")]
-    ParseArguments,
     #[error("could not resolve domain: {0}")]
     Resolve(#[source] NetError),
 }
 
 pub struct Dig {
-    command: Prefix,
     resolver: TokioResolver,
 }
 
@@ -78,9 +75,8 @@ impl Plugin<Context> for Dig {
             .with_options(opts)
             .build()
             .map_err(plugin_err)?;
-        let command = Prefix::new(".dig");
 
-        Ok(Dig { command, resolver })
+        Ok(Dig { resolver })
     }
 
     fn metadata() -> Metadata {
@@ -90,36 +86,34 @@ impl Plugin<Context> for Dig {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".dig")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        command: &Prefix,
+        args: &str,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, user_message) = &message.command else {
-            return Ok(());
-        };
-        let Some(args) = self.command.parse(user_message) else {
-            return Ok(());
-        };
-        let Some(sub_args) = shlex::split(args) else {
-            return Err(plugin_err(Error::ParseArguments));
-        };
-        let sub_args_ref = sub_args.iter().map(String::as_ref).collect::<Vec<_>>();
-
-        match Opts::from_args(&[".dig"], &sub_args_ref) {
-            Ok(opts) => match self.resolve(&opts.name, opts.record_type).await {
-                Ok(result) => {
-                    for line in result.to_string().lines() {
-                        client.send_privmsg(channel, line)?;
-                    }
-                }
-                Err(err) => {
-                    client.send_privmsg(channel, formatted(&err.to_string()))?;
-                }
-            },
+        let opts = match command.parse_args::<Opts>(args) {
+            Ok(opts) => opts,
             Err(err) => {
-                client.send_privmsg(channel, formatted(&err.output))?;
+                client.send_privmsg(channel, err.to_string())?;
+                return Ok(());
+            }
+        };
+
+        match self.resolve(&opts.name, opts.record_type).await {
+            Ok(result) => {
+                for line in result.to_string().lines() {
+                    client.send_privmsg(channel, line)?;
+                }
+            }
+            Err(err) => {
+                client.send_privmsg(channel, formatted(&err.to_string()))?;
             }
         }
 

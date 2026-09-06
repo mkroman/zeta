@@ -4,10 +4,7 @@ use tokio::runtime::Handle;
 
 use crate::plugin::prelude::*;
 
-pub struct Health {
-    /// The `.health` command trigger.
-    command: Prefix,
-}
+pub struct Health;
 
 /// Process telemetry snapshot.
 pub struct Snapshot {
@@ -26,9 +23,7 @@ pub struct Snapshot {
 #[async_trait]
 impl Plugin<Context> for Health {
     fn new(_ctx: &Context) -> Result<Health, ZetaError> {
-        let command = Prefix::new(".health");
-
-        Ok(Health { command })
+        Ok(Health)
     }
 
     fn metadata() -> Metadata {
@@ -38,16 +33,19 @@ impl Plugin<Context> for Health {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".health")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        _args: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(_) = self.command.parse(user_message)
-            && let Some(snapshot) = Snapshot::capture()
-        {
+        if let Some(snapshot) = Snapshot::capture() {
             client.send_privmsg(
                 channel,
                 format!("\x0310>\x0f\x02 Health\x02\x0310: {snapshot}"),

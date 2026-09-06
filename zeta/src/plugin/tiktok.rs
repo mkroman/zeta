@@ -130,7 +130,6 @@ impl Tiktok {
     }
 
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
-        debug!(%url, "processing url");
         match classify_tiktok_url(url) {
             Some(UrlKind::Video(channel_slug, video_id)) => {
                 debug!(%video_id, "processing video");
@@ -155,8 +154,6 @@ impl Tiktok {
             }
             _ => {}
         }
-
-        debug!(%url, "finished processing url");
 
         Ok(())
     }

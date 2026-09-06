@@ -5,7 +5,6 @@ edition = "2024"
 description = "A client and parser for the Danish Dictionary (Den Danske Ordbog)."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mkroman/zeta"
-readme = "README.md"
 keywords = ["dictionary", "danish", "scraper", "ordnet", "ddo"]
 categories = ["api-bindings", "parser", "text-processing"]
 

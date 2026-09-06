@@ -4404,7 +4404,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
- "shlex",
  "sqlx",
  "thiserror 2.0.20",
  "time",
@@ -4421,8 +4420,10 @@ dependencies = [
 name = "zeta-plugin"
 version = "0.2.0"
 dependencies = [
+ "argh",
  "async-trait",
  "irc",
+ "shlex",
  "thiserror 2.0.20",
 ]
 

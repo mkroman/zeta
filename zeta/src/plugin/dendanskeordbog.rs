@@ -6,7 +6,6 @@ use crate::{http, plugin::prelude::*};
 
 pub struct DenDanskeOrdbog {
     client: dendanskeordbog::Client,
-    command: Prefix,
 }
 
 struct MessageFormatter(DictionaryDocument);
@@ -61,25 +60,27 @@ impl Plugin<Context> for DenDanskeOrdbog {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".ddo")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        args: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(args) = self.command.parse(user_message)
-        {
-            if args.is_empty() {
-                client.send_privmsg(channel, "\x0310> Usage: .ddo\x0f <query>")?;
-            } else {
-                match self.client.query(args).await {
-                    Ok(document) => {
-                        client.send_privmsg(channel, MessageFormatter(document).to_string())?;
-                    }
-                    Err(err) => {
-                        client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
-                    }
+        if args.is_empty() {
+            client.send_privmsg(channel, "\x0310> Usage: .ddo\x0f <query>")?;
+        } else {
+            match self.client.query(args).await {
+                Ok(document) => {
+                    client.send_privmsg(channel, MessageFormatter(document).to_string())?;
+                }
+                Err(err) => {
+                    client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
                 }
             }
         }
@@ -92,8 +93,7 @@ impl DenDanskeOrdbog {
     pub fn new() -> DenDanskeOrdbog {
         let http_client = http::build_client();
         let client = dendanskeordbog::Client::with_client(http_client);
-        let command = Prefix::new(".ddo");
 
-        DenDanskeOrdbog { client, command }
+        DenDanskeOrdbog { client }
     }
 }

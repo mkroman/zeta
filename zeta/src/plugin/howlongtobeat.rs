@@ -23,8 +23,6 @@ const REFERER_URL: &str = "https://howlongtobeat.com/";
 pub struct HowLongToBeat {
     /// The HTTP client used for requests.
     client: reqwest::Client,
-    /// The parsed trigger command for the plugin.
-    command: Prefix,
     /// Cached authentication data (token and homepage key/value).
     auth: RwLock<Option<AuthData>>,
 }
@@ -205,11 +203,9 @@ impl Default for SearchOptions {
 impl Plugin<Context> for HowLongToBeat {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
-        let command = Prefix::new(".hltb");
 
         Ok(Self {
             client,
-            command,
             auth: RwLock::new(None),
         })
     }
@@ -221,33 +217,35 @@ impl Plugin<Context> for HowLongToBeat {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".hltb")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        query: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(query) = self.command.parse(user_message)
-        {
-            if query.trim().is_empty() {
-                client.send_privmsg(channel, "\x0310> Usage: .hltb\x0f <game>")?;
-                return Ok(());
-            }
+        if query.trim().is_empty() {
+            client.send_privmsg(channel, "\x0310> Usage: .hltb\x0f <game>")?;
+            return Ok(());
+        }
 
-            match self.search(query).await {
-                Ok(games) => {
-                    if let Some(game) = games.first() {
-                        let msg = format_game(game);
-                        client.send_privmsg(channel, msg)?;
-                    } else {
-                        client.send_privmsg(channel, "\x0310> No results found")?;
-                    }
+        match self.search(query).await {
+            Ok(games) => {
+                if let Some(game) = games.first() {
+                    let msg = format_game(game);
+                    client.send_privmsg(channel, msg)?;
+                } else {
+                    client.send_privmsg(channel, "\x0310> No results found")?;
                 }
-                Err(err) => {
-                    warn!(?err, "hltb search failed");
-                    client.send_privmsg(channel, format!("\x0310> Failed to fetch data: {err}"))?;
-                }
+            }
+            Err(err) => {
+                warn!(?err, "hltb search failed");
+                client.send_privmsg(channel, format!("\x0310> Failed to fetch data: {err}"))?;
             }
         }
 
