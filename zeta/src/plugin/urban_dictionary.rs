@@ -12,7 +12,6 @@ pub const BASE_URL: &str = "https://api.urbandictionary.com";
 /// Urban Dictionary plugin.
 pub struct UrbanDictionary {
     client: reqwest::Client,
-    command: Prefix,
 }
 
 /// Errors that can occur during execution.
@@ -70,31 +69,34 @@ impl Plugin<Context> for UrbanDictionary {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".ud")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        query: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
-            match self.command.parse(user_message) {
-                Some("") => {
-                    client.send_privmsg(channel, formatted(USAGE))?;
+        if query.is_empty() {
+            client.send_privmsg(channel, formatted(USAGE))?;
+            return Ok(());
+        }
+
+        match self.definitions(query).await {
+            Ok(definitions) => {
+                if let Some(definition) = definitions.list.first() {
+                    let s = formatted(&format!("{definition}"));
+                    client.send_privmsg(channel, s)?;
+                } else {
+                    client.send_privmsg(channel, formatted("No results"))?;
                 }
-                Some(query) => match self.definitions(query).await {
-                    Ok(definitions) => {
-                        if let Some(definition) = definitions.list.first() {
-                            let s = formatted(&format!("{definition}"));
-                            client.send_privmsg(channel, s)?;
-                        } else {
-                            client.send_privmsg(channel, formatted("No results"))?;
-                        }
-                    }
-                    Err(err) => {
-                        client.send_privmsg(channel, formatted(&format!("Error: {err}")))?;
-                    }
-                },
-                None => {}
+            }
+            Err(err) => {
+                client.send_privmsg(channel, formatted(&format!("Error: {err}")))?;
             }
         }
 
@@ -127,9 +129,8 @@ fn formatted(s: &str) -> String {
 impl UrbanDictionary {
     pub fn new() -> Self {
         let client = http::build_client();
-        let command = Prefix::new(".ud");
 
-        UrbanDictionary { client, command }
+        Self { client }
     }
 
     /// Looks up the given `term` and returns a list of definitions.

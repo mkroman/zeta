@@ -19,8 +19,6 @@ const KELVIN: f64 = 273.15;
 pub struct OpenWeatherMap {
     /// HTTP client for making API requests.
     client: reqwest::Client,
-    /// Command handler for the `.w` command.
-    command: Prefix,
     /// OpenWeatherMap API key.
     app_id: String,
 }
@@ -113,13 +111,8 @@ impl Plugin<Context> for OpenWeatherMap {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let app_id = require_env("OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client();
-        let command = Prefix::new(".w");
 
-        Ok(Self {
-            client,
-            command,
-            app_id,
-        })
+        Ok(Self { client, app_id })
     }
 
     fn metadata() -> Metadata {
@@ -129,34 +122,37 @@ impl Plugin<Context> for OpenWeatherMap {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".w")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        args: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(args) = self.command.parse(user_message)
-        {
-            let location = args.trim();
-            if location.is_empty() {
-                client.send_privmsg(channel, "\x0310> Usage: .w\x0f <location>")?;
-                return Ok(());
-            }
+        let location = args.trim();
+        if location.is_empty() {
+            client.send_privmsg(channel, "\x0310> Usage: .w\x0f <location>")?;
+            return Ok(());
+        }
 
-            match self.fetch_weather(location).await {
-                Ok(weather) => {
-                    client.send_privmsg(channel, format_weather(&weather))?;
-                }
-                Err(Error::LocationNotFound) => {
-                    client.send_privmsg(channel, "\x0310> Location not found")?;
-                }
-                Err(e) => {
-                    warn!(error = ?e, "openweathermap error");
-                    client.send_privmsg(channel, format!("\x0310> Error: {e}"))?;
-                }
+        match self.fetch_weather(location).await {
+            Ok(weather) => {
+                client.send_privmsg(channel, format_weather(&weather))?;
+            }
+            Err(Error::LocationNotFound) => {
+                client.send_privmsg(channel, "\x0310> Location not found")?;
+            }
+            Err(e) => {
+                warn!(error = ?e, "openweathermap error");
+                client.send_privmsg(channel, format!("\x0310> Error: {e}"))?;
             }
         }
+
         Ok(())
     }
 }

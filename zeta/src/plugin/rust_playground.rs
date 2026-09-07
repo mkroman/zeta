@@ -13,7 +13,6 @@ const BASE_URL: &str = "https://play.rust-lang.org/execute";
 /// Plugin for evaluating Rust code.
 pub struct RustPlayground {
     client: reqwest::Client,
-    command: Prefix,
     error_regex: Regex,
 }
 
@@ -50,15 +49,10 @@ struct ExecuteResponse {
 impl Plugin<Context> for RustPlayground {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
-        let command = Prefix::new(".rs");
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
 
-        Ok(Self {
-            client,
-            command,
-            error_regex,
-        })
+        Ok(Self { client, error_regex })
     }
 
     fn metadata() -> Metadata {
@@ -68,29 +62,31 @@ impl Plugin<Context> for RustPlayground {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".rs")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        expr: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(expr) = self.command.parse(user_message)
-        {
-            // Early return if input is empty
-            if expr.trim().is_empty() {
-                client.send_privmsg(channel, formatted("Usage: .rs\x0f <expr>"))?;
-                return Ok(());
-            }
+        // Early return if input is empty
+        if expr.trim().is_empty() {
+            client.send_privmsg(channel, formatted("Usage: .rs\x0f <expr>"))?;
+            return Ok(());
+        }
 
-            match self.evaluate(expr).await {
-                Ok(output) => {
-                    client.send_privmsg(channel, formatted(&output))?;
-                }
-                Err(e) => {
-                    warn!("rust playground error: {}", e);
-                    client.send_privmsg(channel, formatted(&format!("http error: {e}")))?;
-                }
+        match self.evaluate(expr).await {
+            Ok(output) => {
+                client.send_privmsg(channel, formatted(&output))?;
+            }
+            Err(e) => {
+                warn!("rust playground error: {}", e);
+                client.send_privmsg(channel, formatted(&format!("http error: {e}")))?;
             }
         }
 

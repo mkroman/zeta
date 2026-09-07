@@ -35,7 +35,6 @@ pub enum Error {
 /// Holds the HTTP client to reuse connection pools.
 pub struct GitHubPlugin {
     http: reqwest::Client,
-    command: Prefix,
 }
 
 /// Represents the top-level search response from GitHub API.
@@ -70,21 +69,24 @@ impl Plugin<Context> for GitHubPlugin {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".gh")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        args: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(args) = self.command.parse(user_message)
-        {
-            if let Ok(Some(response)) = self.handle_command(channel, Some(args)).await {
-                client.send_privmsg(channel, response)?;
-            } else {
-                client.send_privmsg(channel, "no results")?;
-            }
+        if let Ok(Some(response)) = self.run(channel, Some(args)).await {
+            client.send_privmsg(channel, response)?;
+        } else {
+            client.send_privmsg(channel, "no results")?;
         }
+
         Ok(())
     }
 }
@@ -93,7 +95,6 @@ impl GitHubPlugin {
     /// Create a new instance of the GitHub plugin.
     /// Initializes a generic HTTP client with standard timeouts.
     pub fn new() -> Result<Self> {
-        let cmd = Prefix::new(".gh");
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -109,10 +110,7 @@ impl GitHubPlugin {
             .build()
             .map_err(Error::InitFailed)?;
 
-        Ok(Self {
-            http: client,
-            command: cmd,
-        })
+        Ok(Self { http: client })
     }
 
     /// The main entry point for processing the `.gh` command.
@@ -123,7 +121,7 @@ impl GitHubPlugin {
     ///
     /// # Returns
     /// * `Result<Option<String>>` - Some(message) to reply, or None if no reply needed.
-    pub async fn handle_command(
+    pub async fn run(
         &self,
         channel: &str,
         args: Option<&str>,

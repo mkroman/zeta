@@ -41,21 +41,15 @@ pub enum Error {
 pub struct KagiPlugin {
     /// Kagi search client.
     client: client::Client,
-    /// `.g` search command.
-    search_command: Prefix,
 }
 
 #[async_trait]
 impl Plugin<Context> for KagiPlugin {
     fn new(_ctx: &Context) -> Result<KagiPlugin, ZetaError> {
         let token = require_env("KAGI_SESSION_TOKEN")?;
-        let search_command = Prefix::new(".g");
         let client = client::Client::with_token(token);
 
-        Ok(KagiPlugin {
-            client,
-            search_command,
-        })
+        Ok(KagiPlugin { client })
     }
 
     fn metadata() -> Metadata {
@@ -65,31 +59,33 @@ impl Plugin<Context> for KagiPlugin {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".g")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        query: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(query) = self.search_command.parse(user_message)
-        {
-            let results = self.client.search(query).await;
+        let results = self.client.search(query).await;
 
-            match results {
-                Ok(results) => {
-                    if let Some(result) = results.first() {
-                        let title = &result.title;
-                        let url = &result.url;
+        match results {
+            Ok(results) => {
+                if let Some(result) = results.first() {
+                    let title = &result.title;
+                    let url = &result.url;
 
-                        client.send_privmsg(channel, format!("\x0310> {title} - {url}"))?;
-                    } else {
-                        client.send_privmsg(channel, "\x0310> No results")?;
-                    }
+                    client.send_privmsg(channel, format!("\x0310> {title} - {url}"))?;
+                } else {
+                    client.send_privmsg(channel, "\x0310> No results")?;
                 }
-                Err(err) => {
-                    client.send_privmsg(channel, format!("Error: {err}"))?;
-                }
+            }
+            Err(err) => {
+                client.send_privmsg(channel, format!("Error: {err}"))?;
             }
         }
 

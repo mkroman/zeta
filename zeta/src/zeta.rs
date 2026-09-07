@@ -99,7 +99,7 @@ impl Zeta {
     /// # Returns
     /// * `Ok(())` - Message processed (individual plugin errors are logged, not propagated)
     async fn handle_message(&self, client: &Client, message: Message) -> Result<(), Error> {
-        debug!(?message, "processing irc message");
+        debug!(payload = %message, "processing irc message");
 
         for (plugin_name, plugin) in &self.registry.plugins {
             if let Err(e) = plugin.handle_message(&self.context, client, &message).await {

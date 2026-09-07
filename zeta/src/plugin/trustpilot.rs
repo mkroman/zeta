@@ -17,8 +17,6 @@ pub struct Trustpilot {
     client: reqwest::Client,
     /// Trustpilot API key.
     api_key: String,
-    /// Command handler.
-    command: Prefix,
 }
 
 /// Represents a business unit response from the Trustpilot API.
@@ -73,13 +71,8 @@ impl Plugin<Context> for Trustpilot {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let api_key = require_env("TRUSTPILOT_API_KEY")?;
         let client = http::build_client();
-        let command = Prefix::new(".tp");
 
-        Ok(Self {
-            client,
-            api_key,
-            command,
-        })
+        Ok(Self { client, api_key })
     }
 
     fn metadata() -> Metadata {
@@ -89,34 +82,37 @@ impl Plugin<Context> for Trustpilot {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".tp")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        query: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(query) = self.command.parse(user_message)
-        {
-            if query.trim().is_empty() {
-                client.send_privmsg(channel, "\x0310> Usage: .tp\x0f <domain name>")?;
-                return Ok(());
-            }
+        if query.trim().is_empty() {
+            client.send_privmsg(channel, "\x0310> Usage: .tp\x0f <domain name>")?;
+            return Ok(());
+        }
 
-            match self.search(query).await {
-                Ok(business) => {
-                    client.send_privmsg(channel, format_business(&business))?;
-                }
-                Err(Error::NotFound) => {
-                    client.send_privmsg(channel, "\x0310> No results found")?;
-                }
-                Err(e) => {
-                    warn!(error = ?e, "trustpilot error");
-                    // The error is already safe for display
-                    client.send_privmsg(channel, format!("\x0310> Error: {e}"))?;
-                }
+        match self.search(query).await {
+            Ok(business) => {
+                client.send_privmsg(channel, format_business(&business))?;
+            }
+            Err(Error::NotFound) => {
+                client.send_privmsg(channel, "\x0310> No results found")?;
+            }
+            Err(e) => {
+                warn!(error = ?e, "trustpilot error");
+                // The error is already safe for display
+                client.send_privmsg(channel, format!("\x0310> Error: {e}"))?;
             }
         }
+
         Ok(())
     }
 }
@@ -210,7 +206,7 @@ mod tests {
 
         assert_eq!(business.display_name, "Test Company");
         assert_eq!(business.name.identifying, "test.com");
-        assert_eq!(business.score.trust_score, 4.5);
+        assert!((business.score.trust_score - 4.5).abs() < f64::EPSILON);
         assert_eq!(business.number_of_reviews.total, 100);
     }
 }

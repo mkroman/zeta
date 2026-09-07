@@ -25,15 +25,11 @@ use model::{InsertUrlRecord, UrlRecord};
 /// The prefix for the plugin command.
 const COMMAND_PREFIX: &str = ".ofn";
 
-pub struct Ofn {
-    command: Prefix,
-}
+pub struct Ofn;
 
 impl Ofn {
     pub const fn new() -> Ofn {
-        Ofn {
-            command: Prefix::new(COMMAND_PREFIX),
-        }
+        Ofn
     }
 
     /// Find and return a [`UrlRecord`] for the given `url` and associated `origin` if present in
@@ -260,38 +256,28 @@ impl Ofn {
     }
 
     /// Handles explicit plugin commands (e.g., `.ofn stats`).
-    async fn handle_command(
+    async fn run_stats_command(
         &self,
         ctx: &Context,
         client: &Client,
         channel: &str,
-        args: &str,
+        opts: Opts,
     ) -> Result<(), ZetaError> {
-        let sub_args = shlex::split(args).ok_or_else(|| plugin_err(Error::ParseArguments))?;
-        let sub_args_ref = sub_args.iter().map(String::as_str).collect::<Vec<_>>();
+        match opts.command {
+            Subcommand::Stats(_) => {
+                let stats = self.stats(ctx).await.map_err(plugin_err)?;
+                let output = format!(
+                    "URLs:\x0f {}\x0310 YouTube Videos:\x0f {}\x0310 Recorded today:\x0f {}\x0310/\x0f{}",
+                    stats.num_urls.to_formatted_string(&Locale::en),
+                    stats.num_yt_ids.to_formatted_string(&Locale::en),
+                    stats.num_urls_today.to_formatted_string(&Locale::en),
+                    stats.num_yt_ids_today.to_formatted_string(&Locale::en)
+                );
 
-        match Opts::from_args(&[COMMAND_PREFIX], &sub_args_ref) {
-            Ok(opts) => match opts.command {
-                Subcommand::Stats(_) => {
-                    let stats = self.stats(ctx).await.map_err(plugin_err)?;
-                    let output = format!(
-                        "URLs:\x0f {}\x0310 YouTube Videos:\x0f {}\x0310 Recorded today:\x0f {}\x0310/\x0f{}",
-                        stats.num_urls.to_formatted_string(&Locale::en),
-                        stats.num_yt_ids.to_formatted_string(&Locale::en),
-                        stats.num_urls_today.to_formatted_string(&Locale::en),
-                        stats.num_yt_ids_today.to_formatted_string(&Locale::en)
-                    );
-
-                    client.send_privmsg(channel, formatted(&output))?;
-                }
-            },
-            Err(err) => {
-                for line in err.output.lines().filter(|s| !s.is_empty()) {
-                    client.send_privmsg(channel, formatted(line))?;
-                }
-                error!(?err, "error when parsing ofn opts");
+                client.send_privmsg(channel, formatted(&output))?;
             }
         }
+
         Ok(())
     }
 
@@ -376,6 +362,31 @@ impl Plugin<Context> for Ofn {
         }
     }
 
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(COMMAND_PREFIX)] }
+    }
+
+    async fn handle_command(
+        &self,
+        ctx: &Context,
+        client: &Client,
+        channel: &str,
+        command: &Prefix,
+        args: &str,
+    ) -> Result<(), ZetaError> {
+        let opts = match command.parse_args::<Opts>(args) {
+            Ok(opts) => opts,
+            Err(err) => {
+                for line in err.to_string().lines().filter(|s| !s.is_empty()) {
+                    client.send_privmsg(channel, formatted(line))?;
+                }
+                return Ok(());
+            }
+        };
+
+        self.run_stats_command(ctx, client, channel, opts).await
+    }
+
     async fn handle_message(
         &self,
         ctx: &Context,
@@ -390,8 +401,8 @@ impl Plugin<Context> for Ofn {
             return Ok(());
         };
 
-        if let Some(args) = self.command.parse(msg) {
-            self.handle_command(ctx, client, channel, args).await
+        if self.commands().iter().any(|command| command.parse(msg).is_some()) {
+            self.dispatch_command(ctx, client, message).await
         } else {
             let origin = ChannelMessageOrigin {
                 channel,
@@ -468,8 +479,6 @@ pub enum Error {
     InsertUrl(#[source] sqlx::Error),
     #[error("can't insert url with no host")]
     InsertUrlNoHost,
-    #[error("could not parse arguments")]
-    ParseArguments,
 }
 
 pub enum Resource {

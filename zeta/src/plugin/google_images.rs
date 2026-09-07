@@ -12,8 +12,6 @@ use crate::{http, plugin::prelude::*};
 pub struct GoogleImages {
     /// HTTP client for making requests.
     client: reqwest::Client,
-    /// Command handler for the `.gis` command.
-    command: Prefix,
 }
 
 /// Errors that can occur during the execution of the Google Images plugin.
@@ -74,9 +72,8 @@ struct OriginalImage {
 impl Plugin<Context> for GoogleImages {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client();
-        let command = Prefix::new(".gis");
 
-        Ok(Self { client, command })
+        Ok(Self { client })
     }
 
     fn metadata() -> zeta_plugin::Metadata {
@@ -86,36 +83,38 @@ impl Plugin<Context> for GoogleImages {
         }
     }
 
-    async fn handle_message(
+    fn commands(&self) -> &'static [Prefix] {
+        const { &[Prefix::new(".gis")] }
+    }
+
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        channel: &str,
+        _command: &Prefix,
+        query: &str,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(query) = self.command.parse(user_message)
-        {
-            if query.trim().is_empty() {
-                client.send_privmsg(channel, "\x0310> Usage: .gis\x0f <query>")?;
-                return Ok(());
-            }
+        if query.trim().is_empty() {
+            client.send_privmsg(channel, "\x0310> Usage: .gis\x0f <query>")?;
+            return Ok(());
+        }
 
-            match self.search(query).await {
-                Ok(result) => {
-                    let snippet = result.text_in_grid.snippet;
-                    let url = result.original_image.url;
-                    client.send_privmsg(
-                        channel,
-                        format!("\x0310>\x0f\x02 Google:\x02\x0310 {snippet} - {url}"),
-                    )?;
-                }
-                Err(Error::NoResults) => {
-                    client.send_privmsg(channel, "\x0310> No results")?;
-                }
-                Err(err) => {
-                    warn!(?err, "google image search failed");
-                    client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
-                }
+        match self.search(query).await {
+            Ok(result) => {
+                let snippet = result.text_in_grid.snippet;
+                let url = result.original_image.url;
+                client.send_privmsg(
+                    channel,
+                    format!("\x0310>\x0f\x02 Google:\x02\x0310 {snippet} - {url}"),
+                )?;
+            }
+            Err(Error::NoResults) => {
+                client.send_privmsg(channel, "\x0310> No results")?;
+            }
+            Err(err) => {
+                warn!(?err, "google image search failed");
+                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
             }
         }
 
