@@ -78,8 +78,9 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// The prefix commands handled by this plugin.
     ///
     /// Every incoming `PRIVMSG` is matched against these prefixes; the first matching command is
-    /// dispatched to [`Plugin::handle_command`]. Commands may overlap as long as no prefix is a
-    /// word-prefix of another (e.g. `.y` and `.yt`).
+    /// dispatched to [`Plugin::handle_command`].
+    ///
+    /// Commands may overlap as long as no prefix is a word-prefix of another (e.g. `.y` and `.yt`).
     fn commands(&self) -> &'static [Prefix] {
         &[]
     }
