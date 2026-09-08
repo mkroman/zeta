@@ -74,8 +74,7 @@ impl Zeta {
         self.client = Some(client);
 
         if let Some(client) = &self.client {
-            for (name, plugin) in &mut self.registry.plugins {
-                debug!(%name, "calling plugin::loaded");
+            for (_name, plugin) in &mut self.registry.plugins {
                 plugin.loaded(&self.context, client).await?;
             }
 

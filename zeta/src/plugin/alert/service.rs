@@ -9,7 +9,7 @@ use std::{
 
 use sqlx::types::chrono::{DateTime, Utc};
 use tokio::sync::{Mutex, Notify, mpsc};
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, instrument, trace, warn};
 
 use super::{
     error::Error,
@@ -150,7 +150,7 @@ impl Scheduler {
     async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
         let alert = self.repo.insert(alert).await?;
 
-        debug!(?alert, "scheduling alert");
+        trace!(?alert, "scheduling alert");
 
         self.cache
             .lock()
@@ -167,7 +167,6 @@ impl Scheduler {
     async fn run(self) {
         loop {
             let now = Utc::now();
-
             let next_due = self
                 .cache
                 .lock()
@@ -222,7 +221,7 @@ impl Scheduler {
         }
 
         for Scheduled(alert) in &due {
-            debug!(?alert, "delivering alert");
+            trace!(?alert, "delivering alert");
 
             if self.tx.send(alert.clone()).is_err() {
                 error!(alert_id = alert.id, "alert delivery channel is closed");
@@ -255,7 +254,10 @@ impl Scheduler {
         let mut cache = self.cache.lock().await;
         let mut due = Vec::new();
 
-        while cache.peek().is_some_and(|Reverse(alert)| alert.0.time <= now) {
+        while cache
+            .peek()
+            .is_some_and(|Reverse(alert)| alert.0.time <= now)
+        {
             due.push(cache.pop().expect("peeked").0);
         }
 
@@ -282,8 +284,7 @@ mod tests {
     use super::*;
 
     /// Skips the test if a test database has not been configured.
-    async fn test_service()
-    -> Option<(AlertService, mpsc::UnboundedReceiver<Alert>, Database)> {
+    async fn test_service() -> Option<(AlertService, mpsc::UnboundedReceiver<Alert>, Database)> {
         let url = std::env::var("ZETA_TEST_DATABASE_URL").ok()?;
 
         let db = sqlx::postgres::PgPoolOptions::new()
@@ -333,7 +334,10 @@ mod tests {
             .await
             .unwrap();
         let second = service
-            .create(new_alert("second", now + TimeDelta::try_seconds(3).unwrap()))
+            .create(new_alert(
+                "second",
+                now + TimeDelta::try_seconds(3).unwrap(),
+            ))
             .await
             .unwrap();
 
@@ -346,7 +350,10 @@ mod tests {
 
             assert_eq!(delivered.id, expected.id);
 
-            let latency = Utc::now().signed_duration_since(expected.time).to_std().unwrap();
+            let latency = Utc::now()
+                .signed_duration_since(expected.time)
+                .to_std()
+                .unwrap();
             assert!(latency < Duration::from_secs(2), "latency {latency:?}");
         }
 

@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use tokio::sync::Mutex;
-use tracing::{debug, instrument};
+use tracing::{instrument, trace};
 
 use super::{
     error::Error,
@@ -41,12 +41,12 @@ impl NotificationService {
     /// Returns [`Error::Load`] if the notifications could not be fetched from the database.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
-        debug!("loading notifications into memory");
+        trace!("loading notifications into memory");
 
         let mut cache: HashMap<String, HashMap<String, Vec<Notification>>> = HashMap::new();
 
         for notification in self.repo.list().await? {
-            debug!(?notification, "storing notification in cache");
+            trace!(?notification, "storing notification in cache");
 
             cache
                 .entry(notification.channel.clone())
@@ -70,7 +70,7 @@ impl NotificationService {
     pub async fn create(&self, notification: NewNotification) -> Result<Notification, Error> {
         let notification = self.repo.insert(notification).await?;
 
-        debug!(?notification, "storing notification in cache");
+        trace!(?notification, "storing notification in cache");
         self.cache
             .lock()
             .await

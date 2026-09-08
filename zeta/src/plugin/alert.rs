@@ -28,7 +28,7 @@ use irc::proto::Prefix as IrcPrefix;
 use rand::prelude::IteratorRandom;
 use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 use crate::plugin::prelude::*;
 
@@ -72,7 +72,7 @@ impl AlertPlugin {
             debug!("starting alert delivery task");
 
             while let Some(alert) = receiver.recv().await {
-                debug!(?alert, "delivering alert");
+                trace!(?alert, "delivering alert");
 
                 if let Err(err) = sender.send_privmsg(
                     &alert.channel,
@@ -166,7 +166,10 @@ impl Plugin<Context> for AlertPlugin {
 
                     client.send_privmsg(
                         channel,
-                        format!("{}\x0310 Alert stored for\x0f {local}.", success_message()),
+                        formatted(&format!(
+                            "{} Alert stored for\x0f {local}.",
+                            success_message()
+                        )),
                     )?;
                 }
                 Err(err) => {

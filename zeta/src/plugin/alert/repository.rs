@@ -1,6 +1,6 @@
 //! Database access for alerts.
 
-use tracing::{debug, instrument};
+use tracing::{instrument, trace};
 
 use super::{
     error::Error,
@@ -29,7 +29,7 @@ impl AlertRepository {
     /// Returns [`Error::Insert`] if the alert could not be inserted.
     #[instrument(skip_all, err)]
     pub async fn insert(&self, alert: NewAlert) -> Result<Alert, Error> {
-        debug!("inserting alert into database");
+        trace!("inserting alert into database");
 
         sqlx::query_file_as!(
             Alert,
@@ -53,7 +53,7 @@ impl AlertRepository {
     /// Returns [`Error::Load`] if the alerts could not be fetched.
     #[instrument(skip_all, err)]
     pub async fn list(&self) -> Result<Vec<Alert>, Error> {
-        debug!("loading alerts from database");
+        trace!("loading alerts from database");
 
         sqlx::query_as!(
             Alert,
@@ -73,7 +73,7 @@ impl AlertRepository {
     /// Returns [`Error::Delete`] if the alerts could not be deleted.
     #[instrument(skip_all, err)]
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
-        debug!(?ids, "deleting alerts from database");
+        trace!(?ids, "deleting alerts from database");
 
         sqlx::query!("DELETE FROM alerts WHERE id = ANY($1)", ids)
             .execute(&self.db)
