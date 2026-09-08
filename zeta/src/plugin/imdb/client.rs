@@ -10,7 +10,6 @@ use super::error::Error;
 use super::model::{Person, SearchResult, SeriesInfo, Title};
 use crate::http;
 
-
 /// GraphQL endpoint of IMDb's internal API.
 pub const GRAPHQL_URL: &str = "https://api.graphql.imdb.com/";
 
@@ -90,7 +89,6 @@ query Search($searchTerm: String!, $first: Int!) {
   }
 }
 ";
-
 
 /// A client for IMDb's internal GraphQL API.
 pub struct GraphQlClient {

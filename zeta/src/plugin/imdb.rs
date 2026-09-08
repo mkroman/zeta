@@ -3,7 +3,7 @@
 //! IMDb integration plugin.
 //!
 //! Monitors IRC messages for links to IMDb resources and prints details about them, and handles the
-//! `.imdb <title>` command for searching IMDb.
+//! `!imdb <title>` command for searching IMDb.
 
 use ::url::Url;
 use argh::FromArgs;
@@ -36,7 +36,7 @@ const SEARCH_LIMIT: usize = 5;
 /// The `!imdb` command.
 const COMMAND: Prefix = Prefix::new("!imdb");
 
-/// Command-line options for the `.imdb` command.
+/// Command-line options for the `!imdb` command.
 #[derive(FromArgs, Debug)]
 struct Opts {
     /// title to search for
@@ -54,7 +54,7 @@ impl Opts {
 /// IMDb plugin.
 ///
 /// Prints details about IMDb links posted in a channel — titles as well as persons — and handles
-/// the `.imdb <title>` command for searching IMDb.
+/// the `!imdb <title>` command for searching IMDb.
 pub struct Imdb {
     /// IMDb GraphQL client.
     client: GraphQlClient,
@@ -76,7 +76,7 @@ impl Plugin<Context> for Imdb {
     }
 
     fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".imdb")] }
+        &[COMMAND]
     }
 
     async fn handle_message(
@@ -116,7 +116,7 @@ impl Plugin<Context> for Imdb {
 
         let query = opts.query();
         if query.is_empty() {
-            client.send_privmsg(channel, format!("{PREFIX} usage: .imdb <title>"))?;
+            client.send_privmsg(channel, format!("{PREFIX} usage: !imdb <title>"))?;
             return Ok(());
         }
 

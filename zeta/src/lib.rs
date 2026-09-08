@@ -9,6 +9,7 @@ pub mod consts;
 /// Shared context for plugins
 pub mod context;
 /// Database integration
+#[cfg(feature = "database")]
 pub mod database;
 /// DNS resolution
 pub mod dns;
