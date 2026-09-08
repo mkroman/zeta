@@ -41,7 +41,7 @@ macro_rules! declare_plugins {
 
         // Generate a helper extension to register these specific plugins
         impl Registry {
-            fn register_bundled_plugins(&mut self, ctx: &Context) {
+            fn register_bundled_plugins(&mut self, #[allow(unused)] ctx: &Context) {
                 $(
                     #[cfg(feature = $feature)]
                     {
@@ -224,6 +224,7 @@ impl Registry {
 
 /// Extracts HTTP(s) URLs from a string.
 #[must_use]
+#[allow(unused)]
 pub fn extract_urls(s: &str) -> Option<Vec<Url>> {
     let urls: Vec<Url> = s
         .split(' ')

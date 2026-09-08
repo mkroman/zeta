@@ -14,8 +14,8 @@ pub const USER_AGENT: &str = concat!("linux:zeta:", env!("CARGO_PKG_VERSION"), "
 /// Errors that can occur during Reddit interaction
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    #[error("reddit api error: {0}")]
+    Reddit(#[from] reddit::Error),
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
 }
