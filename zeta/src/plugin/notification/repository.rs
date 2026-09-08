@@ -1,7 +1,7 @@
 //! Database access for notifications.
 
 use futures::TryStreamExt;
-use tracing::{debug, instrument};
+use tracing::{instrument, trace};
 
 use super::{
     error::Error,
@@ -30,7 +30,7 @@ impl NotificationRepository {
     /// Returns [`Error::Load`] if the notifications could not be fetched.
     #[instrument(skip_all, err)]
     pub async fn list(&self) -> Result<Vec<Notification>, Error> {
-        debug!("loading notifications from database");
+        trace!("loading notifications from database");
 
         let mut notifications = Vec::new();
         let mut stream =
@@ -50,7 +50,7 @@ impl NotificationRepository {
     /// Returns [`Error::Insert`] if the notification could not be inserted.
     #[instrument(skip_all, err)]
     pub async fn insert(&self, notification: NewNotification) -> Result<Notification, Error> {
-        debug!("inserting notification into database");
+        trace!("inserting notification into database");
 
         sqlx::query_file_as!(
             Notification,
@@ -74,7 +74,7 @@ impl NotificationRepository {
     /// Returns [`Error::Delete`] if the notification could not be deleted.
     #[instrument(skip_all, err)]
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
-        debug!(?ids, "deleting notifications from database");
+        trace!(?ids, "deleting notifications from database");
 
         sqlx::query!("DELETE FROM notifications WHERE id = ANY($1)", ids)
             .execute(&self.db)

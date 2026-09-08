@@ -20,7 +20,7 @@ pub use {
 
 use irc::proto::Prefix as IrcPrefix;
 use sqlx::types::chrono::Local;
-use tracing::{debug, error};
+use tracing::{error, trace};
 
 use crate::plugin::prelude::*;
 
@@ -55,7 +55,7 @@ impl Plugin<Context> for NotificationPlugin {
         &[NOTIFY]
     }
 
-    async fn loaded(&mut self, _ctx: &Context) -> Result<(), ZetaError> {
+    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
@@ -92,14 +92,11 @@ impl Plugin<Context> for NotificationPlugin {
             };
 
             let result = self.service.create(notification).await;
-
-            debug!(?result, "inserted notification");
+            trace!(?result, "inserted notification");
             client.send_privmsg(channel, "\x0310> The notification has been stored.")?;
         } else {
             let pending = self.service.take(channel, nickname).await;
             let mut sent_ids = Vec::with_capacity(pending.len());
-
-            debug!(?pending, "pending notifications");
 
             for notification in &pending {
                 let message = &notification.message;
