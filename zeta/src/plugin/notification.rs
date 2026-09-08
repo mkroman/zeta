@@ -55,7 +55,7 @@ impl Plugin<Context> for NotificationPlugin {
         &[NOTIFY]
     }
 
-    async fn loaded(&mut self, _ctx: &Context) -> Result<(), ZetaError> {
+    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())

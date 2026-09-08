@@ -136,10 +136,10 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
         Ok(())
     }
 
-    /// Called when all plugins are loaded and the client is connecting to the network.
+    /// Called when all plugins are loaded and the client has connected to the network.
     ///
     /// This is useful for setting up plugins with async state.
-    async fn loaded(&mut self, _ctx: &C) -> Result<(), Error> {
+    async fn loaded(&mut self, _ctx: &C, _client: &Client) -> Result<(), Error> {
         Ok(())
     }
 

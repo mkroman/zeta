@@ -1,6 +1,7 @@
 //! Database access for alerts.
 
 use futures::TryStreamExt;
+use sqlx::types::chrono::{DateTime, Utc};
 use tracing::{debug, instrument};
 
 use super::{
@@ -47,19 +48,20 @@ impl AlertRepository {
         .map_err(Error::Insert)
     }
 
-    /// Returns all alerts that are due, i.e. scheduled for a time in the past.
+    /// Returns all alerts scheduled to occur before `deadline`.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched.
     #[instrument(skip_all, err)]
-    pub async fn list_due(&self) -> Result<Vec<Alert>, Error> {
-        debug!("fetching due alerts from database");
+    pub async fn list_until(&self, deadline: DateTime<Utc>) -> Result<Vec<Alert>, Error> {
+        debug!(?deadline, "loading alerts from database");
 
         let mut alerts = Vec::new();
         let mut stream = sqlx::query_as!(
             Alert,
-            "SELECT * FROM alerts WHERE time <= NOW() ORDER BY time"
+            "SELECT * FROM alerts WHERE time <= $1",
+            deadline
         )
         .fetch(&self.db);
 

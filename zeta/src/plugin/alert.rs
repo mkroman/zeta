@@ -4,9 +4,9 @@
 //! `.alert hello world at 4:20` or `.alert another message in 10 minutes`, and support human
 //! datetime expressions ("tomorrow 8pm", "next friday 10:30", "10 minutes", ..).
 //!
-//! Alerts are persisted in the database and delivered by a scheduler task that broadcasts due
-//! alerts to the plugin, which delivers them in the channel they were created in and removes them
-//! from the database once sent.
+//! Alerts are persisted in the database and cached in memory by the alert service. A scheduler
+//! task broadcasts due alerts to a delivery task, which sends them in the channel they were
+//! created in; alerts are removed from the cache and the database once sent.
 
 mod error;
 mod model;
@@ -21,8 +21,6 @@ pub use {
     model::{Alert, NewAlert},
     service::AlertService,
 };
-
-use std::sync::Mutex;
 
 use chrono::Days;
 use interim::{Dialect, parse_date_string};
@@ -66,58 +64,51 @@ enum Tense {
 /// Alert plugin.
 ///
 /// Lets users schedule alerts for themselves with the `.alert <message> <in|at> <datetime>`
-/// command; a scheduler task broadcasts due alerts which are then delivered in the channel the
-/// alert was created in.
+/// command; a scheduler task broadcasts due alerts to a delivery task, started in [`loaded`],
+/// which sends them in the channel the alert was created in.
+///
+/// [`loaded`]: Plugin::loaded
 pub struct AlertPlugin {
     /// The alert service.
     service: AlertService,
-    /// The receiver of due alerts, broadcast by the scheduler task.
-    receiver: Mutex<broadcast::Receiver<Alert>>,
+    /// The receiver of due alerts, moved into the delivery task on load.
+    receiver: Option<broadcast::Receiver<Alert>>,
 }
 
 impl AlertPlugin {
-    /// Drains all due alerts from the broadcast receiver and delivers them over IRC.
-    fn deliver_due_alerts(&self, client: &Client) {
-        let pending = {
-            let mut receiver = self
-                .receiver
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+    /// Spawns the delivery task that sends due alerts over IRC as they are broadcast by the
+    /// scheduler.
+    fn start_delivery(client: &Client, mut receiver: broadcast::Receiver<Alert>) {
+        let sender = client.sender();
 
-            let mut pending = Vec::new();
+        tokio::spawn(async move {
+            debug!("starting alert delivery task");
 
             loop {
-                match receiver.try_recv() {
-                    Ok(alert) => pending.push(alert),
-                    Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                let alert = match receiver.recv().await {
+                    Ok(alert) => alert,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!(?n, "missed due alerts");
+
+                        continue;
                     }
-                    Err(broadcast::error::TryRecvError::Empty) => break,
-                    Err(broadcast::error::TryRecvError::Closed) => {
+                    Err(broadcast::error::RecvError::Closed) => {
                         error!("alert broadcast channel is closed");
+
                         break;
                     }
+                };
+
+                debug!(?alert, "delivering alert");
+
+                if let Err(err) = sender.send_privmsg(
+                    &alert.channel,
+                    format!("{}: {}", alert.nickname, alert.message),
+                ) {
+                    error!(?err, alert_id = alert.id, "could not deliver alert");
                 }
             }
-
-            pending
-        };
-
-        if pending.is_empty() {
-            return;
-        }
-
-        debug!(?pending, "delivering due alerts");
-
-        for alert in pending {
-            if let Err(err) = client
-                .send_privmsg(&alert.channel, format!("{}: {}", alert.nickname, alert.message))
-            {
-                error!(?err, alert_id = alert.id, "could not deliver alert");
-
-                break;
-            }
-        }
+        });
     }
 }
 
@@ -127,7 +118,7 @@ impl Plugin<Context> for AlertPlugin {
         let service = AlertService::new(ctx.db.clone());
 
         Ok(AlertPlugin {
-            receiver: Mutex::new(service.subscribe()),
+            receiver: Some(service.subscribe()),
             service,
         })
     }
@@ -143,8 +134,13 @@ impl Plugin<Context> for AlertPlugin {
         &[ALERT]
     }
 
-    async fn loaded(&mut self, _ctx: &Context) -> Result<(), ZetaError> {
+    async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {
+        self.service.load().await.map_err(plugin_err)?;
         self.service.start_scheduler();
+
+        if let Some(receiver) = self.receiver.take() {
+            Self::start_delivery(client, receiver);
+        }
 
         Ok(())
     }
@@ -193,7 +189,7 @@ impl Plugin<Context> for AlertPlugin {
 
             match self.service.create(alert).await {
                 Ok(_) => {
-                    let local = time.with_timezone(&Local).format("%d/%m/%Y %H:%M");
+                    let local = time.with_timezone(&Local).format("%d/%m/%Y %H:%M:%S");
 
                     client.send_privmsg(
                         channel,
@@ -206,8 +202,6 @@ impl Plugin<Context> for AlertPlugin {
                 }
             }
         }
-
-        self.deliver_due_alerts(client);
 
         Ok(())
     }

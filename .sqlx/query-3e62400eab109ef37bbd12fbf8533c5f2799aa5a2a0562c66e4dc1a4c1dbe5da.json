@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM alerts WHERE time <= NOW() ORDER BY time",
+  "query": "SELECT * FROM alerts WHERE time <= $1",
   "describe": {
     "columns": [
       {
@@ -93,7 +93,9 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Timestamptz"
+      ]
     },
     "nullable": [
       false,
@@ -106,5 +108,5 @@
       false
     ]
   },
-  "hash": "b4f5f243ef20197cb444524fdb11e16ee5e97f7ecb37484309d52009a64359a9"
+  "hash": "3e62400eab109ef37bbd12fbf8533c5f2799aa5a2a0562c66e4dc1a4c1dbe5da"
 }

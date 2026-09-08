@@ -63,11 +63,6 @@ impl Zeta {
     ///
     /// Plugin errors are logged but not propagated — one failing plugin won't block others.
     pub async fn run(&mut self) -> Result<(), Error> {
-        for (name, plugin) in &mut self.registry.plugins {
-            debug!(%name, "calling plugin::loaded");
-            plugin.loaded(&self.context).await?;
-        }
-
         let mut client = Client::from_config(self.config.irc.clone().into())
             .await
             .map_err(Error::IrcClient)?;
@@ -79,6 +74,11 @@ impl Zeta {
         self.client = Some(client);
 
         if let Some(client) = &self.client {
+            for (name, plugin) in &mut self.registry.plugins {
+                debug!(%name, "calling plugin::loaded");
+                plugin.loaded(&self.context, client).await?;
+            }
+
             while let Some(message) = stream.next().await.transpose()? {
                 self.handle_message(client, message).await?;
             }
