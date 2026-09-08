@@ -186,27 +186,30 @@ impl Ofn {
     /// Returns statistics about the number of rows in the database.
     pub async fn stats(&self, ctx: &Context) -> Result<Statistics, Error> {
         let today = Utc::now().date_naive();
-        let (num_urls, num_urls_today): (i64, i64) = sqlx::query_as(
-            "SELECT 
-                COUNT(id) AS num_urls,
-                COUNT(id) FILTER (WHERE created_at >= $1) AS num_urls_today
-            FROM url_records",
-        )
-        .bind(today)
-        .fetch_one(&ctx.db)
-        .await
-        .map_err(Error::QueryDatabase)?;
-
-        let (num_yt_ids, num_yt_ids_today): (i64, i64) = sqlx::query_as(
-            "SELECT 
-                COUNT(id) AS num_urls,
-                COUNT(id) FILTER (WHERE created_at >= $1) AS num_urls_today
-            FROM youtube_video_urls",
-        )
-        .bind(today)
-        .fetch_one(&ctx.db)
-        .await
-        .map_err(Error::QueryDatabase)?;
+        let (num_urls, num_urls_today, num_yt_ids, num_yt_ids_today): (i64, i64, i64, i64) =
+            sqlx::query_as(
+                r"SELECT
+                    u.num_urls,
+                    u.num_urls_today,
+                    y.num_yt_ids,
+                    y.num_yt_ids_today
+                FROM (
+                    SELECT
+                        COUNT(id) AS num_urls,
+                        COUNT(id) FILTER (WHERE created_at >= $1) AS num_urls_today
+                    FROM url_records
+                ) AS u
+                CROSS JOIN (
+                    SELECT
+                        COUNT(id) AS num_yt_ids,
+                        COUNT(id) FILTER (WHERE created_at >= $1) AS num_yt_ids_today
+                    FROM youtube_video_urls
+                ) AS y",
+            )
+            .bind(today)
+            .fetch_one(&ctx.db)
+            .await
+            .map_err(Error::QueryDatabase)?;
 
         Ok(Statistics {
             num_urls,
@@ -267,12 +270,13 @@ impl Ofn {
         match opts.command {
             Subcommand::Stats(_) => {
                 let stats = self.stats(ctx).await.map_err(plugin_err)?;
+                let num_urls = stats.num_urls.to_formatted_string(&Locale::en);
+                let num_urls_today = stats.num_urls_today.to_formatted_string(&Locale::en);
+                let num_yt_ids = stats.num_yt_ids.to_formatted_string(&Locale::en);
+                let num_yt_ids_today = stats.num_yt_ids_today.to_formatted_string(&Locale::en);
+
                 let output = format!(
-                    "URLs:\x0f {}\x0310 YouTube Videos:\x0f {}\x0310 Recorded today:\x0f {}\x0310/\x0f{}",
-                    stats.num_urls.to_formatted_string(&Locale::en),
-                    stats.num_yt_ids.to_formatted_string(&Locale::en),
-                    stats.num_urls_today.to_formatted_string(&Locale::en),
-                    stats.num_yt_ids_today.to_formatted_string(&Locale::en)
+                    "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"
                 );
 
                 client.send_privmsg(channel, formatted(&output))?;
