@@ -22,8 +22,8 @@ use crate::{
 };
 use model::{InsertUrlRecord, UrlRecord};
 
-/// The prefix for the plugin command.
-const COMMAND_PREFIX: &str = ".ofn";
+/// The `.ofn` command.
+const OFN: Prefix = Prefix::new(".ofn");
 
 pub struct Ofn;
 
@@ -232,13 +232,14 @@ impl Ofn {
         match self.process_urls(ctx, origin, &urls).await {
             Ok(report) => {
                 for resource in report.found {
+                    let time_ago = distance_of_time_in_words(resource.created_at());
+
                     client.send_privmsg(
                         origin.channel,
                         format!(
-                            "{}: OFN - posted by {} @ {}",
+                            "{}: OFN - posted by {} {time_ago}",
                             origin.nickname,
-                            resource.nickname(),
-                            resource.created_at()
+                            resource.nickname()
                         ),
                     )?;
                 }
@@ -363,7 +364,7 @@ impl Plugin<Context> for Ofn {
     }
 
     fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(COMMAND_PREFIX)] }
+        &[OFN]
     }
 
     async fn handle_command(
@@ -401,7 +402,11 @@ impl Plugin<Context> for Ofn {
             return Ok(());
         };
 
-        if self.commands().iter().any(|command| command.parse(msg).is_some()) {
+        if self
+            .commands()
+            .iter()
+            .any(|command| command.parse(msg).is_some())
+        {
             self.dispatch_command(ctx, client, message).await
         } else {
             let origin = ChannelMessageOrigin {
@@ -510,4 +515,74 @@ fn formatted(s: &str) -> String {
 
 fn formatted_err(s: &str) -> String {
     formatted(&format!("Error:\x0f {s}"))
+}
+
+fn distance_of_time_in_words(delta: DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let total_seconds = (now - delta).num_seconds();
+
+    // Handle zero or negative durations
+    if total_seconds <= 0 {
+        return "0 minutes".to_string();
+    }
+
+    // Calculate time units
+    let weeks = total_seconds / (7 * 24 * 60 * 60);
+    let remaining_after_weeks = total_seconds % (7 * 24 * 60 * 60);
+    let days = remaining_after_weeks / (24 * 60 * 60);
+    let remaining_after_days = remaining_after_weeks % (24 * 60 * 60);
+    let hours = remaining_after_days / (60 * 60);
+    let remaining_after_hours = remaining_after_days % (60 * 60);
+    let minutes = remaining_after_hours / 60;
+    let remaining_after_mins = remaining_after_days % (60 * 60);
+    let seconds = remaining_after_mins % 60;
+
+    // Build the parts vector with non-zero units
+    let mut parts = Vec::new();
+
+    if weeks > 0 {
+        parts.push(format!(
+            "{} week{}",
+            weeks,
+            if weeks == 1 { "" } else { "s" }
+        ));
+    }
+    if days > 0 {
+        parts.push(format!("{} day{}", days, if days == 1 { "" } else { "s" }));
+    }
+
+    if hours > 0 {
+        parts.push(format!(
+            "{} hour{}",
+            hours,
+            if hours == 1 { "" } else { "s" }
+        ));
+    }
+
+    if minutes > 0 {
+        parts.push(format!(
+            "{} minute{}",
+            minutes,
+            if minutes == 1 { "" } else { "s" }
+        ));
+    }
+
+    if seconds > 0 {
+        parts.push(format!(
+            "{} second{}",
+            seconds,
+            if seconds == 1 { "" } else { "s" }
+        ));
+    }
+
+    // Format the output with proper grammar
+    match parts.len() {
+        0 => "0 minutes ago".to_string(),
+        1 => format!("{} ago", parts[0].clone()),
+        2 => format!("{} and {} ago", parts[0], parts[1]),
+        _ => {
+            let last = parts.pop().unwrap();
+            format!("{}, and {} ago", parts.join(", "), last)
+        }
+    }
 }
