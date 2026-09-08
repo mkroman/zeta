@@ -1,0 +1,117 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO alerts (\n  nickname, username, hostname, channel, message, time\n) VALUES (\n  $1, $2, $3, $4, $5, $6\n) RETURNING *;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "nickname",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "nickname"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "hostname",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "hostname"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "channel",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "channel"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "message",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "message"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "time",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "time"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5ebdbcbd169d39d4517359da8f4774b6a221c4919d0c45299ae37a859cca16e7"
+}

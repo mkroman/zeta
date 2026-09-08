@@ -13,8 +13,8 @@ mod prelude {
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
+    pub use zeta_plugin::prelude::{plugin_err, require_env, ArgsError, BoxError, Prefix};
     pub use zeta_plugin::Error as ZetaError;
-    pub use zeta_plugin::prelude::{ArgsError, BoxError, Prefix, plugin_err, require_env};
 
     pub use super::{Author, Context, Metadata, Name, Plugin};
 }
@@ -55,6 +55,10 @@ macro_rules! declare_plugins {
 }
 
 declare_plugins! {
+  /// Time-based user alerts.
+  #[cfg(feature = "plugin-alert")]
+  alert::AlertPlugin,
+
   /// Chaturbate platform integration.
   #[cfg(feature = "plugin-chaturbate")]
   chaturbate::Chaturbate,

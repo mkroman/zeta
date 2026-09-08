@@ -21,6 +21,7 @@ http = ["dep:reqwest"]
 native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx?/tls-native-tls"]
 native-tls-vendored = ["reqwest/native-tls-vendored", "irc/tls-native", "sqlx?/tls-native-tls"]
 rustls = ["reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls"]
+plugin-alert = ["database", "dep:chrono", "dep:interim"]
 plugin-chaturbate = ["http", "dep:regex"]
 plugin-choices = []
 plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
@@ -56,6 +57,7 @@ plugin-youtube = [
     "dep:time",
 ]
 plugins-all = [
+    "plugin-alert",
     "plugin-chaturbate",
     "plugin-choices",
     "plugin-dendanskeordbog",
@@ -97,6 +99,7 @@ futures = "0.3.31"
 hickory-resolver = { version = "0.26.2", features = ["tls-ring"] }
 htmlize = { version = "1.1.0", features = ["unescape"], optional = true }
 humantime-serde = "1.1.1"
+interim = { version = "0.2.1", features = ["chrono_0_4"], optional = true }
 irc.workspace = true
 memory-stats = { version = "1.2.0", optional = true }
 miette = { version = "7.2.0", features = ["fancy"] }
