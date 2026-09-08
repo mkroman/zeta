@@ -136,6 +136,13 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
         Ok(())
     }
 
+    /// Called when all plugins are loaded and the client is connecting to the network.
+    ///
+    /// This is useful for setting up plugins with async state.
+    async fn loaded(&mut self, _ctx: &C) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Dispatches `message` to [`Plugin::handle_command`] if it matches one of
     /// [`Plugin::commands`].
     ///

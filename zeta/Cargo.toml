@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [features]
 default = ["plugins-all", "native-tls", "database"]
-database = ["dep:sqlx"]
+database = ["dep:sqlx", "dep:chrono"]
 http = ["dep:reqwest"]
 native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx?/tls-native-tls"]
 native-tls-vendored = ["reqwest/native-tls-vendored", "irc/tls-native", "sqlx?/tls-native-tls"]
@@ -33,6 +33,7 @@ plugin-howlongtobeat = ["http"]
 plugin-imdb = ["http", "dep:num-format", "dep:serde_path_to_error"]
 plugin-isitopen = ["http", "dep:regex", "dep:time"]
 plugin-kagi = ["http", "dep:regex", "dep:scraper"]
+plugin-notification = ["database", "dep:chrono"]
 plugin-ofn = ["database", "http", "plugin-youtube", "dep:num-format"]
 plugin-openweathermap = ["http"]
 plugin-pornhub = ["http", "dep:num-format", "dep:serde_path_to_error"]
@@ -67,6 +68,7 @@ plugins-all = [
     "plugin-imdb",
     "plugin-isitopen",
     "plugin-kagi",
+    "plugin-notification",
     "plugin-ofn",
     "plugin-openweathermap",
     "plugin-pornhub",
@@ -88,6 +90,7 @@ plugins-all = [
 argh.workspace = true
 async-trait.workspace = true
 base64 = { version = "0.23.0", optional = true }
+chrono = { version = "0.4.45", optional = true }
 dendanskeordbog = { path = "../dendanskeordbog", features = ["client"], optional = true }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
