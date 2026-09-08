@@ -12,15 +12,7 @@ pub enum Error {
     /// Deleting an alert from the database failed.
     #[error("could not delete alert: {0}")]
     Delete(#[source] sqlx::Error),
-}
-
-/// Errors that can occur while parsing the datetime of an alert.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ParseTimeError {
-    /// The datetime could not be understood.
-    #[error("ambiguous or unsupported datetime")]
-    Ambiguous,
-    /// The datetime occurs in the past.
-    #[error("specified time occurs in the past")]
-    Past,
+    /// The alert delivery channel is closed.
+    #[error("alert delivery channel is closed")]
+    Closed,
 }

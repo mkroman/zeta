@@ -7,7 +7,7 @@ use sqlx::{
 
 /// A scheduled alert, as stored in the database.
 // Some fields are only populated from the database and never read.
-#[derive(Debug, FromRow, Clone)]
+#[derive(Debug, FromRow, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct Alert {
     /// The database id of the alert.

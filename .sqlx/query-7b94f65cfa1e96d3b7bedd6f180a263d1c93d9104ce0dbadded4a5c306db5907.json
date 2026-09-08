@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO alerts (\n  nickname, username, hostname, channel, message, time\n) VALUES (\n  $1, $2, $3, $4, $5, $6\n) RETURNING *;\n",
+  "query": "SELECT id, nickname, username, hostname, channel, message, time, created_at\n               FROM alerts\n               ORDER BY time",
   "describe": {
     "columns": [
       {
@@ -93,14 +93,7 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Text",
-        "Text",
-        "Text",
-        "Text",
-        "Text",
-        "Timestamptz"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -113,5 +106,5 @@
       false
     ]
   },
-  "hash": "5ebdbcbd169d39d4517359da8f4774b6a221c4919d0c45299ae37a859cca16e7"
+  "hash": "7b94f65cfa1e96d3b7bedd6f180a263d1c93d9104ce0dbadded4a5c306db5907"
 }

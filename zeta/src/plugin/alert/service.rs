@@ -1,13 +1,14 @@
-//! Alert service, persisting alerts in the database and broadcasting due alerts to a subscriber.
+//! Alert service, persisting alerts in the database and delivering due alerts to a subscriber.
 
 use std::{
-    collections::{HashMap, HashSet},
+    cmp::{Ordering, Reverse},
+    collections::BinaryHeap,
     sync::Arc,
     time::Duration,
 };
 
 use sqlx::types::chrono::{DateTime, Utc};
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{Mutex, Notify, mpsc};
 use tracing::{debug, error, instrument, warn};
 
 use super::{
@@ -17,188 +18,347 @@ use super::{
 };
 use crate::database::Database;
 
-/// How often the scheduler checks the cache for due alerts.
-const SCHEDULER_INTERVAL: Duration = Duration::from_mins(5);
+/// How long the scheduler waits before retrying after a failed tick.
+const RETRY_DELAY: Duration = Duration::from_secs(30);
 
-/// The capacity of the broadcast channel used to deliver due alerts.
-const BROADCAST_CAPACITY: usize = 256;
+/// An alert scheduled for delivery, ordered by the time it is due.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Scheduled(Alert);
 
-/// Returns the deadline until which alerts are cached, i.e. the time of the next scheduler poll
-/// relative to `now`.
-fn next_poll(now: DateTime<Utc>) -> DateTime<Utc> {
-    now + SCHEDULER_INTERVAL
+impl Ord for Scheduled {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .time
+            .cmp(&other.0.time)
+            .then(self.0.id.cmp(&other.0.id))
+    }
 }
 
-/// Stores alerts in the database, caching them in memory and broadcasting due alerts on a
-/// [`tokio::sync::broadcast`] channel.
-///
-/// Only the alerts that will trigger before the next scheduler poll are cached; the database
-/// remains the source of truth for alerts further in the future. The scheduler task broadcasts
-/// each alert as it becomes due, deleting it from both the cache and the database once broadcast,
-/// and refreshes the cache with the alerts triggering before its next poll. The plugin holds a
-/// receiver and delivers the alerts it receives over IRC.
+impl PartialOrd for Scheduled {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// The state shared between the service and the scheduler task.
 #[derive(Clone)]
-pub struct AlertService {
+struct Scheduler {
     /// The alert repository.
     repo: AlertRepository,
-    /// The sender half of the broadcast channel.
-    tx: broadcast::Sender<Alert>,
-    /// The alerts that will trigger before the next scheduler poll, keyed by their database id.
-    cache: Arc<Mutex<HashMap<i32, Alert>>>,
+    /// The sender half of the channel used to deliver due alerts.
+    tx: mpsc::UnboundedSender<Alert>,
+    /// All pending alerts, ordered by the time they are due.
+    cache: Arc<Mutex<BinaryHeap<Reverse<Scheduled>>>>,
+    /// Wakes the scheduler when an alert is created.
+    notify: Arc<Notify>,
+}
+
+/// Stores alerts in the database, caching them in memory and delivering due alerts over an
+/// unbounded [`tokio::sync::mpsc`] channel.
+///
+/// All pending alerts are cached in a min-heap ordered by due time; the database remains the
+/// source of truth for crash recovery. The scheduler task sleeps until the next alert is due,
+/// sends it to the delivery task, and deletes it from the cache and the database once sent.
+/// Delivery is at-least-once: alerts are only deleted after being sent, so a failed deletion
+/// results in a duplicate delivery. The plugin holds the receiver and delivers the alerts it
+/// receives over IRC.
+pub struct AlertService {
+    /// The state shared with the scheduler task.
+    scheduler: Scheduler,
+    /// The receiver of due alerts, taken by the delivery task on load.
+    receiver: Option<mpsc::UnboundedReceiver<Alert>>,
 }
 
 impl AlertService {
     /// Creates a new alert service backed by the given database pool.
     #[must_use]
     pub fn new(db: Database) -> Self {
-        let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let (tx, receiver) = mpsc::unbounded_channel();
 
         Self {
-            repo: AlertRepository::new(db),
-            tx,
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            scheduler: Scheduler {
+                repo: AlertRepository::new(db),
+                tx,
+                cache: Arc::new(Mutex::new(BinaryHeap::new())),
+                notify: Arc::new(Notify::new()),
+            },
+            receiver: Some(receiver),
         }
     }
 
-    /// Returns a new receiver for due alerts.
+    /// Takes the receiver of due alerts, to be handed to the delivery task.
+    ///
+    /// Returns `None` if the receiver has already been taken.
     #[must_use]
-    pub fn subscribe(&self) -> broadcast::Receiver<Alert> {
-        self.tx.subscribe()
+    pub const fn take_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<Alert>> {
+        self.receiver.take()
     }
 
-    /// Loads the alerts that will trigger before the next scheduler poll into the cache.
+    /// Loads all pending alerts from the database into the cache.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
-        self.refresh_cache(Utc::now()).await
+        self.scheduler.load().await
     }
 
-    /// Creates a new alert, persisting it in the database.
-    ///
-    /// The alert is also added to the cache if it will trigger before the next scheduler poll;
-    /// alerts further in the future are picked up by a later poll.
+    /// Creates a new alert, persisting it in the database and scheduling it for delivery.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the alert could not be inserted into the database.
     #[instrument(skip_all, err)]
     pub async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
-        let alert = self.repo.insert(alert).await?;
-
-        if alert.time <= next_poll(Utc::now()) {
-            debug!(?alert, "storing alert in cache");
-            self.cache.lock().await.insert(alert.id, alert.clone());
-        }
-
-        Ok(alert)
+        self.scheduler.create(alert).await
     }
 
-    /// Spawns the scheduler task, broadcasting due alerts until the runtime shuts down.
+    /// Spawns the scheduler task, delivering due alerts until the runtime shuts down.
     pub fn start_scheduler(&self) {
-        let service = self.clone();
+        let scheduler = self.scheduler.clone();
 
         tokio::spawn(async move {
             debug!("starting alert scheduler");
 
-            let mut ticker = tokio::time::interval(SCHEDULER_INTERVAL);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-            loop {
-                ticker.tick().await;
-
-                if let Err(err) = service.tick().await {
-                    error!(?err, "scheduler tick failed");
-                }
-            }
+            scheduler.run().await;
         });
     }
+}
 
-    /// Broadcasts all alerts that are due, refreshing the cache with the alerts that will trigger
-    /// before the next poll.
-    ///
-    /// # Errors
-    ///
-    /// Returns the repository error if the alerts could not be fetched or deleted.
-    async fn tick(&self) -> Result<(), Error> {
-        let now = Utc::now();
+impl Scheduler {
+    /// Loads all alerts in the database into the cache.
+    async fn load(&self) -> Result<(), Error> {
+        let alerts: BinaryHeap<Reverse<Scheduled>> = self
+            .repo
+            .list()
+            .await?
+            .into_iter()
+            .map(|alert| Reverse(Scheduled(alert)))
+            .collect();
 
-        self.broadcast_due(now).await?;
-        self.refresh_cache(now).await
+        debug!(count = alerts.len(), "loaded alerts into cache");
+
+        // Merges instead of replacing, so an alert persisted by `create` while the query ran is
+        // not evicted from the cache.
+        self.cache.lock().await.extend(alerts);
+
+        Ok(())
     }
 
-    /// Broadcasts all alerts that are due at `now` and removes them from the cache and the
-    /// database once sent.
+    /// Creates a new alert, persisting it in the database and scheduling it for delivery.
+    async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
+        let alert = self.repo.insert(alert).await?;
+
+        debug!(?alert, "scheduling alert");
+
+        self.cache
+            .lock()
+            .await
+            .push(Reverse(Scheduled(alert.clone())));
+
+        // Wakes the scheduler, as the alert may be due sooner than the one it is waiting for.
+        self.notify.notify_one();
+
+        Ok(alert)
+    }
+
+    /// Runs the scheduler loop, delivering each alert as it becomes due.
+    async fn run(self) {
+        loop {
+            let now = Utc::now();
+
+            let next_due = self
+                .cache
+                .lock()
+                .await
+                .peek()
+                .map(|Reverse(alert)| alert.0.time);
+
+            match next_due {
+                // Sleeps until the next alert is due, or wakes early if an alert is created
+                // that is due sooner.
+                Some(due) if due > now => {
+                    let delay = (due - now).to_std().unwrap_or_default();
+
+                    tokio::select! {
+                        () = tokio::time::sleep(delay) => {}
+                        () = self.notify.notified() => continue,
+                    }
+                }
+                // The cache is empty; waits for the next alert to be created.
+                None => {
+                    self.notify.notified().await;
+
+                    continue;
+                }
+                // The next alert is already due.
+                Some(_) => {}
+            }
+
+            if self.tick().await.is_err() {
+                debug!("retrying scheduler tick shortly");
+
+                tokio::time::sleep(RETRY_DELAY).await;
+            }
+        }
+    }
+
+    /// Delivers all alerts that are due at `now`.
+    ///
+    /// Delivery is at-least-once: an alert is only deleted from the database after being sent,
+    /// so if the deletion fails the alert is kept in the cache and delivered again once the
+    /// database recovers.
     ///
     /// # Errors
     ///
-    /// Returns the repository error if the alerts could not be deleted.
-    async fn broadcast_due(&self, now: DateTime<Utc>) -> Result<(), Error> {
-        let due: Vec<Alert> = self
-            .cache
-            .lock()
-            .await
-            .values()
-            .filter(|alert| alert.time <= now)
-            .cloned()
-            .collect();
+    /// Returns the repository error if the alerts could not be deleted, or [`Error::Closed`] if
+    /// the delivery channel is closed.
+    async fn tick(&self) -> Result<(), Error> {
+        let due = self.pop_due(Utc::now()).await;
 
         if due.is_empty() {
             return Ok(());
         }
 
-        let mut sent_ids = Vec::with_capacity(due.len());
+        for Scheduled(alert) in &due {
+            debug!(?alert, "delivering alert");
 
-        for alert in due {
-            debug!(?alert, "broadcasting alert");
+            if self.tx.send(alert.clone()).is_err() {
+                error!(alert_id = alert.id, "alert delivery channel is closed");
 
-            let id = alert.id;
+                self.requeue(&due).await;
 
-            match self.tx.send(alert) {
-                Ok(_) => sent_ids.push(id),
-                Err(broadcast::error::SendError(alert)) => {
-                    warn!(
-                        alert_id = alert.id,
-                        "no active subscribers, keeping the alert for the next tick"
-                    );
-                }
+                return Err(Error::Closed);
             }
         }
 
-        if !sent_ids.is_empty() {
-            self.repo.delete_all(&sent_ids).await?;
+        let sent: Vec<i32> = due.iter().map(|Scheduled(alert)| alert.id).collect();
 
-            let sent: HashSet<i32> = sent_ids.into_iter().collect();
-            self.cache.lock().await.retain(|id, _| !sent.contains(id));
+        if let Err(err) = self.repo.delete_all(&sent).await {
+            warn!(
+                ?err,
+                count = due.len(),
+                "could not delete delivered alerts, they will be delivered again"
+            );
+
+            self.requeue(&due).await;
+
+            return Err(err);
         }
 
         Ok(())
     }
 
-    /// Merges the alerts that will trigger before the next scheduler poll into the cache.
-    ///
-    /// # Errors
-    ///
-    /// Returns the repository error if the alerts could not be fetched.
-    async fn refresh_cache(&self, now: DateTime<Utc>) -> Result<(), Error> {
-        let deadline = next_poll(now);
+    /// Pops all alerts that are due at `now` from the cache.
+    async fn pop_due(&self, now: DateTime<Utc>) -> Vec<Scheduled> {
+        let mut cache = self.cache.lock().await;
+        let mut due = Vec::new();
 
-        let alerts: HashMap<i32, Alert> = self
-            .repo
-            .list_until(deadline)
-            .await?
-            .into_iter()
-            .map(|alert| (alert.id, alert))
-            .collect();
+        while cache.peek().is_some_and(|Reverse(alert)| alert.0.time <= now) {
+            due.push(cache.pop().expect("peeked").0);
+        }
 
-        debug!(count = alerts.len(), ?deadline, "refreshed alert cache");
+        drop(cache);
 
-        // Merges instead of replacing, so an alert persisted after the query ran is not evicted
-        // from the cache by `create` in the meantime.
-        self.cache.lock().await.extend(alerts);
+        due
+    }
 
-        Ok(())
+    /// Puts alerts back into the cache after a failed delivery or deletion.
+    async fn requeue(&self, alerts: &[Scheduled]) {
+        self.cache
+            .lock()
+            .await
+            .extend(alerts.iter().cloned().map(Reverse));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use chrono::TimeDelta;
+
+    use super::*;
+
+    /// Skips the test if a test database has not been configured.
+    async fn test_service()
+    -> Option<(AlertService, mpsc::UnboundedReceiver<Alert>, Database)> {
+        let url = std::env::var("ZETA_TEST_DATABASE_URL").ok()?;
+
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .expect("could not connect to the test database");
+
+        let mut service = AlertService::new(db.clone());
+        let receiver = service.take_receiver();
+
+        Some((service, receiver.unwrap(), db))
+    }
+
+    fn new_alert(message: &str, time: DateTime<Utc>) -> NewAlert {
+        NewAlert {
+            nickname: "smoke".into(),
+            username: "smoke".into(),
+            hostname: "smoke".into(),
+            channel: "#smoke".into(),
+            message: message.into(),
+            time,
+        }
+    }
+
+    #[tokio::test]
+    async fn scheduler_delivers_created_alerts() {
+        let Some((service, mut receiver, db)) = test_service().await else {
+            return;
+        };
+
+        // Removes alerts left behind by earlier runs, so the cache starts clean.
+        sqlx::query("DELETE FROM alerts WHERE nickname = 'smoke'")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        service.load().await.unwrap();
+        service.start_scheduler();
+
+        // The scheduler wakes for an alert created while its cache is empty.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let now = Utc::now();
+        let first = service
+            .create(new_alert("first", now + TimeDelta::try_seconds(1).unwrap()))
+            .await
+            .unwrap();
+        let second = service
+            .create(new_alert("second", now + TimeDelta::try_seconds(3).unwrap()))
+            .await
+            .unwrap();
+
+        // The alerts are delivered in order, roughly when they are due.
+        for expected in [&first, &second] {
+            let delivered = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(delivered.id, expected.id);
+
+            let latency = Utc::now().signed_duration_since(expected.time).to_std().unwrap();
+            assert!(latency < Duration::from_secs(2), "latency {latency:?}");
+        }
+
+        // The alerts are deleted from the database once delivered.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alerts WHERE id = ANY($1)")
+            .bind([first.id, second.id])
+            .fetch_one(&db)
+            .await
+            .unwrap();
+
+        assert_eq!(remaining, 0);
     }
 }

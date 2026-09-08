@@ -5,8 +5,8 @@
 //! datetime expressions ("tomorrow 8pm", "next friday 10:30", "10 minutes", ..).
 //!
 //! Alerts are persisted in the database and cached in memory by the alert service. A scheduler
-//! task broadcasts due alerts to a delivery task, which sends them in the channel they were
-//! created in; alerts are removed from the cache and the database once sent.
+//! task delivers each alert to a delivery task as it becomes due, which sends it in the channel
+//! it was created in; alerts are removed from the cache and the database once sent.
 
 mod error;
 mod model;
@@ -17,7 +17,7 @@ mod service;
 // itself only handles them by value.
 #[allow(unused_imports)]
 pub use {
-    error::{Error, ParseTimeError},
+    error::Error,
     model::{Alert, NewAlert},
     service::AlertService,
 };
@@ -27,8 +27,8 @@ use interim::{Dialect, parse_date_string};
 use irc::proto::Prefix as IrcPrefix;
 use rand::prelude::IteratorRandom;
 use sqlx::types::chrono::{DateTime, Local, Utc};
-use tokio::sync::broadcast;
-use tracing::{debug, error, warn};
+use tokio::sync::mpsc;
+use tracing::{debug, error};
 
 use crate::plugin::prelude::*;
 
@@ -48,23 +48,10 @@ const SUCCESS_MESSAGES: &[&str] = &[
     "Very well, then.",
 ];
 
-/// The tense of an alert's datetime expression.
-///
-/// Determines how the trailing datetime is interpreted; `at` expressions are parsed as absolute or
-/// informal datetimes ("4:20", "12/12/2032 10:30", "tomorrow 8pm"), while `in` expressions are
-/// parsed as durations relative to now ("10 minutes").
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tense {
-    /// The datetime is an absolute point in time.
-    At,
-    /// The datetime is a duration relative to now.
-    In,
-}
-
 /// Alert plugin.
 ///
 /// Lets users schedule alerts for themselves with the `.alert <message> <in|at> <datetime>`
-/// command; a scheduler task broadcasts due alerts to a delivery task, started in [`loaded`],
+/// command; a scheduler task delivers due alerts to a delivery task, started in [`loaded`],
 /// which sends them in the channel the alert was created in.
 ///
 /// [`loaded`]: Plugin::loaded
@@ -72,33 +59,19 @@ pub struct AlertPlugin {
     /// The alert service.
     service: AlertService,
     /// The receiver of due alerts, moved into the delivery task on load.
-    receiver: Option<broadcast::Receiver<Alert>>,
+    receiver: Option<mpsc::UnboundedReceiver<Alert>>,
 }
 
 impl AlertPlugin {
-    /// Spawns the delivery task that sends due alerts over IRC as they are broadcast by the
+    /// Spawns the delivery task that sends due alerts over IRC as they are delivered by the
     /// scheduler.
-    fn start_delivery(client: &Client, mut receiver: broadcast::Receiver<Alert>) {
+    fn start_delivery(client: &Client, mut receiver: mpsc::UnboundedReceiver<Alert>) {
         let sender = client.sender();
 
         tokio::spawn(async move {
             debug!("starting alert delivery task");
 
-            loop {
-                let alert = match receiver.recv().await {
-                    Ok(alert) => alert,
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(?n, "missed due alerts");
-
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        error!("alert broadcast channel is closed");
-
-                        break;
-                    }
-                };
-
+            while let Some(alert) = receiver.recv().await {
                 debug!(?alert, "delivering alert");
 
                 if let Err(err) = sender.send_privmsg(
@@ -108,6 +81,8 @@ impl AlertPlugin {
                     error!(?err, alert_id = alert.id, "could not deliver alert");
                 }
             }
+
+            debug!("alert delivery channel is closed");
         });
     }
 }
@@ -115,12 +90,10 @@ impl AlertPlugin {
 #[async_trait]
 impl Plugin<Context> for AlertPlugin {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let service = AlertService::new(ctx.db.clone());
+        let mut service = AlertService::new(ctx.db.clone());
+        let receiver = service.take_receiver();
 
-        Ok(AlertPlugin {
-            receiver: Some(service.subscribe()),
-            service,
-        })
+        Ok(AlertPlugin { service, receiver })
     }
 
     fn metadata() -> Metadata {
@@ -160,7 +133,7 @@ impl Plugin<Context> for AlertPlugin {
         };
 
         if let Some(args) = ALERT.parse(msg) {
-            let Some((message, tense, time_spec)) = split_args(args) else {
+            let Some((message, time_spec)) = split_args(args) else {
                 client.send_privmsg(
                     channel,
                     formatted("Usage: .alert\x0f <message> <in|at> <datetime>"),
@@ -169,7 +142,7 @@ impl Plugin<Context> for AlertPlugin {
                 return Ok(());
             };
 
-            let time = match parse_time(tense, time_spec, Local::now()) {
+            let time = match parse_time(time_spec, Local::now()) {
                 Ok(time) => time,
                 Err(err) => {
                     client.send_privmsg(channel, formatted(&err.to_string()))?;
@@ -207,44 +180,49 @@ impl Plugin<Context> for AlertPlugin {
     }
 }
 
+/// Errors that can occur while parsing the datetime of an alert.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ParseTimeError {
+    /// The datetime could not be understood.
+    #[error("ambiguous or unsupported datetime")]
+    Ambiguous,
+    /// The datetime occurs in the past.
+    #[error("specified time occurs in the past")]
+    Past,
+}
+
 /// Splits the command arguments into the alert message and its datetime expression.
 ///
 /// The message and datetime are separated by the last occurrence of `at` or `in`, so messages
 /// containing either word are handled correctly. Returns `None` if either part is missing.
 #[must_use]
-fn split_args(args: &str) -> Option<(&str, Tense, &str)> {
-    let lower = args.to_ascii_lowercase();
-    let at = lower.rfind(" at ");
-    let r#in = lower.rfind(" in ");
-
-    let index = at.max(r#in)?;
-
-    let tense = if at == Some(index) { Tense::At } else { Tense::In };
+fn split_args(args: &str) -> Option<(&str, &str)> {
+    let index = rfind_ignore_case(args, " at ").max(rfind_ignore_case(args, " in "))?;
 
     let message = &args[..index];
     let time_spec = args[index + " at ".len()..].trim();
 
-    (!message.trim().is_empty() && !time_spec.is_empty()).then_some((message, tense, time_spec))
+    (!message.trim().is_empty() && !time_spec.is_empty()).then_some((message, time_spec))
+}
+
+/// Returns the byte index of the last occurrence of `needle` in `s`, ignoring ASCII case.
+fn rfind_ignore_case(s: &str, needle: &str) -> Option<usize> {
+    s.as_bytes()
+        .windows(needle.len())
+        .rposition(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 /// Parses the datetime expression of an alert.
 ///
 /// The expression is parsed as a human datetime relative to `now`; if a bare time ("4:20")
-/// resolves to the past it is rolled forward to the next day, while expressions containing a date
-/// that occurs in the past are rejected.
-///
-/// Both tenses are currently parsed alike: `at` expressions are datetimes ("4:20", "12/12/2032
-/// 10:30", "tomorrow 8pm") and `in` expressions are durations relative to `now` ("10 minutes").
+/// resolves to the past it is rolled forward to the next day, while expressions containing a
+/// date that occurs in the past are rejected.
 ///
 /// # Errors
 ///
 /// Returns [`ParseTimeError::Ambiguous`] if the expression could not be parsed, or
 /// [`ParseTimeError::Past`] if the expression contains a date that occurs in the past.
-fn parse_time(
-    _tense: Tense,
-    spec: &str,
-    now: DateTime<Local>,
-) -> Result<DateTime<Utc>, ParseTimeError> {
+fn parse_time(spec: &str, now: DateTime<Local>) -> Result<DateTime<Utc>, ParseTimeError> {
     // Tolerate a leading article in the datetime expression, e.g. "at the weekend".
     let spec = strip_article(spec.trim());
 
@@ -259,13 +237,10 @@ fn parse_time(
 
     if is_time_only(spec) {
         // Bare times such as "4:20" roll forward to their next occurrence.
-        let mut time = time;
-
-        while time <= now {
-            time = time
-                .checked_add_days(Days::new(1))
-                .ok_or(ParseTimeError::Ambiguous)?;
-        }
+        let days = u64::try_from((now - time).num_days()).unwrap_or_default() + 1;
+        let time = time
+            .checked_add_days(Days::new(days))
+            .ok_or(ParseTimeError::Ambiguous)?;
 
         return Ok(time.with_timezone(&Utc));
     }
@@ -281,6 +256,7 @@ fn strip_article(spec: &str) -> &str {
                 .get(..article.len())
                 .is_some_and(|prefix| prefix.eq_ignore_ascii_case(article))
         {
+            // The article is ASCII, so the prefix ends at a character boundary.
             return &spec[article.len()..];
         }
     }
@@ -331,11 +307,10 @@ fn is_time_only(spec: &str) -> bool {
 
 /// Returns `true` if `s` is a clock time on the form `H:M` or `H:M:S`, e.g. `4:20` or `16:34:10`.
 fn is_clock_time(s: &str) -> bool {
-    let segments: Vec<&str> = s.split(':').collect();
+    let segments = s.split(':').count();
 
-    (segments.len() == 2 || segments.len() == 3)
-        && segments
-            .iter()
+    (segments == 2 || segments == 3)
+        && s.split(':')
             .all(|segment| !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit()))
 }
 
@@ -362,15 +337,15 @@ mod tests {
     fn splits_message_and_datetime() {
         assert_eq!(
             split_args("hello world at 4:20"),
-            Some(("hello world", Tense::At, "4:20"))
+            Some(("hello world", "4:20"))
         );
         assert_eq!(
             split_args("some longer message at 10:30 12/12/2032"),
-            Some(("some longer message", Tense::At, "10:30 12/12/2032"))
+            Some(("some longer message", "10:30 12/12/2032"))
         );
         assert_eq!(
             split_args("another message at 12/12/2032 10:30"),
-            Some(("another message", Tense::At, "12/12/2032 10:30"))
+            Some(("another message", "12/12/2032 10:30"))
         );
     }
 
@@ -378,7 +353,7 @@ mod tests {
     fn splits_relative_durations() {
         assert_eq!(
             split_args("check the oven in 10 minutes"),
-            Some(("check the oven", Tense::In, "10 minutes"))
+            Some(("check the oven", "10 minutes"))
         );
     }
 
@@ -386,11 +361,11 @@ mod tests {
     fn splits_on_the_last_tense_marker() {
         assert_eq!(
             split_args("meet me at the station at 4:20"),
-            Some(("meet me at the station", Tense::At, "4:20"))
+            Some(("meet me at the station", "4:20"))
         );
         assert_eq!(
             split_args("come in in 10 minutes"),
-            Some(("come in", Tense::In, "10 minutes"))
+            Some(("come in", "10 minutes"))
         );
     }
 
@@ -408,11 +383,11 @@ mod tests {
     fn is_case_insensitive() {
         assert_eq!(
             split_args("Hello World AT 4:20"),
-            Some(("Hello World", Tense::At, "4:20"))
+            Some(("Hello World", "4:20"))
         );
         assert_eq!(
             split_args("hello world IN 10 minutes"),
-            Some(("hello world", Tense::In, "10 minutes"))
+            Some(("hello world", "10 minutes"))
         );
     }
 
@@ -420,7 +395,7 @@ mod tests {
     fn parses_future_datetimes() {
         let now = Local::now();
 
-        let time = parse_time(Tense::At, "12/12/2032 10:30", now).unwrap();
+        let time = parse_time("12/12/2032 10:30", now).unwrap();
         let expected = Local
             .with_ymd_and_hms(2032, 12, 12, 10, 30, 0)
             .unwrap()
@@ -433,7 +408,7 @@ mod tests {
     fn parses_month_before_day() {
         let now = Local::now();
 
-        let time = parse_time(Tense::At, "10:30 12/12/2032", now).unwrap();
+        let time = parse_time("10:30 12/12/2032", now).unwrap();
         let expected = Local
             .with_ymd_and_hms(2032, 12, 12, 10, 30, 0)
             .unwrap()
@@ -446,7 +421,7 @@ mod tests {
     fn parses_relative_durations() {
         let now = Local::now();
 
-        let time = parse_time(Tense::In, "10 minutes", now).unwrap();
+        let time = parse_time("10 minutes", now).unwrap();
         let local = time.with_timezone(&Local);
 
         assert!(time > now.with_timezone(&Utc));
@@ -458,7 +433,7 @@ mod tests {
     fn rolls_bare_times_forward_to_the_next_day() {
         let now = Local::now();
 
-        let time = parse_time(Tense::At, "4:20", now).unwrap();
+        let time = parse_time("4:20", now).unwrap();
         let local = time.with_timezone(&Local);
 
         assert!(time > now.with_timezone(&Utc));
@@ -470,7 +445,7 @@ mod tests {
         let now = Local::now();
 
         assert_eq!(
-            parse_time(Tense::At, "1/1/2000", now).unwrap_err(),
+            parse_time("1/1/2000", now).unwrap_err(),
             ParseTimeError::Past
         );
     }
@@ -480,7 +455,7 @@ mod tests {
         let now = Local::now();
 
         assert_eq!(
-            parse_time(Tense::At, "not a datetime", now).unwrap_err(),
+            parse_time("not a datetime", now).unwrap_err(),
             ParseTimeError::Ambiguous
         );
     }
@@ -489,7 +464,7 @@ mod tests {
     fn tolerates_a_leading_article() {
         let now = Local::now();
 
-        let time = parse_time(Tense::At, "at 4:20", now).unwrap();
+        let time = parse_time("at 4:20", now).unwrap();
 
         assert!(time > now.with_timezone(&Utc));
     }
