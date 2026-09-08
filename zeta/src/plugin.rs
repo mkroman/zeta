@@ -91,6 +91,10 @@ declare_plugins! {
   #[cfg(feature = "plugin-howlongtobeat")]
   howlongtobeat::HowLongToBeat,
 
+  /// IMDb integration
+  #[cfg(feature = "plugin-imdb")]
+  imdb::Imdb,
+
   /// Is it open
   #[cfg(feature = "plugin-isitopen")]
   isitopen::IsItOpen,
