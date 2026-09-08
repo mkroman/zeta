@@ -106,7 +106,7 @@ rand = "0.10.1"
 reddit = { path = "../reddit", optional = true }
 regex = { version = "1.12.2", optional = true }
 reqwest = { workspace = true, features = ["json", "stream", "cookies", "form", "query"], optional = true }
-rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "4e61b681ef48886e3af6bc805f94ae069c8c055c", features = ["bundle-files", "serde_json"], optional = true }
+rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "61be392a0d605ea6c4192934134683d63fbe7f7d", features = ["bundle-files", "serde_json"], optional = true }
 scraper = { optional = true, workspace = true }
 secrecy = { optional = true, workspace = true }
 serde.workspace = true

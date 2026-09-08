@@ -2616,7 +2616,7 @@ dependencies = [
 [[package]]
 name = "rink-core"
 version = "0.9.0"
-source = "git+https://codeberg.org/tiffany/rink?rev=4e61b681ef48886e3af6bc805f94ae069c8c055c#4e61b681ef48886e3af6bc805f94ae069c8c055c"
+source = "git+https://codeberg.org/tiffany/rink?rev=61be392a0d605ea6c4192934134683d63fbe7f7d#61be392a0d605ea6c4192934134683d63fbe7f7d"
 dependencies = [
  "jiff",
  "num-bigint",
