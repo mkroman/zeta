@@ -29,6 +29,7 @@ plugin-github = []
 plugin-google-images = []
 plugin-health = []
 plugin-howlongtobeat = []
+plugin-imdb = []
 plugin-isitopen = []
 plugin-kagi = []
 plugin-ofn = []
@@ -56,6 +57,7 @@ plugins-all = [
     "plugin-google-images",
     "plugin-health",
     "plugin-howlongtobeat",
+    "plugin-imdb",
     "plugin-isitopen",
     "plugin-kagi",
     "plugin-ofn",
