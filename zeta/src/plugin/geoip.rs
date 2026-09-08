@@ -1,14 +1,12 @@
-
 use std::fmt::Display;
 
 use argh::FromArgs;
-use reqwest::redirect::Policy;
 use serde::Deserialize;
 use thiserror::Error;
 use tracing::{debug, error, info};
 use url::Host;
 
-use crate::{consts::HTTP_TIMEOUT, plugin::prelude::*};
+use crate::{http, plugin::prelude::*};
 
 const BASE_URL: &str = "https://api.ip2location.io";
 
@@ -79,16 +77,9 @@ pub struct IpInfo {
 impl Plugin<Context> for GeoIp {
     fn new(_ctx: &Context) -> Result<GeoIp, ZetaError> {
         let api_key = require_env("GEOIP_API_KEY")?;
+        let client = http::client::builder().build().map_err(plugin_err)?;
 
-        let client = reqwest::Client::builder()
-            .redirect(Policy::none())
-            .timeout(HTTP_TIMEOUT)
-            .build().map_err(plugin_err)?;
-
-        Ok(GeoIp {
-            client,
-            api_key,
-        })
+        Ok(GeoIp { client, api_key })
     }
 
     fn metadata() -> Metadata {
@@ -125,10 +116,7 @@ impl Plugin<Context> for GeoIp {
                 }
             }
             Err(err) => {
-                client.send_privmsg(
-                    channel,
-                    format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"),
-                )?;
+                client.send_privmsg(channel, format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"))?;
             }
         }
 

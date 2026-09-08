@@ -17,36 +17,43 @@ path = "src/main.rs"
 [features]
 default = ["plugins-all", "native-tls", "database"]
 database = ["dep:sqlx"]
+http = ["dep:reqwest"]
 native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx?/tls-native-tls"]
 native-tls-vendored = ["reqwest/native-tls-vendored", "irc/tls-native", "sqlx?/tls-native-tls"]
 rustls = ["reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls"]
-plugin-chaturbate = []
+plugin-chaturbate = ["http", "dep:regex"]
 plugin-choices = []
-plugin-dendanskeordbog = []
+plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
 plugin-dig = []
-plugin-geoip = []
-plugin-github = []
-plugin-google-images = []
-plugin-health = []
-plugin-howlongtobeat = []
-plugin-imdb = []
-plugin-isitopen = []
-plugin-kagi = []
-plugin-ofn = []
-plugin-openweathermap = []
-plugin-pornhub = []
-plugin-reddit = ["dep:reddit"]
-plugin-rink = []
-plugin-rust-playground = []
-plugin-spotify = ["dep:base64"]
+plugin-geoip = ["http"]
+plugin-github = ["http"]
+plugin-google-images = ["http"]
+plugin-health = ["dep:memory-stats"]
+plugin-howlongtobeat = ["http"]
+plugin-imdb = ["http", "dep:num-format", "dep:serde_path_to_error"]
+plugin-isitopen = ["http", "dep:regex", "dep:time"]
+plugin-kagi = ["http", "dep:regex", "dep:scraper"]
+plugin-ofn = ["database", "http", "plugin-youtube", "dep:num-format"]
+plugin-openweathermap = ["http"]
+plugin-pornhub = ["http", "dep:num-format", "dep:serde_path_to_error"]
+plugin-reddit = ["dep:reddit", "dep:secrecy"]
+plugin-rink = ["dep:rink-core"]
+plugin-rust-playground = ["http", "dep:regex"]
+plugin-spotify = ["http", "dep:base64", "dep:num-format", "dep:regex"]
 plugin-string-utils = []
-plugin-thingiverse = []
-plugin-tiktok = []
-plugin-trustpilot = []
-plugin-tvmaze = []
-plugin-twitch = []
-plugin-urban-dictionary = []
-plugin-youtube = []
+plugin-thingiverse = ["http", "dep:num-format", "dep:regex"]
+plugin-tiktok = ["http"]
+plugin-trustpilot = ["http", "dep:num-format"]
+plugin-tvmaze = ["http", "dep:time", "dep:serde_path_to_error"]
+plugin-twitch = ["http", "dep:num-format"]
+plugin-urban-dictionary = ["http", "dep:time"]
+plugin-youtube = [
+    "http",
+    "dep:htmlize",
+    "dep:num-format",
+    "dep:serde_path_to_error",
+    "dep:time",
+]
 plugins-all = [
     "plugin-chaturbate",
     "plugin-choices",
@@ -81,33 +88,33 @@ plugins-all = [
 argh.workspace = true
 async-trait.workspace = true
 base64 = { version = "0.23.0", optional = true }
-dendanskeordbog = { path = "../dendanskeordbog", features = ["client"] }
+dendanskeordbog = { path = "../dendanskeordbog", features = ["client"], optional = true }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
 hickory-resolver = { version = "0.26.1", features = ["tls-ring"] }
-htmlize = { version = "1.1.0", features = ["unescape"] }
+htmlize = { version = "1.1.0", features = ["unescape"], optional = true }
 humantime-serde = "1.1.1"
 irc.workspace = true
-memory-stats = "1.2.0"
+memory-stats = { version = "1.2.0", optional = true }
 miette = { version = "7.2.0", features = ["fancy"] }
-num-format = "0.4.4"
+num-format = { version = "0.4.4", optional = true }
 opentelemetry = "0.32.0"
 opentelemetry-otlp = "0.32.0"
 opentelemetry-resource-detectors = "0.11.0"
 opentelemetry_sdk = { version = "0.32.0", features = ["rt-tokio"] }
 rand = "0.10.1"
 reddit = { path = "../reddit", optional = true }
-regex = "1.12.2"
-reqwest = { workspace = true, features = ["json", "stream", "cookies", "form", "query"] }
-rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "4e61b681ef48886e3af6bc805f94ae069c8c055c", features = ["bundle-files", "serde_json"] }
-scraper.workspace = true
-secrecy.workspace = true
+regex = { version = "1.12.2", optional = true }
+reqwest = { workspace = true, features = ["json", "stream", "cookies", "form", "query"], optional = true }
+rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "4e61b681ef48886e3af6bc805f94ae069c8c055c", features = ["bundle-files", "serde_json"], optional = true }
+scraper = { optional = true, workspace = true }
+secrecy = { optional = true, workspace = true }
 serde.workspace = true
 serde_json.workspace = true
-serde_path_to_error.workspace = true
+serde_path_to_error = { optional = true, workspace = true }
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"], optional = true }
 thiserror.workspace = true
-time = { version = "0.3.43", features = ["formatting", "parsing", "serde"] }
+time = { version = "0.3.43", features = ["formatting", "parsing", "serde"], optional = true }
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 tracing-opentelemetry = { version = "0.33.0" }

@@ -14,6 +14,7 @@ pub mod database;
 /// DNS resolution
 pub mod dns;
 mod error;
+#[cfg(feature = "http")]
 mod http;
 mod plugin;
 /// URL helper utillities

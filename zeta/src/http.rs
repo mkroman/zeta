@@ -13,11 +13,13 @@ pub mod client {
     ///
     /// Panics if the default HTTP client fails to build.
     #[must_use]
+    #[allow(unused)]
     pub fn build() -> Client {
         builder().build().expect("could not build http client")
     }
 
     /// Returns a default HTTP client builder.
+    #[allow(unused)]
     pub fn builder() -> reqwest::ClientBuilder {
         reqwest::ClientBuilder::new()
             .redirect(Policy::none())
@@ -30,6 +32,7 @@ pub mod client {
 ///
 /// This is equivalent to calling [`client::build`].
 #[must_use]
+#[allow(unused)]
 pub fn build_client() -> client::Client {
     client::build()
 }
