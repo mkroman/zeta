@@ -103,6 +103,10 @@ declare_plugins! {
   #[cfg(feature = "plugin-kagi")]
   kagi::KagiPlugin,
 
+  /// User notifications
+  #[cfg(feature = "plugin-notification")]
+  notification::NotificationPlugin,
+
   /// URL history
   #[cfg(feature = "plugin-ofn")]
   ofn::Ofn,

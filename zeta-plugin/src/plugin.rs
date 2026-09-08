@@ -136,6 +136,10 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
         Ok(())
     }
 
+    async fn loaded(&mut self, _ctx: &C) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Dispatches `message` to [`Plugin::handle_command`] if it matches one of
     /// [`Plugin::commands`].
     ///
