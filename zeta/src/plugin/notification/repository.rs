@@ -67,16 +67,16 @@ impl NotificationRepository {
         .map_err(Error::Insert)
     }
 
-    /// Deletes the notification with the given `id`.
+    /// Deletes the notification with the given `ids`.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Delete`] if the notification could not be deleted.
     #[instrument(skip_all, err)]
-    pub async fn delete(&self, id: i32) -> Result<(), Error> {
-        debug!(%id, "deleting notification from database");
+    pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
+        debug!(?ids, "deleting notifications from database");
 
-        sqlx::query!("DELETE FROM notifications WHERE id = $1", id)
+        sqlx::query!("DELETE FROM notifications WHERE id = ANY($1)", ids)
             .execute(&self.db)
             .await
             .map_err(Error::Delete)?;

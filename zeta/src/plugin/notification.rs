@@ -96,26 +96,37 @@ impl Plugin<Context> for NotificationPlugin {
             debug!(?result, "inserted notification");
             client.send_privmsg(channel, "\x0310> The notification has been stored.")?;
         } else {
-            for notification in self.service.take(channel, nickname).await {
-                let message = notification.message;
-                let creator = notification.nickname;
+            let pending = self.service.take(channel, nickname).await;
+            let mut sent_ids = Vec::with_capacity(pending.len());
+
+            debug!(?pending, "pending notifications");
+
+            for notification in &pending {
+                let message = &notification.message;
+                let creator = &notification.nickname;
                 let created_at = notification
                     .created_at
                     .with_timezone(&Local)
                     .format("%d/%m/%Y %H:%M:%S");
 
-                client.send_privmsg(
+                if let Err(err) = client.send_privmsg(
                     channel,
                     format!(
                         "{nickname}:\x0310 Notification\x0f {message}\x0310 from\x0f {creator}\x0310 at\x0f {created_at}"
                     )
-                )?;
+                ) {
+                    error!(?err, "could not deliver notification");
 
-                if let Err(err) = self.service.delete(notification.id).await {
+                    break;
+                }
+
+                sent_ids.push(notification.id);
+
+                if let Err(err) = self.service.delete_all(&sent_ids).await {
                     error!(
                         ?err,
-                        id = notification.id,
-                        "could not delete delivered notification"
+                        count = sent_ids.len(),
+                        "could not delete delivered notifications"
                     );
                 }
             }

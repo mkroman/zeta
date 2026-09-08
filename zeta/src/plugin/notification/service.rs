@@ -1,7 +1,7 @@
 //! Notification service, keeping pending notifications in memory and persisting them in the
 //! database.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tokio::sync::Mutex;
 use tracing::{debug, instrument};
@@ -100,18 +100,24 @@ impl NotificationService {
         taken
     }
 
-    /// Deletes the notification with the given `id` from both the database and the cache.
+    /// Deletes the notification with the given `ids` from both the database and the cache.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Delete`] if the notification could not be deleted from the database.
+    /// Returns [`Error::Delete`] if the notifications could not be deleted from the database.
     #[instrument(skip_all, err)]
-    pub async fn delete(&self, id: i32) -> Result<(), Error> {
-        self.repo.delete(id).await?;
+    pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        self.repo.delete_all(ids).await?;
+
+        let deleted: HashSet<i32> = ids.iter().copied().collect();
 
         self.cache.lock().await.retain(|_, targets| {
             targets.retain(|_, notifications| {
-                notifications.retain(|notification| notification.id != id);
+                notifications.retain(|notification| !deleted.contains(&notification.id));
                 !notifications.is_empty()
             });
 
