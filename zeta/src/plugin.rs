@@ -13,8 +13,8 @@ mod prelude {
     pub use async_trait::async_trait;
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
-    pub use zeta_plugin::prelude::{plugin_err, require_env, ArgsError, BoxError, Prefix};
     pub use zeta_plugin::Error as ZetaError;
+    pub use zeta_plugin::prelude::{ArgsError, BoxError, Prefix, plugin_err, require_env};
 
     pub use super::{Author, Context, Metadata, Name, Plugin};
 }
@@ -66,6 +66,10 @@ declare_plugins! {
   /// Plugin that helps the user make a choice
   #[cfg(feature = "plugin-choices")]
   choices::Choices,
+
+  /// Crypto currency quotes via CoinMarketCap
+  #[cfg(feature = "plugin-cryptocoins")]
+  cryptocoins::CryptoCoins,
 
   /// Query the danish dictionary
   #[cfg(feature = "plugin-dendanskeordbog")]

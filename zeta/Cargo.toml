@@ -24,6 +24,7 @@ rustls = ["reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls"]
 plugin-alert = ["database", "dep:chrono", "dep:interim"]
 plugin-chaturbate = ["http", "dep:regex"]
 plugin-choices = []
+plugin-cryptocoins = ["http", "dep:frizbee", "dep:serde_path_to_error"]
 plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
 plugin-dig = []
 plugin-geoip = ["http"]
@@ -60,6 +61,7 @@ plugins-all = [
     "plugin-alert",
     "plugin-chaturbate",
     "plugin-choices",
+    "plugin-cryptocoins",
     "plugin-dendanskeordbog",
     "plugin-dig",
     "plugin-geoip",
@@ -95,6 +97,7 @@ base64 = { version = "0.23.0", optional = true }
 chrono = { version = "0.4.45", optional = true }
 dendanskeordbog = { path = "../dendanskeordbog", features = ["client"], optional = true }
 figment = { version = "0.10.19", features = ["toml", "env"] }
+frizbee = { workspace = true, optional = true }
 futures = "0.3.31"
 hickory-resolver = { version = "0.26.2", features = ["tls-ring"] }
 htmlize = { version = "1.1.0", features = ["unescape"], optional = true }
