@@ -104,9 +104,19 @@ impl S3 {
     #[cfg(test)]
     #[must_use]
     pub fn for_test() -> Self {
+        Self::with_endpoint("http://127.0.0.1:9")
+    }
+
+    /// Creates a client that points at the given local endpoint, for tests that never talk to a
+    /// real S3.
+    #[cfg(test)]
+    #[must_use]
+    pub fn with_endpoint(endpoint: &str) -> Self {
         let config = aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())
-            .endpoint_url("http://127.0.0.1:9")
+            .region(Region::new("us-east-1"))
+            .endpoint_url(endpoint)
+            .force_path_style(true)
             .build();
 
         Self {

@@ -7,6 +7,7 @@
 //! Mirroring is configured through the `S3_*` environment variables (see `s3::S3::from_env`);
 //! without it, the plugin only posts video summaries.
 
+mod manager;
 mod mirror;
 mod oembed;
 mod s3;
@@ -68,6 +69,14 @@ impl Plugin<Context> for Tiktok {
             name: "tiktok".into(),
             authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
         }
+    }
+
+    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+        if let Some(mirror) = &mut self.mirror {
+            mirror.start_downloads();
+        }
+
+        Ok(())
     }
 
     async fn handle_message(
