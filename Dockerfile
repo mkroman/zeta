@@ -51,8 +51,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 RUN cargo auditable build --release --locked
 
-# Minimal runtime image with security hardening
-FROM gcr.io/distroless/cc-debian12:nonroot
+# Runtime image with `yt-dlp` and `ffmpeg` for the tiktok plugin's video mirroring.
+FROM debian:trixie-slim
+
+# `yt-dlp` is installed from PyPI rather than apt, since TikTok extraction breaks regularly and
+# the distro-packaged version goes stale between Debian releases.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        ffmpeg \
+        python3 \
+        python3-pip && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip3 install --no-cache-dir --break-system-packages yt-dlp
 
 LABEL org.opencontainers.image.title="zeta" \
       org.opencontainers.image.description="An opinionated IRC bot with a bunch of plugins" \
@@ -64,6 +75,8 @@ WORKDIR /app
 COPY --from=builder /usr/local/bin/zeta .
 COPY --from=builder /usr/src/app/config.toml .
 
-USER nonroot
+# Run as an unprivileged user.
+RUN useradd --system --user-group --home-dir /app zeta
+USER zeta
 
 ENTRYPOINT ["/app/zeta"]
