@@ -1,4 +1,4 @@
-//! Parsing and classification of TikTok URLs.
+//! Parsing and construction of TikTok URLs.
 
 use url::Url;
 
@@ -8,21 +8,38 @@ const TIKTOK_SHORT_HOST: &str = "vm.tiktok.com";
 /// The standard hostname.
 const TIKTOK_STANDARD_HOST: &str = "tiktok.com";
 
-/// The kind of TikTok URL.
+/// A TikTok link, identified by what it points at.
 #[derive(Eq, PartialEq, Debug)]
-#[non_exhaustive]
-pub enum UrlKind {
-    /// A video URL, consisting of the channel slug and the video id.
-    Video(String, String),
-    /// A channel URL.
+pub enum TiktokLink {
+    /// A video link, identified by its channel slug and video id.
+    Video {
+        /// The channel slug, e.g. `@dailymail`.
+        channel: String,
+        /// The video id.
+        id: String,
+    },
+    /// A channel profile link.
     Channel(String),
-    /// A shortened video URL.
+    /// A shortened share link that has to be resolved before the video can be identified.
     Shortened(String),
 }
 
-/// Parses the given `url` and returns a [`UrlKind`] depending on the type of TikTok URL.
+/// Returns the canonical URL for the given video.
 #[must_use]
-pub fn classify_tiktok_url(url: &Url) -> Option<UrlKind> {
+pub fn video_url(channel: &str, video_id: &str) -> String {
+    format!("https://www.tiktok.com/{channel}/video/{video_id}")
+}
+
+/// Returns the short URL for the given id, used when resolving redirects.
+#[must_use]
+pub fn short_url(id: &str) -> String {
+    format!("https://{TIKTOK_SHORT_HOST}/{id}/")
+}
+
+/// Parses the given `url` into a [`TiktokLink`], returning `None` if it isn't a TikTok link or
+/// contains invalid components.
+#[must_use]
+pub fn parse_tiktok_url(url: &Url) -> Option<TiktokLink> {
     match url.host_str()? {
         TIKTOK_STANDARD_HOST | "www.tiktok.com" => parse_tiktok_com_url(url),
         TIKTOK_SHORT_HOST => parse_shortened_tiktok_url(url),
@@ -30,32 +47,33 @@ pub fn classify_tiktok_url(url: &Url) -> Option<UrlKind> {
     }
 }
 
-fn parse_shortened_tiktok_url(url: &Url) -> Option<UrlKind> {
+/// Parses vm.tiktok.com URLs.
+fn parse_shortened_tiktok_url(url: &Url) -> Option<TiktokLink> {
     let segments: Vec<&str> = url.path_segments()?.collect();
 
     match segments.as_slice() {
-        [id] | [id, ""] if is_valid_short_id(id) => Some(UrlKind::Shortened((*id).to_string())),
+        [id] | [id, ""] if is_valid_short_id(id) => Some(TiktokLink::Shortened((*id).to_string())),
         _ => None,
     }
 }
 
 /// Parses tiktok.com URLs
-fn parse_tiktok_com_url(url: &Url) -> Option<UrlKind> {
+fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
     let segments: Vec<&str> = url.path_segments()?.collect();
 
     match segments.as_slice() {
         // `/@somechannel`
         [channel] if is_valid_channel_slug(channel) => {
-            Some(UrlKind::Channel((*channel).to_string()))
+            Some(TiktokLink::Channel((*channel).to_string()))
         }
         // `/@somechannel/video/7551110927479754006`
         [channel, "video", video_id] | [channel, "video", video_id, ""]
             if is_valid_channel_slug(channel) && is_valid_video_id(video_id) =>
         {
-            Some(UrlKind::Video(
-                (*channel).to_string(),
-                (*video_id).to_string(),
-            ))
+            Some(TiktokLink::Video {
+                channel: (*channel).to_string(),
+                id: (*video_id).to_string(),
+            })
         }
         _ => None,
     }
@@ -91,19 +109,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_classify_urls() {
-        let video =
-            |channel: &str, id: &str| Some(UrlKind::Video(channel.to_string(), id.to_string()));
+    fn test_parse_urls() {
+        let video = |channel: &str, id: &str| {
+            Some(TiktokLink::Video {
+                channel: channel.to_string(),
+                id: id.to_string(),
+            })
+        };
 
         let test_cases = [
             // Channels.
             (
                 "https://www.tiktok.com/@dailymail",
-                Some(UrlKind::Channel("@dailymail".to_string())),
+                Some(TiktokLink::Channel("@dailymail".to_string())),
             ),
             (
                 "https://tiktok.com/@user123",
-                Some(UrlKind::Channel("@user123".to_string())),
+                Some(TiktokLink::Channel("@user123".to_string())),
             ),
             // Videos.
             (
@@ -121,11 +143,11 @@ mod tests {
             // Shortened links.
             (
                 "https://vm.tiktok.com/ZNdgoKow7/",
-                Some(UrlKind::Shortened("ZNdgoKow7".to_string())),
+                Some(TiktokLink::Shortened("ZNdgoKow7".to_string())),
             ),
             (
                 "https://vm.tiktok.com/ZNdgoKow7",
-                Some(UrlKind::Shortened("ZNdgoKow7".to_string())),
+                Some(TiktokLink::Shortened("ZNdgoKow7".to_string())),
             ),
             // Invalid URLs.
             ("https://www.tiktok.com/@", None),
@@ -144,7 +166,26 @@ mod tests {
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(classify_tiktok_url(&url), expected, "for {url_str}");
+            assert_eq!(parse_tiktok_url(&url), expected, "for {url_str}");
         }
+    }
+
+    #[test]
+    fn test_url_construction() {
+        assert_eq!(
+            video_url("@dailymail", "7541501431543532814"),
+            "https://www.tiktok.com/@dailymail/video/7541501431543532814"
+        );
+        assert_eq!(short_url("ZNdgoKow7"), "https://vm.tiktok.com/ZNdgoKow7/");
+
+        // Constructed URLs round-trip through the parser.
+        let url = Url::parse(&video_url("@dailymail", "7541501431543532814")).unwrap();
+        assert_eq!(
+            parse_tiktok_url(&url),
+            Some(TiktokLink::Video {
+                channel: "@dailymail".to_string(),
+                id: "7541501431543532814".to_string(),
+            })
+        );
     }
 }

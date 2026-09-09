@@ -26,13 +26,7 @@ use crate::{
 
 use self::mirror::Mirror;
 use self::oembed::OEmbed;
-use self::urls::{classify_tiktok_url, UrlKind};
-
-/// The base URL used when constructing canonical video links.
-const TIKTOK_VIDEO_URL: &str = "https://www.tiktok.com";
-
-/// The hostname used for shortened URLs.
-const TIKTOK_SHORT_HOST: &str = "vm.tiktok.com";
+use self::urls::{parse_tiktok_url, short_url, video_url, TiktokLink};
 
 /// The maximum length of a TikTok videos' title before it gets truncated.
 const TIKTOK_TITLE_LENGTH: usize = 150;
@@ -103,23 +97,20 @@ impl Tiktok {
     }
 
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
-        match classify_tiktok_url(url) {
-            Some(UrlKind::Video(channel_slug, video_id)) => {
-                debug!(%video_id, "processing video");
+        match parse_tiktok_url(url) {
+            Some(TiktokLink::Video { channel: slug, id }) => {
+                debug!(video_id = %id, "processing video");
 
-                self.process_video_url(&channel_slug, &video_id, channel, client)
-                    .await?;
+                self.process_video_url(&slug, &id, channel, client).await?;
             }
-            Some(UrlKind::Shortened(short_id)) => {
+            Some(TiktokLink::Shortened(short_id)) => {
                 debug!(%short_id, "resolving url for shortened url");
 
                 let resolved_url = self.resolve_redirect_url(&short_id).await?;
 
-                if let Some(UrlKind::Video(channel_slug, video_id)) =
-                    classify_tiktok_url(&resolved_url)
+                if let Some(TiktokLink::Video { channel: slug, id }) = parse_tiktok_url(&resolved_url)
                 {
-                    self.process_video_url(&channel_slug, &video_id, channel, client)
-                        .await?;
+                    self.process_video_url(&slug, &id, channel, client).await?;
                 }
             }
             _ => {}
@@ -130,14 +121,14 @@ impl Tiktok {
 
     async fn process_video_url(
         &self,
-        channel_slug: &str,
+        slug: &str,
         video_id: &str,
         channel: &str,
         client: &Client,
     ) -> Result<(), Error> {
         debug!(%video_id, "fetching video details");
 
-        let url = format!("{TIKTOK_VIDEO_URL}/{channel_slug}/video/{video_id}");
+        let url = video_url(slug, video_id);
         let embed = oembed::fetch(&self.client, &url).await?;
 
         if embed.is_privacy_restricted() {
@@ -148,10 +139,7 @@ impl Tiktok {
             let _ = client.send_privmsg(channel, formatted(&summary));
         }
 
-        if let Some(mirror) = &self.mirror {
-            self.mirror_video(mirror, &url, video_id, channel, client)
-                .await;
-        }
+        self.mirror_video(&url, video_id, channel, client).await;
 
         Ok(())
     }
@@ -160,14 +148,11 @@ impl Tiktok {
     ///
     /// If the video has already been mirrored, the existing link is sent immediately; otherwise
     /// the download and upload happens in a background task that replies with the link.
-    async fn mirror_video(
-        &self,
-        mirror: &Mirror,
-        url: &str,
-        video_id: &str,
-        channel: &str,
-        client: &Client,
-    ) {
+    async fn mirror_video(&self, url: &str, video_id: &str, channel: &str, client: &Client) {
+        let Some(mirror) = &self.mirror else {
+            return;
+        };
+
         let sender = client.sender();
 
         let on_mirrored = {
@@ -191,11 +176,7 @@ impl Tiktok {
     /// Requests the redirect with the given id and returns the location it redirects to.
     async fn resolve_redirect_url(&self, id: &str) -> Result<Url, Error> {
         debug!(%id, "fetching redirect url");
-        let response = self
-            .client
-            .get(format!("https://{TIKTOK_SHORT_HOST}/{id}/"))
-            .send()
-            .await?;
+        let response = self.client.get(short_url(id)).send().await?;
 
         let location = response
             .headers()

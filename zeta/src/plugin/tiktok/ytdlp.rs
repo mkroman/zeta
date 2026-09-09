@@ -48,14 +48,14 @@ pub enum Error {
 
 /// A downloaded file as reported by `yt-dlp`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
-pub struct Download {
+pub struct DownloadedFile {
     /// The path of the downloaded file.
     pub filepath: PathBuf,
     /// The video codec of the downloaded file, if known.
     pub vcodec: Option<String>,
 }
 
-impl Download {
+impl DownloadedFile {
     /// Returns the name of the downloaded file.
     #[must_use]
     pub fn filename(&self) -> Option<String> {
@@ -75,9 +75,9 @@ impl Download {
 }
 
 #[derive(Debug, Deserialize)]
-struct Output {
+struct JsonDump {
     #[serde(default)]
-    requested_downloads: Vec<Download>,
+    requested_downloads: Vec<DownloadedFile>,
 }
 
 /// A runner for `yt-dlp`.
@@ -116,7 +116,7 @@ impl YtDlp {
     ///
     /// Returns an error if `yt-dlp` could not be spawned, exits with a failure, times out or
     /// produces output that can't be parsed.
-    pub async fn download(&self, url: &str, output_dir: &Path) -> Result<Vec<Download>, Error> {
+    pub async fn download(&self, url: &str, output_dir: &Path) -> Result<Vec<DownloadedFile>, Error> {
         let mut command = Command::new(&self.command);
 
         command
@@ -141,7 +141,7 @@ impl YtDlp {
             return Err(Error::Failure(truncate_tail(stderr.trim_end())));
         }
 
-        let output: Output = serde_json::from_slice(&output.stdout)?;
+        let output: JsonDump = serde_json::from_slice(&output.stdout)?;
         let downloads = verify_paths(output.requested_downloads, output_dir).await?;
 
         if downloads.is_empty() {
@@ -182,7 +182,7 @@ fn build_args(url: &str, output_dir: &Path) -> Vec<OsString> {
 
 /// Returns the downloads whose reported file paths resolve inside `output_dir`, dropping any that
 /// point outside of it.
-async fn verify_paths(downloads: Vec<Download>, output_dir: &Path) -> Result<Vec<Download>, Error> {
+async fn verify_paths(downloads: Vec<DownloadedFile>, output_dir: &Path) -> Result<Vec<DownloadedFile>, Error> {
     let base = tokio::fs::canonicalize(output_dir).await.map_err(Error::Io)?;
     let mut verified = Vec::with_capacity(downloads.len());
 
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn test_parse_output() {
         // Downloads are reported when present, and absent (not an error) otherwise.
-        let output: Output = serde_json::from_str(SAMPLE_OUTPUT).unwrap();
+        let output: JsonDump = serde_json::from_str(SAMPLE_OUTPUT).unwrap();
         assert_eq!(output.requested_downloads.len(), 1);
 
         let download = &output.requested_downloads[0];
@@ -254,7 +254,7 @@ mod tests {
         );
         assert!(!download.is_unsupported_codec());
 
-        let output: Output = serde_json::from_str("{}").unwrap();
+        let output: JsonDump = serde_json::from_str("{}").unwrap();
         assert!(output.requested_downloads.is_empty());
     }
 

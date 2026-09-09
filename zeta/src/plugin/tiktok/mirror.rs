@@ -75,7 +75,7 @@ impl Mirror {
     ///
     /// This is a fast-path check that assumes the common `.mp4` container; a video that was
     /// mirrored under a different container is only caught by the exact-key check performed
-    /// during [`Mirror::mirror_video`].
+    /// during [`Mirror::download_and_upload`].
     async fn is_mirrored(&self, video_id: &str) -> Result<bool, Error> {
         let key = self.key_for(&format!("{video_id}.mp4"));
 
@@ -139,7 +139,7 @@ impl Mirror {
             // panics or is cancelled.
             let _guard = InFlightGuard::new(&mirror, &video_id);
 
-            match mirror.mirror_video(&url, &video_id).await {
+            match mirror.download_and_upload(&url, &video_id).await {
                 Ok(link) => {
                     debug!(%video_id, %link, "mirrored video");
                     on_mirrored(link);
@@ -160,7 +160,7 @@ impl Mirror {
     /// # Errors
     ///
     /// Returns an error if the video could not be downloaded or uploaded.
-    async fn mirror_video(&self, url: &str, video_id: &str) -> Result<String, Error> {
+    async fn download_and_upload(&self, url: &str, video_id: &str) -> Result<String, Error> {
         // The directory is removed when dropped, which happens on every path out of this
         // function — including errors, panics and cancelled tasks.
         let tempdir = tempfile::Builder::new().prefix(TEMP_DIR_PREFIX).tempdir()?;
@@ -295,7 +295,7 @@ mod tests {
         // The script leaks a file into the output directory before failing; the temporary
         // directory must still be removed along with its contents.
         let result = mirror
-            .mirror_video("https://www.tiktok.com/@user/video/123", "123")
+            .download_and_upload("https://www.tiktok.com/@user/video/123", "123")
             .await;
 
         assert!(result.is_err());
