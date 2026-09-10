@@ -7,7 +7,7 @@ use irc::proto::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use url::Url;
-use zeta_plugin::Prefix;
+use zeta_plugin::PluginCommand;
 
 pub use crate::context::{Context, SharedState};
 
@@ -20,7 +20,9 @@ mod prelude {
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
     pub use zeta_plugin::Error as ZetaError;
-    pub use zeta_plugin::prelude::{ArgsError, BoxError, Prefix, plugin_err, require_env};
+    pub use zeta_plugin::prelude::{
+        ArgsError, BoxError, PluginCommand, Prefix, plugin_err, require_env,
+    };
 
     pub use super::{
         Author, Context, Metadata, Name, Plugin, PluginCatalog, PluginInfo, SharedState,
@@ -194,7 +196,7 @@ pub struct PluginInfo {
     /// The authors of the plugin.
     pub authors: Vec<Author>,
     /// The prefix commands handled by the plugin.
-    pub commands: &'static [Prefix],
+    pub commands: &'static [PluginCommand],
 }
 
 /// Snapshot of the plugins registered with the bot and the commands they handle.

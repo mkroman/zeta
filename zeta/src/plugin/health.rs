@@ -33,8 +33,8 @@ impl Plugin<Context> for Health {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".health")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".health"))] }
     }
 
     async fn handle_command(

@@ -139,8 +139,8 @@ impl Plugin<Context> for Tvmaze {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".next")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".next"))] }
     }
 
     async fn handle_command(

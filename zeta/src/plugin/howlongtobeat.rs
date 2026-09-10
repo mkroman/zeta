@@ -217,8 +217,8 @@ impl Plugin<Context> for HowLongToBeat {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".hltb")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".hltb"))] }
     }
 
     async fn handle_command(

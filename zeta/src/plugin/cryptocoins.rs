@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use argh::FromArgs;
+use argh::{ArgsInfo, FromArgs};
 use frizbee::{CaseMatching, Config, Matcher, Matching};
 use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue};
@@ -105,13 +105,29 @@ const COIN_COMMANDS: &[(Prefix, &str)] = &[
 ];
 
 /// All command triggers handled by this plugin.
-const COMMANDS: &[Prefix] = &[
-    CC, BTC, ETH, ZCASH, ZEC, ANS, NEO, STELLAR, XMR, XRP, LTC, ETC, GOLEM, SIA, DOGE, MAID,
-    BCASH, TRUMP,
+const COMMANDS: &[PluginCommand] = &[
+    PluginCommand::with_args::<CoinOpts>(CC),
+    PluginCommand::with_args::<QuoteOpts>(BTC),
+    PluginCommand::with_args::<QuoteOpts>(ETH),
+    PluginCommand::with_args::<QuoteOpts>(ZCASH),
+    PluginCommand::with_args::<QuoteOpts>(ZEC),
+    PluginCommand::with_args::<QuoteOpts>(ANS),
+    PluginCommand::with_args::<QuoteOpts>(NEO),
+    PluginCommand::with_args::<QuoteOpts>(STELLAR),
+    PluginCommand::with_args::<QuoteOpts>(XMR),
+    PluginCommand::with_args::<QuoteOpts>(XRP),
+    PluginCommand::with_args::<QuoteOpts>(LTC),
+    PluginCommand::with_args::<QuoteOpts>(ETC),
+    PluginCommand::with_args::<QuoteOpts>(GOLEM),
+    PluginCommand::with_args::<QuoteOpts>(SIA),
+    PluginCommand::with_args::<QuoteOpts>(DOGE),
+    PluginCommand::with_args::<QuoteOpts>(MAID),
+    PluginCommand::with_args::<QuoteOpts>(BCASH),
+    PluginCommand::with_args::<QuoteOpts>(TRUMP),
 ];
 
-/// Command options for the fixed coin commands.
-#[derive(FromArgs, Debug)]
+/// Convert a coin price into another fiat currency.
+#[derive(FromArgs, ArgsInfo, Debug)]
 struct QuoteOpts {
     /// fiat currency to convert the price into (defaults to USD)
     #[argh(positional)]
@@ -121,8 +137,8 @@ struct QuoteOpts {
 /// The usage hint for the `.cc` command.
 const CC_USAGE: &str = "Usage: .cc \x0f<symbol> [currency]";
 
-/// Command options for the `.cc` command.
-#[derive(FromArgs, Debug)]
+/// Convert a cryptocurrency price into fiat currency.
+#[derive(FromArgs, ArgsInfo, Debug)]
 struct CoinOpts {
     /// the coin to quote, by symbol or name
     #[argh(positional)]
@@ -242,7 +258,7 @@ impl Plugin<Context> for CryptoCoins {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
+    fn commands(&self) -> &'static [PluginCommand] {
         COMMANDS
     }
 
@@ -733,16 +749,26 @@ mod tests {
 
     #[test]
     fn commands_are_consistent() {
-        assert!(COMMANDS.contains(&CC));
+        assert!(COMMANDS.iter().any(|command| command.prefix() == CC));
 
         for (prefix, _) in COIN_COMMANDS {
-            assert!(COMMANDS.contains(prefix), "{prefix:?} missing from COMMANDS");
+            assert!(
+                COMMANDS.iter().any(|command| command.prefix() == *prefix),
+                "{prefix:?} missing from COMMANDS"
+            );
         }
 
-        let mut commands = COMMANDS.iter().map(Prefix::as_str).collect::<Vec<_>>();
+        let mut commands = COMMANDS
+            .iter()
+            .map(|command| command.prefix().as_str())
+            .collect::<Vec<_>>();
         commands.sort_unstable();
         commands.dedup();
-        assert_eq!(commands.len(), COMMANDS.len(), "duplicate command in COMMANDS");
+        assert_eq!(
+            commands.len(),
+            COMMANDS.len(),
+            "duplicate command in COMMANDS"
+        );
     }
 
     #[test]

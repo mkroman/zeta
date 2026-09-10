@@ -51,8 +51,8 @@ impl Plugin<Context> for NotificationPlugin {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        &[NOTIFY]
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(NOTIFY)] }
     }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {

@@ -111,8 +111,8 @@ impl Plugin<Context> for AlertPlugin {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        &[ALERT]
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(ALERT)] }
     }
 
     async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {

@@ -83,8 +83,8 @@ impl Plugin<Context> for GoogleImages {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".gis")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".gis"))] }
     }
 
     async fn handle_command(

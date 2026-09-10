@@ -122,8 +122,8 @@ impl Plugin<Context> for OpenWeatherMap {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".w")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".w"))] }
     }
 
     async fn handle_command(

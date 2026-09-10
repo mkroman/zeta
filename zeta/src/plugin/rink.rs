@@ -29,8 +29,8 @@ impl Plugin<Context> for Rink {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".r")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".r"))] }
     }
 
     async fn handle_command(

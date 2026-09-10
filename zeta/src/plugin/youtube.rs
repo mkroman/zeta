@@ -201,8 +201,8 @@ impl Plugin<Context> for YouTube {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".yt")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".yt"))] }
     }
 
     async fn handle_message(

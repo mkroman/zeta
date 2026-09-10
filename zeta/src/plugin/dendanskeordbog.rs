@@ -60,8 +60,8 @@ impl Plugin<Context> for DenDanskeOrdbog {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".ddo")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".ddo"))] }
     }
 
     async fn handle_command(

@@ -69,8 +69,8 @@ impl Plugin<Context> for GitHubPlugin {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".gh")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".gh"))] }
     }
 
     async fn handle_command(

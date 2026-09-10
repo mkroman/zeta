@@ -59,8 +59,8 @@ impl Plugin<Context> for KagiPlugin {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".g")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".g"))] }
     }
 
     async fn handle_command(

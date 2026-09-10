@@ -82,8 +82,8 @@ impl Plugin<Context> for Trustpilot {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".tp")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".tp"))] }
     }
 
     async fn handle_command(

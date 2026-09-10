@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use argh::FromArgs;
+use argh::{ArgsInfo, FromArgs};
 use serde::Deserialize;
 use thiserror::Error;
 use tracing::{debug, error, info};
@@ -32,10 +32,10 @@ pub enum Error {
     InvalidInput,
 }
 
-/// Geographical lookup utility based on IP address
-#[derive(FromArgs, Debug)]
+/// Look up the geolocation of a domain or IP address.
+#[derive(FromArgs, ArgsInfo, Debug)]
 pub struct Opts {
-    /// the name of the domain to look to look up
+    /// the domain or IP address to look up
     #[argh(positional)]
     name: String,
 }
@@ -89,8 +89,8 @@ impl Plugin<Context> for GeoIp {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".geoip")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::with_args::<Opts>(Prefix::new(".geoip"))] }
     }
 
     async fn handle_command(

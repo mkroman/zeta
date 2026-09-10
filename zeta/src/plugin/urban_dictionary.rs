@@ -69,8 +69,8 @@ impl Plugin<Context> for UrbanDictionary {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".ud")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".ud"))] }
     }
 
     async fn handle_command(

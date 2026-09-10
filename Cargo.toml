@@ -3,7 +3,7 @@ resolver = "3"
 members = ["dendanskeordbog", "reddit", "zeta", "zeta-plugin"]
 
 [workspace.dependencies]
-argh = { version = "0.1.12" }
+argh = { version = "0.1.19" }
 async-trait = "0.1.89"
 aws-sdk-s3 = "1.108.0"
 tempfile = "3.23.0"

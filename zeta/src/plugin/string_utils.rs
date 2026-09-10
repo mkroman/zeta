@@ -14,7 +14,13 @@ const REVERSE: Prefix = Prefix::new(".rev");
 const UNICODE: Prefix = Prefix::new(".uni");
 
 /// The command triggers handled by this plugin.
-const COMMANDS: &[Prefix] = &[BYTES, LENGTH, ORD, REVERSE, UNICODE];
+const COMMANDS: &[PluginCommand] = &[
+    PluginCommand::new(BYTES),
+    PluginCommand::new(LENGTH),
+    PluginCommand::new(ORD),
+    PluginCommand::new(REVERSE),
+    PluginCommand::new(UNICODE),
+];
 
 pub struct StringUtils;
 
@@ -31,7 +37,7 @@ impl Plugin<Context> for StringUtils {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
+    fn commands(&self) -> &'static [PluginCommand] {
         COMMANDS
     }
 
@@ -119,10 +125,10 @@ mod tests {
     fn commands_are_matched_by_identity() {
         let plugin = StringUtils::new();
 
-        assert!(plugin.commands().contains(&BYTES));
-        assert!(plugin.commands().contains(&LENGTH));
-        assert!(plugin.commands().contains(&ORD));
-        assert!(plugin.commands().contains(&REVERSE));
-        assert!(plugin.commands().contains(&UNICODE));
+        assert!(plugin.commands().iter().any(|command| command.prefix() == BYTES));
+        assert!(plugin.commands().iter().any(|command| command.prefix() == LENGTH));
+        assert!(plugin.commands().iter().any(|command| command.prefix() == ORD));
+        assert!(plugin.commands().iter().any(|command| command.prefix() == REVERSE));
+        assert!(plugin.commands().iter().any(|command| command.prefix() == UNICODE));
     }
 }

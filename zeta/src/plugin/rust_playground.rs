@@ -62,8 +62,8 @@ impl Plugin<Context> for RustPlayground {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".rs")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        const { &[PluginCommand::new(Prefix::new(".rs"))] }
     }
 
     async fn handle_command(
