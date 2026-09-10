@@ -15,6 +15,11 @@ use crate::{Error, Metadata};
 /// non-command messages (e.g. URLs) may override `handle_message` and call
 /// [`Plugin::dispatch_command`] themselves.
 ///
+/// Each plugin runs in its own long-lived task, and the calls to a plugin's handlers are
+/// serialized. Handlers therefore must not block the task; spawn a task for work that outlives
+/// the call. Plugins that need to share state with other plugins can publish it through their
+/// context.
+///
 ///# Examples
 ///
 /// ```
