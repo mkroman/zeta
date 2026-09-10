@@ -4,6 +4,15 @@ use tokio::runtime::Handle;
 
 use crate::plugin::prelude::*;
 
+/// The `.health` command.
+const HEALTH: PluginCommand = PluginCommand::new(
+    Prefix::new(".health"),
+    "Show memory usage and runtime task stats",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[HEALTH];
+
 pub struct Health;
 
 /// Process telemetry snapshot.
@@ -33,8 +42,8 @@ impl Plugin<Context> for Health {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".health")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

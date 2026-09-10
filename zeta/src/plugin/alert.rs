@@ -22,6 +22,8 @@ pub use {
     service::AlertService,
 };
 
+use std::sync::Arc;
+
 use chrono::Days;
 use interim::{Dialect, parse_date_string};
 use irc::proto::Prefix as IrcPrefix;
@@ -33,7 +35,13 @@ use tracing::{debug, error, trace};
 use crate::plugin::prelude::*;
 
 /// The `.alert` command.
-const ALERT: Prefix = Prefix::new(".alert");
+const ALERT: PluginCommand = PluginCommand::new(
+    Prefix::new(".alert"),
+    "Schedule an alert to be posted later",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[ALERT];
 
 /// Reply messages used when an alert has been stored.
 const SUCCESS_MESSAGES: &[&str] = &[
@@ -54,10 +62,13 @@ const SUCCESS_MESSAGES: &[&str] = &[
 /// command; a scheduler task delivers due alerts to a delivery task, started in [`loaded`],
 /// which sends them in the channel the alert was created in.
 ///
+/// The alert service is published to [`Context::shared`], so other plugins can schedule alerts
+/// through [`AlertService::create`].
+///
 /// [`loaded`]: Plugin::loaded
 pub struct AlertPlugin {
-    /// The alert service.
-    service: AlertService,
+    /// The alert service, also published for other plugins to use.
+    service: Arc<AlertService>,
     /// The receiver of due alerts, moved into the delivery task on load.
     receiver: Option<mpsc::UnboundedReceiver<Alert>>,
 }
@@ -92,6 +103,9 @@ impl Plugin<Context> for AlertPlugin {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let mut service = AlertService::new(ctx.db.clone());
         let receiver = service.take_receiver();
+        let service = Arc::new(service);
+
+        ctx.shared.publish(Arc::clone(&service));
 
         Ok(AlertPlugin { service, receiver })
     }
@@ -103,8 +117,8 @@ impl Plugin<Context> for AlertPlugin {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        &[ALERT]
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {

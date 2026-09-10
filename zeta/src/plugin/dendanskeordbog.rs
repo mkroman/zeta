@@ -4,6 +4,15 @@ use dendanskeordbog::DictionaryDocument;
 
 use crate::{http, plugin::prelude::*};
 
+/// The `.ddo` command.
+const DDO: PluginCommand = PluginCommand::new(
+    Prefix::new(".ddo"),
+    "Look up a word in Den Danske Ordbog",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[DDO];
+
 pub struct DenDanskeOrdbog {
     client: dendanskeordbog::Client,
 }
@@ -60,8 +69,8 @@ impl Plugin<Context> for DenDanskeOrdbog {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".ddo")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

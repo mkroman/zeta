@@ -6,6 +6,15 @@ use rink_core::Context as RinkContext;
 
 use crate::plugin::prelude::*;
 
+/// The `.r` command.
+const RINK: PluginCommand = PluginCommand::new(
+    Prefix::new(".r"),
+    "Evaluate a calculation with unit conversions",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[RINK];
+
 /// Calculator plugin using rink-rs.
 pub struct Rink {
     /// Handle to our rink context
@@ -29,8 +38,8 @@ impl Plugin<Context> for Rink {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".r")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

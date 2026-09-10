@@ -1,9 +1,15 @@
 #![allow(clippy::doc_markdown)]
 
+use std::sync::Arc;
+
+use irc::client::Client;
+use irc::proto::Message;
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use url::Url;
+use zeta_plugin::PluginCommand;
 
-pub use crate::context::Context;
+pub use crate::context::{Context, SharedState};
 
 pub use zeta_plugin::{Author, Error, Metadata, Name, Plugin};
 
@@ -14,9 +20,13 @@ mod prelude {
     pub use irc::client::Client;
     pub use irc::proto::{Command, Message};
     pub use zeta_plugin::Error as ZetaError;
-    pub use zeta_plugin::prelude::{ArgsError, BoxError, Prefix, plugin_err, require_env};
+    pub use zeta_plugin::prelude::{
+        ArgsError, BoxError, PluginCommand, Prefix, plugin_err, require_env,
+    };
 
-    pub use super::{Author, Context, Metadata, Name, Plugin};
+    pub use super::{
+        Author, Context, Metadata, Name, Plugin, PluginCatalog, PluginInfo, SharedState,
+    };
 }
 
 /// Declares plugin modules and generates a registry helper to avoid boilerplate.
@@ -94,6 +104,10 @@ declare_plugins! {
   /// Process health information
   #[cfg(feature = "plugin-health")]
   health::Health,
+
+  /// List loaded plugins and their commands
+  #[cfg(feature = "plugin-help")]
+  help::Help,
 
   /// Howlongtobeat.com integration
   #[cfg(feature = "plugin-howlongtobeat")]
@@ -174,11 +188,34 @@ declare_plugins! {
   youtube::YouTube,
 }
 
+/// Metadata about a registered plugin.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PluginInfo {
+    /// The name of the plugin.
+    pub name: String,
+    /// The authors of the plugin.
+    pub authors: Vec<Author>,
+    /// The prefix commands handled by the plugin.
+    pub commands: &'static [PluginCommand],
+}
+
+/// Snapshot of the plugins registered with the bot and the commands they handle.
+///
+/// The catalog is published to [`Context::shared`] when the registry is preloaded, so plugins can
+/// look it up with [`SharedState::get`] to discover other plugins.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PluginCatalog {
+    /// The registered plugins, in registration order.
+    pub plugins: Vec<PluginInfo>,
+}
+
 /// Plugin registry.
 #[derive(Default)]
 pub struct Registry {
     /// List of loaded plugins (name, plugin).
     pub plugins: Vec<(String, Box<dyn Plugin<Context>>)>,
+    /// Catalog of the registered plugins, published to [`Context::shared`].
+    catalog: PluginCatalog,
     /// List of plugins that failed to initialize.
     pub failed: Vec<(String, Error)>,
 }
@@ -189,6 +226,7 @@ impl Registry {
     pub fn new() -> Registry {
         Registry {
             plugins: vec![],
+            catalog: PluginCatalog::default(),
             failed: vec![],
         }
     }
@@ -208,6 +246,8 @@ impl Registry {
             warn!(%num_failed, "some plugins failed to initialize");
         }
 
+        ctx.shared.publish(Arc::new(registry.catalog.clone()));
+
         registry
     }
 
@@ -217,12 +257,20 @@ impl Registry {
     /// initialization failed. Failed plugins are tracked in `self.failed` and logged with their
     /// name and error.
     pub fn register<P: Plugin<Context> + 'static>(&mut self, ctx: &Context) -> bool {
-        let name = P::metadata().name.to_string();
+        let metadata = P::metadata();
+        let name = metadata.name.to_string();
 
         match P::new(ctx) {
             Ok(plugin) => {
                 debug!(plugin = %name, "registered plugin");
+
+                self.catalog.plugins.push(PluginInfo {
+                    name: name.clone(),
+                    authors: metadata.authors,
+                    commands: plugin.commands(),
+                });
                 self.plugins.push((name, Box::new(plugin)));
+
                 true
             }
             Err(e) => {
@@ -231,6 +279,70 @@ impl Registry {
                 false
             }
         }
+    }
+
+    /// Removes and returns all loaded plugins, leaving the registry empty.
+    ///
+    /// The caller is expected to move each plugin into its own task.
+    #[must_use]
+    pub fn take_plugins(&mut self) -> Vec<(String, Box<dyn Plugin<Context>>)> {
+        std::mem::take(&mut self.plugins)
+    }
+}
+
+/// A plugin running in its own long-lived task.
+///
+/// The task loads the plugin and then waits for IRC messages on an unbounded channel, handling
+/// them one at a time. State that other plugins should be able to access must be published to
+/// [`Context::shared`] when the plugin is constructed or loaded.
+pub struct PluginTask {
+    /// The name of the plugin, used for logging.
+    pub name: String,
+    /// The mailbox of the plugin task.
+    sender: mpsc::UnboundedSender<Arc<Message>>,
+}
+
+impl PluginTask {
+    /// Spawns `plugin` into a task that loads it and processes messages until the channel closes.
+    ///
+    /// If the plugin fails to load, the error is logged and the task exits.
+    pub fn spawn(
+        name: String,
+        mut plugin: Box<dyn Plugin<Context>>,
+        ctx: Arc<Context>,
+        client: Arc<Client>,
+    ) -> Self {
+        let (sender, mut receiver) = mpsc::unbounded_channel::<Arc<Message>>();
+        let task_name = name.clone();
+
+        tokio::spawn(async move {
+            debug!(plugin = %task_name, "plugin task started");
+
+            if let Err(error) = plugin.loaded(&ctx, &client).await {
+                warn!(plugin = %task_name, %error, "plugin failed to load");
+
+                return;
+            }
+
+            while let Some(message) = receiver.recv().await {
+                if let Err(error) = plugin.handle_message(&ctx, &client, &message).await {
+                    warn!(plugin = %task_name, %error, "plugin error during message handling");
+                }
+            }
+
+            debug!(plugin = %task_name, "plugin task stopped");
+        });
+
+        Self { name, sender }
+    }
+
+    /// Queues `message` for the plugin task.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the plugin task has stopped.
+    pub fn send(&self, message: Arc<Message>) -> Result<(), mpsc::error::SendError<Arc<Message>>> {
+        self.sender.send(message)
     }
 }
 

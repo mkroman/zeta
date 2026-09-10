@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use argh::FromArgs;
+use argh::{ArgsInfo, FromArgs};
 use serde::Deserialize;
 use thiserror::Error;
 use tracing::{debug, error, info};
@@ -9,6 +9,15 @@ use url::Host;
 use crate::{http, plugin::prelude::*};
 
 const BASE_URL: &str = "https://api.ip2location.io";
+
+/// The `.geoip` command.
+const GEOIP: PluginCommand = PluginCommand::with_args::<Opts>(
+    Prefix::new(".geoip"),
+    "Look up the geolocation of a domain or IP",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[GEOIP];
 
 pub struct GeoIp {
     pub client: reqwest::Client,
@@ -32,10 +41,10 @@ pub enum Error {
     InvalidInput,
 }
 
-/// Geographical lookup utility based on IP address
-#[derive(FromArgs, Debug)]
+/// Look up the geolocation of a domain or IP address.
+#[derive(FromArgs, ArgsInfo, Debug)]
 pub struct Opts {
-    /// the name of the domain to look to look up
+    /// the domain or IP address to look up
     #[argh(positional)]
     name: String,
 }
@@ -89,8 +98,8 @@ impl Plugin<Context> for GeoIp {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".geoip")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

@@ -26,6 +26,15 @@ pub enum Error {
     UnexpectedResponse,
 }
 
+/// The `.next` command.
+const NEXT: PluginCommand = PluginCommand::new(
+    Prefix::new(".next"),
+    "Show when a show's next episode airs",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[NEXT];
+
 pub struct Tvmaze {
     /// HTTP client for API requests.
     client: reqwest::Client,
@@ -139,8 +148,8 @@ impl Plugin<Context> for Tvmaze {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".next")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

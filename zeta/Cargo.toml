@@ -31,6 +31,7 @@ plugin-geoip = ["http"]
 plugin-github = ["http"]
 plugin-google-images = ["http"]
 plugin-health = ["dep:memory-stats"]
+plugin-help = []
 plugin-howlongtobeat = ["http"]
 plugin-imdb = ["http", "dep:num-format", "dep:serde_path_to_error"]
 plugin-isitopen = ["http", "dep:regex", "dep:time"]
@@ -68,6 +69,7 @@ plugins-all = [
     "plugin-github",
     "plugin-google-images",
     "plugin-health",
+    "plugin-help",
     "plugin-howlongtobeat",
     "plugin-imdb",
     "plugin-isitopen",

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use argh::FromArgs;
+use argh::{ArgsInfo, FromArgs};
 use hickory_resolver::{
     Resolver, TokioResolver,
     config::{CLOUDFLARE, LookupIpStrategy, ResolveHosts, ResolverConfig, ResolverOpts},
@@ -13,10 +13,10 @@ use thiserror::Error;
 
 use crate::plugin::prelude::*;
 
-/// DNS lookup utility
-#[derive(FromArgs, Debug)]
+/// Look up DNS records for a domain.
+#[derive(FromArgs, ArgsInfo, Debug)]
 pub struct Opts {
-    /// the name of the domain to look to look up
+    /// the domain to look up
     #[argh(positional)]
     name: String,
     /// the type of record to look up
@@ -33,6 +33,15 @@ pub enum Error {
     #[error("could not resolve domain: {0}")]
     Resolve(#[source] NetError),
 }
+
+/// The `.dig` command.
+const DIG: PluginCommand = PluginCommand::with_args::<Opts>(
+    Prefix::new(".dig"),
+    "Look up DNS records for a domain",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[DIG];
 
 pub struct Dig {
     resolver: TokioResolver,
@@ -86,8 +95,8 @@ impl Plugin<Context> for Dig {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".dig")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

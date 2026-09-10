@@ -25,7 +25,13 @@ use tracing::{error, trace};
 use crate::plugin::prelude::*;
 
 /// The `.notify` command.
-const NOTIFY: Prefix = Prefix::new(".notify");
+const NOTIFY: PluginCommand = PluginCommand::new(
+    Prefix::new(".notify"),
+    "Queue a notification for a user's next message",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[NOTIFY];
 
 /// Notification plugin.
 ///
@@ -51,8 +57,8 @@ impl Plugin<Context> for NotificationPlugin {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        &[NOTIFY]
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {

@@ -9,6 +9,15 @@ use crate::{http, plugin::prelude::*};
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
 
+/// The `.ud` command.
+const URBAN_DICTIONARY: PluginCommand = PluginCommand::new(
+    Prefix::new(".ud"),
+    "Look up the top Urban Dictionary definition",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[URBAN_DICTIONARY];
+
 /// Urban Dictionary plugin.
 pub struct UrbanDictionary {
     client: reqwest::Client,
@@ -69,8 +78,8 @@ impl Plugin<Context> for UrbanDictionary {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".ud")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

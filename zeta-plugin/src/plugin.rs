@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use irc::client::Client;
 use irc::proto::{Command, Message};
 
-use crate::command::Prefix;
+use crate::command::{PluginCommand, Prefix};
 use crate::{Error, Metadata};
 
 /// The base trait that all plugins must implement.
@@ -15,6 +15,11 @@ use crate::{Error, Metadata};
 /// non-command messages (e.g. URLs) may override `handle_message` and call
 /// [`Plugin::dispatch_command`] themselves.
 ///
+/// Each plugin runs in its own long-lived task, and the calls to a plugin's handlers are
+/// serialized. Handlers therefore must not block the task; spawn a task for work that outlives
+/// the call. Plugins that need to share state with other plugins can publish it through their
+/// context.
+///
 ///# Examples
 ///
 /// ```
@@ -23,7 +28,8 @@ use crate::{Error, Metadata};
 ///
 /// struct MyPlugin;
 ///
-/// const HELLO: Prefix = Prefix::new(".hello");
+/// const HELLO: PluginCommand = PluginCommand::new(Prefix::new(".hello"), "Greet someone");
+/// const COMMANDS: &[PluginCommand] = &[HELLO];
 ///
 ///#[async_trait]
 /// impl Plugin for MyPlugin {
@@ -38,8 +44,8 @@ use crate::{Error, Metadata};
 ///        }
 ///     }
 ///
-///     fn commands(&self) -> &'static [Prefix] {
-///         &[HELLO]
+///     fn commands(&self) -> &'static [PluginCommand] {
+///         COMMANDS
 ///     }
 ///
 ///     async fn handle_command(
@@ -75,13 +81,17 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     where
         Self: Sized;
 
-    /// The prefix commands handled by this plugin.
+    /// The commands handled by this plugin.
     ///
     /// Every incoming `PRIVMSG` is matched against these prefixes; the first matching command is
     /// dispatched to [`Plugin::handle_command`].
     ///
+    /// Each command carries a short description shown by the host's help command. Commands that
+    /// accept arguments should associate their [`argh`] argument type with
+    /// [`PluginCommand::with_args`], so the host can derive usage and argument information from it.
+    ///
     /// Commands may overlap as long as no prefix is a word-prefix of another (e.g. `.y` and `.yt`).
-    fn commands(&self) -> &'static [Prefix] {
+    fn commands(&self) -> &'static [PluginCommand] {
         &[]
     }
 
@@ -101,13 +111,16 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// # use zeta_plugin::{Error, Prefix, prelude::*};
     /// # const FOO: Prefix = Prefix::new(".foo");
     /// # const BAR: Prefix = Prefix::new(".bar");
-    /// # const COMMANDS: &[Prefix] = &[FOO, BAR];
+    /// # const COMMANDS: &[PluginCommand] = &[
+    /// #     PluginCommand::new(FOO, "Handle `.foo`"),
+    /// #     PluginCommand::new(BAR, "Handle `.bar`"),
+    /// # ];
     /// # struct MyPlugin;
     /// # #[async_trait]
     /// # impl Plugin for MyPlugin {
     /// #     fn new(_: &()) -> Result<Self, Error> { Ok(MyPlugin) }
     /// #     fn metadata() -> Metadata { unimplemented!() }
-    /// #     fn commands(&self) -> &'static [Prefix] { COMMANDS }
+    /// #     fn commands(&self) -> &'static [PluginCommand] { COMMANDS }
     /// async fn handle_command(
     ///     &self,
     ///     _ctx: &(),
@@ -166,7 +179,9 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
             return Ok(());
         };
 
-        self.handle_command(ctx, client, channel, command, args)
+        let prefix = command.prefix();
+
+        self.handle_command(ctx, client, channel, &prefix, args)
             .await
     }
 

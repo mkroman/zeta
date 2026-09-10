@@ -5,7 +5,7 @@
 
 mod model;
 
-use argh::FromArgs;
+use argh::{ArgsInfo, FromArgs};
 use irc::client::prelude::Prefix as IrcPrefix;
 use num_format::{Locale, ToFormattedString};
 use sqlx::types::chrono::{DateTime, Utc};
@@ -23,7 +23,14 @@ use crate::{
 use model::{InsertUrlRecord, UrlRecord};
 
 /// The `.ofn` command.
-const OFN: Prefix = Prefix::new(".ofn");
+/// The `.ofn` command.
+const OFN: PluginCommand = PluginCommand::with_args::<Opts>(
+    Prefix::new(".ofn"),
+    "Show URL and YouTube repost statistics",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[OFN];
 
 pub struct Ofn;
 
@@ -367,8 +374,8 @@ impl Plugin<Context> for Ofn {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        &[OFN]
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(
@@ -455,21 +462,21 @@ pub struct Statistics {
     pub num_yt_ids_today: i64,
 }
 
-/// Old Fucking News (URL history)
-#[derive(FromArgs, Debug, PartialEq, Eq)]
+/// Look up whether a URL has been posted before.
+#[derive(FromArgs, ArgsInfo, Debug, PartialEq, Eq)]
 pub struct Opts {
     #[argh(subcommand)]
     command: Subcommand,
 }
 
-#[derive(FromArgs, Debug, PartialEq, Eq)]
+#[derive(FromArgs, ArgsInfo, Debug, PartialEq, Eq)]
 #[argh(subcommand)]
 enum Subcommand {
     Stats(Stats),
 }
 
 /// Display database statistics
-#[derive(FromArgs, Debug, PartialEq, Eq)]
+#[derive(FromArgs, ArgsInfo, Debug, PartialEq, Eq)]
 #[argh(subcommand, name = "stats")]
 pub struct Stats {}
 

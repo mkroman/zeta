@@ -3,20 +3,17 @@ use std::sync::Arc;
 
 use futures::stream::StreamExt;
 use irc::client::prelude::Client;
-use irc::proto::Message;
 use tracing::{debug, warn};
 
 use crate::Error;
 use crate::Registry;
 use crate::config::Config;
-use crate::plugin::Context;
+use crate::plugin::{Context, PluginTask};
 
 /// The main IRC bot struct that manages connection state and message handling.
 pub struct Zeta {
     /// The complete configuration loaded from file or environment
     config: Config,
-    /// The IRC client - None until connection is established
-    client: Option<Client>,
     /// The plugin containing all loaded plugins
     registry: Registry,
     /// The shared context for plugins
@@ -43,14 +40,18 @@ impl Zeta {
         let registry = Registry::preloaded(&context);
 
         Zeta {
-            client: None,
-            registry,
             config,
+            registry,
             context,
         }
     }
 
     /// Starts the bot and begins processing IRC messages.
+    ///
+    /// Each plugin is spawned into its own long-lived task. Incoming messages are dispatched to
+    /// every plugin through an unbounded channel, so a slow or failing plugin cannot block the IRC
+    /// connection or the other plugins. Plugin errors, including failures during loading, are
+    /// logged but never propagated.
     ///
     /// # Errors
     ///
@@ -60,8 +61,6 @@ impl Zeta {
     ///   configuration issues.)
     /// - [`Error::IrcRegistration`] - if user registration fails (e.g. if the nickname is already taken.)
     /// - [`Error::Irc`] - if a protocol or communication error occurred.
-    ///
-    /// Plugin errors are logged but not propagated — one failing plugin won't block others.
     pub async fn run(&mut self) -> Result<(), Error> {
         let mut client = Client::from_config(self.config.irc.clone().into())
             .await
@@ -71,43 +70,32 @@ impl Zeta {
 
         let mut stream = client.stream()?;
 
-        self.client = Some(client);
+        let context = Arc::clone(&self.context);
+        let client = Arc::new(client);
 
-        if let Some(client) = &self.client {
-            for (_name, plugin) in &mut self.registry.plugins {
-                plugin.loaded(&self.context, client).await?;
-            }
+        let mut plugins = self
+            .registry
+            .take_plugins()
+            .into_iter()
+            .map(|(name, plugin)| {
+                PluginTask::spawn(name, plugin, Arc::clone(&context), Arc::clone(&client))
+            })
+            .collect::<Vec<_>>();
 
-            while let Some(message) = stream.next().await.transpose()? {
-                self.handle_message(client, message).await?;
-            }
-        }
+        while let Some(message) = stream.next().await.transpose()? {
+            debug!(payload = %message, "processing irc message");
 
-        Ok(())
-    }
+            let message = Arc::new(message);
+            let mut index = 0;
 
-    /// Processes a single IRC message by dispatching it to all registered plugins.
-    ///
-    /// This method logs the incoming message for debugging and then forwards it
-    /// to each plugin in the registry for processing. Plugins can respond to
-    /// messages, update state, or perform other actions as needed.
-    ///
-    /// If a plugin fails to handle a message, the error is logged but processing
-    /// continues for remaining plugins. This prevents one misbehaving plugin from
-    /// blocking all others.
-    ///
-    /// # Arguments
-    /// * `client` - Reference to the IRC client for sending responses
-    /// * `message` - The IRC message to process
-    ///
-    /// # Returns
-    /// * `Ok(())` - Message processed (individual plugin errors are logged, not propagated)
-    async fn handle_message(&self, client: &Client, message: Message) -> Result<(), Error> {
-        debug!(payload = %message, "processing irc message");
+            while index < plugins.len() {
+                if let Err(error) = plugins[index].send(Arc::clone(&message)) {
+                    warn!(plugin = %plugins[index].name, %error, "plugin task has stopped");
 
-        for (plugin_name, plugin) in &self.registry.plugins {
-            if let Err(e) = plugin.handle_message(&self.context, client, &message).await {
-                warn!(plugin = %plugin_name, error = %e, "plugin error during message handling");
+                    plugins.swap_remove(index);
+                } else {
+                    index += 1;
+                }
             }
         }
 

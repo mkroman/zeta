@@ -15,7 +15,7 @@
 //! assert_eq!(YT.parse(".goodbye"), None);
 //! ```
 
-use argh::FromArgs;
+use argh::{ArgsInfo, CommandInfoWithArgs, FromArgs};
 use thiserror::Error;
 
 /// A zero-sized prefix matcher for IRC bot commands.
@@ -130,6 +130,118 @@ impl Prefix {
         let tokens = tokens.iter().map(String::as_str).collect::<Vec<_>>();
 
         T::from_args(&[self.0], &tokens).map_err(|early_exit| ArgsError::Usage(early_exit.output))
+    }
+}
+
+/// A command handled by a plugin: a [`Prefix`], a short description, and the arguments it accepts.
+///
+/// The description is shown by the host's help command. Commands with typed arguments also store a
+/// function pointer to the [`ArgsInfo`] implementation of their argument type, so the host can
+/// derive usage and argument information for them without having to parse anything.
+///
+/// # Examples
+///
+/// ```
+/// use zeta_plugin::{PluginCommand, Prefix};
+///
+/// /// Look up a domain name.
+/// #[derive(argh::ArgsInfo)]
+/// struct Opts {
+///     /// the domain to look up
+///     #[argh(positional)]
+///     name: String,
+/// }
+///
+/// const DIG: PluginCommand = PluginCommand::with_args::<Opts>(
+///     Prefix::new(".dig"),
+///     "Look up DNS records for a domain",
+/// );
+///
+/// assert_eq!(DIG.description(), "Look up DNS records for a domain");
+///
+/// let info = DIG.args_info().unwrap();
+/// assert_eq!(info.positionals[0].name, "name");
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct PluginCommand {
+    /// The command prefix.
+    prefix: Prefix,
+    /// A short, user-facing description of the command.
+    description: &'static str,
+    /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
+    args: Option<fn() -> CommandInfoWithArgs>,
+}
+
+/// Compares commands by prefix; the description and argument information are not part of a
+/// command's identity.
+impl PartialEq for PluginCommand {
+    fn eq(&self, other: &Self) -> bool {
+        self.prefix == other.prefix
+    }
+}
+
+impl Eq for PluginCommand {}
+
+impl PluginCommand {
+    /// Creates a command with the given `description`, whose arguments are parsed manually.
+    #[must_use]
+    pub const fn new(prefix: Prefix, description: &'static str) -> Self {
+        Self {
+            prefix,
+            description,
+            args: None,
+        }
+    }
+
+    /// Creates a command with the given `description`, whose arguments are parsed into the
+    /// [`ArgsInfo`]-derived type `T`.
+    #[must_use]
+    pub const fn with_args<T: ArgsInfo>(prefix: Prefix, description: &'static str) -> Self {
+        Self {
+            prefix,
+            description,
+            args: Some(T::get_args_info),
+        }
+    }
+
+    /// Returns the command prefix.
+    #[must_use]
+    pub const fn prefix(&self) -> Prefix {
+        self.prefix
+    }
+
+    /// Returns the short, user-facing description of the command.
+    #[must_use]
+    pub const fn description(&self) -> &'static str {
+        self.description
+    }
+
+    /// Checks if `input` matches this command, returning the trailing arguments (with leading
+    /// whitespace stripped) if it does.
+    ///
+    /// See [`Prefix::parse`] for the matching rules.
+    #[must_use]
+    pub fn parse<'a>(&self, input: &'a str) -> Option<&'a str> {
+        self.prefix.parse(input)
+    }
+
+    /// Parses the trailing arguments of the command into an [`FromArgs`]-derived struct.
+    ///
+    /// See [`Prefix::parse_args`] for the tokenization and error behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArgsError::Quoting`] if the arguments could not be tokenized (e.g. unbalanced
+    /// quotes), or [`ArgsError::Usage`] if `argh` rejected the arguments — the wrapped string is
+    /// the human-readable usage or help output, suitable for replying with directly.
+    pub fn parse_args<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
+        self.prefix.parse_args(args)
+    }
+
+    /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
+    #[must_use]
+    pub fn args_info(&self) -> Option<CommandInfoWithArgs> {
+        self.args.map(|info| info())
     }
 }
 

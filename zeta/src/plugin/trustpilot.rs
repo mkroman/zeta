@@ -11,6 +11,15 @@ use crate::{http, plugin::prelude::*};
 /// The base URL for the Trustpilot API.
 const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
 
+/// The `.tp` command.
+const TRUSTPILOT: PluginCommand = PluginCommand::new(
+    Prefix::new(".tp"),
+    "Look up a business's Trustpilot score",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[TRUSTPILOT];
+
 /// Plugin for querying Trustpilot business scores.
 pub struct Trustpilot {
     /// HTTP client for making API requests.
@@ -82,8 +91,8 @@ impl Plugin<Context> for Trustpilot {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".tp")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

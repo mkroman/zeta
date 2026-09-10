@@ -38,6 +38,15 @@ pub enum Error {
     Nonce,
 }
 
+/// The `.g` command.
+const KAGI: PluginCommand = PluginCommand::new(
+    Prefix::new(".g"),
+    "Search with Kagi and link the top result",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[KAGI];
+
 pub struct KagiPlugin {
     /// Kagi search client.
     client: client::Client,
@@ -59,8 +68,8 @@ impl Plugin<Context> for KagiPlugin {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        const { &[Prefix::new(".g")] }
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_command(

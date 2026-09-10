@@ -6,7 +6,7 @@
 //! `!imdb <title>` command for searching IMDb.
 
 use ::url::Url;
-use argh::FromArgs;
+use argh::{ArgsInfo, FromArgs};
 use tracing::debug;
 
 use crate::plugin::{self, prelude::*};
@@ -34,10 +34,16 @@ use format::PREFIX;
 const SEARCH_LIMIT: usize = 5;
 
 /// The `!imdb` command.
-const COMMAND: Prefix = Prefix::new("!imdb");
+const COMMAND: PluginCommand = PluginCommand::with_args::<Opts>(
+    Prefix::new("!imdb"),
+    "Search IMDb and post the top match",
+);
 
-/// Command-line options for the `!imdb` command.
-#[derive(FromArgs, Debug)]
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[COMMAND];
+
+/// Search IMDb for a title.
+#[derive(FromArgs, ArgsInfo, Debug)]
 struct Opts {
     /// title to search for
     #[argh(positional, greedy)]
@@ -75,8 +81,8 @@ impl Plugin<Context> for Imdb {
         }
     }
 
-    fn commands(&self) -> &'static [Prefix] {
-        &[COMMAND]
+    fn commands(&self) -> &'static [PluginCommand] {
+        COMMANDS
     }
 
     async fn handle_message(
