@@ -8,6 +8,15 @@ use tracing::{debug, warn};
 
 use crate::{http, plugin::prelude::*};
 
+/// The `.gis` command.
+const GOOGLE_IMAGES: PluginCommand = PluginCommand::new(
+    Prefix::new(".gis"),
+    "Search Google Images and link the first result",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[GOOGLE_IMAGES];
+
 /// Google Image Search plugin structure.
 pub struct GoogleImages {
     /// HTTP client for making requests.
@@ -84,7 +93,7 @@ impl Plugin<Context> for GoogleImages {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::new(Prefix::new(".gis"))] }
+        COMMANDS
     }
 
     async fn handle_command(

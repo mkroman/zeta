@@ -15,6 +15,15 @@ const API_BASE_URL: &str = "https://api.openweathermap.org";
 /// Constant for converting Kelvin to Celsius.
 const KELVIN: f64 = 273.15;
 
+/// The `.w` command.
+const WEATHER: PluginCommand = PluginCommand::new(
+    Prefix::new(".w"),
+    "Show current weather for a location",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[WEATHER];
+
 /// Plugin for querying weather data.
 pub struct OpenWeatherMap {
     /// HTTP client for making API requests.
@@ -123,7 +132,7 @@ impl Plugin<Context> for OpenWeatherMap {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::new(Prefix::new(".w"))] }
+        COMMANDS
     }
 
     async fn handle_command(

@@ -1,19 +1,35 @@
 //! List the plugins the bot has loaded and the commands they handle.
 //!
 //! The `.help` command reads the plugin catalog published by the registry, so it always reflects
-//! the plugins that were successfully registered. Commands that associate an `argh` argument type
-//! also expose usage and option descriptions derived from it.
+//! the plugins that were successfully registered. Each command's short description is shown in
+//! the per-plugin view, and commands that associate an `argh` argument type also expose usage and
+//! argument details derived from it.
+//!
+//! Entries are packed into as few messages as possible, so `.help` stays a short index while
+//! `.help <command>` provides the details.
 
 use argh::{CommandInfoWithArgs, FlagInfo, FlagInfoKind, Optionality, PositionalInfo};
 
 use crate::plugin::prelude::*;
 
 /// The `.help` command.
-const HELP: Prefix = Prefix::new(".help");
+const HELP: PluginCommand = PluginCommand::new(
+    Prefix::new(".help"),
+    "List plugins and commands, or show usage for one",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[HELP];
+
+/// The maximum length of a help message body, leaving room for the IRC line overhead.
+const MAX_MESSAGE_LENGTH: usize = 360;
+
+/// Separator between entries in a help message.
+const SEPARATOR: &str = "  ";
 
 /// Help plugin.
 ///
-/// Responds to `.help` with one line per plugin and its commands, `.help <plugin>` with the
+/// Responds to `.help` with an index of every plugin and its commands, `.help <plugin>` with the
 /// plugin's commands and their descriptions, or `.help <command>` with the usage and arguments
 /// derived from the command's `argh` type.
 pub struct Help;
@@ -32,7 +48,7 @@ impl Plugin<Context> for Help {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::new(HELP)] }
+        COMMANDS
     }
 
     async fn handle_command(
@@ -51,70 +67,89 @@ impl Plugin<Context> for Help {
 
         let query = args.trim();
 
-        if query.is_empty() {
-            for plugin in catalog
-                .plugins
-                .iter()
-                .filter(|plugin| !plugin.commands.is_empty())
-            {
-                client.send_privmsg(channel, formatted(&plugin_line(plugin)))?;
-            }
+        let messages = if query.is_empty() {
+            pack(
+                catalog
+                    .plugins
+                    .iter()
+                    .filter(|plugin| !plugin.commands.is_empty())
+                    .map(plugin_entry),
+            )
         } else if let Some((plugin, command)) = find_command(&catalog, query) {
-            for line in command_lines(plugin, command) {
-                client.send_privmsg(channel, formatted(&line))?;
-            }
+            pack(command_lines(plugin, command))
         } else if let Some(plugin) = find_plugin(&catalog, query) {
-            for line in plugin_lines(plugin) {
-                client.send_privmsg(channel, formatted(&line))?;
-            }
+            pack(plugin_entries(plugin))
         } else {
-            client.send_privmsg(
-                channel,
-                formatted(&format!("no plugin or command matches `{query}`")),
-            )?;
+            vec![format!("no plugin or command matches `{query}`")]
+        };
+
+        for message in messages {
+            client.send_privmsg(channel, formatted(&message))?;
         }
 
         Ok(())
     }
 }
 
-/// Formats a plugin and its commands.
-fn plugin_line(plugin: &PluginInfo) -> String {
-    format!("{}: {}", plugin.name, commands(plugin))
+/// Formats a plugin and its commands as a single help entry.
+fn plugin_entry(plugin: &PluginInfo) -> String {
+    format!("\x02{}\x02: {}", plugin.name, commands(plugin))
 }
 
-/// Returns the lines describing a plugin and each of its commands.
-fn plugin_lines(plugin: &PluginInfo) -> Vec<String> {
+/// Formats a plugin's heading and each of its commands as help entries.
+fn plugin_entries(plugin: &PluginInfo) -> Vec<String> {
     let authors = authors(plugin);
 
     let heading = if authors.is_empty() {
-        plugin.name.clone()
+        format!("\x02{}\x02", plugin.name)
     } else {
-        format!("{} (by {authors})", plugin.name)
+        format!("\x02{}\x02 by {authors}", plugin.name)
     };
 
     std::iter::once(heading)
-        .chain(plugin.commands.iter().map(command_line))
+        .chain(plugin.commands.iter().map(command_entry))
         .collect()
+}
+
+/// Formats a command and its description as a help entry.
+fn command_entry(command: &PluginCommand) -> String {
+    let prefix = command.prefix().as_str();
+    let description = command.description();
+
+    if description.is_empty() {
+        format!("\x02{prefix}\x02")
+    } else {
+        format!("\x02{prefix}\x02 - {description}")
+    }
 }
 
 /// Returns the lines describing a command, derived from its argument information.
 fn command_lines(plugin: &PluginInfo, command: &PluginCommand) -> Vec<String> {
     let prefix = command.prefix().as_str();
-    let Some(info) = command.args_info() else {
-        return vec![format!("{prefix} ({})", plugin.name)];
+    let name = format!("\x02{prefix}\x02");
+    let attribution = format!("\x0310({})\x0f", plugin.name);
+    let description = command.description();
+
+    let heading = if description.is_empty() {
+        format!("{name} {attribution}")
+    } else {
+        format!("{name} - {description} {attribution}")
     };
 
-    let mut lines = vec![format!("{} ({})", command_line(command), plugin.name)];
+    let Some(info) = command.args_info() else {
+        return vec![heading];
+    };
 
-    lines.push(format!("Usage: {}", usage(prefix, &info)));
+    let mut lines = vec![heading];
+
+    lines.push(format!("\x02Usage\x02: {}", usage(prefix, &info)));
 
     for positional in info
         .positionals
         .iter()
         .filter(|positional| !positional.hidden)
     {
-        lines.push(described(
+        lines.push(entry(
             &positional_label(positional),
             positional.description,
         ));
@@ -125,18 +160,13 @@ fn command_lines(plugin: &PluginInfo, command: &PluginCommand) -> Vec<String> {
         .iter()
         .filter(|flag| !flag.hidden && flag.long != "--help")
     {
-        lines.push(described(&flag_label(flag), flag.description));
+        lines.push(entry(&flag_label(flag), flag.description));
     }
 
     for subcommand in &info.commands {
-        let name = subcommand.command.name;
-        let description = subcommand.command.description.trim();
+        let name = format!("{prefix} {}", subcommand.command.name);
 
-        lines.push(if description.is_empty() {
-            format!("{prefix} {name}")
-        } else {
-            format!("{prefix} {name}: {description}")
-        });
+        lines.push(entry(&name, subcommand.command.description));
     }
 
     lines.extend(info.notes.iter().map(ToString::to_string));
@@ -144,24 +174,50 @@ fn command_lines(plugin: &PluginInfo, command: &PluginCommand) -> Vec<String> {
     lines
 }
 
-/// Formats a command and, when known, its description.
-fn command_line(command: &PluginCommand) -> String {
-    let prefix = command.prefix().as_str();
+/// Formats a bold `label`, appending `description` when it is not empty.
+fn entry(label: &str, description: &str) -> String {
+    let description = description.trim();
 
-    match command.args_info() {
-        Some(info) if !info.description.is_empty() => format!("{prefix} - {}", info.description),
-        _ => prefix.to_string(),
+    if description.is_empty() {
+        format!("\x02{label}\x02")
+    } else {
+        format!("\x02{label}\x02: {description}")
     }
 }
 
-/// Returns the plugin's commands as a comma-separated list.
+/// Packs `entries` into as few messages as possible without splitting an entry.
+fn pack(entries: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut messages = Vec::new();
+    let mut message = String::new();
+
+    for entry in entries {
+        if !message.is_empty() && message.len() + SEPARATOR.len() + entry.len() > MAX_MESSAGE_LENGTH
+        {
+            messages.push(std::mem::take(&mut message));
+        }
+
+        if !message.is_empty() {
+            message.push_str(SEPARATOR);
+        }
+
+        message.push_str(&entry);
+    }
+
+    if !message.is_empty() {
+        messages.push(message);
+    }
+
+    messages
+}
+
+/// Returns the plugin's commands as a space-separated list.
 fn commands(plugin: &PluginInfo) -> String {
     plugin
         .commands
         .iter()
         .map(|command| command.prefix().as_str())
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(" ")
 }
 
 /// Returns the plugin's authors as a comma-separated list.
@@ -172,17 +228,6 @@ fn authors(plugin: &PluginInfo) -> String {
         .map(Author::as_str)
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// Formats `label`, appending `description` when it is not empty.
-fn described(label: &str, description: &str) -> String {
-    let description = description.trim();
-
-    if description.is_empty() {
-        label.to_string()
-    } else {
-        format!("{label}: {description}")
-    }
 }
 
 /// Builds the usage synopsis of a command from its argument information.
@@ -290,18 +335,24 @@ fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a Plugin
 
 /// Formats `s` as a help response.
 fn formatted(s: &str) -> String {
-    format!("\x0310>\x0f\x02 Help\x02\x0310: {s}")
+    format!("\x0310>\x0f\x02 Help\x02\x0310:\x0f {s}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALERT: Prefix = Prefix::new(".alert");
-    const ALERT_COMMANDS: &[PluginCommand] = &[PluginCommand::new(ALERT)];
+    const ALERT: PluginCommand = PluginCommand::new(
+        Prefix::new(".alert"),
+        "Schedule an alert to be posted later",
+    );
+    const ALERT_COMMANDS: &[PluginCommand] = &[ALERT];
 
-    const DIG: Prefix = Prefix::new(".dig");
-    const DIG_COMMANDS: &[PluginCommand] = &[PluginCommand::with_args::<DigOpts>(DIG)];
+    const DIG: PluginCommand = PluginCommand::with_args::<DigOpts>(
+        Prefix::new(".dig"),
+        "Look up DNS records for a domain",
+    );
+    const DIG_COMMANDS: &[PluginCommand] = &[DIG];
 
     /// Look up a domain name.
     #[derive(argh::ArgsInfo)]
@@ -361,27 +412,46 @@ mod tests {
     }
 
     #[test]
-    fn describes_commands_from_arguments() {
+    fn describes_commands_from_descriptions() {
         let catalog = catalog();
         let (plugin, command) = find_command(&catalog, "dig").unwrap();
 
         let lines = command_lines(plugin, command);
 
-        assert_eq!(lines[0], ".dig - Look up a domain name. (dig)");
-        assert_eq!(lines[1], "Usage: .dig [-s] <name>");
-        assert_eq!(lines[2], "<name>: the domain to look up");
-        assert_eq!(lines[3], "-s, --short: only display the answer section");
+        assert_eq!(
+            lines[0],
+            "\x02.dig\x02 - Look up DNS records for a domain \x0310(dig)\x0f"
+        );
+        assert_eq!(lines[1], "\x02Usage\x02: .dig [-s] <name>");
+        assert_eq!(lines[2], "\x02<name>\x02: the domain to look up");
+        assert_eq!(
+            lines[3],
+            "\x02-s, --short\x02: only display the answer section"
+        );
     }
 
     #[test]
-    fn lists_plugins_one_line_each() {
+    fn formats_styled_plugin_entries() {
         let catalog = catalog();
 
-        let alert = plugin_lines(&catalog.plugins[0]);
-        let dig = plugin_lines(&catalog.plugins[1]);
+        assert_eq!(plugin_entry(&catalog.plugins[0]), "\x02alert\x02: .alert");
+        assert_eq!(
+            plugin_entries(&catalog.plugins[1]),
+            vec![
+                "\x02dig\x02".to_string(),
+                "\x02.dig\x02 - Look up DNS records for a domain".to_string(),
+            ]
+        );
+    }
 
-        assert_eq!(alert[0], "alert (by John Doe <john.doe@example.com>)");
-        assert_eq!(alert[1], ".alert");
-        assert_eq!(dig, vec!["dig", ".dig - Look up a domain name."]);
+    #[test]
+    fn packs_entries_without_splitting_them() {
+        let entries = (0..100).map(|index| format!("\x02entry-{index:02}\x02"));
+
+        let messages = pack(entries);
+
+        assert!(messages.iter().all(|message| message.len() <= MAX_MESSAGE_LENGTH));
+        assert!(messages.len() > 1);
+        assert!(messages.iter().all(|message| message.contains("entry-")));
     }
 }

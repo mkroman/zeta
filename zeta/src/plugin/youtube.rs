@@ -19,6 +19,15 @@ use crate::{
 /// YouTube Data API v3 base endpoint URL.
 pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
 
+/// The `.yt` command.
+const YOUTUBE: PluginCommand = PluginCommand::new(
+    Prefix::new(".yt"),
+    "Search YouTube and link the top video",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[YOUTUBE];
+
 /// IRC bot plugin for YouTube URL detection and metadata retrieval.
 ///
 /// This plugin monitors IRC messages for YouTube URLs and automatically responds
@@ -202,7 +211,7 @@ impl Plugin<Context> for YouTube {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::new(Prefix::new(".yt"))] }
+        COMMANDS
     }
 
     async fn handle_message(

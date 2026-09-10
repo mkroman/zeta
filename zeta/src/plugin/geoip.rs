@@ -10,6 +10,15 @@ use crate::{http, plugin::prelude::*};
 
 const BASE_URL: &str = "https://api.ip2location.io";
 
+/// The `.geoip` command.
+const GEOIP: PluginCommand = PluginCommand::with_args::<Opts>(
+    Prefix::new(".geoip"),
+    "Look up the geolocation of a domain or IP",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[GEOIP];
+
 pub struct GeoIp {
     pub client: reqwest::Client,
     api_key: String,
@@ -90,7 +99,7 @@ impl Plugin<Context> for GeoIp {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::with_args::<Opts>(Prefix::new(".geoip"))] }
+        COMMANDS
     }
 
     async fn handle_command(

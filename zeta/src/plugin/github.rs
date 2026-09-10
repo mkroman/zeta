@@ -31,6 +31,15 @@ pub enum Error {
     ResponseParseFailed(#[source] reqwest::Error),
 }
 
+/// The `.gh` command.
+const GITHUB: PluginCommand = PluginCommand::new(
+    Prefix::new(".gh"),
+    "Search GitHub and show the most starred match",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[GITHUB];
+
 /// Structure representing the GitHub Plugin.
 /// Holds the HTTP client to reuse connection pools.
 pub struct GitHubPlugin {
@@ -70,7 +79,7 @@ impl Plugin<Context> for GitHubPlugin {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::new(Prefix::new(".gh"))] }
+        COMMANDS
     }
 
     async fn handle_command(

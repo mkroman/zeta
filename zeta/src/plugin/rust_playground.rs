@@ -10,6 +10,15 @@ use crate::{http, plugin::prelude::*, utils::Truncatable};
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
 
+/// The `.rs` command.
+const RUST_PLAYGROUND: PluginCommand = PluginCommand::new(
+    Prefix::new(".rs"),
+    "Evaluate a Rust expression on the Rust playground",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[RUST_PLAYGROUND];
+
 /// Plugin for evaluating Rust code.
 pub struct RustPlayground {
     client: reqwest::Client,
@@ -63,7 +72,7 @@ impl Plugin<Context> for RustPlayground {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::new(Prefix::new(".rs"))] }
+        COMMANDS
     }
 
     async fn handle_command(

@@ -35,7 +35,13 @@ use tracing::{debug, error, trace};
 use crate::plugin::prelude::*;
 
 /// The `.alert` command.
-const ALERT: Prefix = Prefix::new(".alert");
+const ALERT: PluginCommand = PluginCommand::new(
+    Prefix::new(".alert"),
+    "Schedule an alert to be posted later",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[ALERT];
 
 /// Reply messages used when an alert has been stored.
 const SUCCESS_MESSAGES: &[&str] = &[
@@ -112,7 +118,7 @@ impl Plugin<Context> for AlertPlugin {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::new(ALERT)] }
+        COMMANDS
     }
 
     async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {

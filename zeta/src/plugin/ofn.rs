@@ -23,7 +23,14 @@ use crate::{
 use model::{InsertUrlRecord, UrlRecord};
 
 /// The `.ofn` command.
-const OFN: Prefix = Prefix::new(".ofn");
+/// The `.ofn` command.
+const OFN: PluginCommand = PluginCommand::with_args::<Opts>(
+    Prefix::new(".ofn"),
+    "Show URL and YouTube repost statistics",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[OFN];
 
 pub struct Ofn;
 
@@ -368,7 +375,7 @@ impl Plugin<Context> for Ofn {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::with_args::<Opts>(OFN)] }
+        COMMANDS
     }
 
     async fn handle_command(

@@ -133,18 +133,16 @@ impl Prefix {
     }
 }
 
-/// A command handled by a plugin: a [`Prefix`] and the arguments it accepts.
+/// A command handled by a plugin: a [`Prefix`], a short description, and the arguments it accepts.
 ///
-/// Commands with typed arguments store a function pointer to the [`ArgsInfo`] implementation of
-/// their argument type, so the host can derive usage and help information for them without having
-/// to parse anything.
+/// The description is shown by the host's help command. Commands with typed arguments also store a
+/// function pointer to the [`ArgsInfo`] implementation of their argument type, so the host can
+/// derive usage and argument information for them without having to parse anything.
 ///
 /// # Examples
 ///
 /// ```
 /// use zeta_plugin::{PluginCommand, Prefix};
-///
-/// const DIG: Prefix = Prefix::new(".dig");
 ///
 /// /// Look up a domain name.
 /// #[derive(argh::ArgsInfo)]
@@ -154,21 +152,28 @@ impl Prefix {
 ///     name: String,
 /// }
 ///
-/// const COMMANDS: &[PluginCommand] = &[PluginCommand::with_args::<Opts>(DIG)];
+/// const DIG: PluginCommand = PluginCommand::with_args::<Opts>(
+///     Prefix::new(".dig"),
+///     "Look up DNS records for a domain",
+/// );
 ///
-/// let info = COMMANDS[0].args_info().unwrap();
-/// assert_eq!(info.description, "Look up a domain name.");
+/// assert_eq!(DIG.description(), "Look up DNS records for a domain");
+///
+/// let info = DIG.args_info().unwrap();
 /// assert_eq!(info.positionals[0].name, "name");
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct PluginCommand {
     /// The command prefix.
     prefix: Prefix,
+    /// A short, user-facing description of the command.
+    description: &'static str,
     /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
     args: Option<fn() -> CommandInfoWithArgs>,
 }
 
-/// Compares commands by prefix; the argument information is not part of a command's identity.
+/// Compares commands by prefix; the description and argument information are not part of a
+/// command's identity.
 impl PartialEq for PluginCommand {
     fn eq(&self, other: &Self) -> bool {
         self.prefix == other.prefix
@@ -178,17 +183,23 @@ impl PartialEq for PluginCommand {
 impl Eq for PluginCommand {}
 
 impl PluginCommand {
-    /// Creates a command whose arguments are parsed manually.
+    /// Creates a command with the given `description`, whose arguments are parsed manually.
     #[must_use]
-    pub const fn new(prefix: Prefix) -> Self {
-        Self { prefix, args: None }
-    }
-
-    /// Creates a command whose arguments are parsed into the [`ArgsInfo`]-derived type `T`.
-    #[must_use]
-    pub const fn with_args<T: ArgsInfo>(prefix: Prefix) -> Self {
+    pub const fn new(prefix: Prefix, description: &'static str) -> Self {
         Self {
             prefix,
+            description,
+            args: None,
+        }
+    }
+
+    /// Creates a command with the given `description`, whose arguments are parsed into the
+    /// [`ArgsInfo`]-derived type `T`.
+    #[must_use]
+    pub const fn with_args<T: ArgsInfo>(prefix: Prefix, description: &'static str) -> Self {
+        Self {
+            prefix,
+            description,
             args: Some(T::get_args_info),
         }
     }
@@ -197,6 +208,12 @@ impl PluginCommand {
     #[must_use]
     pub const fn prefix(&self) -> Prefix {
         self.prefix
+    }
+
+    /// Returns the short, user-facing description of the command.
+    #[must_use]
+    pub const fn description(&self) -> &'static str {
+        self.description
     }
 
     /// Checks if `input` matches this command, returning the trailing arguments (with leading

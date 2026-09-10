@@ -34,7 +34,13 @@ use format::PREFIX;
 const SEARCH_LIMIT: usize = 5;
 
 /// The `!imdb` command.
-const COMMAND: Prefix = Prefix::new("!imdb");
+const COMMAND: PluginCommand = PluginCommand::with_args::<Opts>(
+    Prefix::new("!imdb"),
+    "Search IMDb and post the top match",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[COMMAND];
 
 /// Search IMDb for a title.
 #[derive(FromArgs, ArgsInfo, Debug)]
@@ -76,7 +82,7 @@ impl Plugin<Context> for Imdb {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::with_args::<Opts>(COMMAND)] }
+        COMMANDS
     }
 
     async fn handle_message(

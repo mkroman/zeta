@@ -34,6 +34,15 @@ pub enum Error {
     Resolve(#[source] NetError),
 }
 
+/// The `.dig` command.
+const DIG: PluginCommand = PluginCommand::with_args::<Opts>(
+    Prefix::new(".dig"),
+    "Look up DNS records for a domain",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[DIG];
+
 pub struct Dig {
     resolver: TokioResolver,
 }
@@ -87,7 +96,7 @@ impl Plugin<Context> for Dig {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::with_args::<Opts>(Prefix::new(".dig"))] }
+        COMMANDS
     }
 
     async fn handle_command(

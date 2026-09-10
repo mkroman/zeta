@@ -28,7 +28,8 @@ use crate::{Error, Metadata};
 ///
 /// struct MyPlugin;
 ///
-/// const HELLO: Prefix = Prefix::new(".hello");
+/// const HELLO: PluginCommand = PluginCommand::new(Prefix::new(".hello"), "Greet someone");
+/// const COMMANDS: &[PluginCommand] = &[HELLO];
 ///
 ///#[async_trait]
 /// impl Plugin for MyPlugin {
@@ -44,7 +45,7 @@ use crate::{Error, Metadata};
 ///     }
 ///
 ///     fn commands(&self) -> &'static [PluginCommand] {
-///         const { &[PluginCommand::new(HELLO)] }
+///         COMMANDS
 ///     }
 ///
 ///     async fn handle_command(
@@ -85,8 +86,9 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// Every incoming `PRIVMSG` is matched against these prefixes; the first matching command is
     /// dispatched to [`Plugin::handle_command`].
     ///
-    /// Commands that accept arguments should associate their [`argh`] argument type with
-    /// [`PluginCommand::with_args`], so the host can derive usage and help information from it.
+    /// Each command carries a short description shown by the host's help command. Commands that
+    /// accept arguments should associate their [`argh`] argument type with
+    /// [`PluginCommand::with_args`], so the host can derive usage and argument information from it.
     ///
     /// Commands may overlap as long as no prefix is a word-prefix of another (e.g. `.y` and `.yt`).
     fn commands(&self) -> &'static [PluginCommand] {
@@ -109,7 +111,10 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// # use zeta_plugin::{Error, Prefix, prelude::*};
     /// # const FOO: Prefix = Prefix::new(".foo");
     /// # const BAR: Prefix = Prefix::new(".bar");
-    /// # const COMMANDS: &[PluginCommand] = &[PluginCommand::new(FOO), PluginCommand::new(BAR)];
+    /// # const COMMANDS: &[PluginCommand] = &[
+    /// #     PluginCommand::new(FOO, "Handle `.foo`"),
+    /// #     PluginCommand::new(BAR, "Handle `.bar`"),
+    /// # ];
     /// # struct MyPlugin;
     /// # #[async_trait]
     /// # impl Plugin for MyPlugin {

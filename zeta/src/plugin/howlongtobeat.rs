@@ -16,6 +16,15 @@ use crate::{http, plugin::prelude::*};
 const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
 
+/// The `.hltb` command.
+const HLTB: PluginCommand = PluginCommand::new(
+    Prefix::new(".hltb"),
+    "Look up a game's completion times",
+);
+
+/// The commands handled by this plugin.
+const COMMANDS: &[PluginCommand] = &[HLTB];
+
 /// The HowLongToBeat IRC plugin.
 ///
 /// This plugin allows users to query the HowLongToBeat database
@@ -218,7 +227,7 @@ impl Plugin<Context> for HowLongToBeat {
     }
 
     fn commands(&self) -> &'static [PluginCommand] {
-        const { &[PluginCommand::new(Prefix::new(".hltb"))] }
+        COMMANDS
     }
 
     async fn handle_command(
