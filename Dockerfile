@@ -10,6 +10,13 @@ ENV CARGO_TERM_COLOR=always \
     CARGO_NET_RETRY=10 \
     RUSTUP_MAX_RETRIES=10
 
+# BoringSSL (wreq, titles plugin) needs cmake, and bindgen needs libclang.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        cmake \
+        libclang-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo install cargo-chef cargo-auditable --locked
