@@ -14,6 +14,7 @@
 //! deferred to the API.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::sync::{PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
@@ -232,6 +233,30 @@ impl From<Vec<Fiat>> for FiatCache {
     }
 }
 
+/// A cache that expires after the cache TTL.
+trait Cached {
+    /// When the cache was last populated, if it was.
+    fn fetched_at(&self) -> Option<Instant>;
+
+    /// Returns whether the cache was populated within the cache TTL.
+    fn is_fresh(&self) -> bool {
+        self.fetched_at()
+            .is_some_and(|fetched_at| fetched_at.elapsed() < CACHE_TTL)
+    }
+}
+
+impl Cached for CoinCache {
+    fn fetched_at(&self) -> Option<Instant> {
+        self.fetched_at
+    }
+}
+
+impl Cached for FiatCache {
+    fn fetched_at(&self) -> Option<Instant> {
+        self.fetched_at
+    }
+}
+
 /// Crypto currency quotes plugin, backed by the CoinMarketCap API.
 pub struct CoinMarketCap {
     /// Client for CoinMarketCap API requests, with the API key set as a default header.
@@ -307,38 +332,17 @@ impl CoinMarketCap {
         };
 
         self.ensure_coins_cached().await;
-        self.ensure_fiat_cached().await;
-
-        let currency = match parse_currency(&self.fiat_symbols(), opts.currency.as_deref()) {
-            Ok(currency) => currency,
-            Err(err) => return Self::reply_error(client, channel, &err),
-        };
-
-        let query = opts.coin;
 
         // Prefer a cached coin (by symbol, then by fuzzy name); fall back to letting the API
         // resolve the query as a symbol (e.g. when the cache has not been populated yet, or the
         // coin is outside the cached top 1000).
-        let quote = match self.resolve_coin(&query) {
-            Some(coin) => {
-                self.client
-                    .get_quote(CoinQuery::Id(coin.id), &currency)
-                    .await
-            }
-            None => {
-                self.client
-                    .get_quote(CoinQuery::Symbol(query.to_ascii_uppercase()), &currency)
-                    .await
-            }
+        let query = match self.resolve_coin(&opts.coin) {
+            Some(coin) => CoinQuery::Id(coin.id),
+            None => CoinQuery::Symbol(opts.coin.to_ascii_uppercase()),
         };
 
-        Self::reply_quote(
-            client,
-            channel,
-            quote,
-            &currency,
-            self.fiat_sign(&currency).as_deref(),
-        )
+        self.quote_and_reply(client, channel, query, opts.currency.as_deref())
+            .await
     }
 
     /// Handles a fixed coin command invocation (e.g. `.btc`), quoting the given `symbol`.
@@ -358,18 +362,32 @@ impl CoinMarketCap {
             return Ok(());
         };
 
-        self.ensure_coins_cached().await;
+        self.quote_and_reply(
+            client,
+            channel,
+            CoinQuery::Symbol(symbol.to_string()),
+            opts.currency.as_deref(),
+        )
+        .await
+    }
+
+    /// Validates and resolves the optional conversion currency, quotes `query` in it and
+    /// replies to `channel` with the result.
+    async fn quote_and_reply(
+        &self,
+        client: &Client,
+        channel: &str,
+        query: CoinQuery,
+        currency: Option<&str>,
+    ) -> Result<(), ZetaError> {
         self.ensure_fiat_cached().await;
 
-        let currency = match parse_currency(&self.fiat_symbols(), opts.currency.as_deref()) {
+        let currency = match parse_currency(currency, |symbol| self.is_valid_currency(symbol)) {
             Ok(currency) => currency,
             Err(err) => return Self::reply_error(client, channel, &err),
         };
 
-        let quote = self
-            .client
-            .get_quote(CoinQuery::Symbol(symbol.to_string()), &currency)
-            .await;
+        let quote = self.client.get_quote(query, &currency).await;
 
         Self::reply_quote(
             client,
@@ -438,29 +456,10 @@ impl CoinMarketCap {
     /// resolving with the stale coins, and an empty cache falls back to letting the API
     /// resolve queries as symbols.
     async fn ensure_coins_cached(&self) {
-        let fresh = {
-            let cache = self.coins.read().unwrap_or_else(PoisonError::into_inner);
-
-            cache
-                .fetched_at
-                .is_some_and(|fetched_at| fetched_at.elapsed() < CACHE_TTL)
-        };
-
-        if fresh {
-            return;
-        }
-
-        match self.client.coin_map().await {
-            Ok(coins) => {
-                let count = coins.len();
-
-                *self.coins.write().unwrap_or_else(PoisonError::into_inner) =
-                    CoinCache::from(coins);
-
-                debug!(count, "cached the top cryptocurrencies");
-            }
-            Err(err) => warn!(error = %err, "could not cache the top cryptocurrencies"),
-        }
+        refresh_cache(&self.coins, "the top cryptocurrencies", || {
+            self.client.coin_map()
+        })
+        .await;
     }
 
     /// Refreshes the fiat currency cache when it is missing or older than the cache TTL.
@@ -468,37 +467,20 @@ impl CoinMarketCap {
     /// Failures are logged and leave the existing cache, if any, in place: quotes keep working
     /// with the stale currencies, and an empty cache defers currency validation to the API.
     async fn ensure_fiat_cached(&self) {
-        let fresh = {
-            let cache = self.fiat.read().unwrap_or_else(PoisonError::into_inner);
-
-            cache
-                .fetched_at
-                .is_some_and(|fetched_at| fetched_at.elapsed() < CACHE_TTL)
-        };
-
-        if fresh {
-            return;
-        }
-
-        match self.client.fiat_map().await {
-            Ok(fiats) => {
-                let count = fiats.len();
-
-                *self.fiat.write().unwrap_or_else(PoisonError::into_inner) = FiatCache::from(fiats);
-
-                debug!(count, "cached the supported fiat currencies");
-            }
-            Err(err) => warn!(error = %err, "could not cache the supported fiat currencies"),
-        }
+        refresh_cache(&self.fiat, "the supported fiat currencies", || {
+            self.client.fiat_map()
+        })
+        .await;
     }
 
-    /// Returns the fiat currency symbols currently considered valid.
-    fn fiat_symbols(&self) -> HashSet<String> {
-        self.fiat
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .symbols
-            .clone()
+    /// Returns whether `currency` is a fiat currency supported for price conversion.
+    ///
+    /// Returns `true` while the fiat cache has not been populated, deferring validation to
+    /// the API.
+    fn is_valid_currency(&self, currency: &str) -> bool {
+        let cache = self.fiat.read().unwrap_or_else(PoisonError::into_inner);
+
+        cache.symbols.is_empty() || cache.symbols.contains(currency)
     }
 
     /// Returns the currency sign for `currency`, if known.
@@ -512,16 +494,48 @@ impl CoinMarketCap {
     }
 }
 
+/// Refreshes the cache guarded by `lock` with the items fetched by `fetch` when the cache is
+/// missing or older than the cache TTL.
+///
+/// Failures are logged and leave the existing cache, if any, in place.
+async fn refresh_cache<C, T, E, F, Fut>(lock: &RwLock<C>, subject: &str, fetch: F)
+where
+    C: Cached + From<Vec<T>> + Send + Sync,
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<Vec<T>, E>> + Send,
+    E: std::fmt::Display,
+{
+    let fresh = lock.read().unwrap_or_else(PoisonError::into_inner).is_fresh();
+
+    if fresh {
+        return;
+    }
+
+    match fetch().await {
+        Ok(items) => {
+            let count = items.len();
+
+            *lock.write().unwrap_or_else(PoisonError::into_inner) = C::from(items);
+
+            debug!(count, "cached {subject}");
+        }
+        Err(err) => warn!(error = %err, "could not cache {subject}"),
+    }
+}
+
 /// Parses and validates the optional conversion currency of a command invocation.
 ///
 /// The input is sanitized before validation, so an unsupported currency can be echoed back to
-/// the channel without leaking IRC formatting control characters. An empty `valid` set skips
-/// validation entirely, deferring to the API — this is the fallback while the fiat cache has
-/// not been populated.
-fn parse_currency(valid: &HashSet<String>, currency: Option<&str>) -> Result<String, Error> {
+/// the channel without leaking IRC formatting control characters. Validation is delegated to
+/// `is_valid`, which accepts everything while the fiat cache has not been populated,
+/// deferring validation to the API.
+fn parse_currency(
+    currency: Option<&str>,
+    is_valid: impl Fn(&str) -> bool,
+) -> Result<String, Error> {
     let currency = sanitize(currency.unwrap_or(DEFAULT_CURRENCY)).to_ascii_uppercase();
 
-    if valid.is_empty() || valid.contains(&currency) {
+    if is_valid(&currency) {
         Ok(currency)
     } else {
         Err(Error::InvalidCurrency(currency))
@@ -778,31 +792,47 @@ mod tests {
 
     #[test]
     fn parses_currencies() {
-        let valid = HashSet::from(["USD".to_string(), "EUR".to_string(), "JPY".to_string()]);
+        let is_valid = |currency: &str| matches!(currency, "USD" | "EUR" | "JPY");
 
-        assert_eq!(parse_currency(&valid, None).unwrap(), "USD");
-        assert_eq!(parse_currency(&valid, Some("eur")).unwrap(), "EUR");
-        assert_eq!(parse_currency(&valid, Some("JPY")).unwrap(), "JPY");
+        assert_eq!(parse_currency(None, is_valid).unwrap(), "USD");
+        assert_eq!(parse_currency(Some("eur"), is_valid).unwrap(), "EUR");
+        assert_eq!(parse_currency(Some("JPY"), is_valid).unwrap(), "JPY");
         assert!(matches!(
-            parse_currency(&valid, Some("xyz")),
+            parse_currency(Some("xyz"), is_valid),
             Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
         ));
     }
 
     #[test]
+    fn validates_currencies_against_the_fiat_cache() {
+        let mut plugin = test_plugin();
+
+        // An empty fiat cache defers validation to the API.
+        assert!(plugin.is_valid_currency("XYZ"));
+
+        plugin.fiat = RwLock::new(FiatCache::from(vec![Fiat {
+            sign: "$".to_string(),
+            symbol: "USD".to_string(),
+        }]));
+
+        assert!(plugin.is_valid_currency("USD"));
+        assert!(!plugin.is_valid_currency("XYZ"));
+    }
+
+    #[test]
     fn parses_currencies_without_fiat_cache() {
         // Without a fiat cache, validation is deferred to the API.
-        assert_eq!(parse_currency(&HashSet::new(), Some("xyz")).unwrap(), "XYZ");
+        assert_eq!(parse_currency(Some("xyz"), |_| true).unwrap(), "XYZ");
     }
 
     #[test]
     fn sanitizes_currencies() {
         // Control characters (which include all IRC formatting bytes) must not survive into
         // the currency that is echoed back on error.
-        let valid = HashSet::from(["USD".to_string()]);
+        let is_valid = |currency: &str| currency == "USD";
 
         assert!(matches!(
-            parse_currency(&valid, Some("\u{2}xyz\u{f}")),
+            parse_currency(Some("\u{2}xyz\u{f}"), is_valid),
             Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
         ));
     }

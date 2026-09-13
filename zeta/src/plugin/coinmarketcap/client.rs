@@ -61,57 +61,49 @@ impl Client {
 
     /// Fetches the map of the top cryptocurrencies (by market cap rank) from the CoinMarketCap
     /// API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if the request fails, the API responds with an error status, or
+    /// the response cannot be parsed.
     pub async fn coin_map(&self) -> Result<Vec<Coin>, Error> {
         debug!(limit = COIN_MAP_LIMIT, "fetching the top cryptocurrencies");
 
-        let response = self
-            .inner
-            .get(format!("{API_BASE_URL}/v1/cryptocurrency/map"))
-            .query(&[
-                ("limit", COIN_MAP_LIMIT.to_string()),
-                ("sort", "cmc_rank".to_string()),
-            ])
-            .send()
-            .await
-            .map_err(Error::Request)?;
-
-        let status = response.status();
-        let text = response.text().await.map_err(Error::Request)?;
-
-        if !status.is_success() {
-            return Err(api_error(status, &text));
-        }
-
-        let parsed: Envelope<Vec<Coin>> = decode_response(&text)?;
+        let parsed: Envelope<Vec<Coin>> = self
+            .get_json(
+                "/v1/cryptocurrency/map",
+                &[
+                    ("limit", COIN_MAP_LIMIT.to_string()),
+                    ("sort", "cmc_rank".to_string()),
+                ],
+            )
+            .await?;
 
         Ok(parsed.data.unwrap_or_default())
     }
 
     /// Fetches the fiat currencies supported for price conversion from the CoinMarketCap API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if the request fails, the API responds with an error status, or
+    /// the response cannot be parsed.
     pub async fn fiat_map(&self) -> Result<Vec<Fiat>, Error> {
         debug!("fetching the supported fiat currencies");
 
-        let response = self
-            .inner
-            .get(format!("{API_BASE_URL}/v1/fiat/map"))
-            .query(&[("limit", FIAT_MAP_LIMIT.to_string())])
-            .send()
-            .await
-            .map_err(Error::Request)?;
-
-        let status = response.status();
-        let text = response.text().await.map_err(Error::Request)?;
-
-        if !status.is_success() {
-            return Err(api_error(status, &text));
-        }
-
-        let parsed: Envelope<Vec<Fiat>> = decode_response(&text)?;
+        let parsed: Envelope<Vec<Fiat>> = self
+            .get_json("/v1/fiat/map", &[("limit", FIAT_MAP_LIMIT.to_string())])
+            .await?;
 
         Ok(parsed.data.unwrap_or_default())
     }
 
     /// Fetches the quote for a single coin in the given conversion currency.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotFound`] when the API does not know the coin, and an [`Error`] for
+    /// request, status or parse failures.
     pub async fn get_quote(&self, coin: CoinQuery, convert: &str) -> Result<QuoteData, Error> {
         let mut query: Vec<(&str, String)> = vec![("convert", convert.to_string())];
 
@@ -122,10 +114,36 @@ impl Client {
 
         debug!(?query, "requesting coin quote");
 
+        let parsed: Envelope<HashMap<String, QuoteData>> = self
+            .get_json("/v1/cryptocurrency/quotes/latest", &query)
+            .await?;
+
+        // The data payload is keyed by the requested identifier (symbol or id); a single coin is
+        // requested, so the first (and only) value is the quote.
+        parsed
+            .data
+            .and_then(|data| data.into_values().next())
+            .ok_or(Error::NotFound)
+    }
+
+    /// Performs a GET request against `path` with `query`, deserializing a successful response
+    /// into `T`.
+    ///
+    /// Non-success statuses are mapped to an error by [`api_error`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if the request fails, the response status is not a success, or the
+    /// response cannot be parsed.
+    async fn get_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T, Error> {
         let response = self
             .inner
-            .get(format!("{API_BASE_URL}/v1/cryptocurrency/quotes/latest"))
-            .query(&query)
+            .get(format!("{API_BASE_URL}{path}"))
+            .query(query)
             .send()
             .await
             .map_err(Error::Request)?;
@@ -137,14 +155,7 @@ impl Client {
             return Err(api_error(status, &text));
         }
 
-        let parsed: Envelope<HashMap<String, QuoteData>> = decode_response(&text)?;
-
-        // The data payload is keyed by the requested identifier (symbol or id); a single coin is
-        // requested, so the first (and only) value is the quote.
-        parsed
-            .data
-            .and_then(|data| data.into_values().next())
-            .ok_or(Error::NotFound)
+        decode_response(&text)
     }
 }
 
