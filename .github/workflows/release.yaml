@@ -20,6 +20,8 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    outputs:
+      version: "${{ steps.artifact.outputs.version }}"
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
@@ -96,3 +98,32 @@ jobs:
         with:
           name: zeta-${{ matrix.platform }}-${{ matrix.arch }}
           path: target/release/zeta${{ matrix.platform == 'windows' && '.exe' || '' }}
+
+  pre-notification:
+    name: Send Pre-Notification
+    runs-on: ubuntu-latest
+    needs:
+      - check
+    steps:
+      - uses: mkroman/send-irc-notification@main
+        with:
+          channel: "#uplink"
+          network: "irc.rwx.im:6697"
+          message: "\x0310> Building Zeta release\x0f ${{ needs.check.outputs.version }} @ https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          token: "${{ secrets.WEBHOOK_TOKEN }}"
+          webhook-url: "${{ vars.WEBHOOK_URL }}"
+
+  post-notification:
+    name: Send Post-Notification
+    runs-on: ubuntu-latest
+    needs:
+      - check
+      - container_image
+    steps:
+      - uses: mkroman/send-irc-notification@main
+        with:
+          channel: "#uplink"
+          network: "irc.rwx.im:6697"
+          message: "\x0310> Zeta version\x0f ${{ needs.check.outputs.version }}\x0310 released.."
+          token: "${{ secrets.WEBHOOK_TOKEN }}"
+          webhook-url: "${{ vars.WEBHOOK_URL }}"
