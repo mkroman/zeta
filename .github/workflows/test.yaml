@@ -44,7 +44,32 @@ permissions:
 
 jobs:
   test:
-    name: Test (${{ inputs.toolchain }})
+    name: Test
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+      - name: Install Rust ${{ inputs.toolchain }}
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: ${{ inputs.toolchain }}
+      - name: Enable type layout randomization
+        run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
+        if: inputs.toolchain == 'nightly'
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ inputs.cache-key }}
+          cache-on-failure: ${{ inputs.cache-on-failure }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: true
+      - name: Run tests
+        run: cargo test ${{ inputs.args }} ${{ !inputs.fail-fast && '--no-fail-fast' || '' }}
+
+  # Clippy runs as its own job because it doesn't play nice and reuse the
+  # intermediate artifacts built by `cargo test` anyway.
+  clippy:
+    name: Clippy
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout source
@@ -54,9 +79,6 @@ jobs:
         with:
           toolchain: ${{ inputs.toolchain }}
           components: clippy
-      - name: Enable type layout randomization
-        run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
-        if: inputs.toolchain == 'nightly'
       - name: Cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -68,5 +90,3 @@ jobs:
         uses: clechasseur/rs-clippy-check@20f338ad6648dedb921c00b023bc30c971ab9ed7 # v6.0.7
         with:
           args: ${{ inputs.args }}
-      - name: Run tests
-        run: cargo test ${{ inputs.args }} ${{ !inputs.fail-fast && '--no-fail-fast' || '' }}
