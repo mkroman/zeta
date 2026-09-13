@@ -78,8 +78,8 @@ declare_plugins! {
   choices::Choices,
 
   /// Crypto currency quotes via CoinMarketCap
-  #[cfg(feature = "plugin-cryptocoins")]
-  cryptocoins::CryptoCoins,
+  #[cfg(feature = "plugin-coinmarketcap")]
+  coinmarketcap::CoinMarketCap,
 
   /// Query the danish dictionary
   #[cfg(feature = "plugin-dendanskeordbog")]

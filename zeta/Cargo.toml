@@ -24,7 +24,7 @@ rustls = ["reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls"]
 plugin-alert = ["database", "dep:chrono", "dep:interim"]
 plugin-chaturbate = ["http", "dep:regex"]
 plugin-choices = []
-plugin-cryptocoins = ["http", "dep:frizbee", "dep:serde_path_to_error"]
+plugin-coinmarketcap = ["http", "dep:frizbee", "dep:serde_path_to_error"]
 plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
 plugin-dig = []
 plugin-geoip = ["http"]
@@ -62,7 +62,7 @@ plugins-all = [
     "plugin-alert",
     "plugin-chaturbate",
     "plugin-choices",
-    "plugin-cryptocoins",
+    "plugin-coinmarketcap",
     "plugin-dendanskeordbog",
     "plugin-dig",
     "plugin-geoip",
