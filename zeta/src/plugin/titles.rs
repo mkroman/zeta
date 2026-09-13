@@ -21,6 +21,9 @@ use html5ever::tendril::StrTendril;
 use irc::client::Client;
 use irc::proto::Command;
 use reqwest::StatusCode;
+use reqwest::header::{
+    ACCEPT, ACCEPT_LANGUAGE, HeaderMap, HeaderName, HeaderValue, TE, UPGRADE_INSECURE_REQUESTS,
+};
 use reqwest::redirect::Policy;
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -367,11 +370,58 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     text
 }
 
+/// Returns the request headers of a browser document navigation.
+///
+/// Anti-bot systems score requests on the coherence of their header profile, and the complete
+/// set is load-bearing — aggressively protected sites reject requests missing any of them.
+///
+/// The set is empirical and intentionally mixes headers across browser families (`Priority` is
+/// Chromium-style, `TE: trailers` is Firefox-style); trimming any of them reintroduces
+/// rejections, so the profile should not be reconciled with a single browser.
+///
+/// The user agent is set by [`http::client::builder`], and `Accept-Encoding` is advertised by
+/// reqwest itself through its compression features, matching what a browser offers.
+#[must_use]
+fn browser_headers() -> HeaderMap {
+    let mut headers = HeaderMap::with_capacity(9);
+
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+    );
+    headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.5"));
+    headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
+    headers.insert(
+        HeaderName::from_static("sec-fetch-dest"),
+        HeaderValue::from_static("document"),
+    );
+    headers.insert(
+        HeaderName::from_static("sec-fetch-mode"),
+        HeaderValue::from_static("navigate"),
+    );
+    headers.insert(
+        HeaderName::from_static("sec-fetch-site"),
+        HeaderValue::from_static("none"),
+    );
+    headers.insert(
+        HeaderName::from_static("sec-fetch-user"),
+        HeaderValue::from_static("?1"),
+    );
+    headers.insert(
+        HeaderName::from_static("priority"),
+        HeaderValue::from_static("u=0, i"),
+    );
+    headers.insert(TE, HeaderValue::from_static("trailers"));
+
+    headers
+}
+
 #[async_trait]
 impl Plugin<Context> for Titles {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::client::builder()
             .redirect(Policy::limited(MAX_REDIRECTS))
+            .default_headers(browser_headers())
             .build()
             .map_err(plugin_err)?;
 

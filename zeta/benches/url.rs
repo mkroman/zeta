@@ -2,7 +2,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use zeta::url::{ExtractUrls, ExtractUrlsExt, SchemeMap};
 
 /// A message without any URLs — the common case that must be rejected quickly.

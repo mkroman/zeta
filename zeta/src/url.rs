@@ -197,9 +197,10 @@ mod tests {
             ExtractUrls::with_schemes("https://maero.dk http://example.com", TTP_SCHEMES).collect();
 
         assert_eq!(urls.len(), 2);
-        assert!(urls
-            .iter()
-            .all(|extracted| extracted.repaired_from.is_none()));
+        assert!(
+            urls.iter()
+                .all(|extracted| extracted.repaired_from.is_none())
+        );
         assert_eq!(urls[0].url.as_str(), "https://maero.dk/");
     }
 
