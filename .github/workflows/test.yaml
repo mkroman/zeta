@@ -51,7 +51,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v7
       - name: Install Rust ${{ inputs.toolchain }}
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: ${{ inputs.toolchain }}
       - name: Enable type layout randomization
@@ -76,7 +76,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v7
       - name: Install Rust ${{ inputs.toolchain }}
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: ${{ inputs.toolchain }}
           components: clippy
