@@ -15,7 +15,7 @@ name = "zeta"
 path = "src/main.rs"
 
 [features]
-default = ["plugins-all", "native-tls", "database"]
+default = ["plugins-all", "rustls", "database"]
 database = ["dep:sqlx", "dep:chrono"]
 http = ["dep:reqwest"]
 native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx?/tls-native-tls"]
