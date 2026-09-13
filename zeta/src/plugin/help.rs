@@ -211,8 +211,8 @@ fn command_details(info: &CommandInfoWithArgs) -> String {
 /// Formats `details` as a comma-separated list.
 ///
 /// Each label is bold and each description gray; all but the last detail are comma-terminated
-/// with the comma inside the color, and details after the first carry a leading space inside
-/// their label.
+/// (with the comma inside the color when the detail has a description), and details after the
+/// first carry a leading space inside their label.
 fn details_list(details: &[Detail]) -> String {
     details
         .iter()
@@ -238,9 +238,11 @@ fn details_list(details: &[Detail]) -> String {
 /// Prepends the packed list of `entries` to `header`.
 ///
 /// Lists longer than [`MAX_MESSAGE_LENGTH`] are split at entry boundaries; the continuation
-/// messages carry the remaining entries without the header.
+/// messages carry the remaining entries without the header. The header counts against the
+/// budget of the first message.
 fn with_list(header: &str, entries: &[String]) -> Vec<String> {
-    let lists = pack(entries);
+    let budget = MAX_MESSAGE_LENGTH.saturating_sub(header.len() + 1);
+    let lists = pack(entries, budget);
 
     if lists.is_empty() {
         return vec![header.to_owned()];
@@ -251,15 +253,15 @@ fn with_list(header: &str, entries: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Packs `entries` into as few messages as possible without exceeding
-/// [`MAX_MESSAGE_LENGTH`] or splitting an entry.
-fn pack(entries: &[String]) -> Vec<String> {
+/// Packs `entries` into as few messages as possible without exceeding `max_length` or splitting
+/// an entry.
+fn pack(entries: &[String], max_length: usize) -> Vec<String> {
     let mut messages = Vec::new();
     let mut message = String::new();
 
     for entry in entries {
         if !message.is_empty()
-            && message.len() + SEPARATOR.len() + entry.len() > MAX_MESSAGE_LENGTH
+            && message.len() + SEPARATOR.len() + entry.len() > max_length
         {
             messages.push(std::mem::take(&mut message));
         }
@@ -743,7 +745,7 @@ mod tests {
             .map(|index| format!("entry-{index:03}{}", "x".repeat(70)))
             .collect::<Vec<_>>();
 
-        let packed = pack(&entries);
+        let packed = pack(&entries, MAX_MESSAGE_LENGTH);
 
         assert!(packed.len() > 1);
         assert!(packed
@@ -767,6 +769,9 @@ mod tests {
         let rendered = messages(&catalog, "");
 
         assert!(rendered.len() > 1);
+        assert!(rendered
+            .iter()
+            .all(|message| message.len() <= MAX_MESSAGE_LENGTH));
         assert!(rendered[0].starts_with("\x0310>\x0f\x02 Help\x02"));
         assert!(rendered[0].contains("plugin-000"));
         assert!(rendered[1].contains("plugin-"));
