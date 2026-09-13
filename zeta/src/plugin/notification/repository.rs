@@ -34,7 +34,7 @@ impl NotificationRepository {
 
         let mut notifications = Vec::new();
         let mut stream =
-            sqlx::query_as!(Notification, "SELECT * FROM notifications").fetch(&self.db);
+            sqlx::query_as("SELECT * FROM notifications").fetch(&self.db);
 
         while let Some(notification) = stream.try_next().await.map_err(Error::Load)? {
             notifications.push(notification);
@@ -52,16 +52,19 @@ impl NotificationRepository {
     pub async fn insert(&self, notification: NewNotification) -> Result<Notification, Error> {
         trace!("inserting notification into database");
 
-        sqlx::query_file_as!(
-            Notification,
-            "queries/insert_notification.sql",
-            notification.target,
-            notification.nickname,
-            notification.username,
-            notification.hostname,
-            notification.channel,
-            notification.message
+        sqlx::query_as(
+            r"INSERT INTO notifications (
+                target, nickname, username, hostname, channel, message
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6
+            ) RETURNING *",
         )
+        .bind(notification.target)
+        .bind(notification.nickname)
+        .bind(notification.username)
+        .bind(notification.hostname)
+        .bind(notification.channel)
+        .bind(notification.message)
         .fetch_one(&self.db)
         .await
         .map_err(Error::Insert)
@@ -76,7 +79,8 @@ impl NotificationRepository {
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting notifications from database");
 
-        sqlx::query!("DELETE FROM notifications WHERE id = ANY($1)", ids)
+        sqlx::query("DELETE FROM notifications WHERE id = ANY($1)")
+            .bind(ids)
             .execute(&self.db)
             .await
             .map_err(Error::Delete)?;

@@ -55,17 +55,24 @@ impl Ofn {
         url: &Url,
     ) -> Result<Option<UrlRecord>, Error> {
         let host = url.host_str().ok_or_else(|| Error::InsertUrlNoHost)?;
-        let result = sqlx::query_file_as!(
-            UrlRecord,
-            "queries/find_url_record.sql",
-            url.scheme(),
-            host,
-            url.port_or_known_default().map(i32::from),
-            url.path(),
-            url.query(),
-            origin.channel,
-            origin.network
+        let result = sqlx::query_as(
+            r"SELECT * FROM url_records
+            WHERE
+                scheme = $1
+                AND host = $2
+                AND port IS NOT DISTINCT FROM $3
+                AND path IS NOT DISTINCT FROM $4
+                AND query IS NOT DISTINCT FROM $5
+                AND channel = $6
+                AND network_id = $7",
         )
+        .bind(url.scheme())
+        .bind(host)
+        .bind(url.port_or_known_default().map(i32::from))
+        .bind(url.path())
+        .bind(url.query())
+        .bind(origin.channel)
+        .bind(origin.network)
         .fetch_optional(&ctx.db)
         .await
         .map_err(Error::QueryDatabase)?;
@@ -83,13 +90,15 @@ impl Ofn {
         origin: &ChannelMessageOrigin<'_>,
         video_id: &str,
     ) -> Result<Option<YouTubeRecord>, Error> {
-        let result = sqlx::query_file_as!(
-            YouTubeRecord,
-            "queries/find_youtube_video_url.sql",
-            video_id,
-            origin.channel,
-            origin.network
+        let result = sqlx::query_as(
+            r"SELECT * FROM youtube_video_urls
+            WHERE video_id = $1
+                AND channel = $2
+                AND network_id = $3",
         )
+        .bind(video_id)
+        .bind(origin.channel)
+        .bind(origin.network)
         .fetch_optional(&ctx.db)
         .await
         .map_err(Error::QueryDatabase)?;
@@ -132,20 +141,32 @@ impl Ofn {
 
         debug!("inserting url into database");
 
-        sqlx::query_file!(
-            "queries/insert_url_record.sql",
-            insert.scheme,
-            insert.host,
-            insert.port,
-            insert.path,
-            insert.query,
-            insert.fragment,
-            insert.nickname,
-            insert.username,
-            insert.hostname,
-            insert.channel,
-            insert.network_id
+        sqlx::query(
+            r"INSERT INTO url_records (
+                scheme,
+                host,
+                port,
+                path,
+                query,
+                fragment,
+                nickname,
+                username,
+                hostname,
+                channel,
+                network_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id",
         )
+        .bind(&insert.scheme)
+        .bind(&insert.host)
+        .bind(insert.port)
+        .bind(&insert.path)
+        .bind(&insert.query)
+        .bind(&insert.fragment)
+        .bind(&insert.nickname)
+        .bind(&insert.username)
+        .bind(&insert.hostname)
+        .bind(&insert.channel)
+        .bind(&insert.network_id)
         .fetch_one(&ctx.db)
         .await
         .map_err(Error::InsertUrl)?;
@@ -174,15 +195,22 @@ impl Ofn {
 
         debug!("inserting youtube video into database");
 
-        sqlx::query_file!(
-            "queries/insert_youtube_video_url.sql",
-            insert.video_id,
-            insert.nickname,
-            insert.username,
-            insert.hostname,
-            insert.channel,
-            insert.network_id
+        sqlx::query(
+            r"INSERT INTO youtube_video_urls (
+                video_id,
+                nickname,
+                username,
+                hostname,
+                channel,
+                network_id
+            ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         )
+        .bind(&insert.video_id)
+        .bind(&insert.nickname)
+        .bind(&insert.username)
+        .bind(&insert.hostname)
+        .bind(&insert.channel)
+        .bind(&insert.network_id)
         .fetch_one(&ctx.db)
         .await
         .map_err(Error::InsertUrl)?;

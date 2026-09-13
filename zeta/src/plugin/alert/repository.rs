@@ -31,16 +31,19 @@ impl AlertRepository {
     pub async fn insert(&self, alert: NewAlert) -> Result<Alert, Error> {
         trace!("inserting alert into database");
 
-        sqlx::query_file_as!(
-            Alert,
-            "queries/insert_alert.sql",
-            alert.nickname,
-            alert.username,
-            alert.hostname,
-            alert.channel,
-            alert.message,
-            alert.time
+        sqlx::query_as(
+            r"INSERT INTO alerts (
+                nickname, username, hostname, channel, message, time
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6
+            ) RETURNING id, nickname, username, hostname, channel, message, time, created_at",
         )
+        .bind(alert.nickname)
+        .bind(alert.username)
+        .bind(alert.hostname)
+        .bind(alert.channel)
+        .bind(alert.message)
+        .bind(alert.time)
         .fetch_one(&self.db)
         .await
         .map_err(Error::Insert)
@@ -55,11 +58,10 @@ impl AlertRepository {
     pub async fn list(&self) -> Result<Vec<Alert>, Error> {
         trace!("loading alerts from database");
 
-        sqlx::query_as!(
-            Alert,
-            r#"SELECT id, nickname, username, hostname, channel, message, time, created_at
-               FROM alerts
-               ORDER BY time"#
+        sqlx::query_as(
+            r"SELECT id, nickname, username, hostname, channel, message, time, created_at
+              FROM alerts
+              ORDER BY time",
         )
         .fetch_all(&self.db)
         .await
@@ -75,7 +77,8 @@ impl AlertRepository {
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting alerts from database");
 
-        sqlx::query!("DELETE FROM alerts WHERE id = ANY($1)", ids)
+        sqlx::query("DELETE FROM alerts WHERE id = ANY($1)")
+            .bind(ids)
             .execute(&self.db)
             .await
             .map_err(Error::Delete)?;
