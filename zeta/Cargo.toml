@@ -14,10 +14,6 @@ crate-type = ["lib"]
 name = "zeta"
 path = "src/main.rs"
 
-[[bench]]
-name = "url"
-harness = false
-
 [features]
 default = ["plugins-all", "rustls", "database"]
 database = ["dep:sqlx", "dep:chrono"]
