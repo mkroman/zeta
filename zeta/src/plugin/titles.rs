@@ -22,7 +22,8 @@ use irc::client::Client;
 use irc::proto::Command;
 use reqwest::StatusCode;
 use reqwest::header::{
-    ACCEPT, ACCEPT_LANGUAGE, HeaderMap, HeaderName, HeaderValue, TE, UPGRADE_INSECURE_REQUESTS,
+    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderMap, HeaderName, HeaderValue, TE,
+    UPGRADE_INSECURE_REQUESTS,
 };
 use reqwest::redirect::Policy;
 use thiserror::Error;
@@ -379,17 +380,24 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 /// Chromium-style, `TE: trailers` is Firefox-style); trimming any of them reintroduces
 /// rejections, so the profile should not be reconciled with a single browser.
 ///
-/// The user agent is set by [`http::client::builder`], and `Accept-Encoding` is advertised by
-/// reqwest itself through its compression features, matching what a browser offers.
+/// `Accept-Encoding` must be set explicitly: the reqwest compression features only control the
+/// transparent decompression of responses — unlike browsers, reqwest does not advertise the
+/// header itself, and its absence is enough to get flagged.
+///
+/// The user agent is set by [`http::client::builder`].
 #[must_use]
 fn browser_headers() -> HeaderMap {
-    let mut headers = HeaderMap::with_capacity(9);
+    let mut headers = HeaderMap::with_capacity(10);
 
     headers.insert(
         ACCEPT,
         HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
     );
     headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.5"));
+    headers.insert(
+        ACCEPT_ENCODING,
+        HeaderValue::from_static("gzip, deflate, br, zstd"),
+    );
     headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
     headers.insert(
         HeaderName::from_static("sec-fetch-dest"),
