@@ -20,21 +20,17 @@ use html5ever::tokenizer::{
 use html5ever::tendril::StrTendril;
 use irc::client::Client;
 use irc::proto::Command;
-use reqwest::StatusCode;
-use reqwest::header::{
-    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderMap, HeaderName, HeaderValue, TE,
-    UPGRADE_INSECURE_REQUESTS,
-};
-use reqwest::redirect::Policy;
+use wreq::StatusCode;
+use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
+use wreq::redirect::Policy;
+use wreq_util::Emulation;
 use thiserror::Error;
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{
-    http,
-    plugin::prelude::*,
-    url::{ExtractedUrl, ExtractUrls, SchemeMap},
-};
+use crate::consts;
+use crate::plugin::prelude::*;
+use crate::url::{ExtractedUrl, ExtractUrls, SchemeMap};
 
 /// The accepted schemes: `http` and `https`, plus the `ttp` and `ttps` variants that are missing
 /// their leading `h` — the latter are repaired and announced before the page is fetched.
@@ -88,9 +84,13 @@ const BINARY_EXTENSIONS: &[&str] = &[
 ///
 /// Fetches pages posted as URLs in a channel and posts their title and OpenGraph metadata as
 /// soon as the document head has been received.
+///
+/// Pages are fetched with a client that emulates a modern browser down to its TLS and HTTP/2
+/// fingerprints — aggressively bot-protected sites reject plain HTTP clients regardless of the
+/// request headers they carry.
 pub struct Titles {
     /// The HTTP client used for fetching pages.
-    client: reqwest::Client,
+    client: wreq::Client,
 }
 
 /// Page title and OpenGraph metadata extracted from a document head.
@@ -236,7 +236,7 @@ enum Error {
     Status(StatusCode),
     /// The request failed.
     #[error("Error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] wreq::Error),
     /// The tokenizer task failed.
     #[error("could not tokenize the response")]
     Task(#[from] tokio::task::JoinError),
@@ -250,8 +250,8 @@ enum Error {
 /// # Errors
 ///
 /// Returns an error if the request fails or the server returns an unsuccessful response.
-async fn fetch_metadata(client: &reqwest::Client, url: &Url) -> Result<PageMetadata, Error> {
-    let response = client.get(url.clone()).send().await?;
+async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMetadata, Error> {
+    let response = client.get(url.as_str()).send().await?;
     let status = response.status();
 
     if !status.is_success() {
@@ -261,7 +261,7 @@ async fn fetch_metadata(client: &reqwest::Client, url: &Url) -> Result<PageMetad
     // The HTML tokenizer is not `Send`, so the response body is streamed through a channel and
     // tokenized on a blocking thread. The channel is bounded so that the reader stalls — and the
     // download is throttled — once the tokenizer falls behind.
-    let (sender, receiver) = mpsc::sync_channel::<Result<Vec<u8>, reqwest::Error>>(4);
+    let (sender, receiver) = mpsc::sync_channel::<Result<Vec<u8>, wreq::Error>>(4);
 
     let reader = tokio::spawn(async move {
         let mut stream = response.bytes_stream();
@@ -371,55 +371,25 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     text
 }
 
-/// Returns the request headers of a browser document navigation.
+/// Returns the request headers layered on top of the emulated browser profile.
 ///
-/// Anti-bot systems score requests on the coherence of their header profile, and the complete
-/// set is load-bearing — aggressively protected sites reject requests missing any of them.
+/// `Accept-Encoding` must be set explicitly: like reqwest, wreq does not advertise the header
+/// itself even though it decompresses responses — and its absence is enough to get flagged.
 ///
-/// The set is empirical and intentionally mixes headers across browser families (`Priority` is
-/// Chromium-style, `TE: trailers` is Firefox-style); trimming any of them reintroduces
-/// rejections, so the profile should not be reconciled with a single browser.
-///
-/// `Accept-Encoding` must be set explicitly: the reqwest compression features only control the
-/// transparent decompression of responses — unlike browsers, reqwest does not advertise the
-/// header itself, and its absence is enough to get flagged.
-///
-/// The user agent is set by [`http::client::builder`].
+/// The profile's user agent is overridden with the bot's Firefox 151 user agent. This skews with
+/// the emulated Firefox 142 fingerprint, and that is deliberate: the profile defaults to macOS —
+/// which anti-bot systems score far more aggressively when requests originate from datacenter
+/// networks — and the matching Linux Firefox 142 user agent is rejected by DataDome outright,
+/// while Firefox 151 passes.
 #[must_use]
-fn browser_headers() -> HeaderMap {
-    let mut headers = HeaderMap::with_capacity(10);
+fn emulated_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
 
-    headers.insert(
-        ACCEPT,
-        HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
-    );
-    headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.5"));
     headers.insert(
         ACCEPT_ENCODING,
         HeaderValue::from_static("gzip, deflate, br, zstd"),
     );
-    headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
-    headers.insert(
-        HeaderName::from_static("sec-fetch-dest"),
-        HeaderValue::from_static("document"),
-    );
-    headers.insert(
-        HeaderName::from_static("sec-fetch-mode"),
-        HeaderValue::from_static("navigate"),
-    );
-    headers.insert(
-        HeaderName::from_static("sec-fetch-site"),
-        HeaderValue::from_static("none"),
-    );
-    headers.insert(
-        HeaderName::from_static("sec-fetch-user"),
-        HeaderValue::from_static("?1"),
-    );
-    headers.insert(
-        HeaderName::from_static("priority"),
-        HeaderValue::from_static("u=0, i"),
-    );
-    headers.insert(TE, HeaderValue::from_static("trailers"));
+    headers.insert(USER_AGENT, HeaderValue::from_static(consts::HTTP_USER_AGENT));
 
     headers
 }
@@ -427,9 +397,11 @@ fn browser_headers() -> HeaderMap {
 #[async_trait]
 impl Plugin<Context> for Titles {
     fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let client = http::client::builder()
+        let client = wreq::Client::builder()
+            .emulation(Emulation::Firefox142)
+            .default_headers(emulated_headers())
             .redirect(Policy::limited(MAX_REDIRECTS))
-            .default_headers(browser_headers())
+            .timeout(consts::HTTP_TIMEOUT)
             .build()
             .map_err(plugin_err)?;
 
