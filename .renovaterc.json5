@@ -26,7 +26,7 @@
     // Don't pin official GitHub Actions versions
     {
       "matchDepTypes": ["action"],
-      "matchPackageNames": ["actions/*"],
+      "matchPackageNames": ["actions/*", "mkroman/send-irc-notification"],
       "pinDigests": false,
     },
     // Don't pin the images used in the Dockerfile
