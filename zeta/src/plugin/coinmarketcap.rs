@@ -414,7 +414,7 @@ impl CoinMarketCap {
         Ok(())
     }
 
-    /// Replies with a friendly error message, logging unexpected failures.
+    /// Replies with the message of a failed coin lookup, logging unexpected failures.
     fn reply_error(client: &Client, channel: &str, err: &Error) -> Result<(), ZetaError> {
         // Unknown coins and unsupported currencies are user errors: they are replied to
         // verbatim, without logging. Anything else is unexpected and worth a warning.
@@ -422,15 +422,7 @@ impl CoinMarketCap {
             warn!(error = %err, "coin lookup failed");
         }
 
-        let message = match err {
-            Error::NotFound => "No such coin".to_string(),
-            Error::InvalidCurrency(_) => err.to_string(),
-            Error::Api(message) => format!("Could not retrieve coin information: {message}"),
-            Error::Request(_) => "Could not reach the CoinMarketCap API".to_string(),
-            Error::Deserialize(_) => "Could not parse the CoinMarketCap response".to_string(),
-        };
-
-        client.send_privmsg(channel, formatted(&message))?;
+        client.send_privmsg(channel, formatted(&err.to_string()))?;
 
         Ok(())
     }

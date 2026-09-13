@@ -254,7 +254,20 @@ mod tests {
 
         let err = api_error(StatusCode::UNAUTHORIZED, text);
 
-        assert_eq!(err.to_string(), "This API Key is invalid.");
+        assert_eq!(
+            err.to_string(),
+            "Could not retrieve coin information: This API Key is invalid."
+        );
+    }
+
+    #[test]
+    fn maps_deserialize_failures_to_a_user_facing_message() {
+        let err = decode_response::<Envelope<Value>>("{").expect_err("malformed json");
+
+        assert_eq!(
+            err.to_string(),
+            "Could not parse the response from the CoinMarketCap API"
+        );
     }
 
     #[test]
