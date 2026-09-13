@@ -105,7 +105,7 @@ jobs:
     needs:
       - check
     steps:
-      - uses: mkroman/send-irc-notification@main
+      - uses: mkroman/send-irc-notification@bc1e4932ff0a234a3576934dadabb6adfaacb81d # main
         with:
           channel: "#uplink"
           network: "irc.rwx.im:6697"
@@ -120,7 +120,7 @@ jobs:
       - check
       - container_image
     steps:
-      - uses: mkroman/send-irc-notification@main
+      - uses: mkroman/send-irc-notification@bc1e4932ff0a234a3576934dadabb6adfaacb81d # main
         with:
           channel: "#uplink"
           network: "irc.rwx.im:6697"
