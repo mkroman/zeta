@@ -5304,7 +5304,7 @@ dependencies = [
 
 [[package]]
 name = "zeta"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "argh",
  "async-trait",
