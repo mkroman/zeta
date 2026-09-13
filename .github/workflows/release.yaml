@@ -37,7 +37,8 @@ jobs:
           ZETA_VERSION: "${{ steps.artifact.outputs.version }}"
         run: |-
           echo "Current git tag: ${GITHUB_REF_NAME}"
-          [[ "${ZETA_VERSION}" == "${GITHUB_REF_NAME}" ]] || echo "Crate and git version mismatch: '" && exit 1
+          echo "Current crate version: ${ZETA_VERSION}"
+          [[ "${ZETA_VERSION}" == "${GITHUB_REF_NAME}" ]] || (echo "Crate and git version mismatch: '" && exit 1)
 
   test:
     name: Test
