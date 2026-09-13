@@ -46,7 +46,7 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - uses: $/.github/actions/send-notification
+      - uses: mkroman/send-irc-notification@main
         with:
           message: "Building ${{ github.ref }} @ ${{ github.repository }}"
           channel: "#uplink"
