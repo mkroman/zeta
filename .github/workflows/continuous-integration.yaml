@@ -1,16 +1,12 @@
 name: Continuous Integration
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: short
@@ -22,38 +18,14 @@ concurrency:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.rust }})
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
-        include:
-          - { rust: stable, toolchain: stable }
-          - { rust: nightly, toolchain: nightly }
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v7
-      - name: Install Rust ${{ matrix.rust }}
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          components: clippy
-      - name: Enable type layout randomization
-        run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
-        if: matrix.rust == 'nightly'
-      - name: Cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: "ci-${{ matrix.rust }}"
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-targets: true
-      - name: Run Clippy check
-        uses: clechasseur/rs-clippy-check@20f338ad6648dedb921c00b023bc30c971ab9ed7 # v6.0.7
-        with:
-          args: --all-targets --all-features --no-deps
-      - name: Run tests
-        run: cargo test --all-features --no-fail-fast
+        rust: [stable, nightly]
+    uses: ./.github/workflows/test.yaml
+    with:
+      toolchain: ${{ matrix.rust }}
 
   container_image:
     name: Container Image

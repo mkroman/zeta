@@ -30,6 +30,20 @@ on:
         required: true
         description: "Password for authentication with the container registry"
 
+    outputs:
+      tags:
+        description: "Generated Docker tags"
+        value: "${{ jobs.build.outputs.tags }}"
+      tag-names:
+        description: "Generated Docker tag names without image base name"
+        value: "${{ jobs.build.outputs.tag-names }}"
+      labels:
+        description: "Generated Docker labels"
+        value: "${{ jobs.build.outputs.labels }}"
+      annotations:
+        description: "Generated annotations"
+        value: "${{ jobs.build.outputs.annotations }}"
+
 permissions:
   contents: read
   packages: write
@@ -38,12 +52,17 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    outputs:
+      tags: "${{ steps.meta.outputs.tags }}"
+      tag-names: "${{ steps.meta.outputs.tag-names }}"
+      labels: "${{ steps.meta.outputs.labels }}"
+      annotations: "${{ steps.meta.outputs.annotations }}"
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Docker meta
+      - name: Generate Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
