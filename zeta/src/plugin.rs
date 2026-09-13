@@ -168,6 +168,10 @@ declare_plugins! {
   #[cfg(feature = "plugin-tiktok")]
   tiktok::Tiktok,
 
+  /// URL titles and OpenGraph metadata
+  #[cfg(feature = "plugin-titles")]
+  titles::Titles,
+
   /// Trustpilot integration
   #[cfg(feature = "plugin-trustpilot")]
   trustpilot::Trustpilot,
@@ -350,10 +354,8 @@ impl PluginTask {
 #[must_use]
 #[allow(unused)]
 pub fn extract_urls(s: &str) -> Option<Vec<Url>> {
-    let urls: Vec<Url> = s
-        .split(' ')
-        .filter(|word| word.to_ascii_lowercase().starts_with("http"))
-        .filter_map(|word| Url::parse(word).ok())
+    let urls: Vec<Url> = crate::url::ExtractUrls::new(s)
+        .map(|extracted| extracted.url)
         .collect();
 
     (!urls.is_empty()).then_some(urls)

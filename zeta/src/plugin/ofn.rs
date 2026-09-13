@@ -262,7 +262,7 @@ impl Ofn {
         origin: &ChannelMessageOrigin<'_>,
         msg: &str,
     ) -> Result<(), ZetaError> {
-        let urls: Vec<Url> = msg.urls().collect();
+        let urls: Vec<Url> = msg.urls().map(|extracted| extracted.url).collect();
         if urls.is_empty() {
             return Ok(());
         }
