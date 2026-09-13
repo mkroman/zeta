@@ -43,8 +43,9 @@ permissions:
   contents: read
 
 jobs:
+  # Run unit tests only, i.e. no integration tests.
   test:
-    name: Test
+    name: Unit Tests
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout source
@@ -64,12 +65,12 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-targets: true
       - name: Run tests
-        run: cargo test ${{ inputs.args }} ${{ !inputs.fail-fast && '--no-fail-fast' || '' }}
+        run: cargo test ${{ inputs.test-args }} ${{ !inputs.fail-fast && '--no-fail-fast' || '' }}
 
   # Clippy runs as its own job because it doesn't play nice and reuse the
   # intermediate artifacts built by `cargo test` anyway.
   clippy:
-    name: Clippy
+    name: Clippy Lints
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout source
@@ -83,10 +84,8 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ${{ inputs.cache-key }}
-          cache-on-failure: ${{ inputs.cache-on-failure }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-targets: true
+          save-if: false # Don't cache clippy artifacts
       - name: Run Clippy check
         uses: clechasseur/rs-clippy-check@20f338ad6648dedb921c00b023bc30c971ab9ed7 # v6.0.7
         with:
-          args: ${{ inputs.args }}
+          args: ${{ inputs.clippy-args }}
