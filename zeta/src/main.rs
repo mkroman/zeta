@@ -16,6 +16,15 @@ pub use zeta::{Error, config};
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
+    // The dependency graph enables both `ring` and `aws-lc-rs` on rustls (via aws-sdk-s3), so
+    // rustls cannot pick a process-level CryptoProvider on its own and would panic on the first TLS
+    // connection. Install one explicitly, before anything
+    // (sqlx, irc, reqwest, hickory) touches TLS.
+    #[cfg(feature = "rustls")]
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("failed to install default rustls CryptoProvider");
+
     let opts: cli::Opts = argh::from_env();
     let config: Config = Figment::new()
         .merge(Toml::file(opts.config_path))

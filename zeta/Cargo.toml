@@ -20,7 +20,7 @@ database = ["dep:sqlx", "dep:chrono"]
 http = ["dep:reqwest"]
 native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx?/tls-native-tls"]
 native-tls-vendored = ["reqwest/native-tls-vendored", "irc/tls-native", "sqlx?/tls-native-tls"]
-rustls = ["reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls"]
+rustls = ["dep:rustls", "reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls"]
 plugin-alert = ["database", "dep:chrono", "dep:interim"]
 plugin-chaturbate = ["http", "dep:regex"]
 plugin-choices = []
@@ -102,7 +102,7 @@ dendanskeordbog = { path = "../dendanskeordbog", features = ["client"], optional
 figment = { version = "0.10.19", features = ["toml", "env"] }
 frizbee = { workspace = true, optional = true }
 futures = "0.3.31"
-hickory-resolver = { version = "0.26.2", features = ["tls-ring"] }
+hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
 htmlize = { version = "1.1.0", features = ["unescape"], optional = true }
 humantime-serde = "1.1.1"
 interim = { version = "0.2.1", features = ["chrono_0_4"], optional = true }
@@ -119,6 +119,7 @@ reddit = { path = "../reddit", optional = true }
 regex = { version = "1.12.2", optional = true }
 reqwest = { workspace = true, features = ["json", "stream", "cookies", "form", "query"], optional = true }
 rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "61be392a0d605ea6c4192934134683d63fbe7f7d", features = ["bundle-files", "serde_json"], optional = true }
+rustls = { version = "0.23.44", optional = true }
 scraper = { optional = true, workspace = true }
 secrecy = { optional = true, workspace = true }
 serde.workspace = true
