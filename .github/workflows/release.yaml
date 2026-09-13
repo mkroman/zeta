@@ -5,6 +5,10 @@ on:
     tags:
       - 0.*
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -32,7 +36,8 @@ jobs:
         env:
           ZETA_VERSION: "${{ steps.artifact.outputs.version }}"
         run: |-
-          [[ "${ZETA_VERSION}" == "${GITHUB_REF_NAME}" ]] || echo "Crate and git version mismatch" && exit 1
+          echo "Current git tag: ${GITHUB_REF_NAME}"
+          [[ "${ZETA_VERSION}" == "${GITHUB_REF_NAME}" ]] || echo "Crate and git version mismatch: '" && exit 1
 
   test:
     name: Test
