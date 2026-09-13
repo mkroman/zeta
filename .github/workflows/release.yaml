@@ -13,8 +13,31 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: stable
+      - name: Determine crate version
+        id: artifact
+        run: |-
+          VERSION="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "zeta") | .version')"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+      - name: Verify crate version matches git tag
+        env:
+          ZETA_VERSION: "${{ steps.artifact.outputs.version }}"
+        run: |-
+          [[ "${ZETA_VERSION}" == "${GITHUB_REF_NAME}" ]] || echo "Crate and git version mismatch" && exit 1
+
   test:
     name: Test
+    needs:
+      - check
     uses: ./.github/workflows/test.yaml
 
   container_image:
@@ -25,6 +48,9 @@ jobs:
     with:
       images: ghcr.io/${{ github.repository }}
       push: true
+      tags: |
+        type=edge,branch=main
+        type=ref,event=tag
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
 

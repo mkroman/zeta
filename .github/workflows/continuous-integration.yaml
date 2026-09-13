@@ -41,15 +41,3 @@ jobs:
       cache-to: type=gha,mode=max,scope=buildkit-${{ github.ref_name }}
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
-
-    # Test job, remove
-  notify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: mkroman/send-irc-notification@main
-        with:
-          message: "Building ${{ github.ref }} @ ${{ github.repository }}"
-          channel: "#uplink"
-          network: "irc.rwx.im:6697"
-          token: "${{ secrets.WEBHOOK_TOKEN }}"
-          webhook-url: "${{ vars.WEBHOOK_URL }}"
