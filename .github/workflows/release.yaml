@@ -1,86 +1,92 @@
 name: Release
 
 on:
-  release:
-    types:
-    - published
+  push:
+    tags:
+      - 0.*
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: short
 
 jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: stable
+      - name: Determine crate version
+        id: artifact
+        run: |-
+          VERSION="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "zeta") | .version')"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+      - name: Verify crate version matches git tag
+        env:
+          ZETA_VERSION: "${{ steps.artifact.outputs.version }}"
+        run: |-
+          [[ "${ZETA_VERSION}" == "${GITHUB_REF_NAME}" ]] || echo "Crate and git version mismatch" && exit 1
+
   test:
     name: Test
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: [stable, nightly]
-    steps:
-    - name: Checkout source
-      uses: actions/checkout@v7
-    - name: Install Rust ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
-      with:
-        toolchain: ${{ matrix.rust }}
-        components: clippy
-    - name: Enable type layout randomization
-      run: echo "RUSTFLAGS=${RUSTFLAGS} -Zrandomize-layout" >> "${GITHUB_ENV}"
-      if: matrix.rust == 'nightly'
-    - name: Cache 
-      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-    - name: Run Clippy check
-      uses: clechasseur/rs-clippy-check@20f338ad6648dedb921c00b023bc30c971ab9ed7 # v6.0.7
-      with:
-        args: --no-deps --all-features
-    - name: Run tests
-      run: cargo test
+    needs:
+      - check
+    uses: ./.github/workflows/test.yaml
 
   container_image:
     name: Container Image
     needs:
-    - test
+      - test
     uses: ./.github/workflows/container-image.yaml
     with:
       images: ghcr.io/${{ github.repository }}
       push: true
+      tags: |
+        type=edge,branch=main
+        type=ref,event=tag
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     name: Build
-    runs-on: ${{ matrix.os }}
+    needs:
+      - test
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-        - { os: ubuntu-latest, platform: linux, arch: amd64 }
-        - { os: ubuntu-latest, platform: linux, arch: arm64 }
-        - { os: ubuntu-24.04-arm, platform: linux, arch: arm64 }
-        - { os: macos-latest, platform: darwin, arch: aarch64 }
-        - { os: macos-26, platform: darwin, arch: aarch64 }
-        - { os: windows-latest, platform: windows, arch: amd64 }
-        - { os: windows-11-arm, platform: windows, arch: arm64 }
+          - { runner: ubuntu-latest, platform: linux, arch: amd64 }
+          - { runner: ubuntu-latest, platform: linux, arch: arm64 }
+          - { runner: macos-latest, platform: darwin, arch: aarch64 }
     outputs:
-      zeta_version: ${{ steps.artifact.outputs.version }}
-    needs:
-    - test
+      version: ${{ steps.artifact.outputs.version }}
     steps:
-    - name: Checkout source
-      uses: actions/checkout@v7
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
-      with:
-        toolchain: stable
-    - name: Install cargo-auditable
-      run: cargo install cargo-auditable
-      # Note that we're deliberately avoiding reusing the build cache.
-    - name: Build
-      run: cargo auditable build --release
-    - name: Determine version
-      id: artifact
-      run: |-
-        VERSION="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "zeta") | .version')"
-        echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-    - name: Upload executable
-      uses: actions/upload-artifact@v7
-      with:
-        name: zeta-${{ matrix.platform }}-${{ matrix.arch }}
-        path: target/release/zeta${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      - name: Checkout source
+        uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: stable
+      - name: Determine crate version
+        id: artifact
+        run: |-
+          VERSION="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "zeta") | .version')"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+      - name: Install cargo-auditable
+        run: cargo install cargo-auditable
+        # Note that we're deliberately avoiding reusing the build cache.
+      - name: Build
+        run: cargo auditable build --release
+      - name: Upload executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: zeta-${{ matrix.platform }}-${{ matrix.arch }}
+          path: target/release/zeta${{ matrix.platform == 'windows' && '.exe' || '' }}
