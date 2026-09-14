@@ -1163,7 +1163,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.5",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1969,9 +1969,9 @@ dependencies = [
 
 [[package]]
 name = "html5ever"
-version = "0.40.0"
+version = "0.40.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1fb45cc6b576ff3c8053c7a1a4c14b2b24ae166ab6a3e5bc5856aa45d39de70"
+checksum = "456a1a377e608e555d22ddab27ac0114bc7a7b4199078108e34c2aeae6c9b130"
 dependencies = [
  "log",
  "markup5ever 0.40.0",
@@ -5903,7 +5903,7 @@ dependencies = [
  "frizbee",
  "futures",
  "hickory-resolver",
- "html5ever 0.40.0",
+ "html5ever 0.40.1",
  "htmlize",
  "humantime-serde",
  "interim",
