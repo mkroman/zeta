@@ -4,7 +4,7 @@ use serde::Deserialize;
 use time::OffsetDateTime;
 use tracing::debug;
 
-use crate::{http, plugin::prelude::*};
+use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
@@ -136,7 +136,7 @@ fn formatted(s: &str) -> String {
 }
 
 impl UrbanDictionary {
-    pub fn new(config: &crate::config::HttpConfig) -> Self {
+    pub fn new(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
 
         Self { client }

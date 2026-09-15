@@ -653,6 +653,7 @@ fn format_price(price: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::HttpConfig;
     use model::FiatQuote;
 
     /// Builds a coin list for cache tests.
@@ -684,11 +685,7 @@ mod tests {
     /// Builds a plugin instance for lookup tests, without touching the API.
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
-            client: client::Client::new(
-                "test-api-key",
-                &crate::config::HttpConfig::default(),
-            )
-            .unwrap(),
+            client: client::Client::new("test-api-key", &HttpConfig::default()).unwrap(),
             coins: RwLock::new(CoinCache::from(test_coins())),
             fiat: RwLock::new(FiatCache::default()),
         }

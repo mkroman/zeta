@@ -9,7 +9,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use time::Duration;
 use tracing::{debug, error, instrument};
 
-use crate::{http, plugin::prelude::*};
+use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 /// Base URL for the TVmaze API.
 pub const API_BASE_URL: &str = "https://api.tvmaze.com";
@@ -166,7 +166,7 @@ impl Plugin<Context> for Tvmaze {
 
 impl Tvmaze {
     /// Creates a new TVmaze plugin instance.
-    pub fn new(config: &crate::config::HttpConfig) -> Self {
+    pub fn new(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
         let urls = EndpointUrls::new();
 

@@ -10,6 +10,7 @@ use tracing::debug;
 
 use super::error::Error;
 use super::model::{Coin, CoinQuery, Envelope, Fiat, QuoteData};
+use crate::config::HttpConfig;
 use crate::http;
 use crate::plugin::prelude::{ZetaError, plugin_err};
 
@@ -42,7 +43,7 @@ impl Client {
     ///
     /// Returns [`ZetaError`] if the API key is not a valid HTTP header value, or the client
     /// could not be built.
-    pub fn new(api_key: &str, config: &crate::config::HttpConfig) -> Result<Self, ZetaError> {
+    pub fn new(api_key: &str, config: &HttpConfig) -> Result<Self, ZetaError> {
         let headers = HeaderMap::from_iter([
             (ACCEPT, HeaderValue::from_static("application/json")),
             (

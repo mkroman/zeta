@@ -9,7 +9,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use tracing::{error, info};
 
-use crate::{http, plugin::prelude::*};
+use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 /// Custom error types for the GitHub plugin.
 #[derive(Debug, Error, Diagnostic)]
@@ -103,7 +103,7 @@ impl Plugin<Context> for GitHubPlugin {
 impl GitHubPlugin {
     /// Create a new instance of the GitHub plugin.
     /// Initializes a generic HTTP client with standard timeouts.
-    pub fn new(config: &crate::config::HttpConfig) -> Result<Self> {
+    pub fn new(config: &HttpConfig) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,

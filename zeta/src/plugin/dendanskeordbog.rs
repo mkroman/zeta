@@ -2,7 +2,7 @@ use std::fmt::{self, Display};
 
 use dendanskeordbog::DictionaryDocument;
 
-use crate::{http, plugin::prelude::*};
+use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 /// The `.ddo` command.
 const DDO: PluginCommand = PluginCommand::new(
@@ -99,7 +99,7 @@ impl Plugin<Context> for DenDanskeOrdbog {
 }
 
 impl DenDanskeOrdbog {
-    pub fn new(config: &crate::config::HttpConfig) -> DenDanskeOrdbog {
+    pub fn new(config: &HttpConfig) -> DenDanskeOrdbog {
         let http_client = http::build_client(config);
         let client = dendanskeordbog::Client::with_client(http_client);
 

@@ -1,5 +1,7 @@
 //! HTTP features
 
+use crate::config::HttpConfig;
+
 /// HTTP client integration
 pub mod client {
     use crate::config::HttpConfig;
@@ -35,6 +37,6 @@ pub mod client {
 /// This is equivalent to calling [`client::build`].
 #[must_use]
 #[allow(unused)]
-pub fn build_client(config: &crate::config::HttpConfig) -> client::Client {
+pub fn build_client(config: &HttpConfig) -> client::Client {
     client::build(config)
 }

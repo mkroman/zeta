@@ -193,6 +193,7 @@ impl Imdb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::HttpConfig;
 
     #[test]
     fn parses_multi_word_queries() {
@@ -218,7 +219,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
     async fn live_search_and_title() {
-        let client = GraphQlClient::new(&crate::config::HttpConfig::default()).unwrap();
+        let client = GraphQlClient::new(&HttpConfig::default()).unwrap();
 
         let results = client.search("peggle nights", 5).await.unwrap();
         assert!(!results.is_empty());
@@ -234,7 +235,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
     async fn live_unknown_title_is_not_found() {
-        let client = GraphQlClient::new(&crate::config::HttpConfig::default()).unwrap();
+        let client = GraphQlClient::new(&HttpConfig::default()).unwrap();
 
         let err = client.title("tt9999999999999").await.unwrap_err();
 
@@ -244,7 +245,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
     async fn live_episode() {
-        let client = GraphQlClient::new(&crate::config::HttpConfig::default()).unwrap();
+        let client = GraphQlClient::new(&HttpConfig::default()).unwrap();
 
         let title = client.title("tt0959621").await.unwrap();
         println!("{}", format_title(&title));
@@ -259,7 +260,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
     async fn live_person() {
-        let client = GraphQlClient::new(&crate::config::HttpConfig::default()).unwrap();
+        let client = GraphQlClient::new(&HttpConfig::default()).unwrap();
 
         let person = client.person("nm0186505").await.unwrap();
         println!("{}", format_person(&person));

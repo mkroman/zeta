@@ -8,6 +8,7 @@ use tracing::{debug, error, instrument};
 
 use super::error::Error;
 use super::model::{Person, SearchResult, SeriesInfo, Title};
+use crate::config::HttpConfig;
 use crate::http;
 
 /// GraphQL endpoint of IMDb's internal API.
@@ -98,7 +99,7 @@ pub struct GraphQlClient {
 
 impl Default for GraphQlClient {
     fn default() -> Self {
-        Self::new(&crate::config::HttpConfig::default()).expect("could not build http client")
+        Self::new(&HttpConfig::default()).expect("could not build http client")
     }
 }
 
@@ -108,7 +109,7 @@ impl GraphQlClient {
     /// # Errors
     ///
     /// Returns an error if the HTTP client could not be built.
-    pub fn new(config: &crate::config::HttpConfig) -> Result<Self, Error> {
+    pub fn new(config: &HttpConfig) -> Result<Self, Error> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(ORIGIN, HeaderValue::from_static("https://www.imdb.com"));
