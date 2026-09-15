@@ -139,7 +139,7 @@ declare_plugins! {
 
   /// Query geolocation of addresses and hostnames
   #[cfg(feature = "plugin-geoip")]
-  geoip::GeoIp => NoSettings,
+  geoip::GeoIp => geoip::Settings,
 
   /// Normative affective resonance profiling, calendar-scoped
   #[cfg(feature = "plugin-gay")]
@@ -147,7 +147,7 @@ declare_plugins! {
 
   /// GitHub integration
   #[cfg(feature = "plugin-github")]
-  github::GitHubPlugin => NoSettings,
+  github::GitHubPlugin => github::Settings,
 
   /// Process health information
   #[cfg(feature = "plugin-health")]
@@ -167,7 +167,7 @@ declare_plugins! {
 
   /// Is it open
   #[cfg(feature = "plugin-isitopen")]
-  isitopen::IsItOpen => NoSettings,
+  isitopen::IsItOpen => isitopen::Settings,
 
   /// Kagi search integration
   #[cfg(feature = "plugin-kagi")]
@@ -191,7 +191,7 @@ declare_plugins! {
 
   /// Reddit plugin integration
   #[cfg(feature = "plugin-reddit")]
-  reddit::Reddit => NoSettings,
+  reddit::Reddit => reddit::Settings,
 
   /// Calculator plugin based on rink
   #[cfg(feature = "plugin-rink")]
@@ -203,7 +203,7 @@ declare_plugins! {
 
   /// Spotify integration
   #[cfg(feature = "plugin-spotify")]
-  spotify::Spotify => NoSettings,
+  spotify::Spotify => spotify::Settings,
 
   /// Generic string utility plugin
   #[cfg(feature = "plugin-string-utils")]
@@ -211,7 +211,7 @@ declare_plugins! {
 
   /// Thingiverse integration
   #[cfg(feature = "plugin-thingiverse")]
-  thingiverse::Thingiverse => NoSettings,
+  thingiverse::Thingiverse => thingiverse::Settings,
 
   /// TikTok integration
   #[cfg(feature = "plugin-tiktok")]
@@ -231,7 +231,7 @@ declare_plugins! {
 
   /// Twitch integration
   #[cfg(feature = "plugin-twitch")]
-  twitch::Twitch => NoSettings,
+  twitch::Twitch => twitch::Settings,
 
   /// Urban Dictionary integration
   #[cfg(feature = "plugin-urban-dictionary")]

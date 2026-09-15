@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use num_format::{Locale, ToFormattedString};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use url::Url;
@@ -18,6 +18,22 @@ use crate::{
 const AUTH_URL: &str = "https://id.twitch.tv/oauth2/token";
 /// Twitch Helix API base URL.
 const BASE_URL: &str = "https://api.twitch.tv/helix";
+
+/// Settings for the twitch plugin, from its `[plugins.twitch]` configuration section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The Twitch application client id.
+    ///
+    /// Falls back to the `TWITCH_CLIENT_ID` environment variable when unset.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// The Twitch application client secret.
+    ///
+    /// Falls back to the `TWITCH_CLIENT_SECRET` environment variable when unset.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
 
 /// Twitch.tv integration plugin.
 ///
@@ -112,8 +128,10 @@ enum UrlKind {
 #[async_trait]
 impl Plugin<Context> for Twitch {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let client_id = require_env("TWITCH_CLIENT_ID")?;
-        let client_secret = require_env("TWITCH_CLIENT_SECRET")?;
+        let settings = &ctx.config.plugins.twitch.settings;
+        let client_id = resolve_secret(settings.client_id.as_deref(), "TWITCH_CLIENT_ID")?;
+        let client_secret =
+            resolve_secret(settings.client_secret.as_deref(), "TWITCH_CLIENT_SECRET")?;
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self {
@@ -333,4 +351,29 @@ fn formatted(message: &str) -> String {
 fn is_valid_username(s: &str) -> bool {
     let len = s.len();
     (4..=25).contains(&len) && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.client_id.is_none());
+        assert!(settings.client_secret.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "client_id": "id",
+            "client_secret": "secret",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.client_id.as_deref(), Some("id"));
+        assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+    }
 }

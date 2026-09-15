@@ -1,5 +1,6 @@
 use reddit::Link;
 use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
 use tracing::error;
 use url::Url;
 
@@ -10,6 +11,22 @@ use crate::{
 
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
 pub const USER_AGENT: &str = concat!("linux:zeta:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");
+
+/// Settings for the reddit plugin, from its `[plugins.reddit]` configuration section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The Reddit application client id.
+    ///
+    /// Falls back to the `REDDIT_CLIENT_ID` environment variable when unset.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// The Reddit application client secret.
+    ///
+    /// Falls back to the `REDDIT_CLIENT_SECRET` environment variable when unset.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
 
 /// Errors that can occur during Reddit interaction
 #[derive(Debug, thiserror::Error)]
@@ -28,11 +45,14 @@ pub struct Reddit {
 
 #[async_trait]
 impl Plugin<Context> for Reddit {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let client_id = require_env("REDDIT_CLIENT_ID")?;
-        let client_secret: SecretString = require_env("REDDIT_CLIENT_SECRET")?.into();
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+        let settings = &ctx.config.plugins.reddit.settings;
+        let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
+        let client_secret: SecretString =
+            resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();
         let user_agent = Some(USER_AGENT.to_string());
-        let client = reddit::Client::new(client_id, client_secret, user_agent);
+        let timeout = Some(ctx.config.http.timeout);
+        let client = reddit::Client::new(client_id, client_secret, user_agent, timeout);
 
         Ok(Reddit { client })
     }
@@ -162,5 +182,30 @@ impl Reddit {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.client_id.is_none());
+        assert!(settings.client_secret.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "client_id": "id",
+            "client_secret": "secret",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.client_id.as_deref(), Some("id"));
+        assert_eq!(settings.client_secret.as_deref(), Some("secret"));
     }
 }

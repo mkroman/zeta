@@ -127,11 +127,18 @@ name = "#zeta.dev"
   [plugins.geoip]
   # Enable the plugin.
   enabled = true
+  # The ip2location.io API key. Falls back to the `GEOIP_API_KEY`
+  # environment variable when unset.
+  # api_key = "..."
 
   # GitHub integration.
   [plugins.github]
   # Enable the plugin.
   enabled = true
+  # A GitHub API token, used to raise the rate limit for requests. Falls
+  # back to the `GITHUB_TOKEN` environment variable when unset. Prefer the
+  # environment over committing secrets to this file.
+  # token = "..."
 
   # Process health information.
   [plugins.health]
@@ -163,6 +170,9 @@ name = "#zeta.dev"
   [plugins.isitopen]
   # Enable the plugin.
   enabled = true
+  # The Google Maps API key. Falls back to the `GOOGLE_MAPS_API_KEY`
+  # environment variable when unset.
+  # api_key = "..."
 
   # Kagi search integration.
   [plugins.kagi]
@@ -210,6 +220,11 @@ name = "#zeta.dev"
   [plugins.reddit]
   # Enable the plugin.
   enabled = true
+  # The Reddit application client id and secret. Fall back to the
+  # `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` environment variables when
+  # unset. Prefer the environment over committing secrets to this file.
+  # client_id = "..."
+  # client_secret = "..."
 
   # Calculator plugin based on rink.
   [plugins.rink]
@@ -233,6 +248,11 @@ name = "#zeta.dev"
   [plugins.spotify]
   # Enable the plugin.
   enabled = true
+  # The Spotify application client id and secret. Fall back to the
+  # `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` environment variables
+  # when unset. Prefer the environment over committing secrets to this file.
+  # client_id = "..."
+  # client_secret = "..."
 
   # Generic string utility plugin.
   [plugins.string_utils]
@@ -243,6 +263,9 @@ name = "#zeta.dev"
   [plugins.thingiverse]
   # Enable the plugin.
   enabled = true
+  # The Thingiverse app token. Falls back to the `THINGIVERSE_APP_TOKEN`
+  # environment variable when unset.
+  # api_key = "..."
 
   # TikTok integration.
   [plugins.tiktok]
@@ -321,6 +344,11 @@ name = "#zeta.dev"
   [plugins.twitch]
   # Enable the plugin.
   enabled = true
+  # The Twitch application client id and secret. Fall back to the
+  # `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` environment variables when
+  # unset. Prefer the environment over committing secrets to this file.
+  # client_id = "..."
+  # client_secret = "..."
 
   # Urban Dictionary integration.
   [plugins.urban_dictionary]
