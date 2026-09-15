@@ -223,7 +223,7 @@ declare_plugins! {
 
   /// Trustpilot integration
   #[cfg(feature = "plugin-trustpilot")]
-  trustpilot::Trustpilot => NoSettings,
+  trustpilot::Trustpilot => trustpilot::Settings,
 
   /// TVmaze integration
   #[cfg(feature = "plugin-tvmaze")]

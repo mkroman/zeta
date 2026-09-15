@@ -243,6 +243,11 @@ name = "#zeta.dev"
   [plugins.trustpilot]
   # Enable the plugin.
   enabled = true
+  # The Trustpilot API key. Falls back to the `TRUSTPILOT_API_KEY` environment
+  # variable when unset.
+  # api_key = "..."
+  # The Trustpilot domain used for review links (e.g. "dk" or "www").
+  # review_domain = "dk"
 
   # TVmaze integration.
   [plugins.tvmaze]
