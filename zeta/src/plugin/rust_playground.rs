@@ -10,6 +10,56 @@ use crate::{http, plugin::prelude::*, utils::Truncatable};
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
 
+/// Settings for the rust_playground plugin, from its `[plugins.rust_playground]` configuration
+/// section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The release channel used for evaluation: `stable`, `beta` or `nightly`.
+    #[serde(default = "default_channel")]
+    pub channel: String,
+    /// The build mode: `debug` or `release`.
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    /// The Rust edition: `2015`, `2018`, `2021` or `2024`.
+    #[serde(default = "default_edition")]
+    pub edition: String,
+    /// The maximum output length, in characters.
+    #[serde(default = "default_max_output_length")]
+    pub max_output_length: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            channel: default_channel(),
+            mode: default_mode(),
+            edition: default_edition(),
+            max_output_length: default_max_output_length(),
+        }
+    }
+}
+
+/// Returns the default release channel.
+fn default_channel() -> String {
+    "stable".to_string()
+}
+
+/// Returns the default build mode.
+fn default_mode() -> String {
+    "debug".to_string()
+}
+
+/// Returns the default Rust edition.
+fn default_edition() -> String {
+    "2024".to_string()
+}
+
+/// Returns the default maximum output length, in characters.
+const fn default_max_output_length() -> usize {
+    250
+}
+
 /// The `.rs` command.
 const RUST_PLAYGROUND: PluginCommand = PluginCommand::new(
     Prefix::new(".rs"),
@@ -23,6 +73,7 @@ const COMMANDS: &[PluginCommand] = &[RUST_PLAYGROUND];
 pub struct RustPlayground {
     client: reqwest::Client,
     error_regex: Regex,
+    settings: Settings,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -57,11 +108,16 @@ struct ExecuteResponse {
 #[async_trait]
 impl Plugin<Context> for RustPlayground {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
+        let settings = ctx.config.plugins.rust_playground.settings.clone();
         let client = http::build_client(&ctx.config.http);
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
 
-        Ok(Self { client, error_regex })
+        Ok(Self {
+            client,
+            error_regex,
+            settings,
+        })
     }
 
     fn metadata() -> Metadata {
@@ -110,9 +166,9 @@ impl RustPlayground {
         let code = format!(r#"fn main() {{ println!("{{:?}}", {{ {expr} }}); }}"#);
 
         let request = ExecuteRequest {
-            channel: "stable",
-            mode: "debug",
-            edition: "2024",
+            channel: &self.settings.channel,
+            mode: &self.settings.mode,
+            edition: &self.settings.edition,
             crate_type: "bin",
             tests: false,
             code,
@@ -127,7 +183,9 @@ impl RustPlayground {
 
         if result.success {
             let output = sanitize_output(&result.stdout);
-            Ok(output.truncate_with_suffix(250, "…").into_owned())
+            Ok(output
+                .truncate_with_suffix(self.settings.max_output_length, "…")
+                .into_owned())
         } else {
             let errors = self.extract_errors(&result.stderr);
             let output = if errors.is_empty() {
@@ -136,7 +194,9 @@ impl RustPlayground {
             } else {
                 format!("Compilation error(s): {}", errors.join(", "))
             };
-            Ok(output.truncate_with_suffix(250, "…").into_owned())
+            Ok(output
+                .truncate_with_suffix(self.settings.max_output_length, "…")
+                .into_owned())
         }
     }
 
@@ -162,4 +222,35 @@ fn sanitize_output(s: &str) -> String {
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert_eq!(settings.channel, "stable");
+        assert_eq!(settings.mode, "debug");
+        assert_eq!(settings.edition, "2024");
+        assert_eq!(settings.max_output_length, 250);
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "channel": "nightly",
+            "mode": "release",
+            "edition": "2021",
+            "max_output_length": 100,
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.channel, "nightly");
+        assert_eq!(settings.mode, "release");
+        assert_eq!(settings.edition, "2021");
+        assert_eq!(settings.max_output_length, 100);
+    }
 }

@@ -199,7 +199,7 @@ declare_plugins! {
 
   /// Rust Playground integration
   #[cfg(feature = "plugin-rust-playground")]
-  rust_playground::RustPlayground => NoSettings,
+  rust_playground::RustPlayground => rust_playground::Settings,
 
   /// Spotify integration
   #[cfg(feature = "plugin-spotify")]

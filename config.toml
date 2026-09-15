@@ -220,6 +220,14 @@ name = "#zeta.dev"
   [plugins.rust_playground]
   # Enable the plugin.
   enabled = true
+  # The release channel used for evaluation: "stable", "beta" or "nightly".
+  # channel = "stable"
+  # The build mode: "debug" or "release".
+  # mode = "debug"
+  # The Rust edition: "2015", "2018", "2021" or "2024".
+  # edition = "2024"
+  # The maximum output length, in characters.
+  # max_output_length = 250
 
   # Spotify integration.
   [plugins.spotify]
