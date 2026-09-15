@@ -16,7 +16,7 @@ pub mod prelude {
     pub use async_trait::async_trait;
 
     pub use super::command::{ArgsError, PluginCommand, Prefix};
-    pub use super::error::{BoxError, plugin_err, require_env};
+    pub use super::error::{BoxError, plugin_err, require_env, resolve_secret};
     pub use super::types::NoSettings;
     pub use super::{Author, Error, Metadata, Name, Plugin};
 }
