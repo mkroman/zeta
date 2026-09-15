@@ -237,6 +237,14 @@ name = "#zeta.dev"
   [plugins.youtube]
   # Enable the plugin.
   enabled = true
+  # The YouTube Data API v3 key. Falls back to the `YOUTUBE_API_KEY`
+  # environment variable when unset.
+  # api_key = "..."
+  # The region code used when fetching video categories.
+  # region_code = "US"
+  # The safe search filter applied to search requests:
+  # "none", "moderate" or "strict".
+  # safe_search = "none"
 
 # Tracing Configuration.
 [tracing]

@@ -28,6 +28,7 @@ mod prelude {
     pub use zeta_plugin::Error as ZetaError;
     pub use zeta_plugin::prelude::{
         ArgsError, BoxError, NoSettings, PluginCommand, Prefix, plugin_err, require_env,
+        resolve_secret,
     };
 
     pub use super::{
@@ -238,7 +239,7 @@ declare_plugins! {
 
   /// YouTube integration
   #[cfg(feature = "plugin-youtube")]
-  youtube::YouTube => NoSettings,
+  youtube::YouTube => youtube::Settings,
 }
 
 /// Metadata about a registered plugin.
