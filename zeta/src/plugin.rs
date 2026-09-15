@@ -131,7 +131,7 @@ declare_plugins! {
 
   /// Query the danish dictionary
   #[cfg(feature = "plugin-dendanskeordbog")]
-  dendanskeordbog::DenDanskeOrdbog => NoSettings,
+  dendanskeordbog::DenDanskeOrdbog => dendanskeordbog::Settings,
 
   /// Query nameservers
   #[cfg(feature = "plugin-dig")]

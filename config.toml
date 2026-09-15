@@ -113,6 +113,12 @@ name = "#zeta.dev"
   [plugins.dendanskeordbog]
   # Enable the plugin.
   enabled = true
+  # Whether to show the morphology (inflection) of the entry.
+  # show_morphology = true
+  # Whether to show the etymology (origin) of the entry.
+  # show_etymology = true
+  # Whether to show an example sentence for the definition.
+  # show_examples = true
 
   # Query nameservers.
   [plugins.dig]
