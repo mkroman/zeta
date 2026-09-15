@@ -12,7 +12,7 @@ categories = ["api-bindings", "parser", "text-processing"]
 all-features = true
 
 [features]
-default = ["default-tls"]
+default = ["default-tls", "gzip", "brotli", "deflate", "zstd"]
 # The default TLS backend selection (rustls), convenient for `default-features = false`.
 default-tls = ["rustls"]
 # TLS backend using rustls with the bundled aws-lc-rs provider and platform verifier roots.
@@ -21,13 +21,13 @@ rustls = ["reqwest/rustls"]
 native-tls = ["reqwest/native-tls"]
 # Same as `native-tls`, but with a statically vendored OpenSSL.
 native-tls-vendored = ["reqwest/native-tls-vendored"]
-# Opt-in decompression of responses compressed with gzip.
+# Decompression of responses compressed with gzip.
 gzip = ["reqwest/gzip"]
-# Opt-in decompression of responses compressed with brotli.
+# Decompression of responses compressed with brotli.
 brotli = ["reqwest/brotli"]
-# Opt-in decompression of responses compressed with deflate.
+# Decompression of responses compressed with deflate.
 deflate = ["reqwest/deflate"]
-# Opt-in decompression of responses compressed with zstd.
+# Decompression of responses compressed with zstd.
 zstd = ["reqwest/zstd"]
 
 [dependencies]

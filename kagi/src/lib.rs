@@ -6,10 +6,10 @@
 //! ## Features
 //!
 //! - **`default-tls`** *(enabled by default)*: selects the default TLS backend (**`rustls`**).
-//!   Disable default features and choose a backend explicitly with **`rustls`**,
+//!   Disable default features and choose a TLS backend explicitly with **`rustls`**,
 //!   **`native-tls`** or **`native-tls-vendored`**.
-//! - **`gzip`**, **`brotli`**, **`deflate`**, **`zstd`**: opt-in decompression of compressed
-//!   responses.
+//! - **`gzip`**, **`brotli`**, **`deflate`**, **`zstd`** *(all enabled by default)*:
+//!   decompression of compressed responses.
 //!
 //! ## Quick Start
 //!
