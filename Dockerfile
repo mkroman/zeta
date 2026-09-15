@@ -17,9 +17,10 @@ RUN apt-get update && \
         libclang-dev && \
     rm -rf /var/lib/apt/lists/*
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo install cargo-chef cargo-auditable --locked
+# Install cargo-chef and cargo-auditable from their checksummed release binaries.
+COPY hack/install-cargo-tool.sh /usr/local/bin/install-cargo-tool
+RUN sh /usr/local/bin/install-cargo-tool cargo-chef /usr/local/bin && \
+    sh /usr/local/bin/install-cargo-tool cargo-auditable /usr/local/bin
 
 # Analyze project dependencies
 FROM chef AS planner
@@ -51,14 +52,27 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo chef cook --release --recipe-path recipe.json
 
-# Now bring in real sources and build the app.
-COPY . .
+# Now bring in real sources and build the app. Only copy build inputs so
+# unrelated changes (config.toml, docs, ...) don't invalidate this layer.
+COPY --parents \
+    Cargo.toml \
+    Cargo.lock \
+    zeta/Cargo.toml \
+    zeta/src \
+    zeta/migrations \
+    zeta-plugin/Cargo.toml \
+    zeta-plugin/src \
+    dendanskeordbog/Cargo.toml \
+    dendanskeordbog/src \
+    reddit/Cargo.toml \
+    reddit/src \
+    kagi/Cargo.toml \
+    kagi/src \
+    ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo auditable build --release --locked --bin zeta && \
     cp target/release/zeta /usr/local/bin/zeta
-
-RUN cargo auditable build --release --locked
 
 # Runtime image with `yt-dlp` and `ffmpeg` for the tiktok plugin's video mirroring.
 FROM debian:trixie-slim
@@ -82,7 +96,7 @@ LABEL org.opencontainers.image.title="zeta" \
 WORKDIR /app
 
 COPY --from=builder /usr/local/bin/zeta .
-COPY --from=builder /usr/src/app/config.toml .
+COPY config.toml .
 
 # Run as an unprivileged user.
 RUN useradd --system --user-group --home-dir /app zeta

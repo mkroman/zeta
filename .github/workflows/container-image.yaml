@@ -7,6 +7,9 @@ on:
       labels:
         required: false
         type: string
+      annotations:
+        required: false
+        type: string
       tags:
         required: false
         type: string
@@ -65,9 +68,13 @@ jobs:
       - name: Generate Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          # GHCR reads the description from the image index, not the image manifests
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           images: ${{ inputs.images }}
           labels: ${{ inputs.labels }}
+          annotations: ${{ inputs.annotations }}
           tags: ${{ inputs.tags }}
       - name: Login to Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -82,5 +89,6 @@ jobs:
           push: ${{ inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: ${{ inputs.cache-from }}
           cache-to: ${{ inputs.cache-to }}

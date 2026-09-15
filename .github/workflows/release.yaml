@@ -57,8 +57,8 @@ jobs:
       images: ghcr.io/${{ github.repository }}
       push: true
       tags: |
-        type=edge,branch=main
         type=ref,event=tag
+      cache-from: type=gha,scope=buildkit-main
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -72,7 +72,7 @@ jobs:
       matrix:
         include:
           - { runner: ubuntu-latest, platform: linux, arch: amd64 }
-          - { runner: ubuntu-latest, platform: linux, arch: arm64 }
+          - { runner: ubuntu-24.04-arm, platform: linux, arch: arm64 }
           - { runner: macos-latest, platform: darwin, arch: aarch64 }
     outputs:
       version: ${{ steps.artifact.outputs.version }}
@@ -89,8 +89,9 @@ jobs:
           VERSION="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "zeta") | .version')"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
       - name: Install cargo-auditable
-        run: cargo install cargo-auditable
-        # Note that we're deliberately avoiding reusing the build cache.
+        # Note that we're deliberately avoiding reusing the build cache. The
+        # tool itself is installed from its checksummed release binary.
+        run: bash hack/install-cargo-tool.sh cargo-auditable "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: Build
         run: cargo auditable build --release
       - name: Upload executable

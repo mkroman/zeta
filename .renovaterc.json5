@@ -4,6 +4,20 @@
     "config:recommended",
     "config:best-practices"
   ],
+  "customManagers": [
+    {
+      // Keep the pinned cargo tool versions and checksums in sync with their
+      // GitHub releases. The computed digest is the release's `sha256.sum`.
+      "customType": "regex",
+      "description": "cargo tools in hack/install-cargo-tool.sh",
+      "managerFilePatterns": ["/^hack\\/install-cargo-tool\\.sh$/"],
+      "matchStrings": [
+        "package_name=\"(?<packageName>[^\"]+)\"\\n\\s*version=\"(?<currentValue>[^\"]+)\"\\n\\s*manifest_sha256=\"(?<currentDigest>[a-f0-9]{64})\"",
+      ],
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "semver",
+    },
+  ],
   "packageRules": [
     // Bundle opentelemetry dependencies in a single update
     {
@@ -33,6 +47,11 @@
     {
       "matchDatasources": ["docker"],
       "pinDigests": false
+    },
+    // Group the cargo tool updates in hack/install-cargo-tool.sh
+    {
+      "matchDatasources": ["github-release-attachments"],
+      "groupName": "cargo tools"
     }
   ]
 }
