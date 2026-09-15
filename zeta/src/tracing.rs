@@ -1,13 +1,15 @@
 use std::env;
 
 use miette::{IntoDiagnostic, WrapErr};
-use opentelemetry::InstrumentationScope;
 use opentelemetry::trace::TracerProvider;
+use opentelemetry::InstrumentationScope;
 use opentelemetry_resource_detectors::{
     HostResourceDetector, K8sResourceDetector, OsResourceDetector,
 };
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
+use opentelemetry_sdk::runtime::Tokio;
+use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
+use opentelemetry_sdk::Resource;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -34,9 +36,10 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
             .wrap_err("building otlp http exporter failed")?;
         // Set up resource detectors to enrich otel attributes
         let res_detectors = otel_resource_detectors();
-        // Resource detectors for tracing context
+        // Resource detectors for tracing context. The processor spawns its batching task on the
+        // tokio runtime, so the async exporter can be driven from it.
         let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-            .with_batch_exporter(otlp_exporter)
+            .with_span_processor(BatchSpanProcessor::builder(otlp_exporter, Tokio).build())
             .with_resource(
                 Resource::builder_empty()
                     .with_service_name(env!("CARGO_PKG_NAME"))
