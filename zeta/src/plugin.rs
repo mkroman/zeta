@@ -115,7 +115,7 @@ macro_rules! declare_plugins {
 declare_plugins! {
   /// Time-based user alerts.
   #[cfg(feature = "plugin-alert")]
-  alert::AlertPlugin => NoSettings,
+  alert::AlertPlugin => alert::Settings,
 
   /// Chaturbate platform integration.
   #[cfg(feature = "plugin-chaturbate")]

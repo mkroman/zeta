@@ -79,6 +79,10 @@ name = "#zeta.dev"
   [plugins.alert]
   # Enable the plugin.
   enabled = true
+  # How long the scheduler waits before retrying after a failed tick.
+  # retry_delay = "30s"
+  # The maximum number of pending alerts a user may have.
+  # max_pending_per_user = 10
 
   # Chaturbate platform integration.
   [plugins.chaturbate]
