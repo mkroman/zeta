@@ -204,6 +204,9 @@ name = "#zeta.dev"
   [plugins.notification]
   # Enable the plugin.
   enabled = true
+  # The maximum number of pending notifications a target may have in a
+  # channel.
+  # max_pending_per_target = 10
 
   # URL history.
   [plugins.ofn]

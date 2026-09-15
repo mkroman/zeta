@@ -175,7 +175,7 @@ declare_plugins! {
 
   /// User notifications
   #[cfg(feature = "plugin-notification")]
-  notification::NotificationPlugin => NoSettings,
+  notification::NotificationPlugin => notification::Settings,
 
   /// URL history
   #[cfg(feature = "plugin-ofn")]
