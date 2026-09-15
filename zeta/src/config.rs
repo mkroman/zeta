@@ -5,6 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::consts::{
     DEFAULT_DB_IDLE_TIMEOUT, DEFAULT_IRC_PORT, DEFAULT_IRC_TLS_PORT, DEFAULT_MAX_DB_CONNECTIONS,
+    HTTP_TIMEOUT, HTTP_USER_AGENT,
 };
 use crate::plugin::PluginsConfig;
 
@@ -17,6 +18,9 @@ pub struct Config {
     pub tracing: TracingConfig,
     /// IRC client configuration
     pub irc: IrcConfig,
+    /// HTTP client configuration
+    #[serde(default)]
+    pub http: HttpConfig,
     /// Per-plugin configuration sections.
     #[serde(default)]
     pub plugins: PluginsConfig,
@@ -89,6 +93,26 @@ pub struct DbConfig {
     /// Maximum idle duration for individual connections, in seconds
     #[serde(default = "default_db_idle_timeout", with = "humantime_serde")]
     pub idle_timeout: Duration,
+}
+
+/// HTTP client configuration.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HttpConfig {
+    /// Duration before an HTTP request times out.
+    #[serde(default = "default_http_timeout", with = "humantime_serde")]
+    pub timeout: Duration,
+    /// The `User-Agent` header sent with HTTP requests.
+    #[serde(default = "default_http_user_agent")]
+    pub user_agent: String,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            timeout: default_http_timeout(),
+            user_agent: default_http_user_agent(),
+        }
+    }
 }
 
 /// DNS resolution configuration.
@@ -212,14 +236,24 @@ const fn default_db_idle_timeout() -> Duration {
     DEFAULT_DB_IDLE_TIMEOUT
 }
 
+/// Returns the default duration before an HTTP request times out.
+const fn default_http_timeout() -> Duration {
+    HTTP_TIMEOUT
+}
+
+/// Returns the default `User-Agent` header sent with HTTP requests.
+fn default_http_user_agent() -> String {
+    HTTP_USER_AGENT.to_string()
+}
+
 #[cfg(all(test, feature = "plugin-dig", feature = "plugin-health"))]
 mod tests {
     use std::net::IpAddr;
 
     use super::*;
     use figment::{
-        Error, Figment,
         providers::{Format, Toml},
+        Error, Figment,
     };
 
     /// Extracts the `[plugins]` subtree from an inline TOML document.
@@ -229,6 +263,30 @@ mod tests {
             .focus("plugins")
             .extract()
             .map_err(Box::new)
+    }
+
+    #[test]
+    fn http_defaults_are_used_when_omitted() {
+        let config: HttpConfig = Figment::new()
+            .merge(Toml::string(""))
+            .extract()
+            .expect("could not parse http configuration");
+
+        assert_eq!(config.timeout, HTTP_TIMEOUT);
+        assert_eq!(config.user_agent, HTTP_USER_AGENT);
+    }
+
+    #[test]
+    fn http_settings_parse() {
+        let config: HttpConfig = Figment::new()
+            .merge(Toml::string(
+                "timeout = \"10s\"\nuser_agent = \"zeta/test\"\n",
+            ))
+            .extract()
+            .expect("could not parse http configuration");
+
+        assert_eq!(config.timeout, Duration::from_secs(10));
+        assert_eq!(config.user_agent, "zeta/test");
     }
 
     #[test]

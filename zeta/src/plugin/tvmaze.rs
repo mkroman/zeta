@@ -137,8 +137,8 @@ impl EndpointUrls {
 
 #[async_trait]
 impl Plugin<Context> for Tvmaze {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        Ok(Tvmaze::new())
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+        Ok(Tvmaze::new(&ctx.config.http))
     }
 
     fn metadata() -> Metadata {
@@ -166,8 +166,8 @@ impl Plugin<Context> for Tvmaze {
 
 impl Tvmaze {
     /// Creates a new TVmaze plugin instance.
-    pub fn new() -> Self {
-        let client = http::build_client();
+    pub fn new(config: &crate::config::HttpConfig) -> Self {
+        let client = http::build_client(config);
         let urls = EndpointUrls::new();
 
         Tvmaze { client, urls }

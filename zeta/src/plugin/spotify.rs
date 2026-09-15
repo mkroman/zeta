@@ -115,10 +115,10 @@ struct PlaylistTracks {
 
 #[async_trait]
 impl Plugin<Context> for Spotify {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let client_id = require_env("SPOTIFY_CLIENT_ID")?;
         let client_secret = require_env("SPOTIFY_CLIENT_SECRET")?;
-        let client = http::build_client();
+        let client = http::build_client(&ctx.config.http);
         let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)").unwrap();
 
         Ok(Self {

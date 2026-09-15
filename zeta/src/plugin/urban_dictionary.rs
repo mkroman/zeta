@@ -67,8 +67,8 @@ pub struct Definition {
 
 #[async_trait]
 impl Plugin<Context> for UrbanDictionary {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        Ok(UrbanDictionary::new())
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+        Ok(UrbanDictionary::new(&ctx.config.http))
     }
 
     fn metadata() -> Metadata {
@@ -136,8 +136,8 @@ fn formatted(s: &str) -> String {
 }
 
 impl UrbanDictionary {
-    pub fn new() -> Self {
-        let client = http::build_client();
+    pub fn new(config: &crate::config::HttpConfig) -> Self {
+        let client = http::build_client(config);
 
         Self { client }
     }

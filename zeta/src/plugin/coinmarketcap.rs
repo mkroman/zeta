@@ -269,9 +269,9 @@ pub struct CoinMarketCap {
 
 #[async_trait]
 impl Plugin<Context> for CoinMarketCap {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let api_key = require_env("COINMARKETCAP_API_KEY")?;
-        let client = client::Client::new(&api_key)?;
+        let client = client::Client::new(&api_key, &ctx.config.http)?;
 
         Ok(Self {
             client,
@@ -684,7 +684,11 @@ mod tests {
     /// Builds a plugin instance for lookup tests, without touching the API.
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
-            client: client::Client::new("test-api-key").unwrap(),
+            client: client::Client::new(
+                "test-api-key",
+                &crate::config::HttpConfig::default(),
+            )
+            .unwrap(),
             coins: RwLock::new(CoinCache::from(test_coins())),
             fiat: RwLock::new(FiatCache::default()),
         }

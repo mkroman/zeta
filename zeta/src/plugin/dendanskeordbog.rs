@@ -58,8 +58,8 @@ impl Display for MessageFormatter {
 
 #[async_trait]
 impl Plugin<Context> for DenDanskeOrdbog {
-    fn new(_ctx: &Context) -> Result<DenDanskeOrdbog, ZetaError> {
-        Ok(DenDanskeOrdbog::new())
+    fn new(ctx: &Context) -> Result<DenDanskeOrdbog, ZetaError> {
+        Ok(DenDanskeOrdbog::new(&ctx.config.http))
     }
 
     fn metadata() -> Metadata {
@@ -99,8 +99,8 @@ impl Plugin<Context> for DenDanskeOrdbog {
 }
 
 impl DenDanskeOrdbog {
-    pub fn new() -> DenDanskeOrdbog {
-        let http_client = http::build_client();
+    pub fn new(config: &crate::config::HttpConfig) -> DenDanskeOrdbog {
+        let http_client = http::build_client(config);
         let client = dendanskeordbog::Client::with_client(http_client);
 
         DenDanskeOrdbog { client }

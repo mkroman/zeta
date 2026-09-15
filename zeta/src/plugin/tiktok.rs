@@ -49,7 +49,7 @@ pub enum Error {
 
 #[async_trait]
 impl Plugin<Context> for Tiktok {
-    fn new(_ctx: &Context) -> Result<Tiktok, ZetaError> {
+    fn new(ctx: &Context) -> Result<Tiktok, ZetaError> {
         let mirror = match Mirror::from_env() {
             Ok(mirror) => Some(mirror),
             Err(err) => {
@@ -59,7 +59,7 @@ impl Plugin<Context> for Tiktok {
         };
 
         Ok(Tiktok {
-            client: http::build_client(),
+            client: http::build_client(&ctx.config.http),
             mirror,
         })
     }

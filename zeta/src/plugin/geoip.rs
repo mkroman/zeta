@@ -84,9 +84,11 @@ pub struct IpInfo {
 
 #[async_trait]
 impl Plugin<Context> for GeoIp {
-    fn new(_ctx: &Context) -> Result<GeoIp, ZetaError> {
+    fn new(ctx: &Context) -> Result<GeoIp, ZetaError> {
         let api_key = require_env("GEOIP_API_KEY")?;
-        let client = http::client::builder().build().map_err(plugin_err)?;
+        let client = http::client::builder(&ctx.config.http)
+            .build()
+            .map_err(plugin_err)?;
 
         Ok(GeoIp { client, api_key })
     }

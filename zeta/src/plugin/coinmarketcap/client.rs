@@ -42,7 +42,7 @@ impl Client {
     ///
     /// Returns [`ZetaError`] if the API key is not a valid HTTP header value, or the client
     /// could not be built.
-    pub fn new(api_key: &str) -> Result<Self, ZetaError> {
+    pub fn new(api_key: &str, config: &crate::config::HttpConfig) -> Result<Self, ZetaError> {
         let headers = HeaderMap::from_iter([
             (ACCEPT, HeaderValue::from_static("application/json")),
             (
@@ -51,7 +51,7 @@ impl Client {
             ),
         ]);
 
-        let inner = http::client::builder()
+        let inner = http::client::builder(config)
             .default_headers(headers)
             .build()
             .map_err(plugin_err)?;

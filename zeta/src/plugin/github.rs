@@ -65,8 +65,8 @@ struct RepoItem {
 
 #[async_trait]
 impl Plugin<Context> for GitHubPlugin {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let plugin = GitHubPlugin::new()
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+        let plugin = GitHubPlugin::new(&ctx.config.http)
             .map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
         Ok(plugin)
     }
@@ -103,7 +103,7 @@ impl Plugin<Context> for GitHubPlugin {
 impl GitHubPlugin {
     /// Create a new instance of the GitHub plugin.
     /// Initializes a generic HTTP client with standard timeouts.
-    pub fn new() -> Result<Self> {
+    pub fn new(config: &crate::config::HttpConfig) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -114,7 +114,7 @@ impl GitHubPlugin {
             HeaderValue::from_static("2022-11-28"),
         );
 
-        let client = http::client::builder()
+        let client = http::client::builder(config)
             .default_headers(headers)
             .build()
             .map_err(Error::InitFailed)?;

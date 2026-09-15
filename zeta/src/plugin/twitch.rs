@@ -111,10 +111,10 @@ enum UrlKind {
 
 #[async_trait]
 impl Plugin<Context> for Twitch {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let client_id = require_env("TWITCH_CLIENT_ID")?;
         let client_secret = require_env("TWITCH_CLIENT_SECRET")?;
-        let client = http::build_client();
+        let client = http::build_client(&ctx.config.http);
 
         Ok(Self {
             client,

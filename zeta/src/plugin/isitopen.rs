@@ -182,9 +182,9 @@ fn format_time_string(s: &str) -> Option<String> {
 
 #[async_trait]
 impl Plugin<Context> for IsItOpen {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let api_key = require_env("GOOGLE_MAPS_API_KEY")?;
-        let client = http::build_client();
+        let client = http::build_client(&ctx.config.http);
 
         // Initialize regexes (case insensitive)
         let _ = RE_OPENING_TIME.get_or_init(|| {

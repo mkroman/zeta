@@ -77,9 +77,9 @@ pub enum Error {
 
 #[async_trait]
 impl Plugin<Context> for Trustpilot {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let api_key = require_env("TRUSTPILOT_API_KEY")?;
-        let client = http::build_client();
+        let client = http::build_client(&ctx.config.http);
 
         Ok(Self { client, api_key })
     }

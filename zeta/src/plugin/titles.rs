@@ -28,7 +28,6 @@ use thiserror::Error;
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::consts;
 use crate::plugin::prelude::*;
 use crate::url::{ExtractedUrl, ExtractUrls, SchemeMap};
 
@@ -381,27 +380,29 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 /// which anti-bot systems score far more aggressively when requests originate from datacenter
 /// networks — and the matching Linux Firefox 142 user agent is rejected by DataDome outright,
 /// while Firefox 151 passes.
-#[must_use]
-fn emulated_headers() -> HeaderMap {
+fn emulated_headers(user_agent: &str) -> Result<HeaderMap, ZetaError> {
     let mut headers = HeaderMap::new();
 
     headers.insert(
         ACCEPT_ENCODING,
         HeaderValue::from_static("gzip, deflate, br, zstd"),
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static(consts::HTTP_USER_AGENT));
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_str(user_agent).map_err(plugin_err)?,
+    );
 
-    headers
+    Ok(headers)
 }
 
 #[async_trait]
 impl Plugin<Context> for Titles {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let client = wreq::Client::builder()
             .emulation(Emulation::Firefox142)
-            .default_headers(emulated_headers())
+            .default_headers(emulated_headers(&ctx.config.http.user_agent)?)
             .redirect(Policy::limited(MAX_REDIRECTS))
-            .timeout(consts::HTTP_TIMEOUT)
+            .timeout(ctx.config.http.timeout)
             .build()
             .map_err(plugin_err)?;
 

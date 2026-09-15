@@ -69,9 +69,9 @@ struct Creator {
 
 #[async_trait]
 impl Plugin<Context> for Thingiverse {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let app_token = require_env("THINGIVERSE_APP_TOKEN")?;
-        let client = http::build_client();
+        let client = http::build_client(&ctx.config.http);
         // Regex to match /thing:<id>
         let path_regex = Regex::new(r"^/thing:(?P<id>\d+)/?$").expect("invalid regex");
 

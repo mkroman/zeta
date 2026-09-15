@@ -117,9 +117,9 @@ struct Clouds {
 
 #[async_trait]
 impl Plugin<Context> for OpenWeatherMap {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let app_id = require_env("OPENWEATHERMAP_APP_ID")?;
-        let client = http::build_client();
+        let client = http::build_client(&ctx.config.http);
 
         Ok(Self { client, app_id })
     }

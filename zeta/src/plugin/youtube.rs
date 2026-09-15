@@ -197,10 +197,10 @@ pub type SearchListResponse = ApiListResponse<Search>;
 
 #[async_trait]
 impl Plugin<Context> for YouTube {
-    fn new(_ctx: &Context) -> Result<YouTube, ZetaError> {
+    fn new(ctx: &Context) -> Result<YouTube, ZetaError> {
         let api_key = require_env("YOUTUBE_API_KEY")?;
 
-        Ok(YouTube::with_config(api_key))
+        Ok(YouTube::with_config(api_key, &ctx.config.http))
     }
 
     fn metadata() -> Metadata {
@@ -262,8 +262,8 @@ impl Plugin<Context> for YouTube {
 }
 
 impl YouTube {
-    pub fn with_config(api_key: String) -> Self {
-        let client = http::build_client();
+    pub fn with_config(api_key: String, config: &crate::config::HttpConfig) -> Self {
+        let client = http::build_client(config);
 
         Self {
             api_key,
