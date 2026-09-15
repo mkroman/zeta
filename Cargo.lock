@@ -2632,6 +2632,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kagi"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "reqwest",
+ "scraper",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5908,6 +5923,7 @@ dependencies = [
  "humantime-serde",
  "interim",
  "irc",
+ "kagi",
  "memory-stats",
  "miette",
  "num-format",
@@ -5921,7 +5937,6 @@ dependencies = [
  "reqwest",
  "rink-core",
  "rustls 0.23.45",
- "scraper",
  "secrecy",
  "serde",
  "serde_json",

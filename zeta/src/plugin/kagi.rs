@@ -1,42 +1,4 @@
-use std::time::Duration;
-
-use thiserror::Error;
-
 use crate::plugin::prelude::*;
-
-mod client;
-
-/// The duration of a single session. Once this duration has passed, a new session will be created.
-pub const KAGI_SESSION_DURATION: Duration = Duration::from_mins(15);
-
-/// Represents a single search result obtained from the search operation.
-pub struct SearchResult {
-    /// The title of the search result.
-    pub title: String,
-    /// The URL of the search result.
-    pub url: String,
-    /// The description.
-    #[allow(dead_code)]
-    pub description: String,
-}
-
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("unable to send search request")]
-    SearchRequest,
-    #[error("could not read response body of search request")]
-    SearchRequestBody,
-    #[error("could not send nonce request")]
-    RequestNonce(#[source] reqwest::Error),
-    #[error("could not read nonce response")]
-    ReadNonce(#[source] reqwest::Error),
-    #[error("could not send session request")]
-    RequestSession(#[source] reqwest::Error),
-    #[error("response did not include session valid cookies - is the login token valid?")]
-    SessionCookies,
-    #[error("response did not include a nonce")]
-    Nonce,
-}
 
 /// The `.g` command.
 const KAGI: PluginCommand = PluginCommand::new(
@@ -47,16 +9,17 @@ const KAGI: PluginCommand = PluginCommand::new(
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[KAGI];
 
+/// Kagi search integration.
 pub struct KagiPlugin {
     /// Kagi search client.
-    client: client::Client,
+    client: kagi::Client,
 }
 
 #[async_trait]
 impl Plugin<Context> for KagiPlugin {
     fn new(_ctx: &Context) -> Result<KagiPlugin, ZetaError> {
         let token = require_env("KAGI_SESSION_TOKEN")?;
-        let client = client::Client::with_token(token);
+        let client = kagi::Client::with_token(token);
 
         Ok(KagiPlugin { client })
     }

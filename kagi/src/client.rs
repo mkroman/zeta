@@ -1,20 +1,20 @@
 use std::{sync::Arc, time::Instant};
 
 use regex::Regex;
+use secrecy::{ExposeSecret, SecretString};
 use reqwest::header::{ACCEPT, SET_COOKIE};
+use reqwest::redirect::Policy;
 use scraper::{ElementRef, Html, Node, Selector};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
-use crate::http;
-
-use super::{Error, KAGI_SESSION_DURATION, SearchResult};
+use super::{BASE_URL, Error, HTTP_TIMEOUT, SESSION_DURATION, USER_AGENT, SearchResult};
 
 /// Represents a message parsed from the Kagi socket stream.
 /// The raw format is `Tag:JSON_BODY\0\n`.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct KagiMessage {
     /// The message tag (e.g., "search", "search.info", "meta").
     /// This is extracted from the wire prefix or the JSON body.
@@ -23,6 +23,7 @@ struct KagiMessage {
     /// diverse message types (HTML strings, objects, or nulls) without breaking.
     pub payload: Option<Value>,
     /// Optional version string sometimes found in the JSON body.
+    #[allow(dead_code)]
     pub kagi_version: Option<String>,
 }
 
@@ -34,42 +35,54 @@ struct Session {
     created_at: Instant,
 }
 
+/// Client for searching with Kagi.
 pub struct Client {
     /// HTTP client with a cookie jar.
     http: reqwest::Client,
     /// Kagi login token.
-    token: String,
+    token: SecretString,
     /// Session details.
     session: Arc<RwLock<Option<Session>>>,
 }
 
 impl Session {
     fn is_valid(&self) -> bool {
-        self.created_at.elapsed() < KAGI_SESSION_DURATION
+        self.created_at.elapsed() < SESSION_DURATION
     }
 }
 
 impl Client {
-    pub fn with_token(token: String) -> Client {
-        let client = http::client::builder()
+    /// Constructs a new [`Client`] for searching with Kagi using the given session token.
+    ///
+    /// The token is the value of the `kagi_session` cookie from an authenticated browser session.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client fails to build.
+    pub fn with_token(token: impl Into<SecretString>) -> Client {
+        let client = reqwest::ClientBuilder::new()
             .cookie_store(true)
+            .redirect(Policy::none())
+            .timeout(HTTP_TIMEOUT)
+            .user_agent(USER_AGENT)
             .build()
             .expect("could not build http client");
 
         Client {
             http: client,
-            token,
+            token: token.into(),
             session: Arc::new(RwLock::new(None)),
         }
     }
 
     async fn fetch_new_session_data(&self) -> Result<String, Error> {
-        // Issue a request with the login token to receive session cookies.
+        // Issue a request with the login token to receive session cookies. The token is part of
+        // the query string, so the request is intentionally not logged here.
         let req = self
             .http
-            .get("https://kagi.com/search")
-            .query(&[("token", &self.token)]);
-        debug!(?req, "requesting session cookies");
+            .get(format!("{BASE_URL}/search"))
+            .query(&[("token", self.token.expose_secret())]);
+        debug!("requesting session cookies");
 
         let res = req.send().await.map_err(Error::RequestSession)?;
         if !res.headers().contains_key(SET_COOKIE) {
@@ -79,7 +92,7 @@ impl Client {
 
         // Request the main page to receive a nonce for the first search.
         debug!("requesting nonce");
-        let req = self.http.get("https://kagi.com/");
+        let req = self.http.get(BASE_URL);
         let res = req.send().await.map_err(Error::RequestNonce)?;
         let body = res.text().await.map_err(Error::ReadNonce)?;
 
@@ -119,12 +132,18 @@ impl Client {
         Ok(new_nonce)
     }
 
+    /// Searches Kagi with the given query and returns the parsed search results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if a session could not be established, the search request could not
+    /// be sent, or the response could not be read.
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>, Error> {
         let _nonce = self.get_valid_nonce().await?;
 
         let req = self
             .http
-            .get("https://kagi.com/socket/search")
+            .get(format!("{BASE_URL}/socket/search"))
             .header(ACCEPT, "application/vnd.kagi.stream")
             .query(&[("q", query)]);
         debug!(?req, "searching for {query}");
@@ -242,8 +261,7 @@ mod tests {
     use super::*;
 
     fn read_search_stream() -> String {
-        let path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kagi/search_stream.bin");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/search_stream.bin");
 
         std::fs::read_to_string(path).expect("could not read search stream")
     }
@@ -258,8 +276,7 @@ mod tests {
 
     #[test]
     fn test_extract_nonce() {
-        let path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kagi/landing.html");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/landing.html");
         let html = std::fs::read_to_string(path).unwrap();
         let result = extract_nonce(&html).expect("could not extract nonce");
 
