@@ -123,7 +123,7 @@ declare_plugins! {
 
   /// Plugin that helps the user make a choice
   #[cfg(feature = "plugin-choices")]
-  choices::Choices => NoSettings,
+  choices::Choices => choices::Settings,
 
   /// Crypto currency quotes via CoinMarketCap
   #[cfg(feature = "plugin-coinmarketcap")]

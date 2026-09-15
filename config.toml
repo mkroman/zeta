@@ -89,6 +89,10 @@ name = "#zeta.dev"
   [plugins.choices]
   # Enable the plugin.
   enabled = true
+  # The keywords that separate the options.
+  # or_keywords = ["eller"]
+  # The separator between individual options.
+  # option_separator = ", "
 
   # Crypto currency quotes via CoinMarketCap.
   [plugins.coinmarketcap]
