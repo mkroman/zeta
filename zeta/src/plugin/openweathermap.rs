@@ -5,15 +5,77 @@
 //! This plugin allows users to query current weather information via the OpenWeatherMap API
 //! using the `.w` command.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use crate::{http, plugin::prelude::*};
 
 /// Base URL for the OpenWeatherMap API.
 const API_BASE_URL: &str = "https://api.openweathermap.org";
-/// Constant for converting Kelvin to Celsius.
-const KELVIN: f64 = 273.15;
+
+/// The unit system used for temperatures and wind speeds.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Units {
+    /// Temperatures in Celsius and wind speeds in meters per second.
+    #[default]
+    Metric,
+    /// Temperatures in Fahrenheit and wind speeds in miles per hour.
+    Imperial,
+    /// Temperatures in Kelvin and wind speeds in meters per second.
+    Standard,
+}
+
+impl Units {
+    /// Returns the value of the `units` API parameter.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Metric => "metric",
+            Self::Imperial => "imperial",
+            Self::Standard => "standard",
+        }
+    }
+
+    /// Returns the temperature unit label.
+    const fn temperature(self) -> &'static str {
+        match self {
+            Self::Metric => "°C",
+            Self::Imperial => "°F",
+            Self::Standard => "K",
+        }
+    }
+
+    /// Returns the wind speed unit label.
+    const fn wind_speed(self) -> &'static str {
+        match self {
+            Self::Imperial => "mph",
+            Self::Metric | Self::Standard => "m/s",
+        }
+    }
+}
+
+/// Settings for the openweathermap plugin, from its `[plugins.openweathermap]` configuration
+/// section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The OpenWeatherMap API key (the "app id").
+    ///
+    /// Falls back to the `OPENWEATHERMAP_APP_ID` environment variable when unset.
+    #[serde(default)]
+    pub app_id: Option<String>,
+    /// The unit system used for temperatures and wind speeds.
+    #[serde(default)]
+    pub units: Units,
+    /// The language used for weather condition descriptions.
+    ///
+    /// Defaults to the API's own default (English) when unset.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// The location used when the `.w` command is invoked without arguments.
+    #[serde(default)]
+    pub default_location: Option<String>,
+}
 
 /// The `.w` command.
 const WEATHER: PluginCommand = PluginCommand::new(
@@ -30,6 +92,12 @@ pub struct OpenWeatherMap {
     client: reqwest::Client,
     /// OpenWeatherMap API key.
     app_id: String,
+    /// The unit system used for temperatures and wind speeds.
+    units: Units,
+    /// The language used for weather condition descriptions.
+    language: Option<String>,
+    /// The location used when the command is invoked without arguments.
+    default_location: Option<String>,
 }
 
 /// Errors that can occur during weather lookups.
@@ -82,9 +150,9 @@ struct Sys {
 /// Main weather parameters.
 #[derive(Deserialize, Debug)]
 struct Main {
-    /// Temperature in Kelvin.
+    /// Temperature in the configured unit.
     temp: f64,
-    /// Feels-like temperature in Kelvin.
+    /// Feels-like temperature in the configured unit.
     feels_like: f64,
     /// Humidity percentage.
     humidity: u8,
@@ -102,9 +170,9 @@ struct WeatherDescription {
 /// Wind statistics.
 #[derive(Deserialize, Debug)]
 struct Wind {
-    /// Wind speed in m/s.
+    /// Wind speed in the configured unit.
     speed: f64,
-    /// Wind gust in m/s.
+    /// Wind gust in the configured unit.
     gust: Option<f64>,
 }
 
@@ -118,10 +186,17 @@ struct Clouds {
 #[async_trait]
 impl Plugin<Context> for OpenWeatherMap {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let app_id = require_env("OPENWEATHERMAP_APP_ID")?;
+        let settings = &ctx.config.plugins.openweathermap.settings;
+        let app_id = resolve_secret(settings.app_id.as_deref(), "OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client(&ctx.config.http);
 
-        Ok(Self { client, app_id })
+        Ok(Self {
+            client,
+            app_id,
+            units: settings.units,
+            language: settings.language.clone(),
+            default_location: settings.default_location.clone(),
+        })
     }
 
     fn metadata() -> Metadata {
@@ -143,15 +218,21 @@ impl Plugin<Context> for OpenWeatherMap {
         _command: &Prefix,
         args: &str,
     ) -> Result<(), ZetaError> {
-        let location = args.trim();
-        if location.is_empty() {
-            client.send_privmsg(channel, "\x0310> Usage: .w\x0f <location>")?;
-            return Ok(());
-        }
+        let location = if args.trim().is_empty() {
+            let Some(location) = self.default_location.as_deref() else {
+                client.send_privmsg(channel, "\x0310> Usage: .w\x0f <location>")?;
+
+                return Ok(());
+            };
+
+            location
+        } else {
+            args.trim()
+        };
 
         match self.fetch_weather(location).await {
             Ok(weather) => {
-                client.send_privmsg(channel, format_weather(&weather))?;
+                client.send_privmsg(channel, format_weather(&weather, self.units))?;
             }
             Err(Error::LocationNotFound) => {
                 client.send_privmsg(channel, "\x0310> Location not found")?;
@@ -202,11 +283,16 @@ impl OpenWeatherMap {
         let url = format!("{API_BASE_URL}/data/2.5/weather");
         let lat_s = lat.to_string();
         let lon_s = lon.to_string();
-        let params = [
+        let mut params = vec![
             ("lat", lat_s.as_str()),
             ("lon", lon_s.as_str()),
             ("appid", self.app_id.as_str()),
+            ("units", self.units.as_str()),
         ];
+
+        if let Some(language) = self.language.as_deref() {
+            params.push(("lang", language));
+        }
 
         let response = self.client.get(&url).query(&params).send().await?;
 
@@ -222,9 +308,9 @@ impl OpenWeatherMap {
 }
 
 /// Formats the weather response into a natural language string.
-fn format_weather(w: &WeatherResponse) -> String {
-    let temp = w.main.temp - KELVIN;
-    let feels_like = w.main.feels_like - KELVIN;
+fn format_weather(w: &WeatherResponse, units: Units) -> String {
+    let temp_unit = units.temperature();
+    let speed_unit = units.wind_speed();
 
     let location = w
         .sys
@@ -243,8 +329,11 @@ fn format_weather(w: &WeatherResponse) -> String {
     };
 
     let wind_info = match w.wind.gust {
-        Some(g) if g > 0.0 => format!("{:.1} m/s (gusts: {:.1} m/s)", w.wind.speed, g),
-        _ => format!("{:.1} m/s", w.wind.speed),
+        Some(g) if g > 0.0 => format!(
+            "{:.1} {speed_unit} (gusts: {:.1} {speed_unit})",
+            w.wind.speed, g
+        ),
+        _ => format!("{:.1} {speed_unit}", w.wind.speed),
     };
 
     let mut extra_info = Vec::new();
@@ -257,11 +346,84 @@ fn format_weather(w: &WeatherResponse) -> String {
     }
 
     format!(
-        "\x0310> Right now in \x0f{}\x0310 it's \x0f{:.1} °C\x0310 (feels like \x0f{:.1} °C\x0310) with \x0f{}\x0310. {}",
+        "\x0310> Right now in \x0f{}\x0310 it's \x0f{:.1} {temp_unit}\x0310 (feels like \x0f{:.1} {temp_unit}\x0310) with \x0f{}\x0310. {}",
         location,
-        temp,
-        feels_like,
+        w.main.temp,
+        w.main.feels_like,
         conditions,
         extra_info.join(". ")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a weather response for formatting tests.
+    fn test_response() -> WeatherResponse {
+        WeatherResponse {
+            name: "Copenhagen".to_string(),
+            sys: Sys {
+                country: Some("DK".to_string()),
+            },
+            main: Main {
+                temp: 12.5,
+                feels_like: 11.0,
+                humidity: 72,
+                pressure: 1013,
+            },
+            weather: vec![WeatherDescription {
+                description: "light rain".to_string(),
+            }],
+            wind: Wind {
+                speed: 3.0,
+                gust: Some(6.5),
+            },
+            clouds: Some(Clouds { all: 75 }),
+        }
+    }
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.app_id.is_none());
+        assert_eq!(settings.units, Units::Metric);
+        assert!(settings.language.is_none());
+        assert!(settings.default_location.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "app_id": "secret",
+            "units": "imperial",
+            "language": "da",
+            "default_location": "Copenhagen",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.app_id.as_deref(), Some("secret"));
+        assert_eq!(settings.units, Units::Imperial);
+        assert_eq!(settings.language.as_deref(), Some("da"));
+        assert_eq!(settings.default_location.as_deref(), Some("Copenhagen"));
+    }
+
+    #[test]
+    fn formats_metric_weather() {
+        let formatted = format_weather(&test_response(), Units::Metric);
+
+        assert!(formatted.contains("Copenhagen, DK"), "{formatted}");
+        assert!(formatted.contains("12.5 °C"), "{formatted}");
+        assert!(formatted.contains("feels like \x0f11.0 °C"), "{formatted}");
+        assert!(formatted.contains("3.0 m/s (gusts: 6.5 m/s)"), "{formatted}");
+    }
+
+    #[test]
+    fn formats_imperial_weather() {
+        let formatted = format_weather(&test_response(), Units::Imperial);
+
+        assert!(formatted.contains("12.5 °F"), "{formatted}");
+        assert!(formatted.contains("3.0 mph"), "{formatted}");
+    }
 }

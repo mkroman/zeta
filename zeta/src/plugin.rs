@@ -183,7 +183,7 @@ declare_plugins! {
 
   /// Weather service integration
   #[cfg(feature = "plugin-openweathermap")]
-  openweathermap::OpenWeatherMap => NoSettings,
+  openweathermap::OpenWeatherMap => openweathermap::Settings,
 
   /// PornHub platform integration
   #[cfg(feature = "plugin-pornhub")]

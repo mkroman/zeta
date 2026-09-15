@@ -183,6 +183,16 @@ name = "#zeta.dev"
   [plugins.openweathermap]
   # Enable the plugin.
   enabled = true
+  # The OpenWeatherMap API key (the "app id"). Falls back to the
+  # `OPENWEATHERMAP_APP_ID` environment variable when unset.
+  # app_id = "..."
+  # The unit system used for temperatures and wind speeds:
+  # "metric", "imperial" or "standard".
+  # units = "metric"
+  # The language used for weather condition descriptions.
+  # language = "en"
+  # The location used when the `.w` command is invoked without arguments.
+  # default_location = "Copenhagen"
 
   # PornHub platform integration.
   [plugins.pornhub]
