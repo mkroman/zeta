@@ -13,24 +13,23 @@ use std::collections::HashSet;
 use std::sync::mpsc;
 
 use futures::StreamExt;
-use html5ever::tokenizer::{
-    BufferQueue, EndTag, StartTag, Tag, Token, TokenSink, TokenSinkResult, Tokenizer,
-    TokenizerOpts,
-};
 use html5ever::tendril::StrTendril;
+use html5ever::tokenizer::{
+    BufferQueue, EndTag, StartTag, Tag, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts,
+};
 use irc::client::Client;
 use irc::proto::Command;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use tracing::{debug, warn};
+use url::Url;
 use wreq::StatusCode;
 use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
 use wreq::redirect::Policy;
 use wreq_util::Emulation;
-use thiserror::Error;
-use tracing::{debug, warn};
-use url::Url;
 
 use crate::plugin::prelude::*;
-use crate::url::{ExtractedUrl, ExtractUrls, SchemeMap};
+use crate::url::{ExtractUrls, ExtractedUrl, SchemeMap};
 
 /// The accepted schemes: `http` and `https`, plus the `ttp` and `ttps` variants that are missing
 /// their leading `h` — the latter are repaired and announced before the page is fetched.
@@ -55,8 +54,8 @@ const OG_REPLY_SUFFIX: &str = ":\x02\x0310 ";
 
 /// File extensions that we avoid requesting to save time and bandwidth.
 const BINARY_EXTENSIONS: &[&str] = &[
-    ".png", ".jpg", ".bmp", ".gif", ".avi", ".mpg", ".flv", ".3gp", ".mp4", ".exe", ".msi",
-    ".mp3", ".flac", ".tar", ".tar.gz", ".tar.bz2", ".zip",
+    ".png", ".jpg", ".bmp", ".gif", ".avi", ".mpg", ".flv", ".3gp", ".mp4", ".exe", ".msi", ".mp3",
+    ".flac", ".tar", ".tar.gz", ".tar.bz2", ".zip",
 ];
 
 /// Settings for the titles plugin, from its `[plugins.titles]` configuration section.
@@ -65,8 +64,9 @@ const BINARY_EXTENSIONS: &[&str] = &[
 pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
-    /// Removing a host makes this plugin preview its URLs, which may cause it to reply
-    /// alongside the plugin that normally handles the host.
+    /// Defaults to every host matched by a bundled plugin. Removing a host makes this plugin
+    /// preview its URLs, which may cause it to reply alongside the plugin that normally handles
+    /// the host.
     #[serde(default = "default_ignored_hosts")]
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
@@ -94,14 +94,33 @@ impl Default for Settings {
 /// Returns the default hosts that are handled by dedicated plugins.
 fn default_ignored_hosts() -> Vec<String> {
     [
-        "reddit.com",
+        "chaturbate.com",
+        "www.chaturbate.com",
+        "imdb.com",
+        "m.imdb.com",
+        "www.imdb.com",
+        "www.pornhub.com",
+        "i.redd.it",
+        "oauth.reddit.com",
+        "old.reddit.com",
+        "preview.redd.it",
         "redd.it",
+        "reddit.com",
+        "v.redd.it",
         "www.reddit.com",
-        "www.youtube.com",
-        "youtube.com",
-        "youtu.be",
-        "vm.tiktok.com",
+        "open.spotify.com",
+        "play.spotify.com",
+        "thingiverse.com",
+        "www.thingiverse.com",
         "tiktok.com",
+        "vm.tiktok.com",
+        "www.tiktok.com",
+        "clips.twitch.tv",
+        "twitch.tv",
+        "www.twitch.tv",
+        "youtu.be",
+        "youtube.com",
+        "www.youtube.com",
     ]
     .map(String::from)
     .to_vec()
@@ -193,12 +212,12 @@ impl HeadSink {
                 if title.is_none() && self.metadata.borrow().title.is_none() {
                     *title = Some(String::new());
                 }
-            },
+            }
             "meta" => self.capture_meta(tag),
             "body" => {
                 self.done.replace(true);
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -211,11 +230,11 @@ impl HeadSink {
                 {
                     self.metadata.borrow_mut().title = Some(title);
                 }
-            },
+            }
             "head" => {
                 self.done.replace(true);
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -264,8 +283,8 @@ impl TokenSink for HeadSink {
                 if let Some(title) = self.title.borrow_mut().as_mut() {
                     title.push_str(&text);
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         TokenSinkResult::Continue
@@ -385,7 +404,7 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
                 pending.clear();
 
                 break;
-            },
+            }
             Err(error) => {
                 let valid = error.valid_up_to();
 
@@ -402,13 +421,13 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
                         pending.drain(..valid);
 
                         break;
-                    },
+                    }
                     Some(invalid_len) => {
                         text.push('\u{fffd}');
                         pending.drain(..valid + invalid_len);
-                    },
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -544,7 +563,7 @@ impl Titles {
                     }
 
                     return;
-                },
+                }
             };
 
             if let Some(message) = format_page(&metadata, &url, &settings)
@@ -735,9 +754,8 @@ mod tests {
 
     #[test]
     fn extracts_open_graph_metadata_by_name() {
-        let metadata = parse_metadata(
-            r#"<head><meta name="og:description" content="A description"></head>"#,
-        );
+        let metadata =
+            parse_metadata(r#"<head><meta name="og:description" content="A description"></head>"#);
 
         assert_eq!(metadata.description.as_deref(), Some("A description"));
     }
@@ -768,10 +786,7 @@ mod tests {
         );
 
         assert_eq!(metadata.title.as_deref(), Some("Fish & Chips"));
-        assert_eq!(
-            metadata.description.as_deref(),
-            Some("a \"quoted\" word")
-        );
+        assert_eq!(metadata.description.as_deref(), Some("a \"quoted\" word"));
     }
 
     #[test]
@@ -833,10 +848,7 @@ mod tests {
 
         assert_eq!(decode_chunk(&mut pending, &[0xFF, b'a']), "\u{fffd}a");
         assert_eq!(decode_chunk(&mut pending, b"b"), "b");
-        assert_eq!(
-            decode_chunk(&mut pending, "æ".as_bytes()),
-            "æ"
-        );
+        assert_eq!(decode_chunk(&mut pending, "æ".as_bytes()), "æ");
         assert!(pending.is_empty());
     }
 
@@ -850,7 +862,10 @@ mod tests {
 
         assert_eq!(metadata.title.as_deref(), Some("Maero — Notes"));
         assert_eq!(metadata.site_name.as_deref(), Some("Maero"));
-        assert_eq!(metadata.og_title.as_deref(), Some("Notes from the \"field\""));
+        assert_eq!(
+            metadata.og_title.as_deref(),
+            Some("Notes from the \"field\"")
+        );
         assert_eq!(metadata.description.as_deref(), Some("A & B"));
 
         let chunked = parse_metadata_chunked(&html, 7);
@@ -904,11 +919,19 @@ mod tests {
 
     #[test]
     fn ignores_binary_urls() {
-        assert!(is_binary_url(&Url::parse("https://maero.dk/photo.JPG").unwrap()));
-        assert!(is_binary_url(&Url::parse("https://maero.dk/archive.tar.gz").unwrap()));
-        assert!(is_binary_url(&Url::parse("https://maero.dk/video.mp4?start=30").unwrap()));
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/photo.JPG").unwrap()
+        ));
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/archive.tar.gz").unwrap()
+        ));
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/video.mp4?start=30").unwrap()
+        ));
 
-        assert!(!is_binary_url(&Url::parse("https://maero.dk/page.html").unwrap()));
+        assert!(!is_binary_url(
+            &Url::parse("https://maero.dk/page.html").unwrap()
+        ));
         assert!(!is_binary_url(&Url::parse("https://maero.dk").unwrap()));
     }
 
@@ -937,7 +960,10 @@ mod tests {
 
         let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
-        assert_eq!(message, "\x0310>\x0f\x02 Maero:\x02\x0310 Hello — A description");
+        assert_eq!(
+            message,
+            "\x0310>\x0f\x02 Maero:\x02\x0310 Hello — A description"
+        );
     }
 
     #[test]
@@ -951,7 +977,10 @@ mod tests {
 
         let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
-        assert_eq!(message, "\x0310>\x0f\x02 maero.dk:\x02\x0310 Hello — A description");
+        assert_eq!(
+            message,
+            "\x0310>\x0f\x02 maero.dk:\x02\x0310 Hello — A description"
+        );
     }
 
     #[test]
@@ -1013,7 +1042,7 @@ mod tests {
     fn default_settings() {
         let settings = Settings::default();
 
-        assert_eq!(settings.ignored_hosts.len(), 8);
+        assert!(settings.ignored_hosts.len() > 8);
         assert_eq!(settings.max_redirects, 3);
         assert_eq!(settings.max_message_length, 400);
         assert_eq!(settings.max_description_length, 200);

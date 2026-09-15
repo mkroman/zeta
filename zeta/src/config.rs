@@ -266,8 +266,8 @@ mod tests {
 
     use super::*;
     use figment::{
-        providers::{Format, Toml},
         Error, Figment,
+        providers::{Format, Toml},
     };
 
     /// Extracts the `[plugins]` subtree from an inline TOML document.
@@ -442,7 +442,12 @@ enabled = false
         assert!(config.plugins.health.enabled);
         assert_eq!(
             config.plugins.dig.settings.nameservers,
-            vec![IpAddr::from([1, 1, 1, 1]), IpAddr::from([1, 0, 0, 1])]
+            vec![
+                IpAddr::from([1, 1, 1, 1]),
+                IpAddr::from([1, 0, 0, 1]),
+                IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111]),
+                IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001]),
+            ]
         );
         assert!(config.plugins.unknown.is_empty());
     }
