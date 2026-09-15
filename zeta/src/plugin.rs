@@ -235,7 +235,7 @@ declare_plugins! {
 
   /// Urban Dictionary integration
   #[cfg(feature = "plugin-urban-dictionary")]
-  urban_dictionary::UrbanDictionary => NoSettings,
+  urban_dictionary::UrbanDictionary => urban_dictionary::Settings,
 
   /// YouTube integration
   #[cfg(feature = "plugin-youtube")]

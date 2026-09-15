@@ -1,13 +1,41 @@
 use std::fmt::Display;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::debug;
 
-use crate::{config::HttpConfig, http, plugin::prelude::*};
+use crate::{
+    config::HttpConfig,
+    http,
+    plugin::prelude::*,
+    utils::Truncatable,
+};
 
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
+
+/// Settings for the urban_dictionary plugin, from its `[plugins.urban_dictionary]` configuration
+/// section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The maximum length of the definition and example text, in characters.
+    #[serde(default = "default_max_definition_length")]
+    pub max_definition_length: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            max_definition_length: default_max_definition_length(),
+        }
+    }
+}
+
+/// Returns the default maximum length of the definition and example text.
+const fn default_max_definition_length() -> usize {
+    400
+}
 
 /// The `.ud` command.
 const URBAN_DICTIONARY: PluginCommand = PluginCommand::new(
@@ -21,6 +49,7 @@ const COMMANDS: &[PluginCommand] = &[URBAN_DICTIONARY];
 /// Urban Dictionary plugin.
 pub struct UrbanDictionary {
     client: reqwest::Client,
+    settings: Settings,
 }
 
 /// Errors that can occur during execution.
@@ -68,7 +97,10 @@ pub struct Definition {
 #[async_trait]
 impl Plugin<Context> for UrbanDictionary {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        Ok(UrbanDictionary::new(&ctx.config.http))
+        Ok(UrbanDictionary::new(
+            &ctx.config.http,
+            ctx.config.plugins.urban_dictionary.settings.clone(),
+        ))
     }
 
     fn metadata() -> Metadata {
@@ -98,7 +130,12 @@ impl Plugin<Context> for UrbanDictionary {
         match self.definitions(query).await {
             Ok(definitions) => {
                 if let Some(definition) = definitions.list.first() {
-                    let s = formatted(&format!("{definition}"));
+                    let formatter = DefinitionFormatter {
+                        definition,
+                        max_length: self.settings.max_definition_length,
+                    };
+                    let s = formatted(&formatter.to_string());
+
                     client.send_privmsg(channel, s)?;
                 } else {
                     client.send_privmsg(channel, formatted("No results"))?;
@@ -113,11 +150,19 @@ impl Plugin<Context> for UrbanDictionary {
     }
 }
 
-impl Display for Definition {
+/// Formats a definition for IRC, truncating its text to the configured maximum length.
+struct DefinitionFormatter<'a> {
+    definition: &'a Definition,
+    max_length: usize,
+}
+
+impl Display for DefinitionFormatter<'_> {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let word = &self.word;
-        let definition = presentable(&self.definition);
-        let example = presentable(&self.example);
+        let word = &self.definition.word;
+        let definition = presentable(&self.definition.definition);
+        let example = presentable(&self.definition.example);
+        let definition = definition.truncate_with_suffix(self.max_length, "…");
+        let example = example.truncate_with_suffix(self.max_length, "…");
 
         write!(fmt, "Term:\x0f {word}\x0310")?;
         write!(fmt, " Definition:\x0f {definition}\x0310")?;
@@ -136,10 +181,10 @@ fn formatted(s: &str) -> String {
 }
 
 impl UrbanDictionary {
-    pub fn new(config: &HttpConfig) -> Self {
+    pub fn new(config: &HttpConfig, settings: Settings) -> Self {
         let client = http::build_client(config);
 
-        Self { client }
+        Self { client, settings }
     }
 
     /// Looks up the given `term` and returns a list of definitions.
@@ -169,5 +214,75 @@ impl UrbanDictionary {
             }
             Err(err) => Err(Error::Request(err)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a definition for formatting tests.
+    fn test_definition() -> Definition {
+        Definition {
+            id: 1,
+            author: "author".to_string(),
+            definition: "definition".to_string(),
+            example: "example".to_string(),
+            permalink: "https://example.com".to_string(),
+            word: "word".to_string(),
+            thumbs_up: 1,
+            thumbs_down: 0,
+            written_on: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn default_settings() {
+        assert_eq!(Settings::default().max_definition_length, 400);
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "max_definition_length": 100,
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.max_definition_length, 100);
+    }
+
+    #[test]
+    fn formats_definitions() {
+        let definition = test_definition();
+        let formatter = DefinitionFormatter {
+            definition: &definition,
+            max_length: 400,
+        };
+
+        assert_eq!(
+            formatter.to_string(),
+            "Term:\x0f word\x0310 Definition:\x0f definition\x0310 Example:\x0f example"
+        );
+    }
+
+    #[test]
+    fn truncates_long_definitions() {
+        let mut definition = test_definition();
+        definition.definition = "x".repeat(20);
+        definition.example = "y".repeat(20);
+        let formatter = DefinitionFormatter {
+            definition: &definition,
+            max_length: 10,
+        };
+        let message = formatter.to_string();
+
+        assert!(
+            message.contains(&format!("{}\u{2026}", "x".repeat(10))),
+            "{message}"
+        );
+        assert!(
+            message.contains(&format!("{}\u{2026}", "y".repeat(10))),
+            "{message}"
+        );
     }
 }

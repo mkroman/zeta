@@ -364,6 +364,8 @@ name = "#zeta.dev"
   [plugins.urban_dictionary]
   # Enable the plugin.
   enabled = true
+  # The maximum length of the definition and example text, in characters.
+  # max_definition_length = 400
 
   # YouTube integration.
   [plugins.youtube]
