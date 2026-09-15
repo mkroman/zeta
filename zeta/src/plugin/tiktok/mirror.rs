@@ -35,19 +35,16 @@ pub struct Mirror {
 }
 
 impl Mirror {
-    /// Creates a mirror from the environment configuration, using `ytdlp` for downloads.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the S3 configuration is missing or invalid.
-    pub fn from_env(ytdlp: YtDlp, max_concurrent: usize) -> Result<Self, super::s3::Error> {
-        Ok(Self {
-            s3: S3::from_env()?,
+    /// Creates a mirror using the given S3 client and `yt-dlp` runner.
+    #[must_use]
+    pub fn new(s3: S3, ytdlp: YtDlp, max_concurrent: usize) -> Self {
+        Self {
+            s3,
             ytdlp,
             max_concurrent,
             in_flight: Arc::default(),
             manager: None,
-        })
+        }
     }
 
     /// Starts the download manager task.

@@ -4,8 +4,8 @@
 //! downloads the videos with `yt-dlp` and mirrors them to an S3-compatible bucket, replying with a
 //! public link to the mirrored file.
 //!
-//! Mirroring is configured through the `S3_*` environment variables (see `s3::S3::from_env`);
-//! without it, the plugin only posts video summaries.
+//! Mirroring is configured through the `[plugins.tiktok]` S3 settings or the `S3_*` environment
+//! variables; without it, the plugin only posts video summaries.
 
 mod manager;
 mod mirror;
@@ -29,6 +29,7 @@ use crate::{
 
 use self::mirror::Mirror;
 use self::oembed::OEmbed;
+use self::s3::{S3, S3Config};
 use self::urls::{parse_tiktok_url, short_url, video_url, TiktokLink};
 use self::ytdlp::{YtDlp, YtDlpOptions};
 
@@ -56,6 +57,42 @@ pub struct Settings {
     /// neither is set.
     #[serde(default)]
     pub ytdlp_command: Option<String>,
+    /// The S3 access key id used for mirroring.
+    ///
+    /// Falls back to the `S3_ACCESS_KEY_ID` environment variable when unset. Mirroring is
+    /// disabled when the S3 configuration is incomplete.
+    #[serde(default)]
+    pub s3_access_key_id: Option<String>,
+    /// The S3 secret access key used for mirroring.
+    ///
+    /// Falls back to the `S3_SECRET_ACCESS_KEY` environment variable when unset.
+    #[serde(default)]
+    pub s3_secret_access_key: Option<String>,
+    /// The bucket that mirrored videos are uploaded to.
+    ///
+    /// Falls back to the `S3_BUCKET_NAME` environment variable when unset.
+    #[serde(default)]
+    pub s3_bucket_name: Option<String>,
+    /// The S3 region.
+    ///
+    /// Falls back to the `S3_REGION` environment variable, and to `auto` when neither is set.
+    #[serde(default)]
+    pub s3_region: Option<String>,
+    /// The endpoint URL for S3-compatible services.
+    ///
+    /// Falls back to the `S3_ENDPOINT` environment variable when unset.
+    #[serde(default)]
+    pub s3_endpoint: Option<String>,
+    /// The optional key prefix for uploaded objects.
+    ///
+    /// Falls back to the `S3_PREFIX` environment variable when unset.
+    #[serde(default)]
+    pub s3_prefix: Option<String>,
+    /// The base URL used when linking to mirrored videos.
+    ///
+    /// Falls back to the `TIKTOK_PUBLIC_URL_BASE` environment variable when unset.
+    #[serde(default)]
+    pub public_url_base: Option<String>,
 }
 
 impl Default for Settings {
@@ -66,6 +103,13 @@ impl Default for Settings {
             download_timeout: default_download_timeout(),
             max_concurrent_downloads: default_max_concurrent_downloads(),
             ytdlp_command: None,
+            s3_access_key_id: None,
+            s3_secret_access_key: None,
+            s3_bucket_name: None,
+            s3_region: None,
+            s3_endpoint: None,
+            s3_prefix: None,
+            public_url_base: None,
         }
     }
 }
@@ -115,8 +159,21 @@ impl Plugin<Context> for Tiktok {
             max_filesize: settings.max_filesize.clone(),
             download_timeout: settings.download_timeout,
         });
-        let mirror = match Mirror::from_env(ytdlp, settings.max_concurrent_downloads) {
-            Ok(mirror) => Some(mirror),
+        let s3_config = S3Config {
+            access_key_id: settings.s3_access_key_id.clone(),
+            secret_access_key: settings.s3_secret_access_key.clone(),
+            bucket: settings.s3_bucket_name.clone(),
+            region: settings.s3_region.clone(),
+            endpoint: settings.s3_endpoint.clone(),
+            prefix: settings.s3_prefix.clone(),
+            public_url_base: settings.public_url_base.clone(),
+        };
+        let mirror = match S3::new(s3_config) {
+            Ok(s3) => Some(Mirror::new(
+                s3,
+                ytdlp,
+                settings.max_concurrent_downloads,
+            )),
             Err(err) => {
                 warn!(error = %err, "tiktok mirroring is disabled");
                 None
@@ -301,6 +358,13 @@ mod tests {
         assert_eq!(settings.download_timeout, Duration::from_mins(10));
         assert_eq!(settings.max_concurrent_downloads, 2);
         assert!(settings.ytdlp_command.is_none());
+        assert!(settings.s3_access_key_id.is_none());
+        assert!(settings.s3_secret_access_key.is_none());
+        assert!(settings.s3_bucket_name.is_none());
+        assert!(settings.s3_region.is_none());
+        assert!(settings.s3_endpoint.is_none());
+        assert!(settings.s3_prefix.is_none());
+        assert!(settings.public_url_base.is_none());
     }
 
     #[test]
@@ -311,6 +375,13 @@ mod tests {
             "download_timeout": "5m",
             "max_concurrent_downloads": 1,
             "ytdlp_command": "/usr/local/bin/yt-dlp",
+            "s3_access_key_id": "access",
+            "s3_secret_access_key": "secret",
+            "s3_bucket_name": "bucket",
+            "s3_region": "auto",
+            "s3_endpoint": "https://example.com",
+            "s3_prefix": "~meta",
+            "public_url_base": "https://pub.example.com/tiktok",
         }))
         .expect("could not deserialize settings");
 
@@ -321,6 +392,16 @@ mod tests {
         assert_eq!(
             settings.ytdlp_command.as_deref(),
             Some("/usr/local/bin/yt-dlp")
+        );
+        assert_eq!(settings.s3_access_key_id.as_deref(), Some("access"));
+        assert_eq!(settings.s3_secret_access_key.as_deref(), Some("secret"));
+        assert_eq!(settings.s3_bucket_name.as_deref(), Some("bucket"));
+        assert_eq!(settings.s3_region.as_deref(), Some("auto"));
+        assert_eq!(settings.s3_endpoint.as_deref(), Some("https://example.com"));
+        assert_eq!(settings.s3_prefix.as_deref(), Some("~meta"));
+        assert_eq!(
+            settings.public_url_base.as_deref(),
+            Some("https://pub.example.com/tiktok")
         );
     }
 }
