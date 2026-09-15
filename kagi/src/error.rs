@@ -3,12 +3,15 @@
 /// Errors that can occur while searching with Kagi.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// The search request could not be sent.
-    #[error("unable to send search request")]
-    SearchRequest,
-    /// The response body of the search request could not be read.
-    #[error("could not read response body of search request")]
-    SearchRequestBody,
+    /// The stream request could not be sent.
+    #[error("could not send stream request")]
+    StreamRequest(#[source] reqwest::Error),
+    /// The stream request returned an error HTTP status.
+    #[error("stream request returned an error status")]
+    StreamStatus(#[source] reqwest::Error),
+    /// The response body of the stream request could not be read.
+    #[error("could not read response body of stream request")]
+    StreamRequestBody(#[source] reqwest::Error),
     /// The nonce request could not be sent.
     #[error("could not send nonce request")]
     RequestNonce(#[source] reqwest::Error),

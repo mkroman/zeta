@@ -1,7 +1,7 @@
 //! A client and parser for Kagi Search.
 //!
 //! This crate provides an asynchronous [`Client`] for querying [Kagi](https://kagi.com) with a
-//! session token and parsing the streamed HTML response into [`SearchResult`]s.
+//! session token and parsing the streamed responses into [`SearchResult`]s and [`ImageResult`]s.
 //!
 //! ## Features
 //!
@@ -13,8 +13,8 @@
 //!
 //! ## Quick Start
 //!
-//! To get started, add this crate to your `Cargo.toml`. The main entry point for searching is the
-//! [`Client::search`] method.
+//! To get started, add this crate to your `Cargo.toml`. The main entry points for searching are
+//! the [`Client::search`] and [`Client::images`] methods.
 //!
 //! ```rust,no_run
 //! use kagi::{Client, Error};
@@ -28,6 +28,13 @@
 //!
 //! if let Some(result) = results.first() {
 //!     println!("{} - {}", result.title, result.url);
+//! }
+//!
+//! // Or search for images.
+//! let images = client.images("ferrous wheel").await?;
+//!
+//! if let Some(image) = images.first() {
+//!     println!("{} ({}x{}) {}", image.title, image.width, image.height, image.image_url);
 //! }
 //! # Ok(())
 //! # }
@@ -64,4 +71,25 @@ pub struct SearchResult {
     pub url: String,
     /// The description.
     pub description: String,
+}
+
+/// Represents a single image result obtained from the image search operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImageResult {
+    /// The title of the image.
+    pub title: String,
+    /// The URL of the page the image was found on.
+    pub page_url: String,
+    /// The URL of the full-size image.
+    pub image_url: String,
+    /// The URL of the thumbnail served through Kagi's image proxy.
+    pub thumbnail_url: String,
+    /// The width of the image in pixels.
+    pub width: u32,
+    /// The height of the image in pixels.
+    pub height: u32,
+    /// The hostname of the page the image was found on.
+    pub host: String,
+    /// The rank of the image within the results.
+    pub rank: u32,
 }
