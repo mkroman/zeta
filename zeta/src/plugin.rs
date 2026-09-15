@@ -97,10 +97,6 @@ declare_plugins! {
   #[cfg(feature = "plugin-github")]
   github::GitHubPlugin,
 
-  /// Google images integration
-  #[cfg(feature = "plugin-google-images")]
-  google_images::GoogleImages,
-
   /// Process health information
   #[cfg(feature = "plugin-health")]
   health::Health,

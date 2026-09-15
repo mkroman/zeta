@@ -1,13 +1,17 @@
 use crate::plugin::prelude::*;
+use tracing::warn;
 
 /// The `.g` command.
-const KAGI: PluginCommand = PluginCommand::new(
-    Prefix::new(".g"),
-    "Search with Kagi and link the top result",
-);
+const KAGI: Prefix = Prefix::new(".g");
+
+/// The `.gis` command.
+const IMAGES: Prefix = Prefix::new(".gis");
 
 /// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[KAGI];
+const COMMANDS: &[PluginCommand] = &[
+    PluginCommand::new(KAGI, "Search with Kagi and link the top result"),
+    PluginCommand::new(IMAGES, "Search Kagi Images and link the first result"),
+];
 
 /// Kagi search integration.
 pub struct KagiPlugin {
@@ -40,12 +44,34 @@ impl Plugin<Context> for KagiPlugin {
         _ctx: &Context,
         client: &Client,
         channel: &str,
-        _command: &Prefix,
+        command: &Prefix,
         query: &str,
     ) -> Result<(), ZetaError> {
-        let results = self.client.search(query).await;
+        match *command {
+            IMAGES => return self.handle_images(client, channel, query).await,
+            KAGI => return self.handle_search(client, channel, query).await,
+            _ => {}
+        }
 
-        match results {
+        Ok(())
+    }
+}
+
+impl KagiPlugin {
+    /// Handles the `.g` command by linking the top search result for the query.
+    async fn handle_search(
+        &self,
+        client: &Client,
+        channel: &str,
+        query: &str,
+    ) -> Result<(), ZetaError> {
+        if query.trim().is_empty() {
+            client.send_privmsg(channel, "\x0310> Usage: .g\x0f <query>")?;
+
+            return Ok(());
+        }
+
+        match self.client.search(query).await {
             Ok(results) => {
                 if let Some(result) = results.first() {
                     let title = &result.title;
@@ -57,7 +83,41 @@ impl Plugin<Context> for KagiPlugin {
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, format!("Error: {err}"))?;
+                warn!(?err, "kagi search failed");
+                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handles the `.gis` command by linking the first image result for the query.
+    async fn handle_images(
+        &self,
+        client: &Client,
+        channel: &str,
+        query: &str,
+    ) -> Result<(), ZetaError> {
+        if query.trim().is_empty() {
+            client.send_privmsg(channel, "\x0310> Usage: .gis\x0f <query>")?;
+
+            return Ok(());
+        }
+
+        match self.client.images(query).await {
+            Ok(results) => {
+                if let Some(result) = results.first() {
+                    let title = &result.title;
+                    let url = &result.image_url;
+
+                    client.send_privmsg(channel, format!("\x0310>\x0f\x02 Kagi:\x02\x0310 {title} - {url}"))?;
+                } else {
+                    client.send_privmsg(channel, "\x0310> No results")?;
+                }
+            }
+            Err(err) => {
+                warn!(?err, "kagi image search failed");
+                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
             }
         }
 

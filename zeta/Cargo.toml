@@ -29,7 +29,6 @@ plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
 plugin-dig = []
 plugin-geoip = ["http"]
 plugin-github = ["http"]
-plugin-google-images = ["http"]
 plugin-health = ["dep:memory-stats"]
 plugin-help = []
 plugin-howlongtobeat = ["http"]
@@ -68,7 +67,6 @@ plugins-all = [
     "plugin-dig",
     "plugin-geoip",
     "plugin-github",
-    "plugin-google-images",
     "plugin-health",
     "plugin-help",
     "plugin-howlongtobeat",
