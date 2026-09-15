@@ -1,11 +1,52 @@
-use crate::plugin::prelude::*;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 use tracing::warn;
+
+use crate::plugin::prelude::*;
 
 /// The `.g` command.
 const KAGI: Prefix = Prefix::new(".g");
 
 /// The `.gis` command.
 const IMAGES: Prefix = Prefix::new(".gis");
+
+/// Settings for the kagi plugin, from its `[plugins.kagi]` configuration section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The Kagi session token (the `kagi_session` cookie value).
+    ///
+    /// Falls back to the `KAGI_SESSION_TOKEN` environment variable when unset.
+    #[serde(default)]
+    pub session_token: Option<String>,
+    /// How long a search session stays valid before it is refreshed.
+    #[serde(default = "default_session_duration", with = "humantime_serde")]
+    pub session_duration: Duration,
+    /// The `Accept-Language` header sent with requests.
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            session_token: None,
+            session_duration: default_session_duration(),
+            language: default_language(),
+        }
+    }
+}
+
+/// Returns the default session duration.
+const fn default_session_duration() -> Duration {
+    kagi::SESSION_DURATION
+}
+
+/// Returns the default `Accept-Language` header.
+fn default_language() -> String {
+    kagi::LANGUAGE.to_string()
+}
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[
@@ -21,9 +62,16 @@ pub struct KagiPlugin {
 
 #[async_trait]
 impl Plugin<Context> for KagiPlugin {
-    fn new(_ctx: &Context) -> Result<KagiPlugin, ZetaError> {
-        let token = require_env("KAGI_SESSION_TOKEN")?;
-        let client = kagi::Client::with_token(token);
+    fn new(ctx: &Context) -> Result<KagiPlugin, ZetaError> {
+        let settings = &ctx.config.plugins.kagi.settings;
+        let token = resolve_secret(settings.session_token.as_deref(), "KAGI_SESSION_TOKEN")?;
+        let options = kagi::ClientOptions {
+            timeout: ctx.config.http.timeout,
+            user_agent: ctx.config.http.user_agent.clone(),
+            session_duration: settings.session_duration,
+            language: settings.language.clone(),
+        };
+        let client = kagi::Client::with_token_and_options(token, options).map_err(plugin_err)?;
 
         Ok(KagiPlugin { client })
     }
@@ -122,5 +170,33 @@ impl KagiPlugin {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.session_token.is_none());
+        assert_eq!(settings.session_duration, kagi::SESSION_DURATION);
+        assert_eq!(settings.language, kagi::LANGUAGE);
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "session_token": "secret",
+            "session_duration": "1h",
+            "language": "da-DK,da;q=0.9",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.session_token.as_deref(), Some("secret"));
+        assert_eq!(settings.session_duration, Duration::from_hours(1));
+        assert_eq!(settings.language, "da-DK,da;q=0.9");
     }
 }

@@ -61,6 +61,32 @@ pub const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// The duration of a single session. Once this duration has passed, a new session will be created.
 pub const SESSION_DURATION: Duration = Duration::from_mins(15);
+/// The default `Accept-Language` header sent with requests.
+pub const LANGUAGE: &str = "en-US,en;q=0.9";
+
+/// Options for configuring a Kagi [`Client`].
+#[derive(Clone, Debug)]
+pub struct ClientOptions {
+    /// The duration before an HTTP request times out.
+    pub timeout: Duration,
+    /// The `User-Agent` header sent with requests.
+    pub user_agent: String,
+    /// The duration of a single session.
+    pub session_duration: Duration,
+    /// The `Accept-Language` header sent with requests.
+    pub language: String,
+}
+
+impl Default for ClientOptions {
+    fn default() -> Self {
+        Self {
+            timeout: HTTP_TIMEOUT,
+            user_agent: USER_AGENT.to_string(),
+            session_duration: SESSION_DURATION,
+            language: LANGUAGE.to_string(),
+        }
+    }
+}
 
 /// Represents a single search result obtained from the search operation.
 #[derive(Clone, Debug, Eq, PartialEq)]

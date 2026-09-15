@@ -171,7 +171,7 @@ declare_plugins! {
 
   /// Kagi search integration
   #[cfg(feature = "plugin-kagi")]
-  kagi::KagiPlugin => NoSettings,
+  kagi::KagiPlugin => kagi::Settings,
 
   /// User notifications
   #[cfg(feature = "plugin-notification")]

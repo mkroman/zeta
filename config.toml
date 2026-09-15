@@ -168,6 +168,13 @@ name = "#zeta.dev"
   [plugins.kagi]
   # Enable the plugin.
   enabled = true
+  # The Kagi session token (the `kagi_session` cookie value). Falls back to
+  # the `KAGI_SESSION_TOKEN` environment variable when unset.
+  # session_token = "..."
+  # How long a search session stays valid before it is refreshed.
+  # session_duration = "15m"
+  # The `Accept-Language` header sent with requests.
+  # language = "en-US,en;q=0.9"
 
   # User notifications.
   [plugins.notification]
