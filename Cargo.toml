@@ -5,8 +5,7 @@ members = ["dendanskeordbog", "kagi", "reddit", "zeta", "zeta-plugin"]
 [workspace.dependencies]
 argh = { version = "0.1.19" }
 async-trait = "0.1.89"
-aws-sdk-s3 = "1.108.0"
-frizbee = "0.13.0"
+aws-sdk-s3 = { version = "1.108.0", default-features = false }
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
 scraper = "0.27.0"
@@ -25,5 +24,5 @@ url = "2.5.8"
 lto = true
 strip = "debuginfo"
 panic = "unwind"
-opt-level = "s"
+opt-level = "z"
 codegen-units = 1
