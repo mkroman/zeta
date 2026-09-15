@@ -94,6 +94,16 @@ name = "#zeta.dev"
   [plugins.coinmarketcap]
   # Enable the plugin.
   enabled = true
+  # The CoinMarketCap API key. Falls back to the `COINMARKETCAP_API_KEY`
+  # environment variable when unset.
+  # api_key = "..."
+  # The fiat currency used when a command does not specify one.
+  # default_currency = "USD"
+  # How long the cached coins and fiat currencies stay valid before being
+  # refreshed.
+  # cache_ttl = "24h"
+  # The maximum number of typos allowed when fuzzy matching a coin name.
+  # max_name_typos = 2
 
   # Query the danish dictionary.
   [plugins.dendanskeordbog]

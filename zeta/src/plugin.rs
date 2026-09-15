@@ -127,7 +127,7 @@ declare_plugins! {
 
   /// Crypto currency quotes via CoinMarketCap
   #[cfg(feature = "plugin-coinmarketcap")]
-  coinmarketcap::CoinMarketCap => NoSettings,
+  coinmarketcap::CoinMarketCap => coinmarketcap::Settings,
 
   /// Query the danish dictionary
   #[cfg(feature = "plugin-dendanskeordbog")]

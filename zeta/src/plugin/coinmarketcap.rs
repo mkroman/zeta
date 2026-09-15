@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use argh::{ArgsInfo, FromArgs};
 use frizbee::{CaseMatching, Config, Matcher, Matching};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use crate::plugin::prelude::*;
@@ -31,9 +32,53 @@ mod model;
 use error::Error;
 use model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat, QuoteData};
 
-/// The maximum number of typos (needle characters missing from the name) allowed when fuzzy
-/// matching a coin name.
-const MAX_NAME_TYPOS: u16 = 2;
+/// Settings for the coinmarketcap plugin, from its `[plugins.coinmarketcap]` configuration
+/// section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The CoinMarketCap API key.
+    ///
+    /// Falls back to the `COINMARKETCAP_API_KEY` environment variable when unset.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// The fiat currency used when a command does not specify one.
+    #[serde(default = "default_currency")]
+    pub default_currency: String,
+    /// How long the cached coins and fiat currencies stay valid before being refreshed.
+    #[serde(default = "default_cache_ttl", with = "humantime_serde")]
+    pub cache_ttl: Duration,
+    /// The maximum number of typos (needle characters missing from the name) allowed when
+    /// fuzzy matching a coin name.
+    #[serde(default = "default_max_name_typos")]
+    pub max_name_typos: u16,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            default_currency: default_currency(),
+            cache_ttl: default_cache_ttl(),
+            max_name_typos: default_max_name_typos(),
+        }
+    }
+}
+
+/// Returns the default fiat currency used when a command does not specify one.
+fn default_currency() -> String {
+    DEFAULT_CURRENCY.to_string()
+}
+
+/// Returns the default cache TTL for the coin and fiat caches.
+const fn default_cache_ttl() -> Duration {
+    Duration::from_hours(24)
+}
+
+/// Returns the default maximum number of typos allowed when fuzzy matching a coin name.
+const fn default_max_name_typos() -> u16 {
+    2
+}
 
 /// The `.cc` command.
 const CC: PluginCommand = PluginCommand::with_args::<CoinOpts>(
@@ -174,9 +219,6 @@ struct CoinOpts {
     currency: Option<String>,
 }
 
-/// How long the cached coins and fiat currencies stay valid before being refreshed.
-const CACHE_TTL: Duration = Duration::from_hours(24);
-
 /// The top cryptocurrencies by market cap, keyed by ticker symbol.
 ///
 /// Populated from the cryptocurrency map endpoint at startup and refreshed lazily after the
@@ -238,10 +280,10 @@ trait Cached {
     /// When the cache was last populated, if it was.
     fn fetched_at(&self) -> Option<Instant>;
 
-    /// Returns whether the cache was populated within the cache TTL.
-    fn is_fresh(&self) -> bool {
+    /// Returns whether the cache was populated within `cache_ttl`.
+    fn is_fresh(&self, cache_ttl: Duration) -> bool {
         self.fetched_at()
-            .is_some_and(|fetched_at| fetched_at.elapsed() < CACHE_TTL)
+            .is_some_and(|fetched_at| fetched_at.elapsed() < cache_ttl)
     }
 }
 
@@ -261,22 +303,32 @@ impl Cached for FiatCache {
 pub struct CoinMarketCap {
     /// Client for CoinMarketCap API requests, with the API key set as a default header.
     client: client::Client,
-    /// The top cryptocurrencies by market cap, cached for 24 hours.
+    /// The top cryptocurrencies by market cap, cached for the cache TTL.
     coins: RwLock<CoinCache>,
-    /// The fiat currencies supported for price conversion, cached for 24 hours.
+    /// The fiat currencies supported for price conversion, cached for the cache TTL.
     fiat: RwLock<FiatCache>,
+    /// The fiat currency used when a command does not specify one.
+    default_currency: String,
+    /// How long the cached coins and fiat currencies stay valid before being refreshed.
+    cache_ttl: Duration,
+    /// The maximum number of typos allowed when fuzzy matching a coin name.
+    max_name_typos: u16,
 }
 
 #[async_trait]
 impl Plugin<Context> for CoinMarketCap {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let api_key = require_env("COINMARKETCAP_API_KEY")?;
+        let settings = &ctx.config.plugins.coinmarketcap.settings;
+        let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
         let client = client::Client::new(&api_key, &ctx.config.http)?;
 
         Ok(Self {
             client,
             coins: RwLock::new(CoinCache::default()),
             fiat: RwLock::new(FiatCache::default()),
+            default_currency: settings.default_currency.clone(),
+            cache_ttl: settings.cache_ttl,
+            max_name_typos: settings.max_name_typos,
         })
     }
 
@@ -382,7 +434,11 @@ impl CoinMarketCap {
     ) -> Result<(), ZetaError> {
         self.ensure_fiat_cached().await;
 
-        let currency = match parse_currency(currency, |symbol| self.is_valid_currency(symbol)) {
+        let currency = match parse_currency(
+            currency,
+            &self.default_currency,
+            |symbol| self.is_valid_currency(symbol),
+        ) {
             Ok(currency) => currency,
             Err(err) => return Self::reply_error(client, channel, &err),
         };
@@ -439,7 +495,7 @@ impl CoinMarketCap {
         coins
             .get(&query.to_ascii_uppercase())
             .cloned()
-            .or_else(|| find_by_name(coins, query))
+            .or_else(|| find_by_name(coins, query, self.max_name_typos))
     }
 
     /// Refreshes the coin cache when it is missing or older than the cache TTL.
@@ -448,9 +504,12 @@ impl CoinMarketCap {
     /// resolving with the stale coins, and an empty cache falls back to letting the API
     /// resolve queries as symbols.
     async fn ensure_coins_cached(&self) {
-        refresh_cache(&self.coins, "the top cryptocurrencies", || {
-            self.client.coin_map()
-        })
+        refresh_cache(
+            &self.coins,
+            "the top cryptocurrencies",
+            self.cache_ttl,
+            || self.client.coin_map(),
+        )
         .await;
     }
 
@@ -459,9 +518,12 @@ impl CoinMarketCap {
     /// Failures are logged and leave the existing cache, if any, in place: quotes keep working
     /// with the stale currencies, and an empty cache defers currency validation to the API.
     async fn ensure_fiat_cached(&self) {
-        refresh_cache(&self.fiat, "the supported fiat currencies", || {
-            self.client.fiat_map()
-        })
+        refresh_cache(
+            &self.fiat,
+            "the supported fiat currencies",
+            self.cache_ttl,
+            || self.client.fiat_map(),
+        )
         .await;
     }
 
@@ -490,14 +552,21 @@ impl CoinMarketCap {
 /// missing or older than the cache TTL.
 ///
 /// Failures are logged and leave the existing cache, if any, in place.
-async fn refresh_cache<C, T, E, F, Fut>(lock: &RwLock<C>, subject: &str, fetch: F)
-where
+async fn refresh_cache<C, T, E, F, Fut>(
+    lock: &RwLock<C>,
+    subject: &str,
+    cache_ttl: Duration,
+    fetch: F,
+) where
     C: Cached + From<Vec<T>> + Send + Sync,
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<Vec<T>, E>> + Send,
     E: std::fmt::Display,
 {
-    let fresh = lock.read().unwrap_or_else(PoisonError::into_inner).is_fresh();
+    let fresh = lock
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .is_fresh(cache_ttl);
 
     if fresh {
         return;
@@ -523,9 +592,10 @@ where
 /// deferring validation to the API.
 fn parse_currency(
     currency: Option<&str>,
+    default_currency: &str,
     is_valid: impl Fn(&str) -> bool,
 ) -> Result<String, Error> {
-    let currency = sanitize(currency.unwrap_or(DEFAULT_CURRENCY)).to_ascii_uppercase();
+    let currency = sanitize(currency.unwrap_or(default_currency)).to_ascii_uppercase();
 
     if is_valid(&currency) {
         Ok(currency)
@@ -539,7 +609,7 @@ fn parse_currency(
 /// Candidates are scored with frizbee's Smith-Waterman fuzzy matcher (case-insensitive, with
 /// typo resistance); the highest score wins, preferring the shorter name on ties (e.g.
 /// `Bitcoin` over `Bitcoin Cash` for the query `bitcoin`).
-fn find_by_name(coins: &HashMap<String, Coin>, query: &str) -> Option<Coin> {
+fn find_by_name(coins: &HashMap<String, Coin>, query: &str, max_name_typos: u16) -> Option<Coin> {
     if query.trim().is_empty() {
         return None;
     }
@@ -550,7 +620,7 @@ fn find_by_name(coins: &HashMap<String, Coin>, query: &str) -> Option<Coin> {
     let config = Config::default()
         .matching(Matching::Fuzzy)
         .casing(CaseMatching::Ignore)
-        .max_typos(Some(MAX_NAME_TYPOS));
+        .max_typos(Some(max_name_typos));
     let mut matches = Matcher::new(query, &config).match_list(&names);
 
     matches.sort_by(|a, b| {
@@ -688,7 +758,36 @@ mod tests {
             client: client::Client::new("test-api-key", &HttpConfig::default()).unwrap(),
             coins: RwLock::new(CoinCache::from(test_coins())),
             fiat: RwLock::new(FiatCache::default()),
+            default_currency: DEFAULT_CURRENCY.to_string(),
+            cache_ttl: default_cache_ttl(),
+            max_name_typos: default_max_name_typos(),
         }
+    }
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.api_key.is_none());
+        assert_eq!(settings.default_currency, "USD");
+        assert_eq!(settings.cache_ttl, Duration::from_hours(24));
+        assert_eq!(settings.max_name_typos, 2);
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "api_key": "secret",
+            "default_currency": "eur",
+            "cache_ttl": "1h",
+            "max_name_typos": 3,
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        assert_eq!(settings.default_currency, "eur");
+        assert_eq!(settings.cache_ttl, Duration::from_hours(1));
+        assert_eq!(settings.max_name_typos, 3);
     }
 
     /// Builds a quote for `Bitcoin (BTC)` in USD.
@@ -787,11 +886,11 @@ mod tests {
     fn parses_currencies() {
         let is_valid = |currency: &str| matches!(currency, "USD" | "EUR" | "JPY");
 
-        assert_eq!(parse_currency(None, is_valid).unwrap(), "USD");
-        assert_eq!(parse_currency(Some("eur"), is_valid).unwrap(), "EUR");
-        assert_eq!(parse_currency(Some("JPY"), is_valid).unwrap(), "JPY");
+        assert_eq!(parse_currency(None, "USD", is_valid).unwrap(), "USD");
+        assert_eq!(parse_currency(Some("eur"), "USD", is_valid).unwrap(), "EUR");
+        assert_eq!(parse_currency(Some("JPY"), "USD", is_valid).unwrap(), "JPY");
         assert!(matches!(
-            parse_currency(Some("xyz"), is_valid),
+            parse_currency(Some("xyz"), "USD", is_valid),
             Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
         ));
     }
@@ -815,7 +914,7 @@ mod tests {
     #[test]
     fn parses_currencies_without_fiat_cache() {
         // Without a fiat cache, validation is deferred to the API.
-        assert_eq!(parse_currency(Some("xyz"), |_| true).unwrap(), "XYZ");
+        assert_eq!(parse_currency(Some("xyz"), "USD", |_| true).unwrap(), "XYZ");
     }
 
     #[test]
@@ -825,7 +924,7 @@ mod tests {
         let is_valid = |currency: &str| currency == "USD";
 
         assert!(matches!(
-            parse_currency(Some("\u{2}xyz\u{f}"), is_valid),
+            parse_currency(Some("\u{2}xyz\u{f}"), "USD", is_valid),
             Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
         ));
     }
