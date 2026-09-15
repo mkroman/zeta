@@ -219,7 +219,7 @@ declare_plugins! {
 
   /// URL titles and OpenGraph metadata
   #[cfg(feature = "plugin-titles")]
-  titles::Titles => NoSettings,
+  titles::Titles => titles::Settings,
 
   /// Trustpilot integration
   #[cfg(feature = "plugin-trustpilot")]

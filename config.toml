@@ -245,6 +245,24 @@ name = "#zeta.dev"
   [plugins.titles]
   # Enable the plugin.
   enabled = true
+  # Hosts whose URLs are left to dedicated plugins. Remove a host to let
+  # this plugin preview its URLs.
+  # ignored_hosts = [
+  #   "reddit.com",
+  #   "redd.it",
+  #   "www.reddit.com",
+  #   "www.youtube.com",
+  #   "youtube.com",
+  #   "youtu.be",
+  #   "vm.tiktok.com",
+  #   "tiktok.com",
+  # ]
+  # The maximum number of redirects to follow.
+  # max_redirects = 3
+  # The maximum length of a posted message, in characters.
+  # max_message_length = 400
+  # The maximum length of a posted description, in characters.
+  # max_description_length = 200
 
   # Trustpilot integration.
   [plugins.trustpilot]
