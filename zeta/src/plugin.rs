@@ -93,6 +93,10 @@ declare_plugins! {
   #[cfg(feature = "plugin-geoip")]
   geoip::GeoIp,
 
+  /// Normative affective resonance profiling, calendar-scoped
+  #[cfg(feature = "plugin-gay")]
+  gay::Gay,
+
   /// GitHub integration
   #[cfg(feature = "plugin-github")]
   github::GitHubPlugin,

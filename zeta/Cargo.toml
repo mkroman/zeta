@@ -18,15 +18,32 @@ path = "src/main.rs"
 default = ["plugins-all", "rustls", "database"]
 database = ["dep:sqlx", "dep:chrono"]
 http = ["dep:reqwest"]
-native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx?/tls-native-tls", "kagi?/native-tls"]
-native-tls-vendored = ["reqwest/native-tls-vendored", "irc/tls-native", "sqlx?/tls-native-tls", "kagi?/native-tls-vendored"]
-rustls = ["dep:rustls", "reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls", "kagi?/rustls"]
+native-tls = [
+    "reqwest/native-tls",
+    "irc/tls-native",
+    "sqlx?/tls-native-tls",
+    "kagi?/native-tls",
+]
+native-tls-vendored = [
+    "reqwest/native-tls-vendored",
+    "irc/tls-native",
+    "sqlx?/tls-native-tls",
+    "kagi?/native-tls-vendored",
+]
+rustls = [
+    "dep:rustls",
+    "reqwest/rustls",
+    "irc/tls-rust",
+    "sqlx?/tls-rustls",
+    "kagi?/rustls",
+]
 plugin-alert = ["database", "dep:chrono", "dep:interim"]
 plugin-chaturbate = ["http", "dep:regex"]
 plugin-choices = []
 plugin-coinmarketcap = ["http", "dep:frizbee", "dep:serde_path_to_error"]
 plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
 plugin-dig = []
+plugin-gay = ["irc/channel-lists", "dep:chrono", "dep:rand_mt", "dep:sha2"]
 plugin-geoip = ["http"]
 plugin-github = ["http"]
 plugin-health = ["dep:memory-stats"]
@@ -65,6 +82,7 @@ plugins-all = [
     "plugin-coinmarketcap",
     "plugin-dendanskeordbog",
     "plugin-dig",
+    "plugin-gay",
     "plugin-geoip",
     "plugin-github",
     "plugin-health",
@@ -117,6 +135,7 @@ opentelemetry-otlp = "0.32.0"
 opentelemetry-resource-detectors = "0.12.0"
 opentelemetry_sdk = { version = "0.32.0", features = ["rt-tokio"] }
 rand = "0.10.1"
+rand_mt = { version = "6", optional = true }
 reddit = { path = "../reddit", optional = true }
 regex = { version = "1.12.2", optional = true }
 reqwest = { workspace = true, features = ["json", "stream", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"], optional = true }
@@ -126,6 +145,7 @@ secrecy = { optional = true, workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 serde_path_to_error = { optional = true, workspace = true }
+sha2 = { version = "0.11", optional = true }
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"], optional = true }
 tempfile = { workspace = true, optional = true }
 thiserror.workspace = true

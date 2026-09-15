@@ -6,7 +6,6 @@ members = ["dendanskeordbog", "kagi", "reddit", "zeta", "zeta-plugin"]
 argh = { version = "0.1.19" }
 async-trait = "0.1.89"
 aws-sdk-s3 = "1.108.0"
-tempfile = "3.23.0"
 frizbee = "0.13.0"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
@@ -16,6 +15,7 @@ serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.149"
 serde_path_to_error = "0.1.17"
 shlex = "2.0.0"
+tempfile = "3.23.0"
 thiserror = "2.0"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1.41"
