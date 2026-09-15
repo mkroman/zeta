@@ -1,17 +1,65 @@
 use std::fmt::Display;
+use std::net::IpAddr;
 
 use argh::{ArgsInfo, FromArgs};
 use hickory_resolver::{
     Resolver, TokioResolver,
-    config::{CLOUDFLARE, LookupIpStrategy, ResolveHosts, ResolverConfig, ResolverOpts},
+    config::{LookupIpStrategy, NameServerConfig, ResolveHosts, ResolverConfig, ResolverOpts},
     lookup::Lookup,
     net::{NetError, runtime::TokioRuntimeProvider},
     proto::{rr::RecordType, serialize::binary::DecodeError},
 };
 use miette::Diagnostic;
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 use crate::plugin::prelude::*;
+
+/// Settings for the dig plugin, from its `[plugins.dig]` configuration section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// Nameservers to query over UDP and TCP.
+    ///
+    /// Defaults to Cloudflare's public resolvers.
+    #[serde(
+        default = "default_nameservers",
+        deserialize_with = "deserialize_nameservers"
+    )]
+    pub nameservers: Vec<IpAddr>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            nameservers: default_nameservers(),
+        }
+    }
+}
+
+/// Deserializes `nameservers`, rejecting an empty list.
+fn deserialize_nameservers<'de, D>(deserializer: D) -> Result<Vec<IpAddr>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let nameservers = Vec::<IpAddr>::deserialize(deserializer)?;
+
+    if nameservers.is_empty() {
+        return Err(serde::de::Error::custom("`nameservers` must not be empty"));
+    }
+
+    Ok(nameservers)
+}
+
+/// Returns the default nameservers: Cloudflare's public resolvers.
+fn default_nameservers() -> Vec<IpAddr> {
+    vec![
+        IpAddr::from([1, 1, 1, 1]),
+        IpAddr::from([1, 0, 0, 1]),
+        IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111]),
+        IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001]),
+    ]
+}
 
 /// Look up DNS records for a domain.
 #[derive(FromArgs, ArgsInfo, Debug)]
@@ -35,10 +83,8 @@ pub enum Error {
 }
 
 /// The `.dig` command.
-const DIG: PluginCommand = PluginCommand::with_args::<Opts>(
-    Prefix::new(".dig"),
-    "Look up DNS records for a domain",
-);
+const DIG: PluginCommand =
+    PluginCommand::with_args::<Opts>(Prefix::new(".dig"), "Look up DNS records for a domain");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[DIG];
@@ -72,18 +118,9 @@ impl Display for LookupResult {
 
 #[async_trait]
 impl Plugin<Context> for Dig {
-    fn new(_ctx: &Context) -> Result<Dig, ZetaError> {
-        let config = ResolverConfig::udp_and_tcp(&CLOUDFLARE);
-        let mut opts = ResolverOpts::default();
-
-        opts.attempts = 5;
-        opts.ip_strategy = LookupIpStrategy::Ipv6thenIpv4;
-        opts.use_hosts_file = ResolveHosts::Never;
-
-        let resolver = Resolver::builder_with_config(config, TokioRuntimeProvider::default())
-            .with_options(opts)
-            .build()
-            .map_err(plugin_err)?;
+    fn new(ctx: &Context) -> Result<Dig, ZetaError> {
+        let resolver = build_resolver(&ctx.config.plugins.dig.settings.nameservers)
+            .map_err(ZetaError::from)?;
 
         Ok(Dig { resolver })
     }
@@ -136,6 +173,29 @@ fn record_type_from_str(s: &str) -> Result<RecordType, String> {
         .map_err(|err: DecodeError| err.to_string())
 }
 
+/// Builds a resolver that queries `nameservers` over UDP and TCP.
+///
+/// # Errors
+///
+/// Returns an error if the resolver cannot be built.
+fn build_resolver(nameservers: &[IpAddr]) -> Result<TokioResolver, BoxError> {
+    let mut config = ResolverConfig::from_parts(None, Vec::new(), Vec::new());
+
+    for ip in nameservers {
+        config.add_name_server(NameServerConfig::udp_and_tcp(*ip));
+    }
+
+    let mut opts = ResolverOpts::default();
+    opts.attempts = 5;
+    opts.ip_strategy = LookupIpStrategy::Ipv6thenIpv4;
+    opts.use_hosts_file = ResolveHosts::Never;
+
+    Resolver::builder_with_config(config, TokioRuntimeProvider::default())
+        .with_options(opts)
+        .build()
+        .map_err(Into::into)
+}
+
 fn formatted(message: &str) -> String {
     format!("\x0310>\x03\x02 Dig:\x02\x0310 {message}")
 }
@@ -151,5 +211,34 @@ impl Dig {
             .await
             .map(LookupResult)
             .map_err(Error::Resolve)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use figment::value::{Dict, Value};
+
+    #[test]
+    fn default_settings_build_a_resolver() {
+        let settings = Settings::default();
+        assert!(!settings.nameservers.is_empty());
+
+        assert!(
+            build_resolver(&settings.nameservers).is_ok(),
+            "could not build a resolver from the default nameservers"
+        );
+    }
+
+    #[test]
+    fn configured_settings_build_a_resolver() {
+        let settings: Settings = Deserialize::deserialize(&Value::from(Dict::from([(
+            String::from("nameservers"),
+            Value::from(&["192.0.2.53"]),
+        )])))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.nameservers, vec![IpAddr::from([192, 0, 2, 53])]);
+        assert!(build_resolver(&settings.nameservers).is_ok());
     }
 }

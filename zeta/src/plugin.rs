@@ -1,9 +1,12 @@
 #![allow(clippy::doc_markdown)]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use figment::value::Dict;
 use irc::client::Client;
 use irc::proto::Message;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use url::Url;
@@ -13,6 +16,9 @@ pub use crate::context::{Context, SharedState};
 
 pub use zeta_plugin::{Author, Error, Metadata, Name, Plugin};
 
+#[allow(unused_imports)]
+use zeta_plugin::NoSettings;
+
 /// Common includes used in plugins.
 #[allow(unused)]
 mod prelude {
@@ -21,7 +27,7 @@ mod prelude {
     pub use irc::proto::{Command, Message};
     pub use zeta_plugin::Error as ZetaError;
     pub use zeta_plugin::prelude::{
-        ArgsError, BoxError, PluginCommand, Prefix, plugin_err, require_env,
+        ArgsError, BoxError, NoSettings, PluginCommand, Prefix, plugin_err, require_env,
     };
 
     pub use super::{
@@ -33,13 +39,16 @@ mod prelude {
 ///
 /// For each entry, it generates:
 /// 1. `pub mod $mod_name;` (with feature gates and docs).
-/// 2. A call to `register::<$mod_name::$struct_name>()` inside `Registry::register_bundled_plugins`.
+/// 2. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
+///    for plugins with settings, `=> NoSettings` otherwise.
+/// 3. A call to `register::<$mod_name::$struct_name>()` inside `Registry::register_bundled_plugins`,
+///    gated on the plugin's `enabled` configuration.
 macro_rules! declare_plugins {
     (
         $(
             $(#[doc = $doc:expr])*
             #[cfg(feature = $feature:literal)]
-            $mod_name:ident :: $struct_name:ident
+            $mod_name:ident :: $struct_name:ident => $settings:ty
         ),* $(,)?
     ) => {
         // Generate module declarations
@@ -49,14 +58,52 @@ macro_rules! declare_plugins {
             pub mod $mod_name;
         )*
 
+        /// Typed, per-plugin configuration extracted from the `[plugins]` section.
+        ///
+        /// Each plugin has its own section keyed by its module name, e.g. `[plugins.dig]`.
+        /// Sections are type-checked at startup and always present; a section that is omitted
+        /// entirely defaults to `enabled = true` with default settings. The `enabled` key is
+        /// managed by the host; every other key belongs to the plugin's settings type.
+        ///
+        /// Keys under `[plugins]` that do not match a bundled plugin name are collected in
+        /// [`PluginsConfig::unknown`] so the host can warn about likely typos.
+        #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+        pub struct PluginsConfig {
+            $(
+                $(#[doc = $doc])*
+                #[cfg(feature = $feature)]
+                #[serde(default)]
+                pub $mod_name: $crate::config::PluginConfig<$settings>,
+            )*
+
+            /// Sections that match no bundled plugin, whether compiled in or not.
+            #[serde(flatten)]
+            pub unknown: HashMap<String, Dict>,
+        }
+
+        /// The names of every bundled plugin, compiled in or not.
+        const BUNDLED_PLUGIN_NAMES: &[&str] = &[
+            $(
+                stringify!($mod_name),
+            )*
+        ];
+
         // Generate a helper extension to register these specific plugins
         impl Registry {
             fn register_bundled_plugins(&mut self, #[allow(unused)] ctx: &Context) {
                 $(
                     #[cfg(feature = $feature)]
                     {
-                        // Explicitly uses the module and struct passed in
-                        self.register::<$mod_name::$struct_name>(ctx);
+                        let section = &ctx.config.plugins.$mod_name;
+
+                        if section.enabled {
+                            self.register::<$mod_name::$struct_name>(ctx);
+                        } else {
+                            ::tracing::info!(
+                                plugin = %<$mod_name::$struct_name as Plugin<Context>>::metadata().name,
+                                "plugin is disabled by configuration"
+                            );
+                        }
                     }
                 )*
             }
@@ -67,129 +114,131 @@ macro_rules! declare_plugins {
 declare_plugins! {
   /// Time-based user alerts.
   #[cfg(feature = "plugin-alert")]
-  alert::AlertPlugin,
+  alert::AlertPlugin => NoSettings,
 
   /// Chaturbate platform integration.
   #[cfg(feature = "plugin-chaturbate")]
-  chaturbate::Chaturbate,
+  chaturbate::Chaturbate => NoSettings,
 
   /// Plugin that helps the user make a choice
   #[cfg(feature = "plugin-choices")]
-  choices::Choices,
+  choices::Choices => NoSettings,
 
   /// Crypto currency quotes via CoinMarketCap
   #[cfg(feature = "plugin-coinmarketcap")]
-  coinmarketcap::CoinMarketCap,
+  coinmarketcap::CoinMarketCap => NoSettings,
 
   /// Query the danish dictionary
   #[cfg(feature = "plugin-dendanskeordbog")]
-  dendanskeordbog::DenDanskeOrdbog,
+  dendanskeordbog::DenDanskeOrdbog => NoSettings,
 
   /// Query nameservers
   #[cfg(feature = "plugin-dig")]
-  dig::Dig,
+  dig::Dig => dig::Settings,
 
   /// Query geolocation of addresses and hostnames
   #[cfg(feature = "plugin-geoip")]
-  geoip::GeoIp,
+  geoip::GeoIp => NoSettings,
 
   /// Normative affective resonance profiling, calendar-scoped
   #[cfg(feature = "plugin-gay")]
-  gay::Gay,
+  gay::Gay => NoSettings,
 
   /// GitHub integration
   #[cfg(feature = "plugin-github")]
-  github::GitHubPlugin,
+  github::GitHubPlugin => NoSettings,
 
   /// Process health information
   #[cfg(feature = "plugin-health")]
-  health::Health,
+  health::Health => NoSettings,
 
   /// List loaded plugins and their commands
   #[cfg(feature = "plugin-help")]
-  help::Help,
+  help::Help => NoSettings,
 
   /// Howlongtobeat.com integration
   #[cfg(feature = "plugin-howlongtobeat")]
-  howlongtobeat::HowLongToBeat,
+  howlongtobeat::HowLongToBeat => NoSettings,
 
   /// IMDb integration
   #[cfg(feature = "plugin-imdb")]
-  imdb::Imdb,
+  imdb::Imdb => NoSettings,
 
   /// Is it open
   #[cfg(feature = "plugin-isitopen")]
-  isitopen::IsItOpen,
+  isitopen::IsItOpen => NoSettings,
 
   /// Kagi search integration
   #[cfg(feature = "plugin-kagi")]
-  kagi::KagiPlugin,
+  kagi::KagiPlugin => NoSettings,
 
   /// User notifications
   #[cfg(feature = "plugin-notification")]
-  notification::NotificationPlugin,
+  notification::NotificationPlugin => NoSettings,
 
   /// URL history
   #[cfg(feature = "plugin-ofn")]
-  ofn::Ofn,
+  ofn::Ofn => NoSettings,
 
   /// Weather service integration
   #[cfg(feature = "plugin-openweathermap")]
-  openweathermap::OpenWeatherMap,
+  openweathermap::OpenWeatherMap => NoSettings,
 
+  /// PornHub platform integration
   #[cfg(feature = "plugin-pornhub")]
-  pornhub::PornHub,
+  pornhub::PornHub => NoSettings,
 
   /// Reddit plugin integration
   #[cfg(feature = "plugin-reddit")]
-  reddit::Reddit,
+  reddit::Reddit => NoSettings,
 
   /// Calculator plugin based on rink
   #[cfg(feature = "plugin-rink")]
-  rink::Rink,
+  rink::Rink => NoSettings,
 
   /// Rust Playground integration
   #[cfg(feature = "plugin-rust-playground")]
-  rust_playground::RustPlayground,
+  rust_playground::RustPlayground => NoSettings,
 
   /// Spotify integration
   #[cfg(feature = "plugin-spotify")]
-  spotify::Spotify,
+  spotify::Spotify => NoSettings,
 
   /// Generic string utility plugin
   #[cfg(feature = "plugin-string-utils")]
-  string_utils::StringUtils,
+  string_utils::StringUtils => NoSettings,
 
   /// Thingiverse integration
   #[cfg(feature = "plugin-thingiverse")]
-  thingiverse::Thingiverse,
+  thingiverse::Thingiverse => NoSettings,
 
   /// TikTok integration
   #[cfg(feature = "plugin-tiktok")]
-  tiktok::Tiktok,
+  tiktok::Tiktok => NoSettings,
 
   /// URL titles and OpenGraph metadata
   #[cfg(feature = "plugin-titles")]
-  titles::Titles,
+  titles::Titles => NoSettings,
 
   /// Trustpilot integration
   #[cfg(feature = "plugin-trustpilot")]
-  trustpilot::Trustpilot,
+  trustpilot::Trustpilot => NoSettings,
 
+  /// TVmaze integration
   #[cfg(feature = "plugin-tvmaze")]
-  tvmaze::Tvmaze,
+  tvmaze::Tvmaze => NoSettings,
 
-  // Twitch integration
+  /// Twitch integration
   #[cfg(feature = "plugin-twitch")]
-  twitch::Twitch,
+  twitch::Twitch => NoSettings,
 
   /// Urban Dictionary integration
   #[cfg(feature = "plugin-urban-dictionary")]
-  urban_dictionary::UrbanDictionary,
+  urban_dictionary::UrbanDictionary => NoSettings,
 
   /// YouTube integration
   #[cfg(feature = "plugin-youtube")]
-  youtube::YouTube,
+  youtube::YouTube => NoSettings,
 }
 
 /// Metadata about a registered plugin.
@@ -239,6 +288,15 @@ impl Registry {
     pub fn preloaded(ctx: &Context) -> Registry {
         let mut registry = Self::new();
         debug!("registering plugins");
+
+        for section in &ctx.config.plugins.unknown {
+            if !BUNDLED_PLUGIN_NAMES.contains(&section.0.as_str()) {
+                warn!(
+                    section = %section.0,
+                    "unknown plugin configuration section (typo?)"
+                );
+            }
+        }
 
         registry.register_bundled_plugins(ctx);
 
@@ -378,5 +436,13 @@ mod tests {
 
             assert_eq!(num_urls, expected_results);
         }
+    }
+
+    #[test]
+    fn bundled_plugin_names_include_all_plugins() {
+        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 32);
+        assert!(BUNDLED_PLUGIN_NAMES.contains(&"dig"));
+        assert!(BUNDLED_PLUGIN_NAMES.contains(&"health"));
+        assert!(BUNDLED_PLUGIN_NAMES.contains(&"howlongtobeat"));
     }
 }

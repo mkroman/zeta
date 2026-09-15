@@ -61,16 +61,174 @@ name = "#zeta.dev"
 # cache_size = 32
 
 # Plugin Configuration.
+#
+# Every plugin has a section keyed by its name, with an `enabled` toggle that
+# defaults to true. Plugin-specific settings are type-checked at startup;
+# malformed values abort startup with a diagnostic pointing at the key.
+# Sections for plugins that are not compiled in are reported as possible typos.
 [plugins]
+  # Time-based user alerts.
+  [plugins.alert]
+  # Enable the plugin.
+  enabled = true
+
+  # Chaturbate platform integration.
+  [plugins.chaturbate]
+  # Enable the plugin.
+  enabled = true
+
+  # Plugin that helps the user make a choice.
+  [plugins.choices]
+  # Enable the plugin.
+  enabled = true
+
+  # Crypto currency quotes via CoinMarketCap.
+  [plugins.coinmarketcap]
+  # Enable the plugin.
+  enabled = true
+
+  # Query the danish dictionary.
+  [plugins.dendanskeordbog]
+  # Enable the plugin.
+  enabled = true
+
+  # Query nameservers.
+  [plugins.dig]
+  # Enable the plugin.
+  enabled = true
+  # Nameservers to query over UDP and TCP.
+  # Defaults to Cloudflare's public resolvers (including IPv6).
+  nameservers = ["1.1.1.1", "1.0.0.1"]
+
+  # Normative affective resonance profiling, calendar-scoped.
+  [plugins.gay]
+  # Enable the plugin.
+  enabled = true
+
+  # Query geolocation of addresses and hostnames.
+  [plugins.geoip]
+  # Enable the plugin.
+  enabled = true
+
+  # GitHub integration.
+  [plugins.github]
+  # Enable the plugin.
+  enabled = true
+
+  # Process health information.
   [plugins.health]
   # Enable the plugin.
   enabled = true
 
-  [plugins.dig]
+  # List loaded plugins and their commands.
+  [plugins.help]
   # Enable the plugin.
   enabled = true
-  # List of nameservers to use for queries.
-  nameservers = ["1.1.1.1", "1.0.0.1"]
+
+  # Howlongtobeat.com integration.
+  [plugins.howlongtobeat]
+  # Enable the plugin.
+  enabled = true
+
+  # IMDb integration.
+  [plugins.imdb]
+  # Enable the plugin.
+  enabled = true
+
+  # Is it open.
+  [plugins.isitopen]
+  # Enable the plugin.
+  enabled = true
+
+  # Kagi search integration.
+  [plugins.kagi]
+  # Enable the plugin.
+  enabled = true
+
+  # User notifications.
+  [plugins.notification]
+  # Enable the plugin.
+  enabled = true
+
+  # URL history.
+  [plugins.ofn]
+  # Enable the plugin.
+  enabled = true
+
+  # Weather service integration.
+  [plugins.openweathermap]
+  # Enable the plugin.
+  enabled = true
+
+  # PornHub platform integration.
+  [plugins.pornhub]
+  # Enable the plugin.
+  enabled = true
+
+  # Reddit plugin integration.
+  [plugins.reddit]
+  # Enable the plugin.
+  enabled = true
+
+  # Calculator plugin based on rink.
+  [plugins.rink]
+  # Enable the plugin.
+  enabled = true
+
+  # Rust Playground integration.
+  [plugins.rust_playground]
+  # Enable the plugin.
+  enabled = true
+
+  # Spotify integration.
+  [plugins.spotify]
+  # Enable the plugin.
+  enabled = true
+
+  # Generic string utility plugin.
+  [plugins.string_utils]
+  # Enable the plugin.
+  enabled = true
+
+  # Thingiverse integration.
+  [plugins.thingiverse]
+  # Enable the plugin.
+  enabled = true
+
+  # TikTok integration.
+  [plugins.tiktok]
+  # Enable the plugin.
+  enabled = true
+
+  # URL titles and OpenGraph metadata.
+  [plugins.titles]
+  # Enable the plugin.
+  enabled = true
+
+  # Trustpilot integration.
+  [plugins.trustpilot]
+  # Enable the plugin.
+  enabled = true
+
+  # TVmaze integration.
+  [plugins.tvmaze]
+  # Enable the plugin.
+  enabled = true
+
+  # Twitch integration.
+  [plugins.twitch]
+  # Enable the plugin.
+  enabled = true
+
+  # Urban Dictionary integration.
+  [plugins.urban_dictionary]
+  # Enable the plugin.
+  enabled = true
+
+  # YouTube integration.
+  [plugins.youtube]
+  # Enable the plugin.
+  enabled = true
 
 # Tracing Configuration.
 [tracing]

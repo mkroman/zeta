@@ -5817,11 +5817,12 @@ dependencies = [
 
 [[package]]
 name = "zeta-plugin"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "argh",
  "async-trait",
  "irc",
+ "serde",
  "shlex 2.0.1",
  "thiserror 2.0.20",
 ]
