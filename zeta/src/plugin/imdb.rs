@@ -7,6 +7,7 @@
 
 use ::url::Url;
 use argh::{ArgsInfo, FromArgs};
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::plugin::{self, prelude::*};
@@ -32,6 +33,46 @@ use format::PREFIX;
 
 /// Number of search results to request.
 const SEARCH_LIMIT: usize = 5;
+
+/// Settings for the imdb plugin, from its `[plugins.imdb]` configuration section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// Whether to include adult titles in search results.
+    #[serde(default = "default_include_adult")]
+    pub include_adult: bool,
+    /// The country the IMDb API localises results for.
+    #[serde(default = "default_user_country")]
+    pub user_country: String,
+    /// The language the IMDb API localises results for.
+    #[serde(default = "default_user_language")]
+    pub user_language: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            include_adult: default_include_adult(),
+            user_country: default_user_country(),
+            user_language: default_user_language(),
+        }
+    }
+}
+
+/// Returns whether adult titles are included by default.
+const fn default_include_adult() -> bool {
+    true
+}
+
+/// Returns the default country the IMDb API localises results for.
+fn default_user_country() -> String {
+    "US".to_string()
+}
+
+/// Returns the default language the IMDb API localises results for.
+fn default_user_language() -> String {
+    "en-US".to_string()
+}
 
 /// The `!imdb` command.
 const COMMAND: PluginCommand = PluginCommand::with_args::<Opts>(
@@ -68,8 +109,10 @@ pub struct Imdb {
 
 #[async_trait]
 impl Plugin<Context> for Imdb {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let client = GraphQlClient::new().map_err(plugin_err)?;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
 
         Ok(Imdb { client })
     }
@@ -193,6 +236,30 @@ impl Imdb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::HttpConfig;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.include_adult);
+        assert_eq!(settings.user_country, "US");
+        assert_eq!(settings.user_language, "en-US");
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "include_adult": false,
+            "user_country": "DK",
+            "user_language": "da-DK",
+        }))
+        .expect("could not deserialize settings");
+
+        assert!(!settings.include_adult);
+        assert_eq!(settings.user_country, "DK");
+        assert_eq!(settings.user_language, "da-DK");
+    }
 
     #[test]
     fn parses_multi_word_queries() {
@@ -218,7 +285,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
     async fn live_search_and_title() {
-        let client = GraphQlClient::new().unwrap();
+        let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
 
         let results = client.search("peggle nights", 5).await.unwrap();
         assert!(!results.is_empty());
@@ -234,7 +301,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
     async fn live_unknown_title_is_not_found() {
-        let client = GraphQlClient::new().unwrap();
+        let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
 
         let err = client.title("tt9999999999999").await.unwrap_err();
 
@@ -244,7 +311,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
     async fn live_episode() {
-        let client = GraphQlClient::new().unwrap();
+        let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
 
         let title = client.title("tt0959621").await.unwrap();
         println!("{}", format_title(&title));
@@ -259,7 +326,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
     async fn live_person() {
-        let client = GraphQlClient::new().unwrap();
+        let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
 
         let person = client.person("nm0186505").await.unwrap();
         println!("{}", format_person(&person));

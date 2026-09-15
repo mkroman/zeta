@@ -3,13 +3,41 @@
 //! This plugin allows users to query Trustpilot for business scores and reviews via the `.tp` command.
 
 use num_format::{Locale, ToFormattedString};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use crate::{http, plugin::prelude::*};
 
 /// The base URL for the Trustpilot API.
 const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
+
+/// Settings for the trustpilot plugin, from its `[plugins.trustpilot]` configuration section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The Trustpilot API key.
+    ///
+    /// Falls back to the `TRUSTPILOT_API_KEY` environment variable when unset.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// The Trustpilot domain used for review links (e.g. `dk`).
+    #[serde(default = "default_review_domain")]
+    pub review_domain: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            review_domain: default_review_domain(),
+        }
+    }
+}
+
+/// Returns the default Trustpilot domain used for review links.
+fn default_review_domain() -> String {
+    "dk".to_string()
+}
 
 /// The `.tp` command.
 const TRUSTPILOT: PluginCommand = PluginCommand::new(
@@ -26,6 +54,8 @@ pub struct Trustpilot {
     client: reqwest::Client,
     /// Trustpilot API key.
     api_key: String,
+    /// The Trustpilot domain used for review links.
+    review_domain: String,
 }
 
 /// Represents a business unit response from the Trustpilot API.
@@ -77,11 +107,17 @@ pub enum Error {
 
 #[async_trait]
 impl Plugin<Context> for Trustpilot {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let api_key = require_env("TRUSTPILOT_API_KEY")?;
-        let client = http::build_client();
+    type Settings = Settings;
 
-        Ok(Self { client, api_key })
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let api_key = resolve_secret(settings.api_key.as_deref(), "TRUSTPILOT_API_KEY")?;
+        let client = http::build_client(&ctx.config.http);
+
+        Ok(Self {
+            client,
+            api_key,
+            review_domain: settings.review_domain.clone(),
+        })
     }
 
     fn metadata() -> Metadata {
@@ -110,7 +146,7 @@ impl Plugin<Context> for Trustpilot {
 
         match self.search(query).await {
             Ok(business) => {
-                client.send_privmsg(channel, format_business(&business))?;
+                client.send_privmsg(channel, format_business(&business, &self.review_domain))?;
             }
             Err(Error::NotFound) => {
                 client.send_privmsg(channel, "\x0310> No results found")?;
@@ -162,20 +198,52 @@ impl Trustpilot {
 }
 
 /// Formats a business unit into an IRC-friendly string.
-fn format_business(b: &BusinessUnit) -> String {
-    let score = b.score.trust_score;
+fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
+    let score = normalized_score(b.score.trust_score);
     let reviews = b.number_of_reviews.total.to_formatted_string(&Locale::en);
-    let url = format!("https://dk.trustpilot.com/review/{}", b.name.identifying);
+    let url = format!("https://{review_domain}.trustpilot.com/review/{}", b.name.identifying);
     let name = &b.display_name;
 
     format!(
-        "\x0310>\x0f\x02 Trustpilot\x02\x0310 (\x0f{name}\x0310): Score:\x0f {score}\x0310/\x0f5.0\x0310 Reviews:\x0f {reviews}\x0310 - {url}"
+        "\x0310>\x0f\x02 Trustpilot\x02\x0310 (\x0f{name}\x0310): Score:\x0f {score:.1}\x0310/\x0f5.0\x0310 Reviews:\x0f {reviews}\x0310 - {url}"
     )
+}
+
+/// Normalizes a trust score to the 0-5 scale.
+///
+/// Depending on the API version the score is on a 0-5 or 0-10 scale; scores above 5 are treated
+/// as 0-10 and halved.
+fn normalized_score(trust_score: f64) -> f64 {
+    if trust_score > 5.0 {
+        trust_score / 2.0
+    } else {
+        trust_score
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.api_key.is_none());
+        assert_eq!(settings.review_domain, "dk");
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "api_key": "secret",
+            "review_domain": "www",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        assert_eq!(settings.review_domain, "www");
+    }
 
     #[test]
     fn test_format_business() {
@@ -188,11 +256,31 @@ mod tests {
             number_of_reviews: NumberOfReviews { total: 12345 },
         };
 
-        let formatted = format_business(&business);
+        let formatted = format_business(&business, "dk");
         // Note: contains IRC color codes
         assert_eq!(
             formatted,
             "\x0310>\x0f\x02 Trustpilot\x02\x0310 (\x0fCool Company\x0310): Score:\x0f 4.8\x0310/\x0f5.0\x0310 Reviews:\x0f 12,345\x0310 - https://dk.trustpilot.com/review/coolcompany.com"
+        );
+    }
+
+    #[test]
+    fn normalizes_ten_point_scores() {
+        let business = BusinessUnit {
+            display_name: "Cool Company".to_string(),
+            name: BusinessName {
+                identifying: "coolcompany.com".to_string(),
+            },
+            score: Score { trust_score: 9.6 },
+            number_of_reviews: NumberOfReviews { total: 1 },
+        };
+
+        let formatted = format_business(&business, "www");
+
+        assert!(formatted.contains("Score:\x0f 4.8\x0310"), "{formatted}");
+        assert!(
+            formatted.contains("https://www.trustpilot.com/review/coolcompany.com"),
+            "{formatted}"
         );
     }
 

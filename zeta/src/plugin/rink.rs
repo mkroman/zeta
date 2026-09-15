@@ -23,7 +23,9 @@ pub struct Rink {
 
 #[async_trait]
 impl Plugin<Context> for Rink {
-    fn new(_ctx: &Context) -> Result<Rink, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Rink, ZetaError> {
         let ctx = rink_core::simple_context().map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
 
         Ok(Rink {

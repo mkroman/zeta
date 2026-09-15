@@ -61,6 +61,9 @@ pub struct Context {
     /// The DNS resolver.
     pub dns: TokioResolver,
     /// The bot configuration.
+    ///
+    /// Per-plugin settings are not part of the context; each plugin receives its own settings
+    /// through its constructor.
     pub config: Config,
     /// State published by plugins for other plugins to access.
     pub shared: SharedState,

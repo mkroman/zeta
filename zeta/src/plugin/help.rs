@@ -39,7 +39,9 @@ pub struct Help;
 
 #[async_trait]
 impl Plugin<Context> for Help {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
         Ok(Help)
     }
 

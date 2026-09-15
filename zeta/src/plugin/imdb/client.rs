@@ -8,6 +8,8 @@ use tracing::{debug, error, instrument};
 
 use super::error::Error;
 use super::model::{Person, SearchResult, SeriesInfo, Title};
+use super::Settings;
+use crate::config::HttpConfig;
 use crate::http;
 
 /// GraphQL endpoint of IMDb's internal API.
@@ -70,8 +72,8 @@ query GetName($id: ID!) {
 
 /// Query searching for titles matching a search term.
 const SEARCH_QUERY: &str = r"
-query Search($searchTerm: String!, $first: Int!) {
-  mainSearch(first: $first, options: {searchTerm: $searchTerm, type: TITLE, includeAdult: true}) {
+query Search($searchTerm: String!, $first: Int!, $includeAdult: Boolean!) {
+  mainSearch(first: $first, options: {searchTerm: $searchTerm, type: TITLE, includeAdult: $includeAdult}) {
     edges {
       node {
         entity {
@@ -94,40 +96,40 @@ query Search($searchTerm: String!, $first: Int!) {
 pub struct GraphQlClient {
     /// HTTP client for GraphQL requests.
     http: reqwest::Client,
-}
-
-impl Default for GraphQlClient {
-    fn default() -> Self {
-        Self::new().expect("could not build http client")
-    }
+    /// Whether to include adult titles in search results.
+    include_adult: bool,
 }
 
 impl GraphQlClient {
-    /// Creates a new IMDb GraphQL client.
+    /// Creates a new IMDb GraphQL client using the given plugin settings.
     ///
     /// # Errors
     ///
-    /// Returns an error if the HTTP client could not be built.
-    pub fn new() -> Result<Self, Error> {
+    /// Returns an error if the HTTP client could not be built, or a configured country or
+    /// language is not a valid header value.
+    pub fn new(settings: &Settings, config: &HttpConfig) -> Result<Self, Error> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(ORIGIN, HeaderValue::from_static("https://www.imdb.com"));
         headers.insert(REFERER, HeaderValue::from_static("https://www.imdb.com/"));
         headers.insert(
             HeaderName::from_static("x-imdb-user-country"),
-            HeaderValue::from_static("US"),
+            HeaderValue::from_str(&settings.user_country)?,
         );
         headers.insert(
             HeaderName::from_static("x-imdb-user-language"),
-            HeaderValue::from_static("en-US"),
+            HeaderValue::from_str(&settings.user_language)?,
         );
 
-        let http = http::client::builder()
+        let http = http::client::builder(config)
             .default_headers(headers)
             .build()
             .map_err(Error::Request)?;
 
-        Ok(Self { http })
+        Ok(Self {
+            http,
+            include_adult: settings.include_adult,
+        })
     }
 
     /// Fetches details about the title with the given id (e.g. `tt1375666`).
@@ -184,7 +186,7 @@ impl GraphQlClient {
         let data: SearchData = self
             .execute(
                 SEARCH_QUERY,
-                json!({ "searchTerm": query, "first": limit }),
+                json!({ "searchTerm": query, "first": limit, "includeAdult": self.include_adult }),
                 "Search",
             )
             .await?;

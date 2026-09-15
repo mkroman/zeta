@@ -9,7 +9,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use time::Duration;
 use tracing::{debug, error, instrument};
 
-use crate::{http, plugin::prelude::*};
+use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 /// Base URL for the TVmaze API.
 pub const API_BASE_URL: &str = "https://api.tvmaze.com";
@@ -137,8 +137,10 @@ impl EndpointUrls {
 
 #[async_trait]
 impl Plugin<Context> for Tvmaze {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        Ok(Tvmaze::new())
+    type Settings = NoSettings;
+
+    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+        Ok(Tvmaze::new(&ctx.config.http))
     }
 
     fn metadata() -> Metadata {
@@ -166,8 +168,8 @@ impl Plugin<Context> for Tvmaze {
 
 impl Tvmaze {
     /// Creates a new TVmaze plugin instance.
-    pub fn new() -> Self {
-        let client = http::build_client();
+    pub fn new(config: &HttpConfig) -> Self {
+        let client = http::build_client(config);
         let urls = EndpointUrls::new();
 
         Tvmaze { client, urls }

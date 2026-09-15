@@ -19,8 +19,9 @@ pub use {
 };
 
 use irc::proto::Prefix as IrcPrefix;
+use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
-use tracing::{error, trace};
+use tracing::error;
 
 use crate::plugin::prelude::*;
 
@@ -33,6 +34,29 @@ const NOTIFY: PluginCommand = PluginCommand::new(
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[NOTIFY];
 
+/// Settings for the notification plugin, from its `[plugins.notification]` configuration
+/// section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The maximum number of pending notifications a target may have in a channel.
+    #[serde(default = "default_max_pending_per_target")]
+    pub max_pending_per_target: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            max_pending_per_target: default_max_pending_per_target(),
+        }
+    }
+}
+
+/// Returns the default maximum number of pending notifications per target.
+const fn default_max_pending_per_target() -> usize {
+    10
+}
+
 /// Notification plugin.
 ///
 /// Lets users queue notifications for other users with the `.notify <nick> <message>` command, and
@@ -44,9 +68,11 @@ pub struct NotificationPlugin {
 
 #[async_trait]
 impl Plugin<Context> for NotificationPlugin {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         Ok(NotificationPlugin {
-            service: NotificationService::new(ctx.db.clone()),
+            service: NotificationService::new(ctx.db.clone(), settings),
         })
     }
 
@@ -97,9 +123,26 @@ impl Plugin<Context> for NotificationPlugin {
                 message: message.to_owned(),
             };
 
-            let result = self.service.create(notification).await;
-            trace!(?result, "inserted notification");
-            client.send_privmsg(channel, "\x0310> The notification has been stored.")?;
+            match self.service.create(notification).await {
+                Ok(_) => {
+                    client.send_privmsg(
+                        channel,
+                        "\x0310> The notification has been stored.",
+                    )?;
+                }
+                Err(Error::TooManyPending(max)) => {
+                    client.send_privmsg(
+                        channel,
+                        formatted(&format!(
+                            "{target} already has {max} pending notifications in this channel"
+                        )),
+                    )?;
+                }
+                Err(err) => {
+                    error!(?err, "could not store notification");
+                    client.send_privmsg(channel, formatted("could not store the notification"))?;
+                }
+            }
         } else {
             let pending = self.service.take(channel, nickname).await;
             let mut sent_ids = Vec::with_capacity(pending.len());
@@ -153,6 +196,21 @@ fn formatted(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_settings() {
+        assert_eq!(Settings::default().max_pending_per_target, 10);
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "max_pending_per_target": 3,
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.max_pending_per_target, 3);
+    }
 
     #[test]
     fn parses_target_and_message() {

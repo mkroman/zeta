@@ -9,7 +9,7 @@ use std::fmt::{self, Display};
 use num_format::{Locale, ToFormattedString};
 use regex::Regex;
 use reqwest::header::AUTHORIZATION;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
 
@@ -19,6 +19,17 @@ use crate::{
 };
 
 const API_BASE_URL: &str = "https://api.thingiverse.com";
+
+/// Settings for the thingiverse plugin, from its `[plugins.thingiverse]` configuration section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The Thingiverse app token.
+    ///
+    /// Falls back to the `THINGIVERSE_APP_TOKEN` environment variable when unset.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
 
 /// Plugin for handling Thingiverse URLs.
 pub struct Thingiverse {
@@ -69,9 +80,11 @@ struct Creator {
 
 #[async_trait]
 impl Plugin<Context> for Thingiverse {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let app_token = require_env("THINGIVERSE_APP_TOKEN")?;
-        let client = http::build_client();
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
+        let client = http::build_client(&ctx.config.http);
         // Regex to match /thing:<id>
         let path_regex = Regex::new(r"^/thing:(?P<id>\d+)/?$").expect("invalid regex");
 
@@ -218,4 +231,24 @@ impl Display for Thing {
 /// Wraps a message in the standard Zeta plugin prefix.
 fn format_irc_output(message: &str) -> String {
     format!("\x0310>\x0F \x02Thingiverse:\x02\x0310 {message}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        assert!(Settings::default().api_key.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "api_key": "secret",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.api_key.as_deref(), Some("secret"));
+    }
 }

@@ -32,8 +32,8 @@ hostname = "irc.rwx.im"
 # The port number of the server to connect to.
 port = 6667
 
-# Whether the client should use NickServ GHOST to reclaim its primary nickname if it is in use.
-# This has no effect if `nick_password` is not set.
+# Whether the client should use NickServ GHOST to reclaim its primary nickname if it is in use. This
+# has no effect if `nick_password` is not set.
 # should_ghost = true
 
 # TLS Configuration.
@@ -60,17 +60,326 @@ name = "#zeta.dev"
 # The size in number of records the cache can hold.
 # cache_size = 32
 
+# HTTP Configuration.
+[http]
+# The duration before an HTTP request times out.
+# timeout = "30s"
+
+# The `User-Agent` header sent with HTTP requests.
+# user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0"
+
 # Plugin Configuration.
+#
+# Every plugin has a section keyed by its name, with an `enabled` toggle that defaults to true.
+# Plugin-specific settings are type-checked at startup; malformed values abort startup with a
+# diagnostic pointing at the key. Sections for plugins that are not compiled in are reported as
+# possible typos.
 [plugins]
+  # Time-based user alerts.
+  [plugins.alert]
+  # Enable the plugin.
+  enabled = true
+  # How long the scheduler waits before retrying after a failed tick.
+  # retry_delay = "30s"
+  # The maximum number of pending alerts a user may have.
+  # max_pending_per_user = 10
+
+  # Chaturbate platform integration.
+  [plugins.chaturbate]
+  # Enable the plugin.
+  enabled = true
+
+  # Plugin that helps the user make a choice.
+  [plugins.choices]
+  # Enable the plugin.
+  enabled = true
+  # The keywords that separate the options.
+  # or_keywords = ["eller"]
+  # The separator between individual options.
+  # option_separator = ", "
+
+  # Crypto currency quotes via CoinMarketCap.
+  [plugins.coinmarketcap]
+  # Enable the plugin.
+  enabled = true
+  # The CoinMarketCap API key. Falls back to the `COINMARKETCAP_API_KEY` environment variable when
+  # unset.
+  # api_key = "..."
+  # The fiat currency used when a command does not specify one.
+  # default_currency = "USD"
+  # How long the cached coins and fiat currencies stay valid before being refreshed.
+  # cache_ttl = "24h"
+  # The maximum number of typos allowed when fuzzy matching a coin name.
+  # max_name_typos = 2
+
+  # Query the danish dictionary.
+  [plugins.dendanskeordbog]
+  # Enable the plugin.
+  enabled = true
+  # Whether to show the morphology (inflection) of the entry.
+  # show_morphology = true
+  # Whether to show the etymology (origin) of the entry.
+  # show_etymology = true
+  # Whether to show an example sentence for the definition.
+  # show_examples = true
+
+  # Query nameservers.
+  [plugins.dig]
+  # Enable the plugin.
+  enabled = true
+  # Nameservers to query over UDP and TCP.
+  # Defaults to Cloudflare's public resolvers (including IPv6).
+  # nameservers = ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"]
+
+  # Normative affective resonance profiling, calendar-scoped.
+  [plugins.gay]
+  # Enable the plugin.
+  enabled = true
+
+  # Query geolocation of addresses and hostnames.
+  [plugins.geoip]
+  # Enable the plugin.
+  enabled = true
+  # The ip2location.io API key. Falls back to the `GEOIP_API_KEY` environment variable when unset.
+  # api_key = "..."
+
+  # GitHub integration.
+  [plugins.github]
+  # Enable the plugin.
+  enabled = true
+  # A GitHub API token, used to raise the rate limit for requests. Falls back to the `GITHUB_TOKEN`
+  # environment variable when unset. Prefer the environment over committing secrets to this file.
+  # token = "..."
+
+  # Process health information.
   [plugins.health]
   # Enable the plugin.
   enabled = true
 
-  [plugins.dig]
+  # List loaded plugins and their commands.
+  [plugins.help]
   # Enable the plugin.
   enabled = true
-  # List of nameservers to use for queries.
-  nameservers = ["1.1.1.1", "1.0.0.1"]
+
+  # Howlongtobeat.com integration.
+  [plugins.howlongtobeat]
+  # Enable the plugin.
+  enabled = true
+
+  # IMDb integration.
+  [plugins.imdb]
+  # Enable the plugin.
+  enabled = true
+  # Whether to include adult titles in search results.
+  # include_adult = true
+  # The country the IMDb API localises results for.
+  # user_country = "US"
+  # The language the IMDb API localises results for.
+  # user_language = "en-US"
+
+  # Is it open.
+  [plugins.isitopen]
+  # Enable the plugin.
+  enabled = true
+  # The Google Maps API key. Falls back to the `GOOGLE_MAPS_API_KEY` environment variable when
+  # unset.
+  # api_key = "..."
+
+  # Kagi search integration.
+  [plugins.kagi]
+  # Enable the plugin.
+  enabled = true
+  # The Kagi session token (the `kagi_session` cookie value). Falls back to the `KAGI_SESSION_TOKEN`
+  # environment variable when unset.
+  # session_token = "..."
+  # How long a search session stays valid before it is refreshed.
+  # session_duration = "15m"
+  # The `Accept-Language` header sent with requests.
+  # language = "en-US,en;q=0.9"
+
+  # User notifications.
+  [plugins.notification]
+  # Enable the plugin.
+  enabled = true
+  # The maximum number of pending notifications a target may have in a
+  # channel.
+  # max_pending_per_target = 10
+
+  # URL history.
+  [plugins.ofn]
+  # Enable the plugin.
+  enabled = true
+
+  # Weather service integration.
+  [plugins.openweathermap]
+  # Enable the plugin.
+  enabled = true
+  # The OpenWeatherMap API key (the "app id"). Falls back to the `OPENWEATHERMAP_APP_ID` environment
+  # variable when unset.
+  # app_id = "..."
+  # The unit system used for temperatures and wind speeds: "metric", "imperial" or "standard".
+  # units = "metric"
+  # The language used for weather condition descriptions.
+  # language = "en"
+  # The location used when the `.w` command is invoked without arguments.
+  # default_location = "Copenhagen"
+
+  # PornHub platform integration.
+  [plugins.pornhub]
+  # Enable the plugin.
+  enabled = true
+
+  # Reddit plugin integration.
+  [plugins.reddit]
+  # Enable the plugin.
+  enabled = true
+  # The Reddit application client id and secret. Fall back to the `REDDIT_CLIENT_ID` and
+  # `REDDIT_CLIENT_SECRET` environment variables when unset. Prefer the environment over committing
+  # secrets to this file.
+  # client_id = "..."
+  # client_secret = "..."
+
+  # Calculator plugin based on rink.
+  [plugins.rink]
+  # Enable the plugin.
+  enabled = true
+
+  # Rust Playground integration.
+  [plugins.rust_playground]
+  # Enable the plugin.
+  enabled = true
+  # The release channel used for evaluation: "stable", "beta" or "nightly".
+  # channel = "stable"
+  # The build mode: "debug" or "release".
+  # mode = "debug"
+  # The Rust edition: "2015", "2018", "2021" or "2024".
+  # edition = "2024"
+  # The maximum output length, in characters.
+  # max_output_length = 250
+
+  # Spotify integration.
+  [plugins.spotify]
+  # Enable the plugin.
+  enabled = true
+  # The Spotify application client id and secret. Fall back to the `SPOTIFY_CLIENT_ID` and
+  # `SPOTIFY_CLIENT_SECRET` environment variables when unset. Prefer the environment over committing
+  # secrets to this file.
+  # client_id = "..."
+  # client_secret = "..."
+
+  # Generic string utility plugin.
+  [plugins.string_utils]
+  # Enable the plugin.
+  enabled = true
+
+  # Thingiverse integration.
+  [plugins.thingiverse]
+  # Enable the plugin.
+  enabled = true
+  # The Thingiverse app token. Falls back to the `THINGIVERSE_APP_TOKEN` environment variable when
+  # unset.
+  # api_key = "..."
+
+  # TikTok integration.
+  [plugins.tiktok]
+  # Enable the plugin.
+  enabled = true
+  # The maximum length of a video title before it gets truncated.
+  # title_length = 150
+  # The maximum size of a video to download, as passed to `yt-dlp`.
+  # max_filesize = "500M"
+  # The maximum duration of a download before it gets killed.
+  # download_timeout = "10m"
+  # The maximum number of downloads that run concurrently.
+  # max_concurrent_downloads = 2
+  # The command used to run `yt-dlp`. Falls back to the `TIKTOK_YTDLP_COMMAND` environment variable
+  # when unset.
+  # ytdlp_command = "yt-dlp"
+  # S3 mirroring. Credentials fall back to the `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and
+  # `S3_BUCKET_NAME` environment variables when unset; prefer the environment over committing
+  # secrets to this file.
+  # Mirroring is disabled when the configuration is incomplete.
+  # s3_access_key_id = "..."
+  # s3_secret_access_key = "..."
+  # s3_bucket_name = "..."
+  # The S3 region. Falls back to the `S3_REGION` environment variable, and to "auto" when neither is
+  # set.
+  # s3_region = "auto"
+  # The endpoint URL for S3-compatible services. Falls back to the `S3_ENDPOINT` environment
+  # variable when unset.
+  # s3_endpoint = "https://..."
+  # The optional key prefix for uploaded objects. Falls back to the `S3_PREFIX` environment variable
+  # when unset.
+  # s3_prefix = "~meta"
+  # The base URL used when linking to mirrored videos. Falls back to the `TIKTOK_PUBLIC_URL_BASE`
+  # environment variable when unset.
+  # public_url_base = "https://pub.rwx.im/tiktok"
+
+  # URL titles and OpenGraph metadata.
+  [plugins.titles]
+  # Enable the plugin.
+  enabled = true
+  # Hosts whose URLs are left to dedicated plugins. Remove a host to let this plugin preview its
+  # URLs.
+  # ignored_hosts = [
+  #   "reddit.com",
+  #   "redd.it",
+  #   "www.reddit.com",
+  #   "www.youtube.com",
+  #   "youtube.com",
+  #   "youtu.be",
+  #   "vm.tiktok.com",
+  #   "tiktok.com",
+  # ]
+  # The maximum number of redirects to follow.
+  # max_redirects = 3
+  # The maximum length of a posted message, in characters.
+  # max_message_length = 400
+  # The maximum length of a posted description, in characters.
+  # max_description_length = 200
+
+  # Trustpilot integration.
+  [plugins.trustpilot]
+  # Enable the plugin.
+  enabled = true
+  # The Trustpilot API key. Falls back to the `TRUSTPILOT_API_KEY` environment variable when unset.
+  # api_key = "..."
+  # The Trustpilot domain used for review links (e.g. "dk" or "www").
+  # review_domain = "dk"
+
+  # TVmaze integration.
+  [plugins.tvmaze]
+  # Enable the plugin.
+  enabled = true
+
+  # Twitch integration.
+  [plugins.twitch]
+  # Enable the plugin.
+  enabled = true
+  # The Twitch application client id and secret. Fall back to the `TWITCH_CLIENT_ID` and
+  # `TWITCH_CLIENT_SECRET` environment variables when unset. Prefer the environment over committing
+  # secrets to this file.
+  # client_id = "..."
+  # client_secret = "..."
+
+  # Urban Dictionary integration.
+  [plugins.urban_dictionary]
+  # Enable the plugin.
+  enabled = true
+  # The maximum length of the definition and example text, in characters.
+  # max_definition_length = 400
+
+  # YouTube integration.
+  [plugins.youtube]
+  # Enable the plugin.
+  enabled = true
+  # The YouTube Data API v3 key. Falls back to the `YOUTUBE_API_KEY` environment variable when
+  # unset.
+  # api_key = "..."
+  # The region code used when fetching video categories.
+  # region_code = "US"
+  # The safe search filter applied to search requests: "none", "moderate" or "strict".
+  # safe_search = "none"
 
 # Tracing Configuration.
 [tracing]

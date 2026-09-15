@@ -8,7 +8,9 @@ use crate::{Error, Metadata};
 /// The base trait that all plugins must implement.
 ///
 /// Plugins declare the prefix commands they handle through [`Plugin::commands`] and implement
-/// [`Plugin::handle_command`] for each matched command.
+/// [`Plugin::handle_command`] for each matched command. A plugin's configuration is declared
+/// through [`Plugin::Settings`] and deserialized from its `[plugins.<name>]` section by the host,
+/// which passes it to [`Plugin::new`].
 ///
 /// The default [`Plugin::handle_message`] implementation filters incoming `PRIVMSG` messages
 /// against the declared commands and dispatches them — plugins that also need to observe
@@ -33,7 +35,9 @@ use crate::{Error, Metadata};
 ///
 ///#[async_trait]
 /// impl Plugin for MyPlugin {
-///     fn new(_: &()) -> Result<MyPlugin, Error> {
+///     type Settings = NoSettings;
+///
+///     fn new(_: &(), _: &NoSettings) -> Result<MyPlugin, Error> {
 ///         Ok(MyPlugin)
 ///     }
 ///
@@ -64,15 +68,23 @@ use crate::{Error, Metadata};
 /// ```
 #[async_trait]
 pub trait Plugin<C: Sync = ()>: Send + Sync {
+    /// This plugin's deserialized `[plugins.<name>]` settings.
+    ///
+    /// The host hands only the plugin's own settings to [`Plugin::new`]; plugins cannot access
+    /// other plugins' configuration.
+    type Settings;
+
     /// The constructor for a new plugin.
     ///
-    /// Returns `Err` if initialization fails (e.g., missing environment variables, failed HTTP
-    /// client creation). The registry will log the error and skip loading the plugin.
+    /// `settings` holds the plugin's own configuration section, deserialized from
+    /// `[plugins.<name>]` at startup. Returns `Err` if initialization fails (e.g., missing
+    /// environment variables, failed HTTP client creation). The registry will log the error and
+    /// skip loading the plugin.
     ///
     /// # Errors
     ///
     /// Returns an error if the plugin cannot be initialized.
-    fn new(_ctx: &C) -> Result<Self, Error>
+    fn new(_ctx: &C, _settings: &Self::Settings) -> Result<Self, Error>
     where
         Self: Sized;
 
@@ -118,7 +130,8 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// # struct MyPlugin;
     /// # #[async_trait]
     /// # impl Plugin for MyPlugin {
-    /// #     fn new(_: &()) -> Result<Self, Error> { Ok(MyPlugin) }
+    /// #     type Settings = NoSettings;
+    /// #     fn new(_: &(), _: &NoSettings) -> Result<Self, Error> { Ok(MyPlugin) }
     /// #     fn metadata() -> Metadata { unimplemented!() }
     /// #     fn commands(&self) -> &'static [PluginCommand] { COMMANDS }
     /// async fn handle_command(

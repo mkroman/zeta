@@ -10,7 +10,7 @@ use aws_sdk_s3::{
 use tracing::debug;
 use url::Url;
 
-use crate::plugin::prelude::ZetaError;
+use crate::plugin::prelude::{ZetaError, resolve_secret};
 
 /// The default public URL that mirrored videos are linked with.
 const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/tiktok";
@@ -20,6 +20,47 @@ const KEY_ROOT: &str = "tiktok";
 
 /// The name used to identify our credentials provider.
 const CREDENTIALS_PROVIDER_NAME: &str = "zeta-tiktok-plugin";
+
+/// Configuration for the S3 mirror client.
+///
+/// Required values fall back to the `S3_*` environment variables when unset; optional values
+/// fall back to their environment variables and then to defaults.
+#[derive(Clone, Debug, Default)]
+pub struct S3Config {
+    /// The S3 access key id.
+    ///
+    /// Falls back to the `S3_ACCESS_KEY_ID` environment variable when unset.
+    pub access_key_id: Option<String>,
+    /// The S3 secret access key.
+    ///
+    /// Falls back to the `S3_SECRET_ACCESS_KEY` environment variable when unset.
+    pub secret_access_key: Option<String>,
+    /// The name of the bucket to upload to.
+    ///
+    /// Falls back to the `S3_BUCKET_NAME` environment variable when unset.
+    pub bucket: Option<String>,
+    /// The region to use.
+    ///
+    /// Falls back to the `S3_REGION` environment variable, and to `auto` when neither is set.
+    /// `auto` is only meaningful for S3-compatible endpoints (such as R2 or MinIO) — against AWS
+    /// proper, a real region should be set.
+    pub region: Option<String>,
+    /// The endpoint URL for S3-compatible services.
+    ///
+    /// Falls back to the `S3_ENDPOINT` environment variable when unset.
+    pub endpoint: Option<String>,
+    /// The optional key prefix for all uploaded objects.
+    ///
+    /// Falls back to the `S3_PREFIX` environment variable when unset.
+    pub prefix: Option<String>,
+    /// The base URL used when linking to mirrored videos.
+    ///
+    /// Falls back to the `TIKTOK_PUBLIC_URL_BASE` environment variable, and to the default
+    /// public URL when neither is set. Links are built by appending the video id as a URL
+    /// fragment, so the base must point at a viewer page that resolves the fragment — not
+    /// directly at the bucket.
+    pub public_url_base: Option<String>,
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -49,34 +90,37 @@ pub struct S3 {
 }
 
 impl S3 {
-    /// Creates a client from the `S3_*` environment variables.
-    ///
-    /// Requires `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and `S3_BUCKET_NAME`; `S3_ENDPOINT`,
-    /// `S3_REGION` and `S3_PREFIX` are optional. `S3_REGION` defaults to `"auto"`, which is only
-    /// meaningful for S3-compatible endpoints (such as R2 or MinIO) — against AWS proper, a real
-    /// region should be set.
-    ///
-    /// The base URL for public links can be set with `TIKTOK_PUBLIC_URL_BASE`. Links are built by
-    /// appending the video id as a URL fragment, so the base must point at a viewer page that
-    /// resolves the fragment — not directly at the bucket.
+    /// Creates a client from the given configuration, falling back to the `S3_*` environment
+    /// variables.
     ///
     /// # Errors
     ///
-    /// Returns an error if a required environment variable is missing or a configured value is
-    /// invalid.
-    pub fn from_env() -> Result<Self, Error> {
-        let access_key_id = require_env_string("S3_ACCESS_KEY_ID")?;
-        let secret_access_key = require_env_string("S3_SECRET_ACCESS_KEY")?;
-        let bucket = require_env_string("S3_BUCKET_NAME")?;
-        let region = std::env::var("S3_REGION").unwrap_or_else(|_| "auto".to_string());
-        let endpoint = std::env::var("S3_ENDPOINT").ok();
-        let prefix = std::env::var("S3_PREFIX").ok();
-        let public_url_base = match std::env::var("TIKTOK_PUBLIC_URL_BASE") {
-            Ok(value) => Url::parse(&value)?,
-            Err(_) => Url::parse(DEFAULT_PUBLIC_URL_BASE)?,
-        };
+    /// Returns an error if a required value is missing or a configured value is invalid.
+    pub fn new(config: S3Config) -> Result<Self, Error> {
+        let access_key_id =
+            resolve_secret(config.access_key_id.as_deref(), "S3_ACCESS_KEY_ID")
+                .map_err(Error::MissingConfig)?;
+        let secret_access_key =
+            resolve_secret(config.secret_access_key.as_deref(), "S3_SECRET_ACCESS_KEY")
+                .map_err(Error::MissingConfig)?;
+        let bucket = resolve_secret(config.bucket.as_deref(), "S3_BUCKET_NAME")
+            .map_err(Error::MissingConfig)?;
+        let region = config
+            .region
+            .or_else(|| std::env::var("S3_REGION").ok())
+            .unwrap_or_else(|| "auto".to_string());
+        let endpoint = config.endpoint.or_else(|| std::env::var("S3_ENDPOINT").ok());
+        let prefix = config.prefix.or_else(|| std::env::var("S3_PREFIX").ok());
+        let public_url_base =
+            match config
+                .public_url_base
+                .or_else(|| std::env::var("TIKTOK_PUBLIC_URL_BASE").ok())
+            {
+                Some(value) => Url::parse(&value)?,
+                None => Url::parse(DEFAULT_PUBLIC_URL_BASE)?,
+            };
 
-        let mut config = aws_sdk_s3::Config::builder()
+        let mut s3_config = aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(region))
             .credentials_provider(Credentials::new(
@@ -88,11 +132,11 @@ impl S3 {
             ));
 
         if let Some(endpoint) = endpoint {
-            config = config.endpoint_url(endpoint).force_path_style(true);
+            s3_config = s3_config.endpoint_url(endpoint).force_path_style(true);
         }
 
         Ok(Self {
-            client: aws_sdk_s3::Client::from_conf(config.build()),
+            client: aws_sdk_s3::Client::from_conf(s3_config.build()),
             bucket,
             prefix,
             public_url_base,
@@ -225,11 +269,6 @@ fn content_type_for(path: &Path) -> &'static str {
         Some("mkv") => "video/x-matroska",
         _ => "application/octet-stream",
     }
-}
-
-/// Reads a required environment variable, mapping the error into our error type.
-fn require_env_string(name: &str) -> Result<String, Error> {
-    crate::plugin::prelude::require_env(name).map_err(Error::MissingConfig)
 }
 
 #[cfg(test)]

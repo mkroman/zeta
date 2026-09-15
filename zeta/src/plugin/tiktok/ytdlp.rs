@@ -28,14 +28,6 @@ const OUTPUT_TEMPLATE: &str = "%(id)s.%(ext)s";
 /// to the best available format overall.
 const FORMAT: &str = "bestvideo*[vcodec=h264]+bestaudio*/(bv*+ba/b)";
 
-/// The maximum size of a video to download, as passed to `--max-filesize`. Videos that report a
-/// larger size upfront are skipped; sizes are not always known in advance, so the download timeout
-/// remains the final bound.
-const MAX_FILESIZE: &str = "500M";
-
-/// The maximum duration of a download before it gets killed.
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(10);
-
 /// The maximum number of characters to include of `yt-dlp`'s stderr in error messages.
 const STDERR_MESSAGE_LENGTH: usize = 300;
 
@@ -155,16 +147,37 @@ struct JsonDump {
 pub struct YtDlp {
     /// The command to execute.
     command: String,
+    /// The maximum size of a video to download.
+    max_filesize: String,
+    /// The maximum duration of a download before it gets killed.
+    download_timeout: Duration,
+}
+
+/// Options for constructing a [`YtDlp`] runner.
+#[derive(Clone, Debug)]
+pub struct YtDlpOptions {
+    /// The command to execute.
+    ///
+    /// Falls back to the `TIKTOK_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
+    /// neither is set.
+    pub command: Option<String>,
+    /// The maximum size of a video to download, as passed to `--max-filesize`.
+    pub max_filesize: String,
+    /// The maximum duration of a download before it gets killed.
+    pub download_timeout: Duration,
 }
 
 impl YtDlp {
-    /// Creates a new runner, using the path to the `yt-dlp` binary from `TIKTOK_YTDLP_COMMAND` or
-    /// the default.
+    /// Creates a new runner from the given options.
     #[must_use]
-    pub fn from_env() -> Self {
+    pub fn new(options: YtDlpOptions) -> Self {
         Self {
-            command: std::env::var("TIKTOK_YTDLP_COMMAND")
-                .unwrap_or_else(|_| DEFAULT_COMMAND.to_string()),
+            command: options
+                .command
+                .or_else(|| std::env::var("TIKTOK_YTDLP_COMMAND").ok())
+                .unwrap_or_else(|| DEFAULT_COMMAND.to_string()),
+            max_filesize: options.max_filesize,
+            download_timeout: options.download_timeout,
         }
     }
 
@@ -174,6 +187,8 @@ impl YtDlp {
     pub fn with_command(command: &str) -> Self {
         Self {
             command: command.to_string(),
+            max_filesize: "500M".to_string(),
+            download_timeout: Duration::from_mins(10),
         }
     }
 
@@ -196,7 +211,7 @@ impl YtDlp {
         let mut command = Command::new(&self.command);
 
         command
-            .args(build_args(url, output_dir))
+            .args(build_args(url, output_dir, &self.max_filesize))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -220,7 +235,7 @@ impl YtDlp {
         let stderr_task = tokio::spawn(drain_stderr(stderr));
 
         let output = tokio::time::timeout(
-            DOWNLOAD_TIMEOUT,
+            self.download_timeout,
             read_output(&mut child, stdout, &mut on_progress),
         )
         .await
@@ -296,10 +311,10 @@ async fn drain_stderr(stderr: impl tokio::io::AsyncRead + Unpin) -> String {
 /// Builds the `yt-dlp` arguments for downloading `url` into `output_dir`.
 ///
 /// Configuration files and plugins are disabled, the download is bounded to a single video of at
-/// most [`MAX_FILESIZE`], and the URL is passed after a `--` separator so it can never be
+/// most `max_filesize`, and the URL is passed after a `--` separator so it can never be
 /// interpreted as an option.
 #[must_use]
-fn build_args(url: &str, output_dir: &Path) -> Vec<OsString> {
+fn build_args(url: &str, output_dir: &Path, max_filesize: &str) -> Vec<OsString> {
     vec![
         "--ignore-config".into(),
         "--no-plugin-dirs".into(),
@@ -317,7 +332,7 @@ fn build_args(url: &str, output_dir: &Path) -> Vec<OsString> {
         "--dump-single-json".into(),
         "--no-simulate".into(),
         "--max-filesize".into(),
-        MAX_FILESIZE.into(),
+        max_filesize.into(),
         "--format".into(),
         FORMAT.into(),
         "--merge-output-format".into(),
@@ -408,7 +423,7 @@ mod tests {
     #[test]
     fn test_build_args() {
         let args: Vec<String> =
-            build_args("https://www.tiktok.com/@a/video/1", Path::new("/tmp/out"))
+            build_args("https://www.tiktok.com/@a/video/1", Path::new("/tmp/out"), "500M")
                 .iter()
                 .map(|arg| arg.to_string_lossy().into_owned())
                 .collect();

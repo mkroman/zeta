@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use argh::{ArgsInfo, FromArgs};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info};
 use url::Host;
@@ -9,6 +9,17 @@ use url::Host;
 use crate::{http, plugin::prelude::*};
 
 const BASE_URL: &str = "https://api.ip2location.io";
+
+/// Settings for the geoip plugin, from its `[plugins.geoip]` configuration section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The ip2location.io API key.
+    ///
+    /// Falls back to the `GEOIP_API_KEY` environment variable when unset.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
 
 /// The `.geoip` command.
 const GEOIP: PluginCommand = PluginCommand::with_args::<Opts>(
@@ -84,9 +95,13 @@ pub struct IpInfo {
 
 #[async_trait]
 impl Plugin<Context> for GeoIp {
-    fn new(_ctx: &Context) -> Result<GeoIp, ZetaError> {
-        let api_key = require_env("GEOIP_API_KEY")?;
-        let client = http::client::builder().build().map_err(plugin_err)?;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<GeoIp, ZetaError> {
+        let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
+        let client = http::client::builder(&ctx.config.http)
+            .build()
+            .map_err(plugin_err)?;
 
         Ok(GeoIp { client, api_key })
     }
@@ -219,5 +234,25 @@ impl GeoIp {
                 Err(err.into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        assert!(Settings::default().api_key.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "api_key": "secret",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.api_key.as_deref(), Some("secret"));
     }
 }

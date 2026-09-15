@@ -23,11 +23,13 @@ pub use {
 };
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Days;
 use interim::{Dialect, parse_date_string};
 use irc::proto::Prefix as IrcPrefix;
 use rand::prelude::IteratorRandom;
+use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
@@ -42,6 +44,37 @@ const ALERT: PluginCommand = PluginCommand::new(
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[ALERT];
+
+/// Settings for the alert plugin, from its `[plugins.alert]` configuration section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// How long the scheduler waits before retrying after a failed tick.
+    #[serde(default = "default_retry_delay", with = "humantime_serde")]
+    pub retry_delay: Duration,
+    /// The maximum number of pending alerts a user may have.
+    #[serde(default = "default_max_pending_per_user")]
+    pub max_pending_per_user: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            retry_delay: default_retry_delay(),
+            max_pending_per_user: default_max_pending_per_user(),
+        }
+    }
+}
+
+/// Returns the default scheduler retry delay.
+const fn default_retry_delay() -> Duration {
+    Duration::from_secs(30)
+}
+
+/// Returns the default maximum number of pending alerts per user.
+const fn default_max_pending_per_user() -> usize {
+    10
+}
 
 /// Reply messages used when an alert has been stored.
 const SUCCESS_MESSAGES: &[&str] = &[
@@ -100,8 +133,10 @@ impl AlertPlugin {
 
 #[async_trait]
 impl Plugin<Context> for AlertPlugin {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let mut service = AlertService::new(ctx.db.clone());
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let mut service = AlertService::new(ctx.db.clone(), settings);
         let receiver = service.take_receiver();
         let service = Arc::new(service);
 
@@ -183,6 +218,14 @@ impl Plugin<Context> for AlertPlugin {
                         formatted(&format!(
                             "{} Alert stored for\x0f {local}.",
                             success_message()
+                        )),
+                    )?;
+                }
+                Err(Error::TooManyPending(max)) => {
+                    client.send_privmsg(
+                        channel,
+                        formatted(&format!(
+                            "you already have {max} pending alerts, wait for them to be delivered"
                         )),
                     )?;
                 }
@@ -349,6 +392,26 @@ mod tests {
     use sqlx::types::chrono::TimeZone;
 
     use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert_eq!(settings.retry_delay, Duration::from_secs(30));
+        assert_eq!(settings.max_pending_per_user, 10);
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "retry_delay": "1m",
+            "max_pending_per_user": 3,
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.retry_delay, Duration::from_mins(1));
+        assert_eq!(settings.max_pending_per_user, 3);
+    }
 
     #[test]
     fn splits_message_and_datetime() {

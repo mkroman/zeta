@@ -27,4 +27,7 @@ pub enum Error {
     /// The response did not include a nonce.
     #[error("response did not include a nonce")]
     Nonce,
+    /// A configured header value is invalid.
+    #[error("invalid header value: {0}")]
+    InvalidHeader(#[from] reqwest::header::InvalidHeaderValue),
 }

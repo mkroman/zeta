@@ -5,13 +5,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use num_format::{Locale, ToFormattedString};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 use url::Url;
 
 use crate::{
+    config::HttpConfig,
     http,
     plugin::{self, prelude::*},
 };
@@ -27,6 +28,62 @@ const YOUTUBE: PluginCommand = PluginCommand::new(
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[YOUTUBE];
+
+/// The safe search filter applied to YouTube search requests.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SafeSearch {
+    /// Do not filter search results.
+    #[default]
+    None,
+    /// Filter out content that is explicitly flagged as mature.
+    Moderate,
+    /// Filter out most potentially mature content.
+    Strict,
+}
+
+impl SafeSearch {
+    /// Returns the value of the `safeSearch` API parameter.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Moderate => "moderate",
+            Self::Strict => "strict",
+        }
+    }
+}
+
+/// Settings for the youtube plugin, from its `[plugins.youtube]` configuration section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The YouTube Data API v3 key.
+    ///
+    /// Falls back to the `YOUTUBE_API_KEY` environment variable when unset.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// The region code used when fetching video categories.
+    #[serde(default = "default_region_code")]
+    pub region_code: String,
+    /// The safe search filter applied to search requests.
+    #[serde(default)]
+    pub safe_search: SafeSearch,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            region_code: default_region_code(),
+            safe_search: SafeSearch::default(),
+        }
+    }
+}
+
+/// Returns the default region code for video categories.
+fn default_region_code() -> String {
+    "US".to_string()
+}
 
 /// IRC bot plugin for YouTube URL detection and metadata retrieval.
 ///
@@ -44,6 +101,10 @@ const COMMANDS: &[PluginCommand] = &[YOUTUBE];
 pub struct YouTube {
     /// YouTube Data API v3 authentication key
     api_key: String,
+    /// The region code used when fetching video categories
+    region_code: String,
+    /// The safe search filter applied to search requests
+    safe_search: SafeSearch,
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
     /// Thread-safe cache of video categories mapped by category ID
@@ -197,10 +258,12 @@ pub type SearchListResponse = ApiListResponse<Search>;
 
 #[async_trait]
 impl Plugin<Context> for YouTube {
-    fn new(_ctx: &Context) -> Result<YouTube, ZetaError> {
-        let api_key = require_env("YOUTUBE_API_KEY")?;
+    type Settings = Settings;
 
-        Ok(YouTube::with_config(api_key))
+    fn new(ctx: &Context, settings: &Settings) -> Result<YouTube, ZetaError> {
+        let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
+
+        Ok(YouTube::with_config(settings, api_key, &ctx.config.http))
     }
 
     fn metadata() -> Metadata {
@@ -262,11 +325,17 @@ impl Plugin<Context> for YouTube {
 }
 
 impl YouTube {
-    pub fn with_config(api_key: String) -> Self {
-        let client = http::build_client();
+    pub fn with_config(
+        settings: &Settings,
+        api_key: String,
+        config: &HttpConfig,
+    ) -> Self {
+        let client = http::build_client(config);
 
         Self {
             api_key,
+            region_code: settings.region_code.clone(),
+            safe_search: settings.safe_search,
             client,
             video_categories: RwLock::new(Arc::new(HashMap::new())),
             video_categories_updated_at: RwLock::new(None),
@@ -325,7 +394,7 @@ impl YouTube {
         let params = [
             ("key", self.api_key.as_str()),
             ("part", "snippet"),
-            ("regionCode", "US"),
+            ("regionCode", self.region_code.as_str()),
         ];
         let request = self
             .client
@@ -388,7 +457,7 @@ impl YouTube {
             ("key", &self.api_key),
             ("part", "snippet"),
             ("type", "video"),
-            ("safeSearch", "none"),
+            ("safeSearch", self.safe_search.as_str()),
         ];
 
         debug!(?params, "searching for videos");
@@ -496,6 +565,29 @@ fn parse_youtu_be_url(url: &Url) -> Option<UrlKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.api_key.is_none());
+        assert_eq!(settings.region_code, "US");
+        assert_eq!(settings.safe_search, SafeSearch::None);
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "api_key": "secret",
+            "region_code": "DK",
+            "safe_search": "strict",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        assert_eq!(settings.region_code, "DK");
+        assert_eq!(settings.safe_search, SafeSearch::Strict);
+    }
 
     #[test]
     fn test_parse_youtube_com_video_urls() {

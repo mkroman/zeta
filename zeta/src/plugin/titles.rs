@@ -13,24 +13,23 @@ use std::collections::HashSet;
 use std::sync::mpsc;
 
 use futures::StreamExt;
-use html5ever::tokenizer::{
-    BufferQueue, EndTag, StartTag, Tag, Token, TokenSink, TokenSinkResult, Tokenizer,
-    TokenizerOpts,
-};
 use html5ever::tendril::StrTendril;
+use html5ever::tokenizer::{
+    BufferQueue, EndTag, StartTag, Tag, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts,
+};
 use irc::client::Client;
 use irc::proto::Command;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use tracing::{debug, warn};
+use url::Url;
 use wreq::StatusCode;
 use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
 use wreq::redirect::Policy;
 use wreq_util::Emulation;
-use thiserror::Error;
-use tracing::{debug, warn};
-use url::Url;
 
-use crate::consts;
 use crate::plugin::prelude::*;
-use crate::url::{ExtractedUrl, ExtractUrls, SchemeMap};
+use crate::url::{ExtractUrls, ExtractedUrl, SchemeMap};
 
 /// The accepted schemes: `http` and `https`, plus the `ttp` and `ttps` variants that are missing
 /// their leading `h` — the latter are repaired and announced before the page is fetched.
@@ -44,15 +43,6 @@ const SCHEMES: SchemeMap = &[
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
 
-/// The maximum number of redirects to follow.
-const MAX_REDIRECTS: usize = 3;
-
-/// The maximum length of a posted message, in characters.
-const MAX_MESSAGE_LENGTH: usize = 400;
-
-/// The maximum length of a posted description, in characters.
-const MAX_DESCRIPTION_LENGTH: usize = 200;
-
 /// IRC formatting prefix for plain replies.
 const REPLY_PREFIX: &str = "\x0310>";
 
@@ -62,23 +52,94 @@ const OG_REPLY_PREFIX: &str = "\x0310>\x0f\x02 ";
 /// IRC formatting suffix closing the bold site name of an OpenGraph reply.
 const OG_REPLY_SUFFIX: &str = ":\x02\x0310 ";
 
-/// Hosts that are handled by dedicated plugins.
-const IGNORED_HOSTS: &[&str] = &[
-    "reddit.com",
-    "redd.it",
-    "www.reddit.com",
-    "www.youtube.com",
-    "youtube.com",
-    "youtu.be",
-    "vm.tiktok.com",
-    "tiktok.com",
-];
-
 /// File extensions that we avoid requesting to save time and bandwidth.
 const BINARY_EXTENSIONS: &[&str] = &[
-    ".png", ".jpg", ".bmp", ".gif", ".avi", ".mpg", ".flv", ".3gp", ".mp4", ".exe", ".msi",
-    ".mp3", ".flac", ".tar", ".tar.gz", ".tar.bz2", ".zip",
+    ".png", ".jpg", ".bmp", ".gif", ".avi", ".mpg", ".flv", ".3gp", ".mp4", ".exe", ".msi", ".mp3",
+    ".flac", ".tar", ".tar.gz", ".tar.bz2", ".zip",
 ];
+
+/// Settings for the titles plugin, from its `[plugins.titles]` configuration section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// Hosts whose URLs are left to dedicated plugins.
+    ///
+    /// Defaults to every host matched by a bundled plugin. Removing a host makes this plugin
+    /// preview its URLs, which may cause it to reply alongside the plugin that normally handles
+    /// the host.
+    #[serde(default = "default_ignored_hosts")]
+    pub ignored_hosts: Vec<String>,
+    /// The maximum number of redirects to follow.
+    #[serde(default = "default_max_redirects")]
+    pub max_redirects: usize,
+    /// The maximum length of a posted message, in characters.
+    #[serde(default = "default_max_message_length")]
+    pub max_message_length: usize,
+    /// The maximum length of a posted description, in characters.
+    #[serde(default = "default_max_description_length")]
+    pub max_description_length: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            ignored_hosts: default_ignored_hosts(),
+            max_redirects: default_max_redirects(),
+            max_message_length: default_max_message_length(),
+            max_description_length: default_max_description_length(),
+        }
+    }
+}
+
+/// Returns the default hosts that are handled by dedicated plugins.
+fn default_ignored_hosts() -> Vec<String> {
+    [
+        "chaturbate.com",
+        "www.chaturbate.com",
+        "imdb.com",
+        "m.imdb.com",
+        "www.imdb.com",
+        "www.pornhub.com",
+        "i.redd.it",
+        "oauth.reddit.com",
+        "old.reddit.com",
+        "preview.redd.it",
+        "redd.it",
+        "reddit.com",
+        "v.redd.it",
+        "www.reddit.com",
+        "open.spotify.com",
+        "play.spotify.com",
+        "thingiverse.com",
+        "www.thingiverse.com",
+        "tiktok.com",
+        "vm.tiktok.com",
+        "www.tiktok.com",
+        "clips.twitch.tv",
+        "twitch.tv",
+        "www.twitch.tv",
+        "youtu.be",
+        "youtube.com",
+        "www.youtube.com",
+    ]
+    .map(String::from)
+    .to_vec()
+}
+
+/// Returns the default maximum number of redirects to follow.
+const fn default_max_redirects() -> usize {
+    3
+}
+
+/// Returns the default maximum length of a posted message, in characters.
+const fn default_max_message_length() -> usize {
+    400
+}
+
+/// Returns the default maximum length of a posted description, in characters.
+const fn default_max_description_length() -> usize {
+    200
+}
 
 /// Titles plugin.
 ///
@@ -91,6 +152,8 @@ const BINARY_EXTENSIONS: &[&str] = &[
 pub struct Titles {
     /// The HTTP client used for fetching pages.
     client: wreq::Client,
+    /// The plugin settings used when processing URLs.
+    settings: Settings,
 }
 
 /// Page title and OpenGraph metadata extracted from a document head.
@@ -149,12 +212,12 @@ impl HeadSink {
                 if title.is_none() && self.metadata.borrow().title.is_none() {
                     *title = Some(String::new());
                 }
-            },
+            }
             "meta" => self.capture_meta(tag),
             "body" => {
                 self.done.replace(true);
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -167,11 +230,11 @@ impl HeadSink {
                 {
                     self.metadata.borrow_mut().title = Some(title);
                 }
-            },
+            }
             "head" => {
                 self.done.replace(true);
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -220,8 +283,8 @@ impl TokenSink for HeadSink {
                 if let Some(title) = self.title.borrow_mut().as_mut() {
                     title.push_str(&text);
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         TokenSinkResult::Continue
@@ -341,7 +404,7 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
                 pending.clear();
 
                 break;
-            },
+            }
             Err(error) => {
                 let valid = error.valid_up_to();
 
@@ -358,13 +421,13 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
                         pending.drain(..valid);
 
                         break;
-                    },
+                    }
                     Some(invalid_len) => {
                         text.push('\u{fffd}');
                         pending.drain(..valid + invalid_len);
-                    },
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -381,31 +444,38 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 /// which anti-bot systems score far more aggressively when requests originate from datacenter
 /// networks — and the matching Linux Firefox 142 user agent is rejected by DataDome outright,
 /// while Firefox 151 passes.
-#[must_use]
-fn emulated_headers() -> HeaderMap {
+fn emulated_headers(user_agent: &str) -> Result<HeaderMap, ZetaError> {
     let mut headers = HeaderMap::new();
 
     headers.insert(
         ACCEPT_ENCODING,
         HeaderValue::from_static("gzip, deflate, br, zstd"),
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static(consts::HTTP_USER_AGENT));
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_str(user_agent).map_err(plugin_err)?,
+    );
 
-    headers
+    Ok(headers)
 }
 
 #[async_trait]
 impl Plugin<Context> for Titles {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = wreq::Client::builder()
             .emulation(Emulation::Firefox142)
-            .default_headers(emulated_headers())
-            .redirect(Policy::limited(MAX_REDIRECTS))
-            .timeout(consts::HTTP_TIMEOUT)
+            .default_headers(emulated_headers(&ctx.config.http.user_agent)?)
+            .redirect(Policy::limited(settings.max_redirects))
+            .timeout(ctx.config.http.timeout)
             .build()
             .map_err(plugin_err)?;
 
-        Ok(Titles { client })
+        Ok(Titles {
+            client,
+            settings: settings.clone(),
+        })
     }
 
     fn metadata() -> Metadata {
@@ -463,7 +533,7 @@ impl Titles {
             }
         }
 
-        if is_ignored_host(&url) {
+        if is_ignored_host(&url, &self.settings.ignored_hosts) {
             debug!(%url, "skipping url handled by another plugin");
 
             return;
@@ -478,6 +548,7 @@ impl Titles {
         let http_client = self.client.clone();
         let sender = client.sender();
         let channel = channel.to_string();
+        let settings = self.settings.clone();
 
         tokio::spawn(async move {
             let metadata = match fetch_metadata(&http_client, &url).await {
@@ -492,10 +563,10 @@ impl Titles {
                     }
 
                     return;
-                },
+                }
             };
 
-            if let Some(message) = format_page(&metadata, &url)
+            if let Some(message) = format_page(&metadata, &url, &settings)
                 && let Err(error) = sender.send_privmsg(&channel, message)
             {
                 warn!(%error, "could not send page metadata");
@@ -527,9 +598,9 @@ fn should_ignore(text: &str) -> bool {
 
 /// Whether the host of `url` is handled by another plugin.
 #[must_use]
-fn is_ignored_host(url: &Url) -> bool {
+fn is_ignored_host(url: &Url, ignored_hosts: &[String]) -> bool {
     url.host_str()
-        .is_some_and(|host| IGNORED_HOSTS.contains(&host))
+        .is_some_and(|host| ignored_hosts.iter().any(|ignored| ignored == host))
 }
 
 /// Whether the path of `url` looks like binary content.
@@ -549,7 +620,7 @@ fn is_binary_url(url: &Url) -> bool {
 ///
 /// Returns [`None`] when the page has neither a title nor OpenGraph metadata worth posting.
 #[must_use]
-fn format_page(metadata: &PageMetadata, url: &Url) -> Option<String> {
+fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Option<String> {
     let title = metadata
         .title
         .as_deref()
@@ -562,7 +633,7 @@ fn format_page(metadata: &PageMetadata, url: &Url) -> Option<String> {
         .as_deref()
         .map(clean)
         .filter(|description| !description.is_empty())
-        .map(|description| truncate(&description, MAX_DESCRIPTION_LENGTH));
+        .map(|description| truncate(&description, settings.max_description_length));
 
     if title.is_none() && description.is_none() {
         return None;
@@ -588,7 +659,7 @@ fn format_page(metadata: &PageMetadata, url: &Url) -> Option<String> {
         format!("{REPLY_PREFIX} {content}")
     };
 
-    Some(truncate(&message, MAX_MESSAGE_LENGTH))
+    Some(truncate(&message, settings.max_message_length))
 }
 
 /// Whether any OpenGraph metadata was captured.
@@ -683,9 +754,8 @@ mod tests {
 
     #[test]
     fn extracts_open_graph_metadata_by_name() {
-        let metadata = parse_metadata(
-            r#"<head><meta name="og:description" content="A description"></head>"#,
-        );
+        let metadata =
+            parse_metadata(r#"<head><meta name="og:description" content="A description"></head>"#);
 
         assert_eq!(metadata.description.as_deref(), Some("A description"));
     }
@@ -716,10 +786,7 @@ mod tests {
         );
 
         assert_eq!(metadata.title.as_deref(), Some("Fish & Chips"));
-        assert_eq!(
-            metadata.description.as_deref(),
-            Some("a \"quoted\" word")
-        );
+        assert_eq!(metadata.description.as_deref(), Some("a \"quoted\" word"));
     }
 
     #[test]
@@ -781,10 +848,7 @@ mod tests {
 
         assert_eq!(decode_chunk(&mut pending, &[0xFF, b'a']), "\u{fffd}a");
         assert_eq!(decode_chunk(&mut pending, b"b"), "b");
-        assert_eq!(
-            decode_chunk(&mut pending, "æ".as_bytes()),
-            "æ"
-        );
+        assert_eq!(decode_chunk(&mut pending, "æ".as_bytes()), "æ");
         assert!(pending.is_empty());
     }
 
@@ -798,7 +862,10 @@ mod tests {
 
         assert_eq!(metadata.title.as_deref(), Some("Maero — Notes"));
         assert_eq!(metadata.site_name.as_deref(), Some("Maero"));
-        assert_eq!(metadata.og_title.as_deref(), Some("Notes from the \"field\""));
+        assert_eq!(
+            metadata.og_title.as_deref(),
+            Some("Notes from the \"field\"")
+        );
         assert_eq!(metadata.description.as_deref(), Some("A & B"));
 
         let chunked = parse_metadata_chunked(&html, 7);
@@ -829,20 +896,42 @@ mod tests {
 
     #[test]
     fn ignores_hosts_handled_by_other_plugins() {
-        assert!(is_ignored_host(&Url::parse("https://www.reddit.com/r/rust").unwrap()));
-        assert!(is_ignored_host(&Url::parse("https://youtu.be/abc").unwrap()));
-        assert!(is_ignored_host(&Url::parse("https://vm.tiktok.com/abc").unwrap()));
+        let settings = Settings::default();
 
-        assert!(!is_ignored_host(&Url::parse("https://maero.dk").unwrap()));
+        assert!(is_ignored_host(
+            &Url::parse("https://www.reddit.com/r/rust").unwrap(),
+            &settings.ignored_hosts
+        ));
+        assert!(is_ignored_host(
+            &Url::parse("https://youtu.be/abc").unwrap(),
+            &settings.ignored_hosts
+        ));
+        assert!(is_ignored_host(
+            &Url::parse("https://vm.tiktok.com/abc").unwrap(),
+            &settings.ignored_hosts
+        ));
+
+        assert!(!is_ignored_host(
+            &Url::parse("https://maero.dk").unwrap(),
+            &settings.ignored_hosts
+        ));
     }
 
     #[test]
     fn ignores_binary_urls() {
-        assert!(is_binary_url(&Url::parse("https://maero.dk/photo.JPG").unwrap()));
-        assert!(is_binary_url(&Url::parse("https://maero.dk/archive.tar.gz").unwrap()));
-        assert!(is_binary_url(&Url::parse("https://maero.dk/video.mp4?start=30").unwrap()));
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/photo.JPG").unwrap()
+        ));
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/archive.tar.gz").unwrap()
+        ));
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/video.mp4?start=30").unwrap()
+        ));
 
-        assert!(!is_binary_url(&Url::parse("https://maero.dk/page.html").unwrap()));
+        assert!(!is_binary_url(
+            &Url::parse("https://maero.dk/page.html").unwrap()
+        ));
         assert!(!is_binary_url(&Url::parse("https://maero.dk").unwrap()));
     }
 
@@ -854,7 +943,7 @@ mod tests {
         };
         let url = Url::parse("https://maero.dk").unwrap();
 
-        let message = format_page(&metadata, &url).unwrap();
+        let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
         assert_eq!(message, "\x0310> Hello world");
     }
@@ -869,9 +958,12 @@ mod tests {
         };
         let url = Url::parse("https://maero.dk").unwrap();
 
-        let message = format_page(&metadata, &url).unwrap();
+        let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
-        assert_eq!(message, "\x0310>\x0f\x02 Maero:\x02\x0310 Hello — A description");
+        assert_eq!(
+            message,
+            "\x0310>\x0f\x02 Maero:\x02\x0310 Hello — A description"
+        );
     }
 
     #[test]
@@ -883,9 +975,12 @@ mod tests {
         };
         let url = Url::parse("https://www.maero.dk/page").unwrap();
 
-        let message = format_page(&metadata, &url).unwrap();
+        let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
-        assert_eq!(message, "\x0310>\x0f\x02 maero.dk:\x02\x0310 Hello — A description");
+        assert_eq!(
+            message,
+            "\x0310>\x0f\x02 maero.dk:\x02\x0310 Hello — A description"
+        );
     }
 
     #[test]
@@ -897,7 +992,7 @@ mod tests {
         };
         let url = Url::parse("https://maero.dk").unwrap();
 
-        let message = format_page(&metadata, &url).unwrap();
+        let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
         assert_eq!(message, "\x0310>\x0f\x02 Maero:\x02\x0310 A description");
     }
@@ -906,14 +1001,18 @@ mod tests {
     fn stays_silent_for_pages_without_metadata() {
         let url = Url::parse("https://maero.dk").unwrap();
 
-        assert_eq!(format_page(&PageMetadata::default(), &url), None);
+        assert_eq!(
+            format_page(&PageMetadata::default(), &url, &Settings::default()),
+            None
+        );
         assert_eq!(
             format_page(
                 &PageMetadata {
                     title: Some("   ".to_string()),
                     ..PageMetadata::default()
                 },
-                &url
+                &url,
+                &Settings::default()
             ),
             None
         );
@@ -926,15 +1025,42 @@ mod tests {
         assert_eq!(truncate("hello", 4), "hel…");
         assert_eq!(truncate("hæłlo", 4), "hæł…");
 
-        let long = "x".repeat(MAX_MESSAGE_LENGTH + 1);
+        let settings = Settings::default();
+        let long = "x".repeat(settings.max_message_length + 1);
         let metadata = PageMetadata {
             title: Some(long),
             ..PageMetadata::default()
         };
         let url = Url::parse("https://maero.dk").unwrap();
-        let message = format_page(&metadata, &url).unwrap();
+        let message = format_page(&metadata, &url, &settings).unwrap();
 
-        assert_eq!(message.chars().count(), MAX_MESSAGE_LENGTH);
+        assert_eq!(message.chars().count(), settings.max_message_length);
         assert!(message.ends_with('…'));
+    }
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.ignored_hosts.len() > 8);
+        assert_eq!(settings.max_redirects, 3);
+        assert_eq!(settings.max_message_length, 400);
+        assert_eq!(settings.max_description_length, 200);
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "ignored_hosts": ["example.com"],
+            "max_redirects": 1,
+            "max_message_length": 100,
+            "max_description_length": 50,
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.ignored_hosts, ["example.com"]);
+        assert_eq!(settings.max_redirects, 1);
+        assert_eq!(settings.max_message_length, 100);
+        assert_eq!(settings.max_description_length, 50);
     }
 }

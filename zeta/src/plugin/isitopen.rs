@@ -2,7 +2,7 @@
 use std::sync::OnceLock;
 
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use time::{
     Duration, OffsetDateTime, Time, format_description::FormatItem, macros::format_description,
 };
@@ -11,6 +11,17 @@ use tracing::{debug, warn};
 use crate::{http, plugin::prelude::*};
 
 const API_BASE_URL: &str = "https://maps.googleapis.com";
+
+/// Settings for the isitopen plugin, from its `[plugins.isitopen]` configuration section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The Google Maps API key.
+    ///
+    /// Falls back to the `GOOGLE_MAPS_API_KEY` environment variable when unset.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
 
 static RE_OPENING_TIME: OnceLock<Regex> = OnceLock::new();
 static RE_CLOSING_TIME: OnceLock<Regex> = OnceLock::new();
@@ -182,9 +193,11 @@ fn format_time_string(s: &str) -> Option<String> {
 
 #[async_trait]
 impl Plugin<Context> for IsItOpen {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let api_key = require_env("GOOGLE_MAPS_API_KEY")?;
-        let client = http::build_client();
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let api_key = resolve_secret(settings.api_key.as_deref(), "GOOGLE_MAPS_API_KEY")?;
+        let client = http::build_client(&ctx.config.http);
 
         // Initialize regexes (case insensitive)
         let _ = RE_OPENING_TIME.get_or_init(|| {
@@ -470,6 +483,21 @@ fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_settings() {
+        assert!(Settings::default().api_key.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "api_key": "secret",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.api_key.as_deref(), Some("secret"));
+    }
 
     #[test]
     fn test_parse_hhmm() {

@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use tracing::{instrument, trace};
 
 use super::{
+    Settings,
     error::Error,
     model::{NewNotification, Notification},
     repository::NotificationRepository,
@@ -22,15 +23,18 @@ pub struct NotificationService {
     repo: NotificationRepository,
     /// Pending notifications, keyed by channel and target nickname.
     cache: Mutex<HashMap<String, HashMap<String, Vec<Notification>>>>,
+    /// The maximum number of pending notifications a target may have in a channel.
+    max_pending_per_target: usize,
 }
 
 impl NotificationService {
     /// Creates a new notification service backed by the given database pool.
     #[must_use]
-    pub fn new(db: Database) -> Self {
+    pub fn new(db: Database, settings: &Settings) -> Self {
         Self {
             repo: NotificationRepository::new(db),
             cache: Mutex::new(HashMap::new()),
+            max_pending_per_target: settings.max_pending_per_target,
         }
     }
 
@@ -65,9 +69,25 @@ impl NotificationService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Insert`] if the notification could not be inserted into the database.
+    /// Returns [`Error::TooManyPending`] if the target already has the maximum number of pending
+    /// notifications in the channel, or [`Error::Insert`] if the notification could not be
+    /// inserted into the database.
     #[instrument(skip_all, err)]
     pub async fn create(&self, notification: NewNotification) -> Result<Notification, Error> {
+        if self.max_pending_per_target > 0 {
+            let pending = self
+                .cache
+                .lock()
+                .await
+                .get(&notification.channel)
+                .and_then(|targets| targets.get(&notification.target))
+                .map_or(0, Vec::len);
+
+            if pending >= self.max_pending_per_target {
+                return Err(Error::TooManyPending(self.max_pending_per_target));
+            }
+        }
+
         let notification = self.repo.insert(notification).await?;
 
         trace!(?notification, "storing notification in cache");

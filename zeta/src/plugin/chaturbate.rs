@@ -9,6 +9,7 @@ use tracing::debug;
 use url::Url;
 
 use crate::{
+    config::HttpConfig,
     http,
     plugin::{self, prelude::*},
 };
@@ -62,8 +63,10 @@ pub struct RoomDossier {
 
 #[async_trait]
 impl Plugin<Context> for Chaturbate {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        Ok(Self::new())
+    type Settings = NoSettings;
+
+    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+        Ok(Self::new(&ctx.config.http))
     }
 
     fn metadata() -> Metadata {
@@ -103,8 +106,8 @@ impl Chaturbate {
     }
 
     /// Creates a new [`Chaturbate`] plugin instance.
-    pub fn new() -> Self {
-        let client = http::build_client();
+    pub fn new(config: &HttpConfig) -> Self {
+        let client = http::build_client(config);
         // The dossier is assigned as a JSON-encoded string literal, terminated by a semicolon
         // before the closing </script> tag.
         let room_dossier_re =
@@ -192,7 +195,7 @@ mod tests {
     #[test]
     fn test_parse_room_dossier_fiery_redhead() {
         let html = fixture_html("fiery_redhead");
-        let plugin = Chaturbate::new();
+        let plugin = Chaturbate::new(&HttpConfig::default());
         let dossier = parse_room_dossier_with_re(&plugin.room_dossier_re, &html)
             .expect("should parse dossier");
 
@@ -208,7 +211,7 @@ mod tests {
     #[test]
     fn test_parse_room_dossier_milabunny() {
         let html = fixture_html("milabunny_");
-        let plugin = Chaturbate::new();
+        let plugin = Chaturbate::new(&HttpConfig::default());
         let dossier = parse_room_dossier_with_re(&plugin.room_dossier_re, &html)
             .expect("should parse dossier");
 

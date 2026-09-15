@@ -51,12 +51,13 @@ impl Client {
     /// ```
     /// let client_id = "reddit client id";
     /// let client_secret = "reddit client secret";
-    /// let client = reddit::Client::new(client_id, client_secret, None);
+    /// let client = reddit::Client::new(client_id, client_secret, None, None);
     /// ```
     pub fn new(
         client_id: impl Into<String>,
         client_secret: impl Into<SecretString>,
         user_agent: Option<String>,
+        timeout: Option<Duration>,
     ) -> Client {
         let client_id = client_id.into();
         let client_secret = client_secret.into();
@@ -64,7 +65,7 @@ impl Client {
         let user_agent = user_agent.unwrap_or_else(|| USER_AGENT.to_string());
         let client = reqwest::ClientBuilder::new()
             .redirect(Policy::none())
-            .timeout(HTTP_TIMEOUT)
+            .timeout(timeout.unwrap_or(HTTP_TIMEOUT))
             .user_agent(user_agent.clone())
             .build()
             .expect("could not build http client");

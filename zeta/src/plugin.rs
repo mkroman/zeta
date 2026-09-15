@@ -1,9 +1,14 @@
 #![allow(clippy::doc_markdown)]
 
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use figment::value::Dict;
 use irc::client::Client;
 use irc::proto::Message;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use url::Url;
@@ -13,6 +18,9 @@ pub use crate::context::{Context, SharedState};
 
 pub use zeta_plugin::{Author, Error, Metadata, Name, Plugin};
 
+#[allow(unused_imports)]
+use zeta_plugin::NoSettings;
+
 /// Common includes used in plugins.
 #[allow(unused)]
 mod prelude {
@@ -21,7 +29,8 @@ mod prelude {
     pub use irc::proto::{Command, Message};
     pub use zeta_plugin::Error as ZetaError;
     pub use zeta_plugin::prelude::{
-        ArgsError, BoxError, PluginCommand, Prefix, plugin_err, require_env,
+        ArgsError, BoxError, NoSettings, PluginCommand, Prefix, plugin_err, require_env,
+        resolve_secret,
     };
 
     pub use super::{
@@ -33,13 +42,17 @@ mod prelude {
 ///
 /// For each entry, it generates:
 /// 1. `pub mod $mod_name;` (with feature gates and docs).
-/// 2. A call to `register::<$mod_name::$struct_name>()` inside `Registry::register_bundled_plugins`.
+/// 2. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
+///    for plugins with settings, `=> NoSettings` otherwise.
+/// 3. A call to `register::<$mod_name::$struct_name>()` inside `Registry::register_bundled_plugins`,
+///    gated on the plugin's `enabled` configuration and passing the plugin's own settings through
+///    to its constructor.
 macro_rules! declare_plugins {
     (
         $(
             $(#[doc = $doc:expr])*
             #[cfg(feature = $feature:literal)]
-            $mod_name:ident :: $struct_name:ident
+            $mod_name:ident :: $struct_name:ident => $settings:ty
         ),* $(,)?
     ) => {
         // Generate module declarations
@@ -49,14 +62,56 @@ macro_rules! declare_plugins {
             pub mod $mod_name;
         )*
 
+        /// Typed, per-plugin configuration extracted from the `[plugins]` section.
+        ///
+        /// Each plugin has its own section keyed by its module name, e.g. `[plugins.dig]`.
+        /// Sections are type-checked at startup and always present; a section that is omitted
+        /// entirely defaults to `enabled = true` with default settings. The `enabled` key is
+        /// managed by the host; every other key belongs to the plugin's settings type.
+        ///
+        /// Keys under `[plugins]` that do not match a bundled plugin name are collected in
+        /// [`PluginsConfig::unknown`] so the host can warn about likely typos.
+        #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+        pub struct PluginsConfig {
+            $(
+                $(#[doc = $doc])*
+                #[cfg(feature = $feature)]
+                #[serde(default)]
+                pub $mod_name: $crate::config::PluginConfig<$settings>,
+            )*
+
+            /// Sections that match no bundled plugin, whether compiled in or not.
+            #[serde(flatten)]
+            pub unknown: HashMap<String, Dict>,
+        }
+
+        /// The names of every bundled plugin, compiled in or not.
+        const BUNDLED_PLUGIN_NAMES: &[&str] = &[
+            $(
+                stringify!($mod_name),
+            )*
+        ];
+
         // Generate a helper extension to register these specific plugins
         impl Registry {
-            fn register_bundled_plugins(&mut self, #[allow(unused)] ctx: &Context) {
+            fn register_bundled_plugins(
+                &mut self,
+                #[allow(unused)] ctx: &Context,
+                #[allow(unused)] plugins: &PluginsConfig,
+            ) {
                 $(
                     #[cfg(feature = $feature)]
                     {
-                        // Explicitly uses the module and struct passed in
-                        self.register::<$mod_name::$struct_name>(ctx);
+                        let section = &plugins.$mod_name;
+
+                        if section.enabled {
+                            self.register::<$mod_name::$struct_name>(ctx, &section.settings);
+                        } else {
+                            ::tracing::info!(
+                                plugin = %<$mod_name::$struct_name as Plugin<Context>>::metadata().name,
+                                "plugin is disabled by configuration"
+                            );
+                        }
                     }
                 )*
             }
@@ -67,129 +122,184 @@ macro_rules! declare_plugins {
 declare_plugins! {
   /// Time-based user alerts.
   #[cfg(feature = "plugin-alert")]
-  alert::AlertPlugin,
+  alert::AlertPlugin => alert::Settings,
 
   /// Chaturbate platform integration.
   #[cfg(feature = "plugin-chaturbate")]
-  chaturbate::Chaturbate,
+  chaturbate::Chaturbate => NoSettings,
 
   /// Plugin that helps the user make a choice
   #[cfg(feature = "plugin-choices")]
-  choices::Choices,
+  choices::Choices => choices::Settings,
 
   /// Crypto currency quotes via CoinMarketCap
   #[cfg(feature = "plugin-coinmarketcap")]
-  coinmarketcap::CoinMarketCap,
+  coinmarketcap::CoinMarketCap => coinmarketcap::Settings,
 
   /// Query the danish dictionary
   #[cfg(feature = "plugin-dendanskeordbog")]
-  dendanskeordbog::DenDanskeOrdbog,
+  dendanskeordbog::DenDanskeOrdbog => dendanskeordbog::Settings,
 
   /// Query nameservers
   #[cfg(feature = "plugin-dig")]
-  dig::Dig,
+  dig::Dig => dig::Settings,
 
   /// Query geolocation of addresses and hostnames
   #[cfg(feature = "plugin-geoip")]
-  geoip::GeoIp,
+  geoip::GeoIp => geoip::Settings,
 
   /// Normative affective resonance profiling, calendar-scoped
   #[cfg(feature = "plugin-gay")]
-  gay::Gay,
+  gay::Gay => NoSettings,
 
   /// GitHub integration
   #[cfg(feature = "plugin-github")]
-  github::GitHubPlugin,
+  github::GitHubPlugin => github::Settings,
 
   /// Process health information
   #[cfg(feature = "plugin-health")]
-  health::Health,
+  health::Health => NoSettings,
 
   /// List loaded plugins and their commands
   #[cfg(feature = "plugin-help")]
-  help::Help,
+  help::Help => NoSettings,
 
   /// Howlongtobeat.com integration
   #[cfg(feature = "plugin-howlongtobeat")]
-  howlongtobeat::HowLongToBeat,
+  howlongtobeat::HowLongToBeat => NoSettings,
 
   /// IMDb integration
   #[cfg(feature = "plugin-imdb")]
-  imdb::Imdb,
+  imdb::Imdb => imdb::Settings,
 
   /// Is it open
   #[cfg(feature = "plugin-isitopen")]
-  isitopen::IsItOpen,
+  isitopen::IsItOpen => isitopen::Settings,
 
   /// Kagi search integration
   #[cfg(feature = "plugin-kagi")]
-  kagi::KagiPlugin,
+  kagi::KagiPlugin => kagi::Settings,
 
   /// User notifications
   #[cfg(feature = "plugin-notification")]
-  notification::NotificationPlugin,
+  notification::NotificationPlugin => notification::Settings,
 
   /// URL history
   #[cfg(feature = "plugin-ofn")]
-  ofn::Ofn,
+  ofn::Ofn => NoSettings,
 
   /// Weather service integration
   #[cfg(feature = "plugin-openweathermap")]
-  openweathermap::OpenWeatherMap,
+  openweathermap::OpenWeatherMap => openweathermap::Settings,
 
+  /// PornHub platform integration
   #[cfg(feature = "plugin-pornhub")]
-  pornhub::PornHub,
+  pornhub::PornHub => NoSettings,
 
   /// Reddit plugin integration
   #[cfg(feature = "plugin-reddit")]
-  reddit::Reddit,
+  reddit::Reddit => reddit::Settings,
 
   /// Calculator plugin based on rink
   #[cfg(feature = "plugin-rink")]
-  rink::Rink,
+  rink::Rink => NoSettings,
 
   /// Rust Playground integration
   #[cfg(feature = "plugin-rust-playground")]
-  rust_playground::RustPlayground,
+  rust_playground::RustPlayground => rust_playground::Settings,
 
   /// Spotify integration
   #[cfg(feature = "plugin-spotify")]
-  spotify::Spotify,
+  spotify::Spotify => spotify::Settings,
 
   /// Generic string utility plugin
   #[cfg(feature = "plugin-string-utils")]
-  string_utils::StringUtils,
+  string_utils::StringUtils => NoSettings,
 
   /// Thingiverse integration
   #[cfg(feature = "plugin-thingiverse")]
-  thingiverse::Thingiverse,
+  thingiverse::Thingiverse => thingiverse::Settings,
 
   /// TikTok integration
   #[cfg(feature = "plugin-tiktok")]
-  tiktok::Tiktok,
+  tiktok::Tiktok => tiktok::Settings,
 
   /// URL titles and OpenGraph metadata
   #[cfg(feature = "plugin-titles")]
-  titles::Titles,
+  titles::Titles => titles::Settings,
 
   /// Trustpilot integration
   #[cfg(feature = "plugin-trustpilot")]
-  trustpilot::Trustpilot,
+  trustpilot::Trustpilot => trustpilot::Settings,
 
+  /// TVmaze integration
   #[cfg(feature = "plugin-tvmaze")]
-  tvmaze::Tvmaze,
+  tvmaze::Tvmaze => NoSettings,
 
-  // Twitch integration
+  /// Twitch integration
   #[cfg(feature = "plugin-twitch")]
-  twitch::Twitch,
+  twitch::Twitch => twitch::Settings,
 
   /// Urban Dictionary integration
   #[cfg(feature = "plugin-urban-dictionary")]
-  urban_dictionary::UrbanDictionary,
+  urban_dictionary::UrbanDictionary => urban_dictionary::Settings,
 
   /// YouTube integration
   #[cfg(feature = "plugin-youtube")]
-  youtube::YouTube,
+  youtube::YouTube => youtube::Settings,
+}
+
+/// Object-safe view of [`Plugin`], implemented automatically for every `Plugin<Context>`.
+///
+/// [`Plugin`] declares an associated [`Settings`](Plugin::Settings) type and therefore cannot be
+/// used directly as a trait object. The registry stores plugins with different settings types
+/// behind this trait, which erases the settings type and exposes only the runtime methods the
+/// host needs. Plugin authors never implement this trait themselves.
+///
+/// The methods return the plugin's already-boxed futures directly instead of being declared
+/// `async`; forwarding an `async fn` into another `async fn` would allocate a second boxed future
+/// that only awaits the first.
+pub trait ErasedPlugin: Send + Sync {
+    /// The commands handled by the plugin.
+    fn commands(&self) -> &'static [PluginCommand];
+
+    /// Called when all plugins are loaded and the client has connected to the network.
+    fn loaded<'a>(
+        &'a mut self,
+        ctx: &'a Context,
+        client: &'a Client,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+
+    /// Handles IRC protocol messages.
+    fn handle_message<'a>(
+        &'a self,
+        ctx: &'a Context,
+        client: &'a Client,
+        message: &'a Message,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+}
+
+impl<P: Plugin<Context>> ErasedPlugin for P {
+    fn commands(&self) -> &'static [PluginCommand] {
+        Plugin::commands(self)
+    }
+
+    fn loaded<'a>(
+        &'a mut self,
+        ctx: &'a Context,
+        client: &'a Client,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Plugin::loaded(self, ctx, client)
+    }
+
+    fn handle_message<'a>(
+        &'a self,
+        ctx: &'a Context,
+        client: &'a Client,
+        message: &'a Message,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Plugin::handle_message(self, ctx, client, message)
+    }
 }
 
 /// Metadata about a registered plugin.
@@ -217,7 +327,7 @@ pub struct PluginCatalog {
 #[derive(Default)]
 pub struct Registry {
     /// List of loaded plugins (name, plugin).
-    pub plugins: Vec<(String, Box<dyn Plugin<Context>>)>,
+    pub plugins: Vec<(String, Box<dyn ErasedPlugin>)>,
     /// Catalog of the registered plugins, published to [`Context::shared`].
     catalog: PluginCatalog,
     /// List of plugins that failed to initialize.
@@ -236,11 +346,20 @@ impl Registry {
     }
 
     /// Constructs and returns a new plugin registry with initialized plugins.
-    pub fn preloaded(ctx: &Context) -> Registry {
+    pub fn preloaded(ctx: &Context, plugins: &PluginsConfig) -> Registry {
         let mut registry = Self::new();
         debug!("registering plugins");
 
-        registry.register_bundled_plugins(ctx);
+        for section in &plugins.unknown {
+            if !BUNDLED_PLUGIN_NAMES.contains(&section.0.as_str()) {
+                warn!(
+                    section = %section.0,
+                    "unknown plugin configuration section (typo?)"
+                );
+            }
+        }
+
+        registry.register_bundled_plugins(ctx, plugins);
 
         let num_plugins = registry.plugins.len();
         let num_failed = registry.failed.len();
@@ -260,11 +379,15 @@ impl Registry {
     /// Returns `true` if the plugin was successfully initialized and registered, `false` if
     /// initialization failed. Failed plugins are tracked in `self.failed` and logged with their
     /// name and error.
-    pub fn register<P: Plugin<Context> + 'static>(&mut self, ctx: &Context) -> bool {
+    pub fn register<P: Plugin<Context> + 'static>(
+        &mut self,
+        ctx: &Context,
+        settings: &P::Settings,
+    ) -> bool {
         let metadata = P::metadata();
         let name = metadata.name.to_string();
 
-        match P::new(ctx) {
+        match P::new(ctx, settings) {
             Ok(plugin) => {
                 debug!(plugin = %name, "registered plugin");
 
@@ -289,7 +412,7 @@ impl Registry {
     ///
     /// The caller is expected to move each plugin into its own task.
     #[must_use]
-    pub fn take_plugins(&mut self) -> Vec<(String, Box<dyn Plugin<Context>>)> {
+    pub fn take_plugins(&mut self) -> Vec<(String, Box<dyn ErasedPlugin>)> {
         std::mem::take(&mut self.plugins)
     }
 }
@@ -312,7 +435,7 @@ impl PluginTask {
     /// If the plugin fails to load, the error is logged and the task exits.
     pub fn spawn(
         name: String,
-        mut plugin: Box<dyn Plugin<Context>>,
+        mut plugin: Box<dyn ErasedPlugin>,
         ctx: Arc<Context>,
         client: Arc<Client>,
     ) -> Self {
@@ -378,5 +501,13 @@ mod tests {
 
             assert_eq!(num_urls, expected_results);
         }
+    }
+
+    #[test]
+    fn bundled_plugin_names_include_all_plugins() {
+        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 32);
+        assert!(BUNDLED_PLUGIN_NAMES.contains(&"dig"));
+        assert!(BUNDLED_PLUGIN_NAMES.contains(&"health"));
+        assert!(BUNDLED_PLUGIN_NAMES.contains(&"howlongtobeat"));
     }
 }

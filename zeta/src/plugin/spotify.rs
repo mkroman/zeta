@@ -6,7 +6,7 @@ use base64::prelude::*;
 use num_format::{Locale, ToFormattedString};
 use regex::Regex;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use url::Url;
@@ -18,6 +18,22 @@ use crate::{
 
 const AUTH_URL: &str = "https://accounts.spotify.com/api/token";
 const API_BASE_URL: &str = "https://api.spotify.com/v1";
+
+/// Settings for the spotify plugin, from its `[plugins.spotify]` configuration section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The Spotify application client id.
+    ///
+    /// Falls back to the `SPOTIFY_CLIENT_ID` environment variable when unset.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// The Spotify application client secret.
+    ///
+    /// Falls back to the `SPOTIFY_CLIENT_SECRET` environment variable when unset.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
 
 /// Spotify integration plugin.
 pub struct Spotify {
@@ -115,10 +131,13 @@ struct PlaylistTracks {
 
 #[async_trait]
 impl Plugin<Context> for Spotify {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let client_id = require_env("SPOTIFY_CLIENT_ID")?;
-        let client_secret = require_env("SPOTIFY_CLIENT_SECRET")?;
-        let client = http::build_client();
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let client_id = resolve_secret(settings.client_id.as_deref(), "SPOTIFY_CLIENT_ID")?;
+        let client_secret =
+            resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
+        let client = http::build_client(&ctx.config.http);
         let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)").unwrap();
 
         Ok(Self {
@@ -421,5 +440,30 @@ fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
         Some((segments[0], segments[1]))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert!(settings.client_id.is_none());
+        assert!(settings.client_secret.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "client_id": "id",
+            "client_secret": "secret",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.client_id.as_deref(), Some("id"));
+        assert_eq!(settings.client_secret.as_deref(), Some("secret"));
     }
 }

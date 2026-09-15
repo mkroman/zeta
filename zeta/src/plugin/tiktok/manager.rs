@@ -5,7 +5,7 @@
 //! streams progress status back to the manager over a second mpsc channel, and completed downloads
 //! are uploaded to S3 inline before the requester is notified with the public link.
 //!
-//! At most [`MAX_CONCURRENT_DOWNLOADS`] downloads run at a time; further requests are queued and
+//! At most the configured number of downloads run at a time; further requests are queued and
 //! started in order as running downloads finish.
 
 use std::{
@@ -23,9 +23,6 @@ use super::{
 
 /// The filename prefix for our temporary download directories.
 const TEMP_DIR_PREFIX: &str = "zeta-tiktok-";
-
-/// The default maximum number of downloads that run concurrently.
-const MAX_CONCURRENT_DOWNLOADS: usize = 2;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -81,18 +78,14 @@ pub struct DownloadManager {
 impl DownloadManager {
     /// Starts the download manager task and returns a handle for submitting requests to it.
     ///
-    /// Temporary download directories left behind by a previous run are removed.
+    /// At most `max_concurrent` downloads run at a time. Temporary download directories left
+    /// behind by a previous run are removed.
     ///
     /// # Panics
     ///
     /// Panics if called outside of a tokio runtime.
     #[must_use]
-    pub fn start(ytdlp: YtDlp, s3: S3) -> Self {
-        Self::start_with(ytdlp, s3, MAX_CONCURRENT_DOWNLOADS)
-    }
-
-    /// Starts the download manager task with the given maximum number of concurrent downloads.
-    fn start_with(ytdlp: YtDlp, s3: S3, max_concurrent: usize) -> Self {
+    pub fn start(ytdlp: YtDlp, s3: S3, max_concurrent: usize) -> Self {
         let removed = cleanup_stale_downloads(&std::env::temp_dir());
         if removed > 0 {
             debug!(removed, "cleaned up stale download directories");
@@ -568,6 +561,7 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
         let manager = DownloadManager::start(
             YtDlp::with_command(script.to_str().unwrap()),
             S3::for_test(),
+            2,
         );
 
         let (results, mut rx) = mpsc::unbounded_channel();
@@ -599,6 +593,7 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
         let manager = DownloadManager::start(
             YtDlp::with_command(script.to_str().unwrap()),
             S3::for_test(),
+            2,
         );
 
         let (results, mut rx) = mpsc::unbounded_channel();
@@ -623,7 +618,7 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
         let _guard = DOWNLOAD_TESTS.lock().await;
 
         let script = write_sleeping_script("manager-sleep-b");
-        let manager = DownloadManager::start_with(
+        let manager = DownloadManager::start(
             YtDlp::with_command(script.to_str().unwrap()),
             S3::for_test(),
             1,

@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use htmlize::unescape;
 use regex::Regex;
@@ -14,7 +17,7 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
-use super::{BASE_URL, Error, HTTP_TIMEOUT, SESSION_DURATION, USER_AGENT, ImageResult, SearchResult};
+use super::{BASE_URL, ClientOptions, Error, ImageResult, SearchResult};
 
 /// The `Accept` header sent for document (navigation) requests.
 const ACCEPT_DOCUMENT: HeaderValue = HeaderValue::from_static(
@@ -22,8 +25,6 @@ const ACCEPT_DOCUMENT: HeaderValue = HeaderValue::from_static(
 );
 /// The `Accept` header sent for server-sent event stream requests.
 const ACCEPT_EVENT_STREAM: HeaderValue = HeaderValue::from_static("text/event-stream");
-/// The `Accept-Language` header sent with all requests.
-const LANGUAGE: HeaderValue = HeaderValue::from_static("en-US,en;q=0.9");
 
 /// Represents a message parsed from a Kagi socket stream.
 ///
@@ -74,11 +75,15 @@ pub struct Client {
     token: SecretString,
     /// Session details.
     session: Arc<RwLock<Option<Session>>>,
+    /// The duration of a single session.
+    session_duration: Duration,
+    /// The `Accept-Language` header sent with requests.
+    language: HeaderValue,
 }
 
 impl Session {
-    fn is_valid(&self) -> bool {
-        self.created_at.elapsed() < SESSION_DURATION
+    fn is_valid(&self, session_duration: Duration) -> bool {
+        self.created_at.elapsed() < session_duration
     }
 
     /// Returns the nonce on the first call and `None` afterwards, mirroring a browser which
@@ -89,7 +94,8 @@ impl Session {
 }
 
 impl Client {
-    /// Constructs a new [`Client`] for searching with Kagi using the given session token.
+    /// Constructs a new [`Client`] for searching with Kagi using the given session token and
+    /// default options.
     ///
     /// The token is the value of the `kagi_session` cookie from an authenticated browser session.
     ///
@@ -97,19 +103,41 @@ impl Client {
     ///
     /// Panics if the HTTP client fails to build.
     pub fn with_token(token: impl Into<SecretString>) -> Client {
+        Self::with_token_and_options(token, ClientOptions::default())
+            .expect("could not build http client")
+    }
+
+    /// Constructs a new [`Client`] for searching with Kagi using the given session token and
+    /// options.
+    ///
+    /// The token is the value of the `kagi_session` cookie from an authenticated browser session.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client fails to build.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHeader`] if a configured header value is invalid.
+    pub fn with_token_and_options(
+        token: impl Into<SecretString>,
+        options: ClientOptions,
+    ) -> Result<Client, Error> {
         let client = reqwest::ClientBuilder::new()
             .cookie_store(true)
             .redirect(Policy::none())
-            .timeout(HTTP_TIMEOUT)
-            .user_agent(USER_AGENT)
+            .timeout(options.timeout)
+            .user_agent(options.user_agent)
             .build()
             .expect("could not build http client");
 
-        Client {
+        Ok(Client {
             http: client,
             token: token.into(),
             session: Arc::new(RwLock::new(None)),
-        }
+            session_duration: options.session_duration,
+            language: HeaderValue::from_str(&options.language)?,
+        })
     }
 
     /// Attaches the session authorization header to the request, mirroring the browser which
@@ -122,7 +150,7 @@ impl Client {
     fn document_request(&self, url: &str) -> reqwest::RequestBuilder {
         self.authorize(self.http.get(url))
             .header(ACCEPT, ACCEPT_DOCUMENT)
-            .header(ACCEPT_LANGUAGE, LANGUAGE)
+            .header(ACCEPT_LANGUAGE, self.language.clone())
             .header("Sec-Fetch-Dest", HeaderValue::from_static("document"))
             .header("Sec-Fetch-Mode", HeaderValue::from_static("navigate"))
             .header("Sec-Fetch-Site", HeaderValue::from_static("none"))
@@ -134,7 +162,7 @@ impl Client {
     fn stream_request(&self, url: reqwest::Url) -> reqwest::RequestBuilder {
         self.authorize(self.http.get(url))
             .header(ACCEPT, ACCEPT_EVENT_STREAM)
-            .header(ACCEPT_LANGUAGE, LANGUAGE)
+            .header(ACCEPT_LANGUAGE, self.language.clone())
             .header("Sec-Fetch-Dest", HeaderValue::from_static("empty"))
             .header("Sec-Fetch-Mode", HeaderValue::from_static("cors"))
             .header("Sec-Fetch-Site", HeaderValue::from_static("same-origin"))
@@ -177,7 +205,10 @@ impl Client {
         {
             let mut guard = self.session.write().await;
 
-            if let Some(session) = guard.as_mut().filter(|session| session.is_valid()) {
+            if let Some(session) = guard
+                .as_mut()
+                .filter(|session| session.is_valid(self.session_duration))
+            {
                 return Ok(session.take_nonce());
             }
         }
@@ -190,7 +221,10 @@ impl Client {
         let taken = {
             let mut guard = self.session.write().await;
 
-            if let Some(session) = guard.as_mut().filter(|session| session.is_valid()) {
+            if let Some(session) = guard
+                .as_mut()
+                .filter(|session| session.is_valid(self.session_duration))
+            {
                 session.take_nonce()
             } else {
                 let mut session = Session {
@@ -598,5 +632,28 @@ mod tests {
 
         assert_eq!(session.take_nonce().as_deref(), Some("nonce"));
         assert_eq!(session.take_nonce(), None);
+    }
+
+    #[test]
+    fn test_client_options_default_to_constants() {
+        let options = ClientOptions::default();
+
+        assert_eq!(options.timeout, crate::HTTP_TIMEOUT);
+        assert_eq!(options.user_agent, crate::USER_AGENT);
+        assert_eq!(options.session_duration, crate::SESSION_DURATION);
+        assert_eq!(options.language, crate::LANGUAGE);
+    }
+
+    #[test]
+    fn test_invalid_language_is_rejected() {
+        let options = ClientOptions {
+            language: "invalid\nlanguage".to_string(),
+            ..ClientOptions::default()
+        };
+
+        assert!(matches!(
+            Client::with_token_and_options("token", options),
+            Err(Error::InvalidHeader(_))
+        ));
     }
 }

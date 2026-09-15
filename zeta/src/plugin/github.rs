@@ -3,13 +3,24 @@ use std::fmt::Write;
 use miette::{Diagnostic, Result};
 use reqwest::{
     self,
-    header::{ACCEPT, HeaderMap, HeaderValue},
+    header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{error, info};
 
-use crate::{http, plugin::prelude::*};
+use crate::{config::HttpConfig, http, plugin::prelude::*};
+
+/// Settings for the github plugin, from its `[plugins.github]` configuration section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// A GitHub API token, used to raise the rate limit for requests.
+    ///
+    /// Falls back to the `GITHUB_TOKEN` environment variable when unset.
+    #[serde(default)]
+    pub token: Option<String>,
+}
 
 /// Custom error types for the GitHub plugin.
 #[derive(Debug, Error, Diagnostic)]
@@ -29,6 +40,10 @@ pub enum Error {
     #[error("Failed to parse GitHub response")]
     #[diagnostic(code(github::search::parse))]
     ResponseParseFailed(#[source] reqwest::Error),
+
+    #[error("Invalid GitHub token")]
+    #[diagnostic(code(github::init::token))]
+    InvalidToken(#[source] reqwest::header::InvalidHeaderValue),
 }
 
 /// The `.gh` command.
@@ -65,8 +80,14 @@ struct RepoItem {
 
 #[async_trait]
 impl Plugin<Context> for GitHubPlugin {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
-        let plugin = GitHubPlugin::new()
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let token = settings
+            .token
+            .clone()
+            .or_else(|| std::env::var("GITHUB_TOKEN").ok());
+        let plugin = GitHubPlugin::new(&ctx.config.http, token)
             .map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
         Ok(plugin)
     }
@@ -103,7 +124,12 @@ impl Plugin<Context> for GitHubPlugin {
 impl GitHubPlugin {
     /// Create a new instance of the GitHub plugin.
     /// Initializes a generic HTTP client with standard timeouts.
-    pub fn new() -> Result<Self> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client could not be built, or the token is not a valid
+    /// header value.
+    pub fn new(config: &HttpConfig, token: Option<String>) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -114,7 +140,14 @@ impl GitHubPlugin {
             HeaderValue::from_static("2022-11-28"),
         );
 
-        let client = http::client::builder()
+        if let Some(token) = token {
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {token}")).map_err(Error::InvalidToken)?,
+            );
+        }
+
+        let client = http::client::builder(config)
             .default_headers(headers)
             .build()
             .map_err(Error::InitFailed)?;
@@ -221,5 +254,33 @@ impl GitHubPlugin {
     /// Ruby: %(\x0310>\x0F\x02 GitHub:\x02\x0310 #{message})
     fn format_message(message: &str) -> String {
         format!("\x0310>\x0F\x02 GitHub:\x02\x0310 {message}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        assert!(Settings::default().token.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "token": "secret",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.token.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn invalid_tokens_are_rejected() {
+        assert!(
+            GitHubPlugin::new(&HttpConfig::default(), Some("bad\ntoken".to_string())).is_err(),
+            "invalid token should be rejected"
+        );
     }
 }

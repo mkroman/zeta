@@ -12,4 +12,7 @@ pub enum Error {
     /// Deleting a notification from the database failed.
     #[error("could not delete notification: {0}")]
     Delete(#[source] sqlx::Error),
+    /// The target already has the maximum number of pending notifications.
+    #[error("too many pending notifications (maximum is {0})")]
+    TooManyPending(usize),
 }

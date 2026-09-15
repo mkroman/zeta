@@ -12,14 +12,12 @@ use tokio::sync::{Mutex, Notify, mpsc};
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{
+    Settings,
     error::Error,
     model::{Alert, NewAlert},
     repository::AlertRepository,
 };
 use crate::database::Database;
-
-/// How long the scheduler waits before retrying after a failed tick.
-const RETRY_DELAY: Duration = Duration::from_secs(30);
 
 /// An alert scheduled for delivery, ordered by the time it is due.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +49,10 @@ struct Scheduler {
     cache: Arc<Mutex<BinaryHeap<Reverse<Scheduled>>>>,
     /// Wakes the scheduler when an alert is created.
     notify: Arc<Notify>,
+    /// How long the scheduler waits before retrying after a failed tick.
+    retry_delay: Duration,
+    /// The maximum number of pending alerts a user may have.
+    max_pending_per_user: usize,
 }
 
 /// Stores alerts in the database, caching them in memory and delivering due alerts over an
@@ -72,7 +74,7 @@ pub struct AlertService {
 impl AlertService {
     /// Creates a new alert service backed by the given database pool.
     #[must_use]
-    pub fn new(db: Database) -> Self {
+    pub fn new(db: Database, settings: &Settings) -> Self {
         let (tx, receiver) = mpsc::unbounded_channel();
 
         Self {
@@ -81,6 +83,8 @@ impl AlertService {
                 tx,
                 cache: Arc::new(Mutex::new(BinaryHeap::new())),
                 notify: Arc::new(Notify::new()),
+                retry_delay: settings.retry_delay,
+                max_pending_per_user: settings.max_pending_per_user,
             },
             receiver: Some(receiver),
         }
@@ -147,7 +151,26 @@ impl Scheduler {
     }
 
     /// Creates a new alert, persisting it in the database and scheduling it for delivery.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::TooManyPending`] if the user already has the maximum number of pending
+    /// alerts, or [`Error::Insert`] if the alert could not be inserted into the database.
     async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
+        if self.max_pending_per_user > 0 {
+            let pending = self
+                .cache
+                .lock()
+                .await
+                .iter()
+                .filter(|Reverse(scheduled)| scheduled.0.nickname == alert.nickname)
+                .count();
+
+            if pending >= self.max_pending_per_user {
+                return Err(Error::TooManyPending(self.max_pending_per_user));
+            }
+        }
+
         let alert = self.repo.insert(alert).await?;
 
         trace!(?alert, "scheduling alert");
@@ -198,7 +221,7 @@ impl Scheduler {
             if self.tick().await.is_err() {
                 debug!("retrying scheduler tick shortly");
 
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(self.retry_delay).await;
             }
         }
     }
@@ -293,7 +316,7 @@ mod tests {
             .await
             .expect("could not connect to the test database");
 
-        let mut service = AlertService::new(db.clone());
+        let mut service = AlertService::new(db.clone(), &Settings::default());
         let receiver = service.take_receiver();
 
         Some((service, receiver.unwrap(), db))
