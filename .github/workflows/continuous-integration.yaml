@@ -1,6 +1,9 @@
 name: Continuous Integration
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -34,10 +37,13 @@ jobs:
     uses: ./.github/workflows/container-image.yaml
     with:
       images: ghcr.io/${{ github.repository }}
-      push: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
-      cache-from: |
-        type=gha,scope=buildkit-${{ github.ref_name }}
-        type=gha,scope=buildkit-main
-      cache-to: type=gha,mode=max,scope=buildkit-${{ github.ref_name }}
+      push: ${{ github.ref == 'refs/heads/main' }}
+      tags: |
+        type=edge,branch=main
+        type=sha
+      # Only main writes the shared cache: PR caches are scoped to the merge
+      # ref and would evict the shared entries from the 10 GB quota.
+      cache-from: type=gha,scope=buildkit-main
+      cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=buildkit-main' || '' }}
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}

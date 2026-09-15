@@ -31,8 +31,8 @@ on:
         default: "ci-${{ inputs.toolchain }}"
         type: string
       clippy-args:
-        description: "Arguments to pass on to clippy (defaults to `args` if not set)"
-        default: "${{ inputs.args }}"
+        description: "Arguments to pass on to clippy"
+        default: "--all-targets --all-features --no-deps"
         type: string
       test-args:
         description: "Arguments to pass on to cargo test (defaults to `args` if not set)"

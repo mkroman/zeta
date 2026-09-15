@@ -1,7 +1,8 @@
 .dockerignore
 .git/
 .github/
-hack/
+hack/*
+!hack/install-cargo-tool.sh
 target/
 Dockerfile
 renovate.json5
