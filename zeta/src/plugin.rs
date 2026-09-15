@@ -163,7 +163,7 @@ declare_plugins! {
 
   /// IMDb integration
   #[cfg(feature = "plugin-imdb")]
-  imdb::Imdb => NoSettings,
+  imdb::Imdb => imdb::Settings,
 
   /// Is it open
   #[cfg(feature = "plugin-isitopen")]

@@ -7,6 +7,8 @@ pub enum Error {
     Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    #[error("invalid header value: {0}")]
+    InvalidHeader(#[from] reqwest::header::InvalidHeaderValue),
     #[error("graphql error: {0}")]
     GraphQL(String),
     #[error("resource not found")]

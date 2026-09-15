@@ -152,6 +152,12 @@ name = "#zeta.dev"
   [plugins.imdb]
   # Enable the plugin.
   enabled = true
+  # Whether to include adult titles in search results.
+  # include_adult = true
+  # The country the IMDb API localises results for.
+  # user_country = "US"
+  # The language the IMDb API localises results for.
+  # user_language = "en-US"
 
   # Is it open.
   [plugins.isitopen]
