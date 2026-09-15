@@ -35,6 +35,8 @@ COPY --parents \
     dendanskeordbog/src/lib.rs \
     reddit/Cargo.toml \
     reddit/src/lib.rs \
+    kagi/Cargo.toml \
+    kagi/src/lib.rs \
     ./
 
 RUN cargo chef prepare --recipe-path recipe.json

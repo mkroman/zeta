@@ -18,9 +18,9 @@ path = "src/main.rs"
 default = ["plugins-all", "rustls", "database"]
 database = ["dep:sqlx", "dep:chrono"]
 http = ["dep:reqwest"]
-native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx?/tls-native-tls"]
-native-tls-vendored = ["reqwest/native-tls-vendored", "irc/tls-native", "sqlx?/tls-native-tls"]
-rustls = ["dep:rustls", "reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls"]
+native-tls = ["reqwest/native-tls", "irc/tls-native", "sqlx?/tls-native-tls", "kagi?/native-tls"]
+native-tls-vendored = ["reqwest/native-tls-vendored", "irc/tls-native", "sqlx?/tls-native-tls", "kagi?/native-tls-vendored"]
+rustls = ["dep:rustls", "reqwest/rustls", "irc/tls-rust", "sqlx?/tls-rustls", "kagi?/rustls"]
 plugin-alert = ["database", "dep:chrono", "dep:interim"]
 plugin-chaturbate = ["http", "dep:regex"]
 plugin-choices = []
@@ -29,13 +29,12 @@ plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
 plugin-dig = []
 plugin-geoip = ["http"]
 plugin-github = ["http"]
-plugin-google-images = ["http"]
 plugin-health = ["dep:memory-stats"]
 plugin-help = []
 plugin-howlongtobeat = ["http"]
 plugin-imdb = ["http", "dep:num-format", "dep:serde_path_to_error"]
 plugin-isitopen = ["http", "dep:regex", "dep:time"]
-plugin-kagi = ["http", "dep:regex", "dep:scraper"]
+plugin-kagi = ["dep:kagi"]
 plugin-notification = ["database", "dep:chrono"]
 plugin-ofn = ["database", "http", "plugin-youtube", "dep:num-format"]
 plugin-openweathermap = ["http"]
@@ -68,7 +67,6 @@ plugins-all = [
     "plugin-dig",
     "plugin-geoip",
     "plugin-github",
-    "plugin-google-images",
     "plugin-health",
     "plugin-help",
     "plugin-howlongtobeat",
@@ -110,6 +108,7 @@ htmlize = { version = "1.1.0", features = ["unescape"], optional = true }
 humantime-serde = "1.1.1"
 interim = { version = "0.2.1", features = ["chrono_0_4"], optional = true }
 irc.workspace = true
+kagi = { path = "../kagi", default-features = false, optional = true }
 memory-stats = { version = "1.2.0", optional = true }
 miette = { version = "7.2.0", features = ["fancy"] }
 num-format = { version = "0.4.4", optional = true }
@@ -123,7 +122,6 @@ regex = { version = "1.12.2", optional = true }
 reqwest = { workspace = true, features = ["json", "stream", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"], optional = true }
 rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "61be392a0d605ea6c4192934134683d63fbe7f7d", features = ["bundle-files", "serde_json"], optional = true }
 rustls = { version = "0.23.44", optional = true }
-scraper = { optional = true, workspace = true }
 secrecy = { optional = true, workspace = true }
 serde.workspace = true
 serde_json.workspace = true
@@ -142,7 +140,6 @@ wreq-util = { version = "0.2.0", optional = true }
 zeta-plugin = { path = "../zeta-plugin" }
 
 [dev-dependencies]
-criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 wildmatch = "=2.6.1"
 
 [lints.clippy]
