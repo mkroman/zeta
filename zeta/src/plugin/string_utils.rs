@@ -35,7 +35,9 @@ pub struct StringUtils;
 
 #[async_trait]
 impl Plugin<Context> for StringUtils {
-    fn new(_ctx: &Context) -> Result<StringUtils, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<StringUtils, ZetaError> {
         Ok(StringUtils::new())
     }
 

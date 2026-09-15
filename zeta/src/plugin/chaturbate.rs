@@ -63,7 +63,9 @@ pub struct RoomDossier {
 
 #[async_trait]
 impl Plugin<Context> for Chaturbate {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
         Ok(Self::new(&ctx.config.http))
     }
 

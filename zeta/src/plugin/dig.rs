@@ -118,9 +118,10 @@ impl Display for LookupResult {
 
 #[async_trait]
 impl Plugin<Context> for Dig {
-    fn new(ctx: &Context) -> Result<Dig, ZetaError> {
-        let resolver = build_resolver(&ctx.config.plugins.dig.settings.nameservers)
-            .map_err(ZetaError::from)?;
+    type Settings = Settings;
+
+    fn new(_ctx: &Context, settings: &Settings) -> Result<Dig, ZetaError> {
+        let resolver = build_resolver(&settings.nameservers).map_err(ZetaError::from)?;
 
         Ok(Dig { resolver })
     }

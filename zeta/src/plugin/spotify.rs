@@ -131,8 +131,9 @@ struct PlaylistTracks {
 
 #[async_trait]
 impl Plugin<Context> for Spotify {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let settings = &ctx.config.plugins.spotify.settings;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client_id = resolve_secret(settings.client_id.as_deref(), "SPOTIFY_CLIENT_ID")?;
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;

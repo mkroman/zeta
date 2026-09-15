@@ -107,8 +107,9 @@ pub enum Error {
 
 #[async_trait]
 impl Plugin<Context> for Trustpilot {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let settings = &ctx.config.plugins.trustpilot.settings;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "TRUSTPILOT_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 

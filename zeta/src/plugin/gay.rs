@@ -2015,7 +2015,9 @@ fn designation_present(client: &Client, channel: &str, designation: &str) -> boo
 
 #[async_trait]
 impl Plugin<Context> for Gay {
-    fn new(_ctx: &Context) -> Result<Gay, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Gay, ZetaError> {
         let profile = EngineConfig::campaign_profile().map_err(plugin_err)?;
         let engine = GayEngine::assemble(profile).map_err(plugin_err)?;
 

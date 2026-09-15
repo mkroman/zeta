@@ -152,8 +152,9 @@ pub enum Error {
 
 #[async_trait]
 impl Plugin<Context> for Tiktok {
-    fn new(ctx: &Context) -> Result<Tiktok, ZetaError> {
-        let settings = ctx.config.plugins.tiktok.settings.clone();
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Tiktok, ZetaError> {
         let ytdlp = YtDlp::new(YtDlpOptions {
             command: settings.ytdlp_command.clone(),
             max_filesize: settings.max_filesize.clone(),
@@ -183,7 +184,7 @@ impl Plugin<Context> for Tiktok {
         Ok(Tiktok {
             client: http::build_client(&ctx.config.http),
             mirror,
-            settings,
+            settings: settings.clone(),
         })
     }
 

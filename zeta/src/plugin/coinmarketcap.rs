@@ -317,8 +317,9 @@ pub struct CoinMarketCap {
 
 #[async_trait]
 impl Plugin<Context> for CoinMarketCap {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let settings = &ctx.config.plugins.coinmarketcap.settings;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
         let client = client::Client::new(&api_key, &ctx.config.http)?;
 

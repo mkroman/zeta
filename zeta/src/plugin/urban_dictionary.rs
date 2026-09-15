@@ -96,11 +96,10 @@ pub struct Definition {
 
 #[async_trait]
 impl Plugin<Context> for UrbanDictionary {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        Ok(UrbanDictionary::new(
-            &ctx.config.http,
-            ctx.config.plugins.urban_dictionary.settings.clone(),
-        ))
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        Ok(UrbanDictionary::new(&ctx.config.http, settings.clone()))
     }
 
     fn metadata() -> Metadata {

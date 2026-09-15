@@ -27,17 +27,20 @@ impl Zeta {
     /// establish the IRC connection yet. Call `run()` to start the bot.
     #[must_use]
     pub fn new(
-        config: Config,
+        mut config: Config,
         #[cfg(feature = "database")] db: crate::database::Database,
         dns: hickory_resolver::TokioResolver,
     ) -> Self {
+        // The per-plugin sections are handed to the plugins through their constructors; the
+        // context's config only carries global configuration.
+        let plugins = config.take_plugins();
         let context = Arc::new(Context::new(
             #[cfg(feature = "database")]
             db,
             dns,
             config.clone(),
         ));
-        let registry = Registry::preloaded(&context);
+        let registry = Registry::preloaded(&context, &plugins);
 
         Zeta {
             config,

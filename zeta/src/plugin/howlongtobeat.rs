@@ -210,7 +210,9 @@ impl Default for SearchOptions {
 
 #[async_trait]
 impl Plugin<Context> for HowLongToBeat {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self {

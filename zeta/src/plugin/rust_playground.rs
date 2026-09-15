@@ -107,8 +107,9 @@ struct ExecuteResponse {
 
 #[async_trait]
 impl Plugin<Context> for RustPlayground {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let settings = ctx.config.plugins.rust_playground.settings.clone();
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
@@ -116,7 +117,7 @@ impl Plugin<Context> for RustPlayground {
         Ok(Self {
             client,
             error_regex,
-            settings,
+            settings: settings.clone(),
         })
     }
 

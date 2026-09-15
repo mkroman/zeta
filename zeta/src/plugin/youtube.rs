@@ -258,8 +258,9 @@ pub type SearchListResponse = ApiListResponse<Search>;
 
 #[async_trait]
 impl Plugin<Context> for YouTube {
-    fn new(ctx: &Context) -> Result<YouTube, ZetaError> {
-        let settings = &ctx.config.plugins.youtube.settings;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<YouTube, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
 
         Ok(YouTube::with_config(settings, api_key, &ctx.config.http))

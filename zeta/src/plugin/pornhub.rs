@@ -133,8 +133,10 @@ pub struct Category {
 
 #[async_trait]
 impl Plugin<Context> for PornHub {
+    type Settings = NoSettings;
+
     /// Creates a new instance of the PornHub plugin.
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
 
         Ok(PornHub { client })

@@ -137,7 +137,9 @@ impl EndpointUrls {
 
 #[async_trait]
 impl Plugin<Context> for Tvmaze {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
         Ok(Tvmaze::new(&ctx.config.http))
     }
 

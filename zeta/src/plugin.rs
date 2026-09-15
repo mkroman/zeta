@@ -1,6 +1,8 @@
 #![allow(clippy::doc_markdown)]
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use figment::value::Dict;
@@ -43,7 +45,8 @@ mod prelude {
 /// 2. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
 ///    for plugins with settings, `=> NoSettings` otherwise.
 /// 3. A call to `register::<$mod_name::$struct_name>()` inside `Registry::register_bundled_plugins`,
-///    gated on the plugin's `enabled` configuration.
+///    gated on the plugin's `enabled` configuration and passing the plugin's own settings through
+///    to its constructor.
 macro_rules! declare_plugins {
     (
         $(
@@ -91,14 +94,18 @@ macro_rules! declare_plugins {
 
         // Generate a helper extension to register these specific plugins
         impl Registry {
-            fn register_bundled_plugins(&mut self, #[allow(unused)] ctx: &Context) {
+            fn register_bundled_plugins(
+                &mut self,
+                #[allow(unused)] ctx: &Context,
+                #[allow(unused)] plugins: &PluginsConfig,
+            ) {
                 $(
                     #[cfg(feature = $feature)]
                     {
-                        let section = &ctx.config.plugins.$mod_name;
+                        let section = &plugins.$mod_name;
 
                         if section.enabled {
-                            self.register::<$mod_name::$struct_name>(ctx);
+                            self.register::<$mod_name::$struct_name>(ctx, &section.settings);
                         } else {
                             ::tracing::info!(
                                 plugin = %<$mod_name::$struct_name as Plugin<Context>>::metadata().name,
@@ -242,6 +249,59 @@ declare_plugins! {
   youtube::YouTube => youtube::Settings,
 }
 
+/// Object-safe view of [`Plugin`], implemented automatically for every `Plugin<Context>`.
+///
+/// [`Plugin`] declares an associated [`Settings`](Plugin::Settings) type and therefore cannot be
+/// used directly as a trait object. The registry stores plugins with different settings types
+/// behind this trait, which erases the settings type and exposes only the runtime methods the
+/// host needs. Plugin authors never implement this trait themselves.
+///
+/// The methods return the plugin's already-boxed futures directly instead of being declared
+/// `async`; forwarding an `async fn` into another `async fn` would allocate a second boxed future
+/// that only awaits the first.
+pub trait ErasedPlugin: Send + Sync {
+    /// The commands handled by the plugin.
+    fn commands(&self) -> &'static [PluginCommand];
+
+    /// Called when all plugins are loaded and the client has connected to the network.
+    fn loaded<'a>(
+        &'a mut self,
+        ctx: &'a Context,
+        client: &'a Client,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+
+    /// Handles IRC protocol messages.
+    fn handle_message<'a>(
+        &'a self,
+        ctx: &'a Context,
+        client: &'a Client,
+        message: &'a Message,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+}
+
+impl<P: Plugin<Context>> ErasedPlugin for P {
+    fn commands(&self) -> &'static [PluginCommand] {
+        Plugin::commands(self)
+    }
+
+    fn loaded<'a>(
+        &'a mut self,
+        ctx: &'a Context,
+        client: &'a Client,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Plugin::loaded(self, ctx, client)
+    }
+
+    fn handle_message<'a>(
+        &'a self,
+        ctx: &'a Context,
+        client: &'a Client,
+        message: &'a Message,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Plugin::handle_message(self, ctx, client, message)
+    }
+}
+
 /// Metadata about a registered plugin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PluginInfo {
@@ -267,7 +327,7 @@ pub struct PluginCatalog {
 #[derive(Default)]
 pub struct Registry {
     /// List of loaded plugins (name, plugin).
-    pub plugins: Vec<(String, Box<dyn Plugin<Context>>)>,
+    pub plugins: Vec<(String, Box<dyn ErasedPlugin>)>,
     /// Catalog of the registered plugins, published to [`Context::shared`].
     catalog: PluginCatalog,
     /// List of plugins that failed to initialize.
@@ -286,11 +346,11 @@ impl Registry {
     }
 
     /// Constructs and returns a new plugin registry with initialized plugins.
-    pub fn preloaded(ctx: &Context) -> Registry {
+    pub fn preloaded(ctx: &Context, plugins: &PluginsConfig) -> Registry {
         let mut registry = Self::new();
         debug!("registering plugins");
 
-        for section in &ctx.config.plugins.unknown {
+        for section in &plugins.unknown {
             if !BUNDLED_PLUGIN_NAMES.contains(&section.0.as_str()) {
                 warn!(
                     section = %section.0,
@@ -299,7 +359,7 @@ impl Registry {
             }
         }
 
-        registry.register_bundled_plugins(ctx);
+        registry.register_bundled_plugins(ctx, plugins);
 
         let num_plugins = registry.plugins.len();
         let num_failed = registry.failed.len();
@@ -319,11 +379,15 @@ impl Registry {
     /// Returns `true` if the plugin was successfully initialized and registered, `false` if
     /// initialization failed. Failed plugins are tracked in `self.failed` and logged with their
     /// name and error.
-    pub fn register<P: Plugin<Context> + 'static>(&mut self, ctx: &Context) -> bool {
+    pub fn register<P: Plugin<Context> + 'static>(
+        &mut self,
+        ctx: &Context,
+        settings: &P::Settings,
+    ) -> bool {
         let metadata = P::metadata();
         let name = metadata.name.to_string();
 
-        match P::new(ctx) {
+        match P::new(ctx, settings) {
             Ok(plugin) => {
                 debug!(plugin = %name, "registered plugin");
 
@@ -348,7 +412,7 @@ impl Registry {
     ///
     /// The caller is expected to move each plugin into its own task.
     #[must_use]
-    pub fn take_plugins(&mut self) -> Vec<(String, Box<dyn Plugin<Context>>)> {
+    pub fn take_plugins(&mut self) -> Vec<(String, Box<dyn ErasedPlugin>)> {
         std::mem::take(&mut self.plugins)
     }
 }
@@ -371,7 +435,7 @@ impl PluginTask {
     /// If the plugin fails to load, the error is logged and the task exits.
     pub fn spawn(
         name: String,
-        mut plugin: Box<dyn Plugin<Context>>,
+        mut plugin: Box<dyn ErasedPlugin>,
         ctx: Arc<Context>,
         client: Arc<Client>,
     ) -> Self {

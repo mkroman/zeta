@@ -391,7 +391,9 @@ impl Ofn {
 
 #[async_trait]
 impl Plugin<Context> for Ofn {
-    fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
         Ok(Self::new())
     }
 

@@ -133,11 +133,10 @@ impl AlertPlugin {
 
 #[async_trait]
 impl Plugin<Context> for AlertPlugin {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let mut service = AlertService::new(
-            ctx.db.clone(),
-            &ctx.config.plugins.alert.settings,
-        );
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let mut service = AlertService::new(ctx.db.clone(), settings);
         let receiver = service.take_receiver();
         let service = Arc::new(service);
 

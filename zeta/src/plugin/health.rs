@@ -31,7 +31,9 @@ pub struct Snapshot {
 
 #[async_trait]
 impl Plugin<Context> for Health {
-    fn new(_ctx: &Context) -> Result<Health, ZetaError> {
+    type Settings = NoSettings;
+
+    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Health, ZetaError> {
         Ok(Health)
     }
 

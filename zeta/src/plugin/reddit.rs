@@ -45,8 +45,9 @@ pub struct Reddit {
 
 #[async_trait]
 impl Plugin<Context> for Reddit {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let settings = &ctx.config.plugins.reddit.settings;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =
             resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();

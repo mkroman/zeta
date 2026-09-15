@@ -95,8 +95,9 @@ pub struct IpInfo {
 
 #[async_trait]
 impl Plugin<Context> for GeoIp {
-    fn new(ctx: &Context) -> Result<GeoIp, ZetaError> {
-        let settings = &ctx.config.plugins.geoip.settings;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<GeoIp, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
         let client = http::client::builder(&ctx.config.http)
             .build()

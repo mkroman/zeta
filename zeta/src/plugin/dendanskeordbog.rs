@@ -100,11 +100,10 @@ impl Display for MessageFormatter<'_> {
 
 #[async_trait]
 impl Plugin<Context> for DenDanskeOrdbog {
-    fn new(ctx: &Context) -> Result<DenDanskeOrdbog, ZetaError> {
-        Ok(DenDanskeOrdbog::new(
-            &ctx.config.http,
-            ctx.config.plugins.dendanskeordbog.settings.clone(),
-        ))
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<DenDanskeOrdbog, ZetaError> {
+        Ok(DenDanskeOrdbog::new(&ctx.config.http, settings.clone()))
     }
 
     fn metadata() -> Metadata {

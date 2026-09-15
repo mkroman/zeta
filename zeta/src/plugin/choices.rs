@@ -40,9 +40,11 @@ pub struct Choices {
 
 #[async_trait]
 impl Plugin<Context> for Choices {
-    fn new(ctx: &Context) -> Result<Choices, ZetaError> {
+    type Settings = Settings;
+
+    fn new(_ctx: &Context, settings: &Settings) -> Result<Choices, ZetaError> {
         Ok(Choices {
-            settings: ctx.config.plugins.choices.settings.clone(),
+            settings: settings.clone(),
         })
     }
 

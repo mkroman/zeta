@@ -109,8 +109,9 @@ pub struct Imdb {
 
 #[async_trait]
 impl Plugin<Context> for Imdb {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let settings = &ctx.config.plugins.imdb.settings;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
 
         Ok(Imdb { client })

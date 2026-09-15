@@ -68,12 +68,11 @@ pub struct NotificationPlugin {
 
 #[async_trait]
 impl Plugin<Context> for NotificationPlugin {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         Ok(NotificationPlugin {
-            service: NotificationService::new(
-                ctx.db.clone(),
-                &ctx.config.plugins.notification.settings,
-            ),
+            service: NotificationService::new(ctx.db.clone(), settings),
         })
     }
 

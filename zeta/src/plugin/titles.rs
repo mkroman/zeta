@@ -442,8 +442,9 @@ fn emulated_headers(user_agent: &str) -> Result<HeaderMap, ZetaError> {
 
 #[async_trait]
 impl Plugin<Context> for Titles {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let settings = ctx.config.plugins.titles.settings.clone();
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = wreq::Client::builder()
             .emulation(Emulation::Firefox142)
             .default_headers(emulated_headers(&ctx.config.http.user_agent)?)
@@ -452,7 +453,10 @@ impl Plugin<Context> for Titles {
             .build()
             .map_err(plugin_err)?;
 
-        Ok(Titles { client, settings })
+        Ok(Titles {
+            client,
+            settings: settings.clone(),
+        })
     }
 
     fn metadata() -> Metadata {

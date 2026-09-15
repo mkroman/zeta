@@ -80,8 +80,9 @@ struct RepoItem {
 
 #[async_trait]
 impl Plugin<Context> for GitHubPlugin {
-    fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let settings = &ctx.config.plugins.github.settings;
+    type Settings = Settings;
+
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let token = settings
             .token
             .clone()

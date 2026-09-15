@@ -22,8 +22,22 @@ pub struct Config {
     #[serde(default)]
     pub http: HttpConfig,
     /// Per-plugin configuration sections.
+    ///
+    /// Consumed by [`Config::take_plugins`] during startup, before any plugin is constructed; the
+    /// config kept in the context holds defaults for every plugin section afterwards.
     #[serde(default)]
-    pub plugins: PluginsConfig,
+    plugins: PluginsConfig,
+}
+
+impl Config {
+    /// Removes and returns the per-plugin configuration sections.
+    ///
+    /// The host calls this once while starting up and hands each plugin its own section through
+    /// its constructor. Afterwards the config holds defaults for all plugin sections.
+    #[must_use]
+    pub(crate) fn take_plugins(&mut self) -> PluginsConfig {
+        std::mem::take(&mut self.plugins)
+    }
 }
 
 /// An individual plugin's configuration: its `[plugins.<name>]` section.
@@ -457,5 +471,41 @@ channels = []
         assert!(config.plugins.dig.enabled);
         assert!(config.plugins.health.enabled);
         assert!(config.plugins.unknown.is_empty());
+    }
+
+    #[test]
+    fn take_plugins_removes_sections() {
+        let mut config = Figment::new()
+            .merge(Toml::string(
+                r#"
+[database]
+url = "postgresql://localhost/zeta_test"
+
+[tracing]
+enabled = true
+
+[irc]
+nickname = "zeta"
+hostname = "localhost"
+alt_nicks = []
+channels = []
+
+[plugins.dig]
+nameservers = ["1.1.1.1"]
+"#,
+            ))
+            .extract::<Config>()
+            .expect("configuration should parse");
+
+        let plugins = config.take_plugins();
+
+        assert_eq!(
+            plugins.dig.settings.nameservers,
+            vec![IpAddr::from([1, 1, 1, 1])]
+        );
+        assert_eq!(
+            config.plugins.dig.settings.nameservers,
+            crate::plugin::dig::Settings::default().nameservers
+        );
     }
 }

@@ -41,7 +41,7 @@ pub fn plugin_err<E: StdError + Send + Sync + 'static>(e: E) -> Error {
 /// # Example
 ///
 /// ```ignore
-/// fn new(_ctx: &Context) -> Result<Self, ZetaError> {
+/// fn new(_ctx: &Context, _settings: &Settings) -> Result<Self, ZetaError> {
 ///     let api_key = require_env("API_KEY")?;
 ///     Ok(Self { api_key })
 /// }
