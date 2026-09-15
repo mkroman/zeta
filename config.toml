@@ -248,6 +248,17 @@ name = "#zeta.dev"
   [plugins.tiktok]
   # Enable the plugin.
   enabled = true
+  # The maximum length of a video title before it gets truncated.
+  # title_length = 150
+  # The maximum size of a video to download, as passed to `yt-dlp`.
+  # max_filesize = "500M"
+  # The maximum duration of a download before it gets killed.
+  # download_timeout = "10m"
+  # The maximum number of downloads that run concurrently.
+  # max_concurrent_downloads = 2
+  # The command used to run `yt-dlp`. Falls back to the
+  # `TIKTOK_YTDLP_COMMAND` environment variable when unset.
+  # ytdlp_command = "yt-dlp"
 
   # URL titles and OpenGraph metadata.
   [plugins.titles]

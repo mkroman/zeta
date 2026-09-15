@@ -215,7 +215,7 @@ declare_plugins! {
 
   /// TikTok integration
   #[cfg(feature = "plugin-tiktok")]
-  tiktok::Tiktok => NoSettings,
+  tiktok::Tiktok => tiktok::Settings,
 
   /// URL titles and OpenGraph metadata
   #[cfg(feature = "plugin-titles")]

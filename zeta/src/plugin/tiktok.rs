@@ -15,7 +15,9 @@ mod urls;
 mod ytdlp;
 
 use std::fmt::Write;
+use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error, warn};
 use url::Url;
 
@@ -28,13 +30,70 @@ use crate::{
 use self::mirror::Mirror;
 use self::oembed::OEmbed;
 use self::urls::{parse_tiktok_url, short_url, video_url, TiktokLink};
+use self::ytdlp::{YtDlp, YtDlpOptions};
 
-/// The maximum length of a TikTok videos' title before it gets truncated.
-const TIKTOK_TITLE_LENGTH: usize = 150;
+/// Settings for the tiktok plugin, from its `[plugins.tiktok]` configuration section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// The maximum length of a video title before it gets truncated.
+    #[serde(default = "default_title_length")]
+    pub title_length: usize,
+    /// The maximum size of a video to download, as passed to `yt-dlp`.
+    ///
+    /// Videos that report a larger size upfront are skipped.
+    #[serde(default = "default_max_filesize")]
+    pub max_filesize: String,
+    /// The maximum duration of a download before it gets killed.
+    #[serde(default = "default_download_timeout", with = "humantime_serde")]
+    pub download_timeout: Duration,
+    /// The maximum number of downloads that run concurrently.
+    #[serde(default = "default_max_concurrent_downloads")]
+    pub max_concurrent_downloads: usize,
+    /// The command used to run `yt-dlp`.
+    ///
+    /// Falls back to the `TIKTOK_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
+    /// neither is set.
+    #[serde(default)]
+    pub ytdlp_command: Option<String>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            title_length: default_title_length(),
+            max_filesize: default_max_filesize(),
+            download_timeout: default_download_timeout(),
+            max_concurrent_downloads: default_max_concurrent_downloads(),
+            ytdlp_command: None,
+        }
+    }
+}
+
+/// Returns the default maximum title length.
+const fn default_title_length() -> usize {
+    150
+}
+
+/// Returns the default maximum video size.
+fn default_max_filesize() -> String {
+    "500M".to_string()
+}
+
+/// Returns the default download timeout.
+const fn default_download_timeout() -> Duration {
+    Duration::from_mins(10)
+}
+
+/// Returns the default maximum number of concurrent downloads.
+const fn default_max_concurrent_downloads() -> usize {
+    2
+}
 
 pub struct Tiktok {
     client: reqwest::Client,
     mirror: Option<Mirror>,
+    settings: Settings,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -50,7 +109,13 @@ pub enum Error {
 #[async_trait]
 impl Plugin<Context> for Tiktok {
     fn new(ctx: &Context) -> Result<Tiktok, ZetaError> {
-        let mirror = match Mirror::from_env() {
+        let settings = ctx.config.plugins.tiktok.settings.clone();
+        let ytdlp = YtDlp::new(YtDlpOptions {
+            command: settings.ytdlp_command.clone(),
+            max_filesize: settings.max_filesize.clone(),
+            download_timeout: settings.download_timeout,
+        });
+        let mirror = match Mirror::from_env(ytdlp, settings.max_concurrent_downloads) {
             Ok(mirror) => Some(mirror),
             Err(err) => {
                 warn!(error = %err, "tiktok mirroring is disabled");
@@ -61,6 +126,7 @@ impl Plugin<Context> for Tiktok {
         Ok(Tiktok {
             client: http::build_client(&ctx.config.http),
             mirror,
+            settings,
         })
     }
 
@@ -144,7 +210,7 @@ impl Tiktok {
             return Ok(());
         }
 
-        if let Some(summary) = format_summary(&embed) {
+        if let Some(summary) = format_summary(&embed, self.settings.title_length) {
             let _ = client.send_privmsg(channel, formatted(&summary));
         }
 
@@ -202,11 +268,11 @@ impl Tiktok {
 }
 
 /// Formats the oEmbed details as a human-readable summary of the video.
-fn format_summary(embed: &OEmbed) -> Option<String> {
+fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
     let mut buf = String::new();
 
     if let Some(title) = embed.title.as_deref() {
-        let truncated = title.truncate_with_suffix(TIKTOK_TITLE_LENGTH, "…");
+        let truncated = title.truncate_with_suffix(title_length, "…");
 
         let _ = write!(buf, "“\x0f{truncated}\x0310” is a ");
     }
@@ -220,4 +286,41 @@ fn format_summary(embed: &OEmbed) -> Option<String> {
 
 fn formatted(s: &str) -> String {
     format!("\x0310> {s}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings() {
+        let settings = Settings::default();
+
+        assert_eq!(settings.title_length, 150);
+        assert_eq!(settings.max_filesize, "500M");
+        assert_eq!(settings.download_timeout, Duration::from_mins(10));
+        assert_eq!(settings.max_concurrent_downloads, 2);
+        assert!(settings.ytdlp_command.is_none());
+    }
+
+    #[test]
+    fn settings_deserialize() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "title_length": 100,
+            "max_filesize": "100M",
+            "download_timeout": "5m",
+            "max_concurrent_downloads": 1,
+            "ytdlp_command": "/usr/local/bin/yt-dlp",
+        }))
+        .expect("could not deserialize settings");
+
+        assert_eq!(settings.title_length, 100);
+        assert_eq!(settings.max_filesize, "100M");
+        assert_eq!(settings.download_timeout, Duration::from_mins(5));
+        assert_eq!(settings.max_concurrent_downloads, 1);
+        assert_eq!(
+            settings.ytdlp_command.as_deref(),
+            Some("/usr/local/bin/yt-dlp")
+        );
+    }
 }

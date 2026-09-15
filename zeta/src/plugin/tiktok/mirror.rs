@@ -26,6 +26,8 @@ pub struct Mirror {
     s3: S3,
     /// The `yt-dlp` runner used for downloading videos.
     ytdlp: YtDlp,
+    /// The maximum number of downloads that run concurrently.
+    max_concurrent: usize,
     /// The set of videos that are currently being mirrored.
     in_flight: Arc<Mutex<HashSet<String>>>,
     /// The download manager, started by [`Mirror::start_downloads`].
@@ -33,15 +35,16 @@ pub struct Mirror {
 }
 
 impl Mirror {
-    /// Creates a mirror from the environment configuration.
+    /// Creates a mirror from the environment configuration, using `ytdlp` for downloads.
     ///
     /// # Errors
     ///
     /// Returns an error if the S3 configuration is missing or invalid.
-    pub fn from_env() -> Result<Self, super::s3::Error> {
+    pub fn from_env(ytdlp: YtDlp, max_concurrent: usize) -> Result<Self, super::s3::Error> {
         Ok(Self {
             s3: S3::from_env()?,
-            ytdlp: YtDlp::from_env(),
+            ytdlp,
+            max_concurrent,
             in_flight: Arc::default(),
             manager: None,
         })
@@ -52,7 +55,11 @@ impl Mirror {
     /// Must be called before [`Mirror::ensure_mirrored`], when the plugin is loaded.
     pub fn start_downloads(&mut self) {
         if self.manager.is_none() {
-            self.manager = Some(DownloadManager::start(self.ytdlp.clone(), self.s3.clone()));
+            self.manager = Some(DownloadManager::start(
+                self.ytdlp.clone(),
+                self.s3.clone(),
+                self.max_concurrent,
+            ));
         }
     }
 
@@ -174,6 +181,7 @@ mod tests {
         Mirror {
             s3: S3::for_test(),
             ytdlp: YtDlp::with_command("yt-dlp"),
+            max_concurrent: 2,
             in_flight: Arc::default(),
             manager: None,
         }
@@ -213,6 +221,7 @@ mod tests {
         let mirror = Mirror {
             s3: S3::with_endpoint(&format!("http://{address}")),
             ytdlp: YtDlp::with_command("yt-dlp"),
+            max_concurrent: 2,
             in_flight: Arc::default(),
             manager: None,
         };
