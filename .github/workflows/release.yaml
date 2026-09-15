@@ -94,11 +94,18 @@ jobs:
         run: bash hack/install-cargo-tool.sh cargo-auditable "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: Build
         run: cargo auditable build --release
+      - name: Archive symbols and strip executable
+        run: sh hack/strip-release.sh target/release/zeta
       - name: Upload executable
         uses: actions/upload-artifact@v7
         with:
           name: zeta-${{ matrix.platform }}-${{ matrix.arch }}
           path: target/release/zeta${{ matrix.platform == 'windows' && '.exe' || '' }}
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v7
+        with:
+          name: zeta-${{ matrix.platform }}-${{ matrix.arch }}-debug
+          path: target/release/zeta.debug
 
   pre-notification:
     name: Send Pre-Notification

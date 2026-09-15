@@ -62,7 +62,16 @@ plugin-rust-playground = ["http", "dep:regex"]
 plugin-spotify = ["http", "dep:base64", "dep:num-format", "dep:regex"]
 plugin-string-utils = []
 plugin-thingiverse = ["http", "dep:num-format", "dep:regex"]
-plugin-tiktok = ["http", "dep:aws-sdk-s3", "dep:tempfile"]
+plugin-tiktok = [
+    "http",
+    "reqwest?/stream",
+    "dep:aws-credential-types",
+    "dep:aws-sigv4",
+    "dep:aws-smithy-runtime-api",
+    "dep:const-hex",
+    "dep:sha2",
+    "dep:tempfile",
+]
 plugin-titles = ["dep:html5ever", "dep:wreq", "dep:wreq-util"]
 plugin-trustpilot = ["http", "dep:num-format"]
 plugin-tvmaze = ["http", "dep:time", "dep:serde_path_to_error"]
@@ -113,13 +122,12 @@ plugins-all = [
 [dependencies]
 argh.workspace = true
 async-trait.workspace = true
-aws-sdk-s3 = { workspace = true, optional = true, features = [
-    "default-https-client",
-    "http-1x",
-    "rt-tokio",
-] }
+aws-credential-types = { version = "1.3.0", optional = true }
+aws-sigv4 = { version = "1.5.2", optional = true }
+aws-smithy-runtime-api = { version = "1.16.1", features = ["client"], optional = true }
 base64 = { version = "0.23.0", optional = true }
 chrono = { version = "0.4.45", optional = true }
+const-hex = { version = "1.19", optional = true }
 dendanskeordbog = { path = "../dendanskeordbog", features = ["client"], optional = true }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
@@ -162,7 +170,7 @@ strsim = { version = "0.10", optional = true }
 tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 time = { version = "0.3.43", features = ["formatting", "parsing", "serde"], optional = true }
-tokio = { workspace = true, features = ["full"] }
+tokio.workspace = true
 tracing.workspace = true
 tracing-opentelemetry = { version = "0.33.0", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

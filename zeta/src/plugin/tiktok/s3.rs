@@ -1,12 +1,21 @@
 //! S3 client used for mirroring videos.
 
+use std::fmt;
+use std::future::Future;
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
-use aws_sdk_s3::{
-    config::{BehaviorVersion, Credentials, Region},
-    error::SdkError,
-    primitives::{ByteStream, ByteStreamError},
+use aws_credential_types::Credentials;
+use aws_sigv4::http_request::{
+    PayloadChecksumKind, PercentEncodingMode, SignableBody, SignableRequest, SigningSettings,
+    UriPathNormalizationMode, sign,
 };
+use aws_sigv4::sign::v4;
+use aws_smithy_runtime_api::client::identity::Identity;
+use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use reqwest::{Body, Client, StatusCode};
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncReadExt;
 use tracing::debug;
 use url::Url;
 
@@ -20,6 +29,15 @@ const KEY_ROOT: &str = "tiktok";
 
 /// The name used to identify our credentials provider.
 const CREDENTIALS_PROVIDER_NAME: &str = "zeta-tiktok-plugin";
+
+/// The size of the buffer used when hashing files.
+const HASH_BUFFER_SIZE: usize = 64 * 1024;
+
+/// The maximum number of attempts for a request before giving up on transient failures.
+const MAX_SEND_ATTEMPTS: u32 = 3;
+
+/// The delay before the first retry of a transient failure; it doubles for each subsequent retry.
+const RETRY_DELAY: Duration = Duration::from_millis(250);
 
 /// Configuration for the S3 mirror client.
 ///
@@ -62,31 +80,73 @@ pub struct S3Config {
     pub public_url_base: Option<String>,
 }
 
+/// Errors that can occur while talking to S3.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// A required configuration value is missing.
     #[error("{0}")]
     MissingConfig(#[from] ZetaError),
+    /// The configured public URL base is invalid.
     #[error("invalid public url base: {0}")]
     InvalidPublicUrlBase(#[from] url::ParseError),
+    /// The configured S3 endpoint is invalid.
+    #[error("invalid s3 endpoint: {0}")]
+    InvalidEndpoint(url::ParseError),
+    /// An I/O error occurred.
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("could not read file: {0}")]
-    Read(#[from] ByteStreamError),
-    #[error("s3 error: {0}")]
-    S3(Box<aws_sdk_s3::Error>),
+    /// The HTTP request failed.
+    #[error("request failed: {0}")]
+    Request(#[from] reqwest::Error),
+    /// The request could not be signed.
+    #[error("could not sign request: {0}")]
+    Signing(#[from] aws_sigv4::http_request::SigningError),
+    /// The signing parameters were invalid.
+    #[error("invalid signing parameters: {0}")]
+    SigningParams(#[from] v4::signing_params::BuildError),
+    /// S3 returned an unsuccessful response.
+    #[error("s3 request failed with status {status}: {body}")]
+    Status {
+        /// The HTTP status code.
+        status: StatusCode,
+        /// The response body.
+        body: String,
+    },
 }
 
 /// Client for uploading videos to an S3-compatible bucket.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct S3 {
-    /// The S3 client.
-    client: aws_sdk_s3::Client,
+    /// The HTTP client used for requests.
+    client: Client,
+    /// The S3 access key id.
+    access_key_id: String,
+    /// The S3 secret access key.
+    secret_access_key: String,
     /// The name of the bucket to upload to.
     bucket: String,
+    /// The region to sign requests for.
+    region: String,
+    /// The endpoint URL for S3-compatible services, when configured.
+    endpoint: Option<Url>,
     /// The optional key prefix for all uploaded objects.
     prefix: Option<String>,
     /// The base URL used when linking to mirrored videos.
     public_url_base: Url,
+}
+
+// Manual implementation so the secret access key is never printed.
+impl fmt::Debug for S3 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("S3")
+            .field("access_key_id", &self.access_key_id)
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("endpoint", &self.endpoint)
+            .field("prefix", &self.prefix)
+            .field("public_url_base", &self.public_url_base)
+            .finish_non_exhaustive()
+    }
 }
 
 impl S3 {
@@ -97,9 +157,8 @@ impl S3 {
     ///
     /// Returns an error if a required value is missing or a configured value is invalid.
     pub fn new(config: S3Config) -> Result<Self, Error> {
-        let access_key_id =
-            resolve_secret(config.access_key_id.as_deref(), "S3_ACCESS_KEY_ID")
-                .map_err(Error::MissingConfig)?;
+        let access_key_id = resolve_secret(config.access_key_id.as_deref(), "S3_ACCESS_KEY_ID")
+            .map_err(Error::MissingConfig)?;
         let secret_access_key =
             resolve_secret(config.secret_access_key.as_deref(), "S3_SECRET_ACCESS_KEY")
                 .map_err(Error::MissingConfig)?;
@@ -109,35 +168,28 @@ impl S3 {
             .region
             .or_else(|| std::env::var("S3_REGION").ok())
             .unwrap_or_else(|| "auto".to_string());
-        let endpoint = config.endpoint.or_else(|| std::env::var("S3_ENDPOINT").ok());
+        let endpoint = config
+            .endpoint
+            .or_else(|| std::env::var("S3_ENDPOINT").ok())
+            .map(|endpoint| Url::parse(&endpoint))
+            .transpose()
+            .map_err(Error::InvalidEndpoint)?;
         let prefix = config.prefix.or_else(|| std::env::var("S3_PREFIX").ok());
-        let public_url_base =
-            match config
-                .public_url_base
-                .or_else(|| std::env::var("TIKTOK_PUBLIC_URL_BASE").ok())
-            {
-                Some(value) => Url::parse(&value)?,
-                None => Url::parse(DEFAULT_PUBLIC_URL_BASE)?,
-            };
-
-        let mut s3_config = aws_sdk_s3::Config::builder()
-            .behavior_version(BehaviorVersion::latest())
-            .region(Region::new(region))
-            .credentials_provider(Credentials::new(
-                access_key_id,
-                secret_access_key,
-                None,
-                None,
-                CREDENTIALS_PROVIDER_NAME,
-            ));
-
-        if let Some(endpoint) = endpoint {
-            s3_config = s3_config.endpoint_url(endpoint).force_path_style(true);
-        }
+        let public_url_base = match config
+            .public_url_base
+            .or_else(|| std::env::var("TIKTOK_PUBLIC_URL_BASE").ok())
+        {
+            Some(value) => Url::parse(&value)?,
+            None => Url::parse(DEFAULT_PUBLIC_URL_BASE)?,
+        };
 
         Ok(Self {
-            client: aws_sdk_s3::Client::from_conf(s3_config.build()),
+            client: Client::builder().build()?,
+            access_key_id,
+            secret_access_key,
             bucket,
+            region,
+            endpoint,
             prefix,
             public_url_base,
         })
@@ -156,16 +208,13 @@ impl S3 {
     #[cfg(test)]
     #[must_use]
     pub fn with_endpoint(endpoint: &str) -> Self {
-        let config = aws_sdk_s3::Config::builder()
-            .behavior_version(BehaviorVersion::latest())
-            .region(Region::new("us-east-1"))
-            .endpoint_url(endpoint)
-            .force_path_style(true)
-            .build();
-
         Self {
-            client: aws_sdk_s3::Client::from_conf(config),
+            client: Client::new(),
+            access_key_id: "test-access-key".to_string(),
+            secret_access_key: "test-secret-key".to_string(),
             bucket: "test".to_string(),
+            region: "auto".to_string(),
+            endpoint: Some(Url::parse(endpoint).expect("valid endpoint")),
             prefix: None,
             public_url_base: Url::parse(DEFAULT_PUBLIC_URL_BASE).expect("valid default url"),
         }
@@ -191,28 +240,27 @@ impl S3 {
     pub async fn object_exists(&self, key: &str) -> Result<bool, Error> {
         debug!(%key, "checking if object exists");
 
-        match self
-            .client
-            .head_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-        {
-            Ok(_) => Ok(true),
-            Err(SdkError::ServiceError(service_error)) => {
-                let not_found = service_error.err().is_not_found()
-                    || service_error.raw().status().as_u16() == 404;
+        let url = self.object_url(key)?;
+        let headers = self.signing_headers("HEAD", &url, SignableBody::empty())?;
 
-                if not_found {
-                    Ok(false)
-                } else {
-                    Err(Error::S3(Box::new(aws_sdk_s3::Error::from(
-                        SdkError::ServiceError(service_error),
-                    ))))
-                }
+        let response = send_with_retry(|| async {
+            let mut request = self.client.head(url.clone());
+
+            for (name, value) in &headers {
+                request = request.header(*name, value.as_str());
             }
-            Err(err) => Err(Error::S3(Box::new(aws_sdk_s3::Error::from(err)))),
+
+            Ok(request.send().await?)
+        })
+        .await?;
+
+        match response.status() {
+            status if status.is_success() => Ok(true),
+            StatusCode::NOT_FOUND => Ok(false),
+            status => Err(Error::Status {
+                status,
+                body: String::new(),
+            }),
         }
     }
 
@@ -226,20 +274,167 @@ impl S3 {
     pub async fn upload_file(&self, path: &Path, key: &str) -> Result<(), Error> {
         debug!(%key, path = %path.display(), "uploading file to s3");
 
-        let body = ByteStream::from_path(path).await?;
+        let length = tokio::fs::metadata(path).await?.len();
+        let digest = sha256_file(path).await?;
+        let url = self.object_url(key)?;
+        let headers = self.signing_headers("PUT", &url, SignableBody::Precomputed(digest))?;
 
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .content_type(content_type_for(path))
-            .body(body)
-            .send()
-            .await
-            .map_err(|err| Error::S3(Box::new(aws_sdk_s3::Error::from(err))))?;
+        let response = send_with_retry(|| async {
+            let file = tokio::fs::File::open(path).await.map_err(Error::from)?;
+            let mut request = self
+                .client
+                .put(url.clone())
+                .header(CONTENT_LENGTH, length)
+                .header(CONTENT_TYPE, content_type_for(path))
+                .body(Body::from(file));
 
-        Ok(())
+            for (name, value) in &headers {
+                request = request.header(*name, value.as_str());
+            }
+
+            Ok(request.send().await?)
+        })
+        .await?;
+
+        ensure_success(response).await
     }
+
+    /// Returns the URL for the object with the given key.
+    fn object_url(&self, key: &str) -> Result<Url, Error> {
+        self.endpoint
+            .as_ref()
+            .map_or_else(
+                || {
+                    Url::parse(&format!(
+                        "https://{}.s3.{}.amazonaws.com/{}",
+                        self.bucket, self.region, key
+                    ))
+                },
+                |endpoint| {
+                    Url::parse(&format!(
+                        "{}/{}/{}",
+                        endpoint.as_str().trim_end_matches('/'),
+                        self.bucket,
+                        key
+                    ))
+                },
+            )
+            .map_err(Error::InvalidEndpoint)
+    }
+
+    /// Signs a request for the given URL and body, returning the headers to apply to it.
+    fn signing_headers(
+        &self,
+        method: &str,
+        url: &Url,
+        body: SignableBody<'_>,
+    ) -> Result<Vec<(&'static str, String)>, Error> {
+        let credentials = Credentials::new(
+            self.access_key_id.as_str(),
+            self.secret_access_key.as_str(),
+            None,
+            None,
+            CREDENTIALS_PROVIDER_NAME,
+        );
+        let identity: Identity = credentials.into();
+        let mut settings = SigningSettings::default();
+        // S3 requires the payload hash to be part of the signature, must not have its URI path
+        // normalized, and only single-encodes URI paths.
+        settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+        settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
+        settings.percent_encoding_mode = PercentEncodingMode::Single;
+        let params: aws_sigv4::http_request::SigningParams<'_> = v4::SigningParams::builder()
+            .identity(&identity)
+            .region(&self.region)
+            .name("s3")
+            .time(SystemTime::now())
+            .settings(settings)
+            .build()?
+            .into();
+
+        let request = SignableRequest::new(method, url.as_str(), std::iter::empty(), body)?;
+        let (instructions, _signature) = sign(request, &params)?.into_parts();
+        let (headers, _query) = instructions.into_parts();
+
+        Ok(headers
+            .into_iter()
+            .map(|header| (header.name(), header.value().to_string()))
+            .collect())
+    }
+}
+
+/// Sends a request built by `build`, retrying transient failures with a backoff.
+async fn send_with_retry<F, Fut>(mut build: F) -> Result<reqwest::Response, Error>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<reqwest::Response, Error>>,
+{
+    let mut attempt = 0;
+
+    loop {
+        attempt += 1;
+
+        match build().await {
+            Ok(response)
+                if attempt >= MAX_SEND_ATTEMPTS || !is_retryable_status(response.status()) =>
+            {
+                return Ok(response);
+            }
+            Err(error) if attempt >= MAX_SEND_ATTEMPTS || !is_retryable_error(&error) => {
+                return Err(error);
+            }
+            Ok(_) | Err(_) => {}
+        }
+
+        tokio::time::sleep(RETRY_DELAY * attempt).await;
+    }
+}
+
+/// Whether the response status denotes a transient failure worth retrying.
+fn is_retryable_status(status: StatusCode) -> bool {
+    status.is_server_error()
+        || status == StatusCode::REQUEST_TIMEOUT
+        || status == StatusCode::TOO_MANY_REQUESTS
+}
+
+/// Whether the error denotes a transient failure worth retrying.
+fn is_retryable_error(error: &Error) -> bool {
+    match error {
+        Error::Request(error) => error.is_timeout() || error.is_connect() || error.is_request(),
+        _ => false,
+    }
+}
+
+/// Returns an error unless the response has a successful status.
+async fn ensure_success(response: reqwest::Response) -> Result<(), Error> {
+    let status = response.status();
+
+    if status.is_success() {
+        return Ok(());
+    }
+
+    let body = response.text().await.unwrap_or_default();
+
+    Err(Error::Status { status, body })
+}
+
+/// Returns the lowercase hex-encoded SHA-256 digest of the file at `path`.
+async fn sha256_file(path: &Path) -> Result<String, Error> {
+    let mut file = tokio::fs::File::open(path).await?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; HASH_BUFFER_SIZE];
+
+    loop {
+        let read = file.read(&mut buffer).await?;
+
+        if read == 0 {
+            break;
+        }
+
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(const_hex::encode(hasher.finalize()))
 }
 
 /// Returns the object key for the given file name.
@@ -293,6 +488,59 @@ mod tests {
         assert_eq!(
             public_url_for(&base, "7541501431543532814"),
             "https://pub.rwx.im/tiktok#7541501431543532814"
+        );
+    }
+
+    #[test]
+    fn test_object_url_path_style() {
+        let s3 = S3::with_endpoint("http://localhost:9000");
+
+        assert_eq!(
+            s3.object_url("tiktok/123.mp4").unwrap().as_str(),
+            "http://localhost:9000/test/tiktok/123.mp4"
+        );
+    }
+
+    #[test]
+    fn test_signing_headers_include_content_hash() {
+        let s3 = S3::with_endpoint("http://localhost:9000");
+        let url = s3.object_url("tiktok/123.mp4").unwrap();
+
+        let headers = s3
+            .signing_headers("HEAD", &url, SignableBody::empty())
+            .expect("could not sign request");
+
+        assert!(
+            headers
+                .iter()
+                .any(|(name, _)| *name == "x-amz-content-sha256"),
+            "signature must include the payload hash: {headers:?}"
+        );
+        assert!(
+            headers.iter().any(|(name, _)| *name == "authorization"),
+            "signature must include the authorization header: {headers:?}"
+        );
+    }
+
+    #[test]
+    fn test_precomputed_body_hash_matches_bytes() {
+        let s3 = S3::with_endpoint("http://localhost:9000");
+        let url = s3.object_url("tiktok/123.mp4").unwrap();
+        let digest = const_hex::encode(Sha256::digest(b"hello"));
+
+        let hash_of = |body: SignableBody<'_>| {
+            s3.signing_headers("PUT", &url, body)
+                .expect("could not sign request")
+                .into_iter()
+                .find(|(name, _)| *name == "x-amz-content-sha256")
+                .map(|(_, value)| value)
+                .expect("signature must include the payload hash")
+        };
+
+        assert_eq!(hash_of(SignableBody::Precomputed(digest.clone())), digest);
+        assert_eq!(
+            hash_of(SignableBody::Precomputed(digest)),
+            hash_of(SignableBody::Bytes(b"hello"))
         );
     }
 }

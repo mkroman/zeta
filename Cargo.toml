@@ -5,7 +5,6 @@ members = ["dendanskeordbog", "kagi", "reddit", "zeta", "zeta-plugin"]
 [workspace.dependencies]
 argh = { version = "0.1.19" }
 async-trait = "0.1.89"
-aws-sdk-s3 = { version = "1.108.0", default-features = false }
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
 scraper = "0.27.0"
@@ -16,13 +15,26 @@ serde_path_to_error = "0.1.17"
 shlex = "2.0.0"
 tempfile = "3.23.0"
 thiserror = "2.0"
-tokio = { version = "1.52.3", features = ["full"] }
+tokio = { version = "1.52.3", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "fs",
+    "process",
+    "io-util",
+    "net",
+] }
 tracing = "0.1.41"
 url = "2.5.8"
 
 [profile.release]
 lto = true
-strip = "debuginfo"
+# The release binary is stripped by `hack/strip-release.sh` after building, which archives the
+# symbols (and line tables) in a separate `*.debug` file for offline symbolization. Keep the
+# unstripped binary and line tables available when building.
+strip = "none"
+debug = "line-tables-only"
 panic = "unwind"
 opt-level = "z"
 codegen-units = 1
