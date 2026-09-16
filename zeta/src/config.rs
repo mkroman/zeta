@@ -168,6 +168,12 @@ pub struct IrcTlsConfig {
 /// IRC client configuration.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcConfig {
+    /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
+    /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.
+    /// Admins are authorized to manage URL and sender filters with the `.filter` command;
+    /// with no hostmasks configured, nobody is an admin.
+    #[serde(default)]
+    pub admin_hostmasks: Vec<String>,
     /// Alternative nicknames for the client, if the default is taken.
     pub alt_nicks: Vec<String>,
     /// List of channels to automatically manage.

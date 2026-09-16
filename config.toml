@@ -36,6 +36,11 @@ port = 6667
 # has no effect if `nick_password` is not set.
 # should_ghost = true
 
+# Hostmasks of admin users, in `nick!user@hostname` form where any of the three components may
+# contain wildcards (`*` or `?`). Admins are authorized to manage URL and sender filters with the
+# `.filter` command; when unset, nobody is an admin.
+# admin_hostmasks = ["mk!mk@*", "*!*@example.com"]
+
 # TLS Configuration.
 [irc.tls]
 # Toggle the use of TLS.

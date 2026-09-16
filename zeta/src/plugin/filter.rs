@@ -6,6 +6,10 @@
 //! the sender — where all of the set criteria must match for a message to be ignored. Patterns
 //! support `*` and `?` wildcards.
 //!
+//! The command is restricted to admins: a sender is an admin when their `nick!user@host`
+//! matches one of the hostmasks configured in `[irc] admin_hostmasks`, where each component
+//! supports wildcards. With no hostmasks configured, nobody is an admin.
+//!
 //! The filter service is published to [`Context::shared`] when the plugin is constructed, so the
 //! URL-handling plugins can consult it through the
 //! [`Filters`](crate::plugin::filtering::Filters) facade.
@@ -26,9 +30,9 @@ pub use service::{Criteria, FilterService};
 use std::sync::Arc;
 
 use argh::{ArgsInfo, FromArgs};
-use irc::client::prelude::Prefix as IrcPrefix;
 use irc::proto::Command;
-use tracing::debug;
+use tracing::{debug, warn};
+use wildmatch::WildMatch;
 
 use crate::plugin::prelude::*;
 
@@ -284,6 +288,23 @@ fn trimmed(value: Option<&str>) -> Option<String> {
     value.map(str::trim).map(str::to_owned)
 }
 
+/// Compiles admin hostmasks into case-insensitive wildcard matchers, skipping blank entries.
+fn compile_hostmasks(hostmasks: &[String]) -> Vec<WildMatch> {
+    hostmasks
+        .iter()
+        .map(|hostmask| hostmask.trim())
+        .filter(|hostmask| !hostmask.is_empty())
+        .map(WildMatch::new_case_insensitive)
+        .collect()
+}
+
+/// Whether `sender`'s `nick!user@host` matches any of the compiled admin hostmasks.
+fn hostmask_matches(admins: &[WildMatch], sender: Sender<'_>) -> bool {
+    let hostmask = format!("{}!{}@{}", sender.nick, sender.username, sender.hostname);
+
+    admins.iter().any(|pattern| pattern.matches(&hostmask))
+}
+
 /// Filter plugin.
 ///
 /// Manages the database-backed URL and sender filters and publishes the filter service for the
@@ -291,9 +312,20 @@ fn trimmed(value: Option<&str>) -> Option<String> {
 pub struct FilterPlugin {
     /// The filter service, also published for other plugins to use.
     service: Arc<FilterService>,
+    /// The compiled admin hostmasks; senders whose `nick!user@host` matches one of them are
+    /// authorized to manage filters.
+    admins: Vec<WildMatch>,
 }
 
+/// The reply sent to senders that are not authorized to manage filters.
+const UNAUTHORIZED: &str = "You are not authorized to manage filters.";
+
 impl FilterPlugin {
+    /// Whether `sender` is authorized to manage filters.
+    fn is_admin(&self, sender: Sender<'_>) -> bool {
+        hostmask_matches(&self.admins, sender)
+    }
+
     /// Adds one or more filters from the `add` subcommand.
     async fn add(
         &self,
@@ -442,7 +474,18 @@ impl Plugin<Context> for FilterPlugin {
 
         ctx.shared.publish(Arc::clone(&service));
 
-        Ok(FilterPlugin { service })
+        let admins = compile_hostmasks(&ctx.config.irc.admin_hostmasks);
+
+        if admins.is_empty() {
+            warn!(
+                "no admin hostmasks configured; nobody is authorized to manage filters \
+                 (set [irc] admin_hostmasks)"
+            );
+        } else {
+            debug!(count = admins.len(), "loaded admin hostmasks");
+        }
+
+        Ok(FilterPlugin { service, admins })
     }
 
     fn metadata() -> Metadata {
@@ -474,13 +517,19 @@ impl Plugin<Context> for FilterPlugin {
             return Ok(());
         };
 
-        let Some(IrcPrefix::Nickname(nickname, ..)) = &message.prefix else {
+        let Some(sender) = Sender::from_message(message) else {
             return Ok(());
         };
 
         let Some(args) = FILTER.parse(msg) else {
             return Ok(());
         };
+
+        if !self.is_admin(sender) {
+            client.send_privmsg(channel, formatted(UNAUTHORIZED))?;
+
+            return Ok(());
+        }
 
         let opts = match FILTER.parse_words::<Opts>(args) {
             Ok(opts) => opts,
@@ -494,7 +543,7 @@ impl Plugin<Context> for FilterPlugin {
         };
 
         match opts.command {
-            Subcommand::Add(add) => self.add(client, channel, nickname, add).await,
+            Subcommand::Add(add) => self.add(client, channel, sender.nick, add).await,
             Subcommand::List(list) => self.list(client, channel, &list),
             Subcommand::Delete(delete) => self.delete(client, channel, delete).await,
         }
@@ -571,6 +620,31 @@ fn formatted(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn admin_hostmasks_match_wildcards_and_case_insensitively() {
+        let admins = compile_hostmasks(&["mk!mk@*".to_string(), "*!*@example.org".to_string()]);
+
+        assert!(hostmask_matches(&admins, Sender::new("mk", "mk", "user.example")));
+        assert!(hostmask_matches(&admins, Sender::new("MK", "MK", "anything.tld")));
+        assert!(hostmask_matches(&admins, Sender::new("someone", "x", "EXAMPLE.ORG")));
+        assert!(!hostmask_matches(&admins, Sender::new("someone", "x", "example.com")));
+        assert!(!hostmask_matches(&admins, Sender::new("mk", "other", "user.example")));
+    }
+
+    #[test]
+    fn an_empty_admin_list_denies_everyone() {
+        let admins = compile_hostmasks(&[]);
+
+        assert!(!hostmask_matches(&admins, Sender::new("mk", "mk", "example.com")));
+    }
+
+    #[test]
+    fn blank_admin_hostmasks_are_skipped() {
+        let admins = compile_hostmasks(&["  ".to_string(), String::new()]);
+
+        assert!(!hostmask_matches(&admins, Sender::new("mk", "mk", "example.com")));
+    }
 
     #[test]
     fn parses_add_with_repeated_hosts() {
