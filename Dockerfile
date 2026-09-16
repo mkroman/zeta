@@ -13,12 +13,14 @@ ENV CARGO_TERM_COLOR=always \
 # BoringSSL (wreq, titles plugin) needs cmake, and bindgen needs libclang.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        binutils \
         cmake \
         libclang-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Install cargo-chef and cargo-auditable from their checksummed release binaries.
 COPY hack/install-cargo-tool.sh /usr/local/bin/install-cargo-tool
+COPY hack/strip-release.sh /usr/local/bin/strip-release
 RUN sh /usr/local/bin/install-cargo-tool cargo-chef /usr/local/bin && \
     sh /usr/local/bin/install-cargo-tool cargo-auditable /usr/local/bin
 
@@ -72,6 +74,7 @@ COPY --parents \
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo auditable build --release --locked --bin zeta && \
+    strip-release target/release/zeta && \
     cp target/release/zeta /usr/local/bin/zeta
 
 # Runtime image with `yt-dlp` and `ffmpeg` for the tiktok plugin's video mirroring.

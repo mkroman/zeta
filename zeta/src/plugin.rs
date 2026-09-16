@@ -71,18 +71,58 @@ macro_rules! declare_plugins {
         ///
         /// Keys under `[plugins]` that do not match a bundled plugin name are collected in
         /// [`PluginsConfig::unknown`] so the host can warn about likely typos.
-        #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Default, Serialize)]
         pub struct PluginsConfig {
             $(
                 $(#[doc = $doc])*
                 #[cfg(feature = $feature)]
-                #[serde(default)]
                 pub $mod_name: $crate::config::PluginConfig<$settings>,
             )*
 
             /// Sections that match no bundled plugin, whether compiled in or not.
             #[serde(flatten)]
             pub unknown: HashMap<String, Dict>,
+        }
+
+        // Deserialize the `[plugins]` section one plugin at a time instead of deriving
+        // `Deserialize` for the whole struct: a derived implementation deserializes every
+        // section in a single generic visitor, which monomorphizes a large visitor over
+        // figment's deserializer (one field per plugin) and bloats the binary.
+        impl<'de> Deserialize<'de> for PluginsConfig {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                use serde::de::Error as _;
+
+                let mut sections =
+                    HashMap::<String, figment::value::Value>::deserialize(deserializer)?;
+                let mut config = Self::default();
+
+                $(
+                    #[cfg(feature = $feature)]
+                    if let Some(section) = sections.remove(stringify!($mod_name)) {
+                        config.$mod_name =
+                            $crate::config::PluginConfig::<$settings>::deserialize(&section)
+                                .map_err(|error| {
+                                    D::Error::custom(format!(
+                                        "invalid `{}` plugin section: {error}",
+                                        stringify!($mod_name)
+                                    ))
+                                })?;
+                    }
+                )*
+
+                for (name, section) in sections {
+                    let section = Dict::deserialize(&section).map_err(|error| {
+                        D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
+                    })?;
+
+                    config.unknown.insert(name, section);
+                }
+
+                Ok(config)
+            }
         }
 
         /// The names of every bundled plugin, compiled in or not.
