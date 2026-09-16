@@ -53,6 +53,7 @@ plugin-choices = []
 plugin-coinmarketcap = ["http", "dep:strsim", "dep:serde_path_to_error"]
 plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
 plugin-dig = []
+plugin-filter = ["database", "dep:wildmatch"]
 plugin-gay = ["irc/channel-lists", "dep:chrono", "dep:rand_mt", "dep:sha2"]
 plugin-geoip = ["http"]
 plugin-github = ["http"]
@@ -92,6 +93,7 @@ plugins-all = [
     "plugin-coinmarketcap",
     "plugin-dendanskeordbog",
     "plugin-dig",
+    "plugin-filter",
     "plugin-gay",
     "plugin-geoip",
     "plugin-github",
@@ -176,6 +178,7 @@ tracing.workspace = true
 tracing-opentelemetry = { version = "0.33.0", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
+wildmatch = { version = "=2.6.1", optional = true }
 wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "webpki-roots", "prefix-symbols", "stream", "gzip", "brotli", "deflate", "zstd"], optional = true }
 wreq-util = { version = "0.2.0", optional = true }
 zeta-plugin = { path = "../zeta-plugin" }

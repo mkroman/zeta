@@ -64,9 +64,11 @@ const BINARY_EXTENSIONS: &[&str] = &[
 pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
-    /// Defaults to every host matched by a bundled plugin. Removing a host makes this plugin
-    /// preview its URLs, which may cause it to reply alongside the plugin that normally handles
-    /// the host.
+    /// Defaults to every host matched by a bundled plugin. In addition to this list, the hosts
+    /// that loaded plugins advertise through the plugin catalog (see [`Plugin::url_hosts`]) are
+    /// left alone as well — including hosts of plugins added after this list was written. Note
+    /// that the bundled defaults are a floor: removing a host from the setting does not make
+    /// this plugin preview its URLs while the plugin that handles them is loaded.
     #[serde(default = "default_ignored_hosts")]
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
@@ -92,6 +94,10 @@ impl Default for Settings {
 }
 
 /// Returns the default hosts that are handled by dedicated plugins.
+///
+/// This list is a floor that is merged with the hosts advertised through the plugin catalog, so
+/// a plugin that failed to initialize (e.g. for missing credentials) does not make this plugin
+/// take over its hosts.
 fn default_ignored_hosts() -> Vec<String> {
     [
         "chaturbate.com",
@@ -487,7 +493,7 @@ impl Plugin<Context> for Titles {
 
     async fn handle_message(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
@@ -499,6 +505,9 @@ impl Plugin<Context> for Titles {
             return Ok(());
         }
 
+        let filters = Filters::from_context(ctx);
+        let sender = Sender::from_message(message);
+        let catalog = ctx.shared.get::<PluginCatalog>();
         let mut seen = HashSet::new();
 
         for ExtractedUrl { url, repaired_from } in ExtractUrls::with_schemes(text, SCHEMES) {
@@ -508,7 +517,13 @@ impl Plugin<Context> for Titles {
 
             seen.insert(url.clone());
 
-            self.process_url(url, repaired_from, channel, client);
+            if filters.is_filtered(channel, sender, &url) {
+                debug!(%url, "skipping filtered url");
+
+                continue;
+            }
+
+            self.process_url(url, repaired_from, channel, client, catalog.as_deref());
         }
 
         Ok(())
@@ -524,6 +539,7 @@ impl Titles {
         repaired_from: Option<&'static str>,
         channel: &str,
         client: &Client,
+        catalog: Option<&PluginCatalog>,
     ) {
         if let Some(scheme) = repaired_from {
             debug!(%scheme, %url, "posting repaired url");
@@ -533,7 +549,8 @@ impl Titles {
             }
         }
 
-        if is_ignored_host(&url, &self.settings.ignored_hosts) {
+        if is_ignored_host(&url, &self.settings.ignored_hosts) || is_catalog_handled(&url, catalog)
+        {
             debug!(%url, "skipping url handled by another plugin");
 
             return;
@@ -601,6 +618,26 @@ fn should_ignore(text: &str) -> bool {
 fn is_ignored_host(url: &Url, ignored_hosts: &[String]) -> bool {
     url.host_str()
         .is_some_and(|host| ignored_hosts.iter().any(|ignored| ignored == host))
+}
+
+/// Whether the host of `url` is declared as handled by a plugin in the catalog.
+///
+/// Hosts are compared exactly against the hosts advertised through
+/// [`Plugin::url_hosts`](zeta_plugin::Plugin::url_hosts); both sides are already lowercase.
+#[must_use]
+fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
+    let Some(catalog) = catalog else {
+        return false;
+    };
+
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+
+    catalog
+        .plugins
+        .iter()
+        .any(|plugin| plugin.url_hosts.contains(&host))
 }
 
 /// Whether the path of `url` looks like binary content.
@@ -707,6 +744,7 @@ fn tag_attr<'a>(tag: &'a Tag, name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::PluginInfo;
 
     /// Tokenizes `html` in a single chunk and returns the captured metadata.
     fn parse_metadata(html: &str) -> PageMetadata {
@@ -914,6 +952,35 @@ mod tests {
         assert!(!is_ignored_host(
             &Url::parse("https://maero.dk").unwrap(),
             &settings.ignored_hosts
+        ));
+    }
+
+    #[test]
+    fn ignores_hosts_declared_in_the_catalog() {
+        let catalog = PluginCatalog {
+            plugins: vec![PluginInfo {
+                name: "imdb".into(),
+                authors: vec![],
+                commands: &[],
+                url_hosts: &["imdb.com", "www.imdb.com"],
+            }],
+        };
+
+        assert!(is_catalog_handled(
+            &Url::parse("https://www.imdb.com/title/tt1375666").unwrap(),
+            Some(&catalog)
+        ));
+        assert!(is_catalog_handled(
+            &Url::parse("https://IMDB.com/title/tt1375666").unwrap(),
+            Some(&catalog)
+        ));
+        assert!(!is_catalog_handled(
+            &Url::parse("https://maero.dk").unwrap(),
+            Some(&catalog)
+        ));
+        assert!(!is_catalog_handled(
+            &Url::parse("https://maero.dk").unwrap(),
+            None
         ));
     }
 

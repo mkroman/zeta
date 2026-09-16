@@ -36,6 +36,11 @@ port = 6667
 # has no effect if `nick_password` is not set.
 # should_ghost = true
 
+# Hostmasks of admin users, in `nick!user@hostname` form where any of the three components may
+# contain wildcards (`*` or `?`). Admins are authorized to manage URL and sender filters with the
+# `.filter` command; when unset, nobody is an admin.
+# admin_hostmasks = ["mk!mk@*", "*!*@example.com"]
+
 # TLS Configuration.
 [irc.tls]
 # Toggle the use of TLS.
@@ -151,6 +156,11 @@ name = "#zeta.dev"
   # show_etymology = true
   # Whether to show an example sentence for the definition.
   # show_examples = true
+
+  # Channel-scoped URL and sender filters.
+  [plugins.filter]
+  # Enable the plugin.
+  enabled = true
 
   # Query nameservers.
   [plugins.dig]
@@ -332,8 +342,9 @@ name = "#zeta.dev"
   [plugins.titles]
   # Enable the plugin.
   enabled = true
-  # Hosts whose URLs are left to dedicated plugins. Remove a host to let this plugin preview its
-  # URLs.
+  # Hosts whose URLs are left to dedicated plugins. Defaults to every host matched by a bundled
+  # plugin; the hosts advertised by loaded plugins through the plugin catalog are skipped as
+  # well.
   # ignored_hosts = [
   #   "reddit.com",
   #   "redd.it",

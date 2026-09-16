@@ -156,13 +156,20 @@ impl Plugin<Context> for Spotify {
         }
     }
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        &["open.spotify.com", "play.spotify.com"]
+    }
+
     async fn handle_message(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
+            let filters = Filters::from_context(ctx);
+            let sender = Sender::from_message(message);
+
             // 1. Handle Spotify URIs (spotify:type:id)
             for cap in self.uri_regex.captures_iter(user_message) {
                 let type_str = &cap["type"];
@@ -175,6 +182,12 @@ impl Plugin<Context> for Spotify {
             // 2. Handle Spotify URLs (open.spotify.com/type/id)
             if let Some(urls) = plugin::extract_urls(user_message) {
                 for url in urls {
+                    if filters.is_filtered(channel, sender, &url) {
+                        debug!(%url, "skipping filtered url");
+
+                        continue;
+                    }
+
                     if let Some(host) = url.host_str()
                         && (host == "open.spotify.com" || host == "play.spotify.com")
                         && let Some((type_str, id_str)) = parse_spotify_url(&url)

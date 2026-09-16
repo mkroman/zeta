@@ -36,6 +36,8 @@ mod prelude {
     pub use super::{
         Author, Context, Metadata, Name, Plugin, PluginCatalog, PluginInfo, SharedState,
     };
+
+    pub use super::filtering::{Filters, Sender};
 }
 
 /// Declares plugin modules and generates a registry helper to avoid boilerplate.
@@ -159,7 +161,20 @@ macro_rules! declare_plugins {
     }
 }
 
+/// Filtering support shared with plugins that react to URLs.
+///
+/// Unlike the plugin modules below, this module is always compiled: it provides the [`Filters`]
+/// facade that lets URL-handling plugins consult the filter service without depending on the
+/// `plugin-filter` feature themselves.
+// Without any URL-handling plugin compiled in, nothing consumes the facade.
+#[allow(dead_code)]
+pub mod filtering;
+
 declare_plugins! {
+  /// Channel-scoped URL and sender filters.
+  #[cfg(feature = "plugin-filter")]
+  filter::FilterPlugin => NoSettings,
+
   /// Time-based user alerts.
   #[cfg(feature = "plugin-alert")]
   alert::AlertPlugin => alert::Settings,
@@ -303,6 +318,9 @@ pub trait ErasedPlugin: Send + Sync {
     /// The commands handled by the plugin.
     fn commands(&self) -> &'static [PluginCommand];
 
+    /// The URL hosts whose links the plugin handles itself.
+    fn url_hosts(&self) -> &'static [&'static str];
+
     /// Called when all plugins are loaded and the client has connected to the network.
     fn loaded<'a>(
         &'a mut self,
@@ -322,6 +340,10 @@ pub trait ErasedPlugin: Send + Sync {
 impl<P: Plugin<Context>> ErasedPlugin for P {
     fn commands(&self) -> &'static [PluginCommand] {
         Plugin::commands(self)
+    }
+
+    fn url_hosts(&self) -> &'static [&'static str] {
+        Plugin::url_hosts(self)
     }
 
     fn loaded<'a>(
@@ -351,6 +373,8 @@ pub struct PluginInfo {
     pub authors: Vec<Author>,
     /// The prefix commands handled by the plugin.
     pub commands: &'static [PluginCommand],
+    /// The URL hosts whose links the plugin handles itself.
+    pub url_hosts: &'static [&'static str],
 }
 
 /// Snapshot of the plugins registered with the bot and the commands they handle.
@@ -440,6 +464,7 @@ impl Registry {
                     name: name.clone(),
                     authors: metadata.authors,
                     commands: plugin.commands(),
+                    url_hosts: plugin.url_hosts(),
                 });
                 self.plugins.push((name, Box::new(plugin)));
 
@@ -550,7 +575,8 @@ mod tests {
 
     #[test]
     fn bundled_plugin_names_include_all_plugins() {
-        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 32);
+        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 33);
+        assert!(BUNDLED_PLUGIN_NAMES.contains(&"filter"));
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"dig"));
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"health"));
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"howlongtobeat"));

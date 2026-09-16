@@ -76,23 +76,43 @@ impl Plugin<Context> for Chaturbate {
         }
     }
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        &["chaturbate.com", "www.chaturbate.com"]
+    }
+
     async fn handle_message(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        self.handle_command_logic(client, message).await?;
+        let filters = Filters::from_context(ctx);
+        let sender = Sender::from_message(message);
+
+        self.handle_command_logic(client, message, &filters, sender)
+            .await?;
         Ok(())
     }
 }
 
 impl Chaturbate {
-    async fn handle_command_logic(&self, client: &Client, message: &Message) -> Result<(), Error> {
+    async fn handle_command_logic(
+        &self,
+        client: &Client,
+        message: &Message,
+        filters: &Filters,
+        sender: Option<Sender<'_>>,
+    ) -> Result<(), Error> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {
             for url in urls {
+                if filters.is_filtered(channel, sender, &url) {
+                    debug!(%url, "skipping filtered url");
+
+                    continue;
+                }
+
                 if let Some(username) = extract_username(&url) {
                     debug!(%username, "processing chaturbate url");
                     if let Err(e) = self.process_broadcaster(&username, channel, client).await {

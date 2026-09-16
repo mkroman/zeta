@@ -531,26 +531,31 @@ mod tests {
                     name: "alert".into(),
                     authors: vec!["John Doe <john.doe@example.com>".into()],
                     commands: ALERT_COMMANDS,
+                    url_hosts: &[],
                 },
                 PluginInfo {
                     name: "dig".into(),
                     authors: vec![],
                     commands: DIG_COMMANDS,
+                    url_hosts: &[],
                 },
                 PluginInfo {
                     name: "imdb".into(),
                     authors: vec![],
                     commands: IMDB_COMMANDS,
+                    url_hosts: &[],
                 },
                 PluginInfo {
                     name: "openweathermap".into(),
                     authors: vec![],
                     commands: WEATHER_COMMANDS,
+                    url_hosts: &[],
                 },
                 PluginInfo {
                     name: "hooks".into(),
                     authors: vec![],
                     commands: &[],
+                    url_hosts: &[],
                 },
             ],
         }
@@ -764,6 +769,7 @@ mod tests {
                     name: format!("plugin-{index:03}{}", "x".repeat(90)),
                     authors: vec![],
                     commands: COMMANDS,
+                    url_hosts: &[],
                 })
                 .collect(),
         };

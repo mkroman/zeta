@@ -128,6 +128,10 @@ impl Plugin<Context> for Imdb {
         COMMANDS
     }
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        &["imdb.com", "m.imdb.com", "www.imdb.com"]
+    }
+
     async fn handle_message(
         &self,
         ctx: &Context,
@@ -139,7 +143,11 @@ impl Plugin<Context> for Imdb {
         };
 
         if let Some(urls) = plugin::extract_urls(user_message) {
-            self.process_urls(&urls, channel, client).await?;
+            let filters = Filters::from_context(ctx);
+            let sender = Sender::from_message(message);
+
+            self.process_urls(&urls, channel, client, &filters, sender)
+                .await?;
         } else {
             self.dispatch_command(ctx, client, message).await?;
         }
@@ -205,13 +213,23 @@ impl Imdb {
     }
 
     /// Processes URLs found in a message, printing details about any IMDb resources.
+    ///
+    /// URLs matching a filter — e.g. links to IMDb posted by another bot — are skipped.
     async fn process_urls(
         &self,
         urls: &[Url],
         channel: &str,
         client: &Client,
+        filters: &Filters,
+        sender: Option<Sender<'_>>,
     ) -> Result<(), ZetaError> {
         for url in urls {
+            if filters.is_filtered(channel, sender, url) {
+                debug!(%url, "skipping filtered url");
+
+                continue;
+            }
+
             match classify_imdb_url(url) {
                 Some(Link::Title(id)) => {
                     debug!(%id, "fetching details for posted title link");

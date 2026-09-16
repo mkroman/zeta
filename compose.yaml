@@ -1,10 +1,16 @@
 services:
   ircd:
-    image: inspircd/inspircd-docker:3
+    image: inspircd/inspircd-docker:4
     ports:
     - '6667:6667'
     environment:
     - INSP_ENABLE_DNSBL=no
+    volumes:
+    # Relaxes clone limits, fake lag, and connection throttling that would otherwise get in the
+    # way of running the bot and test clients against the local server. Included through the
+    # image's /inspircd/conf.d/ mechanism; restart the container after changing it:
+    # `docker compose restart ircd`.
+    - ./hack/inspircd/testing.conf:/inspircd/conf.d/testing.conf:ro
 
   jaeger:
     image: jaegertracing/jaeger:2.21.0@sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3

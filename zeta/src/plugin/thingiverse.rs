@@ -102,16 +102,29 @@ impl Plugin<Context> for Thingiverse {
         }
     }
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        &["thingiverse.com", "www.thingiverse.com"]
+    }
+
     async fn handle_message(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {
+            let filters = Filters::from_context(ctx);
+            let sender = Sender::from_message(message);
+
             for url in urls {
+                if filters.is_filtered(channel, sender, &url) {
+                    debug!(%url, "skipping filtered url");
+
+                    continue;
+                }
+
                 if let Some(host) = url.host_str()
                     && (host == "thingiverse.com" || host == "www.thingiverse.com")
                 {
