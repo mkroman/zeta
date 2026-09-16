@@ -100,7 +100,7 @@ pub struct Listing {
     pub children: Vec<Item>,
 }
 
-/// Details about a Subreddit.
+/// Details about a submission.
 #[derive(Debug, Deserialize)]
 #[allow(unused)]
 pub struct Submission {
@@ -113,6 +113,80 @@ pub struct Submission {
     /// The main selftext.
     pub selftext: String,
     pub url: String,
+    /// The unique base36 id of the submission.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Media details of the submission, present for hosted video.
+    #[serde(default)]
+    pub secure_media: Option<Media>,
+    /// Media details of the submission; equivalent to `secure_media` for hosted video.
+    #[serde(default)]
+    pub media: Option<Media>,
+    /// The parent submissions when the submission is a crosspost.
+    ///
+    /// The media of a crosspost lives on its parent.
+    #[serde(default)]
+    pub crosspost_parent_list: Option<Vec<Submission>>,
+}
+
+impl Submission {
+    /// Returns the URL of the hosted video of the submission, if any.
+    ///
+    /// The DASH manifest is preferred (it carries both video and audio), then the HLS playlist,
+    /// then the fallback URL (video only). Crossposted videos are resolved through their parent
+    /// submission.
+    #[must_use]
+    pub fn video_url(&self) -> Option<&str> {
+        let video = self.reddit_video()?;
+
+        video
+            .dash_url
+            .as_deref()
+            .or(video.hls_url.as_deref())
+            .or(video.fallback_url.as_deref())
+    }
+
+    /// Returns the hosted video details of the submission, if any.
+    fn reddit_video(&self) -> Option<&RedditVideo> {
+        let own = self
+            .secure_media
+            .as_ref()
+            .and_then(|media| media.reddit_video.as_ref())
+            .or_else(|| {
+                self.media
+                    .as_ref()
+                    .and_then(|media| media.reddit_video.as_ref())
+            });
+
+        own.or_else(|| {
+            self.crosspost_parent_list
+                .as_ref()?
+                .first()
+                .and_then(Submission::reddit_video)
+        })
+    }
+}
+
+/// Media details of a submission.
+#[derive(Debug, Deserialize)]
+pub struct Media {
+    /// Details about the hosted video of the submission, if any.
+    #[serde(default)]
+    pub reddit_video: Option<RedditVideo>,
+}
+
+/// Details about a hosted video.
+#[derive(Debug, Deserialize)]
+pub struct RedditVideo {
+    /// The URL of a single progressive video stream (without audio).
+    #[serde(default)]
+    pub fallback_url: Option<String>,
+    /// The URL of the DASH manifest (video and audio).
+    #[serde(default)]
+    pub dash_url: Option<String>,
+    /// The URL of the HLS playlist (video and audio).
+    #[serde(default)]
+    pub hls_url: Option<String>,
 }
 
 /// Details about a Subreddit.
@@ -437,5 +511,124 @@ mod tests {
         assert!(matches!(item2, Item::Listing(_)));
 
         Ok(())
+    }
+
+    /// A minimal submission with hosted video, as returned by the API.
+    fn video_submission_json() -> serde_json::Value {
+        serde_json::json!({
+            "subreddit": "SteamDeck",
+            "title": "Offline WoW installer is finally complete",
+            "ups": 1,
+            "upvote_ratio": 1.0,
+            "selftext": "",
+            "url": "https://v.redd.it/pxtf7mx2xqzg1",
+            "id": "1t6gdp8",
+            "secure_media": {
+                "reddit_video": {
+                    "fallback_url": "https://v.redd.it/pxtf7mx2xqzg1/DASH_720.mp4?source=fallback",
+                    "dash_url": "https://v.redd.it/pxtf7mx2xqzg1/DASHPlaylist.mpd?a=123",
+                    "hls_url": "https://v.redd.it/pxtf7mx2xqzg1/HLSPlaylist.m3u8?a=123",
+                }
+            },
+        })
+    }
+
+    #[test]
+    fn submission_video_media_parses() {
+        let submission: Submission =
+            serde_json::from_value(video_submission_json()).expect("could not parse submission");
+
+        assert_eq!(submission.id.as_deref(), Some("1t6gdp8"));
+        assert_eq!(
+            submission.video_url(),
+            Some("https://v.redd.it/pxtf7mx2xqzg1/DASHPlaylist.mpd?a=123")
+        );
+    }
+
+    #[test]
+    fn submission_without_video_media_has_no_video_url() {
+        let submission: Submission = serde_json::from_value(serde_json::json!({
+            "subreddit": "europe",
+            "title": "A street in Bologna",
+            "ups": 1,
+            "upvote_ratio": 1.0,
+            "selftext": "",
+            "url": "https://i.redd.it/gvjukykex8pf1.jpeg",
+            "id": "1nh144u",
+            "media": null,
+            "secure_media": null,
+            "crosspost_parent_list": null,
+        }))
+        .expect("could not parse submission");
+
+        assert_eq!(submission.video_url(), None);
+    }
+
+    #[test]
+    fn crosspost_video_url_resolves_through_parent() {
+        let mut parent = video_submission_json();
+        parent["id"] = serde_json::json!("1t5abcd");
+
+        let submission: Submission = serde_json::from_value(serde_json::json!({
+            "subreddit": "interestingasfuck",
+            "title": "Offline WoW installer is finally complete",
+            "ups": 1,
+            "upvote_ratio": 1.0,
+            "selftext": "",
+            "url": "https://v.redd.it/pxtf7mx2xqzg1",
+            "id": "1t6xyz9",
+            "secure_media": null,
+            "crosspost_parent_list": [parent],
+        }))
+        .expect("could not parse submission");
+
+        assert_eq!(
+            submission.video_url(),
+            Some("https://v.redd.it/pxtf7mx2xqzg1/DASHPlaylist.mpd?a=123")
+        );
+    }
+
+    #[test]
+    fn submission_video_url_falls_back_from_secure_media_to_media() {
+        let mut json = video_submission_json();
+        json["secure_media"] = serde_json::json!({});
+        json["media"] = serde_json::json!({
+            "reddit_video": {
+                "fallback_url": "https://v.redd.it/pxtf7mx2xqzg1/DASH_720.mp4?source=fallback",
+            }
+        });
+
+        let submission: Submission =
+            serde_json::from_value(json).expect("could not parse submission");
+
+        assert_eq!(
+            submission.video_url(),
+            Some("https://v.redd.it/pxtf7mx2xqzg1/DASH_720.mp4?source=fallback")
+        );
+    }
+
+    #[test]
+    fn submission_video_url_falls_back_to_hls_and_fallback() {
+        let mut json = video_submission_json();
+        json["secure_media"]["reddit_video"]["dash_url"] = serde_json::Value::Null;
+
+        let submission: Submission =
+            serde_json::from_value(json).expect("could not parse submission");
+        assert_eq!(
+            submission.video_url(),
+            Some("https://v.redd.it/pxtf7mx2xqzg1/HLSPlaylist.m3u8?a=123")
+        );
+
+        let mut json = video_submission_json();
+        json["secure_media"]["reddit_video"] = serde_json::json!({
+            "fallback_url": "https://v.redd.it/pxtf7mx2xqzg1/DASH_720.mp4?source=fallback",
+        });
+
+        let submission: Submission =
+            serde_json::from_value(json).expect("could not parse submission");
+        assert_eq!(
+            submission.video_url(),
+            Some("https://v.redd.it/pxtf7mx2xqzg1/DASH_720.mp4?source=fallback")
+        );
     }
 }
