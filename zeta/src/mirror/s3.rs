@@ -1,4 +1,4 @@
-//! S3 client used for mirroring videos.
+//! S3 client used for mirroring.
 
 use std::fmt;
 use std::future::Future;
@@ -19,16 +19,11 @@ use tokio::io::AsyncReadExt;
 use tracing::debug;
 use url::Url;
 
-use crate::plugin::prelude::{ZetaError, resolve_secret};
-
-/// The default public URL that mirrored videos are linked with.
-const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/tiktok";
-
-/// The path prefix used for all object keys.
-const KEY_ROOT: &str = "tiktok";
+use zeta_plugin::Error as ZetaError;
+use zeta_plugin::prelude::resolve_secret;
 
 /// The name used to identify our credentials provider.
-const CREDENTIALS_PROVIDER_NAME: &str = "zeta-tiktok-plugin";
+const CREDENTIALS_PROVIDER_NAME: &str = "zeta-mirror";
 
 /// The size of the buffer used when hashing files.
 const HASH_BUFFER_SIZE: usize = 64 * 1024;
@@ -67,17 +62,6 @@ pub struct S3Config {
     ///
     /// Falls back to the `S3_ENDPOINT` environment variable when unset.
     pub endpoint: Option<String>,
-    /// The optional key prefix for all uploaded objects.
-    ///
-    /// Falls back to the `S3_PREFIX` environment variable when unset.
-    pub prefix: Option<String>,
-    /// The base URL used when linking to mirrored videos.
-    ///
-    /// Falls back to the `TIKTOK_PUBLIC_URL_BASE` environment variable, and to the default
-    /// public URL when neither is set. Links are built by appending the video id as a URL
-    /// fragment, so the base must point at a viewer page that resolves the fragment — not
-    /// directly at the bucket.
-    pub public_url_base: Option<String>,
 }
 
 /// Errors that can occur while talking to S3.
@@ -86,9 +70,6 @@ pub enum Error {
     /// A required configuration value is missing.
     #[error("{0}")]
     MissingConfig(#[from] ZetaError),
-    /// The configured public URL base is invalid.
-    #[error("invalid public url base: {0}")]
-    InvalidPublicUrlBase(#[from] url::ParseError),
     /// The configured S3 endpoint is invalid.
     #[error("invalid s3 endpoint: {0}")]
     InvalidEndpoint(url::ParseError),
@@ -114,7 +95,7 @@ pub enum Error {
     },
 }
 
-/// Client for uploading videos to an S3-compatible bucket.
+/// Client for uploading mirrored files to an S3-compatible bucket.
 #[derive(Clone)]
 pub struct S3 {
     /// The HTTP client used for requests.
@@ -129,10 +110,6 @@ pub struct S3 {
     region: String,
     /// The endpoint URL for S3-compatible services, when configured.
     endpoint: Option<Url>,
-    /// The optional key prefix for all uploaded objects.
-    prefix: Option<String>,
-    /// The base URL used when linking to mirrored videos.
-    public_url_base: Url,
 }
 
 // Manual implementation so the secret access key is never printed.
@@ -143,8 +120,6 @@ impl fmt::Debug for S3 {
             .field("bucket", &self.bucket)
             .field("region", &self.region)
             .field("endpoint", &self.endpoint)
-            .field("prefix", &self.prefix)
-            .field("public_url_base", &self.public_url_base)
             .finish_non_exhaustive()
     }
 }
@@ -174,14 +149,6 @@ impl S3 {
             .map(|endpoint| Url::parse(&endpoint))
             .transpose()
             .map_err(Error::InvalidEndpoint)?;
-        let prefix = config.prefix.or_else(|| std::env::var("S3_PREFIX").ok());
-        let public_url_base = match config
-            .public_url_base
-            .or_else(|| std::env::var("TIKTOK_PUBLIC_URL_BASE").ok())
-        {
-            Some(value) => Url::parse(&value)?,
-            None => Url::parse(DEFAULT_PUBLIC_URL_BASE)?,
-        };
 
         Ok(Self {
             client: Client::builder().build()?,
@@ -190,8 +157,6 @@ impl S3 {
             bucket,
             region,
             endpoint,
-            prefix,
-            public_url_base,
         })
     }
 
@@ -205,6 +170,10 @@ impl S3 {
 
     /// Creates a client that points at the given local endpoint, for tests that never talk to a
     /// real S3.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `endpoint` is not a valid URL.
     #[cfg(test)]
     #[must_use]
     pub fn with_endpoint(endpoint: &str) -> Self {
@@ -215,21 +184,7 @@ impl S3 {
             bucket: "test".to_string(),
             region: "auto".to_string(),
             endpoint: Some(Url::parse(endpoint).expect("valid endpoint")),
-            prefix: None,
-            public_url_base: Url::parse(DEFAULT_PUBLIC_URL_BASE).expect("valid default url"),
         }
-    }
-
-    /// Returns the object key for the given file name.
-    #[must_use]
-    pub fn key_for(&self, filename: &str) -> String {
-        object_key(self.prefix.as_deref(), filename)
-    }
-
-    /// Returns the public, viewable URL for the given video id.
-    #[must_use]
-    pub fn public_url(&self, video_id: &str) -> String {
-        public_url_for(&self.public_url_base, video_id)
     }
 
     /// Returns whether an object with the given key exists.
@@ -437,25 +392,6 @@ async fn sha256_file(path: &Path) -> Result<String, Error> {
     Ok(const_hex::encode(hasher.finalize()))
 }
 
-/// Returns the object key for the given file name.
-#[must_use]
-fn object_key(prefix: Option<&str>, filename: &str) -> String {
-    match prefix {
-        Some(prefix) if !prefix.is_empty() => {
-            format!("{}/{KEY_ROOT}/{filename}", prefix.trim_end_matches('/'))
-        }
-        _ => format!("{KEY_ROOT}/{filename}"),
-    }
-}
-
-/// Returns the public URL for the given video id, using the given base URL.
-#[must_use]
-fn public_url_for(base: &Url, video_id: &str) -> String {
-    let mut url = base.clone();
-    url.set_fragment(Some(video_id));
-    url.to_string()
-}
-
 /// Returns the content type for the given path, based on its extension.
 fn content_type_for(path: &Path) -> &'static str {
     match path.extension().and_then(std::ffi::OsStr::to_str) {
@@ -471,33 +407,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_object_key() {
-        assert_eq!(object_key(None, "123.mp4"), "tiktok/123.mp4");
-        assert_eq!(object_key(Some(""), "123.mp4"), "tiktok/123.mp4");
-        assert_eq!(object_key(Some("~meta"), "123.mp4"), "~meta/tiktok/123.mp4");
-        assert_eq!(
-            object_key(Some("~meta/"), "123.mp4"),
-            "~meta/tiktok/123.mp4"
-        );
-    }
-
-    #[test]
-    fn test_public_url_for() {
-        let base = Url::parse(DEFAULT_PUBLIC_URL_BASE).unwrap();
-
-        assert_eq!(
-            public_url_for(&base, "7541501431543532814"),
-            "https://pub.rwx.im/tiktok#7541501431543532814"
-        );
-    }
-
-    #[test]
     fn test_object_url_path_style() {
         let s3 = S3::with_endpoint("http://localhost:9000");
 
         assert_eq!(
-            s3.object_url("tiktok/123.mp4").unwrap().as_str(),
-            "http://localhost:9000/test/tiktok/123.mp4"
+            s3.object_url("reddit/123.mp4").unwrap().as_str(),
+            "http://localhost:9000/test/reddit/123.mp4"
         );
     }
 

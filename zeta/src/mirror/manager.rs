@@ -10,38 +10,47 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
+use url::Url;
 
 use super::{
-    s3::S3,
+    is_safe_id, object_key, public_url_for, s3::S3, tempdir_builder, TEMP_DIR_PREFIX,
     ytdlp::{self, DownloadedFile, Progress, YtDlp},
 };
 
-/// The filename prefix for our temporary download directories.
-const TEMP_DIR_PREFIX: &str = "zeta-tiktok-";
-
+/// Errors that can occur while mirroring a download request.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// A temporary download directory could not be created.
     #[error("could not create temporary directory: {0}")]
     TempDir(#[from] std::io::Error),
+    /// The download failed.
     #[error("download error: {0}")]
     Download(#[from] ytdlp::Error),
+    /// The upload of a downloaded file failed.
     #[error("upload error: {0}")]
     Upload(#[from] super::s3::Error),
+    /// The download id is not safe to use in file names and object keys.
+    #[error("invalid download id: {0}")]
+    InvalidId(String),
 }
 
-/// A request to download the video at `url` and mirror it to the bucket.
+/// A request to download the media at `url` and mirror it to the bucket.
 pub struct DownloadRequest {
     /// The URL to download.
     pub url: String,
-    /// The id of the video being downloaded.
-    pub video_id: String,
+    /// The id the downloaded files are named after and the public link is built from.
+    pub id: String,
+    /// The key prefix the files are uploaded under.
+    pub prefix: String,
+    /// The base URL the public link is built from, with the id as its fragment.
+    pub public_url_base: Url,
     /// Called exactly once when the download finishes, successfully or not. On success it
-    /// receives the public URL of the mirrored video.
+    /// receives the public URL of the mirrored media.
     pub on_finish: OnFinish,
 }
 
@@ -49,7 +58,9 @@ impl std::fmt::Debug for DownloadRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DownloadRequest")
             .field("url", &self.url)
-            .field("video_id", &self.video_id)
+            .field("id", &self.id)
+            .field("prefix", &self.prefix)
+            .field("public_url_base", &self.public_url_base)
             .finish_non_exhaustive()
     }
 }
@@ -78,15 +89,24 @@ pub struct DownloadManager {
 impl DownloadManager {
     /// Starts the download manager task and returns a handle for submitting requests to it.
     ///
-    /// At most `max_concurrent` downloads run at a time. Temporary download directories left
-    /// behind by a previous run are removed.
+    /// At most `max_concurrent` downloads run at a time. Downloads are buffered in temporary
+    /// directories inside `download_dir`; `base_dir`, when given, is kept alive for as long as
+    /// the manager runs (used for a per-run random download directory). Stale temporary
+    /// directories are removed at startup; the download directory is expected to be owned by
+    /// this process and must not be shared between concurrently running instances.
     ///
     /// # Panics
     ///
     /// Panics if called outside of a tokio runtime.
     #[must_use]
-    pub fn start(ytdlp: YtDlp, s3: S3, max_concurrent: usize) -> Self {
-        let removed = cleanup_stale_downloads(&std::env::temp_dir());
+    pub fn start(
+        ytdlp: YtDlp,
+        s3: S3,
+        download_dir: PathBuf,
+        base_dir: Option<tempfile::TempDir>,
+        max_concurrent: usize,
+    ) -> Self {
+        let removed = cleanup_stale_downloads(&download_dir);
         if removed > 0 {
             debug!(removed, "cleaned up stale download directories");
         }
@@ -97,6 +117,8 @@ impl DownloadManager {
         let manager = Manager {
             ytdlp,
             s3,
+            download_dir,
+            _base_dir: base_dir,
             max_concurrent,
             requests: request_rx,
             status_tx,
@@ -120,6 +142,7 @@ impl DownloadManager {
     /// # Errors
     ///
     /// Returns the request back if the manager task is no longer running.
+    #[allow(clippy::result_large_err)]
     pub fn submit(&self, request: DownloadRequest) -> Result<(), DownloadRequest> {
         self.requests.send(request).map_err(|err| err.0)
     }
@@ -127,10 +150,14 @@ impl DownloadManager {
 
 /// The state of the download manager task.
 struct Manager {
-    /// The `yt-dlp` runner used for downloading videos.
+    /// The `yt-dlp` runner used for downloading media.
     ytdlp: YtDlp,
-    /// The S3 client used for uploading videos.
+    /// The S3 client used for uploading media.
     s3: S3,
+    /// The directory that downloads are buffered in.
+    download_dir: PathBuf,
+    /// A random download directory, kept alive for as long as the manager runs.
+    _base_dir: Option<tempfile::TempDir>,
     /// The maximum number of downloads that may run concurrently.
     max_concurrent: usize,
     /// The channel download requests arrive on.
@@ -153,7 +180,7 @@ struct Manager {
 struct ActiveDownload {
     /// The request the download was started for.
     request: DownloadRequest,
-    /// The temporary directory the video is downloaded into, removed when the download finishes.
+    /// The temporary directory the media is downloaded into, removed when the download finishes.
     tempdir: tempfile::TempDir,
     /// The most recent progress update of the download.
     last_progress: Option<Progress>,
@@ -186,7 +213,7 @@ impl Manager {
             self.start_download(request);
         } else {
             debug!(
-                video_id = %request.video_id,
+                media_id = %request.id,
                 running = self.running,
                 "queued download request"
             );
@@ -197,15 +224,23 @@ impl Manager {
 
     /// Starts a download task for the given request, creating its temporary download directory.
     fn start_download(&mut self, request: DownloadRequest) {
+        if !is_safe_id(&request.id) {
+            error!(id = %request.id, "rejecting download with an unsafe id");
+
+            (request.on_finish)(Err(Error::InvalidId(request.id)));
+
+            return;
+        }
+
         let id = self.next_id;
         self.next_id += 1;
         self.running += 1;
 
-        let tempdir = match tempfile::Builder::new().prefix(TEMP_DIR_PREFIX).tempdir() {
+        let tempdir = match tempdir_builder().tempdir_in(&self.download_dir) {
             Ok(tempdir) => tempdir,
             Err(err) => {
                 error!(
-                    video_id = %request.video_id,
+                    media_id = %request.id,
                     error = %err,
                     "could not create a temporary download directory"
                 );
@@ -218,7 +253,7 @@ impl Manager {
         };
 
         debug!(
-            video_id = %request.video_id,
+            media_id = %request.id,
             %id,
             path = %tempdir.path().display(),
             "starting download"
@@ -227,11 +262,12 @@ impl Manager {
         let ytdlp = self.ytdlp.clone();
         let task = DownloadTask::new(id, self.status_tx.clone());
         let url = request.url.clone();
+        let media_id = request.id.clone();
         let path = tempdir.path().to_path_buf();
 
         tokio::spawn(async move {
             let result = ytdlp
-                .download_with_progress(&url, &path, |progress| task.progress(progress))
+                .download_with_progress(&url, &media_id, &path, |progress| task.progress(progress))
                 .await;
 
             match result {
@@ -258,7 +294,7 @@ impl Manager {
                     active.last_progress = Some(progress);
 
                     debug!(
-                        video_id = %active.request.video_id,
+                        media_id = %active.request.id,
                         percent = ?progress.fraction().map(|fraction| format!("{:.0}%", fraction * 100.0)),
                         ?progress,
                         "download progress"
@@ -278,9 +314,9 @@ impl Manager {
                 };
 
                 error!(
-                    video_id = %active.request.video_id,
+                    media_id = %active.request.id,
                     error = %error,
-                    "could not download video"
+                    "could not download media"
                 );
 
                 self.finish(active, Err(error)).await;
@@ -300,33 +336,45 @@ impl Manager {
 
         let ActiveDownload {
             request: DownloadRequest {
-                video_id, on_finish, ..
+                id,
+                prefix,
+                public_url_base,
+                on_finish,
+                ..
             },
             tempdir,
             ..
         } = active;
 
         let result = match result {
-            Ok(files) => match Self::upload(&self.s3, &video_id, &files).await {
-                Ok(link) => Ok(link),
-                Err(err) => {
-                    error!(%video_id, error = %err, "could not upload the downloaded video");
-                    Err(Error::Upload(err))
+            Ok(files) => {
+                match Self::upload(&self.s3, &prefix, &public_url_base, &id, &files).await {
+                    Ok(link) => Ok(link),
+                    Err(err) => {
+                        error!(media_id = %id, error = %err, "could not upload the downloaded media");
+                        Err(Error::Upload(err))
+                    }
                 }
-            },
+            }
             Err(err) => Err(Error::Download(err)),
         };
 
-        // The temporary directory is removed here, after the upload of its contents.
-        drop(tempdir);
+        // The temporary directory and everything in it are removed here, both on success and on
+        // failure, so that downloaded files never outlive the download. The path is captured
+        // before `close`, since it is no longer valid afterwards.
+        let tempdir_path = tempdir.path().to_path_buf();
+
+        if let Err(err) = tempdir.close() {
+            error!(path = %tempdir_path.display(), error = %err, "could not remove the temporary download directory");
+        }
 
         on_finish(result);
 
         self.start_next();
     }
 
-    /// Uploads the downloaded files to the bucket and returns the public URL of the mirrored
-    /// video.
+    /// Uploads the downloaded files to the bucket under `prefix` and returns the public URL of
+    /// the mirrored media.
     ///
     /// Files that already exist in the bucket under their exact key are not uploaded again.
     ///
@@ -336,15 +384,17 @@ impl Manager {
     /// uploaded.
     async fn upload(
         s3: &S3,
-        video_id: &str,
+        prefix: &str,
+        public_url_base: &Url,
+        id: &str,
         files: &[DownloadedFile],
     ) -> Result<String, super::s3::Error> {
         for file in files {
             if file.is_unsupported_codec() {
                 warn!(
-                    video_id,
+                    media_id = id,
                     vcodec = ?file.vcodec,
-                    "the video is in a format that isn't supported by browsers"
+                    "the media is in a format that isn't supported by browsers"
                 );
             }
 
@@ -352,7 +402,7 @@ impl Manager {
                 continue;
             };
 
-            let key = s3.key_for(&filename);
+            let key = object_key(prefix, &filename);
 
             if s3.object_exists(&key).await? {
                 debug!(%key, "skipping upload, object already exists");
@@ -360,10 +410,10 @@ impl Manager {
             }
 
             s3.upload_file(&file.filepath, &key).await?;
-            debug!(%key, "uploaded video to s3");
+            debug!(%key, "uploaded media to s3");
         }
 
-        Ok(s3.public_url(video_id))
+        Ok(public_url_for(public_url_base, id))
     }
 
     /// Starts the next queued download, if there is one.
@@ -470,10 +520,10 @@ fn cleanup_stale_downloads(base: &Path) -> usize {
     removed
 }
 
-/// Returns the temporary download directories that currently exist.
+/// Returns the temporary download directories that currently exist under `base`.
 #[cfg(test)]
-fn stale_download_dirs() -> Vec<std::path::PathBuf> {
-    std::fs::read_dir(std::env::temp_dir())
+fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(base)
         .unwrap()
         .flatten()
         .filter(|entry| {
@@ -488,14 +538,9 @@ fn stale_download_dirs() -> Vec<std::path::PathBuf> {
 mod tests {
     use super::*;
 
-    /// Serializes the tests that run a download manager: every manager start cleans up stale
-    /// `zeta-tiktok-*` directories in the shared temporary directory, which would otherwise
-    /// destroy the active downloads of a concurrently running test.
-    static DOWNLOAD_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
     /// Writes an executable script that sleeps for the number of seconds given as its last
     /// argument (the download URL), and then exits with a failure.
-    fn write_sleeping_script(name: &str) -> std::path::PathBuf {
+    fn write_sleeping_script(name: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
         let script = std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
@@ -511,7 +556,7 @@ mod tests {
 
     /// Writes an executable script that acts like a successful `yt-dlp` run: it writes a file
     /// into the directory passed via `--paths` and dumps its json.
-    fn write_successful_script(name: &str) -> std::path::PathBuf {
+    fn write_successful_script(name: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
         let script = std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
@@ -540,29 +585,58 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
     /// Returns a request that reports its result on the given channel.
     fn request(
         url: &str,
-        video_id: &str,
+        id: &str,
         results: mpsc::UnboundedSender<(usize, Result<String, Error>)>,
         index: usize,
     ) -> DownloadRequest {
         DownloadRequest {
             url: url.to_string(),
-            video_id: video_id.to_string(),
+            id: id.to_string(),
+            prefix: "test".to_string(),
+            public_url_base: Url::parse("https://links.example/test").unwrap(),
             on_finish: Box::new(move |result| {
                 let _ = results.send((index, result));
             }),
         }
     }
 
-    #[tokio::test]
-    async fn test_failed_download_reports_and_cleans_up() {
-        let _guard = DOWNLOAD_TESTS.lock().await;
-
-        let script = write_sleeping_script("manager-sleep-a");
+    /// Starts a manager with its own isolated download directory, so tests cannot interfere with
+    /// each other.
+    fn start_manager(script: &Path, max_concurrent: usize) -> (tempfile::TempDir, DownloadManager) {
+        let download_dir = tempfile::tempdir().unwrap();
         let manager = DownloadManager::start(
             YtDlp::with_command(script.to_str().unwrap()),
             S3::for_test(),
-            2,
+            download_dir.path().to_path_buf(),
+            None,
+            max_concurrent,
         );
+
+        (download_dir, manager)
+    }
+
+    #[tokio::test]
+    async fn test_invalid_id_is_rejected() {
+        let script = write_sleeping_script("manager-invalid-id");
+        let (_download_dir, manager) = start_manager(&script, 2);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        manager
+            .submit(request("0", "../evil", results, 0))
+            .expect("manager is running");
+
+        let (_, result) = rx.recv().await.expect("the download did not finish");
+        let error = result.expect_err("the request should have been rejected");
+
+        assert!(matches!(error, Error::InvalidId(_)));
+
+        std::fs::remove_file(&script).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_failed_download_reports_and_cleans_up() {
+        let script = write_sleeping_script("manager-sleep-a");
+        let (download_dir, manager) = start_manager(&script, 2);
 
         let (results, mut rx) = mpsc::unbounded_channel();
         manager
@@ -577,9 +651,9 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
 
         // The temporary download directory was removed.
         assert!(
-            stale_download_dirs().is_empty(),
+            stale_download_dirs(download_dir.path()).is_empty(),
             "temporary download directories were not removed: {:?}",
-            stale_download_dirs()
+            stale_download_dirs(download_dir.path())
         );
 
         std::fs::remove_file(&script).unwrap();
@@ -587,14 +661,8 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
 
     #[tokio::test]
     async fn test_completed_download_is_uploaded_and_reported() {
-        let _guard = DOWNLOAD_TESTS.lock().await;
-
         let script = write_successful_script("manager-success");
-        let manager = DownloadManager::start(
-            YtDlp::with_command(script.to_str().unwrap()),
-            S3::for_test(),
-            2,
-        );
+        let (download_dir, manager) = start_manager(&script, 2);
 
         let (results, mut rx) = mpsc::unbounded_channel();
         manager
@@ -608,21 +676,15 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
         assert!(matches!(error, Error::Upload(_)));
 
         // The temporary download directory was removed.
-        assert!(stale_download_dirs().is_empty());
+        assert!(stale_download_dirs(download_dir.path()).is_empty());
 
         std::fs::remove_file(&script).unwrap();
     }
 
     #[tokio::test]
     async fn test_requests_run_serially_when_capped() {
-        let _guard = DOWNLOAD_TESTS.lock().await;
-
         let script = write_sleeping_script("manager-sleep-b");
-        let manager = DownloadManager::start(
-            YtDlp::with_command(script.to_str().unwrap()),
-            S3::for_test(),
-            1,
-        );
+        let (_download_dir, manager) = start_manager(&script, 1);
 
         let (results, mut rx) = mpsc::unbounded_channel();
 

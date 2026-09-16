@@ -21,6 +21,10 @@ pub struct Config {
     /// HTTP client configuration
     #[serde(default)]
     pub http: HttpConfig,
+    /// Shared media mirroring configuration
+    #[cfg(feature = "mirror")]
+    #[serde(default)]
+    pub mirror: crate::mirror::MirrorConfig,
     /// Per-plugin configuration sections.
     ///
     /// Consumed by [`Config::take_plugins`] during startup, before any plugin is constructed; the
@@ -266,8 +270,8 @@ mod tests {
 
     use super::*;
     use figment::{
-        Error, Figment,
         providers::{Format, Toml},
+        Error, Figment,
     };
 
     /// Extracts the `[plugins]` subtree from an inline TOML document.
