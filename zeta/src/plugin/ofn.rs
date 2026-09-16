@@ -324,6 +324,8 @@ impl Ofn {
     /// Processes the given list of `urls` with the associated `origin` by querying them from the
     /// database and inserting any of the URLs that aren't already present.
     ///
+    /// URLs matching a filter are skipped — neither recorded nor announced.
+    ///
     /// Returns a [`Report`] that contains information about URLs that were already known and URLs
     /// that were added to the database.
     #[tracing::instrument(
@@ -343,10 +345,19 @@ impl Ofn {
         origin: &ChannelMessageOrigin<'_>,
         urls: &[Url],
     ) -> Result<Report, Error> {
+        let filters = Filters::from_context(ctx);
+        let sender = Sender::new(origin.nickname, origin.username, origin.hostname);
+
         let mut found = vec![];
         let mut num_inserted = 0;
 
         for url in urls {
+            if filters.is_filtered(origin.channel, Some(sender), url) {
+                debug!(%url, "skipping filtered url");
+
+                continue;
+            }
+
             if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
                 youtube::parse_youtube_url(url)
             {

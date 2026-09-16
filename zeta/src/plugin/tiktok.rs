@@ -111,6 +111,10 @@ impl Plugin<Context> for Tiktok {
         }
     }
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        &["tiktok.com", "vm.tiktok.com", "www.tiktok.com"]
+    }
+
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
@@ -121,15 +125,23 @@ impl Plugin<Context> for Tiktok {
 
     async fn handle_message(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
-            && let Err(err) = self.process_urls(&urls, channel, client).await
         {
-            error!("could not process urls: {err}");
+            let filters = Filters::from_context(ctx);
+            let sender = Sender::from_message(message);
+            let urls: Vec<_> = urls
+                .into_iter()
+                .filter(|url| !filters.is_filtered(channel, sender, url))
+                .collect();
+
+            if let Err(err) = self.process_urls(&urls, channel, client).await {
+                error!("could not process urls: {err}");
+            }
         }
 
         Ok(())

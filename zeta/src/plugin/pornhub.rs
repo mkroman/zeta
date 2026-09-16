@@ -149,16 +149,27 @@ impl Plugin<Context> for PornHub {
         }
     }
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        &["www.pornhub.com"]
+    }
+
     // Handles incoming messages and processes any PornHub URLs found.
     async fn handle_message(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
         if let Command::PRIVMSG(ref channel, ref user_message) = message.command
             && let Some(urls) = plugin::extract_urls(user_message)
         {
+            let filters = Filters::from_context(ctx);
+            let sender = Sender::from_message(message);
+            let urls: Vec<_> = urls
+                .into_iter()
+                .filter(|url| !filters.is_filtered(channel, sender, url))
+                .collect();
+
             let _ = self.process_urls(urls, channel, client).await;
         }
 

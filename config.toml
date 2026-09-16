@@ -152,6 +152,11 @@ name = "#zeta.dev"
   # Whether to show an example sentence for the definition.
   # show_examples = true
 
+  # Channel-scoped URL and sender filters.
+  [plugins.filter]
+  # Enable the plugin.
+  enabled = true
+
   # Query nameservers.
   [plugins.dig]
   # Enable the plugin.
@@ -332,8 +337,9 @@ name = "#zeta.dev"
   [plugins.titles]
   # Enable the plugin.
   enabled = true
-  # Hosts whose URLs are left to dedicated plugins. Remove a host to let this plugin preview its
-  # URLs.
+  # Hosts whose URLs are left to dedicated plugins. Defaults to every host matched by a bundled
+  # plugin; the hosts advertised by loaded plugins through the plugin catalog are skipped as
+  # well.
   # ignored_hosts = [
   #   "reddit.com",
   #   "redd.it",

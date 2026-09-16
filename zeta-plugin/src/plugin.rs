@@ -107,6 +107,20 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
         &[]
     }
 
+    /// The URL hosts whose links this plugin handles itself.
+    ///
+    /// Plugins that react to URLs posted in a channel — e.g. by looking up details about the
+    /// linked resource — declare the exact host names they handle here, so generic URL plugins
+    /// (such as the titles plugin) can leave those URLs alone. The hosts are matched against the
+    /// URL host after ASCII lowercasing both sides, so list every variant that can appear in a
+    /// posted URL (e.g. `imdb.com` as well as `www.imdb.com`).
+    ///
+    /// The host list is advertised through the plugin catalog; keeping it in sync with the hosts
+    /// the plugin actually handles is up to the plugin.
+    fn url_hosts(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Handles a command invocation.
     ///
     /// Called when a `PRIVMSG` in `channel` matches one of the prefixes returned by

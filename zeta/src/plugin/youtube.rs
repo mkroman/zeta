@@ -273,6 +273,10 @@ impl Plugin<Context> for YouTube {
         }
     }
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        &["youtu.be", "youtube.com", "www.youtube.com"]
+    }
+
     fn commands(&self) -> &'static [PluginCommand] {
         COMMANDS
     }
@@ -288,6 +292,13 @@ impl Plugin<Context> for YouTube {
         };
 
         if let Some(urls) = plugin::extract_urls(user_message) {
+            let filters = Filters::from_context(ctx);
+            let sender = Sender::from_message(message);
+            let urls: Vec<_> = urls
+                .into_iter()
+                .filter(|url| !filters.is_filtered(channel, sender, url))
+                .collect();
+
             self.process_urls(urls, channel, client).await?;
         } else {
             self.dispatch_command(ctx, client, message).await?;
