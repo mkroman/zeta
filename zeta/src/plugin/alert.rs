@@ -2,7 +2,8 @@
 //!
 //! Alerts are created with the `.alert <message> <in|at> <datetime>` command, e.g.
 //! `.alert hello world at 4:20` or `.alert another message in 10 minutes`, and support human
-//! datetime expressions ("tomorrow 8pm", "next friday 10:30", "10 minutes", ..).
+//! datetime expressions ("tomorrow 8pm", "next friday 10:30", "10 minutes", ..). The pending
+//! alerts of a user in the current channel are listed with `.alert -l`.
 //!
 //! Alerts are persisted in the database and cached in memory by the alert service. A scheduler
 //! task delivers each alert to a delivery task as it becomes due, which sends it in the channel
@@ -25,7 +26,8 @@ pub use {
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Days;
+use argh::{ArgsInfo, FromArgs};
+use chrono::{Datelike, Days};
 use interim::{Dialect, parse_date_string};
 use irc::proto::Prefix as IrcPrefix;
 use rand::prelude::IteratorRandom;
@@ -34,16 +36,38 @@ use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
 
-use crate::plugin::prelude::*;
+use crate::{plugin::prelude::*, utils::Truncatable};
 
 /// The `.alert` command.
-const ALERT: PluginCommand = PluginCommand::new(
+const ALERT: PluginCommand = PluginCommand::with_args::<Opts>(
     Prefix::new(".alert"),
-    "Schedule an alert to be posted later",
+    "Schedule an alert to be posted later, or list pending alerts",
 );
+
+/// The usage hint for the `.alert` command.
+const USAGE: &str = "Usage: .alert\x0f [-l] <message> <in|at> <datetime>";
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[ALERT];
+
+/// Schedule an alert to be posted later, or list pending alerts.
+#[derive(FromArgs, ArgsInfo, Debug)]
+#[argh(help_triggers("--help"))]
+struct Opts {
+    /// list your pending alerts in this channel
+    #[argh(switch, short = 'l')]
+    list: bool,
+    /// the alert message, followed by `in` or `at` and a datetime
+    #[argh(positional, greedy)]
+    args: Vec<String>,
+}
+
+impl Opts {
+    /// Returns the joined message and datetime expression.
+    fn input(&self) -> String {
+        self.args.join(" ")
+    }
+}
 
 /// Settings for the alert plugin, from its `[plugins.alert]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -73,7 +97,7 @@ const fn default_retry_delay() -> Duration {
 
 /// Returns the default maximum number of pending alerts per user.
 const fn default_max_pending_per_user() -> usize {
-    10
+    50
 }
 
 /// Reply messages used when an alert has been stored.
@@ -182,11 +206,35 @@ impl Plugin<Context> for AlertPlugin {
         };
 
         if let Some(args) = ALERT.parse(msg) {
-            let Some((message, time_spec)) = split_args(args) else {
-                client.send_privmsg(
-                    channel,
-                    formatted("Usage: .alert\x0f <message> <in|at> <datetime>"),
-                )?;
+            let opts = match ALERT.parse_words::<Opts>(args) {
+                Ok(opts) => opts,
+                Err(err) => {
+                    for line in err.to_string().lines().filter(|line| !line.is_empty()) {
+                        client.send_privmsg(channel, formatted(line))?;
+                    }
+
+                    return Ok(());
+                }
+            };
+
+            if opts.list {
+                if !opts.args.is_empty() {
+                    client.send_privmsg(channel, formatted(USAGE))?;
+
+                    return Ok(());
+                }
+
+                let pending = self.service.pending_for(channel, nickname).await;
+
+                client.send_privmsg(channel, format_pending(&pending))?;
+
+                return Ok(());
+            }
+
+            let input = opts.input();
+
+            let Some((message, time_spec)) = split_args(&input) else {
+                client.send_privmsg(channel, formatted(USAGE))?;
 
                 return Ok(());
             };
@@ -225,7 +273,7 @@ impl Plugin<Context> for AlertPlugin {
                     client.send_privmsg(
                         channel,
                         formatted(&format!(
-                            "you already have {max} pending alerts, wait for them to be delivered"
+                            "you already have\x0f {max}\x0310 pending alerts, wait for them to be delivered"
                         )),
                     )?;
                 }
@@ -308,7 +356,7 @@ fn parse_time(spec: &str, now: DateTime<Local>) -> Result<DateTime<Utc>, ParseTi
     Err(ParseTimeError::Past)
 }
 
-/// Strips a leading `at` or `on` article from the datetime expression.
+/// Strips leading `at` or `on` article from the datetime expression.
 fn strip_article(spec: &str) -> &str {
     for article in ["at ", "on "] {
         if spec.len() > article.len()
@@ -382,9 +430,86 @@ fn success_message() -> &'static str {
         .unwrap_or(&SUCCESS_MESSAGES[0])
 }
 
+/// The maximum number of pending alerts included in a listing.
+const MAX_LISTED_ALERTS: usize = 3;
+
+/// The maximum number of characters of an alert message included in a listing.
+const MAX_LISTED_MESSAGE_CHARS: usize = 50;
+
+/// The maximum length of a pending alerts listing, leaving room for the sender prefix, `PRIVMSG`
+/// framing and line ending overhead within the classic 512-byte IRC line limit.
+const MAX_LISTING_LENGTH: usize = 400;
+
+/// Formats the reply to `.alert -l` for `pending`, ordered by the time the alerts are due.
+///
+/// At most [`MAX_LISTED_ALERTS`] alerts are included, and entries are only appended while the
+/// listing stays within [`MAX_LISTING_LENGTH`]; the count in the header always reflects every
+/// pending alert.
+fn format_pending(pending: &[Alert]) -> String {
+    let Some(next) = pending.first() else {
+        return formatted("You have no pending alerts");
+    };
+
+    let mut listing = formatted(&format!(
+        "Pending alerts:\x0f {}\x0310 Next up: {}",
+        pending.len(),
+        format_entry(next)
+    ));
+
+    for alert in pending.iter().take(MAX_LISTED_ALERTS).skip(1) {
+        let entry = format_entry(alert);
+        let separator = format!("\x0310, then: {entry}");
+
+        if listing.len() + separator.len() > MAX_LISTING_LENGTH {
+            break;
+        }
+
+        listing.push_str(&separator);
+    }
+
+    listing
+}
+
+/// Formats a pending alert as a `“message” Mon DDth HH:MM` entry.
+fn format_entry(alert: &Alert) -> String {
+    let message = alert
+        .message
+        .as_str()
+        .truncate_with_suffix(MAX_LISTED_MESSAGE_CHARS, "…");
+    let due = format_due(alert.time.with_timezone(&Local));
+
+    format!("“\x0f{message}\x0310”\x0f {due}\x0310")
+}
+
+/// Formats the due time of an alert as `Sep 16th 11:21`.
+fn format_due(time: DateTime<Local>) -> String {
+    let day = time.day();
+
+    format!(
+        "{} {day}{} {}",
+        time.format("%b"),
+        ordinal_suffix(day),
+        time.format("%H:%M")
+    )
+}
+
+/// Returns the ordinal suffix of `day`, e.g. `st` for 1 and 21, `th` for 11 through 13.
+const fn ordinal_suffix(day: u32) -> &'static str {
+    if matches!(day % 100, 11..=13) {
+        return "th";
+    }
+
+    match day % 10 {
+        1 => "st",
+        2 => "nd",
+        3 => "rd",
+        _ => "th",
+    }
+}
+
 /// Formats `s` as an alert response.
 fn formatted(s: &str) -> String {
-    format!("\x0310>\x0f\x02 Alert\x02\x0310: {s}")
+    format!("\x0310>\x0f\x02 Alert:\x02\x0310 {s}")
 }
 
 #[cfg(test)]
@@ -398,7 +523,7 @@ mod tests {
         let settings = Settings::default();
 
         assert_eq!(settings.retry_delay, Duration::from_secs(30));
-        assert_eq!(settings.max_pending_per_user, 10);
+        assert_eq!(settings.max_pending_per_user, 50);
     }
 
     #[test]
@@ -562,5 +687,178 @@ mod tests {
         assert!(!is_time_only("tomorrow 10:30"));
         assert!(!is_time_only("next friday 8pm"));
         assert!(!is_time_only("10 minutes"));
+    }
+
+    /// Returns a pending alert fixture.
+    fn alert(message: &str, time: DateTime<Utc>) -> Alert {
+        Alert {
+            id: 1,
+            nickname: "smoke".into(),
+            username: "smoke".into(),
+            hostname: "smoke".into(),
+            channel: "#smoke".into(),
+            message: message.into(),
+            time,
+            created_at: time,
+        }
+    }
+
+    /// Returns the UTC equivalent of a local wall-clock time.
+    fn at(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+        Local
+            .with_ymd_and_hms(year, month, day, hour, minute, 0)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn parses_the_list_flag() {
+        let opts: Opts = ALERT.parse_words("-l").unwrap();
+
+        assert!(opts.list);
+        assert_eq!(opts.input(), "");
+
+        let opts: Opts = ALERT.parse_words("--list").unwrap();
+
+        assert!(opts.list);
+    }
+
+    #[test]
+    fn parses_message_and_datetime() {
+        let opts: Opts = ALERT.parse_words("hello world at 4:20").unwrap();
+
+        assert!(!opts.list);
+        assert_eq!(opts.input(), "hello world at 4:20");
+    }
+
+    #[test]
+    fn parses_empty_arguments() {
+        let opts: Opts = ALERT.parse_words("").unwrap();
+
+        assert!(!opts.list);
+        assert_eq!(opts.input(), "");
+    }
+
+    #[test]
+    fn keeps_messages_verbatim() {
+        let opts: Opts = ALERT
+            .parse_words(r#"don't "forget me"  at   4:20"#)
+            .unwrap();
+
+        assert_eq!(opts.input(), r#"don't "forget me" at 4:20"#);
+    }
+
+    #[test]
+    fn rejects_unknown_flags() {
+        assert!(matches!(
+            ALERT.parse_words::<Opts>("-x").unwrap_err(),
+            ArgsError::Usage(_)
+        ));
+    }
+
+    #[test]
+    fn ordinals() {
+        assert_eq!(ordinal_suffix(1), "st");
+        assert_eq!(ordinal_suffix(2), "nd");
+        assert_eq!(ordinal_suffix(3), "rd");
+        assert_eq!(ordinal_suffix(4), "th");
+        assert_eq!(ordinal_suffix(11), "th");
+        assert_eq!(ordinal_suffix(12), "th");
+        assert_eq!(ordinal_suffix(13), "th");
+        assert_eq!(ordinal_suffix(21), "st");
+        assert_eq!(ordinal_suffix(22), "nd");
+        assert_eq!(ordinal_suffix(23), "rd");
+        assert_eq!(ordinal_suffix(31), "st");
+    }
+
+    #[test]
+    fn formats_due_times() {
+        assert_eq!(
+            format_due(Local.with_ymd_and_hms(2026, 9, 16, 11, 21, 0).unwrap()),
+            "Sep 16th 11:21"
+        );
+        assert_eq!(
+            format_due(Local.with_ymd_and_hms(2026, 1, 1, 0, 5, 0).unwrap()),
+            "Jan 1st 00:05"
+        );
+        assert_eq!(
+            format_due(Local.with_ymd_and_hms(2026, 3, 13, 23, 59, 0).unwrap()),
+            "Mar 13th 23:59"
+        );
+    }
+
+    #[test]
+    fn formats_no_pending_alerts() {
+        assert_eq!(
+            format_pending(&[]),
+            "\x0310>\x0f\x02 Alert:\x02\x0310 You have no pending alerts"
+        );
+    }
+
+    #[test]
+    fn formats_a_single_pending_alert() {
+        let pending = [alert("hello world", at(2026, 9, 16, 11, 21))];
+
+        assert_eq!(
+            format_pending(&pending),
+            concat!(
+                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1",
+                "\x0310 Next up: “\x0fhello world\x0310”\x0f Sep 16th 11:21\x0310",
+            )
+        );
+    }
+
+    #[test]
+    fn formats_at_most_three_pending_alerts() {
+        let pending = [
+            alert("first", at(2026, 9, 16, 11, 21)),
+            alert("second", at(2026, 9, 16, 11, 22)),
+            alert("third", at(2026, 9, 16, 11, 23)),
+            alert("fourth", at(2026, 9, 17, 9, 15)),
+        ];
+
+        assert_eq!(
+            format_pending(&pending),
+            concat!(
+                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 4",
+                "\x0310 Next up: “\x0ffirst\x0310”\x0f Sep 16th 11:21\x0310",
+                "\x0310, then: “\x0fsecond\x0310”\x0f Sep 16th 11:22\x0310",
+                "\x0310, then: “\x0fthird\x0310”\x0f Sep 16th 11:23\x0310",
+            )
+        );
+    }
+
+    #[test]
+    fn truncates_long_messages() {
+        let pending = [alert(&"a".repeat(80), at(2026, 9, 16, 11, 21))];
+
+        let truncated = format!("{}…", "a".repeat(50));
+        let expected = format!(
+            concat!(
+                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1",
+                "\x0310 Next up: “\x0f{}\x0310”\x0f Sep 16th 11:21\x0310",
+            ),
+            truncated
+        );
+
+        assert_eq!(format_pending(&pending), expected);
+    }
+
+    #[test]
+    fn omits_entries_beyond_the_listing_budget() {
+        // Each 50-character message is 100 bytes in UTF-8, so the third entry would push the
+        // listing past the message length budget.
+        let message = "æ".repeat(50);
+        let pending = [
+            alert(&message, at(2026, 9, 16, 11, 21)),
+            alert(&message, at(2026, 9, 16, 11, 22)),
+            alert(&message, at(2026, 9, 16, 11, 23)),
+        ];
+
+        let listing = format_pending(&pending);
+
+        assert!(listing.len() <= MAX_LISTING_LENGTH);
+        assert_eq!(listing.matches("Next up").count(), 1);
+        assert_eq!(listing.matches("then:").count(), 1);
     }
 }

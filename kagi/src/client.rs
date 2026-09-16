@@ -5,13 +5,13 @@ use std::{
 
 use htmlize::unescape;
 use regex::Regex;
-use secrecy::{ExposeSecret, SecretString};
 use reqwest::header::{
-    HeaderValue, ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, PRAGMA, REFERER, SET_COOKIE,
+    ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, HeaderValue, PRAGMA, REFERER, SET_COOKIE,
     UPGRADE_INSECURE_REQUESTS,
 };
 use reqwest::redirect::Policy;
 use scraper::{ElementRef, Html, Node, Selector};
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -20,9 +20,8 @@ use tracing::{debug, error};
 use super::{BASE_URL, ClientOptions, Error, ImageResult, SearchResult};
 
 /// The `Accept` header sent for document (navigation) requests.
-const ACCEPT_DOCUMENT: HeaderValue = HeaderValue::from_static(
-    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-);
+const ACCEPT_DOCUMENT: HeaderValue =
+    HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
 /// The `Accept` header sent for server-sent event stream requests.
 const ACCEPT_EVENT_STREAM: HeaderValue = HeaderValue::from_static("text/event-stream");
 
@@ -545,7 +544,11 @@ mod tests {
         let stream = read_fixture("search_stream_sse.bin");
         let result = parse_stream(&stream);
 
-        assert!(result.iter().any(|message| message.tag == "search_results_json"));
+        assert!(
+            result
+                .iter()
+                .any(|message| message.tag == "search_results_json")
+        );
         assert!(result.iter().any(|message| message.tag == "search"));
         assert!(result.iter().any(|message| message.tag == "search.info"));
     }
@@ -607,7 +610,10 @@ mod tests {
 
         let result = results.first().unwrap();
 
-        assert_eq!(result.title, "How to Do a Reverse Image Search From Your Phone");
+        assert_eq!(
+            result.title,
+            "How to Do a Reverse Image Search From Your Phone"
+        );
         assert_eq!(
             result.page_url,
             "https://www.entrepreneur.com/business-news/how-to-do-a-reverse-image-search-from-your-phone/297541"
@@ -616,7 +622,11 @@ mod tests {
             result.image_url,
             "https://assets.entrepreneur.com/images/misc/1500561136_1.jpg"
         );
-        assert!(result.thumbnail_url.starts_with("https://p.kagi.com/proxy/"));
+        assert!(
+            result
+                .thumbnail_url
+                .starts_with("https://p.kagi.com/proxy/")
+        );
         assert_eq!(result.width, 740);
         assert_eq!(result.height, 475);
         assert_eq!(result.host, "www.entrepreneur.com");

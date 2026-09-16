@@ -1,15 +1,15 @@
 use std::env;
 
 use miette::{IntoDiagnostic, WrapErr};
-use opentelemetry::trace::TracerProvider;
 use opentelemetry::InstrumentationScope;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_resource_detectors::{
     HostResourceDetector, K8sResourceDetector, OsResourceDetector,
 };
+use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
-use opentelemetry_sdk::Resource;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

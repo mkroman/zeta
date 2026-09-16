@@ -6,8 +6,8 @@ use crate::config::HttpConfig;
 pub mod client {
     use crate::config::HttpConfig;
 
-    use reqwest::redirect::Policy;
     pub use reqwest::Client;
+    use reqwest::redirect::Policy;
 
     /// Returns a default HTTP client configured by [`HttpConfig`].
     ///
