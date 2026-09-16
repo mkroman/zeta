@@ -390,6 +390,11 @@ impl Registry {
         let mut registry = Self::new();
         debug!("registering plugins");
 
+        // The shared media mirror is published before any plugin is constructed, so plugins can
+        // pick it up through their constructors.
+        #[cfg(feature = "mirror")]
+        crate::mirror::publish_shared_mirror(ctx);
+
         for section in &plugins.unknown {
             if !BUNDLED_PLUGIN_NAMES.contains(&section.0.as_str()) {
                 warn!(

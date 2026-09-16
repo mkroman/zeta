@@ -21,8 +21,8 @@ use tracing::{debug, warn};
 /// The default command used to run `yt-dlp`.
 const DEFAULT_COMMAND: &str = "yt-dlp";
 
-/// The output filename template, resulting in `<video id>.<ext>`.
-const OUTPUT_TEMPLATE: &str = "%(id)s.%(ext)s";
+/// The environment variable providing the `yt-dlp` command when unconfigured.
+const COMMAND_ENV: &str = "ZETA_YTDLP_COMMAND";
 
 /// The download format — browser-compatible h264 video with the best available audio, falling back
 /// to the best available format overall.
@@ -41,16 +41,22 @@ const PROGRESS_TEMPLATE: &str = "download:zeta-dl %(progress.downloaded_bytes)s 
      %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s \
      %(progress.eta)s";
 
+/// Errors that can occur while downloading with `yt-dlp`.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// An I/O error occurred.
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
+    /// The download exceeded the configured timeout.
     #[error("yt-dlp download timed out")]
     Timeout,
+    /// `yt-dlp` exited with a failure.
     #[error("yt-dlp failed: {0}")]
     Failure(String),
+    /// `yt-dlp` did not report a json dump.
     #[error("yt-dlp did not report a json dump")]
     NoJsonDump,
+    /// `yt-dlp` reported no downloaded files.
     #[error("yt-dlp reported no downloaded files")]
     NoDownloads,
     /// The task running the download was cancelled or panicked before it could report a result.
@@ -158,7 +164,7 @@ pub struct YtDlp {
 pub struct YtDlpOptions {
     /// The command to execute.
     ///
-    /// Falls back to the `TIKTOK_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
+    /// Falls back to the `ZETA_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
     /// neither is set.
     pub command: Option<String>,
     /// The maximum size of a video to download, as passed to `--max-filesize`.
@@ -174,7 +180,7 @@ impl YtDlp {
         Self {
             command: options
                 .command
-                .or_else(|| std::env::var("TIKTOK_YTDLP_COMMAND").ok())
+                .or_else(|| std::env::var(COMMAND_ENV).ok())
                 .unwrap_or_else(|| DEFAULT_COMMAND.to_string()),
             max_filesize: options.max_filesize,
             download_timeout: options.download_timeout,
@@ -192,8 +198,8 @@ impl YtDlp {
         }
     }
 
-    /// Downloads the video at `url` into `output_dir`, streaming progress updates to
-    /// `on_progress` as they are reported by `yt-dlp`.
+    /// Downloads the video at `url` into `output_dir`, naming the downloaded files after `id`,
+    /// and streaming progress updates to `on_progress` as they are reported by `yt-dlp`.
     ///
     /// Videos are downloaded in a browser-compatible h264 format and merged into an mp4 container.
     /// Reported files that resolve outside of `output_dir` are dropped.
@@ -205,13 +211,14 @@ impl YtDlp {
     pub async fn download_with_progress(
         &self,
         url: &str,
+        id: &str,
         output_dir: &Path,
         mut on_progress: impl FnMut(Progress),
     ) -> Result<Vec<DownloadedFile>, Error> {
         let mut command = Command::new(&self.command);
 
         command
-            .args(build_args(url, output_dir, &self.max_filesize))
+            .args(build_args(url, id, output_dir, &self.max_filesize))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -253,7 +260,11 @@ impl YtDlp {
 
         stderr_task.abort();
 
-        let downloads = verify_paths(output.json.ok_or(Error::NoJsonDump)?.requested_downloads, output_dir).await?;
+        let downloads = verify_paths(
+            output.json.ok_or(Error::NoJsonDump)?.requested_downloads,
+            output_dir,
+        )
+        .await?;
 
         if downloads.is_empty() {
             return Err(Error::NoDownloads);
@@ -308,13 +319,14 @@ async fn drain_stderr(stderr: impl tokio::io::AsyncRead + Unpin) -> String {
     stderr_text
 }
 
-/// Builds the `yt-dlp` arguments for downloading `url` into `output_dir`.
+/// Builds the `yt-dlp` arguments for downloading `url` into `output_dir`, naming the downloaded
+/// files after `id` (i.e. `<id>.<ext>`).
 ///
 /// Configuration files and plugins are disabled, the download is bounded to a single video of at
 /// most `max_filesize`, and the URL is passed after a `--` separator so it can never be
 /// interpreted as an option.
 #[must_use]
-fn build_args(url: &str, output_dir: &Path, max_filesize: &str) -> Vec<OsString> {
+fn build_args(url: &str, id: &str, output_dir: &Path, max_filesize: &str) -> Vec<OsString> {
     vec![
         "--ignore-config".into(),
         "--no-plugin-dirs".into(),
@@ -326,7 +338,7 @@ fn build_args(url: &str, output_dir: &Path, max_filesize: &str) -> Vec<OsString>
         "--progress-template".into(),
         PROGRESS_TEMPLATE.into(),
         "--output".into(),
-        OUTPUT_TEMPLATE.into(),
+        format!("{id}.%(ext)s").into(),
         "--paths".into(),
         output_dir.as_os_str().to_os_string(),
         "--dump-single-json".into(),
@@ -344,8 +356,13 @@ fn build_args(url: &str, output_dir: &Path, max_filesize: &str) -> Vec<OsString>
 
 /// Returns the downloads whose reported file paths resolve inside `output_dir`, dropping any that
 /// point outside of it.
-async fn verify_paths(downloads: Vec<DownloadedFile>, output_dir: &Path) -> Result<Vec<DownloadedFile>, Error> {
-    let base = tokio::fs::canonicalize(output_dir).await.map_err(Error::Io)?;
+async fn verify_paths(
+    downloads: Vec<DownloadedFile>,
+    output_dir: &Path,
+) -> Result<Vec<DownloadedFile>, Error> {
+    let base = tokio::fs::canonicalize(output_dir)
+        .await
+        .map_err(Error::Io)?;
     let mut verified = Vec::with_capacity(downloads.len());
 
     for download in downloads {
@@ -422,11 +439,15 @@ mod tests {
 
     #[test]
     fn test_build_args() {
-        let args: Vec<String> =
-            build_args("https://www.tiktok.com/@a/video/1", Path::new("/tmp/out"), "500M")
-                .iter()
-                .map(|arg| arg.to_string_lossy().into_owned())
-                .collect();
+        let args: Vec<String> = build_args(
+            "https://www.tiktok.com/@a/video/1",
+            "123",
+            Path::new("/tmp/out"),
+            "500M",
+        )
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
 
         let value = |option: &str| {
             args.iter()
@@ -462,6 +483,8 @@ mod tests {
         assert!(template.contains("%(progress.total_bytes)s"));
         assert!(template.contains("%(progress.eta)s"));
 
+        // The downloaded files are named after the given id.
+        assert_eq!(value("--output"), Some("123.%(ext)s"));
         // The output directory is passed with `--paths` rather than changing the working directory.
         assert_eq!(value("--paths"), Some("/tmp/out"));
         // The format selector has a fallback.
@@ -545,6 +568,7 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
         let downloads = ytdlp
             .download_with_progress(
                 "https://www.tiktok.com/@user/video/123",
+                "123",
                 output_dir.path(),
                 |progress| progress_updates.push(progress),
             )

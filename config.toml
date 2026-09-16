@@ -68,6 +68,35 @@ name = "#zeta.dev"
 # The `User-Agent` header sent with HTTP requests.
 # user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0"
 
+# Media mirroring, shared by the plugins that mirror media (tiktok, reddit).
+#
+# Credentials fall back to the `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and `S3_BUCKET_NAME`
+# environment variables when unset; prefer the environment over committing secrets to this file.
+# Mirroring is disabled when the configuration is incomplete.
+[mirror]
+# The directory that downloads are buffered in. When unset, a random subdirectory of the system
+# temporary directory is used and removed when the bot shuts down. Prefer a dedicated directory
+# outside the system temporary directory: its cleanup services may remove in-progress downloads.
+# download_dir = "/var/cache/zeta/mirror"
+# The maximum size of a file to download, as passed to `yt-dlp`.
+# max_filesize = "500M"
+# The maximum duration of a download before it gets killed.
+# download_timeout = "10m"
+# The maximum number of downloads that run concurrently.
+# max_concurrent_downloads = 4
+# The command used to run `yt-dlp`. Falls back to the `ZETA_YTDLP_COMMAND` environment variable
+# when unset.
+# ytdlp_command = "yt-dlp"
+# s3_access_key_id = "..."
+# s3_secret_access_key = "..."
+# s3_bucket_name = "..."
+# The S3 region. Falls back to the `S3_REGION` environment variable, and to "auto" when neither is
+# set.
+# s3_region = "auto"
+# The endpoint URL for S3-compatible services. Falls back to the `S3_ENDPOINT` environment
+# variable when unset.
+# s3_endpoint = "https://..."
+
 # Plugin Configuration.
 #
 # Every plugin has a section keyed by its name, with an `enabled` toggle that defaults to true.
@@ -238,6 +267,12 @@ name = "#zeta.dev"
   # secrets to this file.
   # client_id = "..."
   # client_secret = "..."
+  # The key prefix that mirrored videos are uploaded under. Falls back to the `REDDIT_S3_PREFIX`
+  # environment variable, and to "reddit" when neither is set.
+  # prefix = "reddit"
+  # The base URL used when linking to mirrored videos. Falls back to the `REDDIT_PUBLIC_URL_BASE`
+  # environment variable when unset.
+  # public_url_base = "https://pub.rwx.im/reddit"
 
   # Calculator plugin based on rink.
   [plugins.rink]
@@ -286,31 +321,9 @@ name = "#zeta.dev"
   enabled = true
   # The maximum length of a video title before it gets truncated.
   # title_length = 150
-  # The maximum size of a video to download, as passed to `yt-dlp`.
-  # max_filesize = "500M"
-  # The maximum duration of a download before it gets killed.
-  # download_timeout = "10m"
-  # The maximum number of downloads that run concurrently.
-  # max_concurrent_downloads = 2
-  # The command used to run `yt-dlp`. Falls back to the `TIKTOK_YTDLP_COMMAND` environment variable
-  # when unset.
-  # ytdlp_command = "yt-dlp"
-  # S3 mirroring. Credentials fall back to the `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and
-  # `S3_BUCKET_NAME` environment variables when unset; prefer the environment over committing
-  # secrets to this file.
-  # Mirroring is disabled when the configuration is incomplete.
-  # s3_access_key_id = "..."
-  # s3_secret_access_key = "..."
-  # s3_bucket_name = "..."
-  # The S3 region. Falls back to the `S3_REGION` environment variable, and to "auto" when neither is
-  # set.
-  # s3_region = "auto"
-  # The endpoint URL for S3-compatible services. Falls back to the `S3_ENDPOINT` environment
-  # variable when unset.
-  # s3_endpoint = "https://..."
-  # The optional key prefix for uploaded objects. Falls back to the `S3_PREFIX` environment variable
-  # when unset.
-  # s3_prefix = "~meta"
+  # The key prefix that mirrored videos are uploaded under. Falls back to the `TIKTOK_S3_PREFIX`
+  # environment variable, and to "tiktok" when neither is set.
+  # prefix = "tiktok"
   # The base URL used when linking to mirrored videos. Falls back to the `TIKTOK_PUBLIC_URL_BASE`
   # environment variable when unset.
   # public_url_base = "https://pub.rwx.im/tiktok"

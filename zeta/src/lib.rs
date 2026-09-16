@@ -16,6 +16,9 @@ pub mod dns;
 mod error;
 #[cfg(feature = "http")]
 mod http;
+/// Shared media mirroring
+#[cfg(feature = "mirror")]
+pub mod mirror;
 mod plugin;
 /// URL helper utillities
 pub mod url;

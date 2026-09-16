@@ -18,6 +18,16 @@ path = "src/main.rs"
 default = ["plugins-all", "rustls", "database"]
 database = ["dep:sqlx", "dep:chrono"]
 http = ["dep:reqwest"]
+mirror = [
+    "dep:reqwest",
+    "reqwest/stream",
+    "dep:aws-credential-types",
+    "dep:aws-sigv4",
+    "dep:aws-smithy-runtime-api",
+    "dep:const-hex",
+    "dep:sha2",
+    "dep:tempfile",
+]
 native-tls = [
     "reqwest/native-tls",
     "irc/tls-native",
@@ -56,22 +66,13 @@ plugin-notification = ["database", "dep:chrono"]
 plugin-ofn = ["database", "http", "plugin-youtube", "dep:num-format"]
 plugin-openweathermap = ["http"]
 plugin-pornhub = ["http", "dep:num-format", "dep:serde_path_to_error"]
-plugin-reddit = ["dep:reddit", "dep:secrecy"]
+plugin-reddit = ["mirror", "dep:reddit", "dep:secrecy"]
 plugin-rink = ["dep:rink-core"]
 plugin-rust-playground = ["http", "dep:regex"]
 plugin-spotify = ["http", "dep:base64", "dep:num-format", "dep:regex"]
 plugin-string-utils = []
 plugin-thingiverse = ["http", "dep:num-format", "dep:regex"]
-plugin-tiktok = [
-    "http",
-    "reqwest?/stream",
-    "dep:aws-credential-types",
-    "dep:aws-sigv4",
-    "dep:aws-smithy-runtime-api",
-    "dep:const-hex",
-    "dep:sha2",
-    "dep:tempfile",
-]
+plugin-tiktok = ["mirror", "http"]
 plugin-titles = ["dep:html5ever", "dep:wreq", "dep:wreq-util"]
 plugin-trustpilot = ["http", "dep:num-format"]
 plugin-tvmaze = ["http", "dep:time", "dep:serde_path_to_error"]
