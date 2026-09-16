@@ -1,5 +1,6 @@
 //! Database access for alerts.
 
+use sqlx::types::chrono::{DateTime, Utc};
 use tracing::{instrument, trace};
 
 use super::{
@@ -49,20 +50,44 @@ impl AlertRepository {
         .map_err(Error::Insert)
     }
 
-    /// Returns all alerts in the database.
+    /// Returns the alerts that are due at or before `cutoff`, ordered by the time they are due.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched.
     #[instrument(skip_all, err)]
-    pub async fn list(&self) -> Result<Vec<Alert>, Error> {
-        trace!("loading alerts from database");
+    pub async fn list_due_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<Alert>, Error> {
+        trace!(?cutoff, "loading alerts from database");
 
         sqlx::query_as(
             r"SELECT id, nickname, username, hostname, channel, message, time, created_at
               FROM alerts
+              WHERE time <= $1
               ORDER BY time",
         )
+        .bind(cutoff)
+        .fetch_all(&self.db)
+        .await
+        .map_err(Error::Load)
+    }
+
+    /// Returns the pending alerts of `nickname` in `channel`, ordered by the time they are due.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Load`] if the alerts could not be fetched.
+    #[instrument(skip_all, err)]
+    pub async fn list_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
+        trace!(channel, nickname, "loading pending alerts from database");
+
+        sqlx::query_as(
+            r"SELECT id, nickname, username, hostname, channel, message, time, created_at
+              FROM alerts
+              WHERE channel = $1 AND nickname = $2
+              ORDER BY time",
+        )
+        .bind(channel)
+        .bind(nickname)
         .fetch_all(&self.db)
         .await
         .map_err(Error::Load)

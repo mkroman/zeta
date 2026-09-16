@@ -45,25 +45,27 @@ struct Scheduler {
     repo: AlertRepository,
     /// The sender half of the channel used to deliver due alerts.
     tx: mpsc::UnboundedSender<Alert>,
-    /// All pending alerts, ordered by the time they are due.
+    /// The alerts due within the window, ordered by the time they are due.
     cache: Arc<Mutex<BinaryHeap<Reverse<Scheduled>>>>,
-    /// Wakes the scheduler when an alert is created.
+    /// Wakes the scheduler to sync the window when an alert is created.
     notify: Arc<Notify>,
     /// How long the scheduler waits before retrying after a failed tick.
     retry_delay: Duration,
-    /// The maximum number of pending alerts a user may have.
-    max_pending_per_user: usize,
+    /// How often the window of upcoming alerts is synced from the database.
+    sync_interval: Duration,
+    /// How far ahead of their due time alerts are kept in the cache.
+    window: Duration,
 }
 
-/// Stores alerts in the database, caching them in memory and delivering due alerts over an
-/// unbounded [`tokio::sync::mpsc`] channel.
+/// Stores alerts in the database, caching a window of upcoming alerts in memory and delivering
+/// due alerts over an unbounded [`tokio::sync::mpsc`] channel.
 ///
-/// All pending alerts are cached in a min-heap ordered by due time; the database remains the
-/// source of truth for crash recovery. The scheduler task sleeps until the next alert is due,
-/// sends it to the delivery task, and deletes it from the cache and the database once sent.
-/// Delivery is at-least-once: alerts are only deleted after being sent, so a failed deletion
-/// results in a duplicate delivery. The plugin holds the receiver and delivers the alerts it
-/// receives over IRC.
+/// The cache holds only the alerts due within the next window (15 minutes by default), synced
+/// from the database every few minutes; the database remains the source of truth for crash
+/// recovery. The scheduler task sleeps until the next cached alert is due, sends it to the
+/// delivery task, and deletes it from the database once sent. Delivery is at-least-once: alerts
+/// are only deleted after being sent, so a failed deletion results in a duplicate delivery. The
+/// plugin holds the receiver and delivers the alerts it receives over IRC.
 pub struct AlertService {
     /// The state shared with the scheduler task.
     scheduler: Scheduler,
@@ -84,7 +86,8 @@ impl AlertService {
                 cache: Arc::new(Mutex::new(BinaryHeap::new())),
                 notify: Arc::new(Notify::new()),
                 retry_delay: settings.retry_delay,
-                max_pending_per_user: settings.max_pending_per_user,
+                sync_interval: settings.sync_interval,
+                window: settings.window,
             },
             receiver: Some(receiver),
         }
@@ -98,17 +101,18 @@ impl AlertService {
         self.receiver.take()
     }
 
-    /// Loads all pending alerts from the database into the cache.
+    /// Loads the alerts due within the window from the database into the cache.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
-        self.scheduler.load().await
+        self.scheduler.sync().await.map(|_| ())
     }
 
-    /// Creates a new alert, persisting it in the database and scheduling it for delivery.
+    /// Creates a new alert, persisting it in the database and waking the scheduler to sync it
+    /// into the cache.
     ///
     /// # Errors
     ///
@@ -119,8 +123,12 @@ impl AlertService {
     }
 
     /// Returns the pending alerts of `nickname` in `channel`, ordered by the time they are due.
-    #[instrument(skip_all)]
-    pub async fn pending_for(&self, channel: &str, nickname: &str) -> Vec<Alert> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
+    #[instrument(skip_all, err)]
+    pub async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
         self.scheduler.pending_for(channel, nickname).await
     }
 
@@ -129,90 +137,96 @@ impl AlertService {
         let scheduler = self.scheduler.clone();
 
         tokio::spawn(async move {
-            debug!("starting alert scheduler");
-
             scheduler.run().await;
         });
     }
 }
 
 impl Scheduler {
-    /// Loads all alerts in the database into the cache.
-    async fn load(&self) -> Result<(), Error> {
-        let alerts: BinaryHeap<Reverse<Scheduled>> = self
-            .repo
-            .list()
-            .await?
-            .into_iter()
-            .map(|alert| Reverse(Scheduled(alert)))
-            .collect();
-
-        debug!(count = alerts.len(), "loaded alerts into cache");
-
-        // Merges instead of replacing, so an alert persisted by `create` while the query ran is
-        // not evicted from the cache.
-        self.cache.lock().await.extend(alerts);
-
-        Ok(())
-    }
-
-    /// Creates a new alert, persisting it in the database and scheduling it for delivery.
+    /// Syncs the cache with the database, replacing it with the alerts due within the window.
+    ///
+    /// Only the scheduler task mutates the cache, so an alert persisted by `create` just before
+    /// the sync either is part of the fetched window or is picked up by the sync woken by the
+    /// create; it is never lost.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::TooManyPending`] if the user already has the maximum number of pending
-    /// alerts, or [`Error::Insert`] if the alert could not be inserted into the database.
-    async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
-        if self.max_pending_per_user > 0 {
-            let pending = self
-                .cache
-                .lock()
-                .await
-                .iter()
-                .filter(|Reverse(scheduled)| scheduled.0.nickname == alert.nickname)
-                .count();
+    /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
+    async fn sync(&self) -> Result<usize, Error> {
+        let cutoff = Utc::now() + self.window;
 
-            if pending >= self.max_pending_per_user {
-                return Err(Error::TooManyPending(self.max_pending_per_user));
-            }
+        let alerts = self.repo.list_due_before(cutoff).await?;
+        let count = alerts.len();
+
+        debug!(count, "synced alerts from database");
+
+        {
+            let mut cache = self.cache.lock().await;
+
+            *cache = alerts
+                .into_iter()
+                .map(|alert| Reverse(Scheduled(alert)))
+                .collect();
         }
 
+        Ok(count)
+    }
+
+    /// Creates a new alert, persisting it in the database and waking the scheduler to sync it
+    /// into the cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Insert`] if the alert could not be inserted into the database.
+    async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
         let alert = self.repo.insert(alert).await?;
 
-        trace!(?alert, "scheduling alert");
+        trace!(?alert, "created alert");
 
-        self.cache
-            .lock()
-            .await
-            .push(Reverse(Scheduled(alert.clone())));
-
-        // Wakes the scheduler, as the alert may be due sooner than the one it is waiting for.
+        // Wakes the scheduler to sync the window, pulling the alert into the cache.
         self.notify.notify_one();
 
         Ok(alert)
     }
 
     /// Returns the pending alerts of `nickname` in `channel`, ordered by the time they are due.
-    async fn pending_for(&self, channel: &str, nickname: &str) -> Vec<Alert> {
-        let mut pending = self
-            .cache
-            .lock()
-            .await
-            .iter()
-            .filter(|Reverse(scheduled)| {
-                scheduled.0.channel == channel && scheduled.0.nickname == nickname
-            })
-            .map(|Reverse(scheduled)| scheduled.0.clone())
-            .collect::<Vec<_>>();
-
-        pending.sort_by_key(|alert| (alert.time, alert.id));
-
-        pending
+    ///
+    /// The alerts are read from the database, as the cache only holds the window of alerts due
+    /// in the near future.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
+    async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
+        self.repo.list_for(channel, nickname).await
     }
 
-    /// Runs the scheduler loop, delivering each alert as it becomes due.
+    /// Runs the scheduler loop, syncing the window of upcoming alerts from the database every
+    /// `sync_interval` and delivering each alert as it becomes due.
     async fn run(self) {
+        debug!("starting alert scheduler");
+
+        // The window is synced once at startup through `load`, so the first in-loop sync is a
+        // full sync interval away.
+        let mut next_sync = tokio::time::Instant::now() + self.sync_interval;
+
         loop {
+            if self.tick().await.is_err() {
+                debug!("retrying scheduler tick shortly");
+
+                tokio::time::sleep(self.retry_delay).await;
+            }
+
+            if tokio::time::Instant::now() >= next_sync {
+                if let Err(err) = self.sync().await {
+                    warn!(?err, "could not sync alerts from database");
+                }
+
+                next_sync = tokio::time::Instant::now() + self.sync_interval;
+
+                continue;
+            }
+
             let now = Utc::now();
             let next_due = self
                 .cache
@@ -221,31 +235,35 @@ impl Scheduler {
                 .peek()
                 .map(|Reverse(alert)| alert.0.time);
 
+            // How long until the window is synced again; saturates at zero, as the tick above
+            // and locking the cache may take past the sync deadline.
+            let sync_delay = next_sync.saturating_duration_since(tokio::time::Instant::now());
+
             match next_due {
-                // Sleeps until the next alert is due, or wakes early if an alert is created
-                // that is due sooner.
+                // Sleeps until the next alert is due, the window is synced, or an alert is
+                // created that is due sooner.
                 Some(due) if due > now => {
-                    let delay = (due - now).to_std().unwrap_or_default();
+                    let due_delay = (due - now).to_std().unwrap_or_default();
 
                     tokio::select! {
-                        () = tokio::time::sleep(delay) => {}
-                        () = self.notify.notified() => continue,
+                        () = tokio::time::sleep(due_delay.min(sync_delay)) => {}
+                        () = self.notify.notified() => {
+                            next_sync = tokio::time::Instant::now();
+                        }
                     }
                 }
-                // The cache is empty; waits for the next alert to be created.
+                // The cache is empty; waits for the window to be synced or an alert to be
+                // created.
                 None => {
-                    self.notify.notified().await;
-
-                    continue;
+                    tokio::select! {
+                        () = tokio::time::sleep(sync_delay) => {}
+                        () = self.notify.notified() => {
+                            next_sync = tokio::time::Instant::now();
+                        }
+                    }
                 }
                 // The next alert is already due.
                 Some(_) => {}
-            }
-
-            if self.tick().await.is_err() {
-                debug!("retrying scheduler tick shortly");
-
-                tokio::time::sleep(self.retry_delay).await;
             }
         }
     }
@@ -346,12 +364,13 @@ mod tests {
         Some((service, receiver.unwrap(), db))
     }
 
-    fn new_alert(message: &str, time: DateTime<Utc>) -> NewAlert {
+    /// A new alert fixture.
+    fn new_alert(nickname: &str, channel: &str, message: &str, time: DateTime<Utc>) -> NewAlert {
         NewAlert {
-            nickname: "smoke".into(),
-            username: "smoke".into(),
-            hostname: "smoke".into(),
-            channel: "#smoke".into(),
+            nickname: nickname.into(),
+            username: nickname.into(),
+            hostname: nickname.into(),
+            channel: channel.into(),
             message: message.into(),
             time,
         }
@@ -377,11 +396,18 @@ mod tests {
 
         let now = Utc::now();
         let first = service
-            .create(new_alert("first", now + TimeDelta::try_seconds(1).unwrap()))
+            .create(new_alert(
+                "smoke",
+                "#smoke",
+                "first",
+                now + TimeDelta::try_seconds(1).unwrap(),
+            ))
             .await
             .unwrap();
         let second = service
             .create(new_alert(
+                "smoke",
+                "#smoke",
                 "second",
                 now + TimeDelta::try_seconds(3).unwrap(),
             ))
@@ -416,46 +442,121 @@ mod tests {
         assert_eq!(remaining, 0);
     }
 
-    /// A pending alert fixture.
-    fn pending_alert(id: i32, channel: &str, nickname: &str, time: DateTime<Utc>) -> Alert {
-        Alert {
-            id,
-            nickname: nickname.to_owned(),
-            username: nickname.to_owned(),
-            hostname: nickname.to_owned(),
-            channel: channel.to_owned(),
-            message: format!("{nickname} in {channel}"),
-            time,
-            created_at: time,
-        }
+    #[tokio::test]
+    async fn pending_for_filters_by_channel_and_nickname() {
+        let Some((service, _, db)) = test_service().await else {
+            return;
+        };
+
+        // Removes alerts left behind by earlier runs, so the assertions are deterministic. The
+        // nicknames are unique to this test, as the database tests run in parallel.
+        sqlx::query("DELETE FROM alerts WHERE nickname IN ('lister', 'other')")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let now = Utc::now();
+
+        let sooner = service
+            .create(new_alert(
+                "lister",
+                "#smoke",
+                "sooner",
+                now + TimeDelta::try_minutes(5).unwrap(),
+            ))
+            .await
+            .unwrap();
+        let later = service
+            .create(new_alert(
+                "lister",
+                "#smoke",
+                "later",
+                now + TimeDelta::try_minutes(10).unwrap(),
+            ))
+            .await
+            .unwrap();
+        let _other = service
+            .create(new_alert(
+                "other",
+                "#smoke",
+                "other",
+                now + TimeDelta::try_minutes(1).unwrap(),
+            ))
+            .await
+            .unwrap();
+        let _elsewhere = service
+            .create(new_alert(
+                "lister",
+                "#other",
+                "elsewhere",
+                now + TimeDelta::try_minutes(1).unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        let pending = service.pending_for("#smoke", "lister").await.unwrap();
+
+        assert_eq!(pending, vec![sooner, later]);
+
+        sqlx::query("DELETE FROM alerts WHERE nickname IN ('lister', 'other')")
+            .execute(&db)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
-    async fn pending_for_filters_by_channel_and_nickname() {
-        // The pool is lazy, so the test runs without a database.
-        let db = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .connect_lazy("postgresql://localhost/zeta")
-            .expect("could not create a lazy database pool");
+    async fn sync_only_caches_alerts_within_the_window() {
+        let Some((service, _, db)) = test_service().await else {
+            return;
+        };
 
-        let service = AlertService::new(db, &Settings::default());
+        // Removes alerts left behind by earlier runs, so the assertions are deterministic. The
+        // nickname is unique to this test, as the database tests run in parallel.
+        sqlx::query("DELETE FROM alerts WHERE nickname = 'window'")
+            .execute(&db)
+            .await
+            .unwrap();
+
         let now = Utc::now();
 
-        let sooner = pending_alert(1, "#smoke", "smoke", now + TimeDelta::try_minutes(5).unwrap());
-        let later = pending_alert(2, "#smoke", "smoke", now + TimeDelta::try_minutes(10).unwrap());
-        let other = pending_alert(3, "#smoke", "ash", now + TimeDelta::try_minutes(1).unwrap());
-        let elsewhere =
-            pending_alert(4, "#other", "smoke", now + TimeDelta::try_minutes(1).unwrap());
+        let inside = service
+            .create(new_alert(
+                "window",
+                "#smoke",
+                "inside",
+                now + TimeDelta::try_minutes(5).unwrap(),
+            ))
+            .await
+            .unwrap();
+        let _outside = service
+            .create(new_alert(
+                "window",
+                "#smoke",
+                "outside",
+                now + TimeDelta::try_hours(1).unwrap(),
+            ))
+            .await
+            .unwrap();
 
-        service.scheduler.cache.lock().await.extend([
-            Reverse(Scheduled(later.clone())),
-            Reverse(Scheduled(other)),
-            Reverse(Scheduled(elsewhere)),
-            Reverse(Scheduled(sooner.clone())),
-        ]);
+        // The scheduler is not running, so the cache is only populated by the sync.
+        service.load().await.unwrap();
 
-        let pending = service.pending_for("#smoke", "smoke").await;
+        let cached = service.scheduler.cache.lock().await;
 
-        assert_eq!(pending, vec![sooner, later]);
+        assert_eq!(
+            cached
+                .iter()
+                .filter(|Reverse(scheduled)| scheduled.0.nickname == "window")
+                .map(|Reverse(scheduled)| scheduled.0.id)
+                .collect::<Vec<_>>(),
+            vec![inside.id]
+        );
+
+        drop(cached);
+
+        sqlx::query("DELETE FROM alerts WHERE nickname = 'window'")
+            .execute(&db)
+            .await
+            .unwrap();
     }
 }

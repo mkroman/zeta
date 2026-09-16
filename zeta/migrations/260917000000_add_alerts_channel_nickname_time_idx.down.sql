@@ -1,0 +1,1 @@
+DROP INDEX alerts_channel_nickname_time_idx;
