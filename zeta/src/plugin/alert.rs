@@ -97,7 +97,7 @@ const fn default_retry_delay() -> Duration {
 
 /// Returns the default maximum number of pending alerts per user.
 const fn default_max_pending_per_user() -> usize {
-    10
+    50
 }
 
 /// Reply messages used when an alert has been stored.
@@ -273,7 +273,7 @@ impl Plugin<Context> for AlertPlugin {
                     client.send_privmsg(
                         channel,
                         formatted(&format!(
-                            "you already have {max} pending alerts, wait for them to be delivered"
+                            "you already have\x0f {max}\x0310 pending alerts, wait for them to be delivered"
                         )),
                     )?;
                 }
@@ -356,7 +356,7 @@ fn parse_time(spec: &str, now: DateTime<Local>) -> Result<DateTime<Utc>, ParseTi
     Err(ParseTimeError::Past)
 }
 
-/// Strips a leading `at` or `on` article from the datetime expression.
+/// Strips leading `at` or `on` article from the datetime expression.
 fn strip_article(spec: &str) -> &str {
     for article in ["at ", "on "] {
         if spec.len() > article.len()
@@ -478,7 +478,7 @@ fn format_entry(alert: &Alert) -> String {
         .truncate_with_suffix(MAX_LISTED_MESSAGE_CHARS, "…");
     let due = format_due(alert.time.with_timezone(&Local));
 
-    format!("“\x0f{message}\x0310” {due}")
+    format!("“\x0f{message}\x0310”\x0f {due}\x0310")
 }
 
 /// Formats the due time of an alert as `Sep 16th 11:21`.
@@ -705,7 +705,8 @@ mod tests {
 
     /// Returns the UTC equivalent of a local wall-clock time.
     fn at(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
-        Local.with_ymd_and_hms(year, month, day, hour, minute, 0)
+        Local
+            .with_ymd_and_hms(year, month, day, hour, minute, 0)
             .unwrap()
             .with_timezone(&Utc)
     }
@@ -740,7 +741,9 @@ mod tests {
 
     #[test]
     fn keeps_messages_verbatim() {
-        let opts: Opts = ALERT.parse_words(r#"don't "forget me"  at   4:20"#).unwrap();
+        let opts: Opts = ALERT
+            .parse_words(r#"don't "forget me"  at   4:20"#)
+            .unwrap();
 
         assert_eq!(opts.input(), r#"don't "forget me" at 4:20"#);
     }
@@ -770,9 +773,18 @@ mod tests {
 
     #[test]
     fn formats_due_times() {
-        assert_eq!(format_due(Local.with_ymd_and_hms(2026, 9, 16, 11, 21, 0).unwrap()), "Sep 16th 11:21");
-        assert_eq!(format_due(Local.with_ymd_and_hms(2026, 1, 1, 0, 5, 0).unwrap()), "Jan 1st 00:05");
-        assert_eq!(format_due(Local.with_ymd_and_hms(2026, 3, 13, 23, 59, 0).unwrap()), "Mar 13th 23:59");
+        assert_eq!(
+            format_due(Local.with_ymd_and_hms(2026, 9, 16, 11, 21, 0).unwrap()),
+            "Sep 16th 11:21"
+        );
+        assert_eq!(
+            format_due(Local.with_ymd_and_hms(2026, 1, 1, 0, 5, 0).unwrap()),
+            "Jan 1st 00:05"
+        );
+        assert_eq!(
+            format_due(Local.with_ymd_and_hms(2026, 3, 13, 23, 59, 0).unwrap()),
+            "Mar 13th 23:59"
+        );
     }
 
     #[test]
