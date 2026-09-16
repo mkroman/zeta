@@ -118,6 +118,12 @@ impl AlertService {
         self.scheduler.create(alert).await
     }
 
+    /// Returns the pending alerts of `nickname` in `channel`, ordered by the time they are due.
+    #[instrument(skip_all)]
+    pub async fn pending_for(&self, channel: &str, nickname: &str) -> Vec<Alert> {
+        self.scheduler.pending_for(channel, nickname).await
+    }
+
     /// Spawns the scheduler task, delivering due alerts until the runtime shuts down.
     pub fn start_scheduler(&self) {
         let scheduler = self.scheduler.clone();
@@ -184,6 +190,24 @@ impl Scheduler {
         self.notify.notify_one();
 
         Ok(alert)
+    }
+
+    /// Returns the pending alerts of `nickname` in `channel`, ordered by the time they are due.
+    async fn pending_for(&self, channel: &str, nickname: &str) -> Vec<Alert> {
+        let mut pending = self
+            .cache
+            .lock()
+            .await
+            .iter()
+            .filter(|Reverse(scheduled)| {
+                scheduled.0.channel == channel && scheduled.0.nickname == nickname
+            })
+            .map(|Reverse(scheduled)| scheduled.0.clone())
+            .collect::<Vec<_>>();
+
+        pending.sort_by_key(|alert| (alert.time, alert.id));
+
+        pending
     }
 
     /// Runs the scheduler loop, delivering each alert as it becomes due.
@@ -390,5 +414,48 @@ mod tests {
             .unwrap();
 
         assert_eq!(remaining, 0);
+    }
+
+    /// A pending alert fixture.
+    fn pending_alert(id: i32, channel: &str, nickname: &str, time: DateTime<Utc>) -> Alert {
+        Alert {
+            id,
+            nickname: nickname.to_owned(),
+            username: nickname.to_owned(),
+            hostname: nickname.to_owned(),
+            channel: channel.to_owned(),
+            message: format!("{nickname} in {channel}"),
+            time,
+            created_at: time,
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_for_filters_by_channel_and_nickname() {
+        // The pool is lazy, so the test runs without a database.
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgresql://localhost/zeta")
+            .expect("could not create a lazy database pool");
+
+        let service = AlertService::new(db, &Settings::default());
+        let now = Utc::now();
+
+        let sooner = pending_alert(1, "#smoke", "smoke", now + TimeDelta::try_minutes(5).unwrap());
+        let later = pending_alert(2, "#smoke", "smoke", now + TimeDelta::try_minutes(10).unwrap());
+        let other = pending_alert(3, "#smoke", "ash", now + TimeDelta::try_minutes(1).unwrap());
+        let elsewhere =
+            pending_alert(4, "#other", "smoke", now + TimeDelta::try_minutes(1).unwrap());
+
+        service.scheduler.cache.lock().await.extend([
+            Reverse(Scheduled(later.clone())),
+            Reverse(Scheduled(other)),
+            Reverse(Scheduled(elsewhere)),
+            Reverse(Scheduled(sooner.clone())),
+        ]);
+
+        let pending = service.pending_for("#smoke", "smoke").await;
+
+        assert_eq!(pending, vec![sooner, later]);
     }
 }

@@ -131,6 +131,43 @@ impl Prefix {
 
         T::from_args(&[self.0], &tokens).map_err(|early_exit| ArgsError::Usage(early_exit.output))
     }
+
+    /// Parses the trailing arguments of a command into a [`FromArgs`]-derived struct, splitting
+    /// them on whitespace.
+    ///
+    /// Unlike [`parse_args`](Prefix::parse_args), the arguments are not tokenized like a POSIX
+    /// shell: quotes and escapes are preserved verbatim, so free-form text (e.g. messages
+    /// containing apostrophes) reaches a greedy positional argument unharmed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArgsError::Usage`] if `argh` rejected the arguments — the wrapped string is the
+    /// human-readable usage or help output, suitable for replying with directly. Shell quoting
+    /// errors ([`ArgsError::Quoting`]) cannot occur.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use argh::FromArgs;
+    /// use zeta_plugin::Prefix;
+    ///
+    /// /// An alert message and datetime.
+    /// #[derive(FromArgs)]
+    /// struct Opts {
+    ///     /// the message and datetime
+    ///     #[argh(positional, greedy)]
+    ///     args: Vec<String>,
+    /// }
+    ///
+    /// const ALERT: Prefix = Prefix::new(".alert");
+    /// let opts: Opts = ALERT.parse_words("don't forget at 4:20").unwrap();
+    /// assert_eq!(opts.args.join(" "), "don't forget at 4:20");
+    /// ```
+    pub fn parse_words<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
+        let tokens: Vec<&str> = args.split_whitespace().collect();
+
+        T::from_args(&[self.0], &tokens).map_err(|early_exit| ArgsError::Usage(early_exit.output))
+    }
 }
 
 /// A command handled by a plugin: a [`Prefix`], a short description, and the arguments it accepts.
@@ -236,6 +273,19 @@ impl PluginCommand {
     /// the human-readable usage or help output, suitable for replying with directly.
     pub fn parse_args<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
         self.prefix.parse_args(args)
+    }
+
+    /// Parses the trailing arguments of the command into a [`FromArgs`]-derived struct, splitting
+    /// them on whitespace.
+    ///
+    /// See [`Prefix::parse_words`] for the tokenization and error behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArgsError::Usage`] if `argh` rejected the arguments — the wrapped string is the
+    /// human-readable usage or help output, suitable for replying with directly.
+    pub fn parse_words<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
+        self.prefix.parse_words(args)
     }
 
     /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
@@ -369,5 +419,108 @@ mod tests {
             CMD.parse_args::<Opts>("\"unbalanced"),
             Err(ArgsError::Quoting)
         );
+    }
+
+    #[test]
+    fn parse_words_splits_on_whitespace() {
+        #[derive(FromArgs, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the message and datetime
+            #[argh(positional, greedy)]
+            #[allow(dead_code)]
+            args: Vec<String>,
+        }
+
+        const CMD: Prefix = Prefix::new(".test");
+
+        let opts: Opts = CMD.parse_words("  hello\tworld  ").unwrap();
+
+        assert_eq!(opts.args, vec!["hello".to_owned(), "world".to_owned()]);
+
+        let opts: Opts = CMD.parse_words("").unwrap();
+
+        assert!(opts.args.is_empty());
+    }
+
+    #[test]
+    fn parse_words_keeps_quotes_and_apostrophes_verbatim() {
+        #[derive(FromArgs, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the message and datetime
+            #[argh(positional, greedy)]
+            #[allow(dead_code)]
+            args: Vec<String>,
+        }
+
+        const CMD: Prefix = Prefix::new(".test");
+
+        let opts: Opts = CMD.parse_words(r#"don't "forget me" at 4:20"#).unwrap();
+
+        assert_eq!(opts.args.join(" "), r#"don't "forget me" at 4:20"#);
+    }
+
+    #[test]
+    fn parse_words_parses_flags() {
+        #[derive(FromArgs, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// list instead
+            #[argh(switch, short = 'l')]
+            list: bool,
+            /// the message and datetime
+            #[argh(positional, greedy)]
+            #[allow(dead_code)]
+            args: Vec<String>,
+        }
+
+        const CMD: Prefix = Prefix::new(".test");
+
+        let opts: Opts = CMD.parse_words("-l hello world").unwrap();
+
+        assert!(opts.list);
+        assert_eq!(opts.args, vec!["hello".to_owned(), "world".to_owned()]);
+
+        let opts: Opts = CMD.parse_words("-- don't panic").unwrap();
+
+        assert!(!opts.list);
+        assert_eq!(opts.args, vec!["don't".to_owned(), "panic".to_owned()]);
+    }
+
+    #[test]
+    fn parse_words_reports_usage_on_error() {
+        #[derive(FromArgs, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the message and datetime
+            #[argh(positional, greedy)]
+            #[allow(dead_code)]
+            args: Vec<String>,
+        }
+
+        const CMD: Prefix = Prefix::new(".test");
+
+        let err = CMD.parse_words::<Opts>("-x").unwrap_err();
+
+        assert!(matches!(err, ArgsError::Usage(ref out) if out.contains("-x")));
+    }
+
+    #[test]
+    fn plugin_command_parse_words_delegates() {
+        #[derive(FromArgs, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the message and datetime
+            #[argh(positional, greedy)]
+            #[allow(dead_code)]
+            args: Vec<String>,
+        }
+
+        const CMD: PluginCommand = PluginCommand::new(Prefix::new(".test"), "test");
+
+        let opts: Opts = CMD.parse_words("don't panic").unwrap();
+
+        assert_eq!(opts.args, vec!["don't".to_owned(), "panic".to_owned()]);
     }
 }
