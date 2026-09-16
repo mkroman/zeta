@@ -15,7 +15,4 @@ pub enum Error {
     /// The alert delivery channel is closed.
     #[error("alert delivery channel is closed")]
     Closed,
-    /// The user already has the maximum number of pending alerts.
-    #[error("too many pending alerts (maximum is {0})")]
-    TooManyPending(usize),
 }

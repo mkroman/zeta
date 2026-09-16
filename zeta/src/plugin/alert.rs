@@ -5,9 +5,10 @@
 //! datetime expressions ("tomorrow 8pm", "next friday 10:30", "10 minutes", ..). The pending
 //! alerts of a user in the current channel are listed with `.alert -l`.
 //!
-//! Alerts are persisted in the database and cached in memory by the alert service. A scheduler
-//! task delivers each alert to a delivery task as it becomes due, which sends it in the channel
-//! it was created in; alerts are removed from the cache and the database once sent.
+//! Alerts are persisted in the database, and a window of upcoming alerts is cached in memory by
+//! the alert service, syncing the window from the database every few minutes. A scheduler task
+//! delivers each alert to a delivery task as it becomes due, which sends it in the channel it
+//! was created in; alerts are deleted from the database once sent.
 
 mod error;
 mod model;
@@ -76,16 +77,26 @@ pub struct Settings {
     /// How long the scheduler waits before retrying after a failed tick.
     #[serde(default = "default_retry_delay", with = "humantime_serde")]
     pub retry_delay: Duration,
-    /// The maximum number of pending alerts a user may have.
-    #[serde(default = "default_max_pending_per_user")]
-    pub max_pending_per_user: usize,
+    /// How often the window of upcoming alerts is synced from the database.
+    ///
+    /// Alerts are only delivered on time if the window is at least as large as this interval,
+    /// as the last sync before an alert is due can be a full interval earlier.
+    #[serde(default = "default_sync_interval", with = "humantime_serde")]
+    pub sync_interval: Duration,
+    /// How far ahead of their due time alerts are kept in memory.
+    ///
+    /// Should be at least [`Settings::sync_interval`], so every alert is cached before it is
+    /// due.
+    #[serde(default = "default_window", with = "humantime_serde")]
+    pub window: Duration,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             retry_delay: default_retry_delay(),
-            max_pending_per_user: default_max_pending_per_user(),
+            sync_interval: default_sync_interval(),
+            window: default_window(),
         }
     }
 }
@@ -95,9 +106,14 @@ const fn default_retry_delay() -> Duration {
     Duration::from_secs(30)
 }
 
-/// Returns the default maximum number of pending alerts per user.
-const fn default_max_pending_per_user() -> usize {
-    50
+/// Returns the default alert window sync interval.
+const fn default_sync_interval() -> Duration {
+    Duration::from_mins(5)
+}
+
+/// Returns the default alert window.
+const fn default_window() -> Duration {
+    Duration::from_mins(15)
 }
 
 /// Reply messages used when an alert has been stored.
@@ -224,7 +240,16 @@ impl Plugin<Context> for AlertPlugin {
                     return Ok(());
                 }
 
-                let pending = self.service.pending_for(channel, nickname).await;
+                let pending = match self.service.pending_for(channel, nickname).await {
+                    Ok(pending) => pending,
+                    Err(err) => {
+                        error!(?err, "could not list pending alerts");
+
+                        client.send_privmsg(channel, formatted("could not list your pending alerts"))?;
+
+                        return Ok(());
+                    }
+                };
 
                 client.send_privmsg(channel, format_pending(&pending))?;
 
@@ -266,14 +291,6 @@ impl Plugin<Context> for AlertPlugin {
                         formatted(&format!(
                             "{} Alert stored for\x0f {local}.",
                             success_message()
-                        )),
-                    )?;
-                }
-                Err(Error::TooManyPending(max)) => {
-                    client.send_privmsg(
-                        channel,
-                        formatted(&format!(
-                            "you already have\x0f {max}\x0310 pending alerts, wait for them to be delivered"
                         )),
                     )?;
                 }
@@ -523,19 +540,22 @@ mod tests {
         let settings = Settings::default();
 
         assert_eq!(settings.retry_delay, Duration::from_secs(30));
-        assert_eq!(settings.max_pending_per_user, 50);
+        assert_eq!(settings.sync_interval, Duration::from_mins(5));
+        assert_eq!(settings.window, Duration::from_mins(15));
     }
 
     #[test]
     fn settings_deserialize() {
         let settings: Settings = serde_json::from_value(serde_json::json!({
             "retry_delay": "1m",
-            "max_pending_per_user": 3,
+            "sync_interval": "2m",
+            "window": "30m",
         }))
         .expect("could not deserialize settings");
 
         assert_eq!(settings.retry_delay, Duration::from_mins(1));
-        assert_eq!(settings.max_pending_per_user, 3);
+        assert_eq!(settings.sync_interval, Duration::from_mins(2));
+        assert_eq!(settings.window, Duration::from_mins(30));
     }
 
     #[test]
