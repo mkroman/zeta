@@ -176,12 +176,7 @@ impl Mirror {
 
     /// Creates a mirror using the given S3 client and `yt-dlp` runner.
     #[must_use]
-    pub fn new(
-        s3: S3,
-        ytdlp: YtDlp,
-        download_dir: Option<PathBuf>,
-        max_concurrent: usize,
-    ) -> Self {
+    pub fn new(s3: S3, ytdlp: YtDlp, download_dir: Option<PathBuf>, max_concurrent: usize) -> Self {
         Self {
             s3,
             ytdlp,
@@ -402,8 +397,11 @@ impl MirrorTarget {
         public_url_base_env: &str,
         public_url_base_default: &str,
     ) -> Option<Self> {
-        let public_url_base =
-            resolve_public_url_base(public_url_base, public_url_base_env, public_url_base_default)?;
+        let public_url_base = resolve_public_url_base(
+            public_url_base,
+            public_url_base_env,
+            public_url_base_default,
+        )?;
         let prefix = resolve_prefix(prefix, prefix_env, prefix_default);
         let mirror = mirror?;
 
@@ -515,7 +513,10 @@ pub(crate) fn tempdir_builder() -> tempfile::Builder<'static, 'static> {
 /// consist of ASCII alphanumerics, `_` or `-`.
 #[must_use]
 pub(crate) fn is_safe_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Removes any temporary download directories left behind by a previous run.
@@ -653,7 +654,10 @@ mod tests {
     fn test_object_key() {
         assert_eq!(object_key("", "123.mp4"), "123.mp4");
         assert_eq!(object_key("reddit", "123.mp4"), "reddit/123.mp4");
-        assert_eq!(object_key("~meta/reddit", "123.mp4"), "~meta/reddit/123.mp4");
+        assert_eq!(
+            object_key("~meta/reddit", "123.mp4"),
+            "~meta/reddit/123.mp4"
+        );
         assert_eq!(
             object_key("~meta/reddit/", "123.mp4"),
             "~meta/reddit/123.mp4"
@@ -687,12 +691,8 @@ mod tests {
 
         assert_eq!(base.as_str(), "https://pub.example.com/x");
 
-        let base = resolve_public_url_base(
-            None,
-            "X_PUBLIC_URL_BASE",
-            "https://pub.rwx.im/reddit",
-        )
-        .expect("default base should be valid");
+        let base = resolve_public_url_base(None, "X_PUBLIC_URL_BASE", "https://pub.rwx.im/reddit")
+            .expect("default base should be valid");
 
         assert_eq!(base.as_str(), "https://pub.rwx.im/reddit");
 
@@ -793,7 +793,13 @@ mod tests {
 
         // The request is rejected before any S3 request is made.
         let result = mirror
-            .ensure_mirrored("reddit", &base, "https://v.redd.it/../evil", "../evil", |_| {})
+            .ensure_mirrored(
+                "reddit",
+                &base,
+                "https://v.redd.it/../evil",
+                "../evil",
+                |_| {},
+            )
             .await
             .expect("the rejection should not be an error");
 

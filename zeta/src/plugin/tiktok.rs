@@ -24,7 +24,7 @@ use crate::{
 };
 
 use self::oembed::OEmbed;
-use self::urls::{parse_tiktok_url, short_url, video_url, TiktokLink};
+use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};
 
 /// The default public URL that mirrored videos are linked with.
 const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/tiktok";
@@ -137,7 +137,12 @@ impl Plugin<Context> for Tiktok {
 }
 
 impl Tiktok {
-    async fn process_urls(&self, urls: &[Url], channel: &str, client: &Client) -> Result<(), Error> {
+    async fn process_urls(
+        &self,
+        urls: &[Url],
+        channel: &str,
+        client: &Client,
+    ) -> Result<(), Error> {
         for url in urls {
             self.process_url(url, channel, client).await?;
         }
@@ -157,7 +162,8 @@ impl Tiktok {
 
                 let resolved_url = self.resolve_redirect_url(&short_id).await?;
 
-                if let Some(TiktokLink::Video { channel: slug, id }) = parse_tiktok_url(&resolved_url)
+                if let Some(TiktokLink::Video { channel: slug, id }) =
+                    parse_tiktok_url(&resolved_url)
                 {
                     self.process_video_url(&slug, &id, channel, client).await?;
                 }
@@ -247,8 +253,9 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
 
     if let Some(title) = embed.title.as_deref() {
         let truncated = title.truncate_with_suffix(title_length, "…");
+        let trimmed = truncated.trim();
 
-        let _ = write!(buf, "“\x0f{truncated}\x0310” is a ");
+        let _ = write!(buf, "“\x0f{trimmed}\x0310” is a ");
     }
 
     if let Some(author_name) = embed.author_name.as_deref() {

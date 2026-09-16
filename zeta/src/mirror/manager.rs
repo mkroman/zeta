@@ -18,7 +18,9 @@ use tracing::{debug, error, warn};
 use url::Url;
 
 use super::{
-    is_safe_id, object_key, public_url_for, s3::S3, tempdir_builder, TEMP_DIR_PREFIX,
+    TEMP_DIR_PREFIX, is_safe_id, object_key, public_url_for,
+    s3::S3,
+    tempdir_builder,
     ytdlp::{self, DownloadedFile, Progress, YtDlp},
 };
 
@@ -335,13 +337,14 @@ impl Manager {
         self.running -= 1;
 
         let ActiveDownload {
-            request: DownloadRequest {
-                id,
-                prefix,
-                public_url_base,
-                on_finish,
-                ..
-            },
+            request:
+                DownloadRequest {
+                    id,
+                    prefix,
+                    public_url_base,
+                    on_finish,
+                    ..
+                },
             tempdir,
             ..
         } = active;
@@ -453,19 +456,13 @@ impl DownloadTask {
 
     /// Reports the download as completed, disarming the guard.
     fn completed(mut self, files: Vec<DownloadedFile>) {
-        self.send(DownloadStatus::Completed {
-            id: self.id,
-            files,
-        });
+        self.send(DownloadStatus::Completed { id: self.id, files });
         self.status_tx = None;
     }
 
     /// Reports the download as failed, disarming the guard.
     fn failed(mut self, error: ytdlp::Error) {
-        self.send(DownloadStatus::Failed {
-            id: self.id,
-            error,
-        });
+        self.send(DownloadStatus::Failed { id: self.id, error });
         self.status_tx = None;
     }
 
@@ -527,7 +524,10 @@ fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
         .unwrap()
         .flatten()
         .filter(|entry| {
-            entry.file_name().to_string_lossy().starts_with(TEMP_DIR_PREFIX)
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(TEMP_DIR_PREFIX)
                 && entry.file_type().is_ok_and(|file_type| file_type.is_dir())
         })
         .map(|entry| entry.path())
@@ -543,9 +543,13 @@ mod tests {
     fn write_sleeping_script(name: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
-        let script = std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
-        std::fs::write(&script, "#!/bin/sh\nfor last; do :; done\nsleep \"$last\"\nexit 1\n")
-            .unwrap();
+        let script =
+            std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nfor last; do :; done\nsleep \"$last\"\nexit 1\n",
+        )
+        .unwrap();
 
         let mut permissions = std::fs::metadata(&script).unwrap().permissions();
         permissions.set_mode(0o755);
@@ -559,7 +563,8 @@ mod tests {
     fn write_successful_script(name: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
-        let script = std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
+        let script =
+            std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
         std::fs::write(
             &script,
             r#"#!/bin/sh
@@ -666,7 +671,12 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
 
         let (results, mut rx) = mpsc::unbounded_channel();
         manager
-            .submit(request("https://www.tiktok.com/@user/video/123", "123", results, 0))
+            .submit(request(
+                "https://www.tiktok.com/@user/video/123",
+                "123",
+                results,
+                0,
+            ))
             .expect("manager is running");
 
         // The download succeeds, but the upload fails against the unreachable test endpoint.

@@ -260,7 +260,11 @@ impl YtDlp {
 
         stderr_task.abort();
 
-        let downloads = verify_paths(output.json.ok_or(Error::NoJsonDump)?.requested_downloads, output_dir).await?;
+        let downloads = verify_paths(
+            output.json.ok_or(Error::NoJsonDump)?.requested_downloads,
+            output_dir,
+        )
+        .await?;
 
         if downloads.is_empty() {
             return Err(Error::NoDownloads);
@@ -352,8 +356,13 @@ fn build_args(url: &str, id: &str, output_dir: &Path, max_filesize: &str) -> Vec
 
 /// Returns the downloads whose reported file paths resolve inside `output_dir`, dropping any that
 /// point outside of it.
-async fn verify_paths(downloads: Vec<DownloadedFile>, output_dir: &Path) -> Result<Vec<DownloadedFile>, Error> {
-    let base = tokio::fs::canonicalize(output_dir).await.map_err(Error::Io)?;
+async fn verify_paths(
+    downloads: Vec<DownloadedFile>,
+    output_dir: &Path,
+) -> Result<Vec<DownloadedFile>, Error> {
+    let base = tokio::fs::canonicalize(output_dir)
+        .await
+        .map_err(Error::Io)?;
     let mut verified = Vec::with_capacity(downloads.len());
 
     for download in downloads {

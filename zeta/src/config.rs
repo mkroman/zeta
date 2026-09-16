@@ -270,8 +270,8 @@ mod tests {
 
     use super::*;
     use figment::{
-        providers::{Format, Toml},
         Error, Figment,
+        providers::{Format, Toml},
     };
 
     /// Extracts the `[plugins]` subtree from an inline TOML document.
