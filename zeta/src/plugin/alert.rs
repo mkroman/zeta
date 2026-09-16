@@ -523,7 +523,7 @@ mod tests {
         let settings = Settings::default();
 
         assert_eq!(settings.retry_delay, Duration::from_secs(30));
-        assert_eq!(settings.max_pending_per_user, 10);
+        assert_eq!(settings.max_pending_per_user, 50);
     }
 
     #[test]
@@ -803,7 +803,7 @@ mod tests {
             format_pending(&pending),
             concat!(
                 "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1",
-                "\x0310 Next up: “\x0fhello world\x0310” Sep 16th 11:21",
+                "\x0310 Next up: “\x0fhello world\x0310”\x0f Sep 16th 11:21\x0310",
             )
         );
     }
@@ -821,9 +821,9 @@ mod tests {
             format_pending(&pending),
             concat!(
                 "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 4",
-                "\x0310 Next up: “\x0ffirst\x0310” Sep 16th 11:21",
-                "\x0310, then: “\x0fsecond\x0310” Sep 16th 11:22",
-                "\x0310, then: “\x0fthird\x0310” Sep 16th 11:23",
+                "\x0310 Next up: “\x0ffirst\x0310”\x0f Sep 16th 11:21\x0310",
+                "\x0310, then: “\x0fsecond\x0310”\x0f Sep 16th 11:22\x0310",
+                "\x0310, then: “\x0fthird\x0310”\x0f Sep 16th 11:23\x0310",
             )
         );
     }
@@ -836,7 +836,7 @@ mod tests {
         let expected = format!(
             concat!(
                 "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1",
-                "\x0310 Next up: “\x0f{}\x0310” Sep 16th 11:21",
+                "\x0310 Next up: “\x0f{}\x0310”\x0f Sep 16th 11:21\x0310",
             ),
             truncated
         );
