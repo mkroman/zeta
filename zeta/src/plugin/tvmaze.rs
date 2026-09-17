@@ -6,10 +6,9 @@
 //! about upcoming episodes using the TVmaze API.
 use reqwest::{Response, StatusCode, Url};
 use serde::{Deserialize, de::DeserializeOwned};
-use time::Duration;
 use tracing::{debug, error, instrument};
 
-use crate::{config::HttpConfig, http, plugin::prelude::*};
+use crate::{config::HttpConfig, http, plugin::prelude::*, utils::TimeInWords};
 
 /// Base URL for the TVmaze API.
 pub const API_BASE_URL: &str = "https://api.tvmaze.com";
@@ -259,10 +258,7 @@ impl Tvmaze {
             let now = time::OffsetDateTime::now_utc();
             episode.airstamp.map_or_else(
                 || "???".to_string(),
-                |airstamp| {
-                    let dt = airstamp - now;
-                    duration_in_words(dt)
-                },
+                |airstamp| (airstamp - now).in_words(),
             )
         };
         let content = format!(
@@ -328,63 +324,4 @@ async fn deserialize_response<T: DeserializeOwned>(response: Response) -> Result
     serde_path_to_error::deserialize(deserializer)
         .inspect_err(|err| error!(?err, body = %text, "failed to parse json response"))
         .map_err(Error::Deserialize)
-}
-
-fn duration_in_words(duration: Duration) -> String {
-    let total_seconds = duration.whole_seconds();
-
-    // Handle zero or negative durations
-    if total_seconds <= 0 {
-        return "0 minutes".to_string();
-    }
-
-    // Calculate time units
-    let weeks = total_seconds / (7 * 24 * 60 * 60);
-    let remaining_after_weeks = total_seconds % (7 * 24 * 60 * 60);
-    let days = remaining_after_weeks / (24 * 60 * 60);
-    let remaining_after_days = remaining_after_weeks % (24 * 60 * 60);
-    let hours = remaining_after_days / (60 * 60);
-    let remaining_after_hours = remaining_after_days % (60 * 60);
-    let minutes = remaining_after_hours / 60;
-
-    // Build the parts vector with non-zero units
-    let mut parts = Vec::new();
-
-    if weeks > 0 {
-        parts.push(format!(
-            "{} week{}",
-            weeks,
-            if weeks == 1 { "" } else { "s" }
-        ));
-    }
-    if days > 0 {
-        parts.push(format!("{} day{}", days, if days == 1 { "" } else { "s" }));
-    }
-
-    if hours > 0 {
-        parts.push(format!(
-            "{} hour{}",
-            hours,
-            if hours == 1 { "" } else { "s" }
-        ));
-    }
-
-    if minutes > 0 {
-        parts.push(format!(
-            "{} minute{}",
-            minutes,
-            if minutes == 1 { "" } else { "s" }
-        ));
-    }
-
-    // Format the output with proper grammar
-    match parts.len() {
-        0 => "0 minutes".to_string(),
-        1 => parts[0].clone(),
-        2 => format!("{} and {}", parts[0], parts[1]),
-        _ => {
-            let last = parts.pop().unwrap();
-            format!("{}, and {}", parts.join(", "), last)
-        }
-    }
 }
