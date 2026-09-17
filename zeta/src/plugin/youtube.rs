@@ -89,7 +89,7 @@ fn default_region_code() -> String {
 /// IRC bot plugin for YouTube URL detection and metadata retrieval.
 ///
 /// This plugin monitors IRC messages for YouTube URLs and automatically responds
-/// with video metadata including title, duration, category, channel name, and view count.
+/// with video metadata including title, duration, channel name, and view count.
 /// It maintains a cache of YouTube video categories to reduce API calls and
 /// uses async/await for non-blocking operation.
 ///
@@ -541,9 +541,9 @@ impl YouTube {
 
 /// Formats the message describing `video`, using the resolved `category` and `view_count`.
 ///
-/// Live and upcoming streams are described as live streams along with their current number
-/// of concurrent viewers (falling back to the total view count when unavailable), while
-/// regular videos include their duration.
+/// Live and upcoming streams are described as live streams along with their category and
+/// current number of concurrent viewers (falling back to the total view count when
+/// unavailable), while regular videos include only their duration.
 fn format_video_message(video: &Video, category: &str, view_count: u64) -> String {
     let snippet = video.snippet.as_ref();
     let title = snippet.map_or("‽", |s| s.title.as_str());
@@ -581,7 +581,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         .map_or_else(|| "unknown duration".to_string(), format_duration);
 
     format!(
-        "\x0310> “\x0f{title}\x0310” is a\x0f {duration}\x0310 {category}\x0310 video by\x0f \
+        "\x0310> “\x0f{title}\x0310” is a\x0f {duration}\x0310 video by\x0f \
          {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
     )
 }
@@ -799,7 +799,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Music", 123_456),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f 1h 2m 20s\x0310 Music\x0310 video by\x0f Test Channel\x0310 with\x0f 123,456\x0310 views",
+            "\x0310> “\x0fTest Video\x0310” is a\x0f 1h 2m 20s\x0310 video by\x0f Test Channel\x0310 with\x0f 123,456\x0310 views",
         );
     }
 
@@ -809,7 +809,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Music", 1),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f unknown duration\x0310 Music\x0310 video by\x0f Test Channel\x0310 with\x0f 1\x0310 views",
+            "\x0310> “\x0fTest Video\x0310” is a\x0f unknown duration\x0310 video by\x0f Test Channel\x0310 with\x0f 1\x0310 views",
         );
     }
 
