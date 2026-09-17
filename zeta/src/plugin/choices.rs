@@ -170,23 +170,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert_eq!(settings.or_keywords, ["eller"]);
-        assert_eq!(settings.option_separator, ", ");
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.or_keywords, ["eller"]);
+            assert_eq!(settings.option_separator, ", ");
+        }
+        deserialize: {
             "or_keywords": ["or", "eller"],
             "option_separator": "; ",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.or_keywords, ["or", "eller"]);
-        assert_eq!(settings.option_separator, "; ");
+        } assert: {
+            assert_eq!(settings.or_keywords, ["or", "eller"]);
+            assert_eq!(settings.option_separator, "; ");
+        }
     }
 }

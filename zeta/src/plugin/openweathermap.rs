@@ -373,30 +373,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.app_id.is_none());
-        assert_eq!(settings.units, Units::Metric);
-        assert!(settings.language.is_none());
-        assert!(settings.default_location.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.app_id.is_none());
+            assert_eq!(settings.units, Units::Metric);
+            assert!(settings.language.is_none());
+            assert!(settings.default_location.is_none());
+        }
+        deserialize: {
             "app_id": "secret",
             "units": "imperial",
             "language": "da",
             "default_location": "Copenhagen",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.app_id.as_deref(), Some("secret"));
-        assert_eq!(settings.units, Units::Imperial);
-        assert_eq!(settings.language.as_deref(), Some("da"));
-        assert_eq!(settings.default_location.as_deref(), Some("Copenhagen"));
+        } assert: {
+            assert_eq!(settings.app_id.as_deref(), Some("secret"));
+            assert_eq!(settings.units, Units::Imperial);
+            assert_eq!(settings.language.as_deref(), Some("da"));
+            assert_eq!(settings.default_location.as_deref(), Some("Copenhagen"));
+        }
     }
 
     #[test]

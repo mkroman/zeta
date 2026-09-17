@@ -303,32 +303,28 @@ impl Reddit {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.client_id.is_none());
-        assert!(settings.client_secret.is_none());
-        assert!(settings.prefix.is_none());
-        assert!(settings.public_url_base.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.client_id.is_none());
+            assert!(settings.client_secret.is_none());
+            assert!(settings.prefix.is_none());
+            assert!(settings.public_url_base.is_none());
+        }
+        deserialize: {
             "client_id": "id",
             "client_secret": "secret",
             "prefix": "~meta/reddit",
             "public_url_base": "https://pub.example.com/reddit",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.client_id.as_deref(), Some("id"));
-        assert_eq!(settings.client_secret.as_deref(), Some("secret"));
-        assert_eq!(settings.prefix.as_deref(), Some("~meta/reddit"));
-        assert_eq!(
-            settings.public_url_base.as_deref(),
-            Some("https://pub.example.com/reddit")
-        );
+        } assert: {
+            assert_eq!(settings.client_id.as_deref(), Some("id"));
+            assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+            assert_eq!(settings.prefix.as_deref(), Some("~meta/reddit"));
+            assert_eq!(
+                settings.public_url_base.as_deref(),
+                Some("https://pub.example.com/reddit")
+            );
+        }
     }
 }

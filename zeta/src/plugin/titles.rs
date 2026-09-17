@@ -1055,29 +1055,25 @@ mod tests {
         assert!(message.ends_with('…'));
     }
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.ignored_hosts.is_empty());
-        assert_eq!(settings.max_redirects, 3);
-        assert_eq!(settings.max_message_length, 400);
-        assert_eq!(settings.max_description_length, 200);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.ignored_hosts.is_empty());
+            assert_eq!(settings.max_redirects, 3);
+            assert_eq!(settings.max_message_length, 400);
+            assert_eq!(settings.max_description_length, 200);
+        }
+        deserialize: {
             "ignored_hosts": ["example.com"],
             "max_redirects": 1,
             "max_message_length": 100,
             "max_description_length": 50,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.ignored_hosts, ["example.com"]);
-        assert_eq!(settings.max_redirects, 1);
-        assert_eq!(settings.max_message_length, 100);
-        assert_eq!(settings.max_description_length, 50);
+        } assert: {
+            assert_eq!(settings.ignored_hosts, ["example.com"]);
+            assert_eq!(settings.max_redirects, 1);
+            assert_eq!(settings.max_message_length, 100);
+            assert_eq!(settings.max_description_length, 50);
+        }
     }
 }

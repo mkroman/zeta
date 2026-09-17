@@ -268,29 +268,25 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert_eq!(settings.title_length, 150);
-        assert!(settings.prefix.is_none());
-        assert!(settings.public_url_base.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.title_length, 150);
+            assert!(settings.prefix.is_none());
+            assert!(settings.public_url_base.is_none());
+        }
+        deserialize: {
             "title_length": 100,
             "prefix": "~meta/tiktok",
             "public_url_base": "https://pub.example.com/tiktok",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.title_length, 100);
-        assert_eq!(settings.prefix.as_deref(), Some("~meta/tiktok"));
-        assert_eq!(
-            settings.public_url_base.as_deref(),
-            Some("https://pub.example.com/tiktok")
-        );
+        } assert: {
+            assert_eq!(settings.title_length, 100);
+            assert_eq!(settings.prefix.as_deref(), Some("~meta/tiktok"));
+            assert_eq!(
+                settings.public_url_base.as_deref(),
+                Some("https://pub.example.com/tiktok")
+            );
+        }
     }
 }

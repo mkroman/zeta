@@ -220,24 +220,20 @@ fn normalized_score(trust_score: f64) -> f64 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.api_key.is_none());
-        assert_eq!(settings.review_domain, "dk");
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.api_key.is_none());
+            assert_eq!(settings.review_domain, "dk");
+        }
+        deserialize: {
             "api_key": "secret",
             "review_domain": "www",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.api_key.as_deref(), Some("secret"));
-        assert_eq!(settings.review_domain, "www");
+        } assert: {
+            assert_eq!(settings.api_key.as_deref(), Some("secret"));
+            assert_eq!(settings.review_domain, "www");
+        }
     }
 
     #[test]

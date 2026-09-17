@@ -631,27 +631,23 @@ fn parse_youtu_be_url(url: &Url) -> Option<UrlKind> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.api_key.is_none());
-        assert_eq!(settings.region_code, "US");
-        assert_eq!(settings.safe_search, SafeSearch::None);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.api_key.is_none());
+            assert_eq!(settings.region_code, "US");
+            assert_eq!(settings.safe_search, SafeSearch::None);
+        }
+        deserialize: {
             "api_key": "secret",
             "region_code": "DK",
             "safe_search": "strict",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.api_key.as_deref(), Some("secret"));
-        assert_eq!(settings.region_code, "DK");
-        assert_eq!(settings.safe_search, SafeSearch::Strict);
+        } assert: {
+            assert_eq!(settings.api_key.as_deref(), Some("secret"));
+            assert_eq!(settings.region_code, "DK");
+            assert_eq!(settings.safe_search, SafeSearch::Strict);
+        }
     }
 
     #[test]

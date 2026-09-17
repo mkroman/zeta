@@ -218,29 +218,25 @@ fn sanitize_output(s: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert_eq!(settings.channel, "stable");
-        assert_eq!(settings.mode, "debug");
-        assert_eq!(settings.edition, "2024");
-        assert_eq!(settings.max_output_length, 250);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.channel, "stable");
+            assert_eq!(settings.mode, "debug");
+            assert_eq!(settings.edition, "2024");
+            assert_eq!(settings.max_output_length, 250);
+        }
+        deserialize: {
             "channel": "nightly",
             "mode": "release",
             "edition": "2021",
             "max_output_length": 100,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.channel, "nightly");
-        assert_eq!(settings.mode, "release");
-        assert_eq!(settings.edition, "2021");
-        assert_eq!(settings.max_output_length, 100);
+        } assert: {
+            assert_eq!(settings.channel, "nightly");
+            assert_eq!(settings.mode, "release");
+            assert_eq!(settings.edition, "2021");
+            assert_eq!(settings.max_output_length, 100);
+        }
     }
 }

@@ -189,19 +189,17 @@ fn parse_args(args: &str) -> Option<(&str, &str)> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        assert_eq!(Settings::default().max_pending_per_target, 10);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.max_pending_per_target, 10);
+        }
+        deserialize: {
             "max_pending_per_target": 3,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.max_pending_per_target, 3);
+        } assert: {
+            assert_eq!(settings.max_pending_per_target, 3);
+        }
     }
 
     #[test]

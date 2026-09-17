@@ -217,19 +217,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn default_settings() {
-        assert_eq!(Settings::default().max_definition_length, 400);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.max_definition_length, 400);
+        }
+        deserialize: {
             "max_definition_length": 100,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.max_definition_length, 100);
+        } assert: {
+            assert_eq!(settings.max_definition_length, 100);
+        }
     }
 
     #[test]

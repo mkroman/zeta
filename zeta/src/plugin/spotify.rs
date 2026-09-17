@@ -422,23 +422,19 @@ fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.client_id.is_none());
-        assert!(settings.client_secret.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.client_id.is_none());
+            assert!(settings.client_secret.is_none());
+        }
+        deserialize: {
             "client_id": "id",
             "client_secret": "secret",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.client_id.as_deref(), Some("id"));
-        assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+        } assert: {
+            assert_eq!(settings.client_id.as_deref(), Some("id"));
+            assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+        }
     }
 }

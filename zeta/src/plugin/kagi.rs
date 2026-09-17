@@ -169,26 +169,22 @@ impl KagiPlugin {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.session_token.is_none());
-        assert_eq!(settings.session_duration, kagi::SESSION_DURATION);
-        assert_eq!(settings.language, kagi::LANGUAGE);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.session_token.is_none());
+            assert_eq!(settings.session_duration, kagi::SESSION_DURATION);
+            assert_eq!(settings.language, kagi::LANGUAGE);
+        }
+        deserialize: {
             "session_token": "secret",
             "session_duration": "1h",
             "language": "da-DK,da;q=0.9",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.session_token.as_deref(), Some("secret"));
-        assert_eq!(settings.session_duration, Duration::from_hours(1));
-        assert_eq!(settings.language, "da-DK,da;q=0.9");
+        } assert: {
+            assert_eq!(settings.session_token.as_deref(), Some("secret"));
+            assert_eq!(settings.session_duration, Duration::from_hours(1));
+            assert_eq!(settings.language, "da-DK,da;q=0.9");
+        }
     }
 }

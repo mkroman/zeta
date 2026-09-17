@@ -148,26 +148,22 @@ impl DenDanskeOrdbog {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.show_morphology);
-        assert!(settings.show_etymology);
-        assert!(settings.show_examples);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.show_morphology);
+            assert!(settings.show_etymology);
+            assert!(settings.show_examples);
+        }
+        deserialize: {
             "show_morphology": false,
             "show_etymology": false,
             "show_examples": false,
-        }))
-        .expect("could not deserialize settings");
-
-        assert!(!settings.show_morphology);
-        assert!(!settings.show_etymology);
-        assert!(!settings.show_examples);
+        } assert: {
+            assert!(!settings.show_morphology);
+            assert!(!settings.show_etymology);
+            assert!(!settings.show_examples);
+        }
     }
 }

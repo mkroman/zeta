@@ -471,19 +471,17 @@ fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a st
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        assert!(Settings::default().api_key.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.api_key.is_none());
+        }
+        deserialize: {
             "api_key": "secret",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        } assert: {
+            assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        }
     }
 
     #[test]

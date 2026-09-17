@@ -238,27 +238,23 @@ mod tests {
     use super::*;
     use crate::config::HttpConfig;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.include_adult);
-        assert_eq!(settings.user_country, "US");
-        assert_eq!(settings.user_language, "en-US");
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.include_adult);
+            assert_eq!(settings.user_country, "US");
+            assert_eq!(settings.user_language, "en-US");
+        }
+        deserialize: {
             "include_adult": false,
             "user_country": "DK",
             "user_language": "da-DK",
-        }))
-        .expect("could not deserialize settings");
-
-        assert!(!settings.include_adult);
-        assert_eq!(settings.user_country, "DK");
-        assert_eq!(settings.user_language, "da-DK");
+        } assert: {
+            assert!(!settings.include_adult);
+            assert_eq!(settings.user_country, "DK");
+            assert_eq!(settings.user_language, "da-DK");
+        }
     }
 
     #[test]

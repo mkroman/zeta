@@ -247,19 +247,17 @@ impl GitHubPlugin {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        assert!(Settings::default().token.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.token.is_none());
+        }
+        deserialize: {
             "token": "secret",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.token.as_deref(), Some("secret"));
+        } assert: {
+            assert_eq!(settings.token.as_deref(), Some("secret"));
+        }
     }
 
     #[test]

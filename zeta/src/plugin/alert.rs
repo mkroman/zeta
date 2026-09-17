@@ -527,27 +527,23 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert_eq!(settings.retry_delay, Duration::from_secs(30));
-        assert_eq!(settings.sync_interval, Duration::from_mins(5));
-        assert_eq!(settings.window, Duration::from_mins(15));
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.retry_delay, Duration::from_secs(30));
+            assert_eq!(settings.sync_interval, Duration::from_mins(5));
+            assert_eq!(settings.window, Duration::from_mins(15));
+        }
+        deserialize: {
             "retry_delay": "1m",
             "sync_interval": "2m",
             "window": "30m",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.retry_delay, Duration::from_mins(1));
-        assert_eq!(settings.sync_interval, Duration::from_mins(2));
-        assert_eq!(settings.window, Duration::from_mins(30));
+        } assert: {
+            assert_eq!(settings.retry_delay, Duration::from_mins(1));
+            assert_eq!(settings.sync_interval, Duration::from_mins(2));
+            assert_eq!(settings.window, Duration::from_mins(30));
+        }
     }
 
     #[test]

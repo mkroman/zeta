@@ -796,30 +796,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.api_key.is_none());
-        assert_eq!(settings.default_currency, "USD");
-        assert_eq!(settings.cache_ttl, Duration::from_hours(24));
-        assert_eq!(settings.max_name_typos, 2);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.api_key.is_none());
+            assert_eq!(settings.default_currency, "USD");
+            assert_eq!(settings.cache_ttl, Duration::from_hours(24));
+            assert_eq!(settings.max_name_typos, 2);
+        }
+        deserialize: {
             "api_key": "secret",
             "default_currency": "eur",
             "cache_ttl": "1h",
             "max_name_typos": 3,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.api_key.as_deref(), Some("secret"));
-        assert_eq!(settings.default_currency, "eur");
-        assert_eq!(settings.cache_ttl, Duration::from_hours(1));
-        assert_eq!(settings.max_name_typos, 3);
+        } assert: {
+            assert_eq!(settings.api_key.as_deref(), Some("secret"));
+            assert_eq!(settings.default_currency, "eur");
+            assert_eq!(settings.cache_ttl, Duration::from_hours(1));
+            assert_eq!(settings.max_name_typos, 3);
+        }
     }
 
     /// Builds a quote for `Bitcoin (BTC)` in USD.
