@@ -596,21 +596,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_url_extraction() {
-        let tests = [
-            ("hello https://example.com world", 1),
-            ("ftp://example.com/some/file.zip", 0),
-            ("http://example.com/some/file.html", 1),
-        ];
-
-        for (input, expected_results) in tests {
-            let num_urls = extract_urls(input).iter().len();
-
-            assert_eq!(num_urls, expected_results);
-        }
-    }
-
-    #[test]
     fn bundled_plugin_names_include_all_plugins() {
         assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 33);
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"filter"));

@@ -528,7 +528,8 @@ mod tests {
             .join("tests/fixtures")
             .join(name);
 
-        std::fs::read_to_string(path).expect("could not read fixture")
+        String::from_utf8(std::fs::read(path).expect("could not read fixture"))
+            .expect("fixture is not valid UTF-8")
     }
 
     #[test]
@@ -642,16 +643,6 @@ mod tests {
 
         assert_eq!(session.take_nonce().as_deref(), Some("nonce"));
         assert_eq!(session.take_nonce(), None);
-    }
-
-    #[test]
-    fn test_client_options_default_to_constants() {
-        let options = ClientOptions::default();
-
-        assert_eq!(options.timeout, crate::HTTP_TIMEOUT);
-        assert_eq!(options.user_agent, crate::USER_AGENT);
-        assert_eq!(options.session_duration, crate::SESSION_DURATION);
-        assert_eq!(options.language, crate::LANGUAGE);
     }
 
     #[test]

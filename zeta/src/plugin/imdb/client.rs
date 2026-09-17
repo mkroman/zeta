@@ -146,12 +146,7 @@ impl GraphQlClient {
             .execute(GET_TITLE_QUERY, json!({ "id": id }), "GetTitle")
             .await?;
 
-        // Titles that do not exist are returned as an empty node (all fields null) rather than
-        // `null`, so a title without any title text is treated as not found.
-        data.title
-            .filter(|title| title.title_text.is_some() || title.original_title_text.is_some())
-            .map(Title::from)
-            .ok_or(Error::NotFound)
+        title_from_node(data.title)
     }
 
     /// Fetches details about the person with the given id (e.g. `nm0186505`).
@@ -429,6 +424,16 @@ struct TitleData {
     title: Option<TitleNode>,
 }
 
+/// Converts a title node into a [`Title`].
+///
+/// Titles that do not exist are returned as an empty node (all fields null) rather than `null`,
+/// so a title without any title text is treated as not found.
+fn title_from_node(node: Option<TitleNode>) -> Result<Title, Error> {
+    node.filter(|title| title.title_text.is_some() || title.original_title_text.is_some())
+        .map(Title::from)
+        .ok_or(Error::NotFound)
+}
+
 /// The data payload of a `GetName` query response.
 #[derive(Debug, Deserialize)]
 struct NameData {
@@ -593,29 +598,19 @@ impl From<EntityNode> for SearchResult {
 mod tests {
     use super::*;
 
-    #[test]
-    fn decodes_get_title_response() {
-        let text = r#"{"data":{"title":{"id":"tt14663588","titleText":{"text":"Peggle Nights"},"originalTitleText":{"text":"Peggle Nights"},"titleType":{"text":"Video Game"},"releaseYear":{"year":2008,"endYear":null},"ratingsSummary":{"aggregateRating":7.6,"voteCount":53},"plot":{"plotText":{"plainText":"Downloadable follow-up to the original \"Peggle (2007)\"."}},"titleGenres":{"genres":[{"genre":{"text":"Action"}},{"genre":{"text":"Adventure"}},{"genre":{"text":"Family"}}]}}}}"#;
-
-        let response: GraphQlResponse<TitleData> = http::json::from_str(text).unwrap();
-        let title = Title::from(response.data.unwrap().title.unwrap());
-
-        assert_eq!(title.id, "tt14663588");
-        assert_eq!(title.title.as_deref(), Some("Peggle Nights"));
-        assert_eq!(title.title_type.as_deref(), Some("Video Game"));
-        assert_eq!(title.year, Some(2008));
-        assert_eq!(title.end_year, None);
-        assert_eq!(title.rating, Some(7.6));
-        assert_eq!(title.votes, Some(53));
-        assert!(title.plot.as_deref().unwrap().starts_with("Downloadable"));
-        assert_eq!(title.genres, ["Action", "Adventure", "Family"]);
+    /// Reads a recorded GraphQL response fixture.
+    fn fixture(name: &str) -> String {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/imdb")
+            .join(format!("{name}.json"));
+        std::fs::read_to_string(path).expect("fixture file not found")
     }
 
     #[test]
-    fn decodes_search_response() {
-        let text = r#"{"data":{"mainSearch":{"edges":[{"node":{"entity":{"id":"tt14663588","titleText":{"text":"Peggle Nights"},"releaseYear":{"year":2008}}}}]}}}"#;
+    fn decodes_recorded_search_response() {
+        let text = fixture("search_peggle_nights");
 
-        let response: GraphQlResponse<SearchData> = http::json::from_str(text).unwrap();
+        let response: GraphQlResponse<SearchData> = http::json::from_str(&text).unwrap();
         let data = response.data.unwrap();
         let results: Vec<SearchResult> = data
             .main_search
@@ -626,14 +621,48 @@ mod tests {
             .map(SearchResult::from)
             .collect();
 
-        assert_eq!(
-            results,
-            vec![SearchResult {
-                id: "tt14663588".to_string(),
-                title: Some("Peggle Nights".to_string()),
-                year: Some(2008),
-            }]
-        );
+        assert!(!results.is_empty());
+        assert_eq!(results[0].id, "tt14663588");
+        assert_eq!(results[0].title.as_deref(), Some("Peggle Nights"));
+        assert_eq!(results[0].year, Some(2008));
+    }
+
+    #[test]
+    fn decodes_recorded_title_response() {
+        let text = fixture("title_tt14663588");
+
+        let response: GraphQlResponse<TitleData> = http::json::from_str(&text).unwrap();
+        let title = Title::from(response.data.unwrap().title.unwrap());
+
+        assert_eq!(title.id, "tt14663588");
+        assert_eq!(title.title.as_deref(), Some("Peggle Nights"));
+        assert_eq!(title.original_title.as_deref(), Some("Peggle Nights"));
+        assert_eq!(title.title_type.as_deref(), Some("Video Game"));
+        assert_eq!(title.year, Some(2008));
+        assert_eq!(title.end_year, None);
+        assert_eq!(title.rating, Some(7.6));
+        assert_eq!(title.votes, Some(53));
+        assert!(title.plot.as_deref().unwrap().starts_with("Downloadable"));
+        assert_eq!(title.genres, ["Action", "Adventure", "Family"]);
+        assert!(title.series.is_none());
+        assert!(!title.is_episode());
+
+        let message = super::super::format_title(&title);
+        assert!(message.starts_with(super::super::format::PREFIX));
+        assert!(message.contains("Peggle Nights"));
+    }
+
+    #[test]
+    fn decodes_recorded_empty_title_as_not_found() {
+        // Non-existent titles are returned as an empty node (all fields null), not `null`.
+        let text = fixture("title_not_found");
+
+        let response: GraphQlResponse<TitleData> = http::json::from_str(&text).unwrap();
+
+        assert!(matches!(
+            title_from_node(response.data.unwrap().title),
+            Err(Error::NotFound)
+        ));
     }
 
     #[test]
@@ -641,14 +670,17 @@ mod tests {
         let text = r#"{"data":{"title":null}}"#;
         let response: GraphQlResponse<TitleData> = http::json::from_str(text).unwrap();
 
-        assert!(response.data.unwrap().title.is_none());
+        assert!(matches!(
+            title_from_node(response.data.unwrap().title),
+            Err(Error::NotFound)
+        ));
     }
 
     #[test]
-    fn decodes_episode_response_with_series_info() {
-        let text = r#"{"data":{"title":{"id":"tt0959621","titleText":{"text":"Pilot"},"titleType":{"text":"TV Episode"},"releaseYear":{"year":2008,"endYear":null},"series":{"series":{"id":"tt0903747","titleText":{"text":"Breaking Bad"}},"displayableEpisodeNumber":{"episodeNumber":{"episodeNumber":"1"},"displayableSeason":{"season":"1"}}}}}}"#;
+    fn decodes_recorded_episode_response() {
+        let text = fixture("title_tt0959621");
 
-        let response: GraphQlResponse<TitleData> = http::json::from_str(text).unwrap();
+        let response: GraphQlResponse<TitleData> = http::json::from_str(&text).unwrap();
         let title = Title::from(response.data.unwrap().title.unwrap());
 
         assert!(title.is_episode());
@@ -661,22 +693,28 @@ mod tests {
     }
 
     #[test]
-    fn decodes_name_response() {
-        let text = r#"{"data":{"name":{"id":"nm0186505","nameText":{"text":"Bryan Cranston"},"birthDate":{"dateComponents":{"year":1956}},"deathDate":null,"bios":{"edges":[{"node":{"text":{"plainText":"Bryan Lee Cranston was born on March 7, 1956."}}}]},"knownFor":{"edges":[{"node":{"title":{"id":"tt0903747","titleText":{"text":"Breaking Bad"},"releaseYear":{"year":2008,"endYear":2013}}}}]}}}}"#;
+    fn decodes_recorded_name_response() {
+        let text = fixture("name_nm0186505");
 
-        let response: GraphQlResponse<NameData> = http::json::from_str(text).unwrap();
+        let response: GraphQlResponse<NameData> = http::json::from_str(&text).unwrap();
         let person = Person::from(response.data.unwrap().name.unwrap());
 
         assert_eq!(person.id, "nm0186505");
         assert_eq!(person.name.as_deref(), Some("Bryan Cranston"));
         assert_eq!(person.birth_year, Some(1956));
         assert_eq!(person.death_year, None);
-        assert_eq!(
-            person.bio.as_deref(),
-            Some("Bryan Lee Cranston was born on March 7, 1956.")
+        assert!(
+            person
+                .bio
+                .as_deref()
+                .unwrap()
+                .starts_with("Bryan Lee Cranston was born on March 7, 1956")
         );
-        assert_eq!(person.known_for.len(), 1);
+        assert!(!person.known_for.is_empty());
         assert_eq!(person.known_for[0].title.as_deref(), Some("Breaking Bad"));
-        assert_eq!(person.known_for[0].end_year, Some(2013));
+
+        let message = super::super::format_person(&person);
+        assert!(message.contains("Bryan Cranston"));
+        assert!(message.contains("https://imdb.com/name/nm0186505"));
     }
 }

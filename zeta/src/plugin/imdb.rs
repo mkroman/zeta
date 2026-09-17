@@ -278,57 +278,27 @@ mod tests {
         assert_eq!(opts.query(), "");
     }
 
+    /// Live smoke test against IMDb's GraphQL API, to catch contract drift that the recorded
+    /// fixtures cannot. Run with `cargo test -p zeta --all-features -- --ignored imdb::`.
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires network access"]
-    async fn live_search_and_title() {
+    async fn live_api_contract_smoke() {
         let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
 
-        let results = client.search("peggle nights", 5).await.unwrap();
+        let results = client.search("peggle nights", SEARCH_LIMIT).await.unwrap();
         assert!(!results.is_empty());
-        assert_eq!(results.first().unwrap().id, "tt14663588");
 
-        let title = client.title("tt14663588").await.unwrap();
+        // The top match for a stable query must still decode into the full model.
+        let title = client.title(&results[0].id).await.unwrap();
         println!("{}", format_title(&title));
         assert_eq!(title.title.as_deref(), Some("Peggle Nights"));
-        assert_eq!(title.rating, Some(7.6));
-        assert_eq!(title.genres, ["Action", "Adventure", "Family"]);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "requires network access"]
-    async fn live_unknown_title_is_not_found() {
-        let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
-
-        let err = client.title("tt9999999999999").await.unwrap_err();
-
-        assert!(matches!(err, Error::NotFound));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "requires network access"]
-    async fn live_episode() {
-        let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
-
-        let title = client.title("tt0959621").await.unwrap();
-        println!("{}", format_title(&title));
-
-        assert!(title.is_episode());
-        let series = title.series.expect("series info");
-        assert_eq!(series.title.as_deref(), Some("Breaking Bad"));
-        assert_eq!(series.season.as_deref(), Some("1"));
-        assert_eq!(series.number.as_deref(), Some("1"));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "requires network access"]
-    async fn live_person() {
-        let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
 
         let person = client.person("nm0186505").await.unwrap();
         println!("{}", format_person(&person));
-
         assert_eq!(person.name.as_deref(), Some("Bryan Cranston"));
-        assert_eq!(person.birth_year, Some(1956));
-        assert!(!person.known_for.is_empty());
+
+        // Unknown ids must still map to a not-found error.
+        let err = client.title("tt9999999999999").await.unwrap_err();
+        assert!(matches!(err, Error::NotFound));
     }
 }

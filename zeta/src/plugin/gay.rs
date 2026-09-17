@@ -2556,10 +2556,7 @@ mod tests {
         }
 
         assert_eq!(engine.audit.entries(), 1);
-        assert_eq!(
-            engine.audit.last_fingerprint(),
-            Some(engine.audit.last_fingerprint().expect("booked"))
-        );
+        assert!(engine.audit.last_fingerprint().is_some());
     }
 
     #[test]
@@ -2636,8 +2633,9 @@ mod tests {
     #[test]
     fn crystal_previews_are_stable() {
         let crystal = crystal_for("blimblewick", "2026-09-15");
+        let preview = crystal.glyph_preview();
 
-        assert_eq!(crystal.glyph_preview(), crystal.glyph_preview());
+        assert_eq!(crystal.glyph_preview(), preview);
     }
 
     #[test]
@@ -2713,8 +2711,10 @@ mod tests {
     #[test]
     fn audit_fingerprints_are_stable_within_a_report() {
         let report = consult("blimblewick", "2026-09-15");
+        let fingerprint = report.audit_hash();
 
-        assert_eq!(report.audit_hash(), report.audit_hash());
+        assert_ne!(fingerprint, 0);
+        assert_eq!(report.audit_hash(), fingerprint);
     }
 
     #[test]

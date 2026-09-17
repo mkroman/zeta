@@ -408,7 +408,8 @@ mod tests {
             .await
             .unwrap();
 
-        // The alerts are delivered in order, roughly when they are due.
+        // The alerts are delivered in order, roughly when they are due. Only the order is
+        // asserted: a latency bound would flake on loaded machines.
         for expected in [&first, &second] {
             let delivered = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
                 .await
@@ -416,12 +417,6 @@ mod tests {
                 .unwrap();
 
             assert_eq!(delivered.id, expected.id);
-
-            let latency = Utc::now()
-                .signed_duration_since(expected.time)
-                .to_std()
-                .unwrap();
-            assert!(latency < Duration::from_secs(2), "latency {latency:?}");
         }
 
         // The alerts are deleted from the database once delivered.

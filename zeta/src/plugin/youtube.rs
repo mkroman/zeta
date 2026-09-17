@@ -631,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_youtube_com_video_urls() {
+    fn test_parse_video_urls() {
         let test_cases = [
             (
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -641,17 +641,21 @@ mod tests {
                 "https://youtube.com/watch?v=dQw4w9WgXcQ",
                 Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
             ),
+            (
+                "https://youtu.be/dQw4w9WgXcQ",
+                Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
+            ),
         ];
 
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(parse_youtube_url(&url), expected);
+            assert_eq!(parse_youtube_url(&url), expected, "for {url_str}");
         }
     }
 
     #[test]
-    fn test_parse_youtube_com_shorts_urls() {
+    fn test_parse_shorts_urls() {
         let test_cases = [
             (
                 "https://www.youtube.com/shorts/l4s8y-O_ols",
@@ -666,21 +670,7 @@ mod tests {
         for (url_str, expected) in test_cases {
             let url = Url::parse(url_str).unwrap();
 
-            assert_eq!(parse_youtube_url(&url), expected);
-        }
-    }
-
-    #[test]
-    fn test_parse_youtu_be_video_urls() {
-        let test_cases = [(
-            "https://youtu.be/dQw4w9WgXcQ",
-            Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
-        )];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected);
+            assert_eq!(parse_youtube_url(&url), expected, "for {url_str}");
         }
     }
 
