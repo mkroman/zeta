@@ -1,7 +1,7 @@
 use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 
-use crate::plugin::prelude::*;
+use crate::{plugin::prelude::*, utils::strip_nick_prefix};
 
 /// Settings for the choices plugin, from its `[plugins.choices]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -48,13 +48,6 @@ impl Plugin<Context> for Choices {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "choices".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     async fn handle_message(
         &self,
         _ctx: &Context,
@@ -77,16 +70,6 @@ impl Plugin<Context> for Choices {
 
         Ok(())
     }
-}
-
-fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a str> {
-    s.strip_prefix(current_nickname).and_then(|s| {
-        if s.starts_with(", ") || s.starts_with(": ") {
-            Some(&s[2..])
-        } else {
-            None
-        }
-    })
 }
 
 fn extract_options<'a>(s: &'a str, settings: &Settings) -> Option<Vec<&'a str>> {
@@ -177,23 +160,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert_eq!(settings.or_keywords, ["eller"]);
-        assert_eq!(settings.option_separator, ", ");
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.or_keywords, ["eller"]);
+            assert_eq!(settings.option_separator, ", ");
+        }
+        deserialize: {
             "or_keywords": ["or", "eller"],
             "option_separator": "; ",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.or_keywords, ["or", "eller"]);
-        assert_eq!(settings.option_separator, "; ");
+        } assert: {
+            assert_eq!(settings.or_keywords, ["or", "eller"]);
+            assert_eq!(settings.option_separator, "; ");
+        }
     }
 }

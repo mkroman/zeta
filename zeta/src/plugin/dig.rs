@@ -105,7 +105,7 @@ impl Display for LookupResult {
             let record_type = lookup.record_type().to_string();
             let data = &lookup.data;
 
-            write!(fmt, "\x0310>\x0f\x02 Dig:\x02\x0310 ")?;
+            write!(fmt, "{}", reply_prefix("Dig"))?;
             writeln!(
                 fmt,
                 "{name:<25} {ttl:<7} {dns_class:<7} {record_type:<7} {data}"
@@ -126,16 +126,7 @@ impl Plugin<Context> for Dig {
         Ok(Dig { resolver })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "dig".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -160,7 +151,7 @@ impl Plugin<Context> for Dig {
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, formatted(&err.to_string()))?;
+                client.send_privmsg(channel, reply("Dig", err.to_string()))?;
             }
         }
 
@@ -195,10 +186,6 @@ fn build_resolver(nameservers: &[IpAddr]) -> Result<TokioResolver, BoxError> {
         .with_options(opts)
         .build()
         .map_err(Into::into)
-}
-
-fn formatted(message: &str) -> String {
-    format!("\x0310>\x03\x02 Dig:\x02\x0310 {message}")
 }
 
 impl Dig {

@@ -5,7 +5,7 @@
 //! This plugin provides functionality to search for TV shows and display information
 //! about upcoming episodes using the TVmaze API.
 use reqwest::{Response, StatusCode, Url};
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::Deserialize;
 use tracing::{debug, error, instrument};
 
 use crate::{config::HttpConfig, duration::TimeInWords, http, plugin::prelude::*};
@@ -16,20 +16,18 @@ pub const API_BASE_URL: &str = "https://api.tvmaze.com";
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("could not deserialize response: {0}")]
-    Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
+    Deserialize(#[from] serde_path_to_error::Error<serde_json::Error>),
     #[error("resource not found")]
     NotFound,
     #[error("request error: {0}")]
-    Request(#[source] reqwest::Error),
+    Request(#[from] reqwest::Error),
     #[error("unexpected http response")]
     UnexpectedResponse,
 }
 
 /// The `.next` command.
-const NEXT: PluginCommand = PluginCommand::new(
-    Prefix::new(".next"),
-    "Show when a show's next episode airs",
-);
+const NEXT: PluginCommand =
+    PluginCommand::new(Prefix::new(".next"), "Show when a show's next episode airs");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[NEXT];
@@ -142,16 +140,7 @@ impl Plugin<Context> for Tvmaze {
         Ok(Tvmaze::new(&ctx.config.http))
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "tvmaze".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -199,7 +188,8 @@ impl Tvmaze {
         match response.status() {
             StatusCode::OK => {
                 debug!("response is ok, parsing show");
-                let show = deserialize_response(response).await?;
+                let text = response.text().await.map_err(Error::Request)?;
+                let show = http::json::from_str(&text).map_err(Error::Deserialize)?;
                 debug!(?show, "finished parsing show");
 
                 Ok(show)
@@ -256,10 +246,9 @@ impl Tvmaze {
         let number = episode.number;
         let time_until_air = {
             let now = time::OffsetDateTime::now_utc();
-            episode.airstamp.map_or_else(
-                || "???".to_string(),
-                |airstamp| (airstamp - now).in_words(),
-            )
+            episode
+                .airstamp
+                .map_or_else(|| "???".to_string(), |airstamp| (airstamp - now).in_words())
         };
         let content = format!(
             "Next episode “\x0f{title}\x0310” (\x0f{season}x{number:02}\x0310) airs in\x0f {time_until_air}"
@@ -301,27 +290,11 @@ impl Tvmaze {
         url
     }
 
-    /// Formats a message for display in IRC with optional prefix.
-    #[allow(clippy::option_if_let_else)]
+    /// Formats a message for display in IRC with an optional bold subject name.
     fn build_formatted_message(prefix: Option<&str>, message: &str) -> String {
-        match prefix {
-            Some(name) => format!("\x0310>\x03\x02 TVmaze\x02\x0310 (\x0f{name}\x0310): {message}"),
-            None => format!("\x0310>\x03\x02 TVmaze\x02\x0310: {message}"),
-        }
+        prefix.map_or_else(
+            || reply("TVmaze", message),
+            |name| reply("TVmaze", format!("(\x0f{name}\x0310): {message}")),
+        )
     }
-}
-
-/// Deserializes an HTTP response into the specified type.
-///
-/// # Errors
-///
-/// Returns `Error::Request` if reading the response fails.
-/// Returns `Error::Deserialize` if parsing the JSON fails.
-async fn deserialize_response<T: DeserializeOwned>(response: Response) -> Result<T, Error> {
-    let text = response.text().await.map_err(Error::Request)?;
-    let deserializer = &mut serde_json::Deserializer::from_slice(text.as_bytes());
-
-    serde_path_to_error::deserialize(deserializer)
-        .inspect_err(|err| error!(?err, body = %text, "failed to parse json response"))
-        .map_err(Error::Deserialize)
 }

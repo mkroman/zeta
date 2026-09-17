@@ -15,7 +15,7 @@ use url::Url;
 
 use crate::{
     mirror::{Mirror, MirrorTarget},
-    plugin::{self, prelude::*},
+    plugin::prelude::*,
     utils::Truncatable,
 };
 
@@ -98,15 +98,17 @@ impl Plugin<Context> for Reddit {
         Ok(Reddit { client, mirror })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "reddit".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["i.redd.it", "oauth.reddit.com", "old.reddit.com", "preview.redd.it", "redd.it", "reddit.com", "v.redd.it", "www.reddit.com"]
+        &[
+            "i.redd.it",
+            "oauth.reddit.com",
+            "old.reddit.com",
+            "preview.redd.it",
+            "redd.it",
+            "reddit.com",
+            "v.redd.it",
+            "www.reddit.com",
+        ]
     }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
@@ -123,15 +125,9 @@ impl Plugin<Context> for Reddit {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
-        {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-            let urls: Vec<_> = urls
-                .into_iter()
-                .filter(|url| !filters.is_filtered(channel, sender, url))
-                .collect();
+        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
+            let channel = urls.channel();
+            let urls: Vec<_> = urls.collect();
 
             let _ = self
                 .process_urls(&urls, channel, client)
@@ -165,7 +161,8 @@ impl Reddit {
                 self.process_submission(&id, channel, client).await?;
             }
             Link::Comment { submission, .. } => {
-                self.process_submission(&submission, channel, client).await?;
+                self.process_submission(&submission, channel, client)
+                    .await?;
             }
             Link::Video(id) => match self.client.video(&id).await {
                 Ok(submission) => {
@@ -175,7 +172,7 @@ impl Reddit {
                 Err(err) => {
                     client.send_privmsg(
                         channel,
-                        format!("\x0310> could not resolve video link: {err}"),
+                        notice(format!("could not resolve video link: {err}")),
                     )?;
                 }
             },
@@ -189,7 +186,7 @@ impl Reddit {
                     Err(err) => {
                         client.send_privmsg(
                             channel,
-                            format!("\x0310> could not resolve shortened link: {err}"),
+                            notice(format!("could not resolve shortened link: {err}")),
                         )?;
                     }
                 }
@@ -201,15 +198,12 @@ impl Reddit {
                         let description =
                             subreddit.public_description.truncate_with_suffix(250, "…");
 
-                        client.send_privmsg(
-                            channel,
-                            format!("\x0310>\x03\x02 {title}:\x02\x0310 {description}"),
-                        )?;
+                        client.send_privmsg(channel, reply(&title, &description))?;
                     }
                     Err(err) => {
                         client.send_privmsg(
                             channel,
-                            format!("\x0310> could not fetch subreddit details: {err}"),
+                            notice(format!("could not fetch subreddit details: {err}")),
                         )?;
                     }
                 }
@@ -235,7 +229,7 @@ impl Reddit {
             Err(err) => {
                 client.send_privmsg(
                     channel,
-                    format!("\x0310> could not fetch submission details: {err}"),
+                    notice(format!("could not fetch submission details: {err}")),
                 )?;
             }
         }
@@ -255,7 +249,7 @@ impl Reddit {
         let subreddit = submission.subreddit.clone();
         let id = submission.id.as_deref().unwrap_or(fallback_id).to_string();
 
-        client.send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))?;
+        client.send_privmsg(channel, notice(format!("{title} : {subreddit}")))?;
 
         self.mirror_video(&submission, &id, channel, client).await;
 
@@ -289,13 +283,13 @@ impl Reddit {
         let on_mirrored = {
             let channel = channel.to_string();
             move |link: String| {
-                let _ = sender.send_privmsg(&channel, format!("\x0310> {link}"));
+                let _ = sender.send_privmsg(&channel, notice(link));
             }
         };
 
         match mirror.ensure_mirrored(url, id, on_mirrored).await {
             Ok(Some(link)) => {
-                let _ = client.send_privmsg(channel, format!("\x0310> {link}"));
+                let _ = client.send_privmsg(channel, notice(link));
             }
             Ok(None) => {}
             Err(err) => {
@@ -309,32 +303,28 @@ impl Reddit {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.client_id.is_none());
-        assert!(settings.client_secret.is_none());
-        assert!(settings.prefix.is_none());
-        assert!(settings.public_url_base.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.client_id.is_none());
+            assert!(settings.client_secret.is_none());
+            assert!(settings.prefix.is_none());
+            assert!(settings.public_url_base.is_none());
+        }
+        deserialize: {
             "client_id": "id",
             "client_secret": "secret",
             "prefix": "~meta/reddit",
             "public_url_base": "https://pub.example.com/reddit",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.client_id.as_deref(), Some("id"));
-        assert_eq!(settings.client_secret.as_deref(), Some("secret"));
-        assert_eq!(settings.prefix.as_deref(), Some("~meta/reddit"));
-        assert_eq!(
-            settings.public_url_base.as_deref(),
-            Some("https://pub.example.com/reddit")
-        );
+        } assert: {
+            assert_eq!(settings.client_id.as_deref(), Some("id"));
+            assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+            assert_eq!(settings.prefix.as_deref(), Some("~meta/reddit"));
+            assert_eq!(
+                settings.public_url_base.as_deref(),
+                Some("https://pub.example.com/reddit")
+            );
+        }
     }
 }

@@ -8,17 +8,10 @@ use serde::Deserialize;
 use tracing::debug;
 use url::Url;
 
-use crate::{
-    config::HttpConfig,
-    http,
-    plugin::{self, prelude::*},
-};
+use crate::{config::HttpConfig, http, plugin::prelude::*};
 
-/// The hostname for Chaturbate URLs.
-const CHATURBATE_HOST: &str = "chaturbate.com";
-
-/// The www-prefixed hostname for Chaturbate URLs.
-const CHATURBATE_WWW_HOST: &str = "www.chaturbate.com";
+/// The Chaturbate hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &["chaturbate.com", "www.chaturbate.com"];
 
 /// Plugin for handling Chaturbate URLs and fetching broadcaster room info.
 pub struct Chaturbate {
@@ -69,15 +62,8 @@ impl Plugin<Context> for Chaturbate {
         Ok(Self::new(&ctx.config.http))
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "chaturbate".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["chaturbate.com", "www.chaturbate.com"]
+        URL_HOSTS
     }
 
     async fn handle_message(
@@ -86,11 +72,7 @@ impl Plugin<Context> for Chaturbate {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        let filters = Filters::from_context(ctx);
-        let sender = Sender::from_message(message);
-
-        self.handle_command_logic(client, message, &filters, sender)
-            .await?;
+        self.handle_command_logic(ctx, client, message).await?;
         Ok(())
     }
 }
@@ -98,25 +80,18 @@ impl Plugin<Context> for Chaturbate {
 impl Chaturbate {
     async fn handle_command_logic(
         &self,
+        ctx: &Context,
         client: &Client,
         message: &Message,
-        filters: &Filters,
-        sender: Option<Sender<'_>>,
     ) -> Result<(), Error> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
-        {
+        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
+            let channel = urls.channel();
+
             for url in urls {
-                if filters.is_filtered(channel, sender, &url) {
-                    debug!(%url, "skipping filtered url");
-
-                    continue;
-                }
-
                 if let Some(username) = extract_username(&url) {
                     debug!(%username, "processing chaturbate url");
                     if let Err(e) = self.process_broadcaster(&username, channel, client).await {
-                        client.send_privmsg(channel, format_message(&e.to_string()))?;
+                        client.send_privmsg(channel, reply("Chaturbate", e.to_string()))?;
                     }
                 }
             }
@@ -163,7 +138,7 @@ impl Chaturbate {
             )
         };
 
-        client.send_privmsg(channel, format_message(&msg))?;
+        client.send_privmsg(channel, reply("Chaturbate", &msg))?;
 
         Ok(())
     }
@@ -183,7 +158,7 @@ fn parse_room_dossier_with_re(re: &Regex, html: &str) -> Result<RoomDossier, Err
 fn extract_username(url: &Url) -> Option<String> {
     let host = url.host_str()?;
 
-    if host != CHATURBATE_HOST && host != CHATURBATE_WWW_HOST {
+    if !URL_HOSTS.contains(&host) {
         return None;
     }
 
@@ -196,10 +171,6 @@ fn extract_username(url: &Url) -> Option<String> {
         | "female-cams" | "male-cams" | "couple-cams" | "trans-cams" => None,
         name => Some(name.to_string()),
     }
-}
-
-fn format_message(msg: &str) -> String {
-    format!("\x0310>\x0F \x02Chaturbate:\x02\x0310 {msg}")
 }
 
 #[cfg(test)]

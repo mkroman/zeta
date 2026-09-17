@@ -8,6 +8,12 @@ const TIKTOK_SHORT_HOST: &str = "vm.tiktok.com";
 /// The standard hostname.
 const TIKTOK_STANDARD_HOST: &str = "tiktok.com";
 
+/// The www-prefixed standard hostname.
+const TIKTOK_WWW_HOST: &str = "www.tiktok.com";
+
+/// The TikTok hosts whose links this plugin handles.
+pub(super) const URL_HOSTS: &[&str] = &[TIKTOK_STANDARD_HOST, TIKTOK_SHORT_HOST, TIKTOK_WWW_HOST];
+
 /// A TikTok link, identified by what it points at.
 #[derive(Eq, PartialEq, Debug)]
 pub enum TiktokLink {
@@ -41,7 +47,7 @@ pub fn short_url(id: &str) -> String {
 #[must_use]
 pub fn parse_tiktok_url(url: &Url) -> Option<TiktokLink> {
     match url.host_str()? {
-        TIKTOK_STANDARD_HOST | "www.tiktok.com" => parse_tiktok_com_url(url),
+        TIKTOK_STANDARD_HOST | TIKTOK_WWW_HOST => parse_tiktok_com_url(url),
         TIKTOK_SHORT_HOST => parse_shortened_tiktok_url(url),
         _ => None,
     }

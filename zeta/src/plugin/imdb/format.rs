@@ -12,7 +12,7 @@ use crate::utils::Truncatable;
 
 /// The prefix all IMDb replies start with: a cyan `>` marker, a bold `IMDb` label and a cyan
 /// colon.
-pub(super) const PREFIX: &str = "\x0310>\x0f\x02 IMDb\x02\x0310:\x0f";
+pub(super) const PREFIX: &str = concat!("\x0310>", "\x0f", "\x02 IMDb", "\x02", "\x0310:", "\x0f");
 
 /// Formats the details of `title` as a single IRC message.
 #[must_use]

@@ -19,7 +19,7 @@ use url::Url;
 use crate::{
     http,
     mirror::{Mirror, MirrorTarget},
-    plugin::{self, prelude::*},
+    plugin::prelude::*,
     utils::Truncatable,
 };
 
@@ -104,15 +104,8 @@ impl Plugin<Context> for Tiktok {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "tiktok".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["tiktok.com", "vm.tiktok.com", "www.tiktok.com"]
+        urls::URL_HOSTS
     }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
@@ -129,15 +122,9 @@ impl Plugin<Context> for Tiktok {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
-        {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-            let urls: Vec<_> = urls
-                .into_iter()
-                .filter(|url| !filters.is_filtered(channel, sender, url))
-                .collect();
+        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
+            let channel = urls.channel();
+            let urls: Vec<_> = urls.collect();
 
             if let Err(err) = self.process_urls(&urls, channel, client).await {
                 error!("could not process urls: {err}");
@@ -203,7 +190,7 @@ impl Tiktok {
         }
 
         if let Some(summary) = format_summary(&embed, self.settings.title_length) {
-            let _ = client.send_privmsg(channel, formatted(&summary));
+            let _ = client.send_privmsg(channel, notice(&summary));
         }
 
         self.mirror_video(&url, video_id, channel, client).await;
@@ -225,13 +212,13 @@ impl Tiktok {
         let on_mirrored = {
             let channel = channel.to_string();
             move |link: String| {
-                let _ = sender.send_privmsg(&channel, formatted(&link));
+                let _ = sender.send_privmsg(&channel, notice(&link));
             }
         };
 
         match mirror.ensure_mirrored(url, video_id, on_mirrored).await {
             Ok(Some(link)) => {
-                let _ = client.send_privmsg(channel, formatted(&link));
+                let _ = client.send_privmsg(channel, notice(&link));
             }
             Ok(None) => {}
             Err(err) => {
@@ -277,37 +264,29 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
     (!buf.is_empty()).then_some(buf)
 }
 
-fn formatted(s: &str) -> String {
-    format!("\x0310> {s}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert_eq!(settings.title_length, 150);
-        assert!(settings.prefix.is_none());
-        assert!(settings.public_url_base.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.title_length, 150);
+            assert!(settings.prefix.is_none());
+            assert!(settings.public_url_base.is_none());
+        }
+        deserialize: {
             "title_length": 100,
             "prefix": "~meta/tiktok",
             "public_url_base": "https://pub.example.com/tiktok",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.title_length, 100);
-        assert_eq!(settings.prefix.as_deref(), Some("~meta/tiktok"));
-        assert_eq!(
-            settings.public_url_base.as_deref(),
-            Some("https://pub.example.com/tiktok")
-        );
+        } assert: {
+            assert_eq!(settings.title_length, 100);
+            assert_eq!(settings.prefix.as_deref(), Some("~meta/tiktok"));
+            assert_eq!(
+                settings.public_url_base.as_deref(),
+                Some("https://pub.example.com/tiktok")
+            );
+        }
     }
 }

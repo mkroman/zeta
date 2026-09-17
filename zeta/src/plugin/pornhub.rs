@@ -5,15 +5,11 @@
 //! This plugin provides functionality to display information about linked PornHub videos.
 
 use num_format::{Locale, ToFormattedString};
-use reqwest::Response;
-use serde::{Deserialize, de::DeserializeOwned};
-use tracing::{debug, error};
+use serde::Deserialize;
+use tracing::debug;
 use url::Url;
 
-use crate::{
-    http,
-    plugin::{self, prelude::*},
-};
+use crate::{http, plugin::prelude::*};
 
 /// The hostname for PornHub URLs.
 const PORNHUB_HOST: &str = "www.pornhub.com";
@@ -142,15 +138,8 @@ impl Plugin<Context> for PornHub {
         Ok(PornHub { client })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "pornhub".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["www.pornhub.com"]
+        &[PORNHUB_HOST]
     }
 
     // Handles incoming messages and processes any PornHub URLs found.
@@ -160,15 +149,9 @@ impl Plugin<Context> for PornHub {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
-        {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-            let urls: Vec<_> = urls
-                .into_iter()
-                .filter(|url| !filters.is_filtered(channel, sender, url))
-                .collect();
+        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
+            let channel = urls.channel();
+            let urls: Vec<_> = urls.collect();
 
             let _ = self.process_urls(urls, channel, client).await;
         }
@@ -218,7 +201,8 @@ impl PornHub {
 
         let response = self.client.get(url).send().await.map_err(Error::Request)?;
         debug!("request went ok, parsing response");
-        let json: ApiResponse = deserialize_response(response).await?;
+        let text = response.text().await.map_err(Error::Request)?;
+        let json: ApiResponse = http::json::from_str(&text).map_err(Error::Deserialize)?;
 
         match json {
             ApiResponse::Error { code, .. } => {
@@ -237,7 +221,9 @@ impl PornHub {
         let title = &video.title;
         let views = video.views.to_formatted_string(&Locale::en);
 
-        format!("\x0310> “\x0f{title}\x0310” is a PornHub video with\x0f {views}\x0310 views")
+        notice(format!(
+            "“\x0f{title}\x0310” is a PornHub video with\x0f {views}\x0310 views"
+        ))
     }
 }
 
@@ -255,19 +241,4 @@ fn extract_video_id(url: &Url) -> Option<String> {
             None
         }
     })
-}
-
-/// Deserializes an HTTP response into the specified type.
-///
-/// # Errors
-///
-/// Returns `Error::Request` if reading the response fails.
-/// Returns `Error::Deserialize` if parsing the JSON fails.
-async fn deserialize_response<T: DeserializeOwned>(response: Response) -> Result<T, Error> {
-    let text = response.text().await.map_err(Error::Request)?;
-    let deserializer = &mut serde_json::Deserializer::from_slice(text.as_bytes());
-
-    serde_path_to_error::deserialize(deserializer)
-        .inspect_err(|err| error!(?err, body = %text, "failed to parse json response"))
-        .map_err(Error::Deserialize)
 }

@@ -1,20 +1,21 @@
-
 use std::fmt::Write;
-use std::time::{Duration, Instant};
 
 use base64::prelude::*;
 use num_format::{Locale, ToFormattedString};
 use regex::Regex;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
     http,
-    plugin::{self, prelude::*},
+    oauth::{TokenCache, TokenResponse},
+    plugin::prelude::*,
 };
+
+/// The Spotify hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &["open.spotify.com", "play.spotify.com"];
 
 const AUTH_URL: &str = "https://accounts.spotify.com/api/token";
 const API_BASE_URL: &str = "https://api.spotify.com/v1";
@@ -40,14 +41,8 @@ pub struct Spotify {
     client: reqwest::Client,
     client_id: String,
     client_secret: String,
-    token: RwLock<Option<Token>>,
+    token: TokenCache,
     uri_regex: Regex,
-}
-
-#[derive(Clone, Debug)]
-struct Token {
-    access_token: String,
-    expires_at: Instant,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -58,12 +53,6 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("api error: {0}")]
     Api(String),
-}
-
-#[derive(Deserialize)]
-struct AuthResponse {
-    access_token: String,
-    expires_in: u64,
 }
 
 #[derive(Deserialize)]
@@ -144,20 +133,13 @@ impl Plugin<Context> for Spotify {
             client,
             client_id,
             client_secret,
-            token: RwLock::new(None),
+            token: TokenCache::new(),
             uri_regex,
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "spotify".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["open.spotify.com", "play.spotify.com"]
+        URL_HOSTS
     }
 
     async fn handle_message(
@@ -166,37 +148,31 @@ impl Plugin<Context> for Spotify {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
+        let Command::PRIVMSG(channel, user_message) = &message.command else {
+            return Ok(());
+        };
 
-            // 1. Handle Spotify URIs (spotify:type:id)
-            for cap in self.uri_regex.captures_iter(user_message) {
-                let type_str = &cap["type"];
-                let id_str = &cap["id"];
-                // Include external URL for URI matches
-                self.handle_spotify_resource(channel, type_str, id_str, true, client)
+        // 1. Handle Spotify URIs (spotify:type:id)
+        for cap in self.uri_regex.captures_iter(user_message) {
+            let type_str = &cap["type"];
+            let id_str = &cap["id"];
+            // Include external URL for URI matches
+            self.handle_spotify_resource(channel, type_str, id_str, true, client)
+                .await?;
+        }
+
+        // 2. Handle Spotify URLs (open.spotify.com/type/id)
+        for url in FilteredUrls::from_message(ctx, message)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(host) = url.host_str()
+                && URL_HOSTS.contains(&host)
+                && let Some((type_str, id_str)) = parse_spotify_url(&url)
+            {
+                // Do not include external URL for link matches (avoid redundancy)
+                self.handle_spotify_resource(channel, type_str, id_str, false, client)
                     .await?;
-            }
-
-            // 2. Handle Spotify URLs (open.spotify.com/type/id)
-            if let Some(urls) = plugin::extract_urls(user_message) {
-                for url in urls {
-                    if filters.is_filtered(channel, sender, &url) {
-                        debug!(%url, "skipping filtered url");
-
-                        continue;
-                    }
-
-                    if let Some(host) = url.host_str()
-                        && (host == "open.spotify.com" || host == "play.spotify.com")
-                        && let Some((type_str, id_str)) = parse_spotify_url(&url)
-                    {
-                        // Do not include external URL for link matches (avoid redundancy)
-                        self.handle_spotify_resource(channel, type_str, id_str, false, client)
-                            .await?;
-                    }
-                }
             }
         }
 
@@ -207,34 +183,24 @@ impl Plugin<Context> for Spotify {
 impl Spotify {
     /// Authenticates with Spotify using Client Credentials Flow.
     async fn get_token(&self) -> Result<String, Error> {
-        // Check cache
-        if let Some(token) = self.token.read().await.as_ref()
-            && token.expires_at > Instant::now() + Duration::from_mins(1)
-        {
-            return Ok(token.access_token.clone());
-        }
+        self.token
+            .get(|| async {
+                debug!("refreshing spotify token");
+                let creds = format!("{}:{}", self.client_id, self.client_secret);
+                let encoded = BASE64_STANDARD.encode(creds);
 
-        debug!("refreshing spotify token");
-        let creds = format!("{}:{}", self.client_id, self.client_secret);
-        let encoded = BASE64_STANDARD.encode(creds);
-        let response = self
-            .client
-            .post(AUTH_URL)
-            .header(AUTHORIZATION, format!("Basic {encoded}"))
-            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .form(&[("grant_type", "client_credentials")])
-            .send()
-            .await?;
-
-        let auth: AuthResponse = response.json().await?;
-        let token = Token {
-            access_token: auth.access_token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(auth.expires_in),
-        };
-
-        *self.token.write().await = Some(token);
-
-        Ok(auth.access_token)
+                self.client
+                    .post(AUTH_URL)
+                    .header(AUTHORIZATION, format!("Basic {encoded}"))
+                    .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .form(&[("grant_type", "client_credentials")])
+                    .send()
+                    .await?
+                    .json::<TokenResponse>()
+                    .await
+                    .map_err(Error::from)
+            })
+            .await
     }
 
     async fn handle_spotify_resource(
@@ -307,7 +273,7 @@ impl Spotify {
                     let _ = write!(msg, " - {}", track.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, formatted(&msg))?;
+                client.send_privmsg(channel, reply("Spotify", &msg))?;
             }
             Err(e) => handle_error(channel, client, &e)?,
         }
@@ -332,7 +298,7 @@ impl Spotify {
                     let _ = write!(msg, " - {}", album.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, formatted(&msg))?;
+                client.send_privmsg(channel, reply("Spotify", &msg))?;
             }
             Err(e) => handle_error(channel, client, &e)?,
         }
@@ -364,7 +330,7 @@ impl Spotify {
                     let _ = write!(msg, " - {}", artist.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, formatted(&msg))?;
+                client.send_privmsg(channel, reply("Spotify", &msg))?;
             }
             Err(e) => handle_error(channel, client, &e)?,
         }
@@ -398,16 +364,12 @@ impl Spotify {
                     let _ = write!(msg, " - {}", playlist.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, formatted(&msg))?;
+                client.send_privmsg(channel, reply("Spotify", &msg))?;
             }
             Err(e) => handle_error(channel, client, &e)?,
         }
         Ok(())
     }
-}
-
-fn formatted(message: &str) -> String {
-    format!("\x0310>\x0f\x02 Spotify:\x02\x0310 {message}")
 }
 
 fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), ZetaError> {
@@ -419,7 +381,7 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
     if let Error::Api(s) = error
         && s.contains("404")
     {
-        client.send_privmsg(channel, formatted("Resource not found"))?;
+        client.send_privmsg(channel, reply("Spotify", "Resource not found"))?;
     }
 
     Ok(())
@@ -460,23 +422,19 @@ fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.client_id.is_none());
-        assert!(settings.client_secret.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.client_id.is_none());
+            assert!(settings.client_secret.is_none());
+        }
+        deserialize: {
             "client_id": "id",
             "client_secret": "secret",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.client_id.as_deref(), Some("id"));
-        assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+        } assert: {
+            assert_eq!(settings.client_id.as_deref(), Some("id"));
+            assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+        }
     }
 }

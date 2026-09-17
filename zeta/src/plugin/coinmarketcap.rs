@@ -333,16 +333,7 @@ impl Plugin<Context> for CoinMarketCap {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "coinmarketcap".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.ensure_coins_cached().await;
@@ -379,7 +370,7 @@ impl CoinMarketCap {
         let opts = match CC.parse_args::<CoinOpts>(args) {
             Ok(opts) if !opts.coin.trim().is_empty() => opts,
             _ => {
-                client.send_privmsg(channel, formatted(CC_USAGE))?;
+                client.send_privmsg(channel, notice(CC_USAGE))?;
                 return Ok(());
             }
         };
@@ -410,7 +401,7 @@ impl CoinMarketCap {
         let Ok(opts) = command.parse_args::<QuoteOpts>(args) else {
             client.send_privmsg(
                 channel,
-                formatted(&format!("Usage: {} \x0f[currency]", command.as_str())),
+                notice(format!("Usage: {} \x0f[currency]", command.as_str())),
             )?;
             return Ok(());
         };
@@ -435,11 +426,9 @@ impl CoinMarketCap {
     ) -> Result<(), ZetaError> {
         self.ensure_fiat_cached().await;
 
-        let currency = match parse_currency(
-            currency,
-            &self.default_currency,
-            |symbol| self.is_valid_currency(symbol),
-        ) {
+        let currency = match parse_currency(currency, &self.default_currency, |symbol| {
+            self.is_valid_currency(symbol)
+        }) {
             Ok(currency) => currency,
             Err(err) => return Self::reply_error(client, channel, &err),
         };
@@ -479,7 +468,7 @@ impl CoinMarketCap {
             warn!(error = %err, "coin lookup failed");
         }
 
-        client.send_privmsg(channel, formatted(&err.to_string()))?;
+        client.send_privmsg(channel, notice(err.to_string()))?;
 
         Ok(())
     }
@@ -695,12 +684,6 @@ fn sanitize(input: &str) -> String {
     input.chars().filter(|c| !c.is_control()).collect()
 }
 
-/// Renders the given string as a message from the plugin, in the blue used by the original
-/// coinmarketcap script.
-fn formatted(s: &str) -> String {
-    format!("\x0310> {s}")
-}
-
 /// Formats a coin quote as an IRC message, e.g.:
 ///
 /// `\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x03 $97231.50\x0310 (...)`
@@ -709,7 +692,7 @@ fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String
     let symbol = &quote.symbol;
 
     let Some(fiat) = quote.quote.get(currency) else {
-        return formatted(&format!(
+        return notice(format!(
             "{name} (\x0f{symbol}\x0310) has no quote in {currency}"
         ));
     };
@@ -723,7 +706,7 @@ fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String
     let change_day = format_change(fiat.percent_change_24h);
     let change_week = format_change(fiat.percent_change_7d);
 
-    formatted(&format!(
+    notice(format!(
         "{name} (\x0f{symbol}\x0310) is currently trading at\x03 {price}\x0310 (1 Hour Change:\
          \x0f {change_hour}\x0310 24 Hour Change:\x0f {change_day}\x0310 7 Day Change:\
          \x0f {change_week}\x0310)"
@@ -813,30 +796,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.api_key.is_none());
-        assert_eq!(settings.default_currency, "USD");
-        assert_eq!(settings.cache_ttl, Duration::from_hours(24));
-        assert_eq!(settings.max_name_typos, 2);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.api_key.is_none());
+            assert_eq!(settings.default_currency, "USD");
+            assert_eq!(settings.cache_ttl, Duration::from_hours(24));
+            assert_eq!(settings.max_name_typos, 2);
+        }
+        deserialize: {
             "api_key": "secret",
             "default_currency": "eur",
             "cache_ttl": "1h",
             "max_name_typos": 3,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.api_key.as_deref(), Some("secret"));
-        assert_eq!(settings.default_currency, "eur");
-        assert_eq!(settings.cache_ttl, Duration::from_hours(1));
-        assert_eq!(settings.max_name_typos, 3);
+        } assert: {
+            assert_eq!(settings.api_key.as_deref(), Some("secret"));
+            assert_eq!(settings.default_currency, "eur");
+            assert_eq!(settings.cache_ttl, Duration::from_hours(1));
+            assert_eq!(settings.max_name_typos, 3);
+        }
     }
 
     /// Builds a quote for `Bitcoin (BTC)` in USD.

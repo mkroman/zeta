@@ -187,7 +187,10 @@ impl Add {
             ("--user", &self.user),
             ("--hostname", &self.hostname),
         ] {
-            if value.as_deref().is_some_and(|pattern| pattern.trim().is_empty()) {
+            if value
+                .as_deref()
+                .is_some_and(|pattern| pattern.trim().is_empty())
+            {
                 return Err(format!("{name} patterns cannot be empty"));
             }
         }
@@ -337,7 +340,7 @@ impl FilterPlugin {
         let scope = match opts.validate(channel) {
             Ok(scope) => scope,
             Err(error) => {
-                client.send_privmsg(channel, formatted(&error))?;
+                client.send_privmsg(channel, reply("Filter", &error))?;
 
                 return Ok(());
             }
@@ -347,13 +350,16 @@ impl FilterPlugin {
 
         for new_filter in &new_filters {
             if let Err(error) = self.service.add(new_filter.clone()).await {
-                client.send_privmsg(channel, formatted(&format!("could not add the filter: {error}")))?;
+                client.send_privmsg(
+                    channel,
+                    reply("Filter", format!("could not add the filter: {error}")),
+                )?;
 
                 return Ok(());
             }
         }
 
-        let reply = if let [new_filter] = new_filters.as_slice()
+        let response = if let [new_filter] = new_filters.as_slice()
             && new_filter.path.is_none()
             && new_filter.nickname.is_none()
             && new_filter.username.is_none()
@@ -367,7 +373,7 @@ impl FilterPlugin {
 
         debug!(count = new_filters.len(), "added filters");
 
-        client.send_privmsg(channel, formatted(&reply))?;
+        client.send_privmsg(channel, reply("Filter", &response))?;
 
         Ok(())
     }
@@ -376,20 +382,20 @@ impl FilterPlugin {
     fn list(&self, client: &Client, channel: &str, opts: &List) -> Result<(), ZetaError> {
         let filters = self.service.select(&Criteria::from(opts));
 
-        let reply = if filters.is_empty() {
-            formatted("No filters match your criteria.")
+        let response = if filters.is_empty() {
+            reply("Filter", "No filters match your criteria.")
         } else {
-            let mut listing = formatted(&format!(
-                "{} filters matching your criteria: ",
-                filters.len()
-            ));
+            let mut listing = reply(
+                "Filter",
+                format!("{} filters matching your criteria: ", filters.len()),
+            );
 
             append_entries(&mut listing, filters.iter().map(describe), "");
 
             listing
         };
 
-        client.send_privmsg(channel, reply)?;
+        client.send_privmsg(channel, response)?;
 
         Ok(())
     }
@@ -400,20 +406,20 @@ impl FilterPlugin {
             if opts.criteria().is_some() {
                 client.send_privmsg(
                     channel,
-                    formatted("specify either a filter id or criteria, not both"),
+                    reply("Filter", "specify either a filter id or criteria, not both"),
                 )?;
 
                 return Ok(());
             }
 
-            let reply = match self.service.delete_ids(&[id]).await {
+            let response = match self.service.delete_ids(&[id]).await {
                 Ok(1) => "The filter has been removed.".to_string(),
                 Ok(0) => format!("No filter with id {id}."),
                 Ok(removed) => format!("{removed} filters have been removed."),
                 Err(error) => format!("could not delete the filter: {error}"),
             };
 
-            client.send_privmsg(channel, formatted(&reply))?;
+            client.send_privmsg(channel, reply("Filter", &response))?;
 
             return Ok(());
         }
@@ -421,7 +427,10 @@ impl FilterPlugin {
         let Some(criteria) = opts.criteria() else {
             client.send_privmsg(
                 channel,
-                formatted("specify a filter id, or at least one criterion to match filters by"),
+                reply(
+                    "Filter",
+                    "specify a filter id, or at least one criterion to match filters by",
+                ),
             )?;
 
             return Ok(());
@@ -430,7 +439,7 @@ impl FilterPlugin {
         let filters = self.service.select(&criteria);
 
         if filters.is_empty() {
-            client.send_privmsg(channel, formatted("No filters match your criteria."))?;
+            client.send_privmsg(channel, reply("Filter", "No filters match your criteria."))?;
 
             return Ok(());
         }
@@ -438,10 +447,13 @@ impl FilterPlugin {
         let ids: Vec<i32> = filters.iter().map(|filter| filter.id).collect();
 
         if !opts.force {
-            let mut listing = formatted(&format!(
-                "{} filters matching the criteria will be deleted: ",
-                filters.len()
-            ));
+            let mut listing = reply(
+                "Filter",
+                format!(
+                    "{} filters matching the criteria will be deleted: ",
+                    filters.len()
+                ),
+            );
 
             append_entries(
                 &mut listing,
@@ -454,12 +466,12 @@ impl FilterPlugin {
             return Ok(());
         }
 
-        let reply = match self.service.delete_ids(&ids).await {
+        let response = match self.service.delete_ids(&ids).await {
             Ok(removed) => format!("{removed} filters have been removed."),
             Err(error) => format!("could not delete the filters: {error}"),
         };
 
-        client.send_privmsg(channel, formatted(&reply))?;
+        client.send_privmsg(channel, reply("Filter", &response))?;
 
         Ok(())
     }
@@ -488,16 +500,7 @@ impl Plugin<Context> for FilterPlugin {
         Ok(FilterPlugin { service, admins })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "filter".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
@@ -526,7 +529,7 @@ impl Plugin<Context> for FilterPlugin {
         };
 
         if !self.is_admin(sender) {
-            client.send_privmsg(channel, formatted(UNAUTHORIZED))?;
+            client.send_privmsg(channel, reply("Filter", UNAUTHORIZED))?;
 
             return Ok(());
         }
@@ -535,7 +538,7 @@ impl Plugin<Context> for FilterPlugin {
             Ok(opts) => opts,
             Err(err) => {
                 for line in err.to_string().lines().filter(|line| !line.is_empty()) {
-                    client.send_privmsg(channel, formatted(line))?;
+                    client.send_privmsg(channel, reply("Filter", line))?;
                 }
 
                 return Ok(());
@@ -564,7 +567,8 @@ fn append_entries(
     for entry in entries {
         let separator = if first { "" } else { ", " };
 
-        if !first && message.len() + separator.len() + entry.len() + suffix.len() > MAX_LISTING_LENGTH
+        if !first
+            && message.len() + separator.len() + entry.len() + suffix.len() > MAX_LISTING_LENGTH
         {
             complete = false;
 
@@ -612,11 +616,6 @@ fn describe(filter: &Filter) -> String {
     format!("#{}: {} ({})", filter.id, parts.join(" "), scope)
 }
 
-/// Formats `s` as a filter response.
-fn formatted(s: &str) -> String {
-    format!("\x0310>\x0f\x02 Filter:\x02\x0310 {s}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,25 +624,46 @@ mod tests {
     fn admin_hostmasks_match_wildcards_and_case_insensitively() {
         let admins = compile_hostmasks(&["mk!mk@*".to_string(), "*!*@example.org".to_string()]);
 
-        assert!(hostmask_matches(&admins, Sender::new("mk", "mk", "user.example")));
-        assert!(hostmask_matches(&admins, Sender::new("MK", "MK", "anything.tld")));
-        assert!(hostmask_matches(&admins, Sender::new("someone", "x", "EXAMPLE.ORG")));
-        assert!(!hostmask_matches(&admins, Sender::new("someone", "x", "example.com")));
-        assert!(!hostmask_matches(&admins, Sender::new("mk", "other", "user.example")));
+        assert!(hostmask_matches(
+            &admins,
+            Sender::new("mk", "mk", "user.example")
+        ));
+        assert!(hostmask_matches(
+            &admins,
+            Sender::new("MK", "MK", "anything.tld")
+        ));
+        assert!(hostmask_matches(
+            &admins,
+            Sender::new("someone", "x", "EXAMPLE.ORG")
+        ));
+        assert!(!hostmask_matches(
+            &admins,
+            Sender::new("someone", "x", "example.com")
+        ));
+        assert!(!hostmask_matches(
+            &admins,
+            Sender::new("mk", "other", "user.example")
+        ));
     }
 
     #[test]
     fn an_empty_admin_list_denies_everyone() {
         let admins = compile_hostmasks(&[]);
 
-        assert!(!hostmask_matches(&admins, Sender::new("mk", "mk", "example.com")));
+        assert!(!hostmask_matches(
+            &admins,
+            Sender::new("mk", "mk", "example.com")
+        ));
     }
 
     #[test]
     fn blank_admin_hostmasks_are_skipped() {
         let admins = compile_hostmasks(&["  ".to_string(), String::new()]);
 
-        assert!(!hostmask_matches(&admins, Sender::new("mk", "mk", "example.com")));
+        assert!(!hostmask_matches(
+            &admins,
+            Sender::new("mk", "mk", "example.com")
+        ));
     }
 
     #[test]
@@ -673,10 +693,18 @@ mod tests {
         let filters = add.new_filters(Some("#chan"), "smoke");
 
         assert_eq!(filters.len(), 2);
-        assert!(filters.iter().all(|filter| filter.path.as_deref() == Some("/x/*")));
+        assert!(
+            filters
+                .iter()
+                .all(|filter| filter.path.as_deref() == Some("/x/*"))
+        );
         assert_eq!(filters[0].host.as_deref(), Some("a.com"));
         assert_eq!(filters[1].host.as_deref(), Some("b.com"));
-        assert!(filters.iter().all(|filter| filter.channel.as_deref() == Some("#chan")));
+        assert!(
+            filters
+                .iter()
+                .all(|filter| filter.channel.as_deref() == Some("#chan"))
+        );
         assert!(filters.iter().all(|filter| filter.created_by == "smoke"));
     }
 
@@ -817,7 +845,7 @@ mod tests {
 
     #[test]
     fn listings_stay_within_the_budget() {
-        let mut message = formatted("2 filters matching your criteria: ");
+        let mut message = reply("Filter", "2 filters matching your criteria: ");
 
         let complete = append_entries(
             &mut message,

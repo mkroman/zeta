@@ -26,23 +26,15 @@ impl Plugin<Context> for Rink {
     type Settings = NoSettings;
 
     fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Rink, ZetaError> {
-        let ctx = rink_core::simple_context().map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
+        let ctx = rink_core::simple_context()
+            .map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
 
         Ok(Rink {
             ctx: Mutex::new(ctx),
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "rink".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -53,8 +45,8 @@ impl Plugin<Context> for Rink {
         query: &str,
     ) -> Result<(), ZetaError> {
         let message = match self.eval(query) {
-            Ok(result) => format!("\x0310> {result}"),
-            Err(err) => format!("\x0310> Error: {err}"),
+            Ok(result) => notice(result),
+            Err(err) => notice(format!("Error: {err}")),
         };
 
         client.send_privmsg(channel, message)?;

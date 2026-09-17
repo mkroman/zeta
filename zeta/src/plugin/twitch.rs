@@ -1,20 +1,29 @@
 #![allow(clippy::doc_markdown)]
 
-
-use std::time::{Duration, Instant};
-
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
     http,
-    plugin::{self, prelude::*},
+    oauth::{TokenCache, TokenResponse},
+    plugin::prelude::*,
 };
 
 /// Twitch OAuth2 token endpoint.
+/// The Twitch.tv hostname.
+const TWITCH_HOST: &str = "twitch.tv";
+
+/// The www-prefixed Twitch.tv hostname.
+const TWITCH_WWW_HOST: &str = "www.twitch.tv";
+
+/// The hostname of Twitch clip URLs.
+const CLIPS_HOST: &str = "clips.twitch.tv";
+
+/// The Twitch hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &[CLIPS_HOST, TWITCH_HOST, TWITCH_WWW_HOST];
+
 const AUTH_URL: &str = "https://id.twitch.tv/oauth2/token";
 /// Twitch Helix API base URL.
 const BASE_URL: &str = "https://api.twitch.tv/helix";
@@ -46,17 +55,8 @@ pub struct Twitch {
     client_id: String,
     /// Twitch application client secret.
     client_secret: String,
-    /// Cached access token.
-    token: RwLock<Option<Token>>,
-}
-
-/// A Twitch OAuth2 access token.
-#[derive(Clone, Debug)]
-struct Token {
-    /// The access token string.
-    access_token: String,
-    /// The time at which the token expires.
-    expires_at: Instant,
+    /// Cached OAuth2 access token.
+    token: TokenCache,
 }
 
 /// Errors that can occur during Twitch plugin execution.
@@ -68,13 +68,6 @@ pub enum Error {
     Api(String),
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
-}
-
-/// Response from the Twitch OAuth2 token endpoint.
-#[derive(Deserialize)]
-struct AuthResponse {
-    access_token: String,
-    expires_in: u64,
 }
 
 /// Generic response wrapper for Twitch Helix API endpoints.
@@ -139,19 +132,12 @@ impl Plugin<Context> for Twitch {
             client,
             client_id,
             client_secret,
-            token: RwLock::new(None),
+            token: TokenCache::new(),
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "twitch".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["clips.twitch.tv", "twitch.tv", "www.twitch.tv"]
+        URL_HOSTS
     }
 
     async fn handle_message(
@@ -160,29 +146,23 @@ impl Plugin<Context> for Twitch {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
+        let Command::PRIVMSG(channel, _) = &message.command else {
+            return Ok(());
+        };
+
+        for url in FilteredUrls::from_message(ctx, message)
+            .into_iter()
+            .flatten()
         {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
+            if let Some(kind) = Self::parse_url(&url) {
+                let result = match kind {
+                    UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
+                    UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
+                    UrlKind::Video(id) => self.handle_video(channel, &id, client).await,
+                };
 
-            for url in urls {
-                if filters.is_filtered(channel, sender, &url) {
-                    debug!(%url, "skipping filtered url");
-
-                    continue;
-                }
-
-                if let Some(kind) = Self::parse_url(&url) {
-                    let result = match kind {
-                        UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
-                        UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
-                        UrlKind::Video(id) => self.handle_video(channel, &id, client).await,
-                    };
-
-                    if let Err(e) = result {
-                        warn!("Twitch plugin error: {}", e);
-                    }
+                if let Err(e) = result {
+                    warn!("Twitch plugin error: {}", e);
                 }
             }
         }
@@ -196,32 +176,21 @@ impl Twitch {
     ///
     /// Returns a valid access token, refreshing it if necessary.
     async fn get_token(&self) -> Result<String, Error> {
-        // Check if we have a valid cached token.
-        if let Some(token) = self.token.read().await.as_ref() {
-            // Add a 60 second buffer to the expiration time check.
-            if token.expires_at > Instant::now() + Duration::from_mins(1) {
-                return Ok(token.access_token.clone());
-            }
-        }
+        self.token
+            .get(|| async {
+                debug!("refreshing twitch access token");
+                let params = [
+                    ("client_id", self.client_id.as_str()),
+                    ("client_secret", self.client_secret.as_str()),
+                    ("grant_type", "client_credentials"),
+                ];
 
-        debug!("refreshing twitch access token");
-        let params = [
-            ("client_id", self.client_id.as_str()),
-            ("client_secret", self.client_secret.as_str()),
-            ("grant_type", "client_credentials"),
-        ];
+                let response = self.client.post(AUTH_URL).form(&params).send().await?;
+                let auth: TokenResponse = response.error_for_status()?.json().await?;
 
-        let response = self.client.post(AUTH_URL).form(&params).send().await?;
-        let auth: AuthResponse = response.error_for_status()?.json().await?;
-
-        let token = Token {
-            access_token: auth.access_token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(auth.expires_in),
-        };
-
-        *self.token.write().await = Some(token);
-
-        Ok(auth.access_token)
+                Ok(auth)
+            })
+            .await
     }
 
     /// Helper to make authenticated GET requests to the Helix API.
@@ -254,7 +223,7 @@ impl Twitch {
         let host = url.host_str()?;
         let segments: Vec<&str> = url.path_segments()?.collect();
 
-        if host == "twitch.tv" || host == "www.twitch.tv" {
+        if host == TWITCH_HOST || host == TWITCH_WWW_HOST {
             match segments.as_slice() {
                 // twitch.tv/videos/<id>
                 ["videos", id] if !id.is_empty() => Some(UrlKind::Video(id.to_string())),
@@ -266,7 +235,7 @@ impl Twitch {
                 }
                 _ => None,
             }
-        } else if host == "clips.twitch.tv" {
+        } else if host == CLIPS_HOST {
             // clips.twitch.tv/<id>
             match segments.as_slice() {
                 [id] if !id.is_empty() => Some(UrlKind::Clip(id.to_string())),
@@ -292,12 +261,12 @@ impl Twitch {
             let game_name = &stream.game_name;
             let viewers = stream.viewer_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, formatted(&format!(
+            client.send_privmsg(channel, reply("Twitch", format!(
                 "{user_login}:\x0f {title}\x0310 - Game:\x0f {game_name}\x0310 Viewers:\x0f {viewers}\x0310"
             )))?;
         } else {
             // Fallback behavior: just print the channel name if not live.
-            client.send_privmsg(channel, format!("\x0310> {user_login} - Twitch"))?;
+            client.send_privmsg(channel, notice(format!("{user_login} - Twitch")))?;
         }
 
         Ok(())
@@ -318,11 +287,11 @@ impl Twitch {
             let creator = &clip.creator_name;
             let views = clip.view_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, formatted(&format!(
+            client.send_privmsg(channel, reply("Twitch", format!(
                 "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 views"
             )))?;
         } else {
-            client.send_privmsg(channel, formatted("No results"))?;
+            client.send_privmsg(channel, reply("Twitch", "No results"))?;
         }
 
         Ok(())
@@ -342,20 +311,15 @@ impl Twitch {
             let user = &video.user_name;
             let views = video.view_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, formatted(&format!(
+            client.send_privmsg(channel, reply("Twitch", format!(
                 "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 views"
             )))?;
         } else {
-            client.send_privmsg(channel, formatted("No results"))?;
+            client.send_privmsg(channel, reply("Twitch", "No results"))?;
         }
 
         Ok(())
     }
-}
-
-/// Formats a message with the Twitch prefix and colors.
-fn formatted(message: &str) -> String {
-    format!("\x0310>\x0F\x02 Twitch:\x02\x0310 {message}")
 }
 
 /// Checks if a string looks like a valid Twitch username.
@@ -371,23 +335,19 @@ fn is_valid_username(s: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.client_id.is_none());
-        assert!(settings.client_secret.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.client_id.is_none());
+            assert!(settings.client_secret.is_none());
+        }
+        deserialize: {
             "client_id": "id",
             "client_secret": "secret",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.client_id.as_deref(), Some("id"));
-        assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+        } assert: {
+            assert_eq!(settings.client_id.as_deref(), Some("id"));
+            assert_eq!(settings.client_secret.as_deref(), Some("secret"));
+        }
     }
 }

@@ -92,16 +92,7 @@ impl Plugin<Context> for GitHubPlugin {
         Ok(plugin)
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "github".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -163,11 +154,7 @@ impl GitHubPlugin {
     ///
     /// # Returns
     /// * `Result<Option<String>>` - Some(message) to reply, or None if no reply needed.
-    pub async fn run(
-        &self,
-        channel: &str,
-        args: Option<&str>,
-    ) -> Result<Option<String>> {
+    pub async fn run(&self, channel: &str, args: Option<&str>) -> Result<Option<String>> {
         // 1. Check arguments
         let query = match args {
             Some(q) if !q.trim().is_empty() => q.trim(),
@@ -250,10 +237,9 @@ impl GitHubPlugin {
         Self::format_message(".gh <query>")
     }
 
-    /// Formats the final message with the standard Zeta/Blur prefix.
-    /// Ruby: %(\x0310>\x0F\x02 GitHub:\x02\x0310 #{message})
+    /// Formats the final message with the standard prefix.
     fn format_message(message: &str) -> String {
-        format!("\x0310>\x0F\x02 GitHub:\x02\x0310 {message}")
+        reply("GitHub", message)
     }
 }
 
@@ -261,19 +247,17 @@ impl GitHubPlugin {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        assert!(Settings::default().token.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.token.is_none());
+        }
+        deserialize: {
             "token": "secret",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.token.as_deref(), Some("secret"));
+        } assert: {
+            assert_eq!(settings.token.as_deref(), Some("secret"));
+        }
     }
 
     #[test]

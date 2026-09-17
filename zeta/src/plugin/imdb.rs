@@ -10,7 +10,7 @@ use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::plugin::{self, prelude::*};
+use crate::plugin::prelude::*;
 
 mod client;
 mod error;
@@ -21,6 +21,9 @@ mod url;
 pub use client::GraphQlClient;
 pub use format::{format_person, format_title};
 pub use url::{Link, classify_imdb_url};
+
+/// The IMDb hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &["imdb.com", "m.imdb.com", "www.imdb.com"];
 // The model types are re-exported as part of the module's API surface, even though the plugin
 // itself only handles them by value.
 #[allow(unused_imports)]
@@ -75,10 +78,8 @@ fn default_user_language() -> String {
 }
 
 /// The `!imdb` command.
-const COMMAND: PluginCommand = PluginCommand::with_args::<Opts>(
-    Prefix::new("!imdb"),
-    "Search IMDb and post the top match",
-);
+const COMMAND: PluginCommand =
+    PluginCommand::with_args::<Opts>(Prefix::new("!imdb"), "Search IMDb and post the top match");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[COMMAND];
@@ -117,19 +118,10 @@ impl Plugin<Context> for Imdb {
         Ok(Imdb { client })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "imdb".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["imdb.com", "m.imdb.com", "www.imdb.com"]
+        URL_HOSTS
     }
 
     async fn handle_message(
@@ -138,18 +130,16 @@ impl Plugin<Context> for Imdb {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(ref channel, ref user_message) = message.command else {
+        let Command::PRIVMSG(channel, _) = &message.command else {
             return Ok(());
         };
 
-        if let Some(urls) = plugin::extract_urls(user_message) {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-
-            self.process_urls(&urls, channel, client, &filters, sender)
-                .await?;
-        } else {
-            self.dispatch_command(ctx, client, message).await?;
+        match FilteredUrls::from_message(ctx, message) {
+            Some(urls) => {
+                let urls: Vec<_> = urls.collect();
+                self.process_urls(&urls, channel, client).await?;
+            }
+            None => self.dispatch_command(ctx, client, message).await?,
         }
 
         Ok(())
@@ -220,16 +210,8 @@ impl Imdb {
         urls: &[Url],
         channel: &str,
         client: &Client,
-        filters: &Filters,
-        sender: Option<Sender<'_>>,
     ) -> Result<(), ZetaError> {
         for url in urls {
-            if filters.is_filtered(channel, sender, url) {
-                debug!(%url, "skipping filtered url");
-
-                continue;
-            }
-
             match classify_imdb_url(url) {
                 Some(Link::Title(id)) => {
                     debug!(%id, "fetching details for posted title link");
@@ -256,27 +238,23 @@ mod tests {
     use super::*;
     use crate::config::HttpConfig;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.include_adult);
-        assert_eq!(settings.user_country, "US");
-        assert_eq!(settings.user_language, "en-US");
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.include_adult);
+            assert_eq!(settings.user_country, "US");
+            assert_eq!(settings.user_language, "en-US");
+        }
+        deserialize: {
             "include_adult": false,
             "user_country": "DK",
             "user_language": "da-DK",
-        }))
-        .expect("could not deserialize settings");
-
-        assert!(!settings.include_adult);
-        assert_eq!(settings.user_country, "DK");
-        assert_eq!(settings.user_language, "da-DK");
+        } assert: {
+            assert!(!settings.include_adult);
+            assert_eq!(settings.user_country, "DK");
+            assert_eq!(settings.user_language, "da-DK");
+        }
     }
 
     #[test]

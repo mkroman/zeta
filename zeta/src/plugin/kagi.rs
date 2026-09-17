@@ -77,16 +77,7 @@ impl Plugin<Context> for KagiPlugin {
         Ok(KagiPlugin { client })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "kagi".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -115,7 +106,7 @@ impl KagiPlugin {
         query: &str,
     ) -> Result<(), ZetaError> {
         if query.trim().is_empty() {
-            client.send_privmsg(channel, "\x0310> Usage: .g\x0f <query>")?;
+            client.send_privmsg(channel, notice("Usage: .g\x0f <query>"))?;
 
             return Ok(());
         }
@@ -126,14 +117,14 @@ impl KagiPlugin {
                     let title = &result.title;
                     let url = &result.url;
 
-                    client.send_privmsg(channel, format!("\x0310> {title} - {url}"))?;
+                    client.send_privmsg(channel, notice(format!("{title} - {url}")))?;
                 } else {
-                    client.send_privmsg(channel, "\x0310> No results")?;
+                    client.send_privmsg(channel, notice("No results"))?;
                 }
             }
             Err(err) => {
                 warn!(?err, "kagi search failed");
-                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
             }
         }
 
@@ -148,7 +139,7 @@ impl KagiPlugin {
         query: &str,
     ) -> Result<(), ZetaError> {
         if query.trim().is_empty() {
-            client.send_privmsg(channel, "\x0310> Usage: .gis\x0f <query>")?;
+            client.send_privmsg(channel, notice("Usage: .gis\x0f <query>"))?;
 
             return Ok(());
         }
@@ -159,14 +150,14 @@ impl KagiPlugin {
                     let title = &result.title;
                     let url = &result.image_url;
 
-                    client.send_privmsg(channel, format!("\x0310>\x0f\x02 Kagi:\x02\x0310 {title} - {url}"))?;
+                    client.send_privmsg(channel, reply("Kagi", format!("{title} - {url}")))?;
                 } else {
-                    client.send_privmsg(channel, "\x0310> No results")?;
+                    client.send_privmsg(channel, notice("No results"))?;
                 }
             }
             Err(err) => {
                 warn!(?err, "kagi image search failed");
-                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
             }
         }
 
@@ -178,26 +169,22 @@ impl KagiPlugin {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.session_token.is_none());
-        assert_eq!(settings.session_duration, kagi::SESSION_DURATION);
-        assert_eq!(settings.language, kagi::LANGUAGE);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.session_token.is_none());
+            assert_eq!(settings.session_duration, kagi::SESSION_DURATION);
+            assert_eq!(settings.language, kagi::LANGUAGE);
+        }
+        deserialize: {
             "session_token": "secret",
             "session_duration": "1h",
             "language": "da-DK,da;q=0.9",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.session_token.as_deref(), Some("secret"));
-        assert_eq!(settings.session_duration, Duration::from_hours(1));
-        assert_eq!(settings.language, "da-DK,da;q=0.9");
+        } assert: {
+            assert_eq!(settings.session_token.as_deref(), Some("secret"));
+            assert_eq!(settings.session_duration, Duration::from_hours(1));
+            assert_eq!(settings.language, "da-DK,da;q=0.9");
+        }
     }
 }

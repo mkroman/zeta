@@ -28,8 +28,8 @@ use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
 use wreq::redirect::Policy;
 use wreq_util::Emulation;
 
-use crate::plugin::prelude::*;
 use crate::url::{ExtractUrls, ExtractedUrl, SchemeMap};
+use crate::{plugin::prelude::*, utils::Truncatable};
 
 /// The accepted schemes: `http` and `https`, plus the `ttp` and `ttps` variants that are missing
 /// their leading `h` — the latter are repaired and announced before the page is fetched.
@@ -43,15 +43,6 @@ const SCHEMES: SchemeMap = &[
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
 
-/// IRC formatting prefix for plain replies.
-const REPLY_PREFIX: &str = "\x0310>";
-
-/// IRC formatting prefix for OpenGraph replies, colored and followed by a bold site name.
-const OG_REPLY_PREFIX: &str = "\x0310>\x0f\x02 ";
-
-/// IRC formatting suffix closing the bold site name of an OpenGraph reply.
-const OG_REPLY_SUFFIX: &str = ":\x02\x0310 ";
-
 /// File extensions that we avoid requesting to save time and bandwidth.
 const BINARY_EXTENSIONS: &[&str] = &[
     ".png", ".jpg", ".bmp", ".gif", ".avi", ".mpg", ".flv", ".3gp", ".mp4", ".exe", ".msi", ".mp3",
@@ -64,12 +55,10 @@ const BINARY_EXTENSIONS: &[&str] = &[
 pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
-    /// Defaults to every host matched by a bundled plugin. In addition to this list, the hosts
-    /// that loaded plugins advertise through the plugin catalog (see [`Plugin::url_hosts`]) are
-    /// left alone as well — including hosts of plugins added after this list was written. Note
-    /// that the bundled defaults are a floor: removing a host from the setting does not make
-    /// this plugin preview its URLs while the plugin that handles them is loaded.
-    #[serde(default = "default_ignored_hosts")]
+    /// Empty by default: the hosts that loaded plugins advertise through the plugin catalog
+    /// (see [`Plugin::url_hosts`]) are left alone without any configuration, including hosts of
+    /// plugins added after this configuration was written.
+    #[serde(default)]
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
     #[serde(default = "default_max_redirects")]
@@ -85,51 +74,12 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            ignored_hosts: default_ignored_hosts(),
+            ignored_hosts: Vec::new(),
             max_redirects: default_max_redirects(),
             max_message_length: default_max_message_length(),
             max_description_length: default_max_description_length(),
         }
     }
-}
-
-/// Returns the default hosts that are handled by dedicated plugins.
-///
-/// This list is a floor that is merged with the hosts advertised through the plugin catalog, so
-/// a plugin that failed to initialize (e.g. for missing credentials) does not make this plugin
-/// take over its hosts.
-fn default_ignored_hosts() -> Vec<String> {
-    [
-        "chaturbate.com",
-        "www.chaturbate.com",
-        "imdb.com",
-        "m.imdb.com",
-        "www.imdb.com",
-        "www.pornhub.com",
-        "i.redd.it",
-        "oauth.reddit.com",
-        "old.reddit.com",
-        "preview.redd.it",
-        "redd.it",
-        "reddit.com",
-        "v.redd.it",
-        "www.reddit.com",
-        "open.spotify.com",
-        "play.spotify.com",
-        "thingiverse.com",
-        "www.thingiverse.com",
-        "tiktok.com",
-        "vm.tiktok.com",
-        "www.tiktok.com",
-        "clips.twitch.tv",
-        "twitch.tv",
-        "www.twitch.tv",
-        "youtu.be",
-        "youtube.com",
-        "www.youtube.com",
-    ]
-    .map(String::from)
-    .to_vec()
 }
 
 /// Returns the default maximum number of redirects to follow.
@@ -484,13 +434,6 @@ impl Plugin<Context> for Titles {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "titles".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     async fn handle_message(
         &self,
         ctx: &Context,
@@ -544,7 +487,7 @@ impl Titles {
         if let Some(scheme) = repaired_from {
             debug!(%scheme, %url, "posting repaired url");
 
-            if let Err(error) = client.send_privmsg(channel, format!("{REPLY_PREFIX} {url}")) {
+            if let Err(error) = client.send_privmsg(channel, notice(&url)) {
                 warn!(%error, "could not send repaired url");
             }
         }
@@ -670,7 +613,7 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .as_deref()
         .map(clean)
         .filter(|description| !description.is_empty())
-        .map(|description| truncate(&description, settings.max_description_length));
+        .map(|description| description.truncate_within(settings.max_description_length, "…"));
 
     if title.is_none() && description.is_none() {
         return None;
@@ -691,12 +634,12 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
             .filter(|site| !site.is_empty())
             .unwrap_or_else(|| host_name(url));
 
-        format!("{OG_REPLY_PREFIX}{site}{OG_REPLY_SUFFIX}{content}")
+        reply(&site, &content)
     } else {
-        format!("{REPLY_PREFIX} {content}")
+        notice(&content)
     };
 
-    Some(truncate(&message, settings.max_message_length))
+    Some(message.truncate_within(settings.max_message_length, "…"))
 }
 
 /// Whether any OpenGraph metadata was captured.
@@ -709,18 +652,6 @@ const fn has_open_graph(metadata: &PageMetadata) -> bool {
 #[must_use]
 fn clean(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Truncates `value` to at most `max` characters, appending an ellipsis when truncated.
-#[must_use]
-fn truncate(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
-        return value.to_string();
-    }
-
-    let mut truncated: String = value.chars().take(max.saturating_sub(1)).collect();
-    truncated.push('…');
-    truncated
 }
 
 /// Returns the host of `url` without its `www.` prefix.
@@ -933,8 +864,15 @@ mod tests {
     }
 
     #[test]
-    fn ignores_hosts_handled_by_other_plugins() {
-        let settings = Settings::default();
+    fn ignores_configured_hosts() {
+        let settings = Settings {
+            ignored_hosts: vec![
+                "www.reddit.com".to_string(),
+                "youtu.be".to_string(),
+                "vm.tiktok.com".to_string(),
+            ],
+            ..Settings::default()
+        };
 
         assert!(is_ignored_host(
             &Url::parse("https://www.reddit.com/r/rust").unwrap(),
@@ -1087,11 +1025,6 @@ mod tests {
 
     #[test]
     fn truncates_long_values() {
-        assert_eq!(truncate("hello", 10), "hello");
-        assert_eq!(truncate("hello", 5), "hello");
-        assert_eq!(truncate("hello", 4), "hel…");
-        assert_eq!(truncate("hæłlo", 4), "hæł…");
-
         let settings = Settings::default();
         let long = "x".repeat(settings.max_message_length + 1);
         let metadata = PageMetadata {
@@ -1105,29 +1038,25 @@ mod tests {
         assert!(message.ends_with('…'));
     }
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.ignored_hosts.len() > 8);
-        assert_eq!(settings.max_redirects, 3);
-        assert_eq!(settings.max_message_length, 400);
-        assert_eq!(settings.max_description_length, 200);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.ignored_hosts.is_empty());
+            assert_eq!(settings.max_redirects, 3);
+            assert_eq!(settings.max_message_length, 400);
+            assert_eq!(settings.max_description_length, 200);
+        }
+        deserialize: {
             "ignored_hosts": ["example.com"],
             "max_redirects": 1,
             "max_message_length": 100,
             "max_description_length": 50,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.ignored_hosts, ["example.com"]);
-        assert_eq!(settings.max_redirects, 1);
-        assert_eq!(settings.max_message_length, 100);
-        assert_eq!(settings.max_description_length, 50);
+        } assert: {
+            assert_eq!(settings.ignored_hosts, ["example.com"]);
+            assert_eq!(settings.max_redirects, 1);
+            assert_eq!(settings.max_message_length, 100);
+            assert_eq!(settings.max_description_length, 50);
+        }
     }
 }

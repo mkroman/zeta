@@ -106,16 +106,7 @@ impl Plugin<Context> for GeoIp {
         Ok(GeoIp { client, api_key })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "geoip".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -140,7 +131,7 @@ impl Plugin<Context> for GeoIp {
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"))?;
+                client.send_privmsg(channel, reply("GeoIP", err))?;
             }
         }
 
@@ -185,10 +176,7 @@ impl Display for LookupResult {
         let info = &self.0;
         let ip = &info.ip;
 
-        write!(
-            fmt,
-            "\x0310>\x03\x02 GeoIP\x02\x0310 (\x0f{ip}\x0310): {info}"
-        )
+        write!(fmt, "{}(\x0f{ip}\x0310): {info}", reply_prefix("GeoIP"))
     }
 }
 
@@ -241,18 +229,16 @@ impl GeoIp {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        assert!(Settings::default().api_key.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.api_key.is_none());
+        }
+        deserialize: {
             "api_key": "secret",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        } assert: {
+            assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        }
     }
 }

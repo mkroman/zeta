@@ -45,16 +45,7 @@ impl Plugin<Context> for Help {
         Ok(Help)
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "help".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -67,7 +58,11 @@ impl Plugin<Context> for Help {
         let Some(catalog) = ctx.shared.get::<PluginCatalog>() else {
             client.send_privmsg(
                 channel,
-                format!("{}{}", heading(""), gray(" the plugin catalog is unavailable")),
+                format!(
+                    "{}{}",
+                    heading(""),
+                    gray(" the plugin catalog is unavailable")
+                ),
             )?;
 
             return Ok(());
@@ -231,7 +226,10 @@ fn details_list(details: &[Detail]) -> String {
             if detail.description.is_empty() {
                 format!("{label}{comma}")
             } else {
-                format!("{label}{}", gray(&format!(": {}{comma}", detail.description)))
+                format!(
+                    "{label}{}",
+                    gray(&format!(": {}{comma}", detail.description))
+                )
             }
         })
         .collect()
@@ -262,9 +260,7 @@ fn pack(entries: &[String], max_length: usize) -> Vec<String> {
     let mut message = String::new();
 
     for entry in entries {
-        if !message.is_empty()
-            && message.len() + SEPARATOR.len() + entry.len() > max_length
-        {
+        if !message.is_empty() && message.len() + SEPARATOR.len() + entry.len() > max_length {
             messages.push(std::mem::take(&mut message));
         }
 
@@ -284,7 +280,7 @@ fn pack(entries: &[String], max_length: usize) -> Vec<String> {
 
 /// Formats the header of a help reply, with `subject` appended inside the bold heading.
 fn heading(subject: &str) -> String {
-    format!("\x0310>\x0f\x02 Help{subject}\x02")
+    format!("{REPLY_PREFIX}{RESET}{BOLD} Help{subject}{BOLD}")
 }
 
 /// Builds the usage synopsis of a command from its argument information.
@@ -412,7 +408,7 @@ fn bold(s: &str) -> String {
 
 /// Formats `s` in the muted scaffolding color.
 fn gray(s: &str) -> String {
-    format!("\x0310{s}\x0f")
+    format!("{COLOR}{s}{RESET}")
 }
 
 /// Strips the leading command sigil (`.` or `!`) from `name`.
@@ -497,10 +493,8 @@ mod tests {
         hidden: bool,
     }
 
-    const REPEAT: PluginCommand = PluginCommand::with_args::<RepeatOpts>(
-        Prefix::new(".repeat"),
-        "Repeat the given values",
-    );
+    const REPEAT: PluginCommand =
+        PluginCommand::with_args::<RepeatOpts>(Prefix::new(".repeat"), "Repeat the given values");
     const REPEAT_COMMANDS: &[PluginCommand] = &[REPEAT];
 
     /// Subcommand fixture.
@@ -607,10 +601,8 @@ mod tests {
 
     #[test]
     fn derives_usage_for_subcommands() {
-        let command = PluginCommand::with_args::<SubcommandOpts>(
-            Prefix::new(".stats"),
-            "Show statistics",
-        );
+        let command =
+            PluginCommand::with_args::<SubcommandOpts>(Prefix::new(".stats"), "Show statistics");
         let info = command.args_info().unwrap();
 
         assert_eq!(usage(".stats", &info), ".stats <command> [<args>]");
@@ -658,10 +650,8 @@ mod tests {
 
     #[test]
     fn describes_subcommands() {
-        let command = PluginCommand::with_args::<SubcommandOpts>(
-            Prefix::new(".stats"),
-            "Show statistics",
-        );
+        let command =
+            PluginCommand::with_args::<SubcommandOpts>(Prefix::new(".stats"), "Show statistics");
 
         assert_eq!(
             command_messages(&command)[0],
@@ -755,9 +745,11 @@ mod tests {
         let packed = pack(&entries, MAX_MESSAGE_LENGTH);
 
         assert!(packed.len() > 1);
-        assert!(packed
-            .iter()
-            .all(|message| message.len() <= MAX_MESSAGE_LENGTH));
+        assert!(
+            packed
+                .iter()
+                .all(|message| message.len() <= MAX_MESSAGE_LENGTH)
+        );
         assert!(packed.iter().all(|message| message.contains("entry-")));
     }
 
@@ -777,9 +769,11 @@ mod tests {
         let rendered = messages(&catalog, "");
 
         assert!(rendered.len() > 1);
-        assert!(rendered
-            .iter()
-            .all(|message| message.len() <= MAX_MESSAGE_LENGTH));
+        assert!(
+            rendered
+                .iter()
+                .all(|message| message.len() <= MAX_MESSAGE_LENGTH)
+        );
         assert!(rendered[0].starts_with("\x0310>\x0f\x02 Help\x02"));
         assert!(rendered[0].contains("plugin-000"));
         assert!(rendered[1].contains("plugin-"));

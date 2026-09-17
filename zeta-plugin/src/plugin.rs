@@ -3,7 +3,20 @@ use irc::client::Client;
 use irc::proto::{Command, Message};
 
 use crate::command::{PluginCommand, Prefix};
+use crate::types::{Author, Name};
 use crate::{Error, Metadata};
+
+/// The default author attributed to plugins that do not declare their own authorship.
+pub const DEFAULT_AUTHOR: &str = "Mikkel Kroman <mk@maero.dk>";
+
+/// Supplies the name of a plugin.
+///
+/// The name identifies the plugin in the help system and the plugin catalog, and must match the
+/// plugin's module name.
+pub trait PluginName {
+    /// The plugin's name, e.g. `alert`.
+    const NAME: &'static str;
+}
 
 /// The base trait that all plugins must implement.
 ///
@@ -30,6 +43,10 @@ use crate::{Error, Metadata};
 ///
 /// struct MyPlugin;
 ///
+/// impl PluginName for MyPlugin {
+///     const NAME: &'static str = "my_plugin";
+/// }
+///
 /// const HELLO: PluginCommand = PluginCommand::new(Prefix::new(".hello"), "Greet someone");
 /// const COMMANDS: &[PluginCommand] = &[HELLO];
 ///
@@ -41,16 +58,7 @@ use crate::{Error, Metadata};
 ///         Ok(MyPlugin)
 ///     }
 ///
-///     fn metadata() -> Metadata {
-///         Metadata {
-///             name: "my_plugin".into(),
-///             authors: vec!["John Doe <john.doe@example.com>".into()]
-///        }
-///     }
-///
-///     fn commands(&self) -> &'static [PluginCommand] {
-///         COMMANDS
-///     }
+///     const COMMANDS: &'static [PluginCommand] = COMMANDS;
 ///
 ///     async fn handle_command(
 ///         &self,
@@ -67,7 +75,7 @@ use crate::{Error, Metadata};
 /// }
 /// ```
 #[async_trait]
-pub trait Plugin<C: Sync = ()>: Send + Sync {
+pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// This plugin's deserialized `[plugins.<name>]` settings.
     ///
     /// The host hands only the plugin's own settings to [`Plugin::new`]; plugins cannot access
@@ -89,9 +97,18 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
         Self: Sized;
 
     /// Metadata describing the plugin and its authorship.
+    ///
+    /// Derived from [`PluginName::NAME`] by default, attributing the plugin to
+    /// [`DEFAULT_AUTHOR`]. Override it to credit other authors.
     fn metadata() -> Metadata
     where
-        Self: Sized;
+        Self: Sized,
+    {
+        Metadata {
+            name: Name::new(Self::NAME),
+            authors: vec![Author::new(DEFAULT_AUTHOR)],
+        }
+    }
 
     /// The commands handled by this plugin.
     ///
@@ -103,8 +120,14 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// [`PluginCommand::with_args`], so the host can derive usage and argument information from it.
     ///
     /// Commands may overlap as long as no prefix is a word-prefix of another (e.g. `.y` and `.yt`).
+    const COMMANDS: &'static [PluginCommand] = &[];
+
+    /// Returns the commands handled by this plugin.
+    ///
+    /// Returns [`Plugin::COMMANDS`] by default; override it when the command list cannot be
+    /// expressed as a constant.
     fn commands(&self) -> &'static [PluginCommand] {
-        &[]
+        Self::COMMANDS
     }
 
     /// The URL hosts whose links this plugin handles itself.
@@ -142,12 +165,14 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// #     PluginCommand::new(BAR, "Handle `.bar`"),
     /// # ];
     /// # struct MyPlugin;
+    /// # impl PluginName for MyPlugin {
+    /// #     const NAME: &'static str = "my_plugin";
+    /// # }
     /// # #[async_trait]
     /// # impl Plugin for MyPlugin {
     /// #     type Settings = NoSettings;
     /// #     fn new(_: &(), _: &NoSettings) -> Result<Self, Error> { Ok(MyPlugin) }
-    /// #     fn metadata() -> Metadata { unimplemented!() }
-    /// #     fn commands(&self) -> &'static [PluginCommand] { COMMANDS }
+    /// #     const COMMANDS: &'static [PluginCommand] = COMMANDS;
     /// async fn handle_command(
     ///     &self,
     ///     _ctx: &(),

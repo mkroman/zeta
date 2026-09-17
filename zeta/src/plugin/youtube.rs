@@ -8,24 +8,34 @@ use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
-use tracing::{debug, error};
+use tracing::debug;
 use url::Url;
 
 use crate::{
     config::HttpConfig,
     duration::{format_duration, parse_iso8601_duration},
     http,
-    plugin::{self, prelude::*},
+    plugin::prelude::*,
 };
 
+/// The hostname of shortened YouTube URLs.
+const YOUTU_BE_HOST: &str = "youtu.be";
+
+/// The YouTube.com hostname.
+const YOUTUBE_COM_HOST: &str = "youtube.com";
+
+/// The www-prefixed YouTube.com hostname.
+const YOUTUBE_COM_WWW_HOST: &str = "www.youtube.com";
+
+/// The YouTube hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &[YOUTU_BE_HOST, YOUTUBE_COM_HOST, YOUTUBE_COM_WWW_HOST];
+
 /// YouTube Data API v3 base endpoint URL.
-pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
+const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
 
 /// The `.yt` command.
-const YOUTUBE: PluginCommand = PluginCommand::new(
-    Prefix::new(".yt"),
-    "Search YouTube and link the top video",
-);
+const YOUTUBE: PluginCommand =
+    PluginCommand::new(Prefix::new(".yt"), "Search YouTube and link the top video");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[YOUTUBE];
@@ -287,20 +297,11 @@ impl Plugin<Context> for YouTube {
         Ok(YouTube::with_config(settings, api_key, &ctx.config.http))
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "youtube".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["youtu.be", "youtube.com", "www.youtube.com"]
+        URL_HOSTS
     }
 
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_message(
         &self,
@@ -308,21 +309,13 @@ impl Plugin<Context> for YouTube {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(ref channel, ref user_message) = message.command else {
+        let Command::PRIVMSG(channel, _) = &message.command else {
             return Ok(());
         };
 
-        if let Some(urls) = plugin::extract_urls(user_message) {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-            let urls: Vec<_> = urls
-                .into_iter()
-                .filter(|url| !filters.is_filtered(channel, sender, url))
-                .collect();
-
-            self.process_urls(urls, channel, client).await?;
-        } else {
-            self.dispatch_command(ctx, client, message).await?;
+        match FilteredUrls::from_message(ctx, message) {
+            Some(urls) => self.process_urls(urls.collect(), channel, client).await?,
+            None => self.dispatch_command(ctx, client, message).await?,
         }
 
         Ok(())
@@ -342,13 +335,19 @@ impl Plugin<Context> for YouTube {
                     let id = result.id.video_id.as_ref().unwrap();
                     let title = htmlize::unescape(&result.snippet.title);
 
-                    client.send_privmsg(channel, format!("\x0310>\x03\x02 YouTube:\x02\x0310 {title} - https://www.youtube.com/watch?v={id}"))?;
+                    client.send_privmsg(
+                        channel,
+                        reply(
+                            "YouTube",
+                            format!("{title} - https://www.youtube.com/watch?v={id}"),
+                        ),
+                    )?;
                 } else {
-                    client.send_privmsg(channel, "\x0310> No results")?;
+                    client.send_privmsg(channel, notice("No results"))?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
             }
         }
 
@@ -357,11 +356,7 @@ impl Plugin<Context> for YouTube {
 }
 
 impl YouTube {
-    pub fn with_config(
-        settings: &Settings,
-        api_key: String,
-        config: &HttpConfig,
-    ) -> Self {
+    pub fn with_config(settings: &Settings, api_key: String, config: &HttpConfig) -> Self {
         let client = http::build_client(config);
 
         Self {
@@ -401,8 +396,7 @@ impl YouTube {
                             .and_then(|s| str::parse::<u64>(&s.view_count).ok())
                             .unwrap_or(0);
 
-                        let message =
-                            format_video_message(&video, &category, view_count);
+                        let message = format_video_message(&video, &category, view_count);
                         client.send_privmsg(channel, message)?;
                     }
                     Err(e) => {
@@ -491,24 +485,17 @@ impl YouTube {
         debug!(?params, "searching for videos");
 
         let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
-        let response = request.send().await.map_err(Error::Request)?;
+        let response = request.send().await?.error_for_status()?;
 
-        match response.error_for_status() {
-            Ok(response) => {
-                debug!("response is ok, parsing as json");
-                let text = response.text().await.map_err(Error::Request)?;
-                let de = &mut serde_json::Deserializer::from_str(&text);
-                let result: SearchListResponse = serde_path_to_error::deserialize(de)
-                    .inspect_err(|err| error!(?err, %text, "could not parse response"))
-                    .map_err(Error::Deserialize)?;
-                let items = result.items;
+        debug!("response is ok, parsing as json");
+        let text = response.text().await.map_err(Error::Request)?;
+        let result: SearchListResponse = http::json::from_str(&text).map_err(Error::Deserialize)?;
 
-                debug!(?items, "returning items");
+        let items = result.items;
 
-                Ok(items)
-            }
-            Err(err) => Err(Error::Request(err)),
-        }
+        debug!(?items, "returning items");
+
+        Ok(items)
     }
 
     /// Fetches metadata for a YouTube video using its video ID.
@@ -520,7 +507,10 @@ impl YouTube {
         let params = [
             ("id", video_id),
             ("key", &self.api_key),
-            ("part", "snippet,statistics,contentDetails,liveStreamingDetails"),
+            (
+                "part",
+                "snippet,statistics,contentDetails,liveStreamingDetails",
+            ),
         ];
         let request = self.client.get(format!("{BASE_URL}/videos")).query(&params);
         let response = request
@@ -550,8 +540,8 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
     let channel_name = snippet.map_or("unknown channel", |s| s.channel_title.as_str());
     let view_count_formatted = view_count.to_formatted_string(&Locale::en);
 
-    let is_live_stream = snippet
-        .is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
+    let is_live_stream =
+        snippet.is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
 
     if is_live_stream {
         let concurrent_viewers = video
@@ -561,17 +551,17 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
             .and_then(|viewers| viewers.parse::<u64>().ok());
 
         if let Some(viewers) = concurrent_viewers {
-            return format!(
-                "\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
+            return notice(format!(
+                "“\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
                  {channel_name}\x0310 with\x0f {}\x0310 viewers",
                 viewers.to_formatted_string(&Locale::en),
-            );
+            ));
         }
 
-        return format!(
-            "\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
+        return notice(format!(
+            "“\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
              {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
-        );
+        ));
     }
 
     let duration = video
@@ -580,10 +570,10 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         .and_then(|details| parse_iso8601_duration(&details.duration))
         .map_or_else(|| "unknown duration".to_string(), format_duration);
 
-    format!(
-        "\x0310> “\x0f{title}\x0310” is a\x0f {duration}\x0310 video by\x0f \
+    notice(format!(
+        "“\x0f{title}\x0310” is a\x0f {duration}\x0310 video by\x0f \
          {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
-    )
+    ))
 }
 
 /// Extracts a query parameter value from a URL
@@ -596,8 +586,8 @@ fn extract_query_param(url: &Url, param: &str) -> Option<String> {
 /// Parses the given `url` and returns a [`UrlKind`] depending on the type of YouTube URL.
 pub fn parse_youtube_url(url: &Url) -> Option<UrlKind> {
     match url.host_str()? {
-        "youtu.be" => parse_youtu_be_url(url),
-        "youtube.com" | "www.youtube.com" => parse_youtube_com_url(url),
+        YOUTU_BE_HOST => parse_youtu_be_url(url),
+        YOUTUBE_COM_HOST | YOUTUBE_COM_WWW_HOST => parse_youtube_com_url(url),
         _ => None,
     }
 }
@@ -641,27 +631,23 @@ fn parse_youtu_be_url(url: &Url) -> Option<UrlKind> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.api_key.is_none());
-        assert_eq!(settings.region_code, "US");
-        assert_eq!(settings.safe_search, SafeSearch::None);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.api_key.is_none());
+            assert_eq!(settings.region_code, "US");
+            assert_eq!(settings.safe_search, SafeSearch::None);
+        }
+        deserialize: {
             "api_key": "secret",
             "region_code": "DK",
             "safe_search": "strict",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.api_key.as_deref(), Some("secret"));
-        assert_eq!(settings.region_code, "DK");
-        assert_eq!(settings.safe_search, SafeSearch::Strict);
+        } assert: {
+            assert_eq!(settings.api_key.as_deref(), Some("secret"));
+            assert_eq!(settings.region_code, "DK");
+            assert_eq!(settings.safe_search, SafeSearch::Strict);
+        }
     }
 
     #[test]

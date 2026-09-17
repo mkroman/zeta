@@ -121,16 +121,7 @@ impl Plugin<Context> for RustPlayground {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "rust_playground".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -142,17 +133,20 @@ impl Plugin<Context> for RustPlayground {
     ) -> Result<(), ZetaError> {
         // Early return if input is empty
         if expr.trim().is_empty() {
-            client.send_privmsg(channel, formatted("Usage: .rs\x0f <expr>"))?;
+            client.send_privmsg(channel, reply("Rust Playground", "Usage: .rs\x0f <expr>"))?;
             return Ok(());
         }
 
         match self.evaluate(expr).await {
             Ok(output) => {
-                client.send_privmsg(channel, formatted(&output))?;
+                client.send_privmsg(channel, reply("Rust Playground", &output))?;
             }
             Err(e) => {
                 warn!("rust playground error: {}", e);
-                client.send_privmsg(channel, formatted(&format!("http error: {e}")))?;
+                client.send_privmsg(
+                    channel,
+                    reply("Rust Playground", format!("http error: {e}")),
+                )?;
             }
         }
 
@@ -210,11 +204,6 @@ impl RustPlayground {
     }
 }
 
-/// Applies IRC formatting to the message.
-fn formatted(msg: &str) -> String {
-    format!("\x0310>\x0F\x02 Rust Playground:\x02\x0310 {msg}")
-}
-
 /// Sanitizes output by removing control characters (0x00-0x19, 0x7F).
 /// This includes newlines, which is desirable for IRC.
 fn sanitize_output(s: &str) -> String {
@@ -229,29 +218,25 @@ fn sanitize_output(s: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert_eq!(settings.channel, "stable");
-        assert_eq!(settings.mode, "debug");
-        assert_eq!(settings.edition, "2024");
-        assert_eq!(settings.max_output_length, 250);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.channel, "stable");
+            assert_eq!(settings.mode, "debug");
+            assert_eq!(settings.edition, "2024");
+            assert_eq!(settings.max_output_length, 250);
+        }
+        deserialize: {
             "channel": "nightly",
             "mode": "release",
             "edition": "2021",
             "max_output_length": 100,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.channel, "nightly");
-        assert_eq!(settings.mode, "release");
-        assert_eq!(settings.edition, "2021");
-        assert_eq!(settings.max_output_length, 100);
+        } assert: {
+            assert_eq!(settings.channel, "nightly");
+            assert_eq!(settings.mode, "release");
+            assert_eq!(settings.edition, "2021");
+            assert_eq!(settings.max_output_length, 100);
+        }
     }
 }

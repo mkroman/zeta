@@ -29,15 +29,43 @@ mod prelude {
     pub use irc::proto::{Command, Message};
     pub use zeta_plugin::Error as ZetaError;
     pub use zeta_plugin::prelude::{
-        ArgsError, BoxError, NoSettings, PluginCommand, Prefix, plugin_err, require_env,
-        resolve_secret,
+        ArgsError, BOLD, BoxError, COLOR, NoSettings, PluginCommand, Prefix, REPLY_PREFIX, RESET,
+        notice, plugin_err, reply, reply_prefix, require_env, resolve_secret,
     };
 
     pub use super::{
         Author, Context, Metadata, Name, Plugin, PluginCatalog, PluginInfo, SharedState,
     };
 
-    pub use super::filtering::{Filters, Sender};
+    pub use super::filtering::{FilteredUrls, Filters, Sender};
+}
+
+/// Generates the two settings tests shared by every plugin with a configuration section.
+///
+/// Expands to a `default_settings` test asserting the values produced by [`Default`] and a
+/// `settings_deserialize` test deserializing the given JSON object before asserting on it.
+#[cfg(test)]
+macro_rules! settings_tests {
+    (
+        $ty:ty, $settings:ident,
+        default: { $($default:tt)* }
+        deserialize: { $($json:tt)* } assert: { $($assert:tt)* }
+    ) => {
+        #[test]
+        fn default_settings() {
+            let $settings = <$ty>::default();
+
+            $($default)*
+        }
+
+        #[test]
+        fn settings_deserialize() {
+            let $settings: $ty = serde_json::from_value(serde_json::json!({ $($json)* }))
+                .expect("could not deserialize settings");
+
+            $($assert)*
+        }
+    };
 }
 
 /// Declares plugin modules and generates a registry helper to avoid boilerplate.
@@ -62,6 +90,15 @@ macro_rules! declare_plugins {
             $(#[doc = $doc])*
             #[cfg(feature = $feature)]
             pub mod $mod_name;
+        )*
+
+        // The plugin name is the module name, shared by [`Plugin::metadata`]'s default
+        // implementation.
+        $(
+            #[cfg(feature = $feature)]
+            impl zeta_plugin::PluginName for $mod_name::$struct_name {
+                const NAME: &'static str = stringify!($mod_name);
+            }
         )*
 
         /// Typed, per-plugin configuration extracted from the `[plugins]` section.

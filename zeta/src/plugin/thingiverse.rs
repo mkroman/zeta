@@ -3,7 +3,6 @@
 //! This plugin detects Thingiverse URLs in messages and fetches information
 //! about the linked "thing" using the Thingiverse API.
 
-
 use std::fmt::{self, Display};
 
 use num_format::{Locale, ToFormattedString};
@@ -13,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{
-    http,
-    plugin::{self, prelude::*},
-};
+use crate::{http, plugin::prelude::*};
+
+/// The Thingiverse hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
 
 const API_BASE_URL: &str = "https://api.thingiverse.com";
 
@@ -82,6 +81,10 @@ struct Creator {
 impl Plugin<Context> for Thingiverse {
     type Settings = Settings;
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        URL_HOSTS
+    }
+
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client(&ctx.config.http);
@@ -95,41 +98,24 @@ impl Plugin<Context> for Thingiverse {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "thingiverse".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn url_hosts(&self) -> &'static [&'static str] {
-        &["thingiverse.com", "www.thingiverse.com"]
-    }
-
     async fn handle_message(
         &self,
         ctx: &Context,
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
+        let Command::PRIVMSG(channel, _) = &message.command else {
+            return Ok(());
+        };
+
+        for url in FilteredUrls::from_message(ctx, message)
+            .into_iter()
+            .flatten()
         {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-
-            for url in urls {
-                if filters.is_filtered(channel, sender, &url) {
-                    debug!(%url, "skipping filtered url");
-
-                    continue;
-                }
-
-                if let Some(host) = url.host_str()
-                    && (host == "thingiverse.com" || host == "www.thingiverse.com")
-                {
-                    self.process_url(&url, channel, client).await?;
-                }
+            if let Some(host) = url.host_str()
+                && URL_HOSTS.contains(&host)
+            {
+                self.process_url(&url, channel, client).await?;
             }
         }
 
@@ -157,14 +143,15 @@ impl Thingiverse {
 
             match self.fetch_thing(thing_id).await {
                 Ok(thing) => {
-                    client.send_privmsg(channel, format_irc_output(&thing.to_string()))?;
+                    client.send_privmsg(channel, reply("Thingiverse", thing.to_string()))?;
                 }
                 Err(Error::NotFound) => {
-                    client.send_privmsg(channel, format_irc_output("Thing not found"))?;
+                    client.send_privmsg(channel, reply("Thingiverse", "Thing not found"))?;
                 }
                 Err(e) => {
                     warn!(error = ?e, "thingiverse api error");
-                    client.send_privmsg(channel, format_irc_output(&format!("http error: {e}")))?;
+                    client
+                        .send_privmsg(channel, reply("Thingiverse", format!("http error: {e}")))?;
                 }
             }
         }
@@ -241,27 +228,20 @@ impl Display for Thing {
     }
 }
 
-/// Wraps a message in the standard Zeta plugin prefix.
-fn format_irc_output(message: &str) -> String {
-    format!("\x0310>\x0F \x02Thingiverse:\x02\x0310 {message}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        assert!(Settings::default().api_key.is_none());
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.api_key.is_none());
+        }
+        deserialize: {
             "api_key": "secret",
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        } assert: {
+            assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        }
     }
 }

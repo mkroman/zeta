@@ -47,7 +47,7 @@ impl AlertRepository {
         .bind(alert.time)
         .fetch_one(&self.db)
         .await
-        .map_err(Error::Insert)
+        .map_err(Error::insert)
     }
 
     /// Returns the alerts that are due at or before `cutoff`, ordered by the time they are due.
@@ -68,7 +68,7 @@ impl AlertRepository {
         .bind(cutoff)
         .fetch_all(&self.db)
         .await
-        .map_err(Error::Load)
+        .map_err(Error::load)
     }
 
     /// Returns the pending alerts of `nickname` in `channel`, ordered by the time they are due.
@@ -90,7 +90,7 @@ impl AlertRepository {
         .bind(nickname)
         .fetch_all(&self.db)
         .await
-        .map_err(Error::Load)
+        .map_err(Error::load)
     }
 
     /// Deletes the alerts with the given `ids`.
@@ -102,11 +102,9 @@ impl AlertRepository {
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting alerts from database");
 
-        sqlx::query("DELETE FROM alerts WHERE id = ANY($1)")
-            .bind(ids)
-            .execute(&self.db)
+        crate::database::delete_ids(&self.db, "alerts", ids)
             .await
-            .map_err(Error::Delete)?;
+            .map_err(Error::delete)?;
 
         Ok(())
     }

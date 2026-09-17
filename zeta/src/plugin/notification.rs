@@ -76,16 +76,7 @@ impl Plugin<Context> for NotificationPlugin {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "notification".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
@@ -109,7 +100,10 @@ impl Plugin<Context> for NotificationPlugin {
 
         if let Some(args) = NOTIFY.parse(msg) {
             let Some((target, message)) = parse_args(args) else {
-                client.send_privmsg(channel, formatted("Usage: .notify\x0f <nick> <message>"))?;
+                client.send_privmsg(
+                    channel,
+                    reply("Notification", "Usage: .notify\x0f <nick> <message>"),
+                )?;
 
                 return Ok(());
             };
@@ -125,22 +119,25 @@ impl Plugin<Context> for NotificationPlugin {
 
             match self.service.create(notification).await {
                 Ok(_) => {
-                    client.send_privmsg(
-                        channel,
-                        "\x0310> The notification has been stored.",
-                    )?;
+                    client.send_privmsg(channel, notice("The notification has been stored."))?;
                 }
                 Err(Error::TooManyPending(max)) => {
                     client.send_privmsg(
                         channel,
-                        formatted(&format!(
-                            "{target} already has {max} pending notifications in this channel"
-                        )),
+                        reply(
+                            "Notification",
+                            format!(
+                                "{target} already has {max} pending notifications in this channel"
+                            ),
+                        ),
                     )?;
                 }
                 Err(err) => {
                     error!(?err, "could not store notification");
-                    client.send_privmsg(channel, formatted("could not store the notification"))?;
+                    client.send_privmsg(
+                        channel,
+                        reply("Notification", "could not store the notification"),
+                    )?;
                 }
             }
         } else {
@@ -188,28 +185,21 @@ fn parse_args(args: &str) -> Option<(&str, &str)> {
     (!message.trim().is_empty()).then_some((target, message))
 }
 
-/// Formats `s` as a notification response.
-fn formatted(s: &str) -> String {
-    format!("\x0310>\x0f\x02 Notification\x02\x0310: {s}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        assert_eq!(Settings::default().max_pending_per_target, 10);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.max_pending_per_target, 10);
+        }
+        deserialize: {
             "max_pending_per_target": 3,
-        }))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.max_pending_per_target, 3);
+        } assert: {
+            assert_eq!(settings.max_pending_per_target, 3);
+        }
     }
 
     #[test]

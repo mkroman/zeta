@@ -6,10 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 /// The `.ddo` command.
-const DDO: PluginCommand = PluginCommand::new(
-    Prefix::new(".ddo"),
-    "Look up a word in Den Danske Ordbog",
-);
+const DDO: PluginCommand =
+    PluginCommand::new(Prefix::new(".ddo"), "Look up a word in Den Danske Ordbog");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[DDO];
@@ -58,8 +56,7 @@ struct MessageFormatter<'a> {
 impl Display for MessageFormatter<'_> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(entry) = self.document.entries.first() {
-            let word = &entry.head.keyword;
-            write!(fmt, "\x0310>\x0f\x02 DDO:\x02\x0310 {word}")?;
+            write!(fmt, "{}", reply_prefix("DDO"))?;
 
             if let Some(phonetic) = &entry.phonetic {
                 write!(fmt, " {phonetic}")?;
@@ -91,7 +88,7 @@ impl Display for MessageFormatter<'_> {
                 }
             }
         } else {
-            write!(fmt, "\x0310> No results")?;
+            write!(fmt, "{}", notice("No results"))?;
         }
 
         Ok(())
@@ -106,16 +103,7 @@ impl Plugin<Context> for DenDanskeOrdbog {
         Ok(DenDanskeOrdbog::new(&ctx.config.http, settings.clone()))
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "dendanskeordbog".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
@@ -126,7 +114,7 @@ impl Plugin<Context> for DenDanskeOrdbog {
         args: &str,
     ) -> Result<(), ZetaError> {
         if args.is_empty() {
-            client.send_privmsg(channel, "\x0310> Usage: .ddo\x0f <query>")?;
+            client.send_privmsg(channel, notice("Usage: .ddo\x0f <query>"))?;
         } else {
             match self.client.query(args).await {
                 Ok(document) => {
@@ -138,7 +126,7 @@ impl Plugin<Context> for DenDanskeOrdbog {
                     client.send_privmsg(channel, formatter.to_string())?;
                 }
                 Err(err) => {
-                    client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+                    client.send_privmsg(channel, notice(format!("Error: {err}")))?;
                 }
             }
         }
@@ -160,26 +148,22 @@ impl DenDanskeOrdbog {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_settings() {
-        let settings = Settings::default();
-
-        assert!(settings.show_morphology);
-        assert!(settings.show_etymology);
-        assert!(settings.show_examples);
-    }
-
-    #[test]
-    fn settings_deserialize() {
-        let settings: Settings = serde_json::from_value(serde_json::json!({
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert!(settings.show_morphology);
+            assert!(settings.show_etymology);
+            assert!(settings.show_examples);
+        }
+        deserialize: {
             "show_morphology": false,
             "show_etymology": false,
             "show_examples": false,
-        }))
-        .expect("could not deserialize settings");
-
-        assert!(!settings.show_morphology);
-        assert!(!settings.show_etymology);
-        assert!(!settings.show_examples);
+        } assert: {
+            assert!(!settings.show_morphology);
+            assert!(!settings.show_etymology);
+            assert!(!settings.show_examples);
+        }
     }
 }

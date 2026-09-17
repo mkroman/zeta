@@ -33,10 +33,9 @@ impl NotificationRepository {
         trace!("loading notifications from database");
 
         let mut notifications = Vec::new();
-        let mut stream =
-            sqlx::query_as("SELECT * FROM notifications").fetch(&self.db);
+        let mut stream = sqlx::query_as("SELECT * FROM notifications").fetch(&self.db);
 
-        while let Some(notification) = stream.try_next().await.map_err(Error::Load)? {
+        while let Some(notification) = stream.try_next().await.map_err(Error::load)? {
             notifications.push(notification);
         }
 
@@ -67,7 +66,7 @@ impl NotificationRepository {
         .bind(notification.message)
         .fetch_one(&self.db)
         .await
-        .map_err(Error::Insert)
+        .map_err(Error::insert)
     }
 
     /// Deletes the notification with the given `ids`.
@@ -79,11 +78,9 @@ impl NotificationRepository {
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting notifications from database");
 
-        sqlx::query("DELETE FROM notifications WHERE id = ANY($1)")
-            .bind(ids)
-            .execute(&self.db)
+        crate::database::delete_ids(&self.db, "notifications", ids)
             .await
-            .map_err(Error::Delete)?;
+            .map_err(Error::delete)?;
 
         Ok(())
     }
