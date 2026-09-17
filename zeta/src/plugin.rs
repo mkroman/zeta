@@ -29,8 +29,8 @@ mod prelude {
     pub use irc::proto::{Command, Message};
     pub use zeta_plugin::Error as ZetaError;
     pub use zeta_plugin::prelude::{
-        ArgsError, BoxError, NoSettings, PluginCommand, Prefix, plugin_err, require_env,
-        resolve_secret,
+        ArgsError, BOLD, BoxError, COLOR, NoSettings, PluginCommand, Prefix, REPLY_PREFIX, RESET,
+        notice, plugin_err, reply, reply_prefix, require_env, resolve_secret,
     };
 
     pub use super::{

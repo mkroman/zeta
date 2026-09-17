@@ -1,6 +1,5 @@
 #![allow(clippy::doc_markdown)]
 
-
 use std::time::{Duration, Instant};
 
 use num_format::{Locale, ToFormattedString};
@@ -292,12 +291,12 @@ impl Twitch {
             let game_name = &stream.game_name;
             let viewers = stream.viewer_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, formatted(&format!(
+            client.send_privmsg(channel, reply("Twitch", format!(
                 "{user_login}:\x0f {title}\x0310 - Game:\x0f {game_name}\x0310 Viewers:\x0f {viewers}\x0310"
             )))?;
         } else {
             // Fallback behavior: just print the channel name if not live.
-            client.send_privmsg(channel, format!("\x0310> {user_login} - Twitch"))?;
+            client.send_privmsg(channel, notice(format!("{user_login} - Twitch")))?;
         }
 
         Ok(())
@@ -318,11 +317,11 @@ impl Twitch {
             let creator = &clip.creator_name;
             let views = clip.view_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, formatted(&format!(
+            client.send_privmsg(channel, reply("Twitch", format!(
                 "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 views"
             )))?;
         } else {
-            client.send_privmsg(channel, formatted("No results"))?;
+            client.send_privmsg(channel, reply("Twitch", "No results"))?;
         }
 
         Ok(())
@@ -342,20 +341,15 @@ impl Twitch {
             let user = &video.user_name;
             let views = video.view_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, formatted(&format!(
+            client.send_privmsg(channel, reply("Twitch", format!(
                 "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 views"
             )))?;
         } else {
-            client.send_privmsg(channel, formatted("No results"))?;
+            client.send_privmsg(channel, reply("Twitch", "No results"))?;
         }
 
         Ok(())
     }
-}
-
-/// Formats a message with the Twitch prefix and colors.
-fn formatted(message: &str) -> String {
-    format!("\x0310>\x0F\x02 Twitch:\x02\x0310 {message}")
 }
 
 /// Checks if a string looks like a valid Twitch username.

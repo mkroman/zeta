@@ -163,11 +163,7 @@ impl GitHubPlugin {
     ///
     /// # Returns
     /// * `Result<Option<String>>` - Some(message) to reply, or None if no reply needed.
-    pub async fn run(
-        &self,
-        channel: &str,
-        args: Option<&str>,
-    ) -> Result<Option<String>> {
+    pub async fn run(&self, channel: &str, args: Option<&str>) -> Result<Option<String>> {
         // 1. Check arguments
         let query = match args {
             Some(q) if !q.trim().is_empty() => q.trim(),
@@ -250,10 +246,9 @@ impl GitHubPlugin {
         Self::format_message(".gh <query>")
     }
 
-    /// Formats the final message with the standard Zeta/Blur prefix.
-    /// Ruby: %(\x0310>\x0F\x02 GitHub:\x02\x0310 #{message})
+    /// Formats the final message with the standard prefix.
     fn format_message(message: &str) -> String {
-        format!("\x0310>\x0F\x02 GitHub:\x02\x0310 {message}")
+        reply("GitHub", message)
     }
 }
 

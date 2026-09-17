@@ -203,7 +203,7 @@ impl Tiktok {
         }
 
         if let Some(summary) = format_summary(&embed, self.settings.title_length) {
-            let _ = client.send_privmsg(channel, formatted(&summary));
+            let _ = client.send_privmsg(channel, notice(&summary));
         }
 
         self.mirror_video(&url, video_id, channel, client).await;
@@ -225,13 +225,13 @@ impl Tiktok {
         let on_mirrored = {
             let channel = channel.to_string();
             move |link: String| {
-                let _ = sender.send_privmsg(&channel, formatted(&link));
+                let _ = sender.send_privmsg(&channel, notice(&link));
             }
         };
 
         match mirror.ensure_mirrored(url, video_id, on_mirrored).await {
             Ok(Some(link)) => {
-                let _ = client.send_privmsg(channel, formatted(&link));
+                let _ = client.send_privmsg(channel, notice(&link));
             }
             Ok(None) => {}
             Err(err) => {
@@ -275,10 +275,6 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
     }
 
     (!buf.is_empty()).then_some(buf)
-}
-
-fn formatted(s: &str) -> String {
-    format!("\x0310> {s}")
 }
 
 #[cfg(test)]

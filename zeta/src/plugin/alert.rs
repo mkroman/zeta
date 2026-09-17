@@ -226,7 +226,7 @@ impl Plugin<Context> for AlertPlugin {
                 Ok(opts) => opts,
                 Err(err) => {
                     for line in err.to_string().lines().filter(|line| !line.is_empty()) {
-                        client.send_privmsg(channel, formatted(line))?;
+                        client.send_privmsg(channel, reply("Alert", line))?;
                     }
 
                     return Ok(());
@@ -235,7 +235,7 @@ impl Plugin<Context> for AlertPlugin {
 
             if opts.list {
                 if !opts.args.is_empty() {
-                    client.send_privmsg(channel, formatted(USAGE))?;
+                    client.send_privmsg(channel, reply("Alert", USAGE))?;
 
                     return Ok(());
                 }
@@ -245,7 +245,10 @@ impl Plugin<Context> for AlertPlugin {
                     Err(err) => {
                         error!(?err, "could not list pending alerts");
 
-                        client.send_privmsg(channel, formatted("could not list your pending alerts"))?;
+                        client.send_privmsg(
+                            channel,
+                            reply("Alert", "could not list your pending alerts"),
+                        )?;
 
                         return Ok(());
                     }
@@ -259,7 +262,7 @@ impl Plugin<Context> for AlertPlugin {
             let input = opts.input();
 
             let Some((message, time_spec)) = split_args(&input) else {
-                client.send_privmsg(channel, formatted(USAGE))?;
+                client.send_privmsg(channel, reply("Alert", USAGE))?;
 
                 return Ok(());
             };
@@ -267,7 +270,7 @@ impl Plugin<Context> for AlertPlugin {
             let time = match parse_time(time_spec, Local::now()) {
                 Ok(time) => time,
                 Err(err) => {
-                    client.send_privmsg(channel, formatted(&err.to_string()))?;
+                    client.send_privmsg(channel, reply("Alert", err.to_string()))?;
 
                     return Ok(());
                 }
@@ -288,15 +291,15 @@ impl Plugin<Context> for AlertPlugin {
 
                     client.send_privmsg(
                         channel,
-                        formatted(&format!(
-                            "{} Alert stored for\x0f {local}.",
-                            success_message()
-                        )),
+                        reply(
+                            "Alert",
+                            format!("{} Alert stored for\x0f {local}.", success_message()),
+                        ),
                     )?;
                 }
                 Err(err) => {
                     error!(?err, "could not store alert");
-                    client.send_privmsg(channel, formatted("could not store the alert"))?;
+                    client.send_privmsg(channel, reply("Alert", "could not store the alert"))?;
                 }
             }
         }
@@ -464,14 +467,17 @@ const MAX_LISTING_LENGTH: usize = 400;
 /// pending alert.
 fn format_pending(pending: &[Alert]) -> String {
     let Some(next) = pending.first() else {
-        return formatted("You have no pending alerts");
+        return reply("Alert", "You have no pending alerts");
     };
 
-    let mut listing = formatted(&format!(
-        "Pending alerts:\x0f {}\x0310 Next up: {}",
-        pending.len(),
-        format_entry(next)
-    ));
+    let mut listing = reply(
+        "Alert",
+        format!(
+            "Pending alerts:\x0f {}\x0310 Next up: {}",
+            pending.len(),
+            format_entry(next)
+        ),
+    );
 
     for alert in pending.iter().take(MAX_LISTED_ALERTS).skip(1) {
         let entry = format_entry(alert);
@@ -522,11 +528,6 @@ const fn ordinal_suffix(day: u32) -> &'static str {
         3 => "rd",
         _ => "th",
     }
-}
-
-/// Formats `s` as an alert response.
-fn formatted(s: &str) -> String {
-    format!("\x0310>\x0f\x02 Alert:\x02\x0310 {s}")
 }
 
 #[cfg(test)]

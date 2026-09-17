@@ -8,20 +8,15 @@ const BYTES: PluginCommand = PluginCommand::new(
     "Show a string's UTF-8 bytes as hex escapes",
 );
 /// The `.len` string length command.
-const LENGTH: PluginCommand = PluginCommand::new(
-    Prefix::new(".len"),
-    "Count the characters in a string",
-);
+const LENGTH: PluginCommand =
+    PluginCommand::new(Prefix::new(".len"), "Count the characters in a string");
 /// The `.ord` character codepoint command.
 const ORD: PluginCommand = PluginCommand::new(
     Prefix::new(".ord"),
     "Show the Unicode codepoint of each character",
 );
 /// The `.rev` string reverse command.
-const REVERSE: PluginCommand = PluginCommand::new(
-    Prefix::new(".rev"),
-    "Reverse a string",
-);
+const REVERSE: PluginCommand = PluginCommand::new(Prefix::new(".rev"), "Reverse a string");
 /// The `.uni` command (not implemented yet).
 const UNICODE: PluginCommand = PluginCommand::new(
     Prefix::new(".uni"),
@@ -80,7 +75,7 @@ impl Plugin<Context> for StringUtils {
             return Ok(());
         };
 
-        client.send_privmsg(channel, formatted(&reply))?;
+        client.send_privmsg(channel, notice(&reply))?;
 
         Ok(())
     }
@@ -101,14 +96,10 @@ impl StringUtils {
             return Ok(());
         };
 
-        client.send_privmsg(channel, formatted(usage))?;
+        client.send_privmsg(channel, notice(usage))?;
 
         Ok(())
     }
-}
-
-fn formatted(s: &str) -> String {
-    format!("\x0310> {s}")
 }
 
 fn str_to_hex_string(s: &str) -> String {

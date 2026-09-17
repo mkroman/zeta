@@ -2,7 +2,10 @@
 
 use tracing::{instrument, trace};
 
-use super::{error::Error, model::{Filter, NewFilter}};
+use super::{
+    error::Error,
+    model::{Filter, NewFilter},
+};
 use crate::database::Database;
 
 /// Repository for storing and retrieving filters in the database.

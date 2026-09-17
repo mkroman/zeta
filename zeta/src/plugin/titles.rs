@@ -43,15 +43,6 @@ const SCHEMES: SchemeMap = &[
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
 
-/// IRC formatting prefix for plain replies.
-const REPLY_PREFIX: &str = "\x0310>";
-
-/// IRC formatting prefix for OpenGraph replies, colored and followed by a bold site name.
-const OG_REPLY_PREFIX: &str = "\x0310>\x0f\x02 ";
-
-/// IRC formatting suffix closing the bold site name of an OpenGraph reply.
-const OG_REPLY_SUFFIX: &str = ":\x02\x0310 ";
-
 /// File extensions that we avoid requesting to save time and bandwidth.
 const BINARY_EXTENSIONS: &[&str] = &[
     ".png", ".jpg", ".bmp", ".gif", ".avi", ".mpg", ".flv", ".3gp", ".mp4", ".exe", ".msi", ".mp3",
@@ -544,7 +535,7 @@ impl Titles {
         if let Some(scheme) = repaired_from {
             debug!(%scheme, %url, "posting repaired url");
 
-            if let Err(error) = client.send_privmsg(channel, format!("{REPLY_PREFIX} {url}")) {
+            if let Err(error) = client.send_privmsg(channel, notice(&url)) {
                 warn!(%error, "could not send repaired url");
             }
         }
@@ -691,9 +682,9 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
             .filter(|site| !site.is_empty())
             .unwrap_or_else(|| host_name(url));
 
-        format!("{OG_REPLY_PREFIX}{site}{OG_REPLY_SUFFIX}{content}")
+        reply(&site, &content)
     } else {
-        format!("{REPLY_PREFIX} {content}")
+        notice(&content)
     };
 
     Some(truncate(&message, settings.max_message_length))

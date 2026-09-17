@@ -115,7 +115,7 @@ impl KagiPlugin {
         query: &str,
     ) -> Result<(), ZetaError> {
         if query.trim().is_empty() {
-            client.send_privmsg(channel, "\x0310> Usage: .g\x0f <query>")?;
+            client.send_privmsg(channel, notice("Usage: .g\x0f <query>"))?;
 
             return Ok(());
         }
@@ -126,14 +126,14 @@ impl KagiPlugin {
                     let title = &result.title;
                     let url = &result.url;
 
-                    client.send_privmsg(channel, format!("\x0310> {title} - {url}"))?;
+                    client.send_privmsg(channel, notice(format!("{title} - {url}")))?;
                 } else {
-                    client.send_privmsg(channel, "\x0310> No results")?;
+                    client.send_privmsg(channel, notice("No results"))?;
                 }
             }
             Err(err) => {
                 warn!(?err, "kagi search failed");
-                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
             }
         }
 
@@ -148,7 +148,7 @@ impl KagiPlugin {
         query: &str,
     ) -> Result<(), ZetaError> {
         if query.trim().is_empty() {
-            client.send_privmsg(channel, "\x0310> Usage: .gis\x0f <query>")?;
+            client.send_privmsg(channel, notice("Usage: .gis\x0f <query>"))?;
 
             return Ok(());
         }
@@ -159,14 +159,14 @@ impl KagiPlugin {
                     let title = &result.title;
                     let url = &result.image_url;
 
-                    client.send_privmsg(channel, format!("\x0310>\x0f\x02 Kagi:\x02\x0310 {title} - {url}"))?;
+                    client.send_privmsg(channel, reply("Kagi", format!("{title} - {url}")))?;
                 } else {
-                    client.send_privmsg(channel, "\x0310> No results")?;
+                    client.send_privmsg(channel, notice("No results"))?;
                 }
             }
             Err(err) => {
                 warn!(?err, "kagi image search failed");
-                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
             }
         }
 

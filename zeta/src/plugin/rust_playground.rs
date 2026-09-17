@@ -142,17 +142,20 @@ impl Plugin<Context> for RustPlayground {
     ) -> Result<(), ZetaError> {
         // Early return if input is empty
         if expr.trim().is_empty() {
-            client.send_privmsg(channel, formatted("Usage: .rs\x0f <expr>"))?;
+            client.send_privmsg(channel, reply("Rust Playground", "Usage: .rs\x0f <expr>"))?;
             return Ok(());
         }
 
         match self.evaluate(expr).await {
             Ok(output) => {
-                client.send_privmsg(channel, formatted(&output))?;
+                client.send_privmsg(channel, reply("Rust Playground", &output))?;
             }
             Err(e) => {
                 warn!("rust playground error: {}", e);
-                client.send_privmsg(channel, formatted(&format!("http error: {e}")))?;
+                client.send_privmsg(
+                    channel,
+                    reply("Rust Playground", format!("http error: {e}")),
+                )?;
             }
         }
 
@@ -208,11 +211,6 @@ impl RustPlayground {
             .map(|cap| cap[1].to_string())
             .collect()
     }
-}
-
-/// Applies IRC formatting to the message.
-fn formatted(msg: &str) -> String {
-    format!("\x0310>\x0F\x02 Rust Playground:\x02\x0310 {msg}")
 }
 
 /// Sanitizes output by removing control characters (0x00-0x19, 0x7F).

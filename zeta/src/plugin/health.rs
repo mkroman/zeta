@@ -57,10 +57,7 @@ impl Plugin<Context> for Health {
         _args: &str,
     ) -> Result<(), ZetaError> {
         if let Some(snapshot) = Snapshot::capture() {
-            client.send_privmsg(
-                channel,
-                format!("\x0310>\x0f\x02 Health\x02\x0310: {snapshot}"),
-            )?;
+            client.send_privmsg(channel, reply("Health", snapshot))?;
         }
 
         Ok(())

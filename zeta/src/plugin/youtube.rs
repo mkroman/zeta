@@ -22,10 +22,8 @@ use crate::{
 pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
 
 /// The `.yt` command.
-const YOUTUBE: PluginCommand = PluginCommand::new(
-    Prefix::new(".yt"),
-    "Search YouTube and link the top video",
-);
+const YOUTUBE: PluginCommand =
+    PluginCommand::new(Prefix::new(".yt"), "Search YouTube and link the top video");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[YOUTUBE];
@@ -342,13 +340,19 @@ impl Plugin<Context> for YouTube {
                     let id = result.id.video_id.as_ref().unwrap();
                     let title = htmlize::unescape(&result.snippet.title);
 
-                    client.send_privmsg(channel, format!("\x0310>\x03\x02 YouTube:\x02\x0310 {title} - https://www.youtube.com/watch?v={id}"))?;
+                    client.send_privmsg(
+                        channel,
+                        reply(
+                            "YouTube",
+                            format!("{title} - https://www.youtube.com/watch?v={id}"),
+                        ),
+                    )?;
                 } else {
-                    client.send_privmsg(channel, "\x0310> No results")?;
+                    client.send_privmsg(channel, notice("No results"))?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, format!("\x0310> Error: {err}"))?;
+                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
             }
         }
 
@@ -357,11 +361,7 @@ impl Plugin<Context> for YouTube {
 }
 
 impl YouTube {
-    pub fn with_config(
-        settings: &Settings,
-        api_key: String,
-        config: &HttpConfig,
-    ) -> Self {
+    pub fn with_config(settings: &Settings, api_key: String, config: &HttpConfig) -> Self {
         let client = http::build_client(config);
 
         Self {
@@ -401,8 +401,7 @@ impl YouTube {
                             .and_then(|s| str::parse::<u64>(&s.view_count).ok())
                             .unwrap_or(0);
 
-                        let message =
-                            format_video_message(&video, &category, view_count);
+                        let message = format_video_message(&video, &category, view_count);
                         client.send_privmsg(channel, message)?;
                     }
                     Err(e) => {
@@ -520,7 +519,10 @@ impl YouTube {
         let params = [
             ("id", video_id),
             ("key", &self.api_key),
-            ("part", "snippet,statistics,contentDetails,liveStreamingDetails"),
+            (
+                "part",
+                "snippet,statistics,contentDetails,liveStreamingDetails",
+            ),
         ];
         let request = self.client.get(format!("{BASE_URL}/videos")).query(&params);
         let response = request
@@ -550,8 +552,8 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
     let channel_name = snippet.map_or("unknown channel", |s| s.channel_title.as_str());
     let view_count_formatted = view_count.to_formatted_string(&Locale::en);
 
-    let is_live_stream = snippet
-        .is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
+    let is_live_stream =
+        snippet.is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
 
     if is_live_stream {
         let concurrent_viewers = video
@@ -561,17 +563,17 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
             .and_then(|viewers| viewers.parse::<u64>().ok());
 
         if let Some(viewers) = concurrent_viewers {
-            return format!(
-                "\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
+            return notice(format!(
+                "“\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
                  {channel_name}\x0310 with\x0f {}\x0310 viewers",
                 viewers.to_formatted_string(&Locale::en),
-            );
+            ));
         }
 
-        return format!(
-            "\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
+        return notice(format!(
+            "“\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
              {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
-        );
+        ));
     }
 
     let duration = video
@@ -580,10 +582,10 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         .and_then(|details| parse_iso8601_duration(&details.duration))
         .map_or_else(|| "unknown duration".to_string(), format_duration);
 
-    format!(
-        "\x0310> “\x0f{title}\x0310” is a\x0f {duration}\x0310 video by\x0f \
+    notice(format!(
+        "“\x0f{title}\x0310” is a\x0f {duration}\x0310 video by\x0f \
          {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
-    )
+    ))
 }
 
 /// Extracts a query parameter value from a URL

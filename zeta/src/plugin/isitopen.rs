@@ -1,4 +1,3 @@
-
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -282,11 +281,11 @@ impl IsItOpen {
                     client.send_privmsg(channel, &message)?;
                 }
                 Err(Error::NotFound) => {
-                    client.send_privmsg(channel, formatted("Error: place not found"))?;
+                    client.send_privmsg(channel, notice("Error: place not found"))?;
                 }
                 Err(e) => {
                     warn!(?e, "isitopen error");
-                    client.send_privmsg(channel, formatted(&format!("Error: {e}")))?;
+                    client.send_privmsg(channel, notice(format!("Error: {e}")))?;
                 }
             }
         }
@@ -462,11 +461,6 @@ enum QueryAction {
     ClosingTime,
     IsOpen,
     IsClosed,
-}
-
-/// Applies IRC teal color formatting.
-fn formatted(s: &str) -> String {
-    format!("\x0310{s}")
 }
 
 /// Helper to strip the bot's nickname from the message start.

@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use crate::{
-    duration::{words, HOURS_AND_MINUTES},
+    duration::{HOURS_AND_MINUTES, words},
     http,
     plugin::prelude::*,
 };
@@ -21,10 +21,8 @@ const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
 
 /// The `.hltb` command.
-const HLTB: PluginCommand = PluginCommand::new(
-    Prefix::new(".hltb"),
-    "Look up a game's completion times",
-);
+const HLTB: PluginCommand =
+    PluginCommand::new(Prefix::new(".hltb"), "Look up a game's completion times");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[HLTB];
@@ -245,7 +243,7 @@ impl Plugin<Context> for HowLongToBeat {
         query: &str,
     ) -> Result<(), ZetaError> {
         if query.trim().is_empty() {
-            client.send_privmsg(channel, "\x0310> Usage: .hltb\x0f <game>")?;
+            client.send_privmsg(channel, notice("Usage: .hltb\x0f <game>"))?;
             return Ok(());
         }
 
@@ -255,12 +253,12 @@ impl Plugin<Context> for HowLongToBeat {
                     let msg = format_game(game);
                     client.send_privmsg(channel, msg)?;
                 } else {
-                    client.send_privmsg(channel, "\x0310> No results found")?;
+                    client.send_privmsg(channel, notice("No results found"))?;
                 }
             }
             Err(err) => {
                 warn!(?err, "hltb search failed");
-                client.send_privmsg(channel, format!("\x0310> Failed to fetch data: {err}"))?;
+                client.send_privmsg(channel, notice(format!("Failed to fetch data: {err}")))?;
             }
         }
 
@@ -386,9 +384,12 @@ fn format_game(game: &Game) -> String {
     let main_extra = format_seconds(game.comp_plus);
     let completionist = format_seconds(game.comp_100);
 
-    format!(
-        "\x0310>\x03\x02 HLTB\x02\x0310 (\x0f{}\x0310): Main Story: \x0f{}\x0310 | Main + Extra: \x0f{}\x0310 | Completionist: \x0f{}",
-        game.game_name, main, main_extra, completionist
+    reply(
+        "HLTB",
+        format!(
+            "(\x0f{}\x0310): Main Story: \x0f{}\x0310 | Main + Extra: \x0f{}\x0310 | Completionist: \x0f{}",
+            game.game_name, main, main_extra, completionist
+        ),
     )
 }
 

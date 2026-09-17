@@ -4,12 +4,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::debug;
 
-use crate::{
-    config::HttpConfig,
-    http,
-    plugin::prelude::*,
-    utils::Truncatable,
-};
+use crate::{config::HttpConfig, http, plugin::prelude::*, utils::Truncatable};
 
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
@@ -122,7 +117,7 @@ impl Plugin<Context> for UrbanDictionary {
         query: &str,
     ) -> Result<(), ZetaError> {
         if query.is_empty() {
-            client.send_privmsg(channel, formatted(USAGE))?;
+            client.send_privmsg(channel, reply("Urban Dictionary", USAGE))?;
             return Ok(());
         }
 
@@ -133,15 +128,15 @@ impl Plugin<Context> for UrbanDictionary {
                         definition,
                         max_length: self.settings.max_definition_length,
                     };
-                    let s = formatted(&formatter.to_string());
+                    let s = reply("Urban Dictionary", formatter.to_string());
 
                     client.send_privmsg(channel, s)?;
                 } else {
-                    client.send_privmsg(channel, formatted("No results"))?;
+                    client.send_privmsg(channel, reply("Urban Dictionary", "No results"))?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, formatted(&format!("Error: {err}")))?;
+                client.send_privmsg(channel, reply("Urban Dictionary", format!("Error: {err}")))?;
             }
         }
 
@@ -173,10 +168,6 @@ impl Display for DefinitionFormatter<'_> {
 /// replacing newlines with spaces and trimming leading and trailing whitespace.
 fn presentable(s: &str) -> String {
     s.trim().replace('\r', "").replace('\n', " ")
-}
-
-fn formatted(s: &str) -> String {
-    format!("\x0310>\x03\x02 Urban Dictionary:\x02\x0310 {s}")
 }
 
 impl UrbanDictionary {

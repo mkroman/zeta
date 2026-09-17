@@ -155,8 +155,10 @@ impl HostIndex {
             entries.retain(|entry| !ids.contains(&entry.filter.id));
         }
 
-        self.wildcard.retain(|entry| !ids.contains(&entry.filter.id));
-        self.any_host.retain(|entry| !ids.contains(&entry.filter.id));
+        self.wildcard
+            .retain(|entry| !ids.contains(&entry.filter.id));
+        self.any_host
+            .retain(|entry| !ids.contains(&entry.filter.id));
     }
 
     /// All filters in the bucket, in insertion order.
@@ -229,10 +231,7 @@ impl FilterIndex {
         let host = url.host_str().map(str::to_lowercase);
         let key = channel.to_lowercase();
 
-        for bucket in [
-            self.channels.get(&Some(key)),
-            self.channels.get(&None),
-        ] {
+        for bucket in [self.channels.get(&Some(key)), self.channels.get(&None)] {
             let Some(bucket) = bucket else {
                 continue;
             };
@@ -280,7 +279,11 @@ mod tests {
     }
 
     fn matches(index: &FilterIndex, channel: &str, url: &str) -> bool {
-        index.matches(channel, Some(Sender::new("nick", "user", "host.example")), &url.parse().unwrap())
+        index.matches(
+            channel,
+            Some(Sender::new("nick", "user", "host.example")),
+            &url.parse().unwrap(),
+        )
     }
 
     #[test]
@@ -356,7 +359,11 @@ mod tests {
             Some(Sender::new("someone", "~cliother", "host.example")),
             &"https://imdb.com/title/tt1".parse().unwrap()
         ));
-        assert!(!index.matches("#chan", None, &"https://imdb.com/title/tt1".parse().unwrap()));
+        assert!(!index.matches(
+            "#chan",
+            None,
+            &"https://imdb.com/title/tt1".parse().unwrap()
+        ));
     }
 
     #[test]

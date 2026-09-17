@@ -1,4 +1,3 @@
-
 use std::fmt::Write;
 use std::time::{Duration, Instant};
 
@@ -307,7 +306,7 @@ impl Spotify {
                     let _ = write!(msg, " - {}", track.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, formatted(&msg))?;
+                client.send_privmsg(channel, reply("Spotify", &msg))?;
             }
             Err(e) => handle_error(channel, client, &e)?,
         }
@@ -332,7 +331,7 @@ impl Spotify {
                     let _ = write!(msg, " - {}", album.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, formatted(&msg))?;
+                client.send_privmsg(channel, reply("Spotify", &msg))?;
             }
             Err(e) => handle_error(channel, client, &e)?,
         }
@@ -364,7 +363,7 @@ impl Spotify {
                     let _ = write!(msg, " - {}", artist.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, formatted(&msg))?;
+                client.send_privmsg(channel, reply("Spotify", &msg))?;
             }
             Err(e) => handle_error(channel, client, &e)?,
         }
@@ -398,16 +397,12 @@ impl Spotify {
                     let _ = write!(msg, " - {}", playlist.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, formatted(&msg))?;
+                client.send_privmsg(channel, reply("Spotify", &msg))?;
             }
             Err(e) => handle_error(channel, client, &e)?,
         }
         Ok(())
     }
-}
-
-fn formatted(message: &str) -> String {
-    format!("\x0310>\x0f\x02 Spotify:\x02\x0310 {message}")
 }
 
 fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), ZetaError> {
@@ -419,7 +414,7 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
     if let Error::Api(s) = error
         && s.contains("404")
     {
-        client.send_privmsg(channel, formatted("Resource not found"))?;
+        client.send_privmsg(channel, reply("Spotify", "Resource not found"))?;
     }
 
     Ok(())

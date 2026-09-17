@@ -116,7 +116,7 @@ impl Chaturbate {
                 if let Some(username) = extract_username(&url) {
                     debug!(%username, "processing chaturbate url");
                     if let Err(e) = self.process_broadcaster(&username, channel, client).await {
-                        client.send_privmsg(channel, format_message(&e.to_string()))?;
+                        client.send_privmsg(channel, reply("Chaturbate", e.to_string()))?;
                     }
                 }
             }
@@ -163,7 +163,7 @@ impl Chaturbate {
             )
         };
 
-        client.send_privmsg(channel, format_message(&msg))?;
+        client.send_privmsg(channel, reply("Chaturbate", &msg))?;
 
         Ok(())
     }
@@ -196,10 +196,6 @@ fn extract_username(url: &Url) -> Option<String> {
         | "female-cams" | "male-cams" | "couple-cams" | "trans-cams" => None,
         name => Some(name.to_string()),
     }
-}
-
-fn format_message(msg: &str) -> String {
-    format!("\x0310>\x0F \x02Chaturbate:\x02\x0310 {msg}")
 }
 
 #[cfg(test)]

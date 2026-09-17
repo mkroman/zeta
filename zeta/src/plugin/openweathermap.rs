@@ -78,10 +78,8 @@ pub struct Settings {
 }
 
 /// The `.w` command.
-const WEATHER: PluginCommand = PluginCommand::new(
-    Prefix::new(".w"),
-    "Show current weather for a location",
-);
+const WEATHER: PluginCommand =
+    PluginCommand::new(Prefix::new(".w"), "Show current weather for a location");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[WEATHER];
@@ -221,7 +219,7 @@ impl Plugin<Context> for OpenWeatherMap {
     ) -> Result<(), ZetaError> {
         let location = if args.trim().is_empty() {
             let Some(location) = self.default_location.as_deref() else {
-                client.send_privmsg(channel, "\x0310> Usage: .w\x0f <location>")?;
+                client.send_privmsg(channel, notice("Usage: .w\x0f <location>"))?;
 
                 return Ok(());
             };
@@ -236,11 +234,11 @@ impl Plugin<Context> for OpenWeatherMap {
                 client.send_privmsg(channel, format_weather(&weather, self.units))?;
             }
             Err(Error::LocationNotFound) => {
-                client.send_privmsg(channel, "\x0310> Location not found")?;
+                client.send_privmsg(channel, notice("Location not found"))?;
             }
             Err(e) => {
                 warn!(error = ?e, "openweathermap error");
-                client.send_privmsg(channel, format!("\x0310> Error: {e}"))?;
+                client.send_privmsg(channel, notice(format!("Error: {e}")))?;
             }
         }
 
@@ -346,14 +344,14 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
         extra_info.push(format!("Cloud coverage: \x0f{}%\x0310", clouds.all));
     }
 
-    format!(
-        "\x0310> Right now in \x0f{}\x0310 it's \x0f{:.1} {temp_unit}\x0310 (feels like \x0f{:.1} {temp_unit}\x0310) with \x0f{}\x0310. {}",
+    notice(format!(
+        "Right now in \x0f{}\x0310 it's \x0f{:.1} {temp_unit}\x0310 (feels like \x0f{:.1} {temp_unit}\x0310) with \x0f{}\x0310. {}",
         location,
         w.main.temp,
         w.main.feels_like,
         conditions,
         extra_info.join(". ")
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -417,7 +415,10 @@ mod tests {
         assert!(formatted.contains("Copenhagen, DK"), "{formatted}");
         assert!(formatted.contains("12.5 °C"), "{formatted}");
         assert!(formatted.contains("feels like \x0f11.0 °C"), "{formatted}");
-        assert!(formatted.contains("3.0 m/s (gusts: 6.5 m/s)"), "{formatted}");
+        assert!(
+            formatted.contains("3.0 m/s (gusts: 6.5 m/s)"),
+            "{formatted}"
+        );
     }
 
     #[test]

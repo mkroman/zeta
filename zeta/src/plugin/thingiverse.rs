@@ -3,7 +3,6 @@
 //! This plugin detects Thingiverse URLs in messages and fetches information
 //! about the linked "thing" using the Thingiverse API.
 
-
 use std::fmt::{self, Display};
 
 use num_format::{Locale, ToFormattedString};
@@ -157,14 +156,15 @@ impl Thingiverse {
 
             match self.fetch_thing(thing_id).await {
                 Ok(thing) => {
-                    client.send_privmsg(channel, format_irc_output(&thing.to_string()))?;
+                    client.send_privmsg(channel, reply("Thingiverse", thing.to_string()))?;
                 }
                 Err(Error::NotFound) => {
-                    client.send_privmsg(channel, format_irc_output("Thing not found"))?;
+                    client.send_privmsg(channel, reply("Thingiverse", "Thing not found"))?;
                 }
                 Err(e) => {
                     warn!(error = ?e, "thingiverse api error");
-                    client.send_privmsg(channel, format_irc_output(&format!("http error: {e}")))?;
+                    client
+                        .send_privmsg(channel, reply("Thingiverse", format!("http error: {e}")))?;
                 }
             }
         }
@@ -239,11 +239,6 @@ impl Display for Thing {
 
         Ok(())
     }
-}
-
-/// Wraps a message in the standard Zeta plugin prefix.
-fn format_irc_output(message: &str) -> String {
-    format!("\x0310>\x0F \x02Thingiverse:\x02\x0310 {message}")
 }
 
 #[cfg(test)]

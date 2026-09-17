@@ -26,10 +26,8 @@ pub enum Error {
 }
 
 /// The `.next` command.
-const NEXT: PluginCommand = PluginCommand::new(
-    Prefix::new(".next"),
-    "Show when a show's next episode airs",
-);
+const NEXT: PluginCommand =
+    PluginCommand::new(Prefix::new(".next"), "Show when a show's next episode airs");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[NEXT];
@@ -256,10 +254,9 @@ impl Tvmaze {
         let number = episode.number;
         let time_until_air = {
             let now = time::OffsetDateTime::now_utc();
-            episode.airstamp.map_or_else(
-                || "???".to_string(),
-                |airstamp| (airstamp - now).in_words(),
-            )
+            episode
+                .airstamp
+                .map_or_else(|| "???".to_string(), |airstamp| (airstamp - now).in_words())
         };
         let content = format!(
             "Next episode “\x0f{title}\x0310” (\x0f{season}x{number:02}\x0310) airs in\x0f {time_until_air}"
@@ -301,13 +298,12 @@ impl Tvmaze {
         url
     }
 
-    /// Formats a message for display in IRC with optional prefix.
-    #[allow(clippy::option_if_let_else)]
+    /// Formats a message for display in IRC with an optional bold subject name.
     fn build_formatted_message(prefix: Option<&str>, message: &str) -> String {
-        match prefix {
-            Some(name) => format!("\x0310>\x03\x02 TVmaze\x02\x0310 (\x0f{name}\x0310): {message}"),
-            None => format!("\x0310>\x03\x02 TVmaze\x02\x0310: {message}"),
-        }
+        prefix.map_or_else(
+            || reply("TVmaze", message),
+            |name| reply("TVmaze", format!("(\x0f{name}\x0310): {message}")),
+        )
     }
 }
 

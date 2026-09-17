@@ -40,10 +40,8 @@ fn default_review_domain() -> String {
 }
 
 /// The `.tp` command.
-const TRUSTPILOT: PluginCommand = PluginCommand::new(
-    Prefix::new(".tp"),
-    "Look up a business's Trustpilot score",
-);
+const TRUSTPILOT: PluginCommand =
+    PluginCommand::new(Prefix::new(".tp"), "Look up a business's Trustpilot score");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[TRUSTPILOT];
@@ -140,7 +138,7 @@ impl Plugin<Context> for Trustpilot {
         query: &str,
     ) -> Result<(), ZetaError> {
         if query.trim().is_empty() {
-            client.send_privmsg(channel, "\x0310> Usage: .tp\x0f <domain name>")?;
+            client.send_privmsg(channel, notice("Usage: .tp\x0f <domain name>"))?;
             return Ok(());
         }
 
@@ -149,12 +147,12 @@ impl Plugin<Context> for Trustpilot {
                 client.send_privmsg(channel, format_business(&business, &self.review_domain))?;
             }
             Err(Error::NotFound) => {
-                client.send_privmsg(channel, "\x0310> No results found")?;
+                client.send_privmsg(channel, notice("No results found"))?;
             }
             Err(e) => {
                 warn!(error = ?e, "trustpilot error");
                 // The error is already safe for display
-                client.send_privmsg(channel, format!("\x0310> Error: {e}"))?;
+                client.send_privmsg(channel, notice(format!("Error: {e}")))?;
             }
         }
 
@@ -201,11 +199,17 @@ impl Trustpilot {
 fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
     let score = normalized_score(b.score.trust_score);
     let reviews = b.number_of_reviews.total.to_formatted_string(&Locale::en);
-    let url = format!("https://{review_domain}.trustpilot.com/review/{}", b.name.identifying);
+    let url = format!(
+        "https://{review_domain}.trustpilot.com/review/{}",
+        b.name.identifying
+    );
     let name = &b.display_name;
 
-    format!(
-        "\x0310>\x0f\x02 Trustpilot\x02\x0310 (\x0f{name}\x0310): Score:\x0f {score:.1}\x0310/\x0f5.0\x0310 Reviews:\x0f {reviews}\x0310 - {url}"
+    reply(
+        "Trustpilot",
+        format!(
+            "(\x0f{name}\x0310): Score:\x0f {score:.1}\x0310/\x0f5.0\x0310 Reviews:\x0f {reviews}\x0310 - {url}"
+        ),
     )
 }
 
@@ -260,7 +264,7 @@ mod tests {
         // Note: contains IRC color codes
         assert_eq!(
             formatted,
-            "\x0310>\x0f\x02 Trustpilot\x02\x0310 (\x0fCool Company\x0310): Score:\x0f 4.8\x0310/\x0f5.0\x0310 Reviews:\x0f 12,345\x0310 - https://dk.trustpilot.com/review/coolcompany.com"
+            "\x0310>\x0f\x02 Trustpilot:\x02\x0310 (\x0fCool Company\x0310): Score:\x0f 4.8\x0310/\x0f5.0\x0310 Reviews:\x0f 12,345\x0310 - https://dk.trustpilot.com/review/coolcompany.com"
         );
     }
 

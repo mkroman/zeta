@@ -140,7 +140,7 @@ impl Plugin<Context> for GeoIp {
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, format!("\x0310>\x03\x02 GeoIP:\x02\x0310 {err}"))?;
+                client.send_privmsg(channel, reply("GeoIP", err))?;
             }
         }
 
@@ -185,10 +185,7 @@ impl Display for LookupResult {
         let info = &self.0;
         let ip = &info.ip;
 
-        write!(
-            fmt,
-            "\x0310>\x03\x02 GeoIP\x02\x0310 (\x0f{ip}\x0310): {info}"
-        )
+        write!(fmt, "{}(\x0f{ip}\x0310): {info}", reply_prefix("GeoIP"))
     }
 }
 

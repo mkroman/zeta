@@ -106,7 +106,16 @@ impl Plugin<Context> for Reddit {
     }
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["i.redd.it", "oauth.reddit.com", "old.reddit.com", "preview.redd.it", "redd.it", "reddit.com", "v.redd.it", "www.reddit.com"]
+        &[
+            "i.redd.it",
+            "oauth.reddit.com",
+            "old.reddit.com",
+            "preview.redd.it",
+            "redd.it",
+            "reddit.com",
+            "v.redd.it",
+            "www.reddit.com",
+        ]
     }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
@@ -165,7 +174,8 @@ impl Reddit {
                 self.process_submission(&id, channel, client).await?;
             }
             Link::Comment { submission, .. } => {
-                self.process_submission(&submission, channel, client).await?;
+                self.process_submission(&submission, channel, client)
+                    .await?;
             }
             Link::Video(id) => match self.client.video(&id).await {
                 Ok(submission) => {
@@ -175,7 +185,7 @@ impl Reddit {
                 Err(err) => {
                     client.send_privmsg(
                         channel,
-                        format!("\x0310> could not resolve video link: {err}"),
+                        notice(format!("could not resolve video link: {err}")),
                     )?;
                 }
             },
@@ -189,7 +199,7 @@ impl Reddit {
                     Err(err) => {
                         client.send_privmsg(
                             channel,
-                            format!("\x0310> could not resolve shortened link: {err}"),
+                            notice(format!("could not resolve shortened link: {err}")),
                         )?;
                     }
                 }
@@ -201,15 +211,12 @@ impl Reddit {
                         let description =
                             subreddit.public_description.truncate_with_suffix(250, "…");
 
-                        client.send_privmsg(
-                            channel,
-                            format!("\x0310>\x03\x02 {title}:\x02\x0310 {description}"),
-                        )?;
+                        client.send_privmsg(channel, reply(&title, &description))?;
                     }
                     Err(err) => {
                         client.send_privmsg(
                             channel,
-                            format!("\x0310> could not fetch subreddit details: {err}"),
+                            notice(format!("could not fetch subreddit details: {err}")),
                         )?;
                     }
                 }
@@ -235,7 +242,7 @@ impl Reddit {
             Err(err) => {
                 client.send_privmsg(
                     channel,
-                    format!("\x0310> could not fetch submission details: {err}"),
+                    notice(format!("could not fetch submission details: {err}")),
                 )?;
             }
         }
@@ -255,7 +262,7 @@ impl Reddit {
         let subreddit = submission.subreddit.clone();
         let id = submission.id.as_deref().unwrap_or(fallback_id).to_string();
 
-        client.send_privmsg(channel, format!("\x0310> {title} : {subreddit}"))?;
+        client.send_privmsg(channel, notice(format!("{title} : {subreddit}")))?;
 
         self.mirror_video(&submission, &id, channel, client).await;
 
@@ -289,13 +296,13 @@ impl Reddit {
         let on_mirrored = {
             let channel = channel.to_string();
             move |link: String| {
-                let _ = sender.send_privmsg(&channel, format!("\x0310> {link}"));
+                let _ = sender.send_privmsg(&channel, notice(link));
             }
         };
 
         match mirror.ensure_mirrored(url, id, on_mirrored).await {
             Ok(Some(link)) => {
-                let _ = client.send_privmsg(channel, format!("\x0310> {link}"));
+                let _ = client.send_privmsg(channel, notice(link));
             }
             Ok(None) => {}
             Err(err) => {

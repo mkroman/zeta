@@ -33,8 +33,7 @@ impl NotificationRepository {
         trace!("loading notifications from database");
 
         let mut notifications = Vec::new();
-        let mut stream =
-            sqlx::query_as("SELECT * FROM notifications").fetch(&self.db);
+        let mut stream = sqlx::query_as("SELECT * FROM notifications").fetch(&self.db);
 
         while let Some(notification) = stream.try_next().await.map_err(Error::Load)? {
             notifications.push(notification);

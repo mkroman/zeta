@@ -315,7 +315,7 @@ impl Ofn {
                     "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"
                 );
 
-                client.send_privmsg(channel, formatted(&output))?;
+                client.send_privmsg(channel, reply("OFN", &output))?;
             }
         }
 
@@ -432,7 +432,7 @@ impl Plugin<Context> for Ofn {
             Ok(opts) => opts,
             Err(err) => {
                 for line in err.to_string().lines().filter(|s| !s.is_empty()) {
-                    client.send_privmsg(channel, formatted(line))?;
+                    client.send_privmsg(channel, reply("OFN", line))?;
                 }
                 return Ok(());
             }
@@ -562,10 +562,6 @@ impl Resource {
     }
 }
 
-fn formatted(s: &str) -> String {
-    format!("\x0310>\x0f\x02 OFN\x02\x0310: {s}")
-}
-
 fn formatted_err(s: &str) -> String {
-    formatted(&format!("Error:\x0f {s}"))
+    reply("OFN", format!("Error:\x0f {s}"))
 }
