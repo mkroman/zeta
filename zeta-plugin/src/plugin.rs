@@ -208,6 +208,50 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
         Ok(())
     }
 
+    /// Called once while the bot is shutting down, after the plugin's message queue has been
+    /// drained and before its task is stopped.
+    ///
+    /// Shutdown begins when the host receives a `SIGTERM` (e.g. from a container orchestrator
+    /// deleting the pod) or `SIGINT` (e.g. `Ctrl-C`). Use this hook to flush state to durable
+    /// storage or to finish work that must not be cut short. The host enforces a shutdown grace
+    /// period, so the hook should not block indefinitely.
+    ///
+    /// The default implementation does nothing.
+    ///
+    ///# Examples
+    ///
+    /// ```
+    /// use irc::client::Client;
+    /// use zeta_plugin::{Error, Prefix, prelude::*};
+    ///
+    /// struct FlushPlugin;
+    ///
+    /// impl PluginName for FlushPlugin {
+    ///     const NAME: &'static str = "flush";
+    /// }
+    ///
+    ///#[async_trait]
+    /// impl Plugin for FlushPlugin {
+    ///     type Settings = NoSettings;
+    ///
+    ///     fn new(_: &(), _: &NoSettings) -> Result<Self, Error> {
+    ///         Ok(FlushPlugin)
+    ///     }
+    ///
+    ///     async fn shutdown(&mut self, _: &(), _client: &Client) -> Result<(), Error> {
+    ///         // Flush any pending state to durable storage here.
+    ///         Ok(())
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if flushing failed; the error is logged and the shutdown continues.
+    async fn shutdown(&mut self, _ctx: &C, _client: &Client) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Dispatches `message` to [`Plugin::handle_command`] if it matches one of
     /// [`Plugin::commands`].
     ///
