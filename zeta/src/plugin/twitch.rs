@@ -8,7 +8,7 @@ use url::Url;
 use crate::{
     http,
     oauth::{TokenCache, TokenResponse},
-    plugin::{self, prelude::*},
+    plugin::prelude::*,
 };
 
 /// Twitch OAuth2 token endpoint.
@@ -134,29 +134,23 @@ impl Plugin<Context> for Twitch {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
+        let Command::PRIVMSG(channel, _) = &message.command else {
+            return Ok(());
+        };
+
+        for url in FilteredUrls::from_message(ctx, message)
+            .into_iter()
+            .flatten()
         {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
+            if let Some(kind) = Self::parse_url(&url) {
+                let result = match kind {
+                    UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
+                    UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
+                    UrlKind::Video(id) => self.handle_video(channel, &id, client).await,
+                };
 
-            for url in urls {
-                if filters.is_filtered(channel, sender, &url) {
-                    debug!(%url, "skipping filtered url");
-
-                    continue;
-                }
-
-                if let Some(kind) = Self::parse_url(&url) {
-                    let result = match kind {
-                        UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
-                        UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
-                        UrlKind::Video(id) => self.handle_video(channel, &id, client).await,
-                    };
-
-                    if let Err(e) = result {
-                        warn!("Twitch plugin error: {}", e);
-                    }
+                if let Err(e) = result {
+                    warn!("Twitch plugin error: {}", e);
                 }
             }
         }

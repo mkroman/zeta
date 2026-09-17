@@ -15,7 +15,7 @@ use url::Url;
 
 use crate::{
     mirror::{Mirror, MirrorTarget},
-    plugin::{self, prelude::*},
+    plugin::prelude::*,
     utils::Truncatable,
 };
 
@@ -125,15 +125,9 @@ impl Plugin<Context> for Reddit {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
-        {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-            let urls: Vec<_> = urls
-                .into_iter()
-                .filter(|url| !filters.is_filtered(channel, sender, url))
-                .collect();
+        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
+            let channel = urls.channel();
+            let urls: Vec<_> = urls.collect();
 
             let _ = self
                 .process_urls(&urls, channel, client)

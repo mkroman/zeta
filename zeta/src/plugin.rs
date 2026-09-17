@@ -37,7 +37,7 @@ mod prelude {
         Author, Context, Metadata, Name, Plugin, PluginCatalog, PluginInfo, SharedState,
     };
 
-    pub use super::filtering::{Filters, Sender};
+    pub use super::filtering::{FilteredUrls, Filters, Sender};
 }
 
 /// Declares plugin modules and generates a registry helper to avoid boilerplate.

@@ -9,10 +9,7 @@ use serde::Deserialize;
 use tracing::debug;
 use url::Url;
 
-use crate::{
-    http,
-    plugin::{self, prelude::*},
-};
+use crate::{http, plugin::prelude::*};
 
 /// The hostname for PornHub URLs.
 const PORNHUB_HOST: &str = "www.pornhub.com";
@@ -152,15 +149,9 @@ impl Plugin<Context> for PornHub {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
-        {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-            let urls: Vec<_> = urls
-                .into_iter()
-                .filter(|url| !filters.is_filtered(channel, sender, url))
-                .collect();
+        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
+            let channel = urls.channel();
+            let urls: Vec<_> = urls.collect();
 
             let _ = self.process_urls(urls, channel, client).await;
         }

@@ -6,8 +6,9 @@
 //! `plugin-filter` feature themselves: with the feature disabled, [`Filters`] simply never
 //! matches.
 
-use irc::proto::Message;
 use irc::proto::Prefix as IrcPrefix;
+use irc::proto::{Command, Message};
+use tracing::debug;
 use url::Url;
 
 use super::Context;
@@ -83,5 +84,63 @@ impl Filters {
         let _ = (channel, sender, url);
 
         false
+    }
+}
+
+/// The URLs of a `PRIVMSG` that survive the shared filters.
+///
+/// Obtained from a message with [`FilteredUrls::from_message`]; iterating yields each extracted
+/// URL that no filter matches, in the order they appear in the message.
+pub struct FilteredUrls<'a> {
+    channel: &'a str,
+    filters: Filters,
+    sender: Option<Sender<'a>>,
+    urls: std::vec::IntoIter<Url>,
+}
+
+impl<'a> FilteredUrls<'a> {
+    /// Extracts the filtered URLs of a `PRIVMSG`.
+    ///
+    /// Returns [`None`] for non-`PRIVMSG` messages and messages without any URLs.
+    #[must_use]
+    pub fn from_message(ctx: &Context, message: &'a Message) -> Option<Self> {
+        let Command::PRIVMSG(channel, text) = &message.command else {
+            return None;
+        };
+
+        let urls = super::extract_urls(text)?;
+        let filters = Filters::from_context(ctx);
+        let sender = Sender::from_message(message);
+
+        Some(Self {
+            channel,
+            filters,
+            sender,
+            urls: urls.into_iter(),
+        })
+    }
+
+    /// Returns the channel the message was posted in.
+    #[must_use]
+    pub const fn channel(&self) -> &'a str {
+        self.channel
+    }
+}
+
+impl Iterator for FilteredUrls<'_> {
+    type Item = Url;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        for url in self.urls.by_ref() {
+            if self.filters.is_filtered(self.channel, self.sender, &url) {
+                debug!(%url, "skipping filtered url");
+
+                continue;
+            }
+
+            return Some(url);
+        }
+
+        None
     }
 }

@@ -12,10 +12,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{
-    http,
-    plugin::{self, prelude::*},
-};
+use crate::{http, plugin::prelude::*};
 
 const API_BASE_URL: &str = "https://api.thingiverse.com";
 
@@ -104,24 +101,18 @@ impl Plugin<Context> for Thingiverse {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
+        let Command::PRIVMSG(channel, _) = &message.command else {
+            return Ok(());
+        };
+
+        for url in FilteredUrls::from_message(ctx, message)
+            .into_iter()
+            .flatten()
         {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-
-            for url in urls {
-                if filters.is_filtered(channel, sender, &url) {
-                    debug!(%url, "skipping filtered url");
-
-                    continue;
-                }
-
-                if let Some(host) = url.host_str()
-                    && (host == "thingiverse.com" || host == "www.thingiverse.com")
-                {
-                    self.process_url(&url, channel, client).await?;
-                }
+            if let Some(host) = url.host_str()
+                && (host == "thingiverse.com" || host == "www.thingiverse.com")
+            {
+                self.process_url(&url, channel, client).await?;
             }
         }
 

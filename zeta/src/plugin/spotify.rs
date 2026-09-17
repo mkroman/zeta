@@ -11,7 +11,7 @@ use url::Url;
 use crate::{
     http,
     oauth::{TokenCache, TokenResponse},
-    plugin::{self, prelude::*},
+    plugin::prelude::*,
 };
 
 const AUTH_URL: &str = "https://accounts.spotify.com/api/token";
@@ -145,37 +145,31 @@ impl Plugin<Context> for Spotify {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
+        let Command::PRIVMSG(channel, user_message) = &message.command else {
+            return Ok(());
+        };
 
-            // 1. Handle Spotify URIs (spotify:type:id)
-            for cap in self.uri_regex.captures_iter(user_message) {
-                let type_str = &cap["type"];
-                let id_str = &cap["id"];
-                // Include external URL for URI matches
-                self.handle_spotify_resource(channel, type_str, id_str, true, client)
+        // 1. Handle Spotify URIs (spotify:type:id)
+        for cap in self.uri_regex.captures_iter(user_message) {
+            let type_str = &cap["type"];
+            let id_str = &cap["id"];
+            // Include external URL for URI matches
+            self.handle_spotify_resource(channel, type_str, id_str, true, client)
+                .await?;
+        }
+
+        // 2. Handle Spotify URLs (open.spotify.com/type/id)
+        for url in FilteredUrls::from_message(ctx, message)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(host) = url.host_str()
+                && (host == "open.spotify.com" || host == "play.spotify.com")
+                && let Some((type_str, id_str)) = parse_spotify_url(&url)
+            {
+                // Do not include external URL for link matches (avoid redundancy)
+                self.handle_spotify_resource(channel, type_str, id_str, false, client)
                     .await?;
-            }
-
-            // 2. Handle Spotify URLs (open.spotify.com/type/id)
-            if let Some(urls) = plugin::extract_urls(user_message) {
-                for url in urls {
-                    if filters.is_filtered(channel, sender, &url) {
-                        debug!(%url, "skipping filtered url");
-
-                        continue;
-                    }
-
-                    if let Some(host) = url.host_str()
-                        && (host == "open.spotify.com" || host == "play.spotify.com")
-                        && let Some((type_str, id_str)) = parse_spotify_url(&url)
-                    {
-                        // Do not include external URL for link matches (avoid redundancy)
-                        self.handle_spotify_resource(channel, type_str, id_str, false, client)
-                            .await?;
-                    }
-                }
             }
         }
 

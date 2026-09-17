@@ -8,11 +8,7 @@ use serde::Deserialize;
 use tracing::debug;
 use url::Url;
 
-use crate::{
-    config::HttpConfig,
-    http,
-    plugin::{self, prelude::*},
-};
+use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 /// The hostname for Chaturbate URLs.
 const CHATURBATE_HOST: &str = "chaturbate.com";
@@ -79,11 +75,7 @@ impl Plugin<Context> for Chaturbate {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        let filters = Filters::from_context(ctx);
-        let sender = Sender::from_message(message);
-
-        self.handle_command_logic(client, message, &filters, sender)
-            .await?;
+        self.handle_command_logic(ctx, client, message).await?;
         Ok(())
     }
 }
@@ -91,21 +83,14 @@ impl Plugin<Context> for Chaturbate {
 impl Chaturbate {
     async fn handle_command_logic(
         &self,
+        ctx: &Context,
         client: &Client,
         message: &Message,
-        filters: &Filters,
-        sender: Option<Sender<'_>>,
     ) -> Result<(), Error> {
-        if let Command::PRIVMSG(ref channel, ref user_message) = message.command
-            && let Some(urls) = plugin::extract_urls(user_message)
-        {
+        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
+            let channel = urls.channel();
+
             for url in urls {
-                if filters.is_filtered(channel, sender, &url) {
-                    debug!(%url, "skipping filtered url");
-
-                    continue;
-                }
-
                 if let Some(username) = extract_username(&url) {
                     debug!(%username, "processing chaturbate url");
                     if let Err(e) = self.process_broadcaster(&username, channel, client).await {

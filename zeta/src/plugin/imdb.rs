@@ -10,7 +10,7 @@ use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::plugin::{self, prelude::*};
+use crate::plugin::prelude::*;
 
 mod client;
 mod error;
@@ -127,18 +127,16 @@ impl Plugin<Context> for Imdb {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(ref channel, ref user_message) = message.command else {
+        let Command::PRIVMSG(channel, _) = &message.command else {
             return Ok(());
         };
 
-        if let Some(urls) = plugin::extract_urls(user_message) {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-
-            self.process_urls(&urls, channel, client, &filters, sender)
-                .await?;
-        } else {
-            self.dispatch_command(ctx, client, message).await?;
+        match FilteredUrls::from_message(ctx, message) {
+            Some(urls) => {
+                let urls: Vec<_> = urls.collect();
+                self.process_urls(&urls, channel, client).await?;
+            }
+            None => self.dispatch_command(ctx, client, message).await?,
         }
 
         Ok(())
@@ -209,16 +207,8 @@ impl Imdb {
         urls: &[Url],
         channel: &str,
         client: &Client,
-        filters: &Filters,
-        sender: Option<Sender<'_>>,
     ) -> Result<(), ZetaError> {
         for url in urls {
-            if filters.is_filtered(channel, sender, url) {
-                debug!(%url, "skipping filtered url");
-
-                continue;
-            }
-
             match classify_imdb_url(url) {
                 Some(Link::Title(id)) => {
                     debug!(%id, "fetching details for posted title link");

@@ -15,7 +15,7 @@ use crate::{
     config::HttpConfig,
     duration::{format_duration, parse_iso8601_duration},
     http,
-    plugin::{self, prelude::*},
+    plugin::prelude::*,
 };
 
 /// YouTube Data API v3 base endpoint URL.
@@ -297,21 +297,13 @@ impl Plugin<Context> for YouTube {
         client: &Client,
         message: &Message,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(ref channel, ref user_message) = message.command else {
+        let Command::PRIVMSG(channel, _) = &message.command else {
             return Ok(());
         };
 
-        if let Some(urls) = plugin::extract_urls(user_message) {
-            let filters = Filters::from_context(ctx);
-            let sender = Sender::from_message(message);
-            let urls: Vec<_> = urls
-                .into_iter()
-                .filter(|url| !filters.is_filtered(channel, sender, url))
-                .collect();
-
-            self.process_urls(urls, channel, client).await?;
-        } else {
-            self.dispatch_command(ctx, client, message).await?;
+        match FilteredUrls::from_message(ctx, message) {
+            Some(urls) => self.process_urls(urls.collect(), channel, client).await?,
+            None => self.dispatch_command(ctx, client, message).await?,
         }
 
         Ok(())
