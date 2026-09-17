@@ -13,6 +13,8 @@ pub mod context;
 pub mod database;
 /// DNS resolution
 pub mod dns;
+/// Duration formatting and parsing utilities
+mod duration;
 mod error;
 #[cfg(feature = "http")]
 mod http;

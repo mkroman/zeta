@@ -11,7 +11,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
-use crate::{http, plugin::prelude::*};
+use crate::{
+    duration::{words, HOURS_AND_MINUTES},
+    http,
+    plugin::prelude::*,
+};
 
 const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
@@ -388,22 +392,34 @@ fn format_game(game: &Game) -> String {
     )
 }
 
-/// Converts a duration in seconds into a human-readable hours and minutes string.
+/// Converts a duration in seconds into words, e.g. `"2 hours and 3 minutes"`.
 fn format_seconds(seconds: u32) -> String {
     if seconds == 0 {
         return "--".to_string();
     }
 
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
+    words(i64::from(seconds), HOURS_AND_MINUTES)
+}
 
-    if hours > 0 {
-        if minutes > 0 {
-            format!("{hours} hours {minutes} mins")
-        } else {
-            format!("{hours} hours")
-        }
-    } else {
-        format!("{minutes} mins")
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_missing_completion_times_as_placeholder() {
+        assert_eq!(format_seconds(0), "--");
+    }
+
+    #[test]
+    fn formats_minutes() {
+        assert_eq!(format_seconds(30), "0 minutes");
+        assert_eq!(format_seconds(45 * 60), "45 minutes");
+    }
+
+    #[test]
+    fn formats_hours_and_minutes() {
+        assert_eq!(format_seconds(3600), "1 hour");
+        assert_eq!(format_seconds(2 * 3600 + 3 * 60), "2 hours and 3 minutes");
+        assert_eq!(format_seconds(100 * 3600), "100 hours");
     }
 }

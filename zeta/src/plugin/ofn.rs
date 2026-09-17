@@ -13,13 +13,13 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::{
+    duration::TimeInWords,
     plugin::{
         ofn::model::{InsertYouTubeRecord, YouTubeRecord},
         prelude::*,
         youtube::{self, UrlKind},
     },
     url::ExtractUrlsExt,
-    utils::TimeInWords,
 };
 use model::{InsertUrlRecord, UrlRecord};
 

@@ -8,7 +8,7 @@ use reqwest::{Response, StatusCode, Url};
 use serde::{Deserialize, de::DeserializeOwned};
 use tracing::{debug, error, instrument};
 
-use crate::{config::HttpConfig, http, plugin::prelude::*, utils::TimeInWords};
+use crate::{config::HttpConfig, duration::TimeInWords, http, plugin::prelude::*};
 
 /// Base URL for the TVmaze API.
 pub const API_BASE_URL: &str = "https://api.tvmaze.com";
