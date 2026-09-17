@@ -799,7 +799,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Music", 123_456),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f 1h2m20s\x0310 Music\x0310 video by\x0f Test Channel\x0310 with\x0f 123,456\x0310 views",
+            "\x0310> “\x0fTest Video\x0310” is a\x0f 1h 2m 20s\x0310 Music\x0310 video by\x0f Test Channel\x0310 with\x0f 123,456\x0310 views",
         );
     }
 

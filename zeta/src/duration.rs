@@ -178,7 +178,7 @@ pub fn parse_iso8601_duration(input: &str) -> Option<Duration> {
     Some(total)
 }
 
-/// Formats a [`Duration`] compactly, e.g. `1h2m20s`, skipping components of zero.
+/// Formats a [`Duration`] compactly, e.g. `1h 2m 20s`, skipping components of zero.
 pub fn format_duration(duration: Duration) -> String {
     // Seconds per day, hour, minute, and second, in descending order.
     const UNITS: &[(u64, &str)] = &[(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")];
@@ -191,6 +191,10 @@ pub fn format_duration(duration: Duration) -> String {
         remainder %= unit_seconds;
 
         if count > 0 {
+            if !formatted.is_empty() {
+                formatted.push(' ');
+            }
+
             let _ = write!(formatted, "{count}{suffix}");
         }
     }
@@ -372,17 +376,17 @@ mod format_duration_tests {
     fn formats_durations_compactly() {
         assert_eq!(
             format_duration(Duration::from_secs(DAY + 2 * HOUR + 20 * MINUTE + 5)),
-            "1d2h20m5s",
+            "1d 2h 20m 5s",
         );
         assert_eq!(
             format_duration(Duration::from_secs(HOUR + 2 * MINUTE + 20)),
-            "1h2m20s",
+            "1h 2m 20s",
         );
         assert_eq!(format_duration(Duration::from_secs(45)), "45s");
         assert_eq!(format_duration(Duration::from_secs(DAY)), "1d");
-        assert_eq!(format_duration(Duration::from_secs(DAY + HOUR)), "1d1h");
+        assert_eq!(format_duration(Duration::from_secs(DAY + HOUR)), "1d 1h");
         assert_eq!(format_duration(Duration::from_secs(MINUTE)), "1m");
-        assert_eq!(format_duration(Duration::from_secs(MINUTE + 1)), "1m1s");
+        assert_eq!(format_duration(Duration::from_secs(MINUTE + 1)), "1m 1s");
         assert_eq!(format_duration(Duration::ZERO), "0s");
     }
 }
