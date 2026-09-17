@@ -13,6 +13,7 @@ use url::Url;
 
 use crate::{
     config::HttpConfig,
+    duration::{format_duration, parse_iso8601_duration},
     http,
     plugin::{self, prelude::*},
 };
@@ -88,7 +89,7 @@ fn default_region_code() -> String {
 /// IRC bot plugin for YouTube URL detection and metadata retrieval.
 ///
 /// This plugin monitors IRC messages for YouTube URLs and automatically responds
-/// with video metadata including title, category, channel name, and view count.
+/// with video metadata including title, duration, channel name, and view count.
 /// It maintains a cache of YouTube video categories to reduce API calls and
 /// uses async/await for non-blocking operation.
 ///
@@ -150,6 +151,7 @@ pub struct Snippet {
     pub description: String,
     pub channel_title: String,
     pub category_id: String,
+    pub live_broadcast_content: String,
 }
 
 /// Statistics about a video.
@@ -158,6 +160,23 @@ pub struct Snippet {
 #[allow(unused)]
 pub struct Statistics {
     pub view_count: String,
+}
+
+/// Details about the content of a video, such as its duration.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+pub struct ContentDetails {
+    pub duration: String,
+}
+
+/// Details about a live stream.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+pub struct LiveStreamingDetails {
+    /// The number of concurrent viewers, present while the stream is live.
+    pub concurrent_viewers: Option<String>,
 }
 
 /// A YouTube video.
@@ -170,6 +189,8 @@ pub struct Video {
     pub id: String,
     pub snippet: Option<Snippet>,
     pub statistics: Option<Statistics>,
+    pub content_details: Option<ContentDetails>,
+    pub live_streaming_details: Option<LiveStreamingDetails>,
 }
 
 /// Search Result.
@@ -367,8 +388,6 @@ impl YouTube {
                 match self.get_video(&video_id).await {
                     Ok(video) => {
                         let snippet = video.snippet.as_ref();
-                        let statistics = video.statistics.as_ref();
-                        let title = snippet.map_or_else(|| "‽".to_string(), |s| s.title.clone());
                         let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
                         let categories = self.cached_video_categories().await.unwrap();
                         // TODO: use indefinite form: https://crates.io/crates/indefinite
@@ -376,17 +395,15 @@ impl YouTube {
                             || "unknown category".to_string(),
                             |s| s.snippet.title.clone(),
                         );
-                        let channel_name = snippet.map_or_else(
-                            || "unknown channel".to_string(),
-                            |s| s.channel_title.clone(),
-                        );
-                        let view_count = statistics
+                        let view_count = video
+                            .statistics
+                            .as_ref()
                             .and_then(|s| str::parse::<u64>(&s.view_count).ok())
                             .unwrap_or(0);
-                        let view_count_formatted = view_count.to_formatted_string(&Locale::en);
 
-                        client
-                        .send_privmsg(channel, format!("\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 video by\x0f {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views"))?;
+                        let message =
+                            format_video_message(&video, &category, view_count);
+                        client.send_privmsg(channel, message)?;
                     }
                     Err(e) => {
                         client.send_privmsg(channel, format!("Error: {e}"))?;
@@ -503,7 +520,7 @@ impl YouTube {
         let params = [
             ("id", video_id),
             ("key", &self.api_key),
-            ("part", "snippet,statistics,liveStreamingDetails"),
+            ("part", "snippet,statistics,contentDetails,liveStreamingDetails"),
         ];
         let request = self.client.get(format!("{BASE_URL}/videos")).query(&params);
         let response = request
@@ -520,6 +537,53 @@ impl YouTube {
 
         Err(Error::NoResults)
     }
+}
+
+/// Formats the message describing `video`, using the resolved `category` and `view_count`.
+///
+/// Live and upcoming streams are described as live streams along with their category and
+/// current number of concurrent viewers (falling back to the total view count when
+/// unavailable), while regular videos include only their duration.
+fn format_video_message(video: &Video, category: &str, view_count: u64) -> String {
+    let snippet = video.snippet.as_ref();
+    let title = snippet.map_or("‽", |s| s.title.as_str());
+    let channel_name = snippet.map_or("unknown channel", |s| s.channel_title.as_str());
+    let view_count_formatted = view_count.to_formatted_string(&Locale::en);
+
+    let is_live_stream = snippet
+        .is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
+
+    if is_live_stream {
+        let concurrent_viewers = video
+            .live_streaming_details
+            .as_ref()
+            .and_then(|details| details.concurrent_viewers.as_deref())
+            .and_then(|viewers| viewers.parse::<u64>().ok());
+
+        if let Some(viewers) = concurrent_viewers {
+            return format!(
+                "\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
+                 {channel_name}\x0310 with\x0f {}\x0310 viewers",
+                viewers.to_formatted_string(&Locale::en),
+            );
+        }
+
+        return format!(
+            "\x0310> “\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
+             {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
+        );
+    }
+
+    let duration = video
+        .content_details
+        .as_ref()
+        .and_then(|details| parse_iso8601_duration(&details.duration))
+        .map_or_else(|| "unknown duration".to_string(), format_duration);
+
+    format!(
+        "\x0310> “\x0f{title}\x0310” is a\x0f {duration}\x0310 video by\x0f \
+         {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
+    )
 }
 
 /// Extracts a query parameter value from a URL
@@ -700,5 +764,72 @@ mod tests {
 
             assert_eq!(parse_youtube_url(&url), expected);
         }
+    }
+
+    /// Returns a video with the given live status, duration, and concurrent viewer count.
+    fn test_video(
+        live_broadcast_content: &str,
+        duration: Option<&str>,
+        concurrent_viewers: Option<&str>,
+    ) -> Video {
+        Video {
+            kind: "youtube#video".to_string(),
+            etag: String::new(),
+            id: "dQw4w9WgXcQ".to_string(),
+            snippet: Some(Snippet {
+                title: "Test Video".to_string(),
+                description: String::new(),
+                channel_title: "Test Channel".to_string(),
+                category_id: "10".to_string(),
+                live_broadcast_content: live_broadcast_content.to_string(),
+            }),
+            statistics: None,
+            content_details: duration.map(|duration| ContentDetails {
+                duration: duration.to_string(),
+            }),
+            live_streaming_details: concurrent_viewers.map(|viewers| LiveStreamingDetails {
+                concurrent_viewers: Some(viewers.to_string()),
+            }),
+        }
+    }
+
+    #[test]
+    fn formats_video_message() {
+        let video = test_video("none", Some("PT1H2M20S"), None);
+
+        assert_eq!(
+            format_video_message(&video, "Music", 123_456),
+            "\x0310> “\x0fTest Video\x0310” is a\x0f 1h 2m 20s\x0310 video by\x0f Test Channel\x0310 with\x0f 123,456\x0310 views",
+        );
+    }
+
+    #[test]
+    fn formats_video_message_with_unknown_duration() {
+        let video = test_video("none", None, None);
+
+        assert_eq!(
+            format_video_message(&video, "Music", 1),
+            "\x0310> “\x0fTest Video\x0310” is a\x0f unknown duration\x0310 video by\x0f Test Channel\x0310 with\x0f 1\x0310 views",
+        );
+    }
+
+    #[test]
+    fn formats_live_stream_message() {
+        let video = test_video("live", None, Some("1234"));
+
+        assert_eq!(
+            format_video_message(&video, "Music", 42),
+            "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
+        );
+    }
+
+    #[test]
+    fn formats_upcoming_stream_message_with_total_views() {
+        let video = test_video("upcoming", None, None);
+
+        assert_eq!(
+            format_video_message(&video, "Music", 42),
+            "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 42\x0310 views",
+        );
     }
 }
