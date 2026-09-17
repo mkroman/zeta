@@ -1,17 +1,16 @@
 use std::fmt::Write;
-use std::time::{Duration, Instant};
 
 use base64::prelude::*;
 use num_format::{Locale, ToFormattedString};
 use regex::Regex;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
     http,
+    oauth::{TokenCache, TokenResponse},
     plugin::{self, prelude::*},
 };
 
@@ -39,14 +38,8 @@ pub struct Spotify {
     client: reqwest::Client,
     client_id: String,
     client_secret: String,
-    token: RwLock<Option<Token>>,
+    token: TokenCache,
     uri_regex: Regex,
-}
-
-#[derive(Clone, Debug)]
-struct Token {
-    access_token: String,
-    expires_at: Instant,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -57,12 +50,6 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("api error: {0}")]
     Api(String),
-}
-
-#[derive(Deserialize)]
-struct AuthResponse {
-    access_token: String,
-    expires_in: u64,
 }
 
 #[derive(Deserialize)]
@@ -143,7 +130,7 @@ impl Plugin<Context> for Spotify {
             client,
             client_id,
             client_secret,
-            token: RwLock::new(None),
+            token: TokenCache::new(),
             uri_regex,
         })
     }
@@ -206,34 +193,24 @@ impl Plugin<Context> for Spotify {
 impl Spotify {
     /// Authenticates with Spotify using Client Credentials Flow.
     async fn get_token(&self) -> Result<String, Error> {
-        // Check cache
-        if let Some(token) = self.token.read().await.as_ref()
-            && token.expires_at > Instant::now() + Duration::from_mins(1)
-        {
-            return Ok(token.access_token.clone());
-        }
+        self.token
+            .get(|| async {
+                debug!("refreshing spotify token");
+                let creds = format!("{}:{}", self.client_id, self.client_secret);
+                let encoded = BASE64_STANDARD.encode(creds);
 
-        debug!("refreshing spotify token");
-        let creds = format!("{}:{}", self.client_id, self.client_secret);
-        let encoded = BASE64_STANDARD.encode(creds);
-        let response = self
-            .client
-            .post(AUTH_URL)
-            .header(AUTHORIZATION, format!("Basic {encoded}"))
-            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .form(&[("grant_type", "client_credentials")])
-            .send()
-            .await?;
-
-        let auth: AuthResponse = response.json().await?;
-        let token = Token {
-            access_token: auth.access_token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(auth.expires_in),
-        };
-
-        *self.token.write().await = Some(token);
-
-        Ok(auth.access_token)
+                self.client
+                    .post(AUTH_URL)
+                    .header(AUTHORIZATION, format!("Basic {encoded}"))
+                    .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .form(&[("grant_type", "client_credentials")])
+                    .send()
+                    .await?
+                    .json::<TokenResponse>()
+                    .await
+                    .map_err(Error::from)
+            })
+            .await
     }
 
     async fn handle_spotify_resource(

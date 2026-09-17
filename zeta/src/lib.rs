@@ -21,6 +21,9 @@ mod http;
 /// Shared media mirroring
 #[cfg(feature = "mirror")]
 pub mod mirror;
+/// OAuth2 client-credentials token caching
+#[cfg(feature = "http")]
+pub mod oauth;
 mod plugin;
 /// URL helper utillities
 pub mod url;

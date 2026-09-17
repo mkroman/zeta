@@ -1,15 +1,13 @@
 #![allow(clippy::doc_markdown)]
 
-use std::time::{Duration, Instant};
-
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
     http,
+    oauth::{TokenCache, TokenResponse},
     plugin::{self, prelude::*},
 };
 
@@ -45,17 +43,8 @@ pub struct Twitch {
     client_id: String,
     /// Twitch application client secret.
     client_secret: String,
-    /// Cached access token.
-    token: RwLock<Option<Token>>,
-}
-
-/// A Twitch OAuth2 access token.
-#[derive(Clone, Debug)]
-struct Token {
-    /// The access token string.
-    access_token: String,
-    /// The time at which the token expires.
-    expires_at: Instant,
+    /// Cached OAuth2 access token.
+    token: TokenCache,
 }
 
 /// Errors that can occur during Twitch plugin execution.
@@ -67,13 +56,6 @@ pub enum Error {
     Api(String),
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
-}
-
-/// Response from the Twitch OAuth2 token endpoint.
-#[derive(Deserialize)]
-struct AuthResponse {
-    access_token: String,
-    expires_in: u64,
 }
 
 /// Generic response wrapper for Twitch Helix API endpoints.
@@ -138,7 +120,7 @@ impl Plugin<Context> for Twitch {
             client,
             client_id,
             client_secret,
-            token: RwLock::new(None),
+            token: TokenCache::new(),
         })
     }
 
@@ -195,32 +177,21 @@ impl Twitch {
     ///
     /// Returns a valid access token, refreshing it if necessary.
     async fn get_token(&self) -> Result<String, Error> {
-        // Check if we have a valid cached token.
-        if let Some(token) = self.token.read().await.as_ref() {
-            // Add a 60 second buffer to the expiration time check.
-            if token.expires_at > Instant::now() + Duration::from_mins(1) {
-                return Ok(token.access_token.clone());
-            }
-        }
+        self.token
+            .get(|| async {
+                debug!("refreshing twitch access token");
+                let params = [
+                    ("client_id", self.client_id.as_str()),
+                    ("client_secret", self.client_secret.as_str()),
+                    ("grant_type", "client_credentials"),
+                ];
 
-        debug!("refreshing twitch access token");
-        let params = [
-            ("client_id", self.client_id.as_str()),
-            ("client_secret", self.client_secret.as_str()),
-            ("grant_type", "client_credentials"),
-        ];
+                let response = self.client.post(AUTH_URL).form(&params).send().await?;
+                let auth: TokenResponse = response.error_for_status()?.json().await?;
 
-        let response = self.client.post(AUTH_URL).form(&params).send().await?;
-        let auth: AuthResponse = response.error_for_status()?.json().await?;
-
-        let token = Token {
-            access_token: auth.access_token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(auth.expires_in),
-        };
-
-        *self.token.write().await = Some(token);
-
-        Ok(auth.access_token)
+                Ok(auth)
+            })
+            .await
     }
 
     /// Helper to make authenticated GET requests to the Helix API.
