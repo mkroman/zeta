@@ -98,13 +98,6 @@ impl Plugin<Context> for Reddit {
         Ok(Reddit { client, mirror })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "reddit".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
         &[
             "i.redd.it",

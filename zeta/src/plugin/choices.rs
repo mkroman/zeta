@@ -48,13 +48,6 @@ impl Plugin<Context> for Choices {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "choices".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     async fn handle_message(
         &self,
         _ctx: &Context,

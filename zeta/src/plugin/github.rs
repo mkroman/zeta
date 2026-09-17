@@ -92,16 +92,7 @@ impl Plugin<Context> for GitHubPlugin {
         Ok(plugin)
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "github".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

@@ -64,6 +64,15 @@ macro_rules! declare_plugins {
             pub mod $mod_name;
         )*
 
+        // The plugin name is the module name, shared by [`Plugin::metadata`]'s default
+        // implementation.
+        $(
+            #[cfg(feature = $feature)]
+            impl zeta_plugin::PluginName for $mod_name::$struct_name {
+                const NAME: &'static str = stringify!($mod_name);
+            }
+        )*
+
         /// Typed, per-plugin configuration extracted from the `[plugins]` section.
         ///
         /// Each plugin has its own section keyed by its module name, e.g. `[plugins.dig]`.

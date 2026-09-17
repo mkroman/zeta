@@ -409,16 +409,7 @@ impl Plugin<Context> for Ofn {
         Ok(Self::new())
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "ofn".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

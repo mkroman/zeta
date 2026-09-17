@@ -285,20 +285,11 @@ impl Plugin<Context> for YouTube {
         Ok(YouTube::with_config(settings, api_key, &ctx.config.http))
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "youtube".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
         &["youtu.be", "youtube.com", "www.youtube.com"]
     }
 
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_message(
         &self,

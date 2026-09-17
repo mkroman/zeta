@@ -103,16 +103,7 @@ impl Plugin<Context> for DenDanskeOrdbog {
         Ok(DenDanskeOrdbog::new(&ctx.config.http, settings.clone()))
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "dendanskeordbog".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

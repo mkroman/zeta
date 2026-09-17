@@ -141,13 +141,6 @@ impl Plugin<Context> for PornHub {
         Ok(PornHub { client })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "pornhub".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
         &["www.pornhub.com"]
     }

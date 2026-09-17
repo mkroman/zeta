@@ -36,16 +36,7 @@ impl Plugin<Context> for StringUtils {
         Ok(StringUtils::new())
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "string_utils".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

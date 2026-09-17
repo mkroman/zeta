@@ -94,13 +94,6 @@ impl Plugin<Context> for Thingiverse {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "thingiverse".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
         &["thingiverse.com", "www.thingiverse.com"]
     }

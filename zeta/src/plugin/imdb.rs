@@ -75,10 +75,8 @@ fn default_user_language() -> String {
 }
 
 /// The `!imdb` command.
-const COMMAND: PluginCommand = PluginCommand::with_args::<Opts>(
-    Prefix::new("!imdb"),
-    "Search IMDb and post the top match",
-);
+const COMMAND: PluginCommand =
+    PluginCommand::with_args::<Opts>(Prefix::new("!imdb"), "Search IMDb and post the top match");
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[COMMAND];
@@ -117,16 +115,7 @@ impl Plugin<Context> for Imdb {
         Ok(Imdb { client })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "imdb".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     fn url_hosts(&self) -> &'static [&'static str] {
         &["imdb.com", "m.imdb.com", "www.imdb.com"]

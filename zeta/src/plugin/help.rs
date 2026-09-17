@@ -45,16 +45,7 @@ impl Plugin<Context> for Help {
         Ok(Help)
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "help".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

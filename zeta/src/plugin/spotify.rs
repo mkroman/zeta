@@ -135,13 +135,6 @@ impl Plugin<Context> for Spotify {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "spotify".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
         &["open.spotify.com", "play.spotify.com"]
     }

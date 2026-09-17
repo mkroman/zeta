@@ -124,13 +124,6 @@ impl Plugin<Context> for Twitch {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "twitch".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
         &["clips.twitch.tv", "twitch.tv", "www.twitch.tv"]
     }

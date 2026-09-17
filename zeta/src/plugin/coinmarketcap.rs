@@ -333,16 +333,7 @@ impl Plugin<Context> for CoinMarketCap {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "coinmarketcap".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.ensure_coins_cached().await;

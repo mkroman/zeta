@@ -140,16 +140,7 @@ impl Plugin<Context> for Tvmaze {
         Ok(Tvmaze::new(&ctx.config.http))
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "tvmaze".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

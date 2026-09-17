@@ -2024,16 +2024,7 @@ impl Plugin<Context> for Gay {
         Ok(Gay { engine })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "gay".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

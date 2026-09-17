@@ -475,13 +475,6 @@ impl Plugin<Context> for Titles {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "titles".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     async fn handle_message(
         &self,
         ctx: &Context,

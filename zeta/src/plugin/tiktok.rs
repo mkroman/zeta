@@ -104,13 +104,6 @@ impl Plugin<Context> for Tiktok {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "tiktok".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
         &["tiktok.com", "vm.tiktok.com", "www.tiktok.com"]
     }

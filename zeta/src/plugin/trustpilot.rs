@@ -118,16 +118,7 @@ impl Plugin<Context> for Trustpilot {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "trustpilot".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

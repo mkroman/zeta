@@ -69,13 +69,6 @@ impl Plugin<Context> for Chaturbate {
         Ok(Self::new(&ctx.config.http))
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "chaturbate".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
     fn url_hosts(&self) -> &'static [&'static str] {
         &["chaturbate.com", "www.chaturbate.com"]
     }

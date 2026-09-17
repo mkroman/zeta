@@ -223,16 +223,7 @@ impl Plugin<Context> for HowLongToBeat {
         })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "hltb".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

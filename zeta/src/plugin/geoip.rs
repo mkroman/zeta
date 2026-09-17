@@ -106,16 +106,7 @@ impl Plugin<Context> for GeoIp {
         Ok(GeoIp { client, api_key })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "geoip".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,

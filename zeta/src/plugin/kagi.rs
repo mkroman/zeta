@@ -77,16 +77,7 @@ impl Plugin<Context> for KagiPlugin {
         Ok(KagiPlugin { client })
     }
 
-    fn metadata() -> Metadata {
-        Metadata {
-            name: "kagi".into(),
-            authors: vec!["Mikkel Kroman <mk@maero.dk>".into()],
-        }
-    }
-
-    fn commands(&self) -> &'static [PluginCommand] {
-        COMMANDS
-    }
+    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
