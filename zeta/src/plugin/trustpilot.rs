@@ -98,6 +98,9 @@ pub enum Error {
     /// An error occurred while performing the HTTP request.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The API returned an error, e.g. a non-success status or an unparseable body.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     /// The requested business was not found.
     #[error("business not found")]
     NotFound,
@@ -160,7 +163,8 @@ impl Trustpilot {
     ///
     /// # Errors
     ///
-    /// Returns `Error::NotFound` if the API returns a 404, or `Error::Request` for other HTTP errors.
+    /// Returns `Error::NotFound` if the API returns a 404, or another [`Error`] for other
+    /// failures.
     async fn search(&self, query: &str) -> Result<BusinessUnit, Error> {
         let url = format!("{API_BASE_URL}/business-units/find");
         let params = [("name", &query.to_string())];
@@ -175,14 +179,11 @@ impl Trustpilot {
             .send()
             .await?;
 
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(Error::NotFound);
+        match http::parse_response(response).await {
+            Ok(business) => Ok(business),
+            Err(http::ApiError::Status(reqwest::StatusCode::NOT_FOUND)) => Err(Error::NotFound),
+            Err(error) => Err(Error::from(error)),
         }
-
-        let response = response.error_for_status()?;
-        let business = response.json::<BusinessUnit>().await?;
-
-        Ok(business)
     }
 }
 

@@ -2,16 +2,16 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
 
 use crate::{
+    cache::TtlCache,
     config::HttpConfig,
     duration::{format_duration, parse_iso8601_duration},
     http,
@@ -118,10 +118,9 @@ pub struct YouTube {
     safe_search: SafeSearch,
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
-    /// Thread-safe cache of video categories mapped by category ID
-    video_categories: RwLock<Arc<HashMap<String, Category>>>,
-    /// Timestamp tracking when video categories were last fetched for cache invalidation
-    video_categories_updated_at: RwLock<Option<Instant>>,
+    /// Thread-safe cache of video categories mapped by category ID, refreshed after the cache
+    /// TTL expires.
+    video_categories: TtlCache<Arc<HashMap<String, Category>>>,
 }
 
 /// YouTube API and plugin-specific error types.
@@ -364,8 +363,7 @@ impl YouTube {
             region_code: settings.region_code.clone(),
             safe_search: settings.safe_search,
             client,
-            video_categories: RwLock::new(Arc::new(HashMap::new())),
-            video_categories_updated_at: RwLock::new(None),
+            video_categories: TtlCache::new(Duration::from_mins(30)),
         }
     }
 
@@ -442,32 +440,14 @@ impl YouTube {
     }
 
     async fn cached_video_categories(&self) -> Result<Arc<HashMap<String, Category>>, Error> {
-        let categories_updated_at = *self.video_categories_updated_at.read().await;
-        if let Some(instant) = categories_updated_at {
-            debug!("using cached video categories");
+        self.video_categories
+            .get_or_refresh(|| async {
+                debug!("refreshing cached video categories");
+                let categories = self.video_categories().await?;
 
-            if instant.elapsed() < Duration::from_mins(30) {
-                let vc = self.video_categories.read().await;
-
-                return Ok(vc.clone());
-            }
-        }
-
-        debug!("refreshing cached video categories");
-        let new_categories = self.video_categories().await?;
-        let categories_arc = Arc::new(new_categories);
-
-        {
-            let mut categories_guard = self.video_categories.write().await;
-            *categories_guard = categories_arc.clone();
-        }
-        {
-            let mut updated_at_guard = self.video_categories_updated_at.write().await;
-            *updated_at_guard = Some(Instant::now());
-        }
-
-        let vc = self.video_categories.read().await;
-        Ok(vc.clone())
+                Ok(Arc::new(categories))
+            })
+            .await
     }
 
     /// Searches for videos using the given query.

@@ -35,6 +35,7 @@ use tracing::{debug, warn};
 use wildmatch::WildMatch;
 
 use crate::plugin::prelude::*;
+use crate::utils::append_entries_within_budget;
 
 /// The `.filter` command.
 const FILTER: PluginCommand = PluginCommand::with_args::<Opts>(
@@ -390,7 +391,7 @@ impl FilterPlugin {
                 format!("{} filters matching your criteria: ", filters.len()),
             );
 
-            append_entries(&mut listing, filters.iter().map(describe), "");
+            append_entries_within_budget(&mut listing, filters.iter().map(describe), ", ", MAX_LISTING_LENGTH, 0);
 
             listing
         };
@@ -455,11 +456,15 @@ impl FilterPlugin {
                 ),
             );
 
-            append_entries(
+            append_entries_within_budget(
                 &mut listing,
                 filters.iter().map(describe),
-                " - use --force to proceed.",
+                ", ",
+                MAX_LISTING_LENGTH,
+                " - use --force to proceed.".len(),
             );
+
+            listing.push_str(" - use --force to proceed.");
 
             client.send_privmsg(channel, listing)?;
 
@@ -537,9 +542,7 @@ impl Plugin<Context> for FilterPlugin {
         let opts = match FILTER.parse_words::<Opts>(args) {
             Ok(opts) => opts,
             Err(err) => {
-                for line in err.to_string().lines().filter(|line| !line.is_empty()) {
-                    client.send_privmsg(channel, reply("Filter", line))?;
-                }
+                reply_usage_lines(client, channel, &err, |line| reply("Filter", line))?;
 
                 return Ok(());
             }
@@ -551,40 +554,6 @@ impl Plugin<Context> for FilterPlugin {
             Subcommand::Delete(delete) => self.delete(client, channel, delete).await,
         }
     }
-}
-
-/// Appends `entries` to `message`, separated by `, `, as long as the listing — including
-/// `suffix` — stays within [`MAX_LISTING_LENGTH`]. The first entry is always included, so the
-/// count in the header is never misleading. Returns whether every entry was included.
-fn append_entries(
-    message: &mut String,
-    entries: impl Iterator<Item = String>,
-    suffix: &str,
-) -> bool {
-    let mut first = message.ends_with(' ');
-    let mut complete = true;
-
-    for entry in entries {
-        let separator = if first { "" } else { ", " };
-
-        if !first
-            && message.len() + separator.len() + entry.len() + suffix.len() > MAX_LISTING_LENGTH
-        {
-            complete = false;
-
-            break;
-        }
-
-        message.push_str(separator);
-        message.push_str(&entry);
-        first = false;
-    }
-
-    if !complete || !suffix.is_empty() {
-        message.push_str(suffix);
-    }
-
-    complete
 }
 
 /// Formats a filter for listings.
@@ -847,14 +816,15 @@ mod tests {
     fn listings_stay_within_the_budget() {
         let mut message = reply("Filter", "2 filters matching your criteria: ");
 
-        let complete = append_entries(
+        let complete = append_entries_within_budget(
             &mut message,
             [
                 format!("long entry {}", "x".repeat(180)),
                 format!("long entry {}", "y".repeat(180)),
-            ]
-            .into_iter(),
-            "",
+            ],
+            ", ",
+            MAX_LISTING_LENGTH,
+            0,
         );
 
         assert!(!complete);

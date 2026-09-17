@@ -49,10 +49,10 @@ pub struct Spotify {
 pub enum Error {
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("api error: {0}")]
-    Api(String),
 }
 
 #[derive(Deserialize)]
@@ -246,11 +246,7 @@ impl Spotify {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            return Err(Error::Api(format!("status: {}", response.status())));
-        }
-
-        Ok(response.json().await?)
+        http::parse_response(response).await.map_err(Error::from)
     }
 
     async fn send_track_details(
@@ -377,9 +373,8 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
     // Mimic Ruby behavior: simplistic error messages for common HTTP codes could be added here
     // For now, we generally don't spam the channel with errors unless it's critical,
     // but the Ruby plugin did print "Invalid track ID" etc.
-    // Since we use reqwest, specific status codes like 404/400 would be inside Error::Request or Error::Api
-    if let Error::Api(s) = error
-        && s.contains("404")
+    if let Error::Api(http::ApiError::Status(status)) = error
+        && *status == reqwest::StatusCode::NOT_FOUND
     {
         client.send_privmsg(channel, reply("Spotify", "Resource not found"))?;
     }

@@ -14,15 +14,14 @@
 //! deferred to the API.
 
 use std::collections::{HashMap, HashSet};
-use std::future::Future;
-use std::sync::{PoisonError, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};
 use strsim::jaro_winkler;
 use tracing::{debug, warn};
 
+use crate::cache::TtlCache;
 use crate::plugin::prelude::*;
 
 mod client;
@@ -223,12 +222,10 @@ struct CoinOpts {
 ///
 /// Populated from the cryptocurrency map endpoint at startup and refreshed lazily after the
 /// cache TTL expires.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct CoinCache {
     /// The cached coins, keyed by ticker symbol.
     by_symbol: HashMap<String, Coin>,
-    /// When the cache was last populated.
-    fetched_at: Option<Instant>,
 }
 
 impl From<Vec<Coin>> for CoinCache {
@@ -241,10 +238,7 @@ impl From<Vec<Coin>> for CoinCache {
             by_symbol.entry(coin.symbol.clone()).or_insert(coin);
         }
 
-        Self {
-            by_symbol,
-            fetched_at: Some(Instant::now()),
-        }
+        Self { by_symbol }
     }
 }
 
@@ -252,14 +246,12 @@ impl From<Vec<Coin>> for CoinCache {
 ///
 /// Populated from the fiat map endpoint at startup and refreshed lazily after the cache TTL
 /// expires.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct FiatCache {
     /// The valid fiat currency symbols (e.g. `USD`).
     symbols: HashSet<String>,
     /// The currency sign of each symbol (e.g. `USD` maps to `$`).
     signs: HashMap<String, String>,
-    /// When the cache was last populated.
-    fetched_at: Option<Instant>,
 }
 
 impl From<Vec<Fiat>> for FiatCache {
@@ -270,32 +262,7 @@ impl From<Vec<Fiat>> for FiatCache {
                 .into_iter()
                 .map(|fiat| (fiat.symbol, fiat.sign))
                 .collect(),
-            fetched_at: Some(Instant::now()),
         }
-    }
-}
-
-/// A cache that expires after the cache TTL.
-trait Cached {
-    /// When the cache was last populated, if it was.
-    fn fetched_at(&self) -> Option<Instant>;
-
-    /// Returns whether the cache was populated within `cache_ttl`.
-    fn is_fresh(&self, cache_ttl: Duration) -> bool {
-        self.fetched_at()
-            .is_some_and(|fetched_at| fetched_at.elapsed() < cache_ttl)
-    }
-}
-
-impl Cached for CoinCache {
-    fn fetched_at(&self) -> Option<Instant> {
-        self.fetched_at
-    }
-}
-
-impl Cached for FiatCache {
-    fn fetched_at(&self) -> Option<Instant> {
-        self.fetched_at
     }
 }
 
@@ -304,13 +271,11 @@ pub struct CoinMarketCap {
     /// Client for CoinMarketCap API requests, with the API key set as a default header.
     client: client::Client,
     /// The top cryptocurrencies by market cap, cached for the cache TTL.
-    coins: RwLock<CoinCache>,
+    coins: TtlCache<CoinCache>,
     /// The fiat currencies supported for price conversion, cached for the cache TTL.
-    fiat: RwLock<FiatCache>,
+    fiat: TtlCache<FiatCache>,
     /// The fiat currency used when a command does not specify one.
     default_currency: String,
-    /// How long the cached coins and fiat currencies stay valid before being refreshed.
-    cache_ttl: Duration,
     /// The maximum number of typos allowed when fuzzy matching a coin name.
     max_name_typos: u16,
 }
@@ -325,10 +290,9 @@ impl Plugin<Context> for CoinMarketCap {
 
         Ok(Self {
             client,
-            coins: RwLock::new(CoinCache::default()),
-            fiat: RwLock::new(FiatCache::default()),
+            coins: TtlCache::new(settings.cache_ttl),
+            fiat: TtlCache::new(settings.cache_ttl),
             default_currency: settings.default_currency.clone(),
-            cache_ttl: settings.cache_ttl,
             max_name_typos: settings.max_name_typos,
         })
     }
@@ -476,16 +440,14 @@ impl CoinMarketCap {
     /// Resolves a user query to a coin, by exact symbol match first and by fuzzy name match
     /// second.
     fn resolve_coin(&self, query: &str) -> Option<Coin> {
-        let coins = &self
-            .coins
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .by_symbol;
+        self.coins.read(|cache| {
+            let coins = cache.map(|cache| &cache.by_symbol)?;
 
-        coins
-            .get(&query.to_ascii_uppercase())
-            .cloned()
-            .or_else(|| find_by_name(coins, query, self.max_name_typos))
+            coins
+                .get(&query.to_ascii_uppercase())
+                .cloned()
+                .or_else(|| find_by_name(coins, query, self.max_name_typos))
+        })
     }
 
     /// Refreshes the coin cache when it is missing or older than the cache TTL.
@@ -494,13 +456,19 @@ impl CoinMarketCap {
     /// resolving with the stale coins, and an empty cache falls back to letting the API
     /// resolve queries as symbols.
     async fn ensure_coins_cached(&self) {
-        refresh_cache(
-            &self.coins,
-            "the top cryptocurrencies",
-            self.cache_ttl,
-            || self.client.coin_map(),
-        )
-        .await;
+        if let Err(err) = self
+            .coins
+            .refresh(|| async {
+                let coins = self.client.coin_map().await?;
+                let count = coins.len();
+                debug!(count, "cached the top cryptocurrencies");
+
+                Ok::<_, Error>(CoinCache::from(coins))
+            })
+            .await
+        {
+            warn!(error = %err, "could not cache the top cryptocurrencies");
+        }
     }
 
     /// Refreshes the fiat currency cache when it is missing or older than the cache TTL.
@@ -508,13 +476,19 @@ impl CoinMarketCap {
     /// Failures are logged and leave the existing cache, if any, in place: quotes keep working
     /// with the stale currencies, and an empty cache defers currency validation to the API.
     async fn ensure_fiat_cached(&self) {
-        refresh_cache(
-            &self.fiat,
-            "the supported fiat currencies",
-            self.cache_ttl,
-            || self.client.fiat_map(),
-        )
-        .await;
+        if let Err(err) = self
+            .fiat
+            .refresh(|| async {
+                let fiats = self.client.fiat_map().await?;
+                let count = fiats.len();
+                debug!(count, "cached the supported fiat currencies");
+
+                Ok::<_, Error>(FiatCache::from(fiats))
+            })
+            .await
+        {
+            warn!(error = %err, "could not cache the supported fiat currencies");
+        }
     }
 
     /// Returns whether `currency` is a fiat currency supported for price conversion.
@@ -522,55 +496,17 @@ impl CoinMarketCap {
     /// Returns `true` while the fiat cache has not been populated, deferring validation to
     /// the API.
     fn is_valid_currency(&self, currency: &str) -> bool {
-        let cache = self.fiat.read().unwrap_or_else(PoisonError::into_inner);
-
-        cache.symbols.is_empty() || cache.symbols.contains(currency)
+        self.fiat.read(|cache| {
+            cache.is_none_or(|cache| {
+                cache.symbols.is_empty() || cache.symbols.contains(currency)
+            })
+        })
     }
 
     /// Returns the currency sign for `currency`, if known.
     fn fiat_sign(&self, currency: &str) -> Option<String> {
         self.fiat
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .signs
-            .get(currency)
-            .cloned()
-    }
-}
-
-/// Refreshes the cache guarded by `lock` with the items fetched by `fetch` when the cache is
-/// missing or older than the cache TTL.
-///
-/// Failures are logged and leave the existing cache, if any, in place.
-async fn refresh_cache<C, T, E, F, Fut>(
-    lock: &RwLock<C>,
-    subject: &str,
-    cache_ttl: Duration,
-    fetch: F,
-) where
-    C: Cached + From<Vec<T>> + Send + Sync,
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<Vec<T>, E>> + Send,
-    E: std::fmt::Display,
-{
-    let fresh = lock
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .is_fresh(cache_ttl);
-
-    if fresh {
-        return;
-    }
-
-    match fetch().await {
-        Ok(items) => {
-            let count = items.len();
-
-            *lock.write().unwrap_or_else(PoisonError::into_inner) = C::from(items);
-
-            debug!(count, "cached {subject}");
-        }
-        Err(err) => warn!(error = %err, "could not cache {subject}"),
+            .read(|cache| cache.and_then(|cache| cache.signs.get(currency).cloned()))
     }
 }
 
@@ -788,10 +724,9 @@ mod tests {
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
             client: client::Client::new("test-api-key", &HttpConfig::default()).unwrap(),
-            coins: RwLock::new(CoinCache::from(test_coins())),
-            fiat: RwLock::new(FiatCache::default()),
+            coins: TtlCache::with_value(CoinCache::from(test_coins()), default_cache_ttl()),
+            fiat: TtlCache::new(default_cache_ttl()),
             default_currency: DEFAULT_CURRENCY.to_string(),
-            cache_ttl: default_cache_ttl(),
             max_name_typos: default_max_name_typos(),
         }
     }
@@ -978,10 +913,13 @@ mod tests {
         // An empty fiat cache defers validation to the API.
         assert!(plugin.is_valid_currency("XYZ"));
 
-        plugin.fiat = RwLock::new(FiatCache::from(vec![Fiat {
-            sign: "$".to_string(),
-            symbol: "USD".to_string(),
-        }]));
+        plugin.fiat = TtlCache::with_value(
+            FiatCache::from(vec![Fiat {
+                sign: "$".to_string(),
+                symbol: "USD".to_string(),
+            }]),
+            default_cache_ttl(),
+        );
 
         assert!(plugin.is_valid_currency("USD"));
         assert!(!plugin.is_valid_currency("XYZ"));

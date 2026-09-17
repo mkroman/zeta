@@ -1,12 +1,10 @@
 use std::fmt::Write;
 
-use miette::{Diagnostic, Result};
 use reqwest::{
     self,
     header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use tracing::{error, info};
 
 use crate::{config::HttpConfig, http, plugin::prelude::*};
@@ -22,28 +20,15 @@ pub struct Settings {
     pub token: Option<String>,
 }
 
-/// Custom error types for the GitHub plugin.
-#[derive(Debug, Error, Diagnostic)]
+/// Errors that can occur during GitHub interaction.
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Failed to initialize GitHub HTTP client")]
-    #[diagnostic(code(github::init))]
-    InitFailed(#[source] reqwest::Error),
-
-    #[error("Failed to perform GitHub search request")]
-    #[diagnostic(code(github::search::request))]
-    SearchRequestFailed(#[source] reqwest::Error),
-
-    #[error("GitHub API returned status {0}")]
-    #[diagnostic(code(github::search::status))]
-    ApiStatus(reqwest::StatusCode),
-
-    #[error("Failed to parse GitHub response")]
-    #[diagnostic(code(github::search::parse))]
-    ResponseParseFailed(#[source] reqwest::Error),
-
-    #[error("Invalid GitHub token")]
-    #[diagnostic(code(github::init::token))]
-    InvalidToken(#[source] reqwest::header::InvalidHeaderValue),
+    #[error("request error: {0}")]
+    Request(#[from] reqwest::Error),
+    #[error("invalid header value: {0}")]
+    InvalidToken(#[from] reqwest::header::InvalidHeaderValue),
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
 }
 
 /// The `.gh` command.
@@ -83,12 +68,10 @@ impl Plugin<Context> for GitHubPlugin {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
-        let token = settings
-            .token
-            .clone()
-            .or_else(|| std::env::var("GITHUB_TOKEN").ok());
-        let plugin = GitHubPlugin::new(&ctx.config.http, token)
-            .map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
+        // The token is optional; it only raises the API rate limit.
+        let token = resolve_secret(settings.token.as_deref(), "GITHUB_TOKEN").ok();
+        let plugin = GitHubPlugin::new(&ctx.config.http, token).map_err(plugin_err)?;
+
         Ok(plugin)
     }
 
@@ -120,7 +103,7 @@ impl GitHubPlugin {
     ///
     /// Returns an error if the HTTP client could not be built, or the token is not a valid
     /// header value.
-    pub fn new(config: &HttpConfig, token: Option<String>) -> Result<Self> {
+    pub fn new(config: &HttpConfig, token: Option<String>) -> Result<Self, Error> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -134,14 +117,13 @@ impl GitHubPlugin {
         if let Some(token) = token {
             headers.insert(
                 AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {token}")).map_err(Error::InvalidToken)?,
+                HeaderValue::from_str(&format!("Bearer {token}"))?,
             );
         }
 
         let client = http::client::builder(config)
             .default_headers(headers)
-            .build()
-            .map_err(Error::InitFailed)?;
+            .build()?;
 
         Ok(Self { http: client })
     }
@@ -154,7 +136,7 @@ impl GitHubPlugin {
     ///
     /// # Returns
     /// * `Result<Option<String>>` - Some(message) to reply, or None if no reply needed.
-    pub async fn run(&self, channel: &str, args: Option<&str>) -> Result<Option<String>> {
+    pub async fn run(&self, channel: &str, args: Option<&str>) -> Result<Option<String>, Error> {
         // 1. Check arguments
         let query = match args {
             Some(q) if !q.trim().is_empty() => q.trim(),
@@ -181,7 +163,7 @@ impl GitHubPlugin {
     }
 
     /// Searches for repositories based on the given query.
-    async fn search_repos(&self, query: &str) -> Result<SearchResponse> {
+    async fn search_repos(&self, query: &str) -> Result<SearchResponse, Error> {
         let params = [("q", query), ("sort", "stars"), ("order", "desc")];
 
         let response = self
@@ -189,18 +171,9 @@ impl GitHubPlugin {
             .get("https://api.github.com/search/repositories")
             .query(&params)
             .send()
-            .await
-            .map_err(Error::SearchRequestFailed)?;
+            .await?;
 
-        // Check for HTTP errors (4xx, 5xx)
-        if !response.status().is_success() {
-            return Err(Error::ApiStatus(response.status()).into());
-        }
-
-        let search_data: SearchResponse =
-            response.json().await.map_err(Error::ResponseParseFailed)?;
-
-        Ok(search_data)
+        http::parse_response(response).await.map_err(Error::from)
     }
 
     /// Formats a specific repository item into an IRC-friendly string.

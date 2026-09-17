@@ -230,14 +230,11 @@ impl GraphQlClient {
             .post(GRAPHQL_URL)
             .json(&payload)
             .send()
-            .await
-            .map_err(Error::Request)?
-            .error_for_status()
-            .map_err(Error::Request)?;
+            .await?
+            .error_for_status()?;
 
-        let text = response.text().await.map_err(Error::Request)?;
-        let response: GraphQlResponse<T> =
-            http::json::from_str(&text).map_err(Error::Deserialize)?;
+        let text = response.text().await?;
+        let response: GraphQlResponse<T> = http::json::from_str(&text)?;
 
         if let Some(errors) = response.errors.filter(|errors| !errors.is_empty()) {
             let messages = errors

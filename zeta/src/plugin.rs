@@ -30,7 +30,7 @@ mod prelude {
     pub use zeta_plugin::Error as ZetaError;
     pub use zeta_plugin::prelude::{
         ArgsError, BOLD, BoxError, COLOR, NoSettings, PluginCommand, Prefix, REPLY_PREFIX, RESET,
-        notice, plugin_err, reply, reply_prefix, require_env, resolve_secret,
+        notice, plugin_err, reply, reply_prefix, reply_usage_lines, require_env, resolve_secret,
     };
 
     pub use super::{

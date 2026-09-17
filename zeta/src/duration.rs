@@ -39,57 +39,54 @@ const UNITS_TO_MINUTES: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES];
 /// Duration units from hours down to minutes.
 pub const HOURS_AND_MINUTES: &[(i64, &str)] = &[HOURS, MINUTES];
 
+/// Splits `total_seconds` into its non-zero `(count, unit)` parts, walking `units` from
+/// largest to smallest and spending the remainder of each unit on the next smaller one.
+fn split_into_units(
+    total_seconds: i64,
+    units: &[(i64, &'static str)],
+) -> Vec<(i64, &'static str)> {
+    let mut parts = Vec::new();
+    let mut remainder = total_seconds;
+
+    for &(unit_seconds, unit) in units {
+        let count = remainder / unit_seconds;
+        remainder %= unit_seconds;
+
+        if count > 0 {
+            parts.push((count, unit));
+        }
+    }
+
+    parts
+}
+
 /// Formats a duration of `total_seconds` in words using the given unit table, e.g.
 /// `"1 year, 2 weeks, and 3 days"`.
 ///
 /// Non-positive durations are formatted as `"0 minutes"`.
 pub fn words(total_seconds: i64, units: &[(i64, &'static str)]) -> String {
-    if total_seconds <= 0 {
-        return "0 minutes".to_string();
-    }
-
-    // Count the units that will appear in the output, so separators can be placed correctly.
-    let mut num_parts = 0;
-    let mut remainder = total_seconds;
-
-    for &(unit_seconds, _) in units {
-        if remainder / unit_seconds > 0 {
-            num_parts += 1;
-        }
-
-        remainder %= unit_seconds;
-    }
-
-    if num_parts == 0 {
-        return "0 minutes".to_string();
-    }
-
-    let last_separator = if num_parts > 2 { ", and " } else { " and " };
     // Sub-year remainders cap each non-leading count (weeks < 52, days < 7, ...) and large counts
     // only occur for years, so 24 bytes per part never needs a reallocation.
+    let parts = split_into_units(total_seconds.max(0), units);
+
+    if parts.is_empty() {
+        return "0 minutes".to_string();
+    }
+
+    let num_parts = parts.len();
+    let last_separator = if num_parts > 2 { ", and " } else { " and " };
     let mut buf = String::with_capacity(24 * num_parts);
-    let mut written_parts = 0;
-    let mut remainder = total_seconds;
 
-    for &(unit_seconds, name) in units {
-        let count = remainder / unit_seconds;
-        remainder %= unit_seconds;
-
-        if count == 0 {
-            continue;
-        }
-
-        written_parts += 1;
-
-        if written_parts > 1 {
-            buf.push_str(if written_parts == num_parts {
+    for (index, (count, unit)) in parts.iter().enumerate() {
+        if index > 0 {
+            buf.push_str(if index == num_parts - 1 {
                 last_separator
             } else {
                 ", "
             });
         }
 
-        let _ = write!(buf, "{count} {name}{}", if count == 1 { "" } else { "s" });
+        let _ = write!(buf, "{count} {unit}{}", if *count == 1 { "" } else { "s" });
     }
 
     buf
@@ -181,28 +178,19 @@ pub fn parse_iso8601_duration(input: &str) -> Option<Duration> {
 /// Formats a [`Duration`] compactly, e.g. `1h 2m 20s`, skipping components of zero.
 pub fn format_duration(duration: Duration) -> String {
     // Seconds per day, hour, minute, and second, in descending order.
-    const UNITS: &[(u64, &str)] = &[(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")];
+    const UNITS: &[(i64, &str)] = &[(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")];
 
-    let mut formatted = String::new();
-    let mut remainder = duration.as_secs();
+    // A duration of more than `i64::MAX` seconds would outlive the universe several times over;
+    // saturate rather than wrap.
+    let total_seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
 
-    for &(unit_seconds, suffix) in UNITS {
-        let count = remainder / unit_seconds;
-        remainder %= unit_seconds;
-
-        if count > 0 {
-            if !formatted.is_empty() {
-                formatted.push(' ');
-            }
-
-            let _ = write!(formatted, "{count}{suffix}");
-        }
-    }
-
-    if formatted.is_empty() {
-        "0s".to_string()
-    } else {
-        formatted
+    match split_into_units(total_seconds, UNITS).as_slice() {
+        [] => "0s".to_string(),
+        parts => parts
+            .iter()
+            .map(|(count, suffix)| format!("{count}{suffix}"))
+            .collect::<Vec<_>>()
+            .join(" "),
     }
 }
 

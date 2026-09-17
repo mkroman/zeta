@@ -18,7 +18,7 @@ pub mod prelude {
 
     pub use super::command::{ArgsError, PluginCommand, Prefix};
     pub use super::error::{BoxError, plugin_err, require_env, resolve_secret};
-    pub use super::irc::{BOLD, COLOR, REPLY_PREFIX, RESET, notice, reply, reply_prefix};
+    pub use super::irc::{BOLD, COLOR, REPLY_PREFIX, RESET, notice, reply, reply_prefix, reply_usage_lines};
     pub use super::plugin::PluginName;
     pub use super::types::NoSettings;
     pub use super::{Author, Error, Metadata, Name, Plugin};

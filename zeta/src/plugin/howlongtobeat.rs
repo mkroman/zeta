@@ -43,8 +43,8 @@ pub struct HowLongToBeat {
 pub enum Error {
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
-    #[error("could not deserialize response: {0}")]
-    Deserialize(#[source] reqwest::Error),
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
 }
 
 /// Cached authentication credentials required by the API.
@@ -286,11 +286,7 @@ impl HowLongToBeat {
             .send()
             .await?;
 
-        let init: InitResponse = response
-            .error_for_status()?
-            .json()
-            .await
-            .map_err(Error::Deserialize)?;
+        let init: InitResponse = http::parse_response(response).await?;
 
         let auth_data = AuthData {
             token: init.token,
@@ -315,7 +311,7 @@ impl HowLongToBeat {
 
         match self.perform_search_request(&auth, query).await {
             Ok(results) => Ok(results),
-            Err(Error::Request(e)) if e.status() == Some(StatusCode::FORBIDDEN) => {
+            Err(Error::Api(http::ApiError::Status(StatusCode::FORBIDDEN))) => {
                 warn!("hltb token expired, refreshing...");
                 let new_auth = self.refresh_auth().await?;
                 self.perform_search_request(&new_auth, query).await
@@ -359,11 +355,7 @@ impl HowLongToBeat {
             .send()
             .await?;
 
-        let response_data: SearchResponse = response
-            .error_for_status()?
-            .json()
-            .await
-            .map_err(Error::Deserialize)?;
+        let response_data: SearchResponse = http::parse_response(response).await?;
 
         Ok(response_data.data)
     }

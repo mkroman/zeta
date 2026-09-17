@@ -47,8 +47,8 @@ pub enum Error {
     Request(#[from] reqwest::Error),
     #[error("resource not found")]
     NotFound,
-    #[error("api error: {0}")]
-    Api(String),
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
 }
 
 /// Represents a "Thing" (3D model) from the Thingiverse API.
@@ -170,15 +170,11 @@ impl Thingiverse {
             .send()
             .await?;
 
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(Error::NotFound);
+        match http::parse_response(response).await {
+            Ok(thing) => Ok(thing),
+            Err(http::ApiError::Status(reqwest::StatusCode::NOT_FOUND)) => Err(Error::NotFound),
+            Err(error) => Err(Error::from(error)),
         }
-
-        if !response.status().is_success() {
-            return Err(Error::Api(response.status().to_string()));
-        }
-
-        response.json().await.map_err(Error::from)
     }
 }
 

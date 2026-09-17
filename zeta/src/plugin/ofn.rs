@@ -422,9 +422,8 @@ impl Plugin<Context> for Ofn {
         let opts = match command.parse_args::<Opts>(args) {
             Ok(opts) => opts,
             Err(err) => {
-                for line in err.to_string().lines().filter(|s| !s.is_empty()) {
-                    client.send_privmsg(channel, reply("OFN", line))?;
-                }
+                reply_usage_lines(client, channel, &err, |line| reply("OFN", line))?;
+
                 return Ok(());
             }
         };

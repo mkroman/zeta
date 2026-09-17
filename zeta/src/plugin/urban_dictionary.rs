@@ -50,10 +50,8 @@ pub struct UrbanDictionary {
 /// Errors that can occur during execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("request error: {0}")]
-    Request(#[source] reqwest::Error),
-    #[error("unable to parse list of definitions: {0}")]
-    ParseDefinitions(#[source] reqwest::Error),
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
 }
 
 /// List of definitions.
@@ -183,18 +181,12 @@ impl UrbanDictionary {
             .client
             .get(format!("{BASE_URL}/v0/define"))
             .query(&params);
-        let response = request.send().await.map_err(Error::Request)?;
+        let response = request.send().await.map_err(http::ApiError::Request)?;
 
-        match response.error_for_status() {
-            Ok(response) => {
-                let definitions: Definitions =
-                    response.json().await.map_err(Error::ParseDefinitions)?;
-                debug!(num_definitions = %definitions.list.len(), "fetched definitions");
+        let definitions: Definitions = http::parse_response(response).await?;
+        debug!(num_definitions = %definitions.list.len(), "fetched definitions");
 
-                Ok(definitions)
-            }
-            Err(err) => Err(Error::Request(err)),
-        }
+        Ok(definitions)
     }
 }
 
