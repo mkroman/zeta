@@ -78,7 +78,9 @@ jobs:
           tags: ${{ inputs.tags }}
       - name: Login to Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        if: inputs.push
+        # The registry cache backend (`type=registry`) needs registry auth even
+        # when the image itself isn't pushed.
+        if: inputs.push || inputs.cache-from != '' || inputs.cache-to != ''
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs.username || github.actor }}

@@ -41,9 +41,9 @@ jobs:
       tags: |
         type=edge,branch=main
         type=sha
-      # Only main writes the shared cache: PR caches are scoped to the merge
-      # ref and would evict the shared entries from the 10 GB quota.
-      cache-from: type=gha,scope=buildkit-main
-      cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=buildkit-main' || '' }}
+      # Only main writes the shared cache: PR caches would accumulate
+      # per-branch cache images in the registry.
+      cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/buildcache
+      cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/{0}/buildcache,mode=max', github.repository) || '' }}
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
