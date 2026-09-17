@@ -61,9 +61,92 @@ pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'
     })
 }
 
+/// Appends `entries` to `message`, separated by `separator`, as long as the listing —
+/// including `reserved` trailing bytes — stays within `budget` bytes.
+///
+/// The first entry is always appended, so a count in the message header is never misleading;
+/// subsequent entries are only appended while they fit. Once an entry does not fit, no further
+/// entries are appended (earlier ones are kept) and `false` is returned.
+///
+/// Callers that trail a fixed `suffix` after the listing pass its length as `reserved` and
+/// append it themselves.
+pub fn append_entries_within_budget(
+    message: &mut String,
+    entries: impl IntoIterator<Item = String>,
+    separator: &str,
+    budget: usize,
+    reserved: usize,
+) -> bool {
+    let mut complete = true;
+    let mut first = true;
+
+    for entry in entries {
+        let prefix = if first { "" } else { separator };
+
+        if !first && message.len() + prefix.len() + entry.len() + reserved > budget {
+            complete = false;
+
+            break;
+        }
+
+        message.push_str(prefix);
+        message.push_str(&entry);
+        first = false;
+    }
+
+    complete
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appends_entries_within_the_budget() {
+        let mut message = String::from("header: ");
+
+        let complete =
+            append_entries_within_budget(&mut message, ["a", "b"].map(String::from), ", ", 30, 0);
+
+        assert!(complete);
+        assert_eq!(message, "header: a, b");
+    }
+
+    #[test]
+    fn always_appends_the_first_entry_and_keeps_prefixes() {
+        let mut message = String::from("header: ");
+
+        let complete = append_entries_within_budget(
+            &mut message,
+            ["first", "second", "third"].map(String::from),
+            ", ",
+            20,
+            0,
+        );
+
+        // The first entry is unconditional; "header: first, second" is 21 bytes and would
+        // exceed the 20-byte budget, so the loop stops after the first entry.
+        assert!(!complete);
+        assert_eq!(message, "header: first");
+    }
+
+    #[test]
+    fn reserves_room_for_a_suffix() {
+        let mut message = String::new();
+
+        let complete = append_entries_within_budget(
+            &mut message,
+            ["first", "second"].map(String::from),
+            ", ",
+            10,
+            8,
+        );
+
+        // "first" is unconditional; "second" (6 bytes) plus the separator and the 8 reserved
+        // bytes exceeds the budget.
+        assert!(!complete);
+        assert_eq!(message, "first");
+    }
 
     #[test]
     fn truncate_string_with_suffix() {

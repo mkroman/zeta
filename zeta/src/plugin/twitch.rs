@@ -64,8 +64,8 @@ pub struct Twitch {
 pub enum Error {
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
-    #[error("api error: {0}")]
-    Api(String),
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
 }
@@ -211,11 +211,7 @@ impl Twitch {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            return Err(Error::Api(format!("status: {}", response.status())));
-        }
-
-        Ok(response.json().await?)
+        http::parse_response(response).await.map_err(Error::from)
     }
 
     /// Parses a Twitch URL and determines the resource type.

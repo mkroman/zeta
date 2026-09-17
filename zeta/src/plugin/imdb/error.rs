@@ -4,7 +4,7 @@
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("could not deserialize response: {0}")]
-    Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
+    Deserialize(#[from] serde_path_to_error::Error<serde_json::Error>),
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
     #[error("invalid header value: {0}")]

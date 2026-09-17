@@ -256,14 +256,9 @@ impl OpenWeatherMap {
 
         let response = self.client.get(&url).query(&params).send().await?;
 
-        if !response.status().is_success() {
-            return Err(Error::Api(format!(
-                "geocoding failed: {}",
-                response.status()
-            )));
-        }
-
-        let results: Vec<GeocodingResult> = response.json().await?;
+        let results: Vec<GeocodingResult> = http::parse_response(response)
+            .await
+            .map_err(|error| contextual_api_error("geocoding failed", error))?;
         results.into_iter().next().ok_or(Error::LocationNotFound)
     }
 
@@ -286,14 +281,18 @@ impl OpenWeatherMap {
 
         let response = self.client.get(&url).query(&params).send().await?;
 
-        if !response.status().is_success() {
-            return Err(Error::Api(format!(
-                "weather fetch failed: {}",
-                response.status()
-            )));
-        }
+        http::parse_response(response)
+            .await
+            .map_err(|error| contextual_api_error("weather fetch failed", error))
+    }
+}
 
-        response.json().await.map_err(Error::from)
+/// Maps an API error into an [`Error`], prefixing status errors with `context`.
+fn contextual_api_error(context: &str, error: http::ApiError) -> Error {
+    match error {
+        http::ApiError::Status(status) => Error::Api(format!("{context}: {status}")),
+        http::ApiError::Request(error) => Error::Request(error),
+        http::ApiError::Deserialize(error) => Error::Api(error.to_string()),
     }
 }
 

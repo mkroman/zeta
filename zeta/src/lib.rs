@@ -2,6 +2,9 @@
 
 #![allow(clippy::use_self)]
 
+/// Single-slot time-to-live caching
+#[cfg(feature = "http")]
+pub mod cache;
 /// Configuration loading and validation
 pub mod config;
 /// Commonly used constants

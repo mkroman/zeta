@@ -4,7 +4,7 @@
 //!
 //! This plugin provides functionality to search for TV shows and display information
 //! about upcoming episodes using the TVmaze API.
-use reqwest::{Response, StatusCode, Url};
+use reqwest::{StatusCode, Url};
 use serde::Deserialize;
 use tracing::{debug, error, instrument};
 
@@ -179,29 +179,23 @@ impl Tvmaze {
         let url = self.build_search_url(name);
         debug!(url.full = %url, "requesting single search for show: {name}");
 
-        let response = self.client.get(url).send().await.map_err(Error::Request)?;
+        let response = self.client.get(url).send().await?;
 
-        Self::handle_search_response(response).await
-    }
-
-    async fn handle_search_response(response: Response) -> Result<Show, Error> {
-        match response.status() {
-            StatusCode::OK => {
-                debug!("response is ok, parsing show");
-                let text = response.text().await.map_err(Error::Request)?;
-                let show = http::json::from_str(&text).map_err(Error::Deserialize)?;
+        match http::parse_response(response).await {
+            Ok(show) => {
                 debug!(?show, "finished parsing show");
-
                 Ok(show)
             }
-            StatusCode::NOT_FOUND => {
+            Err(http::ApiError::Status(StatusCode::NOT_FOUND)) => {
                 debug!("show not found");
                 Err(Error::NotFound)
             }
-            status => {
+            Err(http::ApiError::Status(status)) => {
                 error!("unexpected response status: {status}");
                 Err(Error::UnexpectedResponse)
             }
+            Err(http::ApiError::Request(error)) => Err(Error::Request(error)),
+            Err(http::ApiError::Deserialize(error)) => Err(Error::Deserialize(error)),
         }
     }
 

@@ -1,6 +1,7 @@
 //! HTTP features
 
 use crate::config::HttpConfig;
+use serde::de::DeserializeOwned;
 
 /// JSON response parsing shared by the API client plugins.
 ///
@@ -28,6 +29,44 @@ pub mod json {
             error!(?error, body = %text, "could not deserialize json response");
         })
     }
+}
+
+/// The errors produced when sending a request and parsing its JSON response.
+#[derive(Debug, thiserror::Error)]
+pub enum ApiError {
+    /// The request could not be sent, or the response body could not be read.
+    #[error("request error: {0}")]
+    Request(reqwest::Error),
+    /// The server responded with a non-success status code, e.g. `404 Not Found`.
+    #[error("{0}")]
+    Status(reqwest::StatusCode),
+    /// The response body could not be parsed as JSON.
+    #[error("could not deserialize response: {0}")]
+    Deserialize(json::Error),
+}
+
+/// Sends a request built by [`reqwest::Client::get`] (or a sibling builder method) and parses
+/// its JSON body into `T`.
+///
+/// Non-success statuses are reported as [`ApiError::Status`] without reading the body; the
+/// response is only parsed when the status is a success.
+///
+/// # Errors
+///
+/// Returns an [`ApiError`] if the request fails, the response status is not a success, or the
+/// body cannot be parsed as JSON.
+pub async fn parse_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, ApiError> {
+    let status = response.status();
+
+    if !status.is_success() {
+        return Err(ApiError::Status(status));
+    }
+
+    let text = response.text().await.map_err(ApiError::Request)?;
+
+    json::from_str(&text).map_err(ApiError::Deserialize)
 }
 
 /// HTTP client integration

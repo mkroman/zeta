@@ -37,7 +37,7 @@ use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
 
-use crate::{plugin::prelude::*, utils::Truncatable};
+use crate::{plugin::prelude::*, utils::Truncatable, utils::append_entries_within_budget};
 
 /// The `.alert` command.
 const ALERT: PluginCommand = PluginCommand::with_args::<Opts>(
@@ -216,9 +216,7 @@ impl Plugin<Context> for AlertPlugin {
             let opts = match ALERT.parse_words::<Opts>(args) {
                 Ok(opts) => opts,
                 Err(err) => {
-                    for line in err.to_string().lines().filter(|line| !line.is_empty()) {
-                        client.send_privmsg(channel, reply("Alert", line))?;
-                    }
+                    reply_usage_lines(client, channel, &err, |line| reply("Alert", line))?;
 
                     return Ok(());
                 }
@@ -457,29 +455,28 @@ const MAX_LISTING_LENGTH: usize = 400;
 /// listing stays within [`MAX_LISTING_LENGTH`]; the count in the header always reflects every
 /// pending alert.
 fn format_pending(pending: &[Alert]) -> String {
-    let Some(next) = pending.first() else {
+    if pending.is_empty() {
         return reply("Alert", "You have no pending alerts");
-    };
-
-    let mut listing = reply(
-        "Alert",
-        format!(
-            "Pending alerts:\x0f {}\x0310 Next up: {}",
-            pending.len(),
-            format_entry(next)
-        ),
-    );
-
-    for alert in pending.iter().take(MAX_LISTED_ALERTS).skip(1) {
-        let entry = format_entry(alert);
-        let separator = format!("\x0310, then: {entry}");
-
-        if listing.len() + separator.len() > MAX_LISTING_LENGTH {
-            break;
-        }
-
-        listing.push_str(&separator);
     }
+
+    let mut listing = reply("Alert", format!("Pending alerts:\x0f {}", pending.len()));
+
+    let entries = pending
+        .iter()
+        .take(MAX_LISTED_ALERTS)
+        .enumerate()
+        .map(|(index, alert)| match index {
+            0 => format!("\x0310 Next up: {}", format_entry(alert)),
+            _ => format_entry(alert),
+        });
+
+    append_entries_within_budget(
+        &mut listing,
+        entries,
+        "\x0310, then: ",
+        MAX_LISTING_LENGTH,
+        0,
+    );
 
     listing
 }

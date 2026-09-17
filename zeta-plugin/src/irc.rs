@@ -7,6 +7,10 @@
 
 use std::fmt;
 
+use irc::client::Client;
+
+use crate::command::ArgsError;
+
 /// The teal color (mIRC color 10) used for plugin replies.
 pub const COLOR: &str = "\x0310";
 
@@ -41,6 +45,28 @@ pub fn reply_prefix(name: &str) -> String {
 #[must_use]
 pub fn notice(message: impl fmt::Display) -> String {
     format!("{REPLY_PREFIX} {message}")
+}
+
+/// Sends the output of a failed argument parse to `channel`, one message per non-empty line.
+///
+/// Parse failures produce the command's usage or help output, which spans multiple lines; IRC
+/// messages cannot contain line breaks, so each line is sent as its own `PRIVMSG`, formatted by
+/// `format` (e.g. by wrapping it in [`reply`] with the plugin's name).
+///
+/// # Errors
+///
+/// Returns any error produced while sending the messages.
+pub fn reply_usage_lines(
+    client: &Client,
+    channel: &str,
+    error: &ArgsError,
+    format: impl Fn(&str) -> String,
+) -> Result<(), irc::error::Error> {
+    for line in error.to_string().lines().filter(|line| !line.is_empty()) {
+        client.send_privmsg(channel, format(line))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
