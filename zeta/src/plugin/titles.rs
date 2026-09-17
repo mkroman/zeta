@@ -55,12 +55,10 @@ const BINARY_EXTENSIONS: &[&str] = &[
 pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
-    /// Defaults to every host matched by a bundled plugin. In addition to this list, the hosts
-    /// that loaded plugins advertise through the plugin catalog (see [`Plugin::url_hosts`]) are
-    /// left alone as well — including hosts of plugins added after this list was written. Note
-    /// that the bundled defaults are a floor: removing a host from the setting does not make
-    /// this plugin preview its URLs while the plugin that handles them is loaded.
-    #[serde(default = "default_ignored_hosts")]
+    /// Empty by default: the hosts that loaded plugins advertise through the plugin catalog
+    /// (see [`Plugin::url_hosts`]) are left alone without any configuration, including hosts of
+    /// plugins added after this configuration was written.
+    #[serde(default)]
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
     #[serde(default = "default_max_redirects")]
@@ -76,51 +74,12 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            ignored_hosts: default_ignored_hosts(),
+            ignored_hosts: Vec::new(),
             max_redirects: default_max_redirects(),
             max_message_length: default_max_message_length(),
             max_description_length: default_max_description_length(),
         }
     }
-}
-
-/// Returns the default hosts that are handled by dedicated plugins.
-///
-/// This list is a floor that is merged with the hosts advertised through the plugin catalog, so
-/// a plugin that failed to initialize (e.g. for missing credentials) does not make this plugin
-/// take over its hosts.
-fn default_ignored_hosts() -> Vec<String> {
-    [
-        "chaturbate.com",
-        "www.chaturbate.com",
-        "imdb.com",
-        "m.imdb.com",
-        "www.imdb.com",
-        "www.pornhub.com",
-        "i.redd.it",
-        "oauth.reddit.com",
-        "old.reddit.com",
-        "preview.redd.it",
-        "redd.it",
-        "reddit.com",
-        "v.redd.it",
-        "www.reddit.com",
-        "open.spotify.com",
-        "play.spotify.com",
-        "thingiverse.com",
-        "www.thingiverse.com",
-        "tiktok.com",
-        "vm.tiktok.com",
-        "www.tiktok.com",
-        "clips.twitch.tv",
-        "twitch.tv",
-        "www.twitch.tv",
-        "youtu.be",
-        "youtube.com",
-        "www.youtube.com",
-    ]
-    .map(String::from)
-    .to_vec()
 }
 
 /// Returns the default maximum number of redirects to follow.
@@ -917,8 +876,15 @@ mod tests {
     }
 
     #[test]
-    fn ignores_hosts_handled_by_other_plugins() {
-        let settings = Settings::default();
+    fn ignores_configured_hosts() {
+        let settings = Settings {
+            ignored_hosts: vec![
+                "www.reddit.com".to_string(),
+                "youtu.be".to_string(),
+                "vm.tiktok.com".to_string(),
+            ],
+            ..Settings::default()
+        };
 
         assert!(is_ignored_host(
             &Url::parse("https://www.reddit.com/r/rust").unwrap(),
@@ -1093,7 +1059,7 @@ mod tests {
     fn default_settings() {
         let settings = Settings::default();
 
-        assert!(settings.ignored_hosts.len() > 8);
+        assert!(settings.ignored_hosts.is_empty());
         assert_eq!(settings.max_redirects, 3);
         assert_eq!(settings.max_message_length, 400);
         assert_eq!(settings.max_description_length, 200);

@@ -21,6 +21,9 @@ mod url;
 pub use client::GraphQlClient;
 pub use format::{format_person, format_title};
 pub use url::{Link, classify_imdb_url};
+
+/// The IMDb hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &["imdb.com", "m.imdb.com", "www.imdb.com"];
 // The model types are re-exported as part of the module's API surface, even though the plugin
 // itself only handles them by value.
 #[allow(unused_imports)]
@@ -118,7 +121,7 @@ impl Plugin<Context> for Imdb {
     const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["imdb.com", "m.imdb.com", "www.imdb.com"]
+        URL_HOSTS
     }
 
     async fn handle_message(

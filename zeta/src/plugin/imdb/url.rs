@@ -16,7 +16,7 @@ pub enum Link {
 /// Attempts to parse the given `url` as an IMDb URL.
 #[must_use]
 pub fn classify_imdb_url(url: &Url) -> Option<Link> {
-    if !matches!(url.host_str()?, "imdb.com" | "www.imdb.com" | "m.imdb.com") {
+    if !super::URL_HOSTS.contains(&url.host_str()?) {
         return None;
     }
 

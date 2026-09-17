@@ -105,7 +105,7 @@ impl Plugin<Context> for Tiktok {
     }
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["tiktok.com", "vm.tiktok.com", "www.tiktok.com"]
+        urls::URL_HOSTS
     }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {

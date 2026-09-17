@@ -18,8 +18,20 @@ use crate::{
     plugin::prelude::*,
 };
 
+/// The hostname of shortened YouTube URLs.
+const YOUTU_BE_HOST: &str = "youtu.be";
+
+/// The YouTube.com hostname.
+const YOUTUBE_COM_HOST: &str = "youtube.com";
+
+/// The www-prefixed YouTube.com hostname.
+const YOUTUBE_COM_WWW_HOST: &str = "www.youtube.com";
+
+/// The YouTube hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &[YOUTU_BE_HOST, YOUTUBE_COM_HOST, YOUTUBE_COM_WWW_HOST];
+
 /// YouTube Data API v3 base endpoint URL.
-pub const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
+const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
 
 /// The `.yt` command.
 const YOUTUBE: PluginCommand =
@@ -286,7 +298,7 @@ impl Plugin<Context> for YouTube {
     }
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["youtu.be", "youtube.com", "www.youtube.com"]
+        URL_HOSTS
     }
 
     const COMMANDS: &'static [PluginCommand] = COMMANDS;
@@ -574,8 +586,8 @@ fn extract_query_param(url: &Url, param: &str) -> Option<String> {
 /// Parses the given `url` and returns a [`UrlKind`] depending on the type of YouTube URL.
 pub fn parse_youtube_url(url: &Url) -> Option<UrlKind> {
     match url.host_str()? {
-        "youtu.be" => parse_youtu_be_url(url),
-        "youtube.com" | "www.youtube.com" => parse_youtube_com_url(url),
+        YOUTU_BE_HOST => parse_youtu_be_url(url),
+        YOUTUBE_COM_HOST | YOUTUBE_COM_WWW_HOST => parse_youtube_com_url(url),
         _ => None,
     }
 }

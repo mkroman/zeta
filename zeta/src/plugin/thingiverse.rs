@@ -14,6 +14,9 @@ use url::Url;
 
 use crate::{http, plugin::prelude::*};
 
+/// The Thingiverse hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
+
 const API_BASE_URL: &str = "https://api.thingiverse.com";
 
 /// Settings for the thingiverse plugin, from its `[plugins.thingiverse]` configuration section.
@@ -78,6 +81,10 @@ struct Creator {
 impl Plugin<Context> for Thingiverse {
     type Settings = Settings;
 
+    fn url_hosts(&self) -> &'static [&'static str] {
+        URL_HOSTS
+    }
+
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client(&ctx.config.http);
@@ -89,10 +96,6 @@ impl Plugin<Context> for Thingiverse {
             app_token,
             path_regex,
         })
-    }
-
-    fn url_hosts(&self) -> &'static [&'static str] {
-        &["thingiverse.com", "www.thingiverse.com"]
     }
 
     async fn handle_message(
@@ -110,7 +113,7 @@ impl Plugin<Context> for Thingiverse {
             .flatten()
         {
             if let Some(host) = url.host_str()
-                && (host == "thingiverse.com" || host == "www.thingiverse.com")
+                && URL_HOSTS.contains(&host)
             {
                 self.process_url(&url, channel, client).await?;
             }

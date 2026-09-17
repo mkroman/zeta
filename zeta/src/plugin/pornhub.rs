@@ -139,7 +139,7 @@ impl Plugin<Context> for PornHub {
     }
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["www.pornhub.com"]
+        &[PORNHUB_HOST]
     }
 
     // Handles incoming messages and processes any PornHub URLs found.

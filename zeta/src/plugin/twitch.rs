@@ -12,6 +12,18 @@ use crate::{
 };
 
 /// Twitch OAuth2 token endpoint.
+/// The Twitch.tv hostname.
+const TWITCH_HOST: &str = "twitch.tv";
+
+/// The www-prefixed Twitch.tv hostname.
+const TWITCH_WWW_HOST: &str = "www.twitch.tv";
+
+/// The hostname of Twitch clip URLs.
+const CLIPS_HOST: &str = "clips.twitch.tv";
+
+/// The Twitch hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &[CLIPS_HOST, TWITCH_HOST, TWITCH_WWW_HOST];
+
 const AUTH_URL: &str = "https://id.twitch.tv/oauth2/token";
 /// Twitch Helix API base URL.
 const BASE_URL: &str = "https://api.twitch.tv/helix";
@@ -125,7 +137,7 @@ impl Plugin<Context> for Twitch {
     }
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["clips.twitch.tv", "twitch.tv", "www.twitch.tv"]
+        URL_HOSTS
     }
 
     async fn handle_message(
@@ -211,7 +223,7 @@ impl Twitch {
         let host = url.host_str()?;
         let segments: Vec<&str> = url.path_segments()?.collect();
 
-        if host == "twitch.tv" || host == "www.twitch.tv" {
+        if host == TWITCH_HOST || host == TWITCH_WWW_HOST {
             match segments.as_slice() {
                 // twitch.tv/videos/<id>
                 ["videos", id] if !id.is_empty() => Some(UrlKind::Video(id.to_string())),
@@ -223,7 +235,7 @@ impl Twitch {
                 }
                 _ => None,
             }
-        } else if host == "clips.twitch.tv" {
+        } else if host == CLIPS_HOST {
             // clips.twitch.tv/<id>
             match segments.as_slice() {
                 [id] if !id.is_empty() => Some(UrlKind::Clip(id.to_string())),

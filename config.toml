@@ -346,9 +346,8 @@ name = "#zeta.dev"
   [plugins.titles]
   # Enable the plugin.
   enabled = true
-  # Hosts whose URLs are left to dedicated plugins. Defaults to every host matched by a bundled
-  # plugin; the hosts advertised by loaded plugins through the plugin catalog are skipped as
-  # well.
+  # Hosts whose URLs are left to dedicated plugins. Empty by default: the hosts advertised by
+  # loaded plugins through the plugin catalog are skipped without any configuration.
   # ignored_hosts = [
   #   "reddit.com",
   #   "redd.it",

@@ -14,6 +14,9 @@ use crate::{
     plugin::prelude::*,
 };
 
+/// The Spotify hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &["open.spotify.com", "play.spotify.com"];
+
 const AUTH_URL: &str = "https://accounts.spotify.com/api/token";
 const API_BASE_URL: &str = "https://api.spotify.com/v1";
 
@@ -136,7 +139,7 @@ impl Plugin<Context> for Spotify {
     }
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["open.spotify.com", "play.spotify.com"]
+        URL_HOSTS
     }
 
     async fn handle_message(
@@ -164,7 +167,7 @@ impl Plugin<Context> for Spotify {
             .flatten()
         {
             if let Some(host) = url.host_str()
-                && (host == "open.spotify.com" || host == "play.spotify.com")
+                && URL_HOSTS.contains(&host)
                 && let Some((type_str, id_str)) = parse_spotify_url(&url)
             {
                 // Do not include external URL for link matches (avoid redundancy)

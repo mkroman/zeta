@@ -10,11 +10,8 @@ use url::Url;
 
 use crate::{config::HttpConfig, http, plugin::prelude::*};
 
-/// The hostname for Chaturbate URLs.
-const CHATURBATE_HOST: &str = "chaturbate.com";
-
-/// The www-prefixed hostname for Chaturbate URLs.
-const CHATURBATE_WWW_HOST: &str = "www.chaturbate.com";
+/// The Chaturbate hosts whose links this plugin handles.
+const URL_HOSTS: &[&str] = &["chaturbate.com", "www.chaturbate.com"];
 
 /// Plugin for handling Chaturbate URLs and fetching broadcaster room info.
 pub struct Chaturbate {
@@ -66,7 +63,7 @@ impl Plugin<Context> for Chaturbate {
     }
 
     fn url_hosts(&self) -> &'static [&'static str] {
-        &["chaturbate.com", "www.chaturbate.com"]
+        URL_HOSTS
     }
 
     async fn handle_message(
@@ -161,7 +158,7 @@ fn parse_room_dossier_with_re(re: &Regex, html: &str) -> Result<RoomDossier, Err
 fn extract_username(url: &Url) -> Option<String> {
     let host = url.host_str()?;
 
-    if host != CHATURBATE_HOST && host != CHATURBATE_WWW_HOST {
+    if !URL_HOSTS.contains(&host) {
         return None;
     }
 
