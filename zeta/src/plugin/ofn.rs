@@ -19,6 +19,7 @@ use crate::{
         youtube::{self, UrlKind},
     },
     url::ExtractUrlsExt,
+    utils::TimeInWords,
 };
 use model::{InsertUrlRecord, UrlRecord};
 
@@ -270,7 +271,7 @@ impl Ofn {
         match self.process_urls(ctx, origin, &urls).await {
             Ok(report) => {
                 for resource in report.found {
-                    let time_ago = distance_of_time_in_words(resource.created_at());
+                    let time_ago = resource.created_at().time_ago();
 
                     client.send_privmsg(
                         origin.channel,
@@ -567,74 +568,4 @@ fn formatted(s: &str) -> String {
 
 fn formatted_err(s: &str) -> String {
     formatted(&format!("Error:\x0f {s}"))
-}
-
-fn distance_of_time_in_words(delta: DateTime<Utc>) -> String {
-    let now = Utc::now();
-    let total_seconds = (now - delta).num_seconds();
-
-    // Handle zero or negative durations
-    if total_seconds <= 0 {
-        return "0 minutes".to_string();
-    }
-
-    // Calculate time units
-    let weeks = total_seconds / (7 * 24 * 60 * 60);
-    let remaining_after_weeks = total_seconds % (7 * 24 * 60 * 60);
-    let days = remaining_after_weeks / (24 * 60 * 60);
-    let remaining_after_days = remaining_after_weeks % (24 * 60 * 60);
-    let hours = remaining_after_days / (60 * 60);
-    let remaining_after_hours = remaining_after_days % (60 * 60);
-    let minutes = remaining_after_hours / 60;
-    let remaining_after_mins = remaining_after_days % (60 * 60);
-    let seconds = remaining_after_mins % 60;
-
-    // Build the parts vector with non-zero units
-    let mut parts = Vec::new();
-
-    if weeks > 0 {
-        parts.push(format!(
-            "{} week{}",
-            weeks,
-            if weeks == 1 { "" } else { "s" }
-        ));
-    }
-    if days > 0 {
-        parts.push(format!("{} day{}", days, if days == 1 { "" } else { "s" }));
-    }
-
-    if hours > 0 {
-        parts.push(format!(
-            "{} hour{}",
-            hours,
-            if hours == 1 { "" } else { "s" }
-        ));
-    }
-
-    if minutes > 0 {
-        parts.push(format!(
-            "{} minute{}",
-            minutes,
-            if minutes == 1 { "" } else { "s" }
-        ));
-    }
-
-    if seconds > 0 {
-        parts.push(format!(
-            "{} second{}",
-            seconds,
-            if seconds == 1 { "" } else { "s" }
-        ));
-    }
-
-    // Format the output with proper grammar
-    match parts.len() {
-        0 => "0 minutes ago".to_string(),
-        1 => format!("{} ago", parts[0].clone()),
-        2 => format!("{} and {} ago", parts[0], parts[1]),
-        _ => {
-            let last = parts.pop().unwrap();
-            format!("{}, and {} ago", parts.join(", "), last)
-        }
-    }
 }

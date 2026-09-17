@@ -61,7 +61,7 @@ plugin-health = ["dep:memory-stats"]
 plugin-help = []
 plugin-howlongtobeat = ["http"]
 plugin-imdb = ["http", "dep:num-format", "dep:serde_path_to_error"]
-plugin-isitopen = ["http", "dep:regex", "dep:time"]
+plugin-isitopen = ["http", "dep:regex", "time"]
 plugin-kagi = ["dep:kagi"]
 plugin-notification = ["database", "dep:chrono"]
 plugin-ofn = ["database", "http", "plugin-youtube", "dep:num-format"]
@@ -76,15 +76,15 @@ plugin-thingiverse = ["http", "dep:num-format", "dep:regex"]
 plugin-tiktok = ["mirror", "http"]
 plugin-titles = ["dep:html5ever", "dep:wreq", "dep:wreq-util"]
 plugin-trustpilot = ["http", "dep:num-format"]
-plugin-tvmaze = ["http", "dep:time", "dep:serde_path_to_error"]
+plugin-tvmaze = ["http", "time", "dep:serde_path_to_error"]
 plugin-twitch = ["http", "dep:num-format"]
-plugin-urban-dictionary = ["http", "dep:time"]
+plugin-urban-dictionary = ["http", "time"]
 plugin-youtube = [
     "http",
     "dep:htmlize",
     "dep:num-format",
     "dep:serde_path_to_error",
-    "dep:time",
+    "time",
 ]
 plugins-all = [
     "plugin-alert",
