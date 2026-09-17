@@ -42,3 +42,104 @@ pub async fn migrate(pool: Database) -> Result<(), Error> {
         .await
         .map_err(Error::DatabaseMigration)
 }
+
+/// Deletes the rows with the given `ids` from `table`, returning the number of deleted rows.
+///
+/// `table` must be a table known at compile time; it is never sourced from user input.
+///
+/// # Errors
+///
+/// Returns the `sqlx::Error` if the query fails.
+pub(crate) async fn delete_ids(
+    db: &Database,
+    table: &'static str,
+    ids: &[i32],
+) -> Result<u64, sqlx::Error> {
+    // The table name is a compile-time constant from the calling module, never user input.
+    let query = sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE id = ANY($1)"));
+
+    sqlx::query(query)
+        .bind(ids)
+        .execute(db)
+        .await
+        .map(|result| result.rows_affected())
+}
+
+/// A failed database operation, naming the affected entity.
+#[derive(Debug)]
+pub struct DbError {
+    stage: Stage,
+    entity: &'static str,
+    source: sqlx::Error,
+}
+
+/// The stage of a database operation that failed.
+#[derive(Debug, Clone, Copy)]
+enum Stage {
+    /// Loading rows from the database.
+    Load,
+    /// Inserting a row into the database.
+    Insert,
+    /// Deleting rows from the database.
+    Delete,
+}
+
+impl DbError {
+    /// Constructs the error for a failed load of `entity` rows.
+    pub(crate) const fn load(entity: &'static str, source: sqlx::Error) -> Self {
+        Self::new(Stage::Load, entity, source)
+    }
+
+    /// Constructs the error for a failed insert of an `entity` row.
+    pub(crate) const fn insert(entity: &'static str, source: sqlx::Error) -> Self {
+        Self::new(Stage::Insert, entity, source)
+    }
+
+    /// Constructs the error for a failed delete of `entity` rows.
+    pub(crate) const fn delete(entity: &'static str, source: sqlx::Error) -> Self {
+        Self::new(Stage::Delete, entity, source)
+    }
+
+    /// Constructs the error from its parts.
+    const fn new(stage: Stage, entity: &'static str, source: sqlx::Error) -> Self {
+        Self {
+            stage,
+            entity,
+            source,
+        }
+    }
+}
+
+impl std::fmt::Display for DbError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.stage {
+            Stage::Load => write!(f, "could not load {} from database", self.entity),
+            Stage::Insert => write!(f, "could not insert {}: {}", self.entity, self.source),
+            Stage::Delete => write!(f, "could not delete {}: {}", self.entity, self.source),
+        }
+    }
+}
+
+impl std::error::Error for DbError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Connects to the test database, if one is configured.
+///
+/// Returns `None` when `ZETA_TEST_DATABASE_URL` is unset, so database-backed tests skip instead
+/// of failing on machines without the database running.
+#[cfg(test)]
+pub(crate) async fn connect_for_tests() -> Option<Database> {
+    use sqlx::postgres::PgPoolOptions;
+
+    let url = std::env::var("ZETA_TEST_DATABASE_URL").ok()?;
+    let db = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("could not connect to the test database");
+
+    Some(db)
+}

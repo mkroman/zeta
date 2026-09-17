@@ -350,13 +350,7 @@ mod tests {
 
     /// Skips the test if a test database has not been configured.
     async fn test_service() -> Option<(AlertService, mpsc::UnboundedReceiver<Alert>, Database)> {
-        let url = std::env::var("ZETA_TEST_DATABASE_URL").ok()?;
-
-        let db = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
-            .connect(&url)
-            .await
-            .expect("could not connect to the test database");
+        let db = crate::database::connect_for_tests().await?;
 
         let mut service = AlertService::new(db.clone(), &Settings::default());
         let receiver = service.take_receiver();

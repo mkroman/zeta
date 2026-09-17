@@ -1,18 +1,31 @@
 //! Errors that can occur while handling alerts.
 
+use crate::database::DbError;
+
 /// Errors that can occur while handling alerts.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Loading alerts from the database failed.
-    #[error("could not load alerts from database")]
-    Load(#[source] sqlx::Error),
-    /// Inserting an alert into the database failed.
-    #[error("could not insert alert: {0}")]
-    Insert(#[source] sqlx::Error),
-    /// Deleting an alert from the database failed.
-    #[error("could not delete alert: {0}")]
-    Delete(#[source] sqlx::Error),
+    /// A database operation on the alerts failed.
+    #[error(transparent)]
+    Database(#[from] DbError),
     /// The alert delivery channel is closed.
     #[error("alert delivery channel is closed")]
     Closed,
+}
+
+impl Error {
+    /// Constructs the error for a failed load of alerts.
+    pub(crate) const fn load(source: sqlx::Error) -> Self {
+        Self::Database(DbError::load("alerts", source))
+    }
+
+    /// Constructs the error for a failed insert of an alert.
+    pub(crate) const fn insert(source: sqlx::Error) -> Self {
+        Self::Database(DbError::insert("alerts", source))
+    }
+
+    /// Constructs the error for a failed delete of alerts.
+    pub(crate) const fn delete(source: sqlx::Error) -> Self {
+        Self::Database(DbError::delete("alerts", source))
+    }
 }

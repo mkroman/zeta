@@ -47,7 +47,7 @@ impl FilterRepository {
         .bind(filter.created_by)
         .fetch_one(&self.db)
         .await
-        .map_err(Error::Insert)
+        .map_err(Error::insert)
     }
 
     /// Returns all filters in the database.
@@ -66,7 +66,7 @@ impl FilterRepository {
         )
         .fetch_all(&self.db)
         .await
-        .map_err(Error::Load)
+        .map_err(Error::load)
     }
 
     /// Deletes the filters with the given `ids`, returning the number of rows removed.
@@ -78,11 +78,8 @@ impl FilterRepository {
     pub async fn delete_all(&self, ids: &[i32]) -> Result<u64, Error> {
         trace!(?ids, "deleting filters from database");
 
-        sqlx::query("DELETE FROM filters WHERE id = ANY($1)")
-            .bind(ids)
-            .execute(&self.db)
+        crate::database::delete_ids(&self.db, "filters", ids)
             .await
-            .map_err(Error::Delete)
-            .map(|result| result.rows_affected())
+            .map_err(Error::delete)
     }
 }
