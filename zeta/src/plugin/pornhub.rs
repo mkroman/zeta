@@ -5,9 +5,8 @@
 //! This plugin provides functionality to display information about linked PornHub videos.
 
 use num_format::{Locale, ToFormattedString};
-use reqwest::Response;
-use serde::{Deserialize, de::DeserializeOwned};
-use tracing::{debug, error};
+use serde::Deserialize;
+use tracing::debug;
 use url::Url;
 
 use crate::{
@@ -218,7 +217,8 @@ impl PornHub {
 
         let response = self.client.get(url).send().await.map_err(Error::Request)?;
         debug!("request went ok, parsing response");
-        let json: ApiResponse = deserialize_response(response).await?;
+        let text = response.text().await.map_err(Error::Request)?;
+        let json: ApiResponse = http::json::from_str(&text).map_err(Error::Deserialize)?;
 
         match json {
             ApiResponse::Error { code, .. } => {
@@ -257,19 +257,4 @@ fn extract_video_id(url: &Url) -> Option<String> {
             None
         }
     })
-}
-
-/// Deserializes an HTTP response into the specified type.
-///
-/// # Errors
-///
-/// Returns `Error::Request` if reading the response fails.
-/// Returns `Error::Deserialize` if parsing the JSON fails.
-async fn deserialize_response<T: DeserializeOwned>(response: Response) -> Result<T, Error> {
-    let text = response.text().await.map_err(Error::Request)?;
-    let deserializer = &mut serde_json::Deserializer::from_slice(text.as_bytes());
-
-    serde_path_to_error::deserialize(deserializer)
-        .inspect_err(|err| error!(?err, body = %text, "failed to parse json response"))
-        .map_err(Error::Deserialize)
 }

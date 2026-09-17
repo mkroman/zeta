@@ -156,7 +156,7 @@ impl Client {
             return Err(api_error(status, &text));
         }
 
-        decode_response(&text)
+        http::json::from_str(&text).map_err(Error::Deserialize)
     }
 }
 
@@ -181,15 +181,6 @@ fn api_error(status: StatusCode, body: &str) -> Error {
     )
 }
 
-/// Deserializes a response body into `T`, logging parse failures.
-fn decode_response<T: DeserializeOwned>(text: &str) -> Result<T, Error> {
-    let deserializer = &mut serde_json::Deserializer::from_str(text);
-
-    serde_path_to_error::deserialize(deserializer)
-        .inspect_err(|err| debug!(?err, %text, "could not deserialize response"))
-        .map_err(Error::Deserialize)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,7 +189,7 @@ mod tests {
     fn decodes_quote_response() {
         let text = r#"{"data":{"BTC":{"id":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","quote":{"USD":{"price":97231.504,"volume_24h":48000000000,"percent_change_1h":0.5,"percent_change_24h":-1.2,"percent_change_7d":10.25,"last_updated":"2026-09-09T00:00:00.000Z"}}}},"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
 
-        let parsed: Envelope<HashMap<String, QuoteData>> = decode_response(text).unwrap();
+        let parsed: Envelope<HashMap<String, QuoteData>> = http::json::from_str(text).unwrap();
         let quote = parsed.data.unwrap().remove("BTC").unwrap();
 
         assert_eq!(quote.name, "Bitcoin");
@@ -211,7 +202,7 @@ mod tests {
     fn decodes_coin_map_response() {
         let text = r#"{"data":[{"id":1,"rank":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","is_active":1,"first_historical_data":"2013-04-28T18:47:21.000Z","last_historical_data":"2020-05-05T20:44:01.000Z","platform":null},{"id":1027,"rank":2,"name":"Ethereum","symbol":"ETH","slug":"ethereum","is_active":1,"first_historical_data":"2015-08-07T14:49:30.000Z","last_historical_data":"2020-05-05T20:44:02.000Z","platform":null}],"status":{"timestamp":"2026-09-13T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
 
-        let parsed: Envelope<Vec<Coin>> = decode_response(text).unwrap();
+        let parsed: Envelope<Vec<Coin>> = http::json::from_str(text).unwrap();
         let coins = parsed.data.unwrap();
 
         assert_eq!(coins.len(), 2);
@@ -223,7 +214,7 @@ mod tests {
     fn decodes_fiat_map_response() {
         let text = r#"{"data":[{"id":2781,"name":"United States Dollar","sign":"$","symbol":"USD"},{"id":2787,"name":"Chinese Yuan","sign":"¥","symbol":"CNY"}],"status":{"timestamp":"2026-09-13T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
 
-        let parsed: Envelope<Vec<Fiat>> = decode_response(text).unwrap();
+        let parsed: Envelope<Vec<Fiat>> = http::json::from_str(text).unwrap();
         let fiats = parsed.data.unwrap();
 
         assert_eq!(fiats.len(), 2);
@@ -263,7 +254,9 @@ mod tests {
 
     #[test]
     fn maps_deserialize_failures_to_a_user_facing_message() {
-        let err = decode_response::<Envelope<Value>>("{").expect_err("malformed json");
+        let err = http::json::from_str::<Envelope<Value>>("{")
+            .map_err(Error::Deserialize)
+            .expect_err("malformed json");
 
         assert_eq!(
             err.to_string(),

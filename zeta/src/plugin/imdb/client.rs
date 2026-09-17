@@ -6,9 +6,9 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 use tracing::{debug, error, instrument};
 
+use super::Settings;
 use super::error::Error;
 use super::model::{Person, SearchResult, SeriesInfo, Title};
-use super::Settings;
 use crate::config::HttpConfig;
 use crate::http;
 
@@ -236,7 +236,8 @@ impl GraphQlClient {
             .map_err(Error::Request)?;
 
         let text = response.text().await.map_err(Error::Request)?;
-        let response: GraphQlResponse<T> = decode_response(&text)?;
+        let response: GraphQlResponse<T> =
+            http::json::from_str(&text).map_err(Error::Deserialize)?;
 
         if let Some(errors) = response.errors.filter(|errors| !errors.is_empty()) {
             let messages = errors
@@ -267,15 +268,6 @@ struct GraphQlResponse<T> {
 struct GraphQlError {
     /// A human-readable description of the error.
     message: Option<String>,
-}
-
-/// Deserializes a GraphQL response body into [`GraphQlResponse`].
-fn decode_response<T: DeserializeOwned>(text: &str) -> Result<GraphQlResponse<T>, Error> {
-    let deserializer = &mut serde_json::Deserializer::from_str(text);
-
-    serde_path_to_error::deserialize(deserializer)
-        .inspect_err(|err| error!(?err, %text, "could not deserialize response"))
-        .map_err(Error::Deserialize)
 }
 
 /// A GraphQL text field (e.g. `titleText { text }`).
@@ -608,7 +600,7 @@ mod tests {
     fn decodes_get_title_response() {
         let text = r#"{"data":{"title":{"id":"tt14663588","titleText":{"text":"Peggle Nights"},"originalTitleText":{"text":"Peggle Nights"},"titleType":{"text":"Video Game"},"releaseYear":{"year":2008,"endYear":null},"ratingsSummary":{"aggregateRating":7.6,"voteCount":53},"plot":{"plotText":{"plainText":"Downloadable follow-up to the original \"Peggle (2007)\"."}},"titleGenres":{"genres":[{"genre":{"text":"Action"}},{"genre":{"text":"Adventure"}},{"genre":{"text":"Family"}}]}}}}"#;
 
-        let response: GraphQlResponse<TitleData> = decode_response(text).unwrap();
+        let response: GraphQlResponse<TitleData> = http::json::from_str(text).unwrap();
         let title = Title::from(response.data.unwrap().title.unwrap());
 
         assert_eq!(title.id, "tt14663588");
@@ -626,7 +618,7 @@ mod tests {
     fn decodes_search_response() {
         let text = r#"{"data":{"mainSearch":{"edges":[{"node":{"entity":{"id":"tt14663588","titleText":{"text":"Peggle Nights"},"releaseYear":{"year":2008}}}}]}}}"#;
 
-        let response: GraphQlResponse<SearchData> = decode_response(text).unwrap();
+        let response: GraphQlResponse<SearchData> = http::json::from_str(text).unwrap();
         let data = response.data.unwrap();
         let results: Vec<SearchResult> = data
             .main_search
@@ -650,7 +642,7 @@ mod tests {
     #[test]
     fn decodes_null_title_as_not_found() {
         let text = r#"{"data":{"title":null}}"#;
-        let response: GraphQlResponse<TitleData> = decode_response(text).unwrap();
+        let response: GraphQlResponse<TitleData> = http::json::from_str(text).unwrap();
 
         assert!(response.data.unwrap().title.is_none());
     }
@@ -659,7 +651,7 @@ mod tests {
     fn decodes_episode_response_with_series_info() {
         let text = r#"{"data":{"title":{"id":"tt0959621","titleText":{"text":"Pilot"},"titleType":{"text":"TV Episode"},"releaseYear":{"year":2008,"endYear":null},"series":{"series":{"id":"tt0903747","titleText":{"text":"Breaking Bad"}},"displayableEpisodeNumber":{"episodeNumber":{"episodeNumber":"1"},"displayableSeason":{"season":"1"}}}}}}"#;
 
-        let response: GraphQlResponse<TitleData> = decode_response(text).unwrap();
+        let response: GraphQlResponse<TitleData> = http::json::from_str(text).unwrap();
         let title = Title::from(response.data.unwrap().title.unwrap());
 
         assert!(title.is_episode());
@@ -675,7 +667,7 @@ mod tests {
     fn decodes_name_response() {
         let text = r#"{"data":{"name":{"id":"nm0186505","nameText":{"text":"Bryan Cranston"},"birthDate":{"dateComponents":{"year":1956}},"deathDate":null,"bios":{"edges":[{"node":{"text":{"plainText":"Bryan Lee Cranston was born on March 7, 1956."}}}]},"knownFor":{"edges":[{"node":{"title":{"id":"tt0903747","titleText":{"text":"Breaking Bad"},"releaseYear":{"year":2008,"endYear":2013}}}}]}}}}"#;
 
-        let response: GraphQlResponse<NameData> = decode_response(text).unwrap();
+        let response: GraphQlResponse<NameData> = http::json::from_str(text).unwrap();
         let person = Person::from(response.data.unwrap().name.unwrap());
 
         assert_eq!(person.id, "nm0186505");

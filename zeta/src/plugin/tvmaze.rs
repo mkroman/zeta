@@ -5,7 +5,7 @@
 //! This plugin provides functionality to search for TV shows and display information
 //! about upcoming episodes using the TVmaze API.
 use reqwest::{Response, StatusCode, Url};
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::Deserialize;
 use tracing::{debug, error, instrument};
 
 use crate::{config::HttpConfig, duration::TimeInWords, http, plugin::prelude::*};
@@ -16,11 +16,11 @@ pub const API_BASE_URL: &str = "https://api.tvmaze.com";
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("could not deserialize response: {0}")]
-    Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
+    Deserialize(#[from] serde_path_to_error::Error<serde_json::Error>),
     #[error("resource not found")]
     NotFound,
     #[error("request error: {0}")]
-    Request(#[source] reqwest::Error),
+    Request(#[from] reqwest::Error),
     #[error("unexpected http response")]
     UnexpectedResponse,
 }
@@ -197,7 +197,8 @@ impl Tvmaze {
         match response.status() {
             StatusCode::OK => {
                 debug!("response is ok, parsing show");
-                let show = deserialize_response(response).await?;
+                let text = response.text().await.map_err(Error::Request)?;
+                let show = http::json::from_str(&text).map_err(Error::Deserialize)?;
                 debug!(?show, "finished parsing show");
 
                 Ok(show)
@@ -305,19 +306,4 @@ impl Tvmaze {
             |name| reply("TVmaze", format!("(\x0f{name}\x0310): {message}")),
         )
     }
-}
-
-/// Deserializes an HTTP response into the specified type.
-///
-/// # Errors
-///
-/// Returns `Error::Request` if reading the response fails.
-/// Returns `Error::Deserialize` if parsing the JSON fails.
-async fn deserialize_response<T: DeserializeOwned>(response: Response) -> Result<T, Error> {
-    let text = response.text().await.map_err(Error::Request)?;
-    let deserializer = &mut serde_json::Deserializer::from_slice(text.as_bytes());
-
-    serde_path_to_error::deserialize(deserializer)
-        .inspect_err(|err| error!(?err, body = %text, "failed to parse json response"))
-        .map_err(Error::Deserialize)
 }

@@ -8,7 +8,7 @@ use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
-use tracing::{debug, error};
+use tracing::debug;
 use url::Url;
 
 use crate::{
@@ -490,24 +490,17 @@ impl YouTube {
         debug!(?params, "searching for videos");
 
         let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
-        let response = request.send().await.map_err(Error::Request)?;
+        let response = request.send().await?.error_for_status()?;
 
-        match response.error_for_status() {
-            Ok(response) => {
-                debug!("response is ok, parsing as json");
-                let text = response.text().await.map_err(Error::Request)?;
-                let de = &mut serde_json::Deserializer::from_str(&text);
-                let result: SearchListResponse = serde_path_to_error::deserialize(de)
-                    .inspect_err(|err| error!(?err, %text, "could not parse response"))
-                    .map_err(Error::Deserialize)?;
-                let items = result.items;
+        debug!("response is ok, parsing as json");
+        let text = response.text().await.map_err(Error::Request)?;
+        let result: SearchListResponse = http::json::from_str(&text).map_err(Error::Deserialize)?;
 
-                debug!(?items, "returning items");
+        let items = result.items;
 
-                Ok(items)
-            }
-            Err(err) => Err(Error::Request(err)),
-        }
+        debug!(?items, "returning items");
+
+        Ok(items)
     }
 
     /// Fetches metadata for a YouTube video using its video ID.
