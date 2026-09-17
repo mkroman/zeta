@@ -28,8 +28,8 @@ use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
 use wreq::redirect::Policy;
 use wreq_util::Emulation;
 
-use crate::plugin::prelude::*;
 use crate::url::{ExtractUrls, ExtractedUrl, SchemeMap};
+use crate::{plugin::prelude::*, utils::Truncatable};
 
 /// The accepted schemes: `http` and `https`, plus the `ttp` and `ttps` variants that are missing
 /// their leading `h` — the latter are repaired and announced before the page is fetched.
@@ -613,7 +613,7 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .as_deref()
         .map(clean)
         .filter(|description| !description.is_empty())
-        .map(|description| truncate(&description, settings.max_description_length));
+        .map(|description| description.truncate_within(settings.max_description_length, "…"));
 
     if title.is_none() && description.is_none() {
         return None;
@@ -639,7 +639,7 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         notice(&content)
     };
 
-    Some(truncate(&message, settings.max_message_length))
+    Some(message.truncate_within(settings.max_message_length, "…"))
 }
 
 /// Whether any OpenGraph metadata was captured.
@@ -652,18 +652,6 @@ const fn has_open_graph(metadata: &PageMetadata) -> bool {
 #[must_use]
 fn clean(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Truncates `value` to at most `max` characters, appending an ellipsis when truncated.
-#[must_use]
-fn truncate(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
-        return value.to_string();
-    }
-
-    let mut truncated: String = value.chars().take(max.saturating_sub(1)).collect();
-    truncated.push('…');
-    truncated
 }
 
 /// Returns the host of `url` without its `www.` prefix.
@@ -1037,11 +1025,6 @@ mod tests {
 
     #[test]
     fn truncates_long_values() {
-        assert_eq!(truncate("hello", 10), "hello");
-        assert_eq!(truncate("hello", 5), "hello");
-        assert_eq!(truncate("hello", 4), "hel…");
-        assert_eq!(truncate("hæłlo", 4), "hæł…");
-
         let settings = Settings::default();
         let long = "x".repeat(settings.max_message_length + 1);
         let metadata = PageMetadata {

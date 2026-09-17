@@ -530,12 +530,8 @@ mod tests {
     /// Writes an executable script that acts like a successful `yt-dlp` run: it emits progress
     /// lines, writes a file into the directory passed via `--paths`, and dumps its json.
     fn write_successful_script() -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-
-        let script =
-            std::env::temp_dir().join(format!("zeta-test-ytdlp-{}.sh", std::process::id()));
-        std::fs::write(
-            &script,
+        crate::mirror::write_test_script(
+            "ytdlp",
             r#"#!/bin/sh
 while [ $# -gt 0 ]; do
   if [ "$1" = "--paths" ] && [ -n "$2" ]; then
@@ -549,13 +545,6 @@ printf junk > "$dir/123.mp4"
 printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "123", "ext": "mp4", "vcodec": "avc1.640029", "acodec": "mp4a.40.2"}]}' "$dir"
 "#,
         )
-        .unwrap();
-
-        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script, permissions).unwrap();
-
-        script
     }
 
     #[tokio::test]

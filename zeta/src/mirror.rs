@@ -521,21 +521,19 @@ pub(crate) fn is_safe_id(id: &str) -> bool {
 
 /// Removes any temporary download directories left behind by a previous run.
 ///
-/// When `max_age` is given, only directories whose modification time is older are removed; use it
-/// when sweeping a directory that may hold the active download directories of other running
-/// processes (the system temporary directory). Left `None` for directories owned by this process.
-fn cleanup_stale_downloads(base: &std::path::Path, max_age: Option<Duration>) {
+/// Returns the number of directories removed. When `max_age` is given, only directories whose
+/// modification time is older are removed; use it when sweeping a directory that may hold the
+/// active download directories of other running processes (the system temporary directory). Left
+/// `None` for directories owned by this process.
+pub(super) fn cleanup_stale_downloads(base: &std::path::Path, max_age: Option<Duration>) -> usize {
     let Ok(entries) = std::fs::read_dir(base) else {
-        return;
+        return 0;
     };
 
+    let mut removed = 0;
+
     for entry in entries.flatten() {
-        if !entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(TEMP_DIR_PREFIX)
-            || !entry.file_type().is_ok_and(|file_type| file_type.is_dir())
-        {
+        if !is_temp_download_dir(&entry) {
             continue;
         }
 
@@ -545,14 +543,41 @@ fn cleanup_stale_downloads(base: &std::path::Path, max_age: Option<Duration>) {
             continue;
         }
 
-        if let Err(err) = std::fs::remove_dir_all(entry.path()) {
-            warn!(
+        match std::fs::remove_dir_all(entry.path()) {
+            Ok(()) => removed += 1,
+            Err(err) => warn!(
                 path = %entry.path().display(),
                 error = %err,
                 "could not remove stale download directory"
-            );
+            ),
         }
     }
+
+    removed
+}
+
+/// Whether `entry` is a temporary download directory left by a mirror download.
+pub(super) fn is_temp_download_dir(entry: &std::fs::DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_string_lossy()
+        .starts_with(TEMP_DIR_PREFIX)
+        && entry.file_type().is_ok_and(|file_type| file_type.is_dir())
+}
+
+/// Writes `body` as an executable, uniquely named test script, returning its path.
+#[cfg(test)]
+pub(crate) fn write_test_script(name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let script = std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
+    std::fs::write(&script, body).unwrap();
+
+    let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script, permissions).unwrap();
+
+    script
 }
 
 /// Returns whether the entry was last modified longer than `age` ago.

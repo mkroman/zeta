@@ -10,19 +10,25 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
+
+#[cfg(test)]
+use std::path::Path;
 
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 use url::Url;
 
 use super::{
-    TEMP_DIR_PREFIX, is_safe_id, object_key, public_url_for,
+    is_safe_id, object_key, public_url_for,
     s3::S3,
     tempdir_builder,
     ytdlp::{self, DownloadedFile, Progress, YtDlp},
 };
+
+#[cfg(test)]
+use super::TEMP_DIR_PREFIX;
 
 /// Errors that can occur while mirroring a download request.
 #[derive(thiserror::Error, Debug)]
@@ -108,7 +114,7 @@ impl DownloadManager {
         base_dir: Option<tempfile::TempDir>,
         max_concurrent: usize,
     ) -> Self {
-        let removed = cleanup_stale_downloads(&download_dir);
+        let removed = super::cleanup_stale_downloads(&download_dir, None);
         if removed > 0 {
             debug!(removed, "cleaned up stale download directories");
         }
@@ -483,53 +489,13 @@ impl Drop for DownloadTask {
     }
 }
 
-/// Removes any temporary download directories left behind by a previous run.
-///
-/// Returns the number of directories removed. Only directories are touched; anything else with a
-/// matching name is left alone.
-fn cleanup_stale_downloads(base: &Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(base) else {
-        return 0;
-    };
-
-    let mut removed = 0;
-
-    for entry in entries.flatten() {
-        if !entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(TEMP_DIR_PREFIX)
-            || !entry.file_type().is_ok_and(|file_type| file_type.is_dir())
-        {
-            continue;
-        }
-
-        match std::fs::remove_dir_all(entry.path()) {
-            Ok(()) => removed += 1,
-            Err(err) => warn!(
-                path = %entry.path().display(),
-                error = %err,
-                "could not remove stale download directory"
-            ),
-        }
-    }
-
-    removed
-}
-
 /// Returns the temporary download directories that currently exist under `base`.
 #[cfg(test)]
 fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(base)
         .unwrap()
         .flatten()
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(TEMP_DIR_PREFIX)
-                && entry.file_type().is_ok_and(|file_type| file_type.is_dir())
-        })
+        .filter(super::is_temp_download_dir)
         .map(|entry| entry.path())
         .collect()
 }
@@ -538,36 +504,11 @@ fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
-    /// Writes an executable script that sleeps for the number of seconds given as its last
-    /// argument (the download URL), and then exits with a failure.
-    fn write_sleeping_script(name: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
+    /// A `yt-dlp` stand-in that fails after sleeping for the download URL.
+    const SLEEPING_SCRIPT_BODY: &str = "#!/bin/sh\nfor last; do :; done\nsleep \"$last\"\nexit 1\n";
 
-        let script =
-            std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
-        std::fs::write(
-            &script,
-            "#!/bin/sh\nfor last; do :; done\nsleep \"$last\"\nexit 1\n",
-        )
-        .unwrap();
-
-        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script, permissions).unwrap();
-
-        script
-    }
-
-    /// Writes an executable script that acts like a successful `yt-dlp` run: it writes a file
-    /// into the directory passed via `--paths` and dumps its json.
-    fn write_successful_script(name: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-
-        let script =
-            std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
-        std::fs::write(
-            &script,
-            r#"#!/bin/sh
+    /// A `yt-dlp` stand-in that writes a file into `--paths` and dumps its json.
+    const SUCCESSFUL_SCRIPT_BODY: &str = r#"#!/bin/sh
 while [ $# -gt 0 ]; do
   if [ "$1" = "--paths" ] && [ -n "$2" ]; then
     dir="$2"
@@ -576,15 +517,18 @@ while [ $# -gt 0 ]; do
 done
 printf junk > "$dir/123.mp4"
 printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "123", "ext": "mp4", "vcodec": "avc1.640029", "acodec": "mp4a.40.2"}]}' "$dir"
-"#,
-        )
-        .unwrap();
+"#;
 
-        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script, permissions).unwrap();
+    /// Writes an executable script that sleeps for the number of seconds given as its last
+    /// argument (the download URL), and then exits with a failure.
+    fn write_sleeping_script(name: &str) -> PathBuf {
+        crate::mirror::write_test_script(name, SLEEPING_SCRIPT_BODY)
+    }
 
-        script
+    /// Writes an executable script that acts like a successful `yt-dlp` run: it writes a file
+    /// into the directory passed via `--paths` and dumps its json.
+    fn write_successful_script(name: &str) -> PathBuf {
+        crate::mirror::write_test_script(name, SUCCESSFUL_SCRIPT_BODY)
     }
 
     /// Returns a request that reports its result on the given channel.
@@ -731,7 +675,7 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
         let unrelated = base.path().join("zeta-unrelated");
         std::fs::create_dir(&unrelated).unwrap();
 
-        assert_eq!(cleanup_stale_downloads(base.path()), 1);
+        assert_eq!(crate::mirror::cleanup_stale_downloads(base.path(), None), 1);
         assert!(!stale.exists());
         assert!(unrelated.exists());
     }

@@ -7,7 +7,7 @@ use time::{
 };
 use tracing::{debug, warn};
 
-use crate::{http, plugin::prelude::*};
+use crate::{http, plugin::prelude::*, utils::strip_nick_prefix};
 
 const API_BASE_URL: &str = "https://maps.googleapis.com";
 
@@ -183,11 +183,16 @@ fn parse_hhmm(s: &str) -> Option<Time> {
     Time::parse(s, HHMM_FORMAT).ok()
 }
 
+/// Formats a `Time` as "HH:MM".
+fn format_time(time: Time) -> String {
+    format!("{:02}:{:02}", time.hour(), time.minute())
+}
+
 /// Formats a "HHMM" string into "HH:MM".
 fn format_time_string(s: &str) -> Option<String> {
     let time = parse_hhmm(s)?;
 
-    Some(format!("{:02}:{:02}", time.hour(), time.minute()))
+    Some(format_time(time))
 }
 
 #[async_trait]
@@ -365,8 +370,8 @@ impl IsItOpen {
 
             if let (Some(open), Some(close)) = (open_time, close_time) {
                 let now_time = now.time();
-                let closing_str = format!("{:02}:{:02}", close.hour(), close.minute());
-                let opening_str = format!("{:02}:{:02}", open.hour(), open.minute());
+                let closing_str = format_time(close);
+                let opening_str = format_time(open);
 
                 if open >= now_time {
                     format!(
@@ -397,7 +402,7 @@ impl IsItOpen {
 
             if let (Some(open), Some(_close)) = (open_time, close_time) {
                 let now_time = now.time();
-                let opening_str = format!("{:02}:{:02}", open.hour(), open.minute());
+                let opening_str = format_time(open);
 
                 if open >= now_time {
                     format!(
@@ -433,7 +438,7 @@ impl IsItOpen {
 
             open_time.map_or_else(|| format!("{nick}: ja, \x02{name}\x02 har lukket for i dag"), |open| {
                 let now_time = now.time();
-                let opening_str = format!("{:02}:{:02}", open.hour(), open.minute());
+                let opening_str = format_time(open);
 
                 if open >= now_time {
                     format!(
@@ -454,17 +459,6 @@ enum QueryAction {
     ClosingTime,
     IsOpen,
     IsClosed,
-}
-
-/// Helper to strip the bot's nickname from the message start.
-fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a str> {
-    s.strip_prefix(current_nickname).and_then(|s| {
-        if s.starts_with(", ") || s.starts_with(": ") {
-            Some(&s[2..])
-        } else {
-            None
-        }
-    })
 }
 
 #[cfg(test)]

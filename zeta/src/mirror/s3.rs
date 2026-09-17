@@ -199,11 +199,7 @@ impl S3 {
         let headers = self.signing_headers("HEAD", &url, SignableBody::empty())?;
 
         let response = send_with_retry(|| async {
-            let mut request = self.client.head(url.clone());
-
-            for (name, value) in &headers {
-                request = request.header(*name, value.as_str());
-            }
+            let request = apply_headers(self.client.head(url.clone()), &headers);
 
             Ok(request.send().await?)
         })
@@ -236,16 +232,14 @@ impl S3 {
 
         let response = send_with_retry(|| async {
             let file = tokio::fs::File::open(path).await.map_err(Error::from)?;
-            let mut request = self
-                .client
-                .put(url.clone())
-                .header(CONTENT_LENGTH, length)
-                .header(CONTENT_TYPE, content_type_for(path))
-                .body(Body::from(file));
-
-            for (name, value) in &headers {
-                request = request.header(*name, value.as_str());
-            }
+            let request = apply_headers(
+                self.client
+                    .put(url.clone())
+                    .header(CONTENT_LENGTH, length)
+                    .header(CONTENT_TYPE, content_type_for(path))
+                    .body(Body::from(file)),
+                &headers,
+            );
 
             Ok(request.send().await?)
         })
@@ -316,6 +310,18 @@ impl S3 {
             .map(|header| (header.name(), header.value().to_string()))
             .collect())
     }
+}
+
+/// Applies the signed `headers` to `request`.
+fn apply_headers(
+    mut request: reqwest::RequestBuilder,
+    headers: &[(&'static str, String)],
+) -> reqwest::RequestBuilder {
+    for (name, value) in headers {
+        request = request.header(*name, value.as_str());
+    }
+
+    request
 }
 
 /// Sends a request built by `build`, retrying transient failures with a backoff.

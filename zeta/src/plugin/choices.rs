@@ -1,7 +1,7 @@
 use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 
-use crate::plugin::prelude::*;
+use crate::{plugin::prelude::*, utils::strip_nick_prefix};
 
 /// Settings for the choices plugin, from its `[plugins.choices]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -70,16 +70,6 @@ impl Plugin<Context> for Choices {
 
         Ok(())
     }
-}
-
-fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a str> {
-    s.strip_prefix(current_nickname).and_then(|s| {
-        if s.starts_with(", ") || s.starts_with(": ") {
-            Some(&s[2..])
-        } else {
-            None
-        }
-    })
 }
 
 fn extract_options<'a>(s: &'a str, settings: &Settings) -> Option<Vec<&'a str>> {
