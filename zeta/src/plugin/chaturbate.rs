@@ -59,7 +59,7 @@ impl Plugin<Context> for Chaturbate {
     type Settings = NoSettings;
 
     fn new(ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions.url_hosts(URL_HOSTS);
+        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
 
         Ok(Self::new(&ctx.config.http))
     }

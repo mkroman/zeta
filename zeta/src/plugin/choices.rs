@@ -46,7 +46,7 @@ impl Plugin<Context> for Choices {
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Choices, ZetaError> {
-        subscriptions.messages();
+        subscriptions.receive_message();
 
         Ok(Choices {
             settings: settings.clone(),

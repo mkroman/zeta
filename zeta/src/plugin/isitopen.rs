@@ -199,7 +199,7 @@ impl Plugin<Context> for IsItOpen {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions.messages();
+        subscriptions.receive_message();
 
         let api_key = resolve_secret(settings.api_key.as_deref(), "GOOGLE_MAPS_API_KEY")?;
         let client = http::build_client(&ctx.config.http);

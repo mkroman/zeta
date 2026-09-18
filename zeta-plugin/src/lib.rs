@@ -16,9 +16,8 @@ pub use argh;
 pub use command::{ArgsError, CommandSpec};
 pub use error::Error;
 pub use event::{
-    CommandEvent, CtcpEvent, CtcpKind, Event, JoinEvent, KickEvent, MessageEvent, NickEvent,
-    PartEvent, PresenceInterest, QuitEvent, RawEvent, Sender, Subscriptions, Tag, UrlEvent,
-    UrlInterest,
+    CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
+    NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, Tag, UrlEvent, UrlScope,
 };
 pub use plugin::{Plugin, PluginName};
 pub use types::{Author, Metadata, Name, NoSettings};
@@ -30,7 +29,7 @@ pub mod prelude {
     pub use super::error::{BoxError, plugin_err, require_env, resolve_secret};
     pub use super::event::{
         CommandEvent, CtcpEvent, CtcpKind, Event, JoinEvent, KickEvent, MessageEvent, NickEvent,
-        PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, Tag, UrlEvent, UrlInterest,
+        PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, Tag, UrlEvent, UrlScope,
     };
     pub use super::irc::{
         BOLD, COLOR, REPLY_PREFIX, RESET, notice, reply, reply_prefix, reply_usage_lines,

@@ -133,7 +133,7 @@ impl Plugin<Context> for PornHub {
 
     /// Creates a new instance of the PornHub plugin.
     fn new(ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions.url_hosts(&[PORNHUB_HOST]);
+        subscriptions.urls(UrlScope::Hosts(&[PORNHUB_HOST]));
 
         let client = http::build_client(&ctx.config.http);
 

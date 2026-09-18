@@ -291,7 +291,9 @@ impl Plugin<Context> for YouTube {
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<YouTube, ZetaError> {
-        subscriptions.command(YOUTUBE).url_hosts(URL_HOSTS);
+        subscriptions
+            .command(YOUTUBE)
+            .urls(UrlScope::Hosts(URL_HOSTS));
 
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
 

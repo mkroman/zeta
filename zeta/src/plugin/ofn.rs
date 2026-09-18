@@ -395,7 +395,7 @@ impl Plugin<Context> for Ofn {
     type Settings = NoSettings;
 
     fn new(_ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions.command(OFN).url_any();
+        subscriptions.command(OFN).urls(UrlScope::Any);
 
         Ok(Self::new())
     }

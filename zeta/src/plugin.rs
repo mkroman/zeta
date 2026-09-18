@@ -31,7 +31,7 @@ mod prelude {
     pub use zeta_plugin::prelude::{
         ArgsError, BOLD, BoxError, COLOR, CommandEvent, CommandSpec, CtcpEvent, CtcpKind, Event,
         JoinEvent, KickEvent, MessageEvent, NickEvent, NoSettings, PartEvent, QuitEvent,
-        REPLY_PREFIX, RESET, RawEvent, Sender, Subscriptions, UrlEvent, UrlInterest, notice,
+        REPLY_PREFIX, RESET, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope, notice,
         plugin_err, reply, reply_prefix, reply_usage_lines, require_env, resolve_secret,
     };
 
@@ -550,8 +550,8 @@ impl Registry {
             Ok(plugin) => {
                 debug!(plugin = %name, "registered plugin");
 
-                let url_hosts = match subscriptions.url_interest() {
-                    zeta_plugin::UrlInterest::Hosts(hosts) => hosts.to_vec(),
+                let url_hosts = match subscriptions.url_scope() {
+                    zeta_plugin::UrlScope::Hosts(hosts) => hosts.to_vec(),
                     _ => Vec::new(),
                 };
 

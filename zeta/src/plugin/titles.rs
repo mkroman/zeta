@@ -43,8 +43,8 @@ pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
     /// Empty by default: the hosts that loaded plugins advertise through the plugin catalog
-    /// (see [`Plugin::url_hosts`]) are left alone without any configuration, including hosts of
-    /// plugins added after this configuration was written.
+    /// (see [`Subscriptions::urls`]) are left alone without any configuration, including hosts
+    /// of plugins added after this configuration was written.
     #[serde(default)]
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
@@ -415,7 +415,7 @@ impl Plugin<Context> for Titles {
             .build()
             .map_err(plugin_err)?;
 
-        subscriptions.url_any();
+        subscriptions.urls(UrlScope::Any);
 
         Ok(Titles {
             client,

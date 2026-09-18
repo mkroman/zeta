@@ -122,7 +122,7 @@ impl Plugin<Context> for Twitch {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions.url_hosts(URL_HOSTS);
+        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
 
         let client_id = resolve_secret(settings.client_id.as_deref(), "TWITCH_CLIENT_ID")?;
         let client_secret =

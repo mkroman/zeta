@@ -13,6 +13,7 @@
 //! Events are constructed by the host's dispatcher; the public constructors exist so tests (and
 //! plugin authors) can build events to exercise handlers directly.
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -255,7 +256,7 @@ impl UrlEvent {
 
 /// A channel message was posted.
 ///
-/// Delivered to plugins that subscribed with [`Subscriptions::messages`]; every channel
+/// Delivered to plugins that subscribed with [`Subscriptions::receive_message`]; every channel
 /// `PRIVMSG` that is not a CTCP message produces one event, whether or not it matches any
 /// registered command.
 #[derive(Clone, Debug)]
@@ -545,7 +546,8 @@ impl CtcpKind {
 
 /// An unmodeled IRC command arrived.
 ///
-/// Delivered only to plugins that subscribed with [`Subscriptions::raw`]; numeric replies and
+/// Delivered only to plugins that subscribed with [`Subscriptions::receive_raw`]; numeric
+/// replies and
 /// the connection's own protocol traffic are never delivered to plugins.
 #[derive(Clone, Debug)]
 pub struct RawEvent {
@@ -600,9 +602,9 @@ fn parse_ctcp(text: &str) -> Option<(&str, &str)> {
     })
 }
 
-/// The URL interest a plugin registered: which posted URLs it wants to receive.
+/// The scope of URLs a plugin registered interest in: which posted URLs it wants to receive.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum UrlInterest {
+pub enum UrlScope {
     /// The plugin does not handle URLs.
     #[default]
     None,
@@ -618,19 +620,42 @@ pub enum UrlInterest {
     Any,
 }
 
-/// The presence events a plugin registered interest in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PresenceInterest {
-    /// Receive [`JoinEvent`]s.
-    pub join: bool,
-    /// Receive [`PartEvent`]s.
-    pub part: bool,
-    /// Receive [`QuitEvent`]s.
-    pub quit: bool,
-    /// Receive [`NickEvent`]s.
-    pub nick: bool,
-    /// Receive [`KickEvent`]s.
-    pub kick: bool,
+/// The kind of an event a plugin subscribes to with a plain flag — one per per-kind handler.
+///
+/// Commands and URLs are excluded: their subscriptions carry payloads ([`CommandSpec`],
+/// [`UrlScope`]) instead of a plain flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EventKind {
+    /// Channel messages ([`MessageEvent`]).
+    Message,
+    /// Users joining channels ([`JoinEvent`]).
+    Join,
+    /// Users leaving channels ([`PartEvent`]).
+    Part,
+    /// Users quitting the network ([`QuitEvent`]).
+    Quit,
+    /// Nickname changes ([`NickEvent`]).
+    Nick,
+    /// Users kicked from channels ([`KickEvent`]).
+    Kick,
+    /// CTCP messages ([`CtcpEvent`]).
+    Ctcp,
+    /// Raw, unmodeled IRC commands ([`RawEvent`]).
+    Raw,
+}
+
+impl EventKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 8] = [
+        Self::Message,
+        Self::Join,
+        Self::Part,
+        Self::Quit,
+        Self::Nick,
+        Self::Kick,
+        Self::Ctcp,
+        Self::Raw,
+    ];
 }
 
 /// The events a plugin registers interest in during initialization.
@@ -639,15 +664,15 @@ pub struct PresenceInterest {
 /// (`zeta_plugin::Plugin::new`), where the plugin registers everything it wants to receive:
 ///
 /// ```
-/// use zeta_plugin::{CommandSpec, Subscriptions};
+/// use zeta_plugin::{CommandSpec, Subscriptions, UrlScope};
 ///
 /// const DIG: CommandSpec = CommandSpec::new(".dig", "Look up DNS records for a domain");
 ///
 /// fn register(subscriptions: &mut Subscriptions) {
 ///     subscriptions
 ///         .command(DIG)
-///         .url_hosts(&["example.com"])
-///         .join();
+///         .urls(UrlScope::Hosts(&["example.com"]))
+///         .receive_join();
 /// }
 ///
 /// let mut subscriptions = Subscriptions::new();
@@ -655,8 +680,8 @@ pub struct PresenceInterest {
 ///
 /// assert_eq!(subscriptions.commands(), &[DIG]);
 /// assert_eq!(
-///     subscriptions.url_interest(),
-///     zeta_plugin::UrlInterest::Hosts(&["example.com"])
+///     subscriptions.url_scope(),
+///     zeta_plugin::UrlScope::Hosts(&["example.com"])
 /// );
 /// ```
 ///
@@ -666,16 +691,10 @@ pub struct PresenceInterest {
 pub struct Subscriptions {
     /// The commands the plugin handles.
     commands: Vec<CommandSpec>,
-    /// The URL interest of the plugin.
-    urls: UrlInterest,
-    /// Whether the plugin receives every channel message.
-    messages: bool,
-    /// The presence events the plugin receives.
-    presence: PresenceInterest,
-    /// Whether the plugin receives CTCP messages.
-    ctcp: bool,
-    /// Whether the plugin receives raw, unmodeled IRC commands.
-    raw: bool,
+    /// The scope of URLs the plugin receives.
+    urls: UrlScope,
+    /// The event kinds the plugin receives, as a set.
+    events: BTreeSet<EventKind>,
 }
 
 impl Subscriptions {
@@ -694,64 +713,58 @@ impl Subscriptions {
         self
     }
 
-    /// Registers interest in URLs posted on `hosts`.
-    pub fn url_hosts(&mut self, hosts: &'static [&'static str]) -> &mut Self {
-        self.urls = UrlInterest::Hosts(hosts);
-        self
-    }
-
-    /// Registers interest in every URL, including hosts other plugins handle.
-    pub fn url_any(&mut self) -> &mut Self {
-        self.urls = UrlInterest::Any;
+    /// Registers the scope of URLs the plugin receives.
+    ///
+    /// Calling it again replaces the previous scope.
+    pub fn urls(&mut self, scope: UrlScope) -> &mut Self {
+        self.urls = scope;
         self
     }
 
     /// Registers interest in every channel message, whether or not it matches a registered
     /// command.
-    pub fn messages(&mut self) -> &mut Self {
-        self.messages = true;
-        self
+    pub fn receive_message(&mut self) -> &mut Self {
+        self.receive(EventKind::Message)
     }
 
     /// Registers interest in users joining channels.
-    pub fn join(&mut self) -> &mut Self {
-        self.presence.join = true;
-        self
+    pub fn receive_join(&mut self) -> &mut Self {
+        self.receive(EventKind::Join)
     }
 
     /// Registers interest in users leaving channels.
-    pub fn part(&mut self) -> &mut Self {
-        self.presence.part = true;
-        self
+    pub fn receive_part(&mut self) -> &mut Self {
+        self.receive(EventKind::Part)
     }
 
     /// Registers interest in users quitting the network.
-    pub fn quit(&mut self) -> &mut Self {
-        self.presence.quit = true;
-        self
+    pub fn receive_quit(&mut self) -> &mut Self {
+        self.receive(EventKind::Quit)
     }
 
     /// Registers interest in nickname changes.
-    pub fn nick(&mut self) -> &mut Self {
-        self.presence.nick = true;
-        self
+    pub fn receive_nick(&mut self) -> &mut Self {
+        self.receive(EventKind::Nick)
     }
 
     /// Registers interest in kicks.
-    pub fn kick(&mut self) -> &mut Self {
-        self.presence.kick = true;
-        self
+    pub fn receive_kick(&mut self) -> &mut Self {
+        self.receive(EventKind::Kick)
     }
 
     /// Registers interest in CTCP messages.
-    pub fn ctcp(&mut self) -> &mut Self {
-        self.ctcp = true;
-        self
+    pub fn receive_ctcp(&mut self) -> &mut Self {
+        self.receive(EventKind::Ctcp)
     }
 
     /// Registers interest in raw, unmodeled IRC commands.
-    pub fn raw(&mut self) -> &mut Self {
-        self.raw = true;
+    pub fn receive_raw(&mut self) -> &mut Self {
+        self.receive(EventKind::Raw)
+    }
+
+    /// Adds `kind` to the set of event kinds the plugin receives.
+    fn receive(&mut self, kind: EventKind) -> &mut Self {
+        self.events.insert(kind);
         self
     }
 
@@ -761,34 +774,16 @@ impl Subscriptions {
         &self.commands
     }
 
-    /// Returns the URL interest the plugin registered.
+    /// Returns the scope of URLs the plugin registered interest in.
     #[must_use]
-    pub const fn url_interest(&self) -> UrlInterest {
+    pub const fn url_scope(&self) -> UrlScope {
         self.urls
     }
 
-    /// Whether the plugin registered interest in every channel message.
+    /// Returns the event kinds the plugin registered interest in.
     #[must_use]
-    pub const fn wants_messages(&self) -> bool {
-        self.messages
-    }
-
-    /// Returns the presence events the plugin registered interest in.
-    #[must_use]
-    pub const fn presence(&self) -> PresenceInterest {
-        self.presence
-    }
-
-    /// Whether the plugin registered interest in CTCP messages.
-    #[must_use]
-    pub const fn wants_ctcp(&self) -> bool {
-        self.ctcp
-    }
-
-    /// Whether the plugin registered interest in raw, unmodeled IRC commands.
-    #[must_use]
-    pub const fn wants_raw(&self) -> bool {
-        self.raw
+    pub fn events(&self) -> &BTreeSet<EventKind> {
+        &self.events
     }
 }
 
@@ -983,32 +978,34 @@ mod tests {
         subscriptions
             .command(CommandSpec::new(".dig", "dig"))
             .command(CommandSpec::new(".ddo", "ddo"))
-            .url_hosts(&["x.example", "www.x.example"])
-            .messages()
-            .join()
-            .kick()
-            .ctcp();
+            .urls(UrlScope::Hosts(&["x.example", "www.x.example"]))
+            .receive_message()
+            .receive_join()
+            .receive_kick()
+            .receive_ctcp();
 
         assert_eq!(subscriptions.commands().len(), 2);
         assert_eq!(
-            subscriptions.url_interest(),
-            UrlInterest::Hosts(&["x.example", "www.x.example"])
+            subscriptions.url_scope(),
+            UrlScope::Hosts(&["x.example", "www.x.example"])
         );
-        assert!(subscriptions.wants_messages());
-        assert!(subscriptions.presence().join);
-        assert!(subscriptions.presence().kick);
-        assert!(!subscriptions.presence().part);
-        assert!(subscriptions.wants_ctcp());
-        assert!(!subscriptions.wants_raw());
+        assert!(subscriptions.events().contains(&EventKind::Message));
+        assert!(subscriptions.events().contains(&EventKind::Join));
+        assert!(subscriptions.events().contains(&EventKind::Kick));
+        assert!(!subscriptions.events().contains(&EventKind::Part));
+        assert!(subscriptions.events().contains(&EventKind::Ctcp));
+        assert!(!subscriptions.events().contains(&EventKind::Raw));
     }
 
     #[test]
-    fn url_any_overrides_hosts() {
+    fn urls_any_overrides_hosts() {
         let mut subscriptions = Subscriptions::new();
 
-        subscriptions.url_hosts(&["x.example"]).url_any();
+        subscriptions
+            .urls(UrlScope::Hosts(&["x.example"]))
+            .urls(UrlScope::Any);
 
-        assert_eq!(subscriptions.url_interest(), UrlInterest::Any);
+        assert_eq!(subscriptions.url_scope(), UrlScope::Any);
     }
 
     #[test]
@@ -1016,10 +1013,7 @@ mod tests {
         let subscriptions = Subscriptions::new();
 
         assert!(subscriptions.commands().is_empty());
-        assert_eq!(subscriptions.url_interest(), UrlInterest::None);
-        assert!(!subscriptions.wants_messages());
-        assert_eq!(subscriptions.presence(), PresenceInterest::default());
-        assert!(!subscriptions.wants_ctcp());
-        assert!(!subscriptions.wants_raw());
+        assert_eq!(subscriptions.url_scope(), UrlScope::None);
+        assert!(subscriptions.events().is_empty());
     }
 }

@@ -86,7 +86,7 @@ impl Plugin<Context> for Tiktok {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Tiktok, ZetaError> {
-        subscriptions.url_hosts(urls::URL_HOSTS);
+        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
 
         let mirror = MirrorTarget::resolve(
             ctx.shared.get::<Mirror>(),

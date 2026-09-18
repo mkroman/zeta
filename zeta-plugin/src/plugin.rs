@@ -93,7 +93,7 @@ pub trait PluginName {
 ///     type Settings = NoSettings;
 ///
 ///     fn new(_: &(), _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Watcher, Error> {
-///         subscriptions.url_any().join().messages();
+///         subscriptions.urls(UrlScope::Any).receive_join().receive_message();
 ///
 ///         Ok(Watcher)
 ///     }
@@ -218,7 +218,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// Handles a URL posted in a channel.
     ///
     /// Called once per extracted URL whose host the plugin registered (or for every URL, for
-    /// plugins that registered with [`Subscriptions::url_any`]). The URL has already been
+    /// plugins that registered with [`Subscriptions::urls`]). The URL has already been
     /// deduplicated and checked against the shared URL filters.
     ///
     /// # Errors
@@ -303,7 +303,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
 
     /// Handles a raw, unmodeled IRC command.
     ///
-    /// Only delivered to plugins that registered with [`Subscriptions::raw`].
+    /// Only delivered to plugins that registered with [`Subscriptions::receive_raw`].
     ///
     /// # Errors
     ///

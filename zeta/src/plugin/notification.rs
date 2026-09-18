@@ -66,7 +66,7 @@ impl Plugin<Context> for NotificationPlugin {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions.command(NOTIFY).messages();
+        subscriptions.command(NOTIFY).receive_message();
 
         Ok(NotificationPlugin {
             service: NotificationService::new(ctx.db.clone(), settings),

@@ -113,7 +113,9 @@ impl Plugin<Context> for Imdb {
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(COMMAND).url_hosts(URL_HOSTS);
+        subscriptions
+            .command(COMMAND)
+            .urls(UrlScope::Hosts(URL_HOSTS));
 
         let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
 
