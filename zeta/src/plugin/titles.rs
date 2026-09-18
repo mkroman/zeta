@@ -51,7 +51,6 @@ const BINARY_EXTENSIONS: &[&str] = &[
 
 /// Settings for the titles plugin, from its `[plugins.titles]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///

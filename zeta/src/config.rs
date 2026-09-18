@@ -51,8 +51,9 @@ impl Config {
 ///
 /// The `enabled` key is managed by the host and defaults to `true`; every other key belongs to
 /// the plugin's settings type (e.g. `dig::Settings`), deserialized through
-/// [`PluginConfig::settings`]. Unknown keys in settings that reject them (via
-/// `deny_unknown_fields`) are rejected.
+/// [`PluginConfig::settings`]. Unknown settings keys are ignored, collected in
+/// [`PluginConfig::unknown_keys`] and warned about by the host: a config that names a setting
+/// removed by a newer release must keep working, so rejection is too harsh.
 #[derive(Clone, Debug, Serialize)]
 pub struct PluginConfig<S> {
     /// Enable the plugin.
@@ -63,6 +64,13 @@ pub struct PluginConfig<S> {
     /// below, which reads settings keys at the section level.
     #[serde(flatten)]
     pub settings: S,
+    /// Keys in the plugin's configuration section that the settings type did not recognize.
+    ///
+    /// Populated during deserialization — a typo'd key, or a setting that no longer exists.
+    /// The host logs each one as a warning. Skipped by serialization, so round-trips only
+    /// carry `enabled` and the settings themselves.
+    #[serde(skip)]
+    pub unknown_keys: Vec<String>,
 }
 
 impl<'de, S> Deserialize<'de> for PluginConfig<S>
@@ -75,8 +83,9 @@ where
     {
         use serde::de::Error as _;
 
-        // A custom implementation instead of `#[serde(flatten)]`, which would silently ignore
-        // unknown keys even when the settings type uses `deny_unknown_fields`.
+        // A custom implementation instead of `#[serde(flatten)]`, which would silently swallow
+        // unknown keys: `serde_ignored` reports every key the settings type ignores so the
+        // host can warn about a typo, or a setting removed by this version.
         let mut section = Dict::deserialize(deserializer)?;
         let enabled = match section.remove("enabled") {
             Some(value) => bool::deserialize(&value)
@@ -84,10 +93,18 @@ where
             None => true,
         };
 
-        let settings = S::deserialize(&Value::from(section))
-            .map_err(|error| D::Error::custom(format!("invalid settings: {error}")))?;
+        let mut unknown_keys = Vec::new();
+        let value = Value::from(section);
+        let settings = serde_ignored::deserialize(&value, |path| {
+            unknown_keys.push(path.to_string());
+        })
+        .map_err(|error| D::Error::custom(format!("invalid settings: {error}")))?;
 
-        Ok(Self { enabled, settings })
+        Ok(Self {
+            enabled,
+            settings,
+            unknown_keys,
+        })
     }
 }
 
@@ -96,6 +113,7 @@ impl<S: Default> Default for PluginConfig<S> {
         Self {
             enabled: true,
             settings: S::default(),
+            unknown_keys: Vec::new(),
         }
     }
 }
@@ -447,19 +465,23 @@ enabled = false
     }
 
     #[test]
-    fn unknown_settings_keys_are_rejected() {
-        assert!(
-            extract("[plugins.dig]\nnameserverss = [\"1.1.1.1\"]\n").is_err(),
-            "typo'd settings key should be rejected"
+    fn unknown_settings_keys_are_ignored() {
+        let plugins = extract("[plugins.dig]\nnameserverss = [\"1.1.1.1\"]\n")
+            .expect("unknown settings keys should be ignored");
+
+        assert_eq!(plugins.dig.unknown_keys, ["nameserverss"]);
+        assert_eq!(
+            plugins.dig.settings.nameservers,
+            crate::plugin::dig::Settings::default().nameservers
         );
     }
 
     #[test]
-    fn unknown_settings_keys_are_rejected_for_plugins_without_settings() {
-        assert!(
-            extract("[plugins.health]\nenabled = true\nwhatever = 1\n").is_err(),
-            "typo'd key should be rejected"
-        );
+    fn unknown_settings_keys_are_ignored_for_plugins_without_settings() {
+        let plugins = extract("[plugins.health]\nenabled = true\nwhatever = 1\n")
+            .expect("unknown settings keys should be ignored");
+
+        assert_eq!(plugins.health.unknown_keys, ["whatever"]);
     }
 
     #[test]

@@ -13,7 +13,6 @@ const BASE_URL: &str = "https://play.rust-lang.org/execute";
 /// Settings for the rust_playground plugin, from its `[plugins.rust_playground]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The release channel used for evaluation: `stable`, `beta` or `nightly`.
     #[serde(default = "default_channel")]

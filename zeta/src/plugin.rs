@@ -110,7 +110,9 @@ macro_rules! declare_plugins {
         /// managed by the host; every other key belongs to the plugin's settings type.
         ///
         /// Keys under `[plugins]` that do not match a bundled plugin name are collected in
-        /// [`PluginsConfig::unknown`] so the host can warn about likely typos.
+        /// [`PluginsConfig::unknown`] so the host can warn about likely typos. Unknown keys
+        /// inside a section are ignored and reported through
+        /// [`PluginConfig::unknown_keys`], which the host also warns about.
         #[derive(Clone, Debug, Default, Serialize)]
         pub struct PluginsConfig {
             $(
@@ -183,6 +185,14 @@ macro_rules! declare_plugins {
                     #[cfg(feature = $feature)]
                     {
                         let section = &plugins.$mod_name;
+
+                        for key in &section.unknown_keys {
+                            ::tracing::warn!(
+                                plugin = stringify!($mod_name),
+                                key = %key,
+                                "unknown settings key (typo, or a setting removed in this version?)"
+                            );
+                        }
 
                         if section.enabled {
                             self.register::<$mod_name::$struct_name>(ctx, &section.settings);

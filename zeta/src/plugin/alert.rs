@@ -72,7 +72,6 @@ impl Opts {
 
 /// Settings for the alert plugin, from its `[plugins.alert]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// How long the scheduler waits before retrying after a failed tick.
     #[serde(default = "default_retry_delay", with = "humantime_serde")]

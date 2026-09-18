@@ -57,7 +57,6 @@ impl Units {
 /// Settings for the openweathermap plugin, from its `[plugins.openweathermap]` configuration
 /// section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The OpenWeatherMap API key (the "app id").
     ///

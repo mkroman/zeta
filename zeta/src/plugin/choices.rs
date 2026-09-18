@@ -5,7 +5,6 @@ use crate::{plugin::prelude::*, utils::strip_nick_prefix};
 
 /// Settings for the choices plugin, from its `[plugins.choices]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The keywords that separate the options.
     #[serde(default = "default_or_keywords")]

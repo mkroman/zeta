@@ -12,7 +12,6 @@ const BASE_URL: &str = "https://api.ip2location.io";
 
 /// Settings for the geoip plugin, from its `[plugins.geoip]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The ip2location.io API key.
     ///

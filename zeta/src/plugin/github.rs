@@ -11,7 +11,6 @@ use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 /// Settings for the github plugin, from its `[plugins.github]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// A GitHub API token, used to raise the rate limit for requests.
     ///

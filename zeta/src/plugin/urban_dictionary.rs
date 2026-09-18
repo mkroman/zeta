@@ -12,7 +12,6 @@ pub const BASE_URL: &str = "https://api.urbandictionary.com";
 /// Settings for the urban_dictionary plugin, from its `[plugins.urban_dictionary]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The maximum length of the definition and example text, in characters.
     #[serde(default = "default_max_definition_length")]

@@ -37,6 +37,10 @@ pub use ytdlp::{YtDlp, YtDlpOptions};
 use crate::context::Context;
 
 /// Configuration for the shared media mirror, from the `[mirror]` configuration section.
+///
+/// Unlike the plugin sections, unknown keys here are rejected (`deny_unknown_fields`): this is a
+/// top-level section shared by all media plugins, and a typo'd or removed key is a hard
+/// configuration mistake worth failing fast on.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MirrorConfig {

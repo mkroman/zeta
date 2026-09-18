@@ -39,7 +39,6 @@ const SEARCH_LIMIT: usize = 5;
 
 /// Settings for the imdb plugin, from its `[plugins.imdb]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// Whether to include adult titles in search results.
     #[serde(default = "default_include_adult")]

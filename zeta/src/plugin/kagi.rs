@@ -13,7 +13,6 @@ const IMAGES: Prefix = Prefix::new(".gis");
 
 /// Settings for the kagi plugin, from its `[plugins.kagi]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The Kagi session token (the `kagi_session` cookie value).
     ///

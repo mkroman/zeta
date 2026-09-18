@@ -37,7 +37,6 @@ const COMMANDS: &[PluginCommand] = &[NOTIFY];
 /// Settings for the notification plugin, from its `[plugins.notification]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The maximum number of pending notifications a target may have in a channel.
     #[serde(default = "default_max_pending_per_target")]

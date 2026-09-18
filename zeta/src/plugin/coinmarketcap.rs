@@ -34,7 +34,6 @@ use model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat, QuoteData};
 /// Settings for the coinmarketcap plugin, from its `[plugins.coinmarketcap]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The CoinMarketCap API key.
     ///
