@@ -122,17 +122,69 @@ jobs:
           token: "${{ secrets.WEBHOOK_TOKEN }}"
           webhook-url: "${{ vars.WEBHOOK_URL }}"
 
+  draft-release:
+    name: Create Draft Release
+    runs-on: ubuntu-latest
+    # Runs once the tests, container images and release builds have all passed,
+    # producing a draft release for the maintainer to review and publish.
+    needs:
+      - check
+      - test
+      - container_image
+      - build
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+      - name: Download release artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: zeta-*
+          path: artifacts
+          merge-multiple: false
+      - name: Stage release assets
+        # Each artifact holds a single file, but the file names are shared
+        # across platforms (`zeta`, `zeta.debug`), so rename them to the
+        # artifact names for unique release assets.
+        run: |-
+          mkdir assets
+          for dir in artifacts/zeta-*/; do
+            name="$(basename "${dir}")"
+            file="$(find "${dir}" -maxdepth 1 -type f | head -1)"
+            mv "${file}" "assets/${name}"
+          done
+      - name: Create draft release
+        # `--generate-notes` builds the body from the commits since the last
+        # release tag; the title defaults to the tag name. Guarded so that
+        # re-runs skip creation and go straight to uploading the assets.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |-
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --generate-notes \
+              --verify-tag
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |-
+          gh release upload "${GITHUB_REF_NAME}" \
+            assets/* \
+            --clobber
+
   post-notification:
     name: Send Post-Notification
     runs-on: ubuntu-latest
     needs:
       - check
-      - container_image
+      - draft-release
     steps:
       - uses: mkroman/send-irc-notification@main
         with:
           channel: "#uplink"
           network: "irc.rwx.im:6697"
-          message: "\x0310> Zeta version\x0f ${{ needs.check.outputs.version }}\x0310 released.."
+          message: "\x0310> Zeta version\x0f ${{ needs.check.outputs.version }}\x0310 draft release ready for review.."
           token: "${{ secrets.WEBHOOK_TOKEN }}"
           webhook-url: "${{ vars.WEBHOOK_URL }}"
