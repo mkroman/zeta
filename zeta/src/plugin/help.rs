@@ -15,13 +15,10 @@ use argh::{CommandInfoWithArgs, FlagInfo, FlagInfoKind, Optionality, PositionalI
 use crate::plugin::prelude::*;
 
 /// The `.help` command.
-const HELP: PluginCommand = PluginCommand::new(
-    Prefix::new(".help"),
+const HELP: CommandSpec = CommandSpec::new(
+    ".help",
     "List plugins and commands, or show usage for one",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[HELP];
 
 /// The maximum length of a help message, assuming the IRCv3 extended line length of 8191 bytes
 /// and leaving room for the sender prefix, `PRIVMSG` framing and line ending overhead.
@@ -41,20 +38,20 @@ pub struct Help;
 impl Plugin<Context> for Help {
     type Settings = NoSettings;
 
-    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+    fn new(_ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(HELP);
         Ok(Help)
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
         ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let args = command.args();
+
         let Some(catalog) = ctx.shared.get::<PluginCatalog>() else {
             client.send_privmsg(
                 channel,
@@ -110,7 +107,7 @@ fn index_messages(catalog: &PluginCatalog) -> Vec<String> {
     );
 
     let entries = catalog
-        .plugins
+        .entries
         .iter()
         .filter(|plugin| !plugin.commands.is_empty())
         .map(|plugin| plugin.name.clone())
@@ -120,7 +117,7 @@ fn index_messages(catalog: &PluginCatalog) -> Vec<String> {
 }
 
 /// Returns the messages listing the commands handled by `plugin`.
-fn plugin_messages(plugin: &PluginInfo) -> Vec<String> {
+fn plugin_messages(plugin: &CatalogEntry) -> Vec<String> {
     let header = format!(
         "{}{}",
         heading(&format!(" ({})", plugin.name)),
@@ -130,7 +127,7 @@ fn plugin_messages(plugin: &PluginInfo) -> Vec<String> {
     let entries = plugin
         .commands
         .iter()
-        .map(|command| command.prefix().as_str().to_owned())
+        .map(|command| command.trigger().to_owned())
         .collect::<Vec<_>>();
 
     with_list(&header, &entries)
@@ -140,8 +137,8 @@ fn plugin_messages(plugin: &PluginInfo) -> Vec<String> {
 ///
 /// The reply carries the command's description, its usage synopsis and, when it accepts
 /// arguments or subcommands, their descriptions in a parenthesized list.
-fn command_messages(command: &PluginCommand) -> Vec<String> {
-    let prefix = command.prefix().as_str();
+fn command_messages(command: &CommandSpec) -> Vec<String> {
+    let prefix = command.trigger();
     let mut message = heading(&format!(" ({prefix})"));
 
     let description = command.description();
@@ -420,50 +417,43 @@ fn normalize(name: &str) -> &str {
 fn find_command<'a>(
     catalog: &'a PluginCatalog,
     query: &str,
-) -> Option<(&'a PluginInfo, &'a PluginCommand)> {
+) -> Option<(&'a CatalogEntry, &'a CommandSpec)> {
     let query = normalize(query);
 
-    catalog.plugins.iter().find_map(|plugin| {
+    catalog.entries.iter().find_map(|plugin| {
         plugin
             .commands
             .iter()
-            .find(|command| normalize(command.prefix().as_str()) == query)
+            .find(|command| normalize(command.trigger()) == query)
             .map(|command| (plugin, command))
     })
 }
 
 /// Finds the plugin with the given name.
-fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a PluginInfo> {
+fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a CatalogEntry> {
     let query = normalize(query);
 
-    catalog.plugins.iter().find(|plugin| plugin.name == query)
+    catalog.entries.iter().find(|plugin| plugin.name == query)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALERT: PluginCommand = PluginCommand::new(
-        Prefix::new(".alert"),
-        "Schedule an alert to be posted later",
-    );
-    const ALERT_COMMANDS: &[PluginCommand] = &[ALERT];
+    const ALERT: CommandSpec = CommandSpec::new(".alert", "Schedule an alert to be posted later");
+    const ALERT_COMMANDS: &[CommandSpec] = &[ALERT];
 
-    const DIG: PluginCommand = PluginCommand::with_args::<DigOpts>(
-        Prefix::new(".dig"),
-        "Look up DNS records for a domain",
-    );
-    const DIG_COMMANDS: &[PluginCommand] = &[DIG];
+    const DIG: CommandSpec =
+        CommandSpec::with_args::<DigOpts>(".dig", "Look up DNS records for a domain");
+    const DIG_COMMANDS: &[CommandSpec] = &[DIG];
 
-    const IMDB: PluginCommand =
-        PluginCommand::new(Prefix::new("!imdb"), "Search IMDb and post the top match");
-    const IMDB_COMMANDS: &[PluginCommand] = &[IMDB];
+    const IMDB: CommandSpec = CommandSpec::new("!imdb", "Search IMDb and post the top match");
+    const IMDB_COMMANDS: &[CommandSpec] = &[IMDB];
 
-    const WEATHER: PluginCommand =
-        PluginCommand::new(Prefix::new(".weather"), "Show the current weather");
-    const WEATHER_COMMANDS: &[PluginCommand] = &[WEATHER];
+    const WEATHER: CommandSpec = CommandSpec::new(".weather", "Show the current weather");
+    const WEATHER_COMMANDS: &[CommandSpec] = &[WEATHER];
 
-    const BARE: PluginCommand = PluginCommand::new(Prefix::new(".bare"), "");
+    const BARE: CommandSpec = CommandSpec::new(".bare", "");
 
     /// Look up a domain name.
     #[derive(argh::ArgsInfo)]
@@ -493,9 +483,9 @@ mod tests {
         hidden: bool,
     }
 
-    const REPEAT: PluginCommand =
-        PluginCommand::with_args::<RepeatOpts>(Prefix::new(".repeat"), "Repeat the given values");
-    const REPEAT_COMMANDS: &[PluginCommand] = &[REPEAT];
+    const REPEAT: CommandSpec =
+        CommandSpec::with_args::<RepeatOpts>(".repeat", "Repeat the given values");
+    const REPEAT_COMMANDS: &[CommandSpec] = &[REPEAT];
 
     /// Subcommand fixture.
     #[derive(argh::ArgsInfo)]
@@ -520,36 +510,36 @@ mod tests {
 
     fn catalog() -> PluginCatalog {
         PluginCatalog {
-            plugins: vec![
-                PluginInfo {
+            entries: vec![
+                CatalogEntry {
                     name: "alert".into(),
                     authors: vec!["John Doe <john.doe@example.com>".into()],
-                    commands: ALERT_COMMANDS,
-                    url_hosts: &[],
+                    commands: ALERT_COMMANDS.to_vec(),
+                    url_hosts: Vec::new(),
                 },
-                PluginInfo {
+                CatalogEntry {
                     name: "dig".into(),
                     authors: vec![],
-                    commands: DIG_COMMANDS,
-                    url_hosts: &[],
+                    commands: DIG_COMMANDS.to_vec(),
+                    url_hosts: Vec::new(),
                 },
-                PluginInfo {
+                CatalogEntry {
                     name: "imdb".into(),
                     authors: vec![],
-                    commands: IMDB_COMMANDS,
-                    url_hosts: &[],
+                    commands: IMDB_COMMANDS.to_vec(),
+                    url_hosts: Vec::new(),
                 },
-                PluginInfo {
+                CatalogEntry {
                     name: "openweathermap".into(),
                     authors: vec![],
-                    commands: WEATHER_COMMANDS,
-                    url_hosts: &[],
+                    commands: WEATHER_COMMANDS.to_vec(),
+                    url_hosts: Vec::new(),
                 },
-                PluginInfo {
+                CatalogEntry {
                     name: "hooks".into(),
                     authors: vec![],
-                    commands: &[],
-                    url_hosts: &[],
+                    commands: Vec::new(),
+                    url_hosts: Vec::new(),
                 },
             ],
         }
@@ -601,8 +591,7 @@ mod tests {
 
     #[test]
     fn derives_usage_for_subcommands() {
-        let command =
-            PluginCommand::with_args::<SubcommandOpts>(Prefix::new(".stats"), "Show statistics");
+        let command = CommandSpec::with_args::<SubcommandOpts>(".stats", "Show statistics");
         let info = command.args_info().unwrap();
 
         assert_eq!(usage(".stats", &info), ".stats <command> [<args>]");
@@ -650,8 +639,7 @@ mod tests {
 
     #[test]
     fn describes_subcommands() {
-        let command =
-            PluginCommand::with_args::<SubcommandOpts>(Prefix::new(".stats"), "Show statistics");
+        let command = CommandSpec::with_args::<SubcommandOpts>(".stats", "Show statistics");
 
         assert_eq!(
             command_messages(&command)[0],
@@ -756,12 +744,12 @@ mod tests {
     #[test]
     fn splits_long_lists_into_unheaded_continuations() {
         let catalog = PluginCatalog {
-            plugins: (0..100)
-                .map(|index| PluginInfo {
+            entries: (0..100)
+                .map(|index| CatalogEntry {
                     name: format!("plugin-{index:03}{}", "x".repeat(90)),
                     authors: vec![],
-                    commands: COMMANDS,
-                    url_hosts: &[],
+                    commands: Vec::new(),
+                    url_hosts: Vec::new(),
                 })
                 .collect(),
         };

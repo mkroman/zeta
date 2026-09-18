@@ -39,11 +39,7 @@ fn default_review_domain() -> String {
 }
 
 /// The `.tp` command.
-const TRUSTPILOT: PluginCommand =
-    PluginCommand::new(Prefix::new(".tp"), "Look up a business's Trustpilot score");
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[TRUSTPILOT];
+const TRUSTPILOT: CommandSpec = CommandSpec::new(".tp", "Look up a business's Trustpilot score");
 
 /// Plugin for querying Trustpilot business scores.
 pub struct Trustpilot {
@@ -109,7 +105,8 @@ pub enum Error {
 impl Plugin<Context> for Trustpilot {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(TRUSTPILOT);
         let api_key = resolve_secret(settings.api_key.as_deref(), "TRUSTPILOT_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -120,16 +117,15 @@ impl Plugin<Context> for Trustpilot {
         })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        query: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let query = command.args();
+
         if query.trim().is_empty() {
             client.send_privmsg(channel, notice("Usage: .tp\x0f <domain name>"))?;
             return Ok(());

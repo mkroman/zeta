@@ -21,13 +21,10 @@ pub struct Settings {
 }
 
 /// The `.geoip` command.
-const GEOIP: PluginCommand = PluginCommand::with_args::<Opts>(
-    Prefix::new(".geoip"),
+const GEOIP: CommandSpec = CommandSpec::with_args::<Opts>(
+    ".geoip",
     "Look up the geolocation of a domain or IP",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[GEOIP];
 
 pub struct GeoIp {
     pub client: reqwest::Client,
@@ -96,7 +93,8 @@ pub struct IpInfo {
 impl Plugin<Context> for GeoIp {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<GeoIp, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<GeoIp, ZetaError> {
+        subscriptions.command(GEOIP);
         let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
         let client = http::client::builder(&ctx.config.http)
             .build()
@@ -105,20 +103,16 @@ impl Plugin<Context> for GeoIp {
         Ok(GeoIp { client, api_key })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let opts = match command.parse_args::<Opts>(args) {
+        let opts = match command.parse_args::<Opts>() {
             Ok(opts) => opts,
             Err(err) => {
-                client.send_privmsg(channel, err.to_string())?;
+                client.send_privmsg(command.channel(), err.to_string())?;
                 return Ok(());
             }
         };
@@ -126,11 +120,11 @@ impl Plugin<Context> for GeoIp {
         match self.resolve(&opts.name).await {
             Ok(result) => {
                 for line in result.to_string().lines() {
-                    client.send_privmsg(channel, line)?;
+                    client.send_privmsg(command.channel(), line)?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, reply("GeoIP", err))?;
+                client.send_privmsg(command.channel(), reply("GeoIP", err))?;
             }
         }
 

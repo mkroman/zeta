@@ -172,35 +172,41 @@ impl Zeta {
         let client = Arc::new(client);
         let quit_message = self.config.irc.quit_message.clone();
 
-        let mut plugins = self
-            .registry
-            .take_plugins()
-            .into_iter()
-            .map(|(name, plugin)| {
-                PluginTask::spawn(name, plugin, Arc::clone(&context), Arc::clone(&client))
-            })
-            .collect::<Vec<_>>();
+        // Each plugin gets its own long-lived task with an unbounded mailbox, so a slow or
+        // failing plugin cannot block the IRC connection or the other plugins. The dispatcher
+        // holds the sending ends; dropping it — when the dispatch future ends — closes every
+        // mailbox at once, making the plugins drain and run their shutdown hooks.
+        let mut index = crate::plugin::dispatch::EventIndex::default();
+        let mut plugins = Vec::new();
 
-        // Dispatching incoming IRC messages to the plugin tasks, until the stream ends or a
-        // shutdown signal arrives.
+        for registered in self.registry.take_plugins() {
+            let name = registered.name;
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+
+            plugins.push(PluginTask::spawn(
+                name.clone(),
+                registered.plugin,
+                Arc::clone(&context),
+                Arc::clone(&client),
+                receiver,
+            ));
+            index.add(&name, &registered.subscriptions, sender);
+        }
+
+        // Dispatching incoming IRC messages as events to the plugins that registered interest,
+        // until the stream ends or a shutdown signal arrives.
         let dispatch = {
-            let plugins = &mut plugins;
             let stream = &mut stream;
             async move {
                 while let Some(message) = stream.next().await.transpose()? {
                     debug!(payload = %message, "processing irc message");
 
-                    let message = Arc::new(message);
-                    let mut index = 0;
+                    let filters = crate::plugin::filtering::Filters::from_context(&context);
 
-                    while index < plugins.len() {
-                        if let Err(error) = plugins[index].send(Arc::clone(&message)) {
-                            warn!(plugin = %plugins[index].name, %error, "plugin task has stopped");
+                    for stopped in index.dispatch(&filters, message) {
+                        warn!(plugin = %stopped, "plugin task has stopped");
 
-                            plugins.swap_remove(index);
-                        } else {
-                            index += 1;
-                        }
+                        index.evict(&stopped);
                     }
                 }
 
@@ -250,7 +256,7 @@ impl Zeta {
 
         let handles = plugins
             .into_iter()
-            .map(|task| (task.name.clone(), task.into_handle()))
+            .map(PluginTask::into_handle)
             .collect::<Vec<_>>();
 
         drain_plugin_handles(handles, SHUTDOWN_GRACE).await;

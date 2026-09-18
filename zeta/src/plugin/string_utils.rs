@@ -3,28 +3,18 @@ use std::fmt::Write;
 use crate::plugin::prelude::*;
 
 /// The `.b` string to bytes command.
-const BYTES: PluginCommand = PluginCommand::new(
-    Prefix::new(".b"),
-    "Show a string's UTF-8 bytes as hex escapes",
-);
+const BYTES: CommandSpec = CommandSpec::new(".b", "Show a string's UTF-8 bytes as hex escapes");
 /// The `.len` string length command.
-const LENGTH: PluginCommand =
-    PluginCommand::new(Prefix::new(".len"), "Count the characters in a string");
+const LENGTH: CommandSpec = CommandSpec::new(".len", "Count the characters in a string");
 /// The `.ord` character codepoint command.
-const ORD: PluginCommand = PluginCommand::new(
-    Prefix::new(".ord"),
-    "Show the Unicode codepoint of each character",
-);
+const ORD: CommandSpec = CommandSpec::new(".ord", "Show the Unicode codepoint of each character");
 /// The `.rev` string reverse command.
-const REVERSE: PluginCommand = PluginCommand::new(Prefix::new(".rev"), "Reverse a string");
+const REVERSE: CommandSpec = CommandSpec::new(".rev", "Reverse a string");
 /// The `.uni` command (not implemented yet).
-const UNICODE: PluginCommand = PluginCommand::new(
-    Prefix::new(".uni"),
+const UNICODE: CommandSpec = CommandSpec::new(
+    ".uni",
     "Show a character's Unicode properties (not implemented)",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[BYTES, LENGTH, ORD, REVERSE, UNICODE];
 
 pub struct StringUtils;
 
@@ -32,41 +22,41 @@ pub struct StringUtils;
 impl Plugin<Context> for StringUtils {
     type Settings = NoSettings;
 
-    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<StringUtils, ZetaError> {
+    fn new(_ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<StringUtils, ZetaError> {
+        subscriptions
+            .command(BYTES)
+            .command(LENGTH)
+            .command(ORD)
+            .command(REVERSE)
+            .command(UNICODE);
         Ok(StringUtils::new())
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        if args.is_empty() {
-            return Self::usage(client, channel, command);
+        if command.args().is_empty() {
+            return Self::usage(client, command.channel(), command.spec);
         }
 
-        let reply = if *command == BYTES.prefix() {
-            str_to_hex_string(args)
-        } else if *command == LENGTH.prefix() {
-            args.chars().count().to_string()
-        } else if *command == ORD.prefix() {
-            args.chars()
+        let reply = match command.spec {
+            BYTES => str_to_hex_string(command.args()),
+            LENGTH => command.args().chars().count().to_string(),
+            ORD => command
+                .args()
+                .chars()
                 .map(|x| (x as u32).to_string())
                 .collect::<Vec<_>>()
-                .join(", ")
-        } else if *command == REVERSE.prefix() {
-            args.chars().rev().collect()
-        } else {
+                .join(", "),
+            REVERSE => command.args().chars().rev().collect(),
             // Unhandled commands (including the not-yet-implemented `.uni`) are ignored.
-            return Ok(());
+            _ => return Ok(()),
         };
 
-        client.send_privmsg(channel, notice(&reply))?;
+        client.send_privmsg(command.channel(), notice(&reply))?;
 
         Ok(())
     }
@@ -74,14 +64,14 @@ impl Plugin<Context> for StringUtils {
 
 impl StringUtils {
     /// Replies with usage information for the invoked command.
-    fn usage(client: &Client, channel: &str, command: &Prefix) -> Result<(), ZetaError> {
-        let usage = if *command == BYTES.prefix() {
+    fn usage(client: &Client, channel: &str, command: CommandSpec) -> Result<(), ZetaError> {
+        let usage = if command == BYTES {
             "Usage: .b\x0f <byte..>"
-        } else if *command == LENGTH.prefix() {
+        } else if command == LENGTH {
             "Usage: .len\x0f <string>"
-        } else if *command == ORD.prefix() {
+        } else if command == ORD {
             "Usage: .ord\x0f <chars..>"
-        } else if *command == REVERSE.prefix() {
+        } else if command == REVERSE {
             "Usage: .rev\x0f <string>"
         } else {
             return Ok(());

@@ -7,13 +7,10 @@ use rink_core::Context as RinkContext;
 use crate::plugin::prelude::*;
 
 /// The `.r` command.
-const RINK: PluginCommand = PluginCommand::new(
-    Prefix::new(".r"),
+const RINK: CommandSpec = CommandSpec::new(
+    ".r",
     "Evaluate a calculation with unit conversions",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[RINK];
 
 /// Calculator plugin using rink-rs.
 pub struct Rink {
@@ -25,7 +22,8 @@ pub struct Rink {
 impl Plugin<Context> for Rink {
     type Settings = NoSettings;
 
-    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Rink, ZetaError> {
+    fn new(_ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Rink, ZetaError> {
+        subscriptions.command(RINK);
         let ctx = rink_core::simple_context()
             .map_err(|e| ZetaError::Plugin(Box::new(std::io::Error::other(e))))?;
 
@@ -34,22 +32,18 @@ impl Plugin<Context> for Rink {
         })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        query: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let message = match self.eval(query) {
+        let message = match self.eval(command.args()) {
             Ok(result) => notice(result),
             Err(err) => notice(format!("Error: {err}")),
         };
 
-        client.send_privmsg(channel, message)?;
+        client.send_privmsg(command.channel(), message)?;
 
         Ok(())
     }

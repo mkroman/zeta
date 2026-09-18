@@ -112,7 +112,7 @@ macro_rules! sender_and_tags {
 /// A plugin receives only the event kinds it registered during initialization; each kind is
 /// handled through its own [`Plugin`](crate::Plugin) method (`handle_command`, `handle_url`,
 /// `handle_join`, ...), which is only called when the plugin registered that kind.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum Event {
     /// A registered command was invoked.
@@ -141,7 +141,7 @@ pub enum Event {
 ///
 /// The host matches the message against the [`CommandSpec`]s the plugin registered; the event
 /// carries the specification that matched and the trailing, whitespace-normalized arguments.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CommandEvent {
     message: Arc<Message>,
     /// The command specification that matched.
@@ -213,7 +213,7 @@ impl CommandEvent {
 /// The host extracts URLs once per message, applies the shared URL filters, and delivers one
 /// event per URL to every plugin that subscribed to its host (or to any host, for generic
 /// handlers).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UrlEvent {
     message: Arc<Message>,
     url: Arc<Url>,
@@ -258,7 +258,7 @@ impl UrlEvent {
 /// Delivered to plugins that subscribed with [`Subscriptions::messages`]; every channel
 /// `PRIVMSG` that is not a CTCP message produces one event, whether or not it matches any
 /// registered command.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MessageEvent {
     message: Arc<Message>,
 }
@@ -286,7 +286,7 @@ impl MessageEvent {
 }
 
 /// A user joined a channel.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct JoinEvent {
     message: Arc<Message>,
 }
@@ -317,7 +317,7 @@ impl JoinEvent {
 }
 
 /// A user left a channel.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PartEvent {
     message: Arc<Message>,
 }
@@ -351,7 +351,7 @@ impl PartEvent {
 }
 
 /// A user quit the network.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct QuitEvent {
     message: Arc<Message>,
 }
@@ -377,7 +377,7 @@ impl QuitEvent {
 
 /// A user changed their nickname; the previous identity is available through
 /// [`sender`](Self::sender).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NickEvent {
     message: Arc<Message>,
 }
@@ -402,7 +402,7 @@ impl NickEvent {
 }
 
 /// A user was kicked from a channel.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct KickEvent {
     message: Arc<Message>,
 }
@@ -448,7 +448,7 @@ impl KickEvent {
 ///
 /// Any `PRIVMSG` or `NOTICE` whose text is wrapped in CTCP `\x01` markers produces one event —
 /// so such messages are never delivered as [`MessageEvent`]s or [`UrlEvent`]s.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CtcpEvent {
     message: Arc<Message>,
     /// The kind of CTCP message.
@@ -547,7 +547,7 @@ impl CtcpKind {
 ///
 /// Delivered only to plugins that subscribed with [`Subscriptions::raw`]; numeric replies and
 /// the connection's own protocol traffic are never delivered to plugins.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RawEvent {
     message: Arc<Message>,
 }

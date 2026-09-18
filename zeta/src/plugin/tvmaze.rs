@@ -26,11 +26,7 @@ pub enum Error {
 }
 
 /// The `.next` command.
-const NEXT: PluginCommand =
-    PluginCommand::new(Prefix::new(".next"), "Show when a show's next episode airs");
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[NEXT];
+const NEXT: CommandSpec = CommandSpec::new(".next", "Show when a show's next episode airs");
 
 pub struct Tvmaze {
     /// HTTP client for API requests.
@@ -136,21 +132,18 @@ impl EndpointUrls {
 impl Plugin<Context> for Tvmaze {
     type Settings = NoSettings;
 
-    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(NEXT);
         Ok(Tvmaze::new(&ctx.config.http))
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        self.handle_show_search(args, channel, client).await
+        self.handle_show_search(command.args(), command.channel(), client).await
     }
 }
 

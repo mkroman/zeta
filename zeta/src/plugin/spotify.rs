@@ -121,7 +121,9 @@ struct PlaylistTracks {
 impl Plugin<Context> for Spotify {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.url_hosts(URL_HOSTS).messages();
+
         let client_id = resolve_secret(settings.client_id.as_deref(), "SPOTIFY_CLIENT_ID")?;
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
@@ -137,42 +139,34 @@ impl Plugin<Context> for Spotify {
         })
     }
 
-    fn url_hosts(&self) -> &'static [&'static str] {
-        URL_HOSTS
+    async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
+        let channel = url.channel();
+
+        // Handle Spotify URLs (open.spotify.com/type/id); do not include an external URL for
+        // link matches, avoiding redundancy.
+        if let Some((type_str, id_str)) = parse_spotify_url(url.url()) {
+            self.handle_spotify_resource(channel, type_str, id_str, false, client)
+                .await?;
+        }
+
+        Ok(())
     }
 
     async fn handle_message(
         &self,
-        ctx: &Context,
+        _ctx: &Context,
         client: &Client,
-        message: &Message,
+        event: &MessageEvent,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, user_message) = &message.command else {
-            return Ok(());
-        };
+        let channel = event.channel();
 
-        // 1. Handle Spotify URIs (spotify:type:id)
-        for cap in self.uri_regex.captures_iter(user_message) {
+        // Handle bare Spotify URIs (spotify:type:id) posted as text.
+        for cap in self.uri_regex.captures_iter(event.text()) {
             let type_str = &cap["type"];
             let id_str = &cap["id"];
-            // Include external URL for URI matches
+            // Include the external URL for URI matches.
             self.handle_spotify_resource(channel, type_str, id_str, true, client)
                 .await?;
-        }
-
-        // 2. Handle Spotify URLs (open.spotify.com/type/id)
-        for url in FilteredUrls::from_message(ctx, message)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(host) = url.host_str()
-                && URL_HOSTS.contains(&host)
-                && let Some((type_str, id_str)) = parse_spotify_url(&url)
-            {
-                // Do not include external URL for link matches (avoid redundancy)
-                self.handle_spotify_resource(channel, type_str, id_str, false, client)
-                    .await?;
-            }
         }
 
         Ok(())

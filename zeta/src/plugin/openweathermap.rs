@@ -77,11 +77,7 @@ pub struct Settings {
 }
 
 /// The `.w` command.
-const WEATHER: PluginCommand =
-    PluginCommand::new(Prefix::new(".w"), "Show current weather for a location");
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[WEATHER];
+const WEATHER: CommandSpec = CommandSpec::new(".w", "Show current weather for a location");
 
 /// Plugin for querying weather data.
 pub struct OpenWeatherMap {
@@ -184,7 +180,8 @@ struct Clouds {
 impl Plugin<Context> for OpenWeatherMap {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(WEATHER);
         let app_id = resolve_secret(settings.app_id.as_deref(), "OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -197,16 +194,15 @@ impl Plugin<Context> for OpenWeatherMap {
         })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let args = command.args();
+
         let location = if args.trim().is_empty() {
             let Some(location) = self.default_location.as_deref() else {
                 client.send_privmsg(channel, notice("Usage: .w\x0f <location>"))?;

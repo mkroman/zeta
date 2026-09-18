@@ -60,13 +60,10 @@ const fn default_max_output_length() -> usize {
 }
 
 /// The `.rs` command.
-const RUST_PLAYGROUND: PluginCommand = PluginCommand::new(
-    Prefix::new(".rs"),
+const RUST_PLAYGROUND: CommandSpec = CommandSpec::new(
+    ".rs",
     "Evaluate a Rust expression on the Rust playground",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[RUST_PLAYGROUND];
 
 /// Plugin for evaluating Rust code.
 pub struct RustPlayground {
@@ -108,7 +105,8 @@ struct ExecuteResponse {
 impl Plugin<Context> for RustPlayground {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(RUST_PLAYGROUND);
         let client = http::build_client(&ctx.config.http);
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
@@ -120,16 +118,15 @@ impl Plugin<Context> for RustPlayground {
         })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        expr: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let expr = command.args();
+
         // Early return if input is empty
         if expr.trim().is_empty() {
             client.send_privmsg(channel, reply("Rust Playground", "Usage: .rs\x0f <expr>"))?;

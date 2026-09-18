@@ -10,6 +10,16 @@ pub type SchemeMap = &'static [(&'static str, Option<&'static str>)];
 /// The default accepted schemes: canonical `http` and `https`.
 const DEFAULT_SCHEMES: SchemeMap = &[("http", None), ("https", None)];
 
+/// The schemes used for host-side URL extraction: canonical `http` and `https`, plus the `ttp`
+/// and `ttps` variants that are missing their leading `h` — the latter are repaired and the
+/// broken prefix reported through [`ExtractedUrl::repaired_from`].
+pub const HTTP_SCHEMES: SchemeMap = &[
+    ("http", None),
+    ("https", None),
+    ("ttp", Some("http")),
+    ("ttps", Some("https")),
+];
+
 /// A URL extracted from a message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExtractedUrl {

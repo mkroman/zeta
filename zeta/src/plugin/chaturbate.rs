@@ -58,47 +58,27 @@ pub struct RoomDossier {
 impl Plugin<Context> for Chaturbate {
     type Settings = NoSettings;
 
-    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.url_hosts(URL_HOSTS);
+
         Ok(Self::new(&ctx.config.http))
     }
 
-    fn url_hosts(&self) -> &'static [&'static str] {
-        URL_HOSTS
-    }
+    async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
+        let channel = url.channel();
 
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        self.handle_command_logic(ctx, client, message).await?;
-        Ok(())
-    }
-}
-
-impl Chaturbate {
-    async fn handle_command_logic(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), Error> {
-        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
-            let channel = urls.channel();
-
-            for url in urls {
-                if let Some(username) = extract_username(&url) {
-                    debug!(%username, "processing chaturbate url");
-                    if let Err(e) = self.process_broadcaster(&username, channel, client).await {
-                        client.send_privmsg(channel, reply("Chaturbate", e.to_string()))?;
-                    }
-                }
+        if let Some(username) = extract_username(url.url()) {
+            debug!(%username, "processing chaturbate url");
+            if let Err(e) = self.process_broadcaster(&username, channel, client).await {
+                client.send_privmsg(channel, reply("Chaturbate", e.to_string()))?;
             }
         }
 
         Ok(())
     }
+}
+
+impl Chaturbate {
 
     /// Creates a new [`Chaturbate`] plugin instance.
     pub fn new(config: &HttpConfig) -> Self {

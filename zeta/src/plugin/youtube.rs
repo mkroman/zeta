@@ -16,6 +16,7 @@ use crate::{
     duration::{format_duration, parse_iso8601_duration},
     http,
     plugin::prelude::*,
+    url::ExtractUrlsExt,
 };
 
 /// The hostname of shortened YouTube URLs.
@@ -34,11 +35,7 @@ const URL_HOSTS: &[&str] = &[YOUTU_BE_HOST, YOUTUBE_COM_HOST, YOUTUBE_COM_WWW_HO
 const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
 
 /// The `.yt` command.
-const YOUTUBE: PluginCommand =
-    PluginCommand::new(Prefix::new(".yt"), "Search YouTube and link the top video");
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[YOUTUBE];
+const YOUTUBE: CommandSpec = CommandSpec::new(".yt", "Search YouTube and link the top video");
 
 /// The safe search filter applied to YouTube search requests.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -289,44 +286,33 @@ pub type SearchListResponse = ApiListResponse<Search>;
 impl Plugin<Context> for YouTube {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<YouTube, ZetaError> {
+    fn new(
+        ctx: &Context,
+        settings: &Settings,
+        subscriptions: &mut Subscriptions,
+    ) -> Result<YouTube, ZetaError> {
+        subscriptions.command(YOUTUBE).url_hosts(URL_HOSTS);
+
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
 
         Ok(YouTube::with_config(settings, api_key, &ctx.config.http))
-    }
-
-    fn url_hosts(&self) -> &'static [&'static str] {
-        URL_HOSTS
-    }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, _) = &message.command else {
-            return Ok(());
-        };
-
-        match FilteredUrls::from_message(ctx, message) {
-            Some(urls) => self.process_urls(urls.collect(), channel, client).await?,
-            None => self.dispatch_command(ctx, client, message).await?,
-        }
-
-        Ok(())
     }
 
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let args = command.args();
+
+        // An invocation whose arguments are a YouTube URL resolves the video below instead of
+        // searching for the URL as a query.
+        if args.urls().next().is_some() {
+            return Ok(());
+        }
+
         match self.search(args).await {
             Ok(results) => {
                 if let Some(result) = results.first() {
@@ -348,6 +334,18 @@ impl Plugin<Context> for YouTube {
                 client.send_privmsg(channel, notice(format!("Error: {err}")))?;
             }
         }
+
+        Ok(())
+    }
+
+    async fn handle_url(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        url: &UrlEvent,
+    ) -> Result<(), ZetaError> {
+        self.process_urls(vec![url.url().clone()], url.channel(), client)
+            .await?;
 
         Ok(())
     }

@@ -77,7 +77,18 @@ pub struct Reddit {
 impl Plugin<Context> for Reddit {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.url_hosts(&[
+            "i.redd.it",
+            "oauth.reddit.com",
+            "old.reddit.com",
+            "preview.redd.it",
+            "redd.it",
+            "reddit.com",
+            "v.redd.it",
+            "www.reddit.com",
+        ]);
+
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =
             resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();
@@ -97,18 +108,6 @@ impl Plugin<Context> for Reddit {
         Ok(Reddit { client, mirror })
     }
 
-    fn url_hosts(&self) -> &'static [&'static str] {
-        &[
-            "i.redd.it",
-            "oauth.reddit.com",
-            "old.reddit.com",
-            "preview.redd.it",
-            "redd.it",
-            "reddit.com",
-            "v.redd.it",
-            "www.reddit.com",
-        ]
-    }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         if let Some(mirror) = &self.mirror {
@@ -118,21 +117,11 @@ impl Plugin<Context> for Reddit {
         Ok(())
     }
 
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
-            let channel = urls.channel();
-            let urls: Vec<_> = urls.collect();
-
-            let _ = self
-                .process_urls(&urls, channel, client)
-                .await
-                .inspect_err(|e| error!("error when processing urls: {e}"));
-        }
+    async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
+        let _ = self
+            .process_urls(&vec![url.url().clone()], url.channel(), client)
+            .await
+            .inspect_err(|e| error!("error when processing urls: {e}"));
 
         Ok(())
     }

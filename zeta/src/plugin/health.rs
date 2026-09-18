@@ -15,10 +15,7 @@ const HEALTH_DESCRIPTION: &str = "Show memory usage, runtime task stats, and dat
 const HEALTH_DESCRIPTION: &str = "Show memory usage and runtime task stats";
 
 /// The `.health` command.
-const HEALTH: PluginCommand = PluginCommand::new(Prefix::new(".health"), HEALTH_DESCRIPTION);
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[HEALTH];
+const HEALTH: CommandSpec = CommandSpec::new(".health", HEALTH_DESCRIPTION);
 
 pub struct Health;
 
@@ -69,24 +66,21 @@ impl PoolStats {
 impl Plugin<Context> for Health {
     type Settings = NoSettings;
 
-    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Health, ZetaError> {
+    fn new(_ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Health, ZetaError> {
+        subscriptions.command(HEALTH);
         Ok(Health)
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
         ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        _args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         if let Some(mut snapshot) = Snapshot::capture() {
             capture_pool_stats(&mut snapshot, ctx);
 
-            client.send_privmsg(channel, reply("Health", snapshot))?;
+            client.send_privmsg(command.channel(), reply("Health", snapshot))?;
         }
 
         Ok(())

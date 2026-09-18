@@ -18,7 +18,6 @@ pub use {
     service::NotificationService,
 };
 
-use irc::proto::Prefix as IrcPrefix;
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
 use tracing::error;
@@ -26,13 +25,10 @@ use tracing::error;
 use crate::plugin::prelude::*;
 
 /// The `.notify` command.
-const NOTIFY: PluginCommand = PluginCommand::new(
-    Prefix::new(".notify"),
+const NOTIFY: CommandSpec = CommandSpec::new(
+    ".notify",
     "Queue a notification for a user's next message",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[NOTIFY];
 
 /// Settings for the notification plugin, from its `[plugins.notification]` configuration
 /// section.
@@ -69,16 +65,74 @@ pub struct NotificationPlugin {
 impl Plugin<Context> for NotificationPlugin {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(NOTIFY).messages();
+
         Ok(NotificationPlugin {
             service: NotificationService::new(ctx.db.clone(), settings),
         })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
+
+        Ok(())
+    }
+
+    async fn handle_command(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        command: &CommandEvent,
+    ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let Some(sender) = command.sender() else {
+            return Ok(());
+        };
+
+        let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
+
+        let Some((target, message)) = parse_args(command.args()) else {
+            client.send_privmsg(
+                channel,
+                reply("Notification", "Usage: .notify\x0f <nick> <message>"),
+            )?;
+
+            return Ok(());
+        };
+
+        let notification = NewNotification {
+            target: target.to_owned(),
+            nickname: nickname.to_owned(),
+            username: username.to_owned(),
+            hostname: hostname.to_owned(),
+            channel: channel.to_owned(),
+            message: message.to_owned(),
+        };
+
+        match self.service.create(notification).await {
+            Ok(_) => {
+                client.send_privmsg(channel, notice("The notification has been stored."))?;
+            }
+            Err(Error::TooManyPending(max)) => {
+                client.send_privmsg(
+                    channel,
+                    reply(
+                        "Notification",
+                        format!(
+                            "{target} already has {max} pending notifications in this channel"
+                        ),
+                    ),
+                )?;
+            }
+            Err(err) => {
+                error!(?err, "could not store notification");
+                client.send_privmsg(
+                    channel,
+                    reply("Notification", "could not store the notification"),
+                )?;
+            }
+        }
 
         Ok(())
     }
@@ -87,59 +141,22 @@ impl Plugin<Context> for NotificationPlugin {
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        event: &MessageEvent,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, msg) = &message.command else {
+        let channel = event.channel();
+        let Some(sender) = event.sender() else {
             return Ok(());
         };
 
-        let Some(IrcPrefix::Nickname(nickname, username, hostname)) = &message.prefix else {
+        let nickname = sender.nick;
+
+        // Delivering is triggered by an ordinary message; command invocations are handled in
+        // `handle_command` and do not deliver the invoker's pending notifications.
+        if NOTIFY.parse(event.text()).is_some() {
             return Ok(());
-        };
+        }
 
-        if let Some(args) = NOTIFY.parse(msg) {
-            let Some((target, message)) = parse_args(args) else {
-                client.send_privmsg(
-                    channel,
-                    reply("Notification", "Usage: .notify\x0f <nick> <message>"),
-                )?;
-
-                return Ok(());
-            };
-
-            let notification = NewNotification {
-                target: target.to_owned(),
-                nickname: nickname.to_owned(),
-                username: username.to_owned(),
-                hostname: hostname.to_owned(),
-                channel: channel.to_owned(),
-                message: message.to_owned(),
-            };
-
-            match self.service.create(notification).await {
-                Ok(_) => {
-                    client.send_privmsg(channel, notice("The notification has been stored."))?;
-                }
-                Err(Error::TooManyPending(max)) => {
-                    client.send_privmsg(
-                        channel,
-                        reply(
-                            "Notification",
-                            format!(
-                                "{target} already has {max} pending notifications in this channel"
-                            ),
-                        ),
-                    )?;
-                }
-                Err(err) => {
-                    error!(?err, "could not store notification");
-                    client.send_privmsg(
-                        channel,
-                        reply("Notification", "could not store the notification"),
-                    )?;
-                }
-            }
-        } else {
+        {
             let pending = self.service.take(channel, nickname).await;
             let mut sent_ids = Vec::with_capacity(pending.len());
 
