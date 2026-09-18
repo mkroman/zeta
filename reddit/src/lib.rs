@@ -302,28 +302,38 @@ mod tests {
 
     use super::*;
 
+    /// Asserts that every listed URL form classifies as `expected`.
+    fn assert_classifies(urls: &[&str], expected: Option<Link>) {
+        for url_str in urls {
+            let url = Url::parse(url_str).unwrap();
+
+            assert_eq!(
+                classify_reddit_url(&url),
+                expected,
+                "unexpected classification of {url_str}"
+            );
+        }
+    }
+
     #[test]
-    fn parse_subreddit_urls() {
-        let test_cases = [(
+    fn parse_web_page_urls() {
+        assert_classifies(
             &[
                 "https://www.reddit.com/r/interestingasfuck/",
                 "https://www.reddit.com/r/interestingasfuck",
             ],
             Some(Link::Subreddit("interestingasfuck".to_string())),
-        )];
+        );
 
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
+        assert_classifies(
+            &[
+                "https://www.reddit.com/user/cealild/",
+                "https://www.reddit.com/user/cealild",
+            ],
+            Some(Link::User("cealild".to_string())),
+        );
 
-                assert_eq!(classify_reddit_url(&url), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn parse_submission_urls() {
-        let test_cases = [(
+        assert_classifies(
             &[
                 "https://www.reddit.com/r/europe/comments/1nh144u/germany_are_2025_eurobasket_champions/",
                 "https://www.reddit.com/r/europe/comments/1nh144u/germany_are_2025_eurobasket_champions",
@@ -334,20 +344,9 @@ mod tests {
                 id: "1nh144u".to_string(),
                 subreddit: "europe".to_string(),
             }),
-        )];
+        );
 
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
-
-                assert_eq!(classify_reddit_url(&url), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn parse_submission_comment_urls() {
-        let test_cases = [(
+        assert_classifies(
             &[
                 "https://www.reddit.com/r/europe/comments/1nh144u/germany_are_2025_eurobasket_champions/ne86mgl/",
                 "https://www.reddit.com/r/europe/comments/1nh144u/germany_are_2025_eurobasket_champions/ne86mgl",
@@ -357,112 +356,9 @@ mod tests {
                 submission: "1nh144u".to_string(),
                 subreddit: "europe".to_string(),
             }),
-        )];
+        );
 
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
-
-                assert_eq!(classify_reddit_url(&url), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn parse_user_urls() {
-        let test_cases = [(
-            &[
-                "https://www.reddit.com/user/cealild/",
-                "https://www.reddit.com/user/cealild",
-            ],
-            Some(Link::User("cealild".to_string())),
-        )];
-
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
-
-                assert_eq!(classify_reddit_url(&url), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn parse_shortened_image_urls() {
-        let test_cases = [(
-            &["https://i.redd.it/gvjukykex8pf1.jpeg"],
-            Some(Link::Image("/gvjukykex8pf1.jpeg".to_string())),
-        )];
-
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
-
-                assert_eq!(classify_reddit_url(&url), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn parse_preview_urls() {
-        let test_cases = [(
-            &["https://preview.redd.it/nry00uecp5pf1.png?width=1497&format=png&auto=webp&s=69be11a8f3a211e485c44db89dc0f3023cdbfaf6"],
-            Some(Link::Preview("/nry00uecp5pf1.png?width=1497&format=png&auto=webp&s=69be11a8f3a211e485c44db89dc0f3023cdbfaf6".to_string())),
-        )];
-
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
-
-                assert_eq!(classify_reddit_url(&url), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn parse_shortened_comment_urls() {
-        let test_cases = [(
-            "https://www.reddit.com/r/linuxmemes/s/dmwUYLKTjd",
-            Some(Link::Shortened {
-                subreddit: "linuxmemes".to_string(),
-                id: "dmwUYLKTjd".to_string(),
-            }),
-        )];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(classify_reddit_url(&url), expected);
-        }
-    }
-
-    #[test]
-    fn classify_video_urls() {
-        let test_cases = [
-            (
-                "https://www.reddit.com/video/b2l87x1pyn7h1",
-                Some(Link::Video("b2l87x1pyn7h1".to_string())),
-            ),
-            (
-                "https://v.redd.it/b2l87x1pyn7h1",
-                Some(Link::Video("b2l87x1pyn7h1".to_string())),
-            ),
-            (
-                "https://v.redd.it/b2l87x1pyn7h1/",
-                Some(Link::Video("b2l87x1pyn7h1".to_string())),
-            ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(classify_reddit_url(&url), expected);
-        }
-    }
-
-    #[test]
-    fn parse_comment_redirect_urls() {
-        let test_cases = [(
+        assert_classifies(
             &[
                 "https://www.reddit.com/comments/1nh144u/",
                 "https://www.reddit.com/comments/1nh144u",
@@ -470,31 +366,42 @@ mod tests {
             Some(Link::Comments {
                 id: "1nh144u".to_string(),
             }),
-        )];
+        );
 
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
+        assert_classifies(
+            &["https://www.reddit.com/gallery/1nj9601"],
+            Some(Link::Gallery("1nj9601".to_string())),
+        );
 
-                assert_eq!(classify_reddit_url(&url), expected);
-            }
-        }
+        assert_classifies(
+            &["https://www.reddit.com/r/linuxmemes/s/dmwUYLKTjd"],
+            Some(Link::Shortened {
+                subreddit: "linuxmemes".to_string(),
+                id: "dmwUYLKTjd".to_string(),
+            }),
+        );
     }
 
     #[test]
-    fn parse_gallery_urls() {
-        let test_cases = [(
-            &["https://www.reddit.com/gallery/1nj9601"],
-            Some(Link::Gallery("1nj9601".to_string())),
-        )];
+    fn parse_media_urls() {
+        assert_classifies(
+            &["https://i.redd.it/gvjukykex8pf1.jpeg"],
+            Some(Link::Image("/gvjukykex8pf1.jpeg".to_string())),
+        );
 
-        for (url_strs, expected) in test_cases {
-            for url_str in url_strs {
-                let url = Url::parse(url_str).unwrap();
+        assert_classifies(
+            &["https://preview.redd.it/nry00uecp5pf1.png?width=1497&format=png&auto=webp&s=69be11a8f3a211e485c44db89dc0f3023cdbfaf6"],
+            Some(Link::Preview("/nry00uecp5pf1.png?width=1497&format=png&auto=webp&s=69be11a8f3a211e485c44db89dc0f3023cdbfaf6".to_string())),
+        );
 
-                assert_eq!(classify_reddit_url(&url), expected);
-            }
-        }
+        assert_classifies(
+            &[
+                "https://www.reddit.com/video/b2l87x1pyn7h1",
+                "https://v.redd.it/b2l87x1pyn7h1",
+                "https://v.redd.it/b2l87x1pyn7h1/",
+            ],
+            Some(Link::Video("b2l87x1pyn7h1".to_string())),
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::consts::{
     DEFAULT_DB_IDLE_TIMEOUT, DEFAULT_IRC_PORT, DEFAULT_IRC_TLS_PORT, DEFAULT_MAX_DB_CONNECTIONS,
-    HTTP_TIMEOUT, HTTP_USER_AGENT,
+    DEFAULT_SHUTDOWN_QUIT_MESSAGE, HTTP_TIMEOUT, HTTP_USER_AGENT,
 };
 use crate::plugin::PluginsConfig;
 
@@ -166,7 +166,7 @@ pub struct IrcTlsConfig {
 }
 
 /// IRC client configuration.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcConfig {
     /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
     /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.
@@ -197,10 +197,35 @@ pub struct IrcConfig {
     /// use.
     #[serde(default)]
     pub should_ghost: bool,
+    /// The message sent in the `QUIT` when the bot shuts down gracefully (on `SIGINT` or
+    /// `SIGTERM`), e.g. when a container orchestrator stops the pod.
+    #[serde(default = "default_shutdown_quit_message")]
+    pub quit_message: String,
     /// TLS configuration.
     pub tls: Option<IrcTlsConfig>,
     /// The client's username.
     pub username: Option<String>,
+}
+
+impl Default for IrcConfig {
+    fn default() -> Self {
+        Self {
+            admin_hostmasks: Vec::new(),
+            alt_nicks: Vec::new(),
+            channels: Vec::new(),
+            encoding: None,
+            hostname: String::new(),
+            nick_password: None,
+            nickname: String::new(),
+            password: None,
+            port: None,
+            realname: None,
+            should_ghost: false,
+            quit_message: default_shutdown_quit_message(),
+            tls: None,
+            username: None,
+        }
+    }
 }
 
 impl IrcConfig {
@@ -268,6 +293,11 @@ const fn default_http_timeout() -> Duration {
 /// Returns the default `User-Agent` header sent with HTTP requests.
 fn default_http_user_agent() -> String {
     HTTP_USER_AGENT.to_string()
+}
+
+/// Returns the default message sent in the `QUIT` when the bot shuts down.
+fn default_shutdown_quit_message() -> String {
+    DEFAULT_SHUTDOWN_QUIT_MESSAGE.to_string()
 }
 
 #[cfg(all(test, feature = "plugin-dig", feature = "plugin-health"))]
@@ -438,6 +468,30 @@ enabled = false
             extract("[plugins]\ndig = \"x\"\n").is_err(),
             "scalar plugin section should be rejected"
         );
+    }
+
+    #[test]
+    fn irc_quit_message_defaults_to_shutting_down() {
+        let config: IrcConfig = Figment::new()
+            .merge(Toml::string(
+                "nickname = \"zeta\"\nhostname = \"localhost\"\nalt_nicks = []\nchannels = []\n",
+            ))
+            .extract()
+            .expect("could not parse irc configuration");
+
+        assert_eq!(config.quit_message, DEFAULT_SHUTDOWN_QUIT_MESSAGE);
+    }
+
+    #[test]
+    fn irc_quit_message_is_configurable() {
+        let config: IrcConfig = Figment::new()
+            .merge(Toml::string(
+                "nickname = \"zeta\"\nhostname = \"localhost\"\nalt_nicks = []\nchannels = []\nquit_message = \"goodbye\"\n",
+            ))
+            .extract()
+            .expect("could not parse irc configuration");
+
+        assert_eq!(config.quit_message, "goodbye");
     }
 
     #[test]

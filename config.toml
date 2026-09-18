@@ -36,6 +36,10 @@ port = 6667
 # has no effect if `nick_password` is not set.
 # should_ghost = true
 
+# The message sent in the QUIT when the bot shuts down gracefully (SIGINT/SIGTERM), e.g. when the
+# pod running the bot is deleted.
+# quit_message = "shutting down"
+
 # Hostmasks of admin users, in `nick!user@hostname` form where any of the three components may
 # contain wildcards (`*` or `?`). Admins are authorized to manage URL and sender filters with the
 # `.filter` command; when unset, nobody is an admin.

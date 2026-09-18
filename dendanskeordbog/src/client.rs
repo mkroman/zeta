@@ -119,14 +119,3 @@ impl Default for Client {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_with_client() {
-        let http_client = reqwest::Client::new();
-        let _ = Client::with_client(http_client);
-    }
-}

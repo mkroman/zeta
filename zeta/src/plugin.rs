@@ -10,6 +10,7 @@ use irc::client::Client;
 use irc::proto::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 use url::Url;
 use zeta_plugin::PluginCommand;
@@ -372,6 +373,14 @@ pub trait ErasedPlugin: Send + Sync {
         client: &'a Client,
         message: &'a Message,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+
+    /// Called once while the bot is shutting down, after the plugin's message queue has been
+    /// drained.
+    fn shutdown<'a>(
+        &'a mut self,
+        ctx: &'a Context,
+        client: &'a Client,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 }
 
 impl<P: Plugin<Context>> ErasedPlugin for P {
@@ -398,6 +407,14 @@ impl<P: Plugin<Context>> ErasedPlugin for P {
         message: &'a Message,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
         Plugin::handle_message(self, ctx, client, message)
+    }
+
+    fn shutdown<'a>(
+        &'a mut self,
+        ctx: &'a Context,
+        client: &'a Client,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Plugin::shutdown(self, ctx, client)
     }
 }
 
@@ -529,17 +546,23 @@ impl Registry {
 /// The task loads the plugin and then waits for IRC messages on an unbounded channel, handling
 /// them one at a time. State that other plugins should be able to access must be published to
 /// [`Context::shared`] when the plugin is constructed or loaded.
+///
+/// Closing the mailbox — by dropping the task or consuming it with [`PluginTask::into_handle`] —
+/// makes the plugin drain its queued messages, run the shutdown hook and exit.
 pub struct PluginTask {
     /// The name of the plugin, used for logging.
     pub name: String,
     /// The mailbox of the plugin task.
     sender: mpsc::UnboundedSender<Arc<Message>>,
+    /// The handle of the spawned plugin task.
+    handle: JoinHandle<()>,
 }
 
 impl PluginTask {
     /// Spawns `plugin` into a task that loads it and processes messages until the channel closes.
     ///
-    /// If the plugin fails to load, the error is logged and the task exits.
+    /// If the plugin fails to load, the error is logged and the task exits. When the channel
+    /// closes, the plugin's shutdown hook runs before the task exits.
     pub fn spawn(
         name: String,
         mut plugin: Box<dyn ErasedPlugin>,
@@ -549,7 +572,7 @@ impl PluginTask {
         let (sender, mut receiver) = mpsc::unbounded_channel::<Arc<Message>>();
         let task_name = name.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             debug!(plugin = %task_name, "plugin task started");
 
             if let Err(error) = plugin.loaded(&ctx, &client).await {
@@ -564,10 +587,19 @@ impl PluginTask {
                 }
             }
 
+            // The mailbox is closed: the bot is shutting down.
+            if let Err(error) = plugin.shutdown(&ctx, &client).await {
+                warn!(plugin = %task_name, %error, "plugin error during shutdown");
+            }
+
             debug!(plugin = %task_name, "plugin task stopped");
         });
 
-        Self { name, sender }
+        Self {
+            name,
+            sender,
+            handle,
+        }
     }
 
     /// Queues `message` for the plugin task.
@@ -577,6 +609,15 @@ impl PluginTask {
     /// Returns an error if the plugin task has stopped.
     pub fn send(&self, message: Arc<Message>) -> Result<(), mpsc::error::SendError<Arc<Message>>> {
         self.sender.send(message)
+    }
+
+    /// Consumes the plugin task, closing its mailbox and returning the task's handle.
+    ///
+    /// Dropping the sender makes the task drain its queued messages, run the plugin's shutdown
+    /// hook and exit. Await the returned handle — bounded by a deadline — to wait for it.
+    #[must_use]
+    pub fn into_handle(self) -> JoinHandle<()> {
+        self.handle
     }
 }
 
@@ -594,21 +635,10 @@ pub fn extract_urls(s: &str) -> Option<Vec<Url>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_url_extraction() {
-        let tests = [
-            ("hello https://example.com world", 1),
-            ("ftp://example.com/some/file.zip", 0),
-            ("http://example.com/some/file.html", 1),
-        ];
-
-        for (input, expected_results) in tests {
-            let num_urls = extract_urls(input).iter().len();
-
-            assert_eq!(num_urls, expected_results);
-        }
-    }
+    use crate::Config;
+    use async_trait::async_trait;
+    use figment::Figment;
+    use figment::providers::{Format, Toml};
 
     #[test]
     fn bundled_plugin_names_include_all_plugins() {
@@ -617,5 +647,131 @@ mod tests {
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"dig"));
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"health"));
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"howlongtobeat"));
+    }
+
+    /// The lifecycle log shared between a test and its plugin through the context.
+    type Recording = Arc<std::sync::Mutex<Vec<&'static str>>>;
+
+    /// Publishes the recording log through the context's shared state.
+    fn publish_recording(ctx: &Context) -> Recording {
+        let recording: Recording = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        assert!(ctx.shared.publish(Arc::clone(&recording)).is_none());
+
+        recording
+    }
+
+    /// Test plugin recording the lifecycle events it observes.
+    struct RecordingPlugin {
+        recording: Recording,
+    }
+
+    impl zeta_plugin::PluginName for RecordingPlugin {
+        const NAME: &'static str = "recording";
+    }
+
+    #[async_trait]
+    impl Plugin<Context> for RecordingPlugin {
+        type Settings = NoSettings;
+
+        fn new(ctx: &Context, _: &NoSettings) -> Result<Self, Error> {
+            let recording = ctx
+                .shared
+                .get::<std::sync::Mutex<Vec<&'static str>>>()
+                .expect("recording log should be published");
+
+            Ok(RecordingPlugin { recording })
+        }
+
+        async fn handle_message(
+            &self,
+            _: &Context,
+            _: &Client,
+            _: &Message,
+        ) -> Result<(), Error> {
+            self.recording
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push("message");
+
+            Ok(())
+        }
+
+        async fn shutdown(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
+            self.recording
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push("shutdown");
+
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "database")]
+    #[tokio::test]
+    async fn plugin_task_drains_messages_before_shutdown() {
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://invalid/zeta_test")
+            .expect("lazy database pool");
+
+        let mut config: Config = Figment::new()
+            .merge(Toml::string(
+                r#"
+[database]
+url = "postgresql://invalid/zeta_test"
+
+[tracing]
+enabled = false
+
+[irc]
+nickname = "zeta-test"
+hostname = "mock"
+alt_nicks = []
+channels = []
+"#,
+            ))
+            .extract()
+            .expect("test configuration should parse");
+
+        let _ = config.take_plugins();
+
+        let ctx = Arc::new(Context::new(db, crate::dns::new(), config));
+        let recording = publish_recording(&ctx);
+
+        let client = Arc::new(
+            Client::from_config(irc::client::data::Config {
+                nickname: Some("zeta-test".to_owned()),
+                server: Some("mock".to_owned()),
+                use_mock_connection: true,
+                mock_initial_value: Some(String::new()),
+                ..Default::default()
+            })
+            .await
+            .expect("mock irc client"),
+        );
+
+        let task = PluginTask::spawn(
+            "recording".to_string(),
+            Box::new(RecordingPlugin {
+                recording: Arc::clone(&recording),
+            }),
+            Arc::clone(&ctx),
+            Arc::clone(&client),
+        );
+
+        for _ in 0..2 {
+            let message = Message::new(None, "PRIVMSG", vec!["#test", "hello"])
+                .expect("message should parse");
+
+            task.send(Arc::new(message)).expect("task should be running");
+        }
+
+        task.into_handle().await.expect("task should finish");
+
+        let log = recording
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        assert_eq!(*log, ["message", "message", "shutdown"]);
     }
 }

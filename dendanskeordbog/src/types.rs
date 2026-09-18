@@ -368,7 +368,8 @@ mod tests {
     }
 
     fn query_fixture_paths() -> Vec<PathBuf> {
-        fs::read_dir("tests/fixtures/queries")
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/queries");
+        fs::read_dir(dir)
             .expect("could not read queries fixtures directory")
             .filter_map(|entry| entry.map(|inner| inner.path()).ok())
             .collect()
