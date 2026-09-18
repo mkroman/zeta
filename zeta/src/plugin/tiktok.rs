@@ -31,7 +31,6 @@ const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/tiktok";
 
 /// Settings for the tiktok plugin, from its `[plugins.tiktok]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The maximum length of a video title before it gets truncated.
     #[serde(default = "default_title_length")]

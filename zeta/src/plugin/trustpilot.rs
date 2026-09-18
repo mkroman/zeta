@@ -13,7 +13,6 @@ const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
 
 /// Settings for the trustpilot plugin, from its `[plugins.trustpilot]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The Trustpilot API key.
     ///

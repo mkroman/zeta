@@ -17,7 +17,6 @@ use crate::plugin::prelude::*;
 
 /// Settings for the dig plugin, from its `[plugins.dig]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// Nameservers to query over UDP and TCP.
     ///

@@ -66,7 +66,6 @@ impl SafeSearch {
 
 /// Settings for the youtube plugin, from its `[plugins.youtube]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The YouTube Data API v3 key.
     ///

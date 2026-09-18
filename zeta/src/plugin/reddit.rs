@@ -30,7 +30,6 @@ const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/reddit";
 
 /// Settings for the reddit plugin, from its `[plugins.reddit]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The Reddit application client id.
     ///

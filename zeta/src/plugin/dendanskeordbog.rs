@@ -15,7 +15,6 @@ const COMMANDS: &[PluginCommand] = &[DDO];
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// Whether to show the morphology (inflection) of the entry.
     #[serde(default = "default_true")]

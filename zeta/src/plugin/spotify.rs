@@ -22,7 +22,6 @@ const API_BASE_URL: &str = "https://api.spotify.com/v1";
 
 /// Settings for the spotify plugin, from its `[plugins.spotify]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Settings {
     /// The Spotify application client id.
     ///
