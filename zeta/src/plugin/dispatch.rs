@@ -165,6 +165,14 @@ impl EventIndex {
 
         match &message.command {
             Command::PRIVMSG(..) => self.dispatch_privmsg(filters, &message, &mut stopped),
+            // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
+            // ordinary notices are not an event kind.
+            Command::NOTICE(..) if !self.ctcp.is_empty() => {
+                if let Some(event) = CtcpEvent::new(Arc::clone(&message)) {
+                    let event = Event::Ctcp(event);
+                    Self::deliver(&event, &self.ctcp, &mut stopped);
+                }
+            }
             Command::JOIN(..) if !self.join.is_empty() => {
                 let event = JoinEvent::new(Arc::clone(&message));
                 Self::deliver(&Event::Join(event), &self.join, &mut stopped);
@@ -453,6 +461,37 @@ mod tests {
         ));
         assert!(drain(&mut messages).is_empty());
         assert!(drain(&mut dig).is_empty());
+    }
+
+    #[test]
+    fn ctcp_replies_arrive_through_notices() {
+        let mut index = EventIndex::default();
+        let mut ctcp = subscribe(&mut index, "ctcp", |s| { s.ctcp(); });
+        let mut watcher = subscribe(&mut index, "watcher", |s| { s.messages(); });
+
+        index.dispatch(
+            &Filters::default(),
+            message("service.example", "NOTICE", &["zeta", "\x01VERSION 1.0\x01"]),
+        );
+
+        assert!(matches!(
+            drain(&mut ctcp)[..],
+            [Event::Ctcp(ref event)] if event.kind == CtcpKind::Version
+        ));
+        assert!(drain(&mut watcher).is_empty());
+    }
+
+    #[test]
+    fn plain_notices_are_not_delivered() {
+        let mut index = EventIndex::default();
+        let mut ctcp = subscribe(&mut index, "ctcp", |s| { s.ctcp(); });
+
+        index.dispatch(
+            &Filters::default(),
+            message("server.example", "NOTICE", &["zeta", "server maintenance"]),
+        );
+
+        assert!(drain(&mut ctcp).is_empty());
     }
 
     #[test]

@@ -22,7 +22,6 @@ use crate::{
 use model::{InsertUrlRecord, UrlRecord};
 
 /// The `.ofn` command.
-/// The `.ofn` command.
 const OFN: CommandSpec = CommandSpec::with_args::<Opts>(
     ".ofn",
     "Show URL and YouTube repost statistics",

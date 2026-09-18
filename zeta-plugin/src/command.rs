@@ -64,6 +64,9 @@ use thiserror::Error;
 /// misbehave.
 ///
 /// Commands may overlap as long as no trigger is a word-prefix of another (e.g. `.y` and `.yt`).
+///
+/// Two specifications compare equal only when trigger, description, and argument information are
+/// all identical — match against the very constant that was registered.
 // The derived equality compares the argument function pointer; only structural (compile-time)
 // equality for `match` patterns depends on it, never a meaningful runtime comparison.
 #[allow(unpredictable_function_pointer_comparisons)]

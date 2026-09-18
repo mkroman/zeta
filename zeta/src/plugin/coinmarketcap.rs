@@ -306,7 +306,6 @@ impl CoinMarketCap {
     }
 
     /// Handles a fixed coin command invocation (e.g. `.btc`), quoting the given `symbol`.
-    /// Handles a fixed coin command invocation (e.g. `.btc`), quoting the given `symbol`.
     async fn handle_coin(
         &self,
         command: CommandSpec,
