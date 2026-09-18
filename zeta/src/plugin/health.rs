@@ -2,13 +2,20 @@ use std::fmt::Display;
 
 use tokio::runtime::Handle;
 
+#[cfg(feature = "database")]
+use crate::database::Database;
 use crate::plugin::prelude::*;
 
+/// The `.health` command description.
+#[cfg(feature = "database")]
+const HEALTH_DESCRIPTION: &str = "Show memory usage, runtime task stats, and database pool stats";
+
+/// The `.health` command description.
+#[cfg(not(feature = "database"))]
+const HEALTH_DESCRIPTION: &str = "Show memory usage and runtime task stats";
+
 /// The `.health` command.
-const HEALTH: PluginCommand = PluginCommand::new(
-    Prefix::new(".health"),
-    "Show memory usage and runtime task stats",
-);
+const HEALTH: PluginCommand = PluginCommand::new(Prefix::new(".health"), HEALTH_DESCRIPTION);
 
 /// The commands handled by this plugin.
 const COMMANDS: &[PluginCommand] = &[HEALTH];
@@ -27,6 +34,35 @@ pub struct Snapshot {
     pub num_alive_tasks: usize,
     /// The number of worker threads used by the runtime.
     pub num_workers: usize,
+    /// Database connection pool statistics.
+    #[cfg(feature = "database")]
+    pub db: Option<PoolStats>,
+}
+
+/// Database connection pool statistics.
+#[cfg(feature = "database")]
+pub struct PoolStats {
+    /// The number of connections currently established by the pool.
+    pub size: u32,
+    /// The number of established connections not currently in use.
+    pub idle: usize,
+    /// The maximum number of connections the pool may establish.
+    pub max: u32,
+    /// Whether the pool has been closed.
+    pub closed: bool,
+}
+
+#[cfg(feature = "database")]
+impl PoolStats {
+    /// Captures the statistics of the database connection pool.
+    pub fn capture(db: &Database) -> PoolStats {
+        PoolStats {
+            size: db.size(),
+            idle: db.num_idle(),
+            max: db.options().get_max_connections(),
+            closed: db.is_closed(),
+        }
+    }
 }
 
 #[async_trait]
@@ -41,19 +77,31 @@ impl Plugin<Context> for Health {
 
     async fn handle_command(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         client: &Client,
         channel: &str,
         _command: &Prefix,
         _args: &str,
     ) -> Result<(), ZetaError> {
-        if let Some(snapshot) = Snapshot::capture() {
+        if let Some(mut snapshot) = Snapshot::capture() {
+            capture_pool_stats(&mut snapshot, ctx);
+
             client.send_privmsg(channel, reply("Health", snapshot))?;
         }
 
         Ok(())
     }
 }
+
+/// Attaches database connection pool statistics to the snapshot.
+#[cfg(feature = "database")]
+fn capture_pool_stats(snapshot: &mut Snapshot, ctx: &Context) {
+    snapshot.db = Some(PoolStats::capture(&ctx.db));
+}
+
+/// Does nothing when the database feature is disabled.
+#[cfg(not(feature = "database"))]
+fn capture_pool_stats(_: &mut Snapshot, _: &Context) {}
 
 impl Snapshot {
     #[allow(clippy::cast_precision_loss)]
@@ -75,6 +123,8 @@ impl Snapshot {
                 global_queue_depth,
                 num_alive_tasks,
                 num_workers,
+                #[cfg(feature = "database")]
+                db: None,
             });
         }
 
@@ -94,6 +144,16 @@ impl Display for Snapshot {
         write!(fmt, "Tasks:\x0f {}\x0310 ", self.num_alive_tasks)?;
         write!(fmt, "(\x0f{}\x0310 scheduled)", self.global_queue_depth)?;
 
+        #[cfg(feature = "database")]
+        if let Some(db) = &self.db {
+            if db.closed {
+                write!(fmt, " DB:\x0f closed\x0310")?;
+            } else {
+                write!(fmt, " DB:\x0f {}\x0310/\x0f{}\x0310 ", db.size, db.max)?;
+                write!(fmt, "(\x0f{}\x0310 idle)", db.idle)?;
+            }
+        }
+
         Ok(())
     }
 }
@@ -111,6 +171,42 @@ mod tests {
         let snapshot_message = snapshot.to_string().strip_formatting();
         let wildmatcher =
             WildMatch::new("Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled)");
+        assert!(wildmatcher.matches(&snapshot_message));
+    }
+
+    #[cfg(feature = "database")]
+    #[tokio::test]
+    async fn it_should_format_database_pool_stats() {
+        let mut snapshot = Snapshot::capture().expect("could not capture");
+        snapshot.db = Some(PoolStats {
+            size: 3,
+            idle: 2,
+            max: 10,
+            closed: false,
+        });
+
+        let snapshot_message = snapshot.to_string().strip_formatting();
+        let wildmatcher = WildMatch::new(
+            "Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled) DB: 3/10 (2 idle)",
+        );
+        assert!(wildmatcher.matches(&snapshot_message));
+    }
+
+    #[cfg(feature = "database")]
+    #[tokio::test]
+    async fn it_should_format_closed_database_pool() {
+        let mut snapshot = Snapshot::capture().expect("could not capture");
+        snapshot.db = Some(PoolStats {
+            size: 0,
+            idle: 0,
+            max: 10,
+            closed: true,
+        });
+
+        let snapshot_message = snapshot.to_string().strip_formatting();
+        let wildmatcher = WildMatch::new(
+            "Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled) DB: closed",
+        );
         assert!(wildmatcher.matches(&snapshot_message));
     }
 }
