@@ -6,10 +6,10 @@ use tracing::warn;
 use crate::plugin::prelude::*;
 
 /// The `.g` command.
-const KAGI: Prefix = Prefix::new(".g");
+const KAGI: CommandSpec = CommandSpec::new(".g", "Search with Kagi and link the top result");
 
 /// The `.gis` command.
-const IMAGES: Prefix = Prefix::new(".gis");
+const IMAGES: CommandSpec = CommandSpec::new(".gis", "Search Kagi Images and link the first result");
 
 /// Settings for the kagi plugin, from its `[plugins.kagi]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -47,12 +47,6 @@ fn default_language() -> String {
     kagi::LANGUAGE.to_string()
 }
 
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[
-    PluginCommand::new(KAGI, "Search with Kagi and link the top result"),
-    PluginCommand::new(IMAGES, "Search Kagi Images and link the first result"),
-];
-
 /// Kagi search integration.
 pub struct KagiPlugin {
     /// Kagi search client.
@@ -63,7 +57,7 @@ pub struct KagiPlugin {
 impl Plugin<Context> for KagiPlugin {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<KagiPlugin, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<KagiPlugin, ZetaError> {
         let token = resolve_secret(settings.session_token.as_deref(), "KAGI_SESSION_TOKEN")?;
         let options = kagi::ClientOptions {
             timeout: ctx.config.http.timeout,
@@ -73,22 +67,20 @@ impl Plugin<Context> for KagiPlugin {
         };
         let client = kagi::Client::with_token_and_options(token, options).map_err(plugin_err)?;
 
+        subscriptions.command(KAGI).command(IMAGES);
+
         Ok(KagiPlugin { client })
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        command: &Prefix,
-        query: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        match *command {
-            IMAGES => return self.handle_images(client, channel, query).await,
-            KAGI => return self.handle_search(client, channel, query).await,
+        match command.spec {
+            IMAGES => return self.handle_images(client, command.channel(), command.args()).await,
+            KAGI => return self.handle_search(client, command.channel(), command.args()).await,
             _ => {}
         }
 

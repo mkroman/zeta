@@ -80,11 +80,9 @@ struct Creator {
 impl Plugin<Context> for Thingiverse {
     type Settings = Settings;
 
-    fn url_hosts(&self) -> &'static [&'static str] {
-        URL_HOSTS
-    }
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client(&ctx.config.http);
         // Regex to match /thing:<id>
@@ -97,26 +95,8 @@ impl Plugin<Context> for Thingiverse {
         })
     }
 
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, _) = &message.command else {
-            return Ok(());
-        };
-
-        for url in FilteredUrls::from_message(ctx, message)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(host) = url.host_str()
-                && URL_HOSTS.contains(&host)
-            {
-                self.process_url(&url, channel, client).await?;
-            }
-        }
+    async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
+        self.process_url(url.url(), url.channel(), client).await?;
 
         Ok(())
     }

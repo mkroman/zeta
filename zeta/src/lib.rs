@@ -35,5 +35,7 @@ mod zeta;
 
 pub use config::Config;
 pub use error::Error;
-pub use plugin::{ErasedPlugin, Plugin, PluginCatalog, PluginInfo, PluginsConfig, Registry};
+pub use plugin::{
+    CatalogEntry, ErasedPlugin, Plugin, PluginCatalog, PluginsConfig, RegisteredPlugin, Registry,
+};
 pub use zeta::Zeta;

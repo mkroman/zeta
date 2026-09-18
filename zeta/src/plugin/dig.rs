@@ -82,11 +82,8 @@ pub enum Error {
 }
 
 /// The `.dig` command.
-const DIG: PluginCommand =
-    PluginCommand::with_args::<Opts>(Prefix::new(".dig"), "Look up DNS records for a domain");
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[DIG];
+const DIG: CommandSpec =
+    CommandSpec::with_args::<Opts>(".dig", "Look up DNS records for a domain");
 
 pub struct Dig {
     resolver: TokioResolver,
@@ -119,26 +116,23 @@ impl Display for LookupResult {
 impl Plugin<Context> for Dig {
     type Settings = Settings;
 
-    fn new(_ctx: &Context, settings: &Settings) -> Result<Dig, ZetaError> {
+    fn new(_ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Dig, ZetaError> {
+        subscriptions.command(DIG);
         let resolver = build_resolver(&settings.nameservers).map_err(ZetaError::from)?;
 
         Ok(Dig { resolver })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let opts = match command.parse_args::<Opts>(args) {
+        let opts = match command.parse_args::<Opts>() {
             Ok(opts) => opts,
             Err(err) => {
-                client.send_privmsg(channel, err.to_string())?;
+                client.send_privmsg(command.channel(), err.to_string())?;
                 return Ok(());
             }
         };
@@ -146,11 +140,11 @@ impl Plugin<Context> for Dig {
         match self.resolve(&opts.name, opts.record_type).await {
             Ok(result) => {
                 for line in result.to_string().lines() {
-                    client.send_privmsg(channel, line)?;
+                    client.send_privmsg(command.channel(), line)?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, reply("Dig", err.to_string()))?;
+                client.send_privmsg(command.channel(), reply("Dig", err.to_string()))?;
             }
         }
 

@@ -30,7 +30,6 @@ use std::time::Duration;
 use argh::{ArgsInfo, FromArgs};
 use chrono::{Datelike, Days};
 use interim::{Dialect, parse_date_string};
-use irc::proto::Prefix as IrcPrefix;
 use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::{DateTime, Local, Utc};
@@ -40,16 +39,13 @@ use tracing::{debug, error, trace};
 use crate::{plugin::prelude::*, utils::Truncatable, utils::append_entries_within_budget};
 
 /// The `.alert` command.
-const ALERT: PluginCommand = PluginCommand::with_args::<Opts>(
-    Prefix::new(".alert"),
+const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
+    ".alert",
     "Schedule an alert to be posted later, or list pending alerts",
 );
 
 /// The usage hint for the `.alert` command.
 const USAGE: &str = "Usage: .alert\x0f [-l] <message> <in|at> <datetime>";
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[ALERT];
 
 /// Schedule an alert to be posted later, or list pending alerts.
 #[derive(FromArgs, ArgsInfo, Debug)]
@@ -174,7 +170,9 @@ impl AlertPlugin {
 impl Plugin<Context> for AlertPlugin {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(ALERT);
+
         let mut service = AlertService::new(ctx.db.clone(), settings);
         let receiver = service.take_receiver();
         let service = Arc::new(service);
@@ -183,8 +181,6 @@ impl Plugin<Context> for AlertPlugin {
 
         Ok(AlertPlugin { service, receiver })
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
@@ -197,100 +193,99 @@ impl Plugin<Context> for AlertPlugin {
         Ok(())
     }
 
-    async fn handle_message(
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, msg) = &message.command else {
+        let channel = command.channel();
+
+        let Some(sender) = command.sender() else {
             return Ok(());
         };
 
-        let Some(IrcPrefix::Nickname(nickname, username, hostname)) = &message.prefix else {
-            return Ok(());
-        };
+        let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
+        let args = command.args();
 
-        if let Some(args) = ALERT.parse(msg) {
-            let opts = match ALERT.parse_words::<Opts>(args) {
-                Ok(opts) => opts,
-                Err(err) => {
-                    reply_usage_lines(client, channel, &err, |line| reply("Alert", line))?;
-
-                    return Ok(());
-                }
-            };
-
-            if opts.list {
-                if !opts.args.is_empty() {
-                    client.send_privmsg(channel, reply("Alert", USAGE))?;
-
-                    return Ok(());
-                }
-
-                let pending = match self.service.pending_for(channel, nickname).await {
-                    Ok(pending) => pending,
-                    Err(err) => {
-                        error!(?err, "could not list pending alerts");
-
-                        client.send_privmsg(
-                            channel,
-                            reply("Alert", "could not list your pending alerts"),
-                        )?;
-
-                        return Ok(());
-                    }
-                };
-
-                client.send_privmsg(channel, format_pending(&pending))?;
+        let opts = match command.spec.parse_words::<Opts>(args) {
+            Ok(opts) => opts,
+            Err(err) => {
+                reply_usage_lines(client, channel, &err, |line| reply("Alert", line))?;
 
                 return Ok(());
             }
+        };
 
-            let input = opts.input();
-
-            let Some((message, time_spec)) = split_args(&input) else {
+        if opts.list {
+            if !opts.args.is_empty() {
                 client.send_privmsg(channel, reply("Alert", USAGE))?;
 
                 return Ok(());
-            };
+            }
 
-            let time = match parse_time(time_spec, Local::now()) {
-                Ok(time) => time,
+            let pending = match self.service.pending_for(channel, nickname).await {
+                Ok(pending) => pending,
                 Err(err) => {
-                    client.send_privmsg(channel, reply("Alert", err.to_string()))?;
+                    error!(?err, "could not list pending alerts");
+
+                    client.send_privmsg(
+                        channel,
+                        reply("Alert", "could not list your pending alerts"),
+                    )?;
 
                     return Ok(());
                 }
             };
 
-            let alert = NewAlert {
-                nickname: nickname.to_owned(),
-                username: username.to_owned(),
-                hostname: hostname.to_owned(),
-                channel: channel.to_owned(),
-                message: message.to_owned(),
-                time,
-            };
+            client.send_privmsg(channel, format_pending(&pending))?;
 
-            match self.service.create(alert).await {
-                Ok(_) => {
-                    let local = time.with_timezone(&Local).format("%d/%m/%Y %H:%M:%S");
-
-                    client.send_privmsg(
-                        channel,
-                        reply(
-                            "Alert",
-                            format!("{} Alert stored for\x0f {local}.", success_message()),
-                        ),
-                    )?;
-                }
-                Err(err) => {
-                    error!(?err, "could not store alert");
-                    client.send_privmsg(channel, reply("Alert", "could not store the alert"))?;
-                }
+            return Ok(());
             }
-        }
+
+        let input = opts.input();
+
+        let Some((message, time_spec)) = split_args(&input) else {
+            client.send_privmsg(channel, reply("Alert", USAGE))?;
+
+            return Ok(());
+        };
+
+        let time = match parse_time(time_spec, Local::now()) {
+            Ok(time) => time,
+            Err(err) => {
+                client.send_privmsg(channel, reply("Alert", err.to_string()))?;
+
+                return Ok(());
+            }
+        };
+
+        let alert = NewAlert {
+            nickname: nickname.to_owned(),
+            username: username.to_owned(),
+            hostname: hostname.to_owned(),
+            channel: channel.to_owned(),
+            message: message.to_owned(),
+            time,
+        };
+
+        match self.service.create(alert).await {
+            Ok(_) => {
+                let local = time.with_timezone(&Local).format("%d/%m/%Y %H:%M:%S");
+
+                client.send_privmsg(
+                    channel,
+                    reply(
+                        "Alert",
+                        format!("{} Alert stored for\x0f {local}.", success_message()),
+                    ),
+                )?;
+            }
+            Err(err) => {
+                error!(?err, "could not store alert");
+                client.send_privmsg(channel, reply("Alert", "could not store the alert"))?;
+            }
+            }
 
         Ok(())
     }

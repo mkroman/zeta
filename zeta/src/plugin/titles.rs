@@ -9,7 +9,6 @@
 //! entire pages served in another encoding, e.g. ISO-8859-1 — are decoded lossily.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::sync::mpsc;
 
 use futures::StreamExt;
@@ -18,7 +17,6 @@ use html5ever::tokenizer::{
     BufferQueue, EndTag, StartTag, Tag, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts,
 };
 use irc::client::Client;
-use irc::proto::Command;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -28,17 +26,7 @@ use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
 use wreq::redirect::Policy;
 use wreq_util::Emulation;
 
-use crate::url::{ExtractUrls, ExtractedUrl, SchemeMap};
 use crate::{plugin::prelude::*, utils::Truncatable};
-
-/// The accepted schemes: `http` and `https`, plus the `ttp` and `ttps` variants that are missing
-/// their leading `h` — the latter are repaired and announced before the page is fetched.
-const SCHEMES: SchemeMap = &[
-    ("http", None),
-    ("https", None),
-    ("ttp", Some("http")),
-    ("ttps", Some("https")),
-];
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
@@ -55,8 +43,8 @@ pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
     /// Empty by default: the hosts that loaded plugins advertise through the plugin catalog
-    /// (see [`Plugin::url_hosts`]) are left alone without any configuration, including hosts of
-    /// plugins added after this configuration was written.
+    /// (see [`Subscriptions::urls`]) are left alone without any configuration, including hosts
+    /// of plugins added after this configuration was written.
     #[serde(default)]
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
@@ -418,7 +406,7 @@ fn emulated_headers(user_agent: &str) -> Result<HeaderMap, ZetaError> {
 impl Plugin<Context> for Titles {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         let client = wreq::Client::builder()
             .emulation(Emulation::Firefox142)
             .default_headers(emulated_headers(&ctx.config.http.user_agent)?)
@@ -427,46 +415,27 @@ impl Plugin<Context> for Titles {
             .build()
             .map_err(plugin_err)?;
 
+        subscriptions.urls(UrlScope::Any);
+
         Ok(Titles {
             client,
             settings: settings.clone(),
         })
     }
 
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(ref channel, ref text) = message.command else {
-            return Ok(());
-        };
-
-        if should_ignore(text) {
+    async fn handle_url(&self, ctx: &Context, client: &Client, event: &UrlEvent) -> Result<(), ZetaError> {
+        if should_ignore(event.text()) {
             return Ok(());
         }
 
-        let filters = Filters::from_context(ctx);
-        let sender = Sender::from_message(message);
         let catalog = ctx.shared.get::<PluginCatalog>();
-        let mut seen = HashSet::new();
-
-        for ExtractedUrl { url, repaired_from } in ExtractUrls::with_schemes(text, SCHEMES) {
-            if seen.contains(&url) {
-                continue;
-            }
-
-            seen.insert(url.clone());
-
-            if filters.is_filtered(channel, sender, &url) {
-                debug!(%url, "skipping filtered url");
-
-                continue;
-            }
-
-            self.process_url(url, repaired_from, channel, client, catalog.as_deref());
-        }
+        self.process_url(
+            event.url().clone(),
+            event.repaired_from,
+            event.channel(),
+            client,
+            catalog.as_deref(),
+        );
 
         Ok(())
     }
@@ -534,14 +503,12 @@ impl Titles {
     }
 }
 
-/// Whether the message should be ignored: CTCP messages, command invocations, and messages that
-/// look like replies from this or other bots, which could cause feedback loops.
+/// Whether the message should be ignored: command invocations and messages that look like
+/// replies from this or other bots, which could cause feedback loops.
+///
+/// CTCP messages do not reach the plugin at all — they are their own event kind.
 #[must_use]
 fn should_ignore(text: &str) -> bool {
-    if text.starts_with('\x01') {
-        return true;
-    }
-
     // Messages that look like command invocations, e.g. `.gis`.
     if text.starts_with('.')
         && text
@@ -564,8 +531,8 @@ fn is_ignored_host(url: &Url, ignored_hosts: &[String]) -> bool {
 
 /// Whether the host of `url` is declared as handled by a plugin in the catalog.
 ///
-/// Hosts are compared exactly against the hosts advertised through
-/// [`Plugin::url_hosts`](zeta_plugin::Plugin::url_hosts); both sides are already lowercase.
+/// Hosts are compared exactly against the hosts advertised through the plugin catalog; both
+/// sides are already lowercase.
 #[must_use]
 fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
     let Some(catalog) = catalog else {
@@ -577,7 +544,7 @@ fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
     };
 
     catalog
-        .plugins
+        .entries
         .iter()
         .any(|plugin| plugin.url_hosts.contains(&host))
 }
@@ -674,7 +641,7 @@ fn tag_attr<'a>(tag: &'a Tag, name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::PluginInfo;
+    use crate::plugin::CatalogEntry;
 
     /// Tokenizes `html` in a single chunk and returns the captured metadata.
     fn parse_metadata(html: &str) -> PageMetadata {
@@ -854,8 +821,8 @@ mod tests {
     }
 
     #[test]
-    fn ignores_ctcp_and_bot_replies() {
-        assert!(should_ignore("\x01ACTION posts a link\x01"));
+    fn ignores_bot_replies() {
+        // CTCP messages never reach the plugin at all: they are their own event kind.
         assert!(should_ignore("\x0310> Some page"));
         assert!(should_ignore("\x0310>\x0f\x02 Site:\x02\x0310 Some page"));
 
@@ -895,11 +862,11 @@ mod tests {
     #[test]
     fn ignores_hosts_declared_in_the_catalog() {
         let catalog = PluginCatalog {
-            plugins: vec![PluginInfo {
+            entries: vec![CatalogEntry {
                 name: "imdb".into(),
                 authors: vec![],
-                commands: &[],
-                url_hosts: &["imdb.com", "www.imdb.com"],
+                commands: Vec::new(),
+                url_hosts: vec!["imdb.com", "www.imdb.com"],
             }],
         };
 

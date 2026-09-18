@@ -121,7 +121,9 @@ enum UrlKind {
 impl Plugin<Context> for Twitch {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
+
         let client_id = resolve_secret(settings.client_id.as_deref(), "TWITCH_CLIENT_ID")?;
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "TWITCH_CLIENT_SECRET")?;
@@ -135,34 +137,18 @@ impl Plugin<Context> for Twitch {
         })
     }
 
-    fn url_hosts(&self) -> &'static [&'static str] {
-        URL_HOSTS
-    }
+    async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
+        let channel = url.channel();
 
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, _) = &message.command else {
-            return Ok(());
-        };
+        if let Some(kind) = Self::parse_url(url.url()) {
+            let result = match kind {
+                UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
+                UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
+                UrlKind::Video(id) => self.handle_video(channel, &id, client).await,
+            };
 
-        for url in FilteredUrls::from_message(ctx, message)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(kind) = Self::parse_url(&url) {
-                let result = match kind {
-                    UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
-                    UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
-                    UrlKind::Video(id) => self.handle_video(channel, &id, client).await,
-                };
-
-                if let Err(e) = result {
-                    warn!("Twitch plugin error: {}", e);
-                }
+            if let Err(e) = result {
+                warn!("Twitch plugin error: {}", e);
             }
         }
 

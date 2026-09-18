@@ -13,7 +13,7 @@ use url::Url;
 use wildmatch::WildMatch;
 
 use super::model::Filter;
-use crate::plugin::filtering::Sender;
+use zeta_plugin::Sender;
 
 /// Whether `pattern` contains wildcards.
 pub(super) fn is_wildcard(pattern: &str) -> bool {

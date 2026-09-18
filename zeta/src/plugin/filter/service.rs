@@ -11,7 +11,8 @@ use super::{
     model::{Filter, NewFilter},
     repository::FilterRepository,
 };
-use crate::{database::Database, plugin::filtering::Sender};
+use zeta_plugin::Sender;
+use crate::database::Database;
 
 /// Stores filters in the database and mirrors them in an in-memory [`FilterIndex`].
 ///

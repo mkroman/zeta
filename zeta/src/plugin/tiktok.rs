@@ -85,7 +85,9 @@ pub enum Error {
 impl Plugin<Context> for Tiktok {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Tiktok, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Tiktok, ZetaError> {
+        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
+
         let mirror = MirrorTarget::resolve(
             ctx.shared.get::<Mirror>(),
             settings.prefix.as_deref(),
@@ -103,10 +105,6 @@ impl Plugin<Context> for Tiktok {
         })
     }
 
-    fn url_hosts(&self) -> &'static [&'static str] {
-        urls::URL_HOSTS
-    }
-
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
@@ -115,19 +113,12 @@ impl Plugin<Context> for Tiktok {
         Ok(())
     }
 
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
-            let channel = urls.channel();
-            let urls: Vec<_> = urls.collect();
-
-            if let Err(err) = self.process_urls(&urls, channel, client).await {
-                error!("could not process urls: {err}");
-            }
+    async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
+        if let Err(err) = self
+            .process_urls(&[url.url().clone()], url.channel(), client)
+            .await
+        {
+            error!("could not process urls: {err}");
         }
 
         Ok(())

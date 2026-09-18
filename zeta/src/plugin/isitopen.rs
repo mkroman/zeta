@@ -198,7 +198,9 @@ fn format_time_string(s: &str) -> Option<String> {
 impl Plugin<Context> for IsItOpen {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.receive_message();
+
         let api_key = resolve_secret(settings.api_key.as_deref(), "GOOGLE_MAPS_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -222,18 +224,17 @@ impl Plugin<Context> for IsItOpen {
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        event: &MessageEvent,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref inner_message) = message.command {
-            let current_nickname = client.current_nickname();
+        let current_nickname = client.current_nickname();
 
-            // Check if the message is addressed to the bot
-            if let Some(msg) = strip_nick_prefix(inner_message, current_nickname)
-                && let Some(nick) = message.source_nickname()
-            {
-                self.process_query(channel, nick, msg, client).await?;
-            }
+        // Check if the message is addressed to the bot
+        if let Some(msg) = strip_nick_prefix(event.text(), current_nickname)
+            && let Some(nick) = event.sender().map(|sender| sender.nick)
+        {
+            self.process_query(event.channel(), nick, msg, client).await?;
         }
+
         Ok(())
     }
 }

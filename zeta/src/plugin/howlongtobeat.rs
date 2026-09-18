@@ -21,11 +21,7 @@ const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
 
 /// The `.hltb` command.
-const HLTB: PluginCommand =
-    PluginCommand::new(Prefix::new(".hltb"), "Look up a game's completion times");
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[HLTB];
+const HLTB: CommandSpec = CommandSpec::new(".hltb", "Look up a game's completion times");
 
 /// The HowLongToBeat IRC plugin.
 ///
@@ -214,7 +210,8 @@ impl Default for SearchOptions {
 impl Plugin<Context> for HowLongToBeat {
     type Settings = NoSettings;
 
-    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(HLTB);
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self {
@@ -223,16 +220,15 @@ impl Plugin<Context> for HowLongToBeat {
         })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        query: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let query = command.args();
+
         if query.trim().is_empty() {
             client.send_privmsg(channel, notice("Usage: .hltb\x0f <game>"))?;
             return Ok(());

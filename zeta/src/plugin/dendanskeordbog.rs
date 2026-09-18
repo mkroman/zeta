@@ -6,11 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{config::HttpConfig, http, plugin::prelude::*};
 
 /// The `.ddo` command.
-const DDO: PluginCommand =
-    PluginCommand::new(Prefix::new(".ddo"), "Look up a word in Den Danske Ordbog");
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[DDO];
+const DDO: CommandSpec = CommandSpec::new(".ddo", "Look up a word in Den Danske Ordbog");
 
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
 /// section.
@@ -98,20 +94,20 @@ impl Display for MessageFormatter<'_> {
 impl Plugin<Context> for DenDanskeOrdbog {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<DenDanskeOrdbog, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<DenDanskeOrdbog, ZetaError> {
+        subscriptions.command(DDO);
         Ok(DenDanskeOrdbog::new(&ctx.config.http, settings.clone()))
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let args = command.args();
+
         if args.is_empty() {
             client.send_privmsg(channel, notice("Usage: .ddo\x0f <query>"))?;
         } else {

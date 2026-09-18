@@ -31,13 +31,10 @@ pub enum Error {
 }
 
 /// The `.gh` command.
-const GITHUB: PluginCommand = PluginCommand::new(
-    Prefix::new(".gh"),
+const GITHUB: CommandSpec = CommandSpec::new(
+    ".gh",
     "Search GitHub and show the most starred match",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[GITHUB];
 
 /// Structure representing the GitHub Plugin.
 /// Holds the HTTP client to reuse connection pools.
@@ -66,7 +63,8 @@ struct RepoItem {
 impl Plugin<Context> for GitHubPlugin {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(GITHUB);
         // The token is optional; it only raises the API rate limit.
         let token = resolve_secret(settings.token.as_deref(), "GITHUB_TOKEN").ok();
         let plugin = GitHubPlugin::new(&ctx.config.http, token).map_err(plugin_err)?;
@@ -74,20 +72,18 @@ impl Plugin<Context> for GitHubPlugin {
         Ok(plugin)
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        if let Ok(Some(response)) = self.run(channel, Some(args)).await {
-            client.send_privmsg(channel, response)?;
+        let args = command.args();
+
+        if let Ok(Some(response)) = self.run(command.channel(), Some(args)).await {
+            client.send_privmsg(command.channel(), response)?;
         } else {
-            client.send_privmsg(channel, "no results")?;
+            client.send_privmsg(command.channel(), "no results")?;
         }
 
         Ok(())

@@ -79,118 +79,66 @@ const fn default_max_name_typos() -> u16 {
 }
 
 /// The `.cc` command.
-const CC: PluginCommand = PluginCommand::with_args::<CoinOpts>(
-    Prefix::new(".cc"),
-    "Quote any coin by symbol or fuzzy name",
-);
+const CC: CommandSpec = CommandSpec::with_args::<CoinOpts>(".cc", "Quote any coin by symbol or fuzzy name");
 
 /// The `.btc` command.
-const BTC: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".btc"),
-    "Quote Bitcoin (BTC) in a fiat currency",
-);
+const BTC: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".btc", "Quote Bitcoin (BTC) in a fiat currency");
 /// The `.eth` command.
-const ETH: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".eth"),
-    "Quote Ethereum (ETH) in a fiat currency",
-);
+const ETH: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".eth", "Quote Ethereum (ETH) in a fiat currency");
 /// The `.zcash` command.
-const ZCASH: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".zcash"),
-    "Quote Zcash (ZEC) in a fiat currency",
-);
+const ZCASH: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".zcash", "Quote Zcash (ZEC) in a fiat currency");
 /// The `.zec` command.
-const ZEC: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".zec"),
-    "Quote Zcash (ZEC) in a fiat currency",
-);
+const ZEC: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".zec", "Quote Zcash (ZEC) in a fiat currency");
 /// The `.ans` command (Antshares, the former name of Neo).
-const ANS: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".ans"),
-    "Quote Neo (NEO), formerly Antshares",
-);
+const ANS: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".ans", "Quote Neo (NEO), formerly Antshares");
 /// The `.neo` command.
-const NEO: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".neo"),
-    "Quote Neo (NEO) in a fiat currency",
-);
+const NEO: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".neo", "Quote Neo (NEO) in a fiat currency");
 /// The `.stellar` command.
-const STELLAR: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".stellar"),
-    "Quote Stellar (XLM) in a fiat currency",
-);
+const STELLAR: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".stellar", "Quote Stellar (XLM) in a fiat currency");
 /// The `.xmr` command.
-const XMR: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".xmr"),
-    "Quote Monero (XMR) in a fiat currency",
-);
+const XMR: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".xmr", "Quote Monero (XMR) in a fiat currency");
 /// The `.xrp` command.
-const XRP: PluginCommand =
-    PluginCommand::with_args::<QuoteOpts>(Prefix::new(".xrp"), "Quote XRP in a fiat currency");
+const XRP: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".xrp", "Quote XRP in a fiat currency");
 /// The `.ltc` command.
-const LTC: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".ltc"),
-    "Quote Litecoin (LTC) in a fiat currency",
-);
+const LTC: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".ltc", "Quote Litecoin (LTC) in a fiat currency");
 /// The `.etc` command.
-const ETC: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".etc"),
-    "Quote Ethereum Classic (ETC) in a fiat currency",
-);
+const ETC: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".etc", "Quote Ethereum Classic (ETC) in a fiat currency");
 /// The `.golem` command.
-const GOLEM: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".golem"),
-    "Quote Golem (GNT) in a fiat currency",
-);
+const GOLEM: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".golem", "Quote Golem (GNT) in a fiat currency");
 /// The `.sia` command.
-const SIA: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".sia"),
-    "Quote Siacoin (SC) in a fiat currency",
-);
+const SIA: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".sia", "Quote Siacoin (SC) in a fiat currency");
 /// The `.doge` command.
-const DOGE: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".doge"),
-    "Quote Dogecoin (DOGE) in a fiat currency",
-);
+const DOGE: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".doge", "Quote Dogecoin (DOGE) in a fiat currency");
 /// The `.maid` command.
-const MAID: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".maid"),
-    "Quote MaidSafeCoin (MAID) in a fiat currency",
-);
+const MAID: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".maid", "Quote MaidSafeCoin (MAID) in a fiat currency");
 /// The `.bcash` command.
-const BCASH: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".bcash"),
-    "Quote Bitcoin Cash (BCH) in a fiat currency",
-);
+const BCASH: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".bcash", "Quote Bitcoin Cash (BCH) in a fiat currency");
 /// The `.trump` command.
-const TRUMP: PluginCommand = PluginCommand::with_args::<QuoteOpts>(
-    Prefix::new(".trump"),
-    "Quote Trump (TRUMP) in a fiat currency",
-);
+const TRUMP: CommandSpec = CommandSpec::with_args::<QuoteOpts>(".trump", "Quote Trump (TRUMP) in a fiat currency");
 
 /// Fixed coin commands, mapped to the symbol they quote.
-const COIN_COMMANDS: &[(Prefix, &str)] = &[
-    (BTC.prefix(), "BTC"),
-    (ETH.prefix(), "ETH"),
-    (ZCASH.prefix(), "ZEC"),
-    (ZEC.prefix(), "ZEC"),
-    (ANS.prefix(), "NEO"),
-    (NEO.prefix(), "NEO"),
-    (STELLAR.prefix(), "XLM"),
-    (XMR.prefix(), "XMR"),
-    (XRP.prefix(), "XRP"),
-    (LTC.prefix(), "LTC"),
-    (ETC.prefix(), "ETC"),
-    (GOLEM.prefix(), "GNT"),
-    (SIA.prefix(), "SC"),
-    (DOGE.prefix(), "DOGE"),
-    (MAID.prefix(), "MAID"),
-    (BCASH.prefix(), "BCH"),
-    (TRUMP.prefix(), "TRUMP"),
+const COIN_COMMANDS: &[(CommandSpec, &str)] = &[
+    (BTC, "BTC"),
+    (ETH, "ETH"),
+    (ZCASH, "ZEC"),
+    (ZEC, "ZEC"),
+    (ANS, "NEO"),
+    (NEO, "NEO"),
+    (STELLAR, "XLM"),
+    (XMR, "XMR"),
+    (XRP, "XRP"),
+    (LTC, "LTC"),
+    (ETC, "ETC"),
+    (GOLEM, "GNT"),
+    (SIA, "SC"),
+    (DOGE, "DOGE"),
+    (MAID, "MAID"),
+    (BCASH, "BCH"),
+    (TRUMP, "TRUMP"),
 ];
 
 /// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[
+const COMMANDS: &[CommandSpec] = &[
     CC, BTC, ETH, ZCASH, ZEC, ANS, NEO, STELLAR, XMR, XRP, LTC, ETC, GOLEM, SIA, DOGE, MAID, BCASH,
     TRUMP,
 ];
@@ -283,9 +231,13 @@ pub struct CoinMarketCap {
 impl Plugin<Context> for CoinMarketCap {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
         let client = client::Client::new(&api_key, &ctx.config.http)?;
+
+        for command in COMMANDS {
+            subscriptions.command(*command);
+        }
 
         Ok(Self {
             client,
@@ -295,8 +247,6 @@ impl Plugin<Context> for CoinMarketCap {
             max_name_typos: settings.max_name_typos,
         })
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.ensure_coins_cached().await;
@@ -309,17 +259,20 @@ impl Plugin<Context> for CoinMarketCap {
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        if *command == CC.prefix() {
-            return self.handle_cc(client, channel, args).await;
+        if command.spec == CC {
+            return self
+                .handle_cc(client, command.channel(), command.args())
+                .await;
         }
 
-        if let Some((_, symbol)) = COIN_COMMANDS.iter().find(|(prefix, _)| prefix == command) {
+        if let Some((_, symbol)) = COIN_COMMANDS
+            .iter()
+            .find(|(spec, _)| *spec == command.spec)
+        {
             return self
-                .handle_coin(command, symbol, client, channel, args)
+                .handle_coin(command.spec, symbol, client, command.channel(), command.args())
                 .await;
         }
 
@@ -355,7 +308,7 @@ impl CoinMarketCap {
     /// Handles a fixed coin command invocation (e.g. `.btc`), quoting the given `symbol`.
     async fn handle_coin(
         &self,
-        command: &Prefix,
+        command: CommandSpec,
         symbol: &str,
         client: &Client,
         channel: &str,
@@ -364,7 +317,7 @@ impl CoinMarketCap {
         let Ok(opts) = command.parse_args::<QuoteOpts>(args) else {
             client.send_privmsg(
                 channel,
-                notice(format!("Usage: {} \x0f[currency]", command.as_str())),
+                notice(format!("Usage: {} \x0f[currency]", command.trigger())),
             )?;
             return Ok(());
         };
@@ -771,22 +724,18 @@ mod tests {
 
     #[test]
     fn commands_are_consistent() {
-        assert!(
-            COMMANDS
-                .iter()
-                .any(|command| command.prefix() == CC.prefix())
-        );
+        assert!(COMMANDS.contains(&CC));
 
-        for (prefix, _) in COIN_COMMANDS {
+        for (spec, _) in COIN_COMMANDS {
             assert!(
-                COMMANDS.iter().any(|command| command.prefix() == *prefix),
-                "{prefix:?} missing from COMMANDS"
+                COMMANDS.contains(spec),
+                "{spec:?} missing from COMMANDS"
             );
         }
 
         let mut commands = COMMANDS
             .iter()
-            .map(|command| command.prefix().as_str())
+            .map(CommandSpec::trigger)
             .collect::<Vec<_>>();
         commands.sort_unstable();
         commands.dedup();

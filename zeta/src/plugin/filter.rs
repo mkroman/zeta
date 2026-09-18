@@ -30,7 +30,6 @@ pub use service::{Criteria, FilterService};
 use std::sync::Arc;
 
 use argh::{ArgsInfo, FromArgs};
-use irc::proto::Command;
 use tracing::{debug, warn};
 use wildmatch::WildMatch;
 
@@ -38,13 +37,10 @@ use crate::plugin::prelude::*;
 use crate::utils::append_entries_within_budget;
 
 /// The `.filter` command.
-const FILTER: PluginCommand = PluginCommand::with_args::<Opts>(
-    Prefix::new(".filter"),
+const FILTER: CommandSpec = CommandSpec::with_args::<Opts>(
+    ".filter",
     "Manage URL and sender filters (add/list/delete)",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[FILTER];
 
 /// The maximum length of a listing, leaving room for `PRIVMSG` framing overhead within the
 /// classic 512-byte IRC line limit.
@@ -486,7 +482,8 @@ impl FilterPlugin {
 impl Plugin<Context> for FilterPlugin {
     type Settings = NoSettings;
 
-    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(FILTER);
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 
         ctx.shared.publish(Arc::clone(&service));
@@ -505,8 +502,6 @@ impl Plugin<Context> for FilterPlugin {
         Ok(FilterPlugin { service, admins })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
 
@@ -515,21 +510,14 @@ impl Plugin<Context> for FilterPlugin {
         Ok(())
     }
 
-    async fn handle_message(
+    async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, msg) = &message.command else {
-            return Ok(());
-        };
-
-        let Some(sender) = Sender::from_message(message) else {
-            return Ok(());
-        };
-
-        let Some(args) = FILTER.parse(msg) else {
+        let channel = command.channel();
+        let Some(sender) = command.sender() else {
             return Ok(());
         };
 
@@ -539,7 +527,7 @@ impl Plugin<Context> for FilterPlugin {
             return Ok(());
         }
 
-        let opts = match FILTER.parse_words::<Opts>(args) {
+        let opts = match command.spec.parse_words::<Opts>(command.args()) {
             Ok(opts) => opts,
             Err(err) => {
                 reply_usage_lines(client, channel, &err, |line| reply("Filter", line))?;

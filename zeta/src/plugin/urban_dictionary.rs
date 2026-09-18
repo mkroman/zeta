@@ -32,13 +32,10 @@ const fn default_max_definition_length() -> usize {
 }
 
 /// The `.ud` command.
-const URBAN_DICTIONARY: PluginCommand = PluginCommand::new(
-    Prefix::new(".ud"),
+const URBAN_DICTIONARY: CommandSpec = CommandSpec::new(
+    ".ud",
     "Look up the top Urban Dictionary definition",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[URBAN_DICTIONARY];
 
 /// Urban Dictionary plugin.
 pub struct UrbanDictionary {
@@ -90,20 +87,20 @@ pub struct Definition {
 impl Plugin<Context> for UrbanDictionary {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(URBAN_DICTIONARY);
         Ok(UrbanDictionary::new(&ctx.config.http, settings.clone()))
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        query: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let query = command.args();
+
         if query.is_empty() {
             client.send_privmsg(channel, reply("Urban Dictionary", USAGE))?;
             return Ok(());

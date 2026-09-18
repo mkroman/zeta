@@ -1986,13 +1986,10 @@ pub struct Opts {
 }
 
 /// The `.gay` command.
-const GAY: PluginCommand = PluginCommand::with_args::<Opts>(
-    Prefix::new(".gay"),
+const GAY: CommandSpec = CommandSpec::with_args::<Opts>(
+    ".gay",
     "Consult the normative resonance engine about a subject",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[GAY];
 
 /// The `.gay` plugin.
 ///
@@ -2017,24 +2014,22 @@ fn designation_present(client: &Client, channel: &str, designation: &str) -> boo
 impl Plugin<Context> for Gay {
     type Settings = NoSettings;
 
-    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Gay, ZetaError> {
+    fn new(_ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Gay, ZetaError> {
+        subscriptions.command(GAY);
         let profile = EngineConfig::campaign_profile().map_err(plugin_err)?;
         let engine = GayEngine::assemble(profile).map_err(plugin_err)?;
 
         Ok(Gay { engine })
     }
 
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        _command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let opts = match GAY.parse_args::<Opts>(args) {
+        let channel = command.channel();
+        let opts = match command.parse_args::<Opts>() {
             Ok(opts) => opts,
             Err(err) => {
                 client.send_privmsg(channel, err.to_string())?;

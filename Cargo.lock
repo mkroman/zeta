@@ -5221,6 +5221,7 @@ dependencies = [
  "serde",
  "shlex 2.0.1",
  "thiserror 2.0.20",
+ "url",
 ]
 
 [[package]]

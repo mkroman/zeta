@@ -6,7 +6,6 @@
 mod model;
 
 use argh::{ArgsInfo, FromArgs};
-use irc::client::prelude::Prefix as IrcPrefix;
 use num_format::{Locale, ToFormattedString};
 use sqlx::types::chrono::{DateTime, Utc};
 use tracing::{debug, error};
@@ -19,19 +18,14 @@ use crate::{
         prelude::*,
         youtube::{self, UrlKind},
     },
-    url::ExtractUrlsExt,
 };
 use model::{InsertUrlRecord, UrlRecord};
 
 /// The `.ofn` command.
-/// The `.ofn` command.
-const OFN: PluginCommand = PluginCommand::with_args::<Opts>(
-    Prefix::new(".ofn"),
+const OFN: CommandSpec = CommandSpec::with_args::<Opts>(
+    ".ofn",
     "Show URL and YouTube repost statistics",
 );
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[OFN];
 
 pub struct Ofn;
 
@@ -255,20 +249,15 @@ impl Ofn {
         })
     }
 
-    /// Scrapes standard chat messages for URLs and updates/checks the database.
-    async fn handle_urls(
+    /// Scrapes URLs posted in chat and updates/checks the database.
+    async fn process_single_url(
         &self,
         ctx: &Context,
         client: &Client,
         origin: &ChannelMessageOrigin<'_>,
-        msg: &str,
+        url: Url,
     ) -> Result<(), ZetaError> {
-        let urls: Vec<Url> = msg.urls().map(|extracted| extracted.url).collect();
-        if urls.is_empty() {
-            return Ok(());
-        }
-
-        match self.process_urls(ctx, origin, &urls).await {
+        match self.process_urls(ctx, origin, &[url]).await {
             Ok(report) => {
                 for resource in report.found {
                     let time_ago = resource.created_at().time_ago();
@@ -405,21 +394,20 @@ impl Ofn {
 impl Plugin<Context> for Ofn {
     type Settings = NoSettings;
 
-    fn new(_ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+    fn new(_ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.command(OFN).urls(UrlScope::Any);
+
         Ok(Self::new())
     }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
 
     async fn handle_command(
         &self,
         ctx: &Context,
         client: &Client,
-        channel: &str,
-        command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let opts = match command.parse_args::<Opts>(args) {
+        let channel = command.channel();
+        let opts = match command.parse_args::<Opts>() {
             Ok(opts) => opts,
             Err(err) => {
                 reply_usage_lines(client, channel, &err, |line| reply("OFN", line))?;
@@ -431,37 +419,31 @@ impl Plugin<Context> for Ofn {
         self.run_stats_command(ctx, client, channel, opts).await
     }
 
-    async fn handle_message(
+    async fn handle_url(
         &self,
         ctx: &Context,
         client: &Client,
-        message: &Message,
+        event: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, msg) = &message.command else {
+        // Command invocations are handled in `handle_command` and are not recorded as history.
+        if OFN.parse(event.text()).is_some() {
             return Ok(());
-        };
-
-        let Some(IrcPrefix::Nickname(nickname, username, hostname)) = &message.prefix else {
-            return Ok(());
-        };
-
-        if self
-            .commands()
-            .iter()
-            .any(|command| command.parse(msg).is_some())
-        {
-            self.dispatch_command(ctx, client, message).await
-        } else {
-            let origin = ChannelMessageOrigin {
-                channel,
-                network: "irc.rwx.im:6697", // TODO: support multiple networks dynamically
-                nickname,
-                username,
-                hostname,
-            };
-
-            self.handle_urls(ctx, client, &origin, msg).await
         }
+
+        let Some(sender) = event.sender() else {
+            return Ok(());
+        };
+
+        let origin = ChannelMessageOrigin {
+            channel: event.channel(),
+            network: "irc.rwx.im:6697", // TODO: support multiple networks dynamically
+            nickname: sender.nick,
+            username: sender.username,
+            hostname: sender.hostname,
+        };
+
+        self.process_single_url(ctx, client, &origin, event.url().clone())
+            .await
     }
 }
 

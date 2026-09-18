@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use figment::value::Dict;
 use irc::client::Client;
-use irc::proto::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
-use url::Url;
-use zeta_plugin::PluginCommand;
+use zeta_plugin::{CommandSpec, Event, Subscriptions};
+
+pub mod dispatch;
 
 pub use crate::context::{Context, SharedState};
 
@@ -27,18 +27,19 @@ use zeta_plugin::NoSettings;
 mod prelude {
     pub use async_trait::async_trait;
     pub use irc::client::Client;
-    pub use irc::proto::{Command, Message};
     pub use zeta_plugin::Error as ZetaError;
     pub use zeta_plugin::prelude::{
-        ArgsError, BOLD, BoxError, COLOR, NoSettings, PluginCommand, Prefix, REPLY_PREFIX, RESET,
-        notice, plugin_err, reply, reply_prefix, reply_usage_lines, require_env, resolve_secret,
+        ArgsError, BOLD, BoxError, COLOR, CommandEvent, CommandSpec, CtcpEvent, CtcpKind, Event,
+        JoinEvent, KickEvent, MessageEvent, NickEvent, NoSettings, PartEvent, QuitEvent,
+        REPLY_PREFIX, RESET, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope, notice,
+        plugin_err, reply, reply_prefix, reply_usage_lines, require_env, resolve_secret,
     };
 
     pub use super::{
-        Author, Context, Metadata, Name, Plugin, PluginCatalog, PluginInfo, SharedState,
+        Author, CatalogEntry, Context, Metadata, Name, Plugin, PluginCatalog, SharedState,
     };
 
-    pub use super::filtering::{FilteredUrls, Filters, Sender};
+    pub use super::filtering::Filters;
 }
 
 /// Generates the two settings tests shared by every plugin with a configuration section.
@@ -363,11 +364,17 @@ declare_plugins! {
 /// `async`; forwarding an `async fn` into another `async fn` would allocate a second boxed future
 /// that only awaits the first.
 pub trait ErasedPlugin: Send + Sync {
-    /// The commands handled by the plugin.
-    fn commands(&self) -> &'static [PluginCommand];
-
-    /// The URL hosts whose links the plugin handles itself.
-    fn url_hosts(&self) -> &'static [&'static str];
+    /// Routes an event to the handler registered for its kind.
+    ///
+    /// Events are only routed to handlers the plugin registered the matching kind for, so an
+    /// unknown variant is unreachable in practice; it is logged when a future event kind is
+    /// added without a routing arm.
+    fn handle_event<'a>(
+        &'a self,
+        ctx: &'a Context,
+        client: &'a Client,
+        event: &'a Event,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 
     /// Called when all plugins are loaded and the client has connected to the network.
     fn loaded<'a>(
@@ -376,15 +383,7 @@ pub trait ErasedPlugin: Send + Sync {
         client: &'a Client,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 
-    /// Handles IRC protocol messages.
-    fn handle_message<'a>(
-        &'a self,
-        ctx: &'a Context,
-        client: &'a Client,
-        message: &'a Message,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
-
-    /// Called once while the bot is shutting down, after the plugin's message queue has been
+    /// Called once while the bot is shutting down, after the plugin's event queue has been
     /// drained.
     fn shutdown<'a>(
         &'a mut self,
@@ -394,12 +393,33 @@ pub trait ErasedPlugin: Send + Sync {
 }
 
 impl<P: Plugin<Context>> ErasedPlugin for P {
-    fn commands(&self) -> &'static [PluginCommand] {
-        Plugin::commands(self)
-    }
+    fn handle_event<'a>(
+        &'a self,
+        ctx: &'a Context,
+        client: &'a Client,
+        event: &'a Event,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move {
+            match event {
+                Event::Command(command) => Plugin::handle_command(self, ctx, client, command).await,
+                Event::Url(url) => Plugin::handle_url(self, ctx, client, url).await,
+                Event::Message(message) => Plugin::handle_message(self, ctx, client, message).await,
+                Event::Join(join) => Plugin::handle_join(self, ctx, client, join).await,
+                Event::Part(part) => Plugin::handle_part(self, ctx, client, part).await,
+                Event::Quit(quit) => Plugin::handle_quit(self, ctx, client, quit).await,
+                Event::Nick(nick) => Plugin::handle_nick(self, ctx, client, nick).await,
+                Event::Kick(kick) => Plugin::handle_kick(self, ctx, client, kick).await,
+                Event::Ctcp(ctcp) => Plugin::handle_ctcp(self, ctx, client, ctcp).await,
+                Event::Raw(raw) => Plugin::handle_raw(self, ctx, client, raw).await,
+                // Future event kinds are accepted so existing plugins keep compiling; the
+                // dispatcher routes them once their kind gains a routing arm.
+                _ => {
+                    warn!(plugin = P::NAME, "unhandled event kind");
 
-    fn url_hosts(&self) -> &'static [&'static str] {
-        Plugin::url_hosts(self)
+                    Ok(())
+                }
+            }
+        })
     }
 
     fn loaded<'a>(
@@ -408,15 +428,6 @@ impl<P: Plugin<Context>> ErasedPlugin for P {
         client: &'a Client,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
         Plugin::loaded(self, ctx, client)
-    }
-
-    fn handle_message<'a>(
-        &'a self,
-        ctx: &'a Context,
-        client: &'a Client,
-        message: &'a Message,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
-        Plugin::handle_message(self, ctx, client, message)
     }
 
     fn shutdown<'a>(
@@ -428,34 +439,44 @@ impl<P: Plugin<Context>> ErasedPlugin for P {
     }
 }
 
+/// A plugin registered with the bot, together with the subscriptions it declared.
+pub struct RegisteredPlugin {
+    /// The name of the plugin.
+    pub name: String,
+    /// The plugin itself.
+    pub plugin: Box<dyn ErasedPlugin>,
+    /// The events the plugin registered interest in during initialization.
+    pub subscriptions: Subscriptions,
+}
+
 /// Metadata about a registered plugin.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PluginInfo {
+pub struct CatalogEntry {
     /// The name of the plugin.
     pub name: String,
     /// The authors of the plugin.
     pub authors: Vec<Author>,
-    /// The prefix commands handled by the plugin.
-    pub commands: &'static [PluginCommand],
+    /// The commands handled by the plugin.
+    pub commands: Vec<CommandSpec>,
     /// The URL hosts whose links the plugin handles itself.
-    pub url_hosts: &'static [&'static str],
+    pub url_hosts: Vec<&'static str>,
 }
 
-/// Snapshot of the plugins registered with the bot and the commands they handle.
+/// Snapshot of the plugins registered with the bot and the events they handle.
 ///
 /// The catalog is published to [`Context::shared`] when the registry is preloaded, so plugins can
 /// look it up with [`SharedState::get`] to discover other plugins.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PluginCatalog {
     /// The registered plugins, in registration order.
-    pub plugins: Vec<PluginInfo>,
+    pub entries: Vec<CatalogEntry>,
 }
 
 /// Plugin registry.
 #[derive(Default)]
 pub struct Registry {
-    /// List of loaded plugins (name, plugin).
-    pub plugins: Vec<(String, Box<dyn ErasedPlugin>)>,
+    /// List of loaded plugins.
+    pub plugins: Vec<RegisteredPlugin>,
     /// Catalog of the registered plugins, published to [`Context::shared`].
     catalog: PluginCatalog,
     /// List of plugins that failed to initialize.
@@ -509,6 +530,10 @@ impl Registry {
 
     /// Registers a new plugin based on its type.
     ///
+    /// A fresh [`Subscriptions`] set is passed to the plugin's constructor, which registers the
+    /// events it handles on it. The subscriptions are committed — to the catalog and to the
+    /// returned plugin — only when construction succeeds.
+    ///
     /// Returns `true` if the plugin was successfully initialized and registered, `false` if
     /// initialization failed. Failed plugins are tracked in `self.failed` and logged with their
     /// name and error.
@@ -519,24 +544,35 @@ impl Registry {
     ) -> bool {
         let metadata = P::metadata();
         let name = metadata.name.to_string();
+        let mut subscriptions = Subscriptions::new();
 
-        match P::new(ctx, settings) {
+        match P::new(ctx, settings, &mut subscriptions) {
             Ok(plugin) => {
                 debug!(plugin = %name, "registered plugin");
 
-                self.catalog.plugins.push(PluginInfo {
+                let url_hosts = match subscriptions.url_scope() {
+                    zeta_plugin::UrlScope::Hosts(hosts) => hosts.to_vec(),
+                    _ => Vec::new(),
+                };
+
+                self.catalog.entries.push(CatalogEntry {
                     name: name.clone(),
                     authors: metadata.authors,
-                    commands: plugin.commands(),
-                    url_hosts: plugin.url_hosts(),
+                    commands: subscriptions.commands().to_vec(),
+                    url_hosts,
                 });
-                self.plugins.push((name, Box::new(plugin)));
+                self.plugins.push(RegisteredPlugin {
+                    name,
+                    plugin: Box::new(plugin),
+                    subscriptions,
+                });
 
                 true
             }
             Err(e) => {
                 warn!(plugin = %name, error = %e, "failed to initialize plugin");
                 self.failed.push((name, e));
+
                 false
             }
         }
@@ -546,30 +582,28 @@ impl Registry {
     ///
     /// The caller is expected to move each plugin into its own task.
     #[must_use]
-    pub fn take_plugins(&mut self) -> Vec<(String, Box<dyn ErasedPlugin>)> {
+    pub fn take_plugins(&mut self) -> Vec<RegisteredPlugin> {
         std::mem::take(&mut self.plugins)
     }
 }
 
 /// A plugin running in its own long-lived task.
 ///
-/// The task loads the plugin and then waits for IRC messages on an unbounded channel, handling
-/// them one at a time. State that other plugins should be able to access must be published to
+/// The task loads the plugin and then waits for events on an unbounded channel, handling them
+/// one at a time. State that other plugins should be able to access must be published to
 /// [`Context::shared`] when the plugin is constructed or loaded.
 ///
-/// Closing the mailbox — by dropping the task or consuming it with [`PluginTask::into_handle`] —
-/// makes the plugin drain its queued messages, run the shutdown hook and exit.
+/// Closing the mailbox — by dropping its senders, which the dispatcher holds — makes the plugin
+/// drain its queued events, run the shutdown hook and exit.
 pub struct PluginTask {
     /// The name of the plugin, used for logging.
     pub name: String,
-    /// The mailbox of the plugin task.
-    sender: mpsc::UnboundedSender<Arc<Message>>,
     /// The handle of the spawned plugin task.
     handle: JoinHandle<()>,
 }
 
 impl PluginTask {
-    /// Spawns `plugin` into a task that loads it and processes messages until the channel closes.
+    /// Spawns `plugin` into a task that loads it and processes events until the channel closes.
     ///
     /// If the plugin fails to load, the error is logged and the task exits. When the channel
     /// closes, the plugin's shutdown hook runs before the task exits.
@@ -578,8 +612,8 @@ impl PluginTask {
         mut plugin: Box<dyn ErasedPlugin>,
         ctx: Arc<Context>,
         client: Arc<Client>,
+        mut receiver: mpsc::UnboundedReceiver<Event>,
     ) -> Self {
-        let (sender, mut receiver) = mpsc::unbounded_channel::<Arc<Message>>();
         let task_name = name.clone();
 
         let handle = tokio::spawn(async move {
@@ -591,9 +625,9 @@ impl PluginTask {
                 return;
             }
 
-            while let Some(message) = receiver.recv().await {
-                if let Err(error) = plugin.handle_message(&ctx, &client, &message).await {
-                    warn!(plugin = %task_name, %error, "plugin error during message handling");
+            while let Some(event) = receiver.recv().await {
+                if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
+                    warn!(plugin = %task_name, %error, "plugin error during event handling");
                 }
             }
 
@@ -605,47 +639,26 @@ impl PluginTask {
             debug!(plugin = %task_name, "plugin task stopped");
         });
 
-        Self {
-            name,
-            sender,
-            handle,
-        }
+        Self { name, handle }
     }
 
-    /// Queues `message` for the plugin task.
+    /// Consumes the plugin task and returns its name with the task's handle.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if the plugin task has stopped.
-    pub fn send(&self, message: Arc<Message>) -> Result<(), mpsc::error::SendError<Arc<Message>>> {
-        self.sender.send(message)
-    }
-
-    /// Consumes the plugin task, closing its mailbox and returning the task's handle.
-    ///
-    /// Dropping the sender makes the task drain its queued messages, run the plugin's shutdown
-    /// hook and exit. Await the returned handle — bounded by a deadline — to wait for it.
+    /// The mailbox is closed by the dispatcher, which holds the sending end; awaiting the
+    /// returned handle — bounded by a deadline — waits for the plugin to drain its queue and
+    /// run its shutdown hook.
     #[must_use]
-    pub fn into_handle(self) -> JoinHandle<()> {
-        self.handle
+    pub fn into_handle(self) -> (String, JoinHandle<()>) {
+        (self.name, self.handle)
     }
-}
-
-/// Extracts HTTP(s) URLs from a string.
-#[must_use]
-#[allow(unused)]
-pub fn extract_urls(s: &str) -> Option<Vec<Url>> {
-    let urls: Vec<Url> = crate::url::ExtractUrls::new(s)
-        .map(|extracted| extracted.url)
-        .collect();
-
-    (!urls.is_empty()).then_some(urls)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Config;
+    use irc::proto::Message;
+    use zeta_plugin::MessageEvent;
     use async_trait::async_trait;
     use figment::Figment;
     use figment::providers::{Format, Toml};
@@ -684,7 +697,7 @@ mod tests {
     impl Plugin<Context> for RecordingPlugin {
         type Settings = NoSettings;
 
-        fn new(ctx: &Context, _: &NoSettings) -> Result<Self, Error> {
+        fn new(ctx: &Context, _: &NoSettings, _: &mut Subscriptions) -> Result<Self, Error> {
             let recording = ctx
                 .shared
                 .get::<std::sync::Mutex<Vec<&'static str>>>()
@@ -697,7 +710,7 @@ mod tests {
             &self,
             _: &Context,
             _: &Client,
-            _: &Message,
+            _: &MessageEvent,
         ) -> Result<(), Error> {
             self.recording
                 .lock()
@@ -760,6 +773,7 @@ channels = []
             .expect("mock irc client"),
         );
 
+        let (sender, receiver) = mpsc::unbounded_channel();
         let task = PluginTask::spawn(
             "recording".to_string(),
             Box::new(RecordingPlugin {
@@ -767,16 +781,23 @@ channels = []
             }),
             Arc::clone(&ctx),
             Arc::clone(&client),
+            receiver,
         );
 
         for _ in 0..2 {
             let message = Message::new(None, "PRIVMSG", vec!["#test", "hello"])
                 .expect("message should parse");
 
-            task.send(Arc::new(message)).expect("task should be running");
+            sender
+                .send(Event::Message(MessageEvent::new(Arc::new(message))))
+                .expect("task should be running");
         }
 
-        task.into_handle().await.expect("task should finish");
+        // Closing the mailbox makes the task drain its queue, run the shutdown hook and exit.
+        drop(sender);
+
+        let (_, handle) = task.into_handle();
+        handle.await.expect("task should finish");
 
         let log = recording
             .lock()

@@ -132,29 +132,19 @@ impl Plugin<Context> for PornHub {
     type Settings = NoSettings;
 
     /// Creates a new instance of the PornHub plugin.
-    fn new(ctx: &Context, _settings: &NoSettings) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, _settings: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
+        subscriptions.urls(UrlScope::Hosts(&[PORNHUB_HOST]));
+
         let client = http::build_client(&ctx.config.http);
 
         Ok(PornHub { client })
     }
 
-    fn url_hosts(&self) -> &'static [&'static str] {
-        &[PORNHUB_HOST]
-    }
-
-    // Handles incoming messages and processes any PornHub URLs found.
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        if let Some(urls) = FilteredUrls::from_message(ctx, message) {
-            let channel = urls.channel();
-            let urls: Vec<_> = urls.collect();
-
-            let _ = self.process_urls(urls, channel, client).await;
-        }
+    /// Processes incoming PornHub URLs.
+    async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
+        let _ = self
+            .process_urls(vec![url.url().clone()], url.channel(), client)
+            .await;
 
         Ok(())
     }

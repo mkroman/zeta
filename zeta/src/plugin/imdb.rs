@@ -77,11 +77,8 @@ fn default_user_language() -> String {
 }
 
 /// The `!imdb` command.
-const COMMAND: PluginCommand =
-    PluginCommand::with_args::<Opts>(Prefix::new("!imdb"), "Search IMDb and post the top match");
-
-/// The commands handled by this plugin.
-const COMMANDS: &[PluginCommand] = &[COMMAND];
+const COMMAND: CommandSpec =
+    CommandSpec::with_args::<Opts>("!imdb", "Search IMDb and post the top match");
 
 /// Search IMDb for a title.
 #[derive(FromArgs, ArgsInfo, Debug)]
@@ -111,48 +108,28 @@ pub struct Imdb {
 impl Plugin<Context> for Imdb {
     type Settings = Settings;
 
-    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+    fn new(
+        ctx: &Context,
+        settings: &Settings,
+        subscriptions: &mut Subscriptions,
+    ) -> Result<Self, ZetaError> {
+        subscriptions
+            .command(COMMAND)
+            .urls(UrlScope::Hosts(URL_HOSTS));
+
         let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
 
         Ok(Imdb { client })
-    }
-
-    const COMMANDS: &'static [PluginCommand] = COMMANDS;
-
-    fn url_hosts(&self) -> &'static [&'static str] {
-        URL_HOSTS
-    }
-
-    async fn handle_message(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        message: &Message,
-    ) -> Result<(), ZetaError> {
-        let Command::PRIVMSG(channel, _) = &message.command else {
-            return Ok(());
-        };
-
-        match FilteredUrls::from_message(ctx, message) {
-            Some(urls) => {
-                let urls: Vec<_> = urls.collect();
-                self.process_urls(&urls, channel, client).await?;
-            }
-            None => self.dispatch_command(ctx, client, message).await?,
-        }
-
-        Ok(())
     }
 
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
-        command: &Prefix,
-        args: &str,
+        command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let opts = match command.parse_args::<Opts>(args) {
+        let channel = command.channel();
+        let opts = match command.parse_args::<Opts>() {
             Ok(opts) => opts,
             Err(err) => {
                 client.send_privmsg(channel, err.to_string())?;
@@ -181,6 +158,18 @@ impl Plugin<Context> for Imdb {
 
         let lookup = self.client.title(&result.id).await;
         Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
+
+        Ok(())
+    }
+
+    async fn handle_url(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        url: &UrlEvent,
+    ) -> Result<(), ZetaError> {
+        self.process_urls(&[url.url().clone()], url.channel(), client)
+            .await?;
 
         Ok(())
     }

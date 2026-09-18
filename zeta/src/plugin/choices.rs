@@ -41,7 +41,13 @@ pub struct Choices {
 impl Plugin<Context> for Choices {
     type Settings = Settings;
 
-    fn new(_ctx: &Context, settings: &Settings) -> Result<Choices, ZetaError> {
+    fn new(
+        _ctx: &Context,
+        settings: &Settings,
+        subscriptions: &mut Subscriptions,
+    ) -> Result<Choices, ZetaError> {
+        subscriptions.receive_message();
+
         Ok(Choices {
             settings: settings.clone(),
         })
@@ -51,20 +57,18 @@ impl Plugin<Context> for Choices {
         &self,
         _ctx: &Context,
         client: &Client,
-        message: &Message,
+        event: &MessageEvent,
     ) -> Result<(), ZetaError> {
-        if let Command::PRIVMSG(ref channel, ref inner_message) = message.command {
-            let current_nickname = client.current_nickname();
+        let current_nickname = client.current_nickname();
 
-            if let Some(msg) = strip_nick_prefix(inner_message, current_nickname)
-                && let Some(options) = extract_options(msg, &self.settings)
-            {
-                let source_nickname = message.source_nickname().unwrap_or("");
-                let mut rng = rand::rng();
-                let selection = options.iter().choose(&mut rng).unwrap();
+        if let Some(msg) = strip_nick_prefix(event.text(), current_nickname)
+            && let Some(options) = extract_options(msg, &self.settings)
+        {
+            let source_nickname = event.sender().map_or("", |sender| sender.nick);
+            let mut rng = rand::rng();
+            let selection = options.iter().choose(&mut rng).unwrap();
 
-                client.send_privmsg(channel, format!("{source_nickname}: {selection}"))?;
-            }
+            client.send_privmsg(event.channel(), format!("{source_nickname}: {selection}"))?;
         }
 
         Ok(())
