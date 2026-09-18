@@ -86,6 +86,6 @@ jobs:
           shared-key: ${{ inputs.cache-key }}
           save-if: false # Don't cache clippy artifacts
       - name: Run Clippy check
-        uses: clechasseur/rs-clippy-check@20f338ad6648dedb921c00b023bc30c971ab9ed7 # v6.0.7
+        uses: clechasseur/rs-clippy-check@d626afd6670c78ecef6c7872e1c9e1221065d5c5 # v6.1.0
         with:
           args: ${{ inputs.clippy-args }}
