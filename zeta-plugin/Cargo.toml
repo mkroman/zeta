@@ -10,3 +10,4 @@ irc.workspace = true
 serde.workspace = true
 shlex.workspace = true
 thiserror.workspace = true
+url.workspace = true
