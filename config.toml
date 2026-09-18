@@ -224,6 +224,19 @@ name = "#zeta.dev"
   # The language the IMDb API localises results for.
   # user_language = "en-US"
 
+  # Instagram integration.
+  [plugins.instagram]
+  # Enable the plugin.
+  enabled = true
+  # The maximum length of a media caption before it gets truncated.
+  # title_length = 150
+  # The key prefix that mirrored media are uploaded under. Falls back to the `INSTAGRAM_S3_PREFIX`
+  # environment variable, and to "instagram" when neither is set.
+  # prefix = "instagram"
+  # The base URL used when linking to mirrored media. Falls back to the
+  # `INSTAGRAM_PUBLIC_URL_BASE` environment variable when unset.
+  # public_url_base = "https://pub.rwx.im/instagram"
+
   # Is it open.
   [plugins.isitopen]
   # Enable the plugin.

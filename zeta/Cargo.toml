@@ -61,6 +61,7 @@ plugin-health = ["dep:memory-stats"]
 plugin-help = []
 plugin-howlongtobeat = ["http"]
 plugin-imdb = ["http", "dep:num-format", "dep:serde_path_to_error"]
+plugin-instagram = ["mirror", "dep:scraper", "dep:wreq", "dep:wreq-util"]
 plugin-isitopen = ["http", "dep:regex", "time"]
 plugin-kagi = ["dep:kagi"]
 plugin-notification = ["database", "dep:chrono"]
@@ -101,6 +102,7 @@ plugins-all = [
     "plugin-help",
     "plugin-howlongtobeat",
     "plugin-imdb",
+    "plugin-instagram",
     "plugin-isitopen",
     "plugin-kagi",
     "plugin-notification",
@@ -163,6 +165,7 @@ regex = { version = "1.12.2", optional = true }
 reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"], optional = true }
 rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "61be392a0d605ea6c4192934134683d63fbe7f7d", features = ["bundle-files", "serde_json"], optional = true }
 rustls = { version = "0.23.44", optional = true }
+scraper = { version = "0.27.0", optional = true }
 secrecy = { optional = true, workspace = true }
 serde.workspace = true
 serde_json.workspace = true
