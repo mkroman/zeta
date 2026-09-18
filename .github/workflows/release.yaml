@@ -138,7 +138,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v7
       - name: Download release artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: zeta-*
           path: artifacts
