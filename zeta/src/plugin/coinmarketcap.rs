@@ -725,18 +725,18 @@ mod tests {
 
     #[test]
     fn commands_are_consistent() {
-        assert!(COMMANDS.iter().any(|command| *command == CC));
+        assert!(COMMANDS.contains(&CC));
 
         for (spec, _) in COIN_COMMANDS {
             assert!(
-                COMMANDS.iter().any(|command| command == spec),
+                COMMANDS.contains(spec),
                 "{spec:?} missing from COMMANDS"
             );
         }
 
         let mut commands = COMMANDS
             .iter()
-            .map(|command| command.trigger())
+            .map(CommandSpec::trigger)
             .collect::<Vec<_>>();
         commands.sort_unstable();
         commands.dedup();

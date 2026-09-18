@@ -167,27 +167,27 @@ impl EventIndex {
             Command::PRIVMSG(..) => self.dispatch_privmsg(filters, &message, &mut stopped),
             Command::JOIN(..) if !self.join.is_empty() => {
                 let event = JoinEvent::new(Arc::clone(&message));
-                self.deliver(&Event::Join(event), &self.join, &mut stopped);
+                Self::deliver(&Event::Join(event), &self.join, &mut stopped);
             }
             Command::PART(..) if !self.part.is_empty() => {
                 let event = PartEvent::new(Arc::clone(&message));
-                self.deliver(&Event::Part(event), &self.part, &mut stopped);
+                Self::deliver(&Event::Part(event), &self.part, &mut stopped);
             }
             Command::QUIT(..) if !self.quit.is_empty() => {
                 let event = QuitEvent::new(Arc::clone(&message));
-                self.deliver(&Event::Quit(event), &self.quit, &mut stopped);
+                Self::deliver(&Event::Quit(event), &self.quit, &mut stopped);
             }
             Command::NICK(..) if !self.nick.is_empty() => {
                 let event = NickEvent::new(Arc::clone(&message));
-                self.deliver(&Event::Nick(event), &self.nick, &mut stopped);
+                Self::deliver(&Event::Nick(event), &self.nick, &mut stopped);
             }
             Command::KICK(..) if !self.kick.is_empty() => {
                 let event = KickEvent::new(Arc::clone(&message));
-                self.deliver(&Event::Kick(event), &self.kick, &mut stopped);
+                Self::deliver(&Event::Kick(event), &self.kick, &mut stopped);
             }
             Command::Raw(..) if !self.raw.is_empty() => {
                 let event = RawEvent::new(Arc::clone(&message));
-                self.deliver(&Event::Raw(event), &self.raw, &mut stopped);
+                Self::deliver(&Event::Raw(event), &self.raw, &mut stopped);
             }
             // Everything else is connection protocol the plugins have no events for.
             _ => {}
@@ -223,7 +223,7 @@ impl EventIndex {
     }
 
     /// Delivers one event to every subscriber of a list.
-    fn deliver(&self, event: &Event, subscribers: &[Subscriber], stopped: &mut Vec<String>) {
+    fn deliver(event: &Event, subscribers: &[Subscriber], stopped: &mut Vec<String>) {
         for subscriber in subscribers {
             subscriber.send(event.clone(), stopped);
         }
@@ -239,7 +239,7 @@ impl EventIndex {
         if text.starts_with('\x01') {
             if let Some(event) = CtcpEvent::new(Arc::clone(message)) {
                 let event = Event::Ctcp(event);
-                self.deliver(&event, &self.ctcp, stopped);
+                Self::deliver(&event, &self.ctcp, stopped);
             }
 
             return;
@@ -260,7 +260,7 @@ impl EventIndex {
         // Message subscribers observe every non-CTCP channel message.
         if !self.message.is_empty() {
             let event = Event::Message(MessageEvent::new(Arc::clone(message)));
-            self.deliver(&event, &self.message, stopped);
+            Self::deliver(&event, &self.message, stopped);
         }
 
         // URLs — extracted once per message, deduplicated and filtered before routing by host.
@@ -288,20 +288,16 @@ impl EventIndex {
                 && let Some(subscribers) = self.url_hosts.get(&host.to_ascii_lowercase())
             {
                 for subscriber in subscribers {
-                    self.send(subscriber, Event::Url(event.clone()), stopped);
+                    subscriber.send(Event::Url(event.clone()), stopped);
                 }
             }
 
             for subscriber in &self.url_any {
-                self.send(subscriber, Event::Url(event.clone()), stopped);
+                subscriber.send(Event::Url(event.clone()), stopped);
             }
         }
     }
 
-    /// Queues `event` for one plugin.
-    fn send(&self, subscriber: &Subscriber, event: Event, stopped: &mut Vec<String>) {
-        subscriber.send(event, stopped);
-    }
 }
 
 #[cfg(test)]
@@ -524,7 +520,7 @@ mod tests {
     #[test]
     fn stopped_plugins_are_evicted() {
         let mut index = EventIndex::default();
-        let mut dig = subscribe(&mut index, "dig", |subscriptions| {
+        let dig = subscribe(&mut index, "dig", |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig")).join();
         });
 
