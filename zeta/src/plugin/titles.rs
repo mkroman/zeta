@@ -641,7 +641,7 @@ fn tag_attr<'a>(tag: &'a Tag, name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::PluginInfo;
+    use crate::plugin::CatalogEntry;
 
     /// Tokenizes `html` in a single chunk and returns the captured metadata.
     fn parse_metadata(html: &str) -> PageMetadata {
@@ -821,8 +821,8 @@ mod tests {
     }
 
     #[test]
-    fn ignores_ctcp_and_bot_replies() {
-        assert!(should_ignore("\x01ACTION posts a link\x01"));
+    fn ignores_bot_replies() {
+        // CTCP messages never reach the plugin at all: they are their own event kind.
         assert!(should_ignore("\x0310> Some page"));
         assert!(should_ignore("\x0310>\x0f\x02 Site:\x02\x0310 Some page"));
 
@@ -862,11 +862,11 @@ mod tests {
     #[test]
     fn ignores_hosts_declared_in_the_catalog() {
         let catalog = PluginCatalog {
-            plugins: vec![PluginInfo {
+            entries: vec![CatalogEntry {
                 name: "imdb".into(),
                 authors: vec![],
-                commands: &[],
-                url_hosts: &["imdb.com", "www.imdb.com"],
+                commands: Vec::new(),
+                url_hosts: vec!["imdb.com", "www.imdb.com"],
             }],
         };
 

@@ -657,6 +657,8 @@ impl PluginTask {
 mod tests {
     use super::*;
     use crate::Config;
+    use irc::proto::Message;
+    use zeta_plugin::MessageEvent;
     use async_trait::async_trait;
     use figment::Figment;
     use figment::providers::{Format, Toml};

@@ -748,7 +748,7 @@ mod tests {
                 .map(|index| CatalogEntry {
                     name: format!("plugin-{index:03}{}", "x".repeat(90)),
                     authors: vec![],
-                    commands: Vec::new(),
+                    commands: vec![HELP],
                     url_hosts: Vec::new(),
                 })
                 .collect(),

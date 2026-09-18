@@ -400,7 +400,7 @@ mod tests {
         let mut youtube = subscribe(&mut index, "youtube", |subscriptions| {
             subscriptions.url_hosts(&["youtube.com", "www.youtube.com"]);
         });
-        let mut titles = subscribe(&mut index, "titles", Subscriptions::url_any);
+        let mut titles = subscribe(&mut index, "titles", |s| { s.url_any(); });
 
         // A claimed host is delivered to its plugin and to generic handlers.
         index.dispatch(&Filters::default(), privmsg("https://youtube.com/watch?v=1"));
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn multiple_urls_yield_one_event_each() {
         let mut index = EventIndex::default();
-        let mut titles = subscribe(&mut index, "titles", Subscriptions::url_any);
+        let mut titles = subscribe(&mut index, "titles", |s| { s.url_any(); });
 
         index.dispatch(
             &Filters::default(),
@@ -443,8 +443,8 @@ mod tests {
     #[test]
     fn ctcp_messages_bypass_everything_else() {
         let mut index = EventIndex::default();
-        let mut ctcp = subscribe(&mut index, "ctcp", Subscriptions::ctcp);
-        let mut messages = subscribe(&mut index, "messages", Subscriptions::messages);
+        let mut ctcp = subscribe(&mut index, "ctcp", |s| { s.ctcp(); });
+        let mut messages = subscribe(&mut index, "messages", |s| { s.messages(); });
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn messages_reach_subscribers_regardless_of_matches() {
         let mut index = EventIndex::default();
-        let mut watcher = subscribe(&mut index, "watcher", Subscriptions::messages);
+        let mut watcher = subscribe(&mut index, "watcher", |s| { s.messages(); });
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
@@ -487,9 +487,9 @@ mod tests {
     #[test]
     fn presence_events_route_by_kind() {
         let mut index = EventIndex::default();
-        let mut joins = subscribe(&mut index, "joins", Subscriptions::join);
-        let mut quits = subscribe(&mut index, "quits", Subscriptions::quit);
-        let mut parts = subscribe(&mut index, "parts", Subscriptions::part);
+        let mut joins = subscribe(&mut index, "joins", |s| { s.join(); });
+        let mut quits = subscribe(&mut index, "quits", |s| { s.quit(); });
+        let mut parts = subscribe(&mut index, "parts", |s| { s.part(); });
 
         index.dispatch(&Filters::default(), message("nick!u@h", "JOIN", &["#test"]));
         index.dispatch(&Filters::default(), message("nick!u@h", "QUIT", &["gone"]));
@@ -508,7 +508,7 @@ mod tests {
     #[test]
     fn unmodeled_commands_reach_raw_subscribers() {
         let mut index = EventIndex::default();
-        let mut raw = subscribe(&mut index, "raw", Subscriptions::raw);
+        let mut raw = subscribe(&mut index, "raw", |s| { s.raw(); });
 
         index.dispatch(
             &Filters::default(),

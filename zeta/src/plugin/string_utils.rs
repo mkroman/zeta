@@ -111,14 +111,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn commands_are_registered() {
-        let plugin = StringUtils::new();
+    #[tokio::test]
+    async fn commands_are_registered() {
+        let mut subscriptions = Subscriptions::new();
 
-        assert!(plugin.commands().contains(&BYTES));
-        assert!(plugin.commands().contains(&LENGTH));
-        assert!(plugin.commands().contains(&ORD));
-        assert!(plugin.commands().contains(&REVERSE));
-        assert!(plugin.commands().contains(&UNICODE));
+        <StringUtils as Plugin<Context>>::new(&Context::for_tests(), &NoSettings {}, &mut subscriptions)
+            .unwrap();
+
+        assert!(subscriptions.commands().contains(&BYTES));
+        assert!(subscriptions.commands().contains(&LENGTH));
+        assert!(subscriptions.commands().contains(&ORD));
+        assert!(subscriptions.commands().contains(&REVERSE));
+        assert!(subscriptions.commands().contains(&UNICODE));
     }
 }

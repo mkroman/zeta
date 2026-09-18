@@ -725,22 +725,18 @@ mod tests {
 
     #[test]
     fn commands_are_consistent() {
-        assert!(
-            COMMANDS
-                .iter()
-                .any(|command| command.prefix() == CC.prefix())
-        );
+        assert!(COMMANDS.iter().any(|command| *command == CC));
 
-        for (prefix, _) in COIN_COMMANDS {
+        for (spec, _) in COIN_COMMANDS {
             assert!(
-                COMMANDS.iter().any(|command| command.prefix() == *prefix),
-                "{prefix:?} missing from COMMANDS"
+                COMMANDS.iter().any(|command| command == spec),
+                "{spec:?} missing from COMMANDS"
             );
         }
 
         let mut commands = COMMANDS
             .iter()
-            .map(|command| command.prefix().as_str())
+            .map(|command| command.trigger())
             .collect::<Vec<_>>();
         commands.sort_unstable();
         commands.dedup();
