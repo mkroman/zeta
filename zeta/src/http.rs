@@ -1,12 +1,19 @@
 //! HTTP features
+//!
+//! Two independent clients live here: the plain `reqwest` client shared by the API plugins
+//! (behind the `http` feature) and the browser-emulated `wreq` client for anti-bot-protected
+//! sites (behind the `emulated` feature).
 
+#[cfg(feature = "http")]
 use crate::config::HttpConfig;
+#[cfg(feature = "http")]
 use serde::de::DeserializeOwned;
 
 /// JSON response parsing shared by the API client plugins.
 ///
 /// Bodies are parsed with [`serde_path_to_error`] so parse failures report the path to the
 /// offending part of the document, and the offending body is logged.
+#[cfg(feature = "http")]
 pub mod json {
     use serde::de::DeserializeOwned;
     use tracing::error;
@@ -32,6 +39,7 @@ pub mod json {
 }
 
 /// The errors produced when sending a request and parsing its JSON response.
+#[cfg(feature = "http")]
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
     /// The request could not be sent, or the response body could not be read.
@@ -55,6 +63,7 @@ pub enum ApiError {
 ///
 /// Returns an [`ApiError`] if the request fails, the response status is not a success, or the
 /// body cannot be parsed as JSON.
+#[cfg(feature = "http")]
 pub async fn parse_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ApiError> {
@@ -70,6 +79,7 @@ pub async fn parse_response<T: DeserializeOwned>(
 }
 
 /// HTTP client integration
+#[cfg(feature = "http")]
 pub mod client {
     use crate::config::HttpConfig;
 
@@ -104,6 +114,7 @@ pub mod client {
 /// This is equivalent to calling [`client::build`].
 #[must_use]
 #[allow(unused)]
+#[cfg(feature = "http")]
 pub fn build_client(config: &HttpConfig) -> client::Client {
     client::build(config)
 }
@@ -111,8 +122,9 @@ pub fn build_client(config: &HttpConfig) -> client::Client {
 /// Client building for anti-bot-protected sites.
 ///
 /// These are fetched with [`wreq`] browser emulation: plain `reqwest` gets TLS-fingerprinted by
-/// them regardless of headers.
-#[cfg(any(feature = "plugin-instagram", feature = "plugin-titles"))]
+/// them regardless of headers. Built behind the `emulated` feature, which the anti-bot-protected
+/// plugins enable.
+#[cfg(feature = "emulated")]
 pub mod emulated {
     use wreq::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING, USER_AGENT};
     use zeta_plugin::{Error, prelude::plugin_err};
