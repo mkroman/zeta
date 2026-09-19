@@ -142,6 +142,17 @@ pub struct Criteria {
 }
 
 impl Criteria {
+    /// Whether no criterion is set.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.channel.is_none()
+            && self.host.is_none()
+            && self.path.is_none()
+            && self.nickname.is_none()
+            && self.username.is_none()
+            && self.hostname.is_none()
+    }
+
     /// Whether the criteria select `filter`.
     #[must_use]
     pub fn matches(&self, filter: &Filter) -> bool {

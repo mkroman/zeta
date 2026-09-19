@@ -407,7 +407,7 @@ impl MirrorTarget {
             public_url_base_env,
             public_url_base_default,
         )?;
-        let prefix = resolve_prefix(prefix, prefix_env, prefix_default);
+        let prefix = crate::utils::resolve_setting(prefix, prefix_env, prefix_default);
         let mirror = mirror?;
 
         Some(Self::new(mirror, prefix, public_url_base))
@@ -445,10 +445,7 @@ impl MirrorTarget {
 /// logs a warning when the resolved value is not a valid URL.
 #[must_use]
 pub fn resolve_public_url_base(setting: Option<&str>, env: &str, default: &str) -> Option<Url> {
-    let value = setting
-        .map(str::to_string)
-        .or_else(|| std::env::var(env).ok())
-        .unwrap_or_else(|| default.to_string());
+    let value = crate::utils::resolve_setting(setting, env, default);
 
     match Url::parse(&value) {
         Ok(url) => Some(url),
@@ -458,17 +455,6 @@ pub fn resolve_public_url_base(setting: Option<&str>, env: &str, default: &str) 
             None
         }
     }
-}
-
-/// Resolves a key prefix from a plugin's configuration.
-///
-/// The configured value wins, then the environment variable, then the default.
-#[must_use]
-pub fn resolve_prefix(setting: Option<&str>, env: &str, default: &str) -> String {
-    setting
-        .map(str::to_string)
-        .or_else(|| std::env::var(env).ok())
-        .unwrap_or_else(|| default.to_string())
 }
 
 /// Constructs and publishes the shared mirror to [`Context::shared`], based on the `[mirror]`
@@ -702,12 +688,6 @@ mod tests {
             public_url_for(&base, "pxtf7mx2xqzg1"),
             "https://pub.rwx.im/reddit#pxtf7mx2xqzg1"
         );
-    }
-
-    #[test]
-    fn test_resolve_prefix() {
-        assert_eq!(resolve_prefix(Some("~meta"), "X_PREFIX", "reddit"), "~meta");
-        assert_eq!(resolve_prefix(None, "X_PREFIX", "reddit"), "reddit");
     }
 
     #[test]

@@ -139,10 +139,8 @@ impl S3 {
                 .map_err(Error::MissingConfig)?;
         let bucket = resolve_secret(config.bucket.as_deref(), "S3_BUCKET_NAME")
             .map_err(Error::MissingConfig)?;
-        let region = config
-            .region
-            .or_else(|| std::env::var("S3_REGION").ok())
-            .unwrap_or_else(|| "auto".to_string());
+        let region = crate::utils::resolve_setting(config.region.as_deref(), "S3_REGION", "auto");
+
         let endpoint = config
             .endpoint
             .or_else(|| std::env::var("S3_ENDPOINT").ok())

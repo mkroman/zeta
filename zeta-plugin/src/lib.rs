@@ -32,7 +32,8 @@ pub mod prelude {
         PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, Tag, UrlEvent, UrlScope,
     };
     pub use super::irc::{
-        BOLD, COLOR, REPLY_PREFIX, RESET, notice, reply, reply_prefix, reply_usage_lines,
+        BOLD, COLOR, REPLY_PREFIX, RESET, notice, parse_words_or_usage, reply, reply_prefix,
+        reply_usage_lines,
     };
     pub use super::plugin::PluginName;
     pub use super::types::NoSettings;

@@ -145,18 +145,12 @@ pub struct YouTube {
 /// YouTube API and plugin-specific error types.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// The API returned a response the plugin does not handle.
-    #[error("server returned invalid response")]
-    InvalidResponse,
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    /// The API responded with a non-success status or an invalid body.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     /// The search or video lookup matched nothing.
     #[error("no results")]
     NoResults,
-    /// The API response could not be deserialized.
-    #[error("deserialization error: {0}")]
-    Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
 }
 
 /// Basic details about the video, such as its title and category.
@@ -455,11 +449,12 @@ impl YouTube {
         debug!(?params, "searching for videos");
 
         let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
-        let response = request.send().await?.error_for_status()?;
+        let response = request
+            .send()
+            .await
+            .map_err(http::ApiError::Request)?;
 
-        debug!("response is ok, parsing as json");
-        let text = response.text().await.map_err(Error::Request)?;
-        let result: SearchListResponse = http::json::from_str(&text).map_err(Error::Deserialize)?;
+        let result: SearchListResponse = http::parse_response(response).await?;
 
         let items = result.items;
 
@@ -486,16 +481,12 @@ impl YouTube {
         let response = request
             .send()
             .await
-            .map_err(|_| Error::InvalidResponse)?
-            .error_for_status()?;
-        let list: VideosResponse = response.json().await?;
+            .map_err(http::ApiError::Request)?;
+        let list: VideosResponse = http::parse_response(response).await?;
+
         debug!("fetched metadata for video");
 
-        if let Some(video) = list.items.first() {
-            return Ok(video.clone());
-        }
-
-        Err(Error::NoResults)
+        list.items.into_iter().next().ok_or(Error::NoResults)
     }
 }
 
@@ -503,9 +494,8 @@ impl YouTube {
 ///
 /// # Errors
 ///
-/// Returns [`Error::InvalidResponse`] if the request failed or the response was an error
-/// status, [`Error::NoResults`] if the API returned no categories, and [`Error::Request`] or
-/// [`Error::Deserialize`] if the response could not be read or parsed.
+/// Returns [`Error::Api`] if the request failed or the response could not be parsed, and
+/// [`Error::NoResults`] if the API returned no categories.
 async fn fetch_video_categories(
     client: &reqwest::Client,
     api_key: &str,
@@ -521,12 +511,8 @@ async fn fetch_video_categories(
     let request = client
         .get(format!("{BASE_URL}/videoCategories"))
         .query(&params);
-    let response = request
-        .send()
-        .await
-        .map_err(|_| Error::InvalidResponse)?
-        .error_for_status()?;
-    let list: CategoriesResponse = response.json().await?;
+    let response = request.send().await.map_err(http::ApiError::Request)?;
+    let list: CategoriesResponse = http::parse_response(response).await?;
 
     debug!("fetched video category list");
 

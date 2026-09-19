@@ -22,11 +22,9 @@ use thiserror::Error;
 use tracing::{debug, warn};
 use url::Url;
 use wreq::StatusCode;
-use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
 use wreq::redirect::Policy;
-use wreq_util::Emulation;
 
-use crate::{plugin::prelude::*, utils::Truncatable, utils::collapse_whitespace};
+use crate::{http, plugin::prelude::*, utils::Truncatable, utils::collapse_whitespace};
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
@@ -377,39 +375,12 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     text
 }
 
-/// Returns the request headers layered on top of the emulated browser profile.
-///
-/// `Accept-Encoding` must be set explicitly: like reqwest, wreq does not advertise the header
-/// itself even though it decompresses responses — and its absence is enough to get flagged.
-///
-/// The profile's user agent is overridden with the bot's Firefox 151 user agent. This skews with
-/// the emulated Firefox 142 fingerprint, and that is deliberate: the profile defaults to macOS —
-/// which anti-bot systems score far more aggressively when requests originate from datacenter
-/// networks — and the matching Linux Firefox 142 user agent is rejected by DataDome outright,
-/// while Firefox 151 passes.
-fn emulated_headers(user_agent: &str) -> Result<HeaderMap, ZetaError> {
-    let mut headers = HeaderMap::new();
-
-    headers.insert(
-        ACCEPT_ENCODING,
-        HeaderValue::from_static("gzip, deflate, br, zstd"),
-    );
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_str(user_agent).map_err(plugin_err)?,
-    );
-
-    Ok(headers)
-}
-
 #[async_trait]
 impl Plugin<Context> for Titles {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        let client = wreq::Client::builder()
-            .emulation(Emulation::Firefox142)
-            .default_headers(emulated_headers(&ctx.config.http.user_agent)?)
+        let client = http::emulated::builder(Some(&ctx.config.http.user_agent))?
             .redirect(Policy::limited(settings.max_redirects))
             .timeout(ctx.config.http.timeout)
             .build()

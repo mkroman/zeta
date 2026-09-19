@@ -36,7 +36,10 @@ use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
 
-use crate::{plugin::prelude::*, utils::Truncatable, utils::append_entries_within_budget};
+use crate::{
+    plugin::prelude::*,
+    utils::{MAX_LISTING_LENGTH, Truncatable, append_entries_within_budget},
+};
 
 /// The `.alert` command.
 const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
@@ -206,15 +209,10 @@ impl Plugin<Context> for AlertPlugin {
         };
 
         let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
-        let args = command.args();
 
-        let opts = match command.spec.parse_words::<Opts>(args) {
-            Ok(opts) => opts,
-            Err(err) => {
-                reply_usage_lines(client, channel, &err, |line| reply("Alert", line))?;
-
-                return Ok(());
-            }
+        let Some(opts) = parse_words_or_usage::<Opts>(client, command, |line| reply("Alert", line))?
+        else {
+            return Ok(());
         };
 
         if opts.list {
@@ -438,10 +436,6 @@ const MAX_LISTED_ALERTS: usize = 3;
 
 /// The maximum number of characters of an alert message included in a listing.
 const MAX_LISTED_MESSAGE_CHARS: usize = 50;
-
-/// The maximum length of a pending alerts listing, leaving room for the sender prefix, `PRIVMSG`
-/// framing and line ending overhead within the classic 512-byte IRC line limit.
-const MAX_LISTING_LENGTH: usize = 400;
 
 /// Formats the reply to `.alert -l` for `pending`, ordered by the time the alerts are due.
 ///
