@@ -10,11 +10,12 @@
 //! link. An invocation whose arguments are themselves a YouTube URL resolves it as a link
 //! below instead of searching for it as a query, so the two event kinds do not double up.
 //!
-//! The video category map is cached in memory with a 30-minute TTL, keyed by the `region_code`
-//! setting (default `US`); the `safe_search` setting (default `none`) is passed to search
-//! requests. The API key is set in `[plugins.youtube]`, falling back to the `YOUTUBE_API_KEY`
-//! environment variable; a missing key fails plugin initialization and the plugin is skipped
-//! at startup.
+//! The video category map is cached in memory with a 24-hour TTL, keyed by the `region_code`
+//! setting (default `US`); a task started when the plugin loads refreshes it periodically, so
+//! URL handling never triggers or waits on a refresh. The `safe_search` setting (default
+//! `none`) is passed to search requests. The API key is set in `[plugins.youtube]`, falling
+//! back to the `YOUTUBE_API_KEY` environment variable; a missing key fails plugin
+//! initialization and the plugin is skipped at startup.
 //!
 //! The URL parser behind link detection is [`parse_youtube_url`], reused by other plugins
 //! (e.g. `ofn`) to identify video links.
@@ -26,7 +27,8 @@ use std::time::Duration;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use tracing::debug;
+use tokio::time::MissedTickBehavior;
+use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
@@ -52,6 +54,16 @@ const URL_HOSTS: &[&str] = &[YOUTU_BE_HOST, YOUTUBE_COM_HOST, YOUTUBE_COM_WWW_HO
 
 /// YouTube Data API v3 base endpoint URL.
 const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
+
+/// The time-to-live of the cached video categories.
+const CATEGORIES_TTL: Duration = Duration::from_hours(24);
+
+/// How often the categories task rechecks the cache for staleness.
+///
+/// A tick only fetches when the cached entry is missing or past its TTL, so the actual API
+/// calls happen at most once per [`CATEGORIES_TTL`]; the shorter check interval makes a failed
+/// fetch retry within an hour instead of after a full TTL.
+const CATEGORIES_CHECK_INTERVAL: Duration = Duration::from_hours(1);
 
 /// The `.yt` command.
 const YOUTUBE: CommandSpec = CommandSpec::new(".yt", "Search YouTube and link the top video");
@@ -121,7 +133,7 @@ fn default_region_code() -> String {
 /// # Features
 /// - Automatic URL detection in IRC messages
 /// - Video metadata extraction via YouTube Data API v3
-/// - Thread-safe category caching with expiration
+/// - Thread-safe category caching with expiration, refreshed periodically in the background
 /// - Support for multiple YouTube URL formats
 /// - Formatted output with IRC color codes
 pub struct YouTube {
@@ -133,9 +145,9 @@ pub struct YouTube {
     safe_search: SafeSearch,
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
-    /// Thread-safe cache of video categories mapped by category ID, refreshed after the cache
-    /// TTL expires.
-    video_categories: TtlCache<Arc<HashMap<String, Category>>>,
+    /// Thread-safe cache of video categories mapped by category ID, refreshed by the task
+    /// started in [`Plugin::loaded`] once per [`CATEGORIES_TTL`].
+    video_categories: Arc<TtlCache<Arc<HashMap<String, Category>>>>,
 }
 
 /// YouTube API and plugin-specific error types.
@@ -369,6 +381,12 @@ impl Plugin<Context> for YouTube {
         Ok(YouTube::with_config(settings, api_key, &ctx.config.http))
     }
 
+    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+        self.start_categories_refresh();
+
+        Ok(())
+    }
+
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -433,8 +451,47 @@ impl YouTube {
             region_code: settings.region_code.clone(),
             safe_search: settings.safe_search,
             client,
-            video_categories: TtlCache::new(Duration::from_mins(30)),
+            video_categories: Arc::new(TtlCache::new(CATEGORIES_TTL)),
         }
+    }
+
+    /// Spawns the task that periodically refreshes the cached video categories.
+    ///
+    /// The task ticks once per [`CATEGORIES_CHECK_INTERVAL`], skipping missed ticks: a tick is
+    /// only an actual API call when the cached entry is missing or past its TTL, so the
+    /// categories are fetched at most once per [`CATEGORIES_TTL`] and a failed fetch is retried
+    /// on the next tick. Refresh failures are logged and leave the stale map in place.
+    fn start_categories_refresh(&self) {
+        let (client, api_key, region_code, cache) = (
+            self.client.clone(),
+            self.api_key.clone(),
+            self.region_code.clone(),
+            Arc::clone(&self.video_categories),
+        );
+
+        tokio::spawn(async move {
+            debug!("starting video category refresh task");
+
+            // The first tick completes immediately, populating the cache at startup.
+            let mut interval = tokio::time::interval(CATEGORIES_CHECK_INTERVAL);
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+            loop {
+                interval.tick().await;
+
+                let refreshed = cache
+                    .refresh(|| async {
+                        fetch_video_categories(&client, &api_key, &region_code)
+                            .await
+                            .map(Arc::new)
+                    })
+                    .await;
+
+                if let Err(error) = refreshed {
+                    warn!(%error, "could not refresh video categories");
+                }
+            }
+        });
     }
 
     /// Processes URLs found in a message
@@ -452,12 +509,20 @@ impl YouTube {
                     Ok(video) => {
                         let snippet = video.snippet.as_ref();
                         let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
-                        let categories = self.cached_video_categories().await.unwrap();
+
+                        // The map is refreshed by the task started on load; the read is
+                        // stale-tolerant, so an unavailable API keeps serving the last known
+                        // categories.
+                        let category = self.video_categories.read(|cache| {
+                            cache
+                                .and_then(|categories| categories.get(&category_id))
+                                .map_or_else(
+                                    || "unknown category".to_string(),
+                                    |category| category.snippet.title.clone(),
+                                )
+                        });
+
                         // TODO: use indefinite form: https://crates.io/crates/indefinite
-                        let category = categories.get(&category_id).map_or_else(
-                            || "unknown category".to_string(),
-                            |s| s.snippet.title.clone(),
-                        );
                         let view_count = video
                             .statistics
                             .as_ref()
@@ -475,49 +540,6 @@ impl YouTube {
         }
 
         Ok(())
-    }
-
-    /// Fetches video categories.
-    async fn video_categories(&self) -> Result<HashMap<String, Category>, Error> {
-        debug!("fetching video categories");
-
-        let params = [
-            ("key", self.api_key.as_str()),
-            ("part", "snippet"),
-            ("regionCode", self.region_code.as_str()),
-        ];
-        let request = self
-            .client
-            .get(format!("{BASE_URL}/videoCategories"))
-            .query(&params);
-        let response = request
-            .send()
-            .await
-            .map_err(|_| Error::InvalidResponse)?
-            .error_for_status()?;
-        let list: CategoriesResponse = response.json().await?;
-
-        debug!("fetched video category list");
-
-        let map: HashMap<String, Category> =
-            list.items.into_iter().map(|c| (c.id.clone(), c)).collect();
-
-        if map.is_empty() {
-            Err(Error::NoResults)
-        } else {
-            Ok(map)
-        }
-    }
-
-    async fn cached_video_categories(&self) -> Result<Arc<HashMap<String, Category>>, Error> {
-        self.video_categories
-            .get_or_refresh(|| async {
-                debug!("refreshing cached video categories");
-                let categories = self.video_categories().await?;
-
-                Ok(Arc::new(categories))
-            })
-            .await
     }
 
     /// Searches for videos using the given query.
@@ -576,6 +598,47 @@ impl YouTube {
         }
 
         Err(Error::NoResults)
+    }
+}
+
+/// Fetches the video categories map from the API, keyed by category id.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidResponse`] if the request failed or the response was an error
+/// status, [`Error::NoResults`] if the API returned no categories, and [`Error::Request`] or
+/// [`Error::Deserialize`] if the response could not be read or parsed.
+async fn fetch_video_categories(
+    client: &reqwest::Client,
+    api_key: &str,
+    region_code: &str,
+) -> Result<HashMap<String, Category>, Error> {
+    debug!("fetching video categories");
+
+    let params = [
+        ("key", api_key),
+        ("part", "snippet"),
+        ("regionCode", region_code),
+    ];
+    let request = client
+        .get(format!("{BASE_URL}/videoCategories"))
+        .query(&params);
+    let response = request
+        .send()
+        .await
+        .map_err(|_| Error::InvalidResponse)?
+        .error_for_status()?;
+    let list: CategoriesResponse = response.json().await?;
+
+    debug!("fetched video category list");
+
+    let map: HashMap<String, Category> =
+        list.items.into_iter().map(|c| (c.id.clone(), c)).collect();
+
+    if map.is_empty() {
+        Err(Error::NoResults)
+    } else {
+        Ok(map)
     }
 }
 
