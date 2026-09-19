@@ -276,6 +276,10 @@ declare_plugins! {
   #[cfg(feature = "plugin-imdb")]
   imdb::Imdb => imdb::Settings,
 
+  /// Instagram integration
+  #[cfg(feature = "plugin-instagram")]
+  instagram::Instagram => instagram::Settings,
+
   /// Is it open
   #[cfg(feature = "plugin-isitopen")]
   isitopen::IsItOpen => isitopen::Settings,
@@ -665,7 +669,7 @@ mod tests {
 
     #[test]
     fn bundled_plugin_names_include_all_plugins() {
-        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 33);
+        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 34);
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"filter"));
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"dig"));
         assert!(BUNDLED_PLUGIN_NAMES.contains(&"health"));

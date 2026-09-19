@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::debug;
 
-use crate::{config::HttpConfig, http, plugin::prelude::*, utils::Truncatable};
+use crate::{config::HttpConfig, http, plugin::prelude::*, utils::Truncatable, utils::collapse_whitespace};
 
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
@@ -138,8 +138,8 @@ struct DefinitionFormatter<'a> {
 impl Display for DefinitionFormatter<'_> {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let word = &self.definition.word;
-        let definition = presentable(&self.definition.definition);
-        let example = presentable(&self.definition.example);
+        let definition = collapse_whitespace(&self.definition.definition);
+        let example = collapse_whitespace(&self.definition.example);
         let definition = definition.truncate_with_suffix(self.max_length, "…");
         let example = example.truncate_with_suffix(self.max_length, "…");
 
@@ -147,12 +147,6 @@ impl Display for DefinitionFormatter<'_> {
         write!(fmt, " Definition:\x0f {definition}\x0310")?;
         write!(fmt, " Example:\x0f {example}")
     }
-}
-
-/// Renders the given input string in an IRC-presentable way by removing carriage returns,
-/// replacing newlines with spaces and trimming leading and trailing whitespace.
-fn presentable(s: &str) -> String {
-    s.trim().replace('\r', "").replace('\n', " ")
 }
 
 impl UrbanDictionary {

@@ -61,6 +61,15 @@ pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'
     })
 }
 
+/// Collapses runs of whitespace in `value` into single spaces, trimming the result.
+///
+/// Text assembled from web pages carries line breaks and repeated spaces that an IRC message
+/// cannot render: a line break terminates the message, and everything after it is lost.
+#[must_use]
+pub fn collapse_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Appends `entries` to `message`, separated by `separator`, as long as the listing —
 /// including `reserved` trailing bytes — stays within `budget` bytes.
 ///
@@ -181,5 +190,14 @@ mod tests {
         assert!(matches!(s.truncate_with_suffix(250, "…"), Cow::Borrowed(_)));
         // should copy when truncating
         assert!(matches!(s.truncate_with_suffix(10, "…"), Cow::Owned(_)));
+    }
+
+    #[test]
+    fn collapses_whitespace_runs_into_single_spaces() {
+        // A line break terminates an IRC message, so text from web pages is collapsed.
+        assert_eq!(collapse_whitespace("first\nsecond\nthird"), "first second third");
+        assert_eq!(collapse_whitespace("  a   b\t\tc  "), "a b c");
+        assert_eq!(collapse_whitespace("plain"), "plain");
+        assert_eq!(collapse_whitespace("   "), "");
     }
 }

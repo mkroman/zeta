@@ -26,7 +26,7 @@ use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
 use wreq::redirect::Policy;
 use wreq_util::Emulation;
 
-use crate::{plugin::prelude::*, utils::Truncatable};
+use crate::{plugin::prelude::*, utils::Truncatable, utils::collapse_whitespace};
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
@@ -571,13 +571,13 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .title
         .as_deref()
         .or(metadata.og_title.as_deref())
-        .map(clean)
+        .map(collapse_whitespace)
         .filter(|title| !title.is_empty());
 
     let description = metadata
         .description
         .as_deref()
-        .map(clean)
+        .map(collapse_whitespace)
         .filter(|description| !description.is_empty())
         .map(|description| description.truncate_within(settings.max_description_length, "…"));
 
@@ -596,7 +596,7 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         let site = metadata
             .site_name
             .as_deref()
-            .map(clean)
+            .map(collapse_whitespace)
             .filter(|site| !site.is_empty())
             .unwrap_or_else(|| host_name(url));
 
@@ -612,12 +612,6 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
 #[must_use]
 const fn has_open_graph(metadata: &PageMetadata) -> bool {
     metadata.site_name.is_some() || metadata.og_title.is_some() || metadata.description.is_some()
-}
-
-/// Collapses runs of whitespace in `value` into single spaces and trims the result.
-#[must_use]
-fn clean(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Returns the host of `url` without its `www.` prefix.

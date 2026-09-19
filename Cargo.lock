@@ -5189,6 +5189,7 @@ dependencies = [
  "reqwest",
  "rink-core",
  "rustls",
+ "scraper",
  "secrecy",
  "serde",
  "serde_ignored",

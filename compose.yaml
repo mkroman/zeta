@@ -40,6 +40,40 @@ services:
     volumes:
     - postgres_data:/var/lib/postgresql
 
+  # S3-compatible endpoint for testing media mirroring; started with
+  # `docker compose --profile mirror up -d`. Docker Hub is unreachable from some environments —
+  # the images come from quay.io.
+  minio:
+    image: quay.io/minio/minio:latest
+    profiles:
+    - mirror
+    ports:
+    - '9000:9000'
+    - '9001:9001'
+    restart: always
+    environment:
+    - MINIO_ROOT_USER=zeta
+    - MINIO_ROOT_PASSWORD=changeme
+    command: server /data --console-address ':9001'
+    volumes:
+    - minio_data:/data
+
+  # One-shot bucket creation for the minio service.
+  minio-init:
+    image: quay.io/minio/mc:latest
+    profiles:
+    - mirror
+    depends_on:
+    - minio
+    entrypoint: /bin/sh
+    # Retries the alias until MinIO is listening; `mc ready` would need the alias first.
+    command:
+    - -c
+    - |
+      until mc alias set local http://minio:9000 zeta changeme >/dev/null 2>&1; do sleep 1; done
+      mc mb --ignore-existing local/zeta-mirror
+
 
 volumes:
   postgres_data:
+  minio_data:
