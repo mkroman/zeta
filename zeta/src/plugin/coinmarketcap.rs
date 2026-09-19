@@ -26,8 +26,11 @@ use serde::{Deserialize, Serialize};
 use strsim::jaro_winkler;
 use tracing::{debug, warn};
 
-use crate::cache::TtlCache;
-use crate::plugin::prelude::*;
+use crate::{
+    cache::TtlCache,
+    plugin::prelude::*,
+    utils::strip_control_chars,
+};
 
 mod client;
 mod error;
@@ -478,7 +481,8 @@ fn parse_currency(
     default_currency: &str,
     is_valid: impl Fn(&str) -> bool,
 ) -> Result<String, Error> {
-    let currency = sanitize(currency.unwrap_or(default_currency)).to_ascii_uppercase();
+    let currency =
+        strip_control_chars(currency.unwrap_or(default_currency)).to_ascii_uppercase();
 
     if is_valid(&currency) {
         Ok(currency)
@@ -566,15 +570,6 @@ fn matches_within(needle: &str, haystack: &str, max_typos: usize) -> bool {
     }
 
     needle.len() - previous[haystack.len()] <= max_typos
-}
-
-/// Strips control characters from user-supplied input.
-///
-/// All IRC formatting bytes (color, bold, underline, reset, ...) are control characters, so
-/// stripping them prevents user input from injecting formatting when echoed back to the
-/// channel.
-fn sanitize(input: &str) -> String {
-    input.chars().filter(|c| !c.is_control()).collect()
 }
 
 /// Formats a coin quote as an IRC message, e.g.:

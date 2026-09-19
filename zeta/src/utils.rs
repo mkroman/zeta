@@ -69,6 +69,15 @@ pub fn collapse_whitespace(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Removes every control character from `text`.
+///
+/// Control characters include all IRC formatting bytes, so text that is echoed back to a
+/// channel must be stripped before it is formatted or replied with.
+#[must_use]
+pub fn strip_control_chars(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).collect()
+}
+
 /// Resolves a string setting: the configured value wins, then the `env` environment variable,
 /// then the default.
 #[must_use]
@@ -243,5 +252,14 @@ mod tests {
         assert_eq!(collapse_whitespace("  a   b\t\tc  "), "a b c");
         assert_eq!(collapse_whitespace("plain"), "plain");
         assert_eq!(collapse_whitespace("   "), "");
+    }
+
+    #[test]
+    fn strips_control_characters() {
+        // The IRC formatting bytes are control characters, so they must not survive into
+        // user-controlled text that is echoed back to a channel.
+        assert_eq!(strip_control_chars("a\u{2}b\u{f}c"), "abc");
+        assert_eq!(strip_control_chars("line\nbreak"), "linebreak");
+        assert_eq!(strip_control_chars("plain"), "plain");
     }
 }

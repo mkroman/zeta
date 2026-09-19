@@ -13,7 +13,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use crate::{http, plugin::prelude::*, utils::Truncatable};
+use crate::{http, plugin::prelude::*, utils::{Truncatable, strip_control_chars}};
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
 
@@ -210,14 +210,10 @@ impl RustPlayground {
     }
 }
 
-/// Sanitizes output by removing control characters (0x00-0x19, 0x7F).
-/// This includes newlines, which is desirable for IRC.
+/// Sanitizes the playground output for IRC: control characters (which include newlines) are
+/// stripped, and the result is trimmed.
 fn sanitize_output(s: &str) -> String {
-    s.chars()
-        .filter(|&c| c as u32 > 25 && c as u32 != 127)
-        .collect::<String>()
-        .trim()
-        .to_string()
+    strip_control_chars(s).trim().to_owned()
 }
 
 #[cfg(test)]
