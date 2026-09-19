@@ -43,6 +43,7 @@ fn default_option_separator() -> String {
     ", ".to_string()
 }
 
+/// The choices plugin: picks an option at random from bot-addressed messages.
 pub struct Choices {
     settings: Settings,
 }

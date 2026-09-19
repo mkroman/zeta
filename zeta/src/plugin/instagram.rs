@@ -121,6 +121,7 @@ const fn default_title_length() -> usize {
     150
 }
 
+/// The Instagram plugin: summarizes and mirrors Instagram media links.
 pub struct Instagram {
     /// The HTTP client used for fetching pages, emulating a modern browser.
     client: wreq::Client,
@@ -140,10 +141,13 @@ pub struct Instagram {
     details: TtlMap<String, MediaDetails>,
 }
 
+/// Errors that can occur while summarizing or mirroring Instagram media.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] wreq::Error),
+    /// A share link did not resolve to a valid Instagram media URL.
     #[error("share link did not resolve to a valid url")]
     InvalidRedirect,
     /// Every consulted metadata source failed with a request error, rather than answering

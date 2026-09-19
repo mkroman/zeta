@@ -24,14 +24,19 @@ pub struct Chaturbate {
 /// Errors that can occur when fetching or parsing a Chaturbate room.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The room page did not contain a room dossier.
     #[error("room dossier not found in page")]
     DossierNotFound,
+    /// The room dossier could not be deserialized.
     #[error("failed to deserialize room dossier: {0}")]
     Deserialize(#[from] serde_json::Error),
+    /// A zeta error occurred while sending the reply.
     #[error("zeta error: {0}")]
     Zeta(#[from] ZetaError),
+    /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
 }
@@ -83,6 +88,12 @@ impl Plugin<Context> for Chaturbate {
 impl Chaturbate {
 
     /// Creates a new [`Chaturbate`] plugin instance.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the room dossier extraction regex fails to compile, which can only happen on a
+    /// programming error since the pattern is a constant.
+    #[must_use]
     pub fn new(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
         // The dossier is assigned as a JSON-encoded string literal, terminated by a semicolon

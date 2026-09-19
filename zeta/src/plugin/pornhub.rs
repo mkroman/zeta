@@ -30,12 +30,16 @@ pub struct PornHub {
 /// Errors that can occur when interacting with the PornHub API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The API response could not be deserialized.
     #[error("could not deserialize response: {0}")]
     Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
+    /// The requested video does not exist.
     #[error("resource not found")]
     NotFound,
+    /// The API returned an error other than a missing video.
     #[error("invalid response")]
     InvalidResponse,
 }
@@ -223,6 +227,7 @@ impl PornHub {
 }
 
 /// Checks if the URL is a valid PornHub video URL.
+#[must_use]
 pub fn is_pornhub_video_url(url: &Url) -> bool {
     url.host_str() == Some(PORNHUB_HOST) && url.path() == "/view_video.php"
 }

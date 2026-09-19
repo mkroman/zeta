@@ -76,10 +76,13 @@ pub struct Twitch {
 /// Errors that can occur during Twitch plugin execution.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The Twitch API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
+    /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
 }

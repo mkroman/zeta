@@ -65,18 +65,23 @@ const fn default_title_length() -> usize {
     150
 }
 
+/// The TikTok plugin: summarizes and mirrors TikTok video links.
 pub struct Tiktok {
     client: reqwest::Client,
     mirror: Option<MirrorTarget>,
     settings: Settings,
 }
 
+/// Errors that can occur while summarizing or mirroring TikTok videos.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// A shortened link did not redirect to a valid TikTok URL.
     #[error("shortened link did not redirect to a valid url")]
     InvalidRedirect,
+    /// TikTok's oEmbed API returned an error response.
     #[error("oembed error: {0}")]
     OEmbed(#[from] oembed::Error),
 }

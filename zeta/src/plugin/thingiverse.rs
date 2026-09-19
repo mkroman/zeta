@@ -48,10 +48,13 @@ pub struct Thingiverse {
 /// Errors that can occur during plugin execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The linked thing does not exist.
     #[error("resource not found")]
     NotFound,
+    /// The Thingiverse API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
 }

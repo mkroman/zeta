@@ -1,9 +1,4 @@
 #![allow(clippy::doc_markdown)]
-// The plugin modules document themselves at the module level; item-level documentation,
-// `#[must_use]`, and `Default` impls across every bundled plugin are not maintained here.
-#![allow(missing_docs)]
-#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
-#![allow(clippy::must_use_candidate, clippy::derivable_impls, clippy::new_without_default)]
 
 use std::collections::HashMap;
 use std::future::Future;

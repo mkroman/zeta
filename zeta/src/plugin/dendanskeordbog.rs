@@ -48,6 +48,7 @@ const fn default_true() -> bool {
     true
 }
 
+/// The Den Danske Ordbog plugin: looks up Danish words on behalf of `.ddo` commands.
 pub struct DenDanskeOrdbog {
     client: dendanskeordbog::Client,
     settings: Settings,
@@ -141,6 +142,8 @@ impl Plugin<Context> for DenDanskeOrdbog {
 }
 
 impl DenDanskeOrdbog {
+    /// Creates a new plugin instance around a client built for the given HTTP configuration.
+    #[must_use]
     pub fn new(config: &HttpConfig, settings: Settings) -> DenDanskeOrdbog {
         let http_client = http::build_client(config);
         let client = dendanskeordbog::Client::with_client(http_client);

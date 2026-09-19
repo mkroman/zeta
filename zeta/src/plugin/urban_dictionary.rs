@@ -13,7 +13,10 @@ use tracing::debug;
 
 use crate::{config::HttpConfig, http, plugin::prelude::*, utils::Truncatable, utils::collapse_whitespace};
 
+/// The usage line sent for empty `.ud` queries.
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
+
+/// The Urban Dictionary API base URL.
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
 
 /// Settings for the urban_dictionary plugin, from its `[plugins.urban_dictionary]` configuration
@@ -53,6 +56,7 @@ pub struct UrbanDictionary {
 /// Errors that can occur during execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// The Urban Dictionary API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
 }
@@ -60,6 +64,7 @@ pub enum Error {
 /// List of definitions.
 #[derive(Debug, Deserialize)]
 pub struct Definitions {
+    /// The definitions, most relevant first.
     pub list: Vec<Definition>,
 }
 
@@ -157,6 +162,8 @@ impl Display for DefinitionFormatter<'_> {
 }
 
 impl UrbanDictionary {
+    /// Creates a new plugin instance around a client built for the given HTTP configuration.
+    #[must_use]
     pub fn new(config: &HttpConfig, settings: Settings) -> Self {
         let client = http::build_client(config);
 

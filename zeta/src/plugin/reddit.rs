@@ -59,8 +59,10 @@ pub struct Settings {
 /// Errors that can occur during Reddit interaction
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The Reddit API returned an error response.
     #[error("reddit api error: {0}")]
     Reddit(#[from] reddit::Error),
+    /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
 }
@@ -128,6 +130,12 @@ impl Plugin<Context> for Reddit {
 }
 
 impl Reddit {
+    /// Processes each reddit link in `urls`, posting a summary for every recognized link kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if a Reddit API request fails or a reply cannot be sent; individual
+    /// unrecognized URLs are skipped.
     pub async fn process_urls(
         &self,
         urls: &Vec<Url>,

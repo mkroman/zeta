@@ -26,7 +26,14 @@ const UNICODE: CommandSpec = CommandSpec::new(
     "Show a character's Unicode properties (not implemented)",
 );
 
+/// The string utilities plugin: offline text transformations for its commands.
 pub struct StringUtils;
+
+impl Default for StringUtils {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Plugin<Context> for StringUtils {
@@ -104,6 +111,8 @@ fn str_to_hex_string(s: &str) -> String {
 }
 
 impl StringUtils {
+    /// Creates a new string utils plugin instance.
+    #[must_use]
     pub const fn new() -> StringUtils {
         StringUtils
     }

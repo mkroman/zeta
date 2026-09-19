@@ -143,16 +143,21 @@ pub struct YouTube {
 /// YouTube API and plugin-specific error types.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// The API returned a response the plugin does not handle.
     #[error("server returned invalid response")]
     InvalidResponse,
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The search or video lookup matched nothing.
     #[error("no results")]
     NoResults,
+    /// The API response could not be deserialized.
     #[error("deserialization error: {0}")]
     Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
 }
 
+/// The kind of YouTube resource a URL points at.
 #[derive(Eq, PartialEq, Debug)]
 #[non_exhaustive]
 pub enum UrlKind {
@@ -173,10 +178,15 @@ pub enum UrlKind {
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct Snippet {
+    /// The video title, possibly containing HTML entities.
     pub title: String,
+    /// The video description.
     pub description: String,
+    /// The title of the channel that uploaded the video.
     pub channel_title: String,
+    /// The video category id, resolvable through the video categories map.
     pub category_id: String,
+    /// Whether the video is a `"live"`, `"upcoming"`, or regular broadcast.
     pub live_broadcast_content: String,
 }
 
@@ -185,6 +195,7 @@ pub struct Snippet {
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct Statistics {
+    /// The number of times the video has been viewed, as a decimal string.
     pub view_count: String,
 }
 
@@ -193,6 +204,7 @@ pub struct Statistics {
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct ContentDetails {
+    /// The video duration as an ISO 8601 duration string (e.g. `PT4M13S`).
     pub duration: String,
 }
 
@@ -210,12 +222,19 @@ pub struct LiveStreamingDetails {
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct Video {
+    /// The API resource type, e.g. `youtube#video`.
     pub kind: String,
+    /// The etag of the resource.
     pub etag: String,
+    /// The video id.
     pub id: String,
+    /// The video's basic details, present in the `snippet` API part.
     pub snippet: Option<Snippet>,
+    /// The video's statistics, present in the `statistics` API part.
     pub statistics: Option<Statistics>,
+    /// The video's content details, present in the `contentDetails` API part.
     pub content_details: Option<ContentDetails>,
+    /// The video's live streaming details, present for live and upcoming streams.
     pub live_streaming_details: Option<LiveStreamingDetails>,
 }
 
@@ -224,43 +243,63 @@ pub struct Video {
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct Search {
+    /// The API resource type, e.g. `youtube#searchResult`.
     pub kind: String,
+    /// The etag of the search result.
     pub etag: String,
+    /// The id of the matched resource, typed by its kind.
     pub id: SearchId,
+    /// The matched resource's basic details.
     pub snippet: SearchSnippet,
 }
 
-// TODO: rework this so it uses an enum
+/// The id of a search result, typed by the kind of resource the search matched.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct SearchId {
+    /// The API resource type of the matched id, e.g. `youtube#video`.
     pub kind: String,
+    /// The video id, present for video results.
     pub video_id: Option<String>,
+    /// The channel id, present for channel results.
     pub channel_id: Option<String>,
+    /// The playlist id, present for playlist results.
     pub playlist_id: Option<String>,
 }
 
+/// The snippet of a search result.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct SearchSnippet {
+    /// The matched resource's title, possibly containing HTML entities.
     pub title: String,
+    /// The matched resource's description.
     pub description: String,
+    /// The id of the channel the matched resource belongs to.
     pub channel_id: String,
+    /// The title of the channel the matched resource belongs to.
     pub channel_title: String,
+    /// The available thumbnails, keyed by their resolution name (e.g. `default`, `high`).
     pub thumbnails: HashMap<String, SearchSnippetThumbnail>,
+    /// When the matched resource was published.
     #[serde(with = "time::serde::rfc3339")]
     pub published_at: OffsetDateTime,
+    /// Whether the resource is a `"live"`, `"upcoming"`, or regular broadcast.
     pub live_broadcast_content: String,
 }
 
+/// A search result thumbnail.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct SearchSnippetThumbnail {
+    /// The thumbnail image URL.
     pub url: String,
+    /// The image width, in pixels.
     pub width: u32,
+    /// The image height, in pixels.
     pub height: u32,
 }
 
@@ -269,8 +308,11 @@ pub struct SearchSnippetThumbnail {
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct CategorySnippet {
+    /// The id of the category's channel (usually the YouTube channel id).
     pub channel_id: String,
+    /// The category title, e.g. "Music".
     pub title: String,
+    /// Whether videos can be assigned to this category.
     pub assignable: bool,
 }
 
@@ -279,9 +321,13 @@ pub struct CategorySnippet {
 #[allow(unused)]
 #[serde(rename_all = "camelCase")]
 pub struct Category {
+    /// The API resource type, e.g. `youtube#videoCategory`.
     pub kind: String,
+    /// The etag of the category.
     pub etag: String,
+    /// The category id.
     pub id: String,
+    /// The category's details.
     pub snippet: CategorySnippet,
 }
 
@@ -290,8 +336,11 @@ pub struct Category {
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
 pub struct ApiListResponse<R> {
+    /// The API resource type of the list, e.g. `youtube#videoListResponse`.
     pub kind: String,
+    /// The etag of the list.
     pub etag: String,
+    /// The list items.
     pub items: Vec<R>,
 }
 
@@ -301,6 +350,7 @@ pub type VideosResponse = ApiListResponse<Video>;
 /// Response with a list of YouTube video categories.
 pub type CategoriesResponse = ApiListResponse<Category>;
 
+/// Response with a list of YouTube search results.
 pub type SearchListResponse = ApiListResponse<Search>;
 
 #[async_trait]
@@ -375,6 +425,8 @@ impl Plugin<Context> for YouTube {
 }
 
 impl YouTube {
+    /// Creates a new plugin instance for the resolved `api_key` and the settings it configures.
+    #[must_use]
     pub fn with_config(settings: &Settings, api_key: String, config: &HttpConfig) -> Self {
         let client = http::build_client(config);
 
@@ -584,6 +636,7 @@ fn extract_query_param(url: &Url, param: &str) -> Option<String> {
 }
 
 /// Parses the given `url` and returns a [`UrlKind`] depending on the type of YouTube URL.
+#[must_use]
 pub fn parse_youtube_url(url: &Url) -> Option<UrlKind> {
     match url.host_str()? {
         YOUTU_BE_HOST => parse_youtu_be_url(url),

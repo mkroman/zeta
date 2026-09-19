@@ -86,8 +86,10 @@ pub struct Opts {
     record_type: RecordType,
 }
 
+/// Errors that can occur while resolving DNS records.
 #[derive(Error, Debug, Diagnostic)]
 pub enum Error {
+    /// The domain could not be resolved through the configured nameservers.
     #[error("could not resolve domain: {0}")]
     Resolve(#[source] NetError),
 }
@@ -96,10 +98,13 @@ pub enum Error {
 const DIG: CommandSpec =
     CommandSpec::with_args::<Opts>(".dig", "Look up DNS records for a domain");
 
+/// The dig plugin: resolves DNS records on behalf of `.dig` commands.
 pub struct Dig {
     resolver: TokioResolver,
 }
 
+/// A successful DNS lookup, formatting one `dig`-style reply line per record.
+#[must_use]
 pub struct LookupResult(Lookup);
 
 impl Display for LookupResult {
@@ -193,6 +198,12 @@ fn build_resolver(nameservers: &[IpAddr]) -> Result<TokioResolver, BoxError> {
 }
 
 impl Dig {
+    /// Looks up `record_type` records for `name` through the configured nameservers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Resolve`] if the lookup fails, e.g. when the domain has no records of
+    /// the requested type or the nameservers are unreachable.
     pub async fn resolve(
         &self,
         name: &str,

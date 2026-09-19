@@ -18,14 +18,19 @@ use crate::{config::HttpConfig, duration::TimeInWords, http, plugin::prelude::*}
 /// Base URL for the TVmaze API.
 pub const API_BASE_URL: &str = "https://api.tvmaze.com";
 
+/// Errors that can occur while talking to the TVmaze API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// The API response could not be deserialized.
     #[error("could not deserialize response: {0}")]
     Deserialize(#[from] serde_path_to_error::Error<serde_json::Error>),
+    /// No show matches the search query.
     #[error("resource not found")]
     NotFound,
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The API returned a status the plugin does not handle.
     #[error("unexpected http response")]
     UnexpectedResponse,
 }
@@ -33,6 +38,7 @@ pub enum Error {
 /// The `.next` command.
 const NEXT: CommandSpec = CommandSpec::new(".next", "Show when a show's next episode airs");
 
+/// The TVmaze plugin: looks up shows and their next episodes.
 pub struct Tvmaze {
     /// HTTP client for API requests.
     client: reqwest::Client,
@@ -118,13 +124,26 @@ pub struct Episode {
     pub airstamp: Option<time::OffsetDateTime>,
 }
 
-/// Cachced collection of API endpoint URLs.
+/// Cached collection of API endpoint URLs.
 pub struct EndpointUrls {
     /// URL for single show search endpoint.
     pub single_search: Url,
 }
 
+impl Default for EndpointUrls {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EndpointUrls {
+    /// Builds the collection of TVmaze endpoint URLs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the API base URL fails to parse, which can only happen on a programming error
+    /// since the base URL is a constant.
+    #[must_use]
     pub fn new() -> EndpointUrls {
         EndpointUrls {
             single_search: Url::parse(&format!("{API_BASE_URL}/singlesearch/shows"))
@@ -154,6 +173,7 @@ impl Plugin<Context> for Tvmaze {
 
 impl Tvmaze {
     /// Creates a new TVmaze plugin instance.
+    #[must_use]
     pub fn new(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
         let urls = EndpointUrls::new();

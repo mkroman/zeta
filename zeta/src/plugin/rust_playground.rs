@@ -80,9 +80,12 @@ pub struct RustPlayground {
 }
 
 #[derive(Debug, thiserror::Error)]
+/// Errors that can occur while evaluating code on the Rust Playground.
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The playground response could not be deserialized.
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 }

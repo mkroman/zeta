@@ -48,8 +48,10 @@ pub struct HowLongToBeat {
 /// Errors that can occur during API interactions.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The HowLongToBeat API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
 }

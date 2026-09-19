@@ -58,12 +58,16 @@ pub struct Spotify {
     uri_regex: Regex,
 }
 
+/// Errors that can occur while talking to the Spotify API.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The Spotify API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
+    /// The token response could not be deserialized.
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 }

@@ -50,10 +50,13 @@ pub struct IsItOpen {
 /// Errors that can occur during plugin execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// No matching place was found, or the place has no opening hours.
     #[error("place not found")]
     NotFound,
+    /// The Google Maps API returned an error response.
     #[error("api error: {0}")]
     Api(String),
 }

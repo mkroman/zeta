@@ -36,24 +36,34 @@ const GEOIP: CommandSpec = CommandSpec::with_args::<Opts>(
     "Look up the geolocation of a domain or IP",
 );
 
+/// The geoip plugin: geolocates addresses on behalf of `.geoip` commands.
 pub struct GeoIp {
+    /// The HTTP client used for API requests.
     pub client: reqwest::Client,
     api_key: String,
 }
 
+/// A successful geolocation lookup, formatting one reply line with the reported details.
+#[must_use]
 #[derive(Default)]
 pub struct LookupResult(IpInfo);
 
+/// Errors that can occur while geolocating an address.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// The API response could not be deserialized.
     #[error("could not deserialize response: {0}")]
     Deserialize(#[source] reqwest::Error),
+    /// Sending the HTTP request failed.
     #[error("http request failed")]
     Request(#[from] reqwest::Error),
+    /// The domain could not be resolved to an IP address.
     #[error("could not resolve domain: {0}")]
     Resolve(#[source] hickory_resolver::net::NetError),
+    /// The domain resolved no IP addresses at all.
     #[error("domain resolved no records")]
     NoDomainRecords,
+    /// The input is neither a domain nor an IP address.
     #[error("invalid input")]
     InvalidInput,
 }
@@ -203,6 +213,15 @@ impl GeoIp {
         }
     }
 
+    /// Geolocates `name`, a domain or IP address, through the ip2location.io API.
+    ///
+    /// Domains are first resolved through the bot's shared DNS resolver, using the first
+    /// resolved address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`enum@Error`] when the input is neither a domain nor an IP address, the domain
+    /// cannot be resolved, the request fails, or the response cannot be parsed.
     pub async fn resolve(&self, name: &str) -> Result<LookupResult, Error> {
         let ip = GeoIp::resolve_domain(name).await?;
         let params = [
