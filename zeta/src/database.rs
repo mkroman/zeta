@@ -126,6 +126,35 @@ impl std::error::Error for DbError {
     }
 }
 
+/// Generates the database error constructors for a repository error enum.
+///
+/// The generated `load`, `insert` and `delete` constructors wrap a [`sqlx::Error`] into a
+/// [`DbError`] naming `$entity`, wrapped into `$error::Database` — the variant every repository
+/// error enum carries. The macro keeps that wiring in one place instead of three near-identical
+/// constructor blocks per plugin.
+macro_rules! database_error {
+    ($error:ty, $entity:literal) => {
+        impl $error {
+            /// Constructs the error for a failed load from the database.
+            pub(crate) const fn load(source: sqlx::Error) -> Self {
+                Self::Database(DbError::load($entity, source))
+            }
+
+            /// Constructs the error for a failed insert into the database.
+            pub(crate) const fn insert(source: sqlx::Error) -> Self {
+                Self::Database(DbError::insert($entity, source))
+            }
+
+            /// Constructs the error for a failed delete from the database.
+            pub(crate) const fn delete(source: sqlx::Error) -> Self {
+                Self::Database(DbError::delete($entity, source))
+            }
+        }
+    };
+}
+
+pub(crate) use database_error;
+
 /// Connects to the test database, if one is configured.
 ///
 /// Returns `None` when `ZETA_TEST_DATABASE_URL` is unset, so database-backed tests skip instead
