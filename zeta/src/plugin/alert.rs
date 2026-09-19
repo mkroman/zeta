@@ -687,12 +687,9 @@ mod tests {
         Alert {
             id: 1,
             nickname: "smoke".into(),
-            username: "smoke".into(),
-            hostname: "smoke".into(),
             channel: "#smoke".into(),
             message: message.into(),
             time,
-            created_at: time,
         }
     }
 

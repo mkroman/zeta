@@ -656,7 +656,6 @@ mod tests {
                 .iter()
                 .all(|filter| filter.channel.as_deref() == Some("#chan"))
         );
-        assert!(filters.iter().all(|filter| filter.created_by == "smoke"));
     }
 
     #[test]
@@ -773,8 +772,6 @@ mod tests {
             nickname: None,
             username: Some("*other".into()),
             hostname: None,
-            created_by: "smoke".into(),
-            created_at: sqlx::types::chrono::Utc::now(),
         };
 
         assert_eq!(describe(&filter), "#12: host=*.com user=*other (#foo)");
@@ -787,8 +784,6 @@ mod tests {
             nickname: None,
             username: None,
             hostname: None,
-            created_by: "smoke".into(),
-            created_at: sqlx::types::chrono::Utc::now(),
         };
 
         assert_eq!(describe(&global), "#3: path=/title/* (all channels)");

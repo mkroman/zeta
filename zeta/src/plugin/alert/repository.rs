@@ -37,7 +37,7 @@ impl AlertRepository {
                 nickname, username, hostname, channel, message, time
             ) VALUES (
                 $1, $2, $3, $4, $5, $6
-            ) RETURNING id, nickname, username, hostname, channel, message, time, created_at",
+            ) RETURNING id, nickname, channel, message, time",
         )
         .bind(alert.nickname)
         .bind(alert.username)
@@ -60,7 +60,7 @@ impl AlertRepository {
         trace!(?cutoff, "loading alerts from database");
 
         sqlx::query_as(
-            r"SELECT id, nickname, username, hostname, channel, message, time, created_at
+            r"SELECT id, nickname, channel, message, time
               FROM alerts
               WHERE time <= $1
               ORDER BY time",
@@ -81,7 +81,7 @@ impl AlertRepository {
         trace!(channel, nickname, "loading pending alerts from database");
 
         sqlx::query_as(
-            r"SELECT id, nickname, username, hostname, channel, message, time, created_at
+            r"SELECT id, nickname, channel, message, time
               FROM alerts
               WHERE channel = $1 AND nickname = $2
               ORDER BY time",

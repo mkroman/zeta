@@ -32,7 +32,7 @@ impl NotificationRepository {
         trace!("loading notifications from database");
 
         sqlx::query_as(
-            r"SELECT id, target, nickname, username, hostname, channel, message, created_at
+            r"SELECT id, target, nickname, channel, message, created_at
               FROM notifications",
         )
         .fetch_all(&self.db)
