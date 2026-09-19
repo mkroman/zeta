@@ -50,6 +50,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install Rust ${{ inputs.toolchain }}
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
@@ -65,7 +67,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-targets: true
       - name: Run tests
-        run: cargo test ${{ inputs.test-args }} ${{ !inputs.fail-fast && '--no-fail-fast' || '' }}
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+          FAIL_FAST: ${{ !inputs.fail-fast && '--no-fail-fast' || '' }}
+        run: cargo test ${TEST_ARGS} ${FAIL_FAST}
 
   # Clippy runs as its own job because it doesn't play nice and reuse the
   # intermediate artifacts built by `cargo test` anyway.
@@ -75,6 +80,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install Rust ${{ inputs.toolchain }}
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:

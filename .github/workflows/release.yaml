@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,6 +24,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
@@ -46,13 +47,13 @@ jobs:
     name: Test
     needs:
       - check
-    uses: ./.github/workflows/test.yaml
+    uses: $/.github/workflows/test.yaml
 
   container_image:
     name: Container Image
     needs:
       - test
-    uses: ./.github/workflows/container-image.yaml
+    uses: $/.github/workflows/container-image.yaml
     with:
       images: ghcr.io/${{ github.repository }}
       push: true
@@ -60,6 +61,9 @@ jobs:
         type=ref,event=tag
       cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/buildcache
       cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/buildcache,mode=max
+    # Pushing the image and registry buildcache to ghcr needs packages: write.
+    permissions:
+      packages: write
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -80,6 +84,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
@@ -137,6 +143,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
