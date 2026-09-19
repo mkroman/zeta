@@ -648,7 +648,7 @@ mod tests {
         assert!(!title.is_episode());
 
         let message = super::super::format_title(&title);
-        assert!(message.starts_with(super::super::format::PREFIX));
+        assert!(message.starts_with(&super::super::format::prefix()));
         assert!(message.contains("Peggle Nights"));
     }
 

@@ -35,7 +35,7 @@ pub use {
     model::{Person, SearchResult, SeriesInfo, Title},
 };
 
-use format::PREFIX;
+use format::prefix;
 
 /// Number of search results to request.
 const SEARCH_LIMIT: usize = 5;
@@ -142,20 +142,20 @@ impl Plugin<Context> for Imdb {
 
         let query = opts.query();
         if query.is_empty() {
-            client.send_privmsg(channel, format!("{PREFIX} usage: !imdb <title>"))?;
+            client.send_privmsg(channel, format!("{} usage: !imdb <title>", prefix()))?;
             return Ok(());
         }
 
         let results = match self.client.search(&query, SEARCH_LIMIT).await {
             Ok(results) => results,
             Err(err) => {
-                client.send_privmsg(channel, format!("{PREFIX} {err}"))?;
+                client.send_privmsg(channel, format!("{} {err}", prefix()))?;
                 return Ok(());
             }
         };
 
         let Some(result) = results.first() else {
-            client.send_privmsg(channel, format!("{PREFIX} no results"))?;
+            client.send_privmsg(channel, format!("{} no results", prefix()))?;
             return Ok(());
         };
 
@@ -186,7 +186,7 @@ impl Imdb {
     ) -> Result<(), ZetaError> {
         match result {
             Ok(message) => client.send_privmsg(channel, message)?,
-            Err(err) => client.send_privmsg(channel, format!("{PREFIX} {err}"))?,
+            Err(err) => client.send_privmsg(channel, format!("{} {err}", prefix()))?,
         }
 
         Ok(())
