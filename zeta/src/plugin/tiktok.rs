@@ -10,7 +10,6 @@
 mod oembed;
 mod urls;
 
-use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
@@ -220,21 +219,23 @@ impl Tiktok {
 }
 
 /// Formats the oEmbed details as a human-readable summary of the video.
+///
+/// The title and author clauses are written independently, so a summary with only one of them
+/// does not carry the other's connecting text.
 fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
-    let mut buf = String::new();
+    let title = embed
+        .title
+        .as_deref()
+        .map(|title| title.truncate_with_suffix(title_length, "…").trim().to_owned());
 
-    if let Some(title) = embed.title.as_deref() {
-        let truncated = title.truncate_with_suffix(title_length, "…");
-        let trimmed = truncated.trim();
-
-        let _ = write!(buf, "“\x0f{trimmed}\x0310” is a ");
+    match (title, embed.author_name.as_deref()) {
+        (Some(title), Some(author)) => Some(format!(
+            "“{RESET}{title}{COLOR}” is a TikTok video by{RESET} {author}"
+        )),
+        (Some(title), None) => Some(format!("“{RESET}{title}{COLOR}”")),
+        (None, Some(author)) => Some(format!("TikTok video by{RESET} {author}")),
+        (None, None) => None,
     }
-
-    if let Some(author_name) = embed.author_name.as_deref() {
-        let _ = write!(buf, "TikTok video by\x0f {author_name}");
-    }
-
-    (!buf.is_empty()).then_some(buf)
 }
 
 #[cfg(test)]
