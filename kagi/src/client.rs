@@ -575,7 +575,7 @@ mod tests {
         let messages = parse_stream(&stream);
         let results = parse_search_result_messages(&messages);
 
-        assert!(!results.is_empty());
+        assert_ne!(results, Vec::new());
 
         let result = results.first().unwrap();
 
@@ -592,7 +592,6 @@ mod tests {
         let messages = parse_kagi_stream(&stream);
         let results = parse_search_result_messages(&messages);
 
-        assert!(!results.is_empty());
         assert_eq!(results.len(), 19);
 
         let result = results.first().unwrap();

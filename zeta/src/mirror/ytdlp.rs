@@ -436,7 +436,7 @@ mod tests {
         assert!(!download.is_unsupported_codec());
 
         let output: JsonDump = serde_json::from_str("{}").unwrap();
-        assert!(output.requested_downloads.is_empty());
+        assert_eq!(output.requested_downloads, Vec::new());
     }
 
     #[test]

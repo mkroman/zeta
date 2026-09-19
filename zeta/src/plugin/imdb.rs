@@ -270,7 +270,7 @@ mod tests {
         let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
 
         let results = client.search("peggle nights", SEARCH_LIMIT).await.unwrap();
-        assert!(!results.is_empty());
+        assert_ne!(results, Vec::new());
 
         // The top match for a stable query must still decode into the full model.
         let title = client.title(&results[0].id).await.unwrap();

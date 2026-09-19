@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn default_settings_build_a_resolver() {
         let settings = Settings::default();
-        assert!(!settings.nameservers.is_empty());
+        assert_ne!(settings.nameservers, Vec::<IpAddr>::new());
 
         assert!(
             build_resolver(&settings.nameservers).is_ok(),

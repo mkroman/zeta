@@ -345,7 +345,7 @@ mod tests {
 
         let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
 
-        assert!(stopped.is_empty());
+        assert_eq!(stopped, Vec::<String>::new());
         assert!(matches!(
             drain(&mut mailbox)[..],
             [Event::Command(ref command)] if command.args() == "example.com"
@@ -559,6 +559,6 @@ mod tests {
         // The evicted plugin receives nothing further.
         let stopped = index.dispatch(&Filters::default(), message("n!u@h", "JOIN", &["#test"]));
 
-        assert!(stopped.is_empty());
+        assert_eq!(stopped, Vec::<String>::new());
     }
 }

@@ -621,7 +621,7 @@ mod tests {
             .map(SearchResult::from)
             .collect();
 
-        assert!(!results.is_empty());
+        assert_ne!(results, Vec::new());
         assert_eq!(results[0].id, "tt14663588");
         assert_eq!(results[0].title.as_deref(), Some("Peggle Nights"));
         assert_eq!(results[0].year, Some(2008));
@@ -710,7 +710,7 @@ mod tests {
                 .unwrap()
                 .starts_with("Bryan Lee Cranston was born on March 7, 1956")
         );
-        assert!(!person.known_for.is_empty());
+        assert_ne!(person.known_for, Vec::new());
         assert_eq!(person.known_for[0].title.as_deref(), Some("Breaking Bad"));
 
         let message = super::super::format_person(&person);
