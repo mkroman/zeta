@@ -30,6 +30,12 @@ jobs:
     with:
       toolchain: ${{ matrix.rust }}
 
+  # Runs in parallel with the tests; the container image job only waits for
+  # the test workflow, not for the docs build.
+  doc:
+    name: Rustdoc
+    uses: ./.github/workflows/doc.yaml
+
   container_image:
     name: Container Image
     needs:

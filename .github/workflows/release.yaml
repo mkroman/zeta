@@ -48,6 +48,12 @@ jobs:
       - check
     uses: ./.github/workflows/test.yaml
 
+  doc:
+    name: Rustdoc
+    needs:
+      - check
+    uses: ./.github/workflows/doc.yaml
+
   container_image:
     name: Container Image
     needs:

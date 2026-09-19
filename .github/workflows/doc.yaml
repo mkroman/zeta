@@ -1,0 +1,52 @@
+name: Doc
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "The GitHub runner to use"
+        default: "ubuntu-latest"
+        type: string
+      toolchain:
+        description: "Rust toolchain to use. Defaults to `stable`."
+        default: "stable"
+        type: string
+
+      # The following inputs are ordered after the ones above because their
+      # default values depends on them already being declared.
+      cache-key:
+        description: "Shared cache key"
+        default: "ci-${{ inputs.toolchain }}"
+        type: string
+      upload:
+        description: "Whether to upload the built documentation as an artifact"
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  doc:
+    name: Rustdoc
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+      - name: Install Rust ${{ inputs.toolchain }}
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: ${{ inputs.toolchain }}
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ inputs.cache-key }}
+          save-if: false # Don't cache rustdoc artifacts
+      - name: Build workspace documentation
+        run: cargo doc --workspace --no-deps --all-features
+      - name: Upload documentation
+        if: inputs.upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: rustdoc
+          path: target/doc
