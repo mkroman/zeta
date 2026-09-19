@@ -1,5 +1,4 @@
 //! Shared utilities.
-#![allow(unused)]
 
 use std::borrow::Cow;
 

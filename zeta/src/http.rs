@@ -92,7 +92,6 @@ pub mod client {
     ///
     /// Panics if the default HTTP client fails to build.
     #[must_use]
-    #[allow(unused)]
     pub fn build(config: &HttpConfig) -> Client {
         builder(config)
             .build()
@@ -100,7 +99,6 @@ pub mod client {
     }
 
     /// Returns a default HTTP client builder configured by [`HttpConfig`].
-    #[allow(unused)]
     pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
         reqwest::ClientBuilder::new()
             .redirect(Policy::none())
@@ -113,7 +111,6 @@ pub mod client {
 ///
 /// This is equivalent to calling [`client::build`].
 #[must_use]
-#[allow(unused)]
 #[cfg(feature = "http")]
 pub fn build_client(config: &HttpConfig) -> client::Client {
     client::build(config)
