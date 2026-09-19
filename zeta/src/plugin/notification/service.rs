@@ -1,7 +1,7 @@
 //! Notification service, keeping pending notifications in memory and persisting them in the
 //! database.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use tokio::sync::Mutex;
 use tracing::{instrument, trace};
@@ -120,7 +120,33 @@ impl NotificationService {
         taken
     }
 
-    /// Deletes the notification with the given `ids` from both the database and the cache.
+    /// Puts notifications back into the cache as pending.
+    ///
+    /// Called for notifications that could not be delivered: `take` removed them from the
+    /// cache, so without restoring them they would not be redelivered until the next restart.
+    pub async fn restore(&self, notifications: Vec<Notification>) {
+        if notifications.is_empty() {
+            return;
+        }
+
+        let mut cache = self.cache.lock().await;
+
+        for notification in notifications {
+            trace!(?notification, "restoring undelivered notification");
+
+            cache
+                .entry(notification.channel.clone())
+                .or_default()
+                .entry(notification.target.clone())
+                .or_default()
+                .push(notification);
+        }
+    }
+
+    /// Deletes the given notifications from the database.
+    ///
+    /// The cache is not touched: the notifications being delivered were already removed by
+    /// `take`, and undelivered ones are returned to the cache with `restore`.
     ///
     /// # Errors
     ///
@@ -131,19 +157,6 @@ impl NotificationService {
             return Ok(());
         }
 
-        self.repo.delete_all(ids).await?;
-
-        let deleted: HashSet<i32> = ids.iter().copied().collect();
-
-        self.cache.lock().await.retain(|_, targets| {
-            targets.retain(|_, notifications| {
-                notifications.retain(|notification| !deleted.contains(&notification.id));
-                !notifications.is_empty()
-            });
-
-            !targets.is_empty()
-        });
-
-        Ok(())
+        self.repo.delete_all(ids).await
     }
 }

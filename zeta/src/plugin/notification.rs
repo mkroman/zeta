@@ -157,8 +157,8 @@ impl Plugin<Context> for NotificationPlugin {
         }
 
         {
-            let pending = self.service.take(channel, nickname).await;
-            let mut sent_ids = Vec::with_capacity(pending.len());
+            let mut pending = self.service.take(channel, nickname).await;
+            let mut delivered = 0;
 
             for notification in &pending {
                 let message = &notification.message;
@@ -168,18 +168,29 @@ impl Plugin<Context> for NotificationPlugin {
                     .with_timezone(&Local)
                     .format("%d/%m/%Y %H:%M:%S");
 
-                if let Err(err) = client.send_privmsg(
+                match client.send_privmsg(
                     channel,
                     format!(
                         "{nickname}:{COLOR} Notification{RESET} {message}{COLOR} from{RESET} {creator}{COLOR} at{RESET} {created_at}"
                     ),
                 ) {
-                    error!(?err, "could not deliver notification");
+                    Ok(()) => delivered += 1,
+                    Err(err) => {
+                        error!(?err, "could not deliver notification");
 
-                    break;
+                        break;
+                    }
                 }
+            }
 
-                sent_ids.push(notification.id);
+            // The delivered notifications are deleted from the database in one go; the
+            // undelivered tail (when a delivery failed) returns to the cache so the next
+            // message retries it instead of leaving it stranded until restart.
+            if delivered > 0 {
+                let sent_ids = pending[..delivered]
+                    .iter()
+                    .map(|notification| notification.id)
+                    .collect::<Vec<_>>();
 
                 if let Err(err) = self.service.delete_all(&sent_ids).await {
                     error!(
@@ -188,6 +199,10 @@ impl Plugin<Context> for NotificationPlugin {
                         "could not delete delivered notifications"
                     );
                 }
+            }
+
+            if delivered < pending.len() {
+                self.service.restore(pending.split_off(delivered)).await;
             }
         }
 
