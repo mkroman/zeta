@@ -1,7 +1,9 @@
-//! Chaturbate platform integration.
+//! Expands Chaturbate room links with broadcaster details.
 //!
-//! This plugin provides information about Chaturbate broadcaster rooms when a chaturbate.com URL is
-//! posted in IRC.
+//! Links to a broadcaster room on `chaturbate.com` are answered with the broadcaster's
+//! username, gender, and room title — or just the username with an offline mark when the room
+//! is not public. The details are scraped from the room page's `window.initialRoomDossier`
+//! JSON blob rather than an API; the plugin has no settings.
 
 use regex::Regex;
 use serde::Deserialize;

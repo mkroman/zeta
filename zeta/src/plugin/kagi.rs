@@ -1,3 +1,15 @@
+//! Search the web and images through Kagi.
+//!
+//! The `.g <query>` command posts the title and URL of the top web result as a notice, and
+//! `.gis <query>` posts the first Kagi Images result (with its image URL). No results and
+//! search errors are sent as a notice.
+//!
+//! Kagi is a cookie-authenticated service: the client holds a session token — set in
+//! `[plugins.kagi]`, falling back to the `KAGI_SESSION_TOKEN` environment variable — and
+//! refreshes the session after `session_duration` (with an `Accept-Language` header taken from
+//! the `language` setting). A missing token fails plugin initialization and the plugin is
+//! skipped at startup; the HTTP timeout and user agent come from the shared `[http]` settings.
+
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};

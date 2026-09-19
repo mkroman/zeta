@@ -1,3 +1,13 @@
+//! Looks up Danish words in Den Danske Ordbog.
+//!
+//! The `.ddo <word>` command queries the dictionary's web service through the `dendanskeordbog`
+//! crate and replies with the phonetics and part of speech of the first matching entry, its
+//! inflection (Bøjning), origin (Oprindelse), first definition, and an example sentence
+//! (Eksempel). No results and lookup errors are sent as a notice.
+//!
+//! The inflection, etymology, and example are optional; each is shown by default and can be
+//! turned off in `[plugins.dendanskeordbog]`.
+
 use std::fmt::{self, Display};
 
 use dendanskeordbog::DictionaryDocument;

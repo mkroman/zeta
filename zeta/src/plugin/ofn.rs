@@ -1,7 +1,17 @@
-//! Old Fucking News, aka URL post history.
+//! Old Fucking News — tracks posted URLs and calls out reposts.
 //!
-//! This plugin tracks URLs that are posted in channels and notifies when the URL has been posted
-//! before.
+//! Every URL posted in a channel is recorded in the database (scoped to the channel and
+//! network) and checked against the history; a repost is replied to with when and by whom it
+//! was previously posted. YouTube videos are additionally tracked by their video id in
+//! a dedicated table, so reposts match across `watch?v=`, `shorts/`, and `youtu.be` links.
+//!
+//! URLs matching the host-wide [`Filters`] are skipped entirely, as are `.ofn` command
+//! invocations themselves.
+//!
+//! The `.ofn stats` command shows aggregate statistics: the number of recorded URLs and
+//! YouTube videos in total, and how many were added today.
+//!
+//! The plugin requires the `database` feature and has no settings.
 
 mod model;
 

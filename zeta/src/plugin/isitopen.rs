@@ -1,3 +1,16 @@
+//! Answers Danish natural-language questions about a place's opening hours.
+//!
+//! Messages addressed to the bot that match one of the question patterns —
+//! `hvornår åbner X?`, `hvad tid lukker X?`, `er X åbent?`, `er X lukket?` — are looked up
+//! through the Google Maps Places API (a text search followed by a place details call) and
+//! answered in Danish: the opening or closing time of the queried weekday, whether the place
+//! is currently open, 24/7 detection, or a status message when the place has no recorded
+//! opening hours.
+//!
+//! The Google Maps API key is set in `[plugins.isitopen]`, falling back to the
+//! `GOOGLE_MAPS_API_KEY` environment variable; a missing key fails plugin initialization and
+//! the plugin is skipped at startup.
+
 use std::sync::OnceLock;
 
 use regex::Regex;

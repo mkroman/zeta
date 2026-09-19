@@ -1,4 +1,4 @@
-//! URL titles and OpenGraph metadata.
+//! Posts the title and OpenGraph metadata of every linked page.
 //!
 //! Monitors messages for HTTP(s) URLs — including the `ttp`/`ttps` variants that are missing
 //! their leading `h` — fetches each page, and posts its title and OpenGraph metadata to the

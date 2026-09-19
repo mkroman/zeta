@@ -1,3 +1,14 @@
+//! Looks up how long games take to complete on HowLongToBeat.
+//!
+//! The `.hltb <game>` command searches HowLongToBeat and replies with the top match's
+//! completion times in words: Main Story, Main + Extra, and Completionist — each rendered as
+//! `--` when the game has no recorded time. No matches and fetch errors are sent as a notice.
+//!
+//! The site's unauthenticated API requires per-installation credentials: the plugin bootstraps
+//! a token and homepage key/value pair from the init endpoint, caches them in memory, sends
+//! them as request headers, and on a `403 Forbidden` refreshes the credentials and retries the
+//! search once.
+
 #![allow(clippy::doc_markdown)]
 
 use std::collections::HashMap;

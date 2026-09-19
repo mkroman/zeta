@@ -42,7 +42,7 @@ impl NotificationService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Load`] if the notifications could not be fetched from the database.
+    /// Returns [`Error::Database`] if the notifications could not be fetched from the database.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
         trace!("loading notifications into memory");
@@ -70,7 +70,7 @@ impl NotificationService {
     /// # Errors
     ///
     /// Returns [`Error::TooManyPending`] if the target already has the maximum number of pending
-    /// notifications in the channel, or [`Error::Insert`] if the notification could not be
+    /// notifications in the channel, or [`Error::Database`] if the notification could not be
     /// inserted into the database.
     #[instrument(skip_all, err)]
     pub async fn create(&self, notification: NewNotification) -> Result<Notification, Error> {
@@ -124,7 +124,7 @@ impl NotificationService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Delete`] if the notifications could not be deleted from the database.
+    /// Returns [`Error::Database`] if the notifications could not be deleted from the database.
     #[instrument(skip_all, err)]
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
         if ids.is_empty() {

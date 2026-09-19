@@ -1,3 +1,24 @@
+//! Expands YouTube links with video details and searches YouTube for videos.
+//!
+//! Video links — `youtube.com/watch?v=<id>`, `youtube.com/shorts/<id>`, and `youtu.be/<id>` —
+//! are resolved through the YouTube Data API v3 and replied to with the title, duration,
+//! category, channel, and view count; live and upcoming streams are described as such along
+//! with their concurrent viewer count (falling back to the total view count). Playlist,
+//! channel, and handle URLs are parsed but deliberately left to other plugins.
+//!
+//! The `.yt <query>` command searches YouTube and posts the top video's title with a `watch?v=`
+//! link. An invocation whose arguments are themselves a YouTube URL resolves it as a link
+//! below instead of searching for it as a query, so the two event kinds do not double up.
+//!
+//! The video category map is cached in memory with a 30-minute TTL, keyed by the `region_code`
+//! setting (default `US`); the `safe_search` setting (default `none`) is passed to search
+//! requests. The API key is set in `[plugins.youtube]`, falling back to the `YOUTUBE_API_KEY`
+//! environment variable; a missing key fails plugin initialization and the plugin is skipped
+//! at startup.
+//!
+//! The URL parser behind link detection is [`parse_youtube_url`], reused by other plugins
+//! (e.g. `ofn`) to identify video links.
+
 #![allow(clippy::doc_markdown)]
 
 use std::collections::HashMap;

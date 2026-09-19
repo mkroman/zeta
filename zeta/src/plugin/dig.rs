@@ -1,3 +1,14 @@
+//! Resolves DNS records through hickory-resolver.
+//!
+//! The `.dig <domain> [record-type]` command looks up `domain` through the configured
+//! nameservers — Cloudflare's public resolvers by default — and replies with one line per
+//! record: name, TTL, class, type, and data, in `dig` output format. The record type defaults
+//! to `A`, parses case-insensitively (`.dig example.com AAAA`), and resolves against the
+//! nameservers configured in `[plugins.dig]` (an empty list is rejected at startup).
+//!
+//! A resolver is built once at plugin initialization, querying the nameservers over both UDP
+//! and TCP; the host file is never consulted.
+
 use std::fmt::Display;
 use std::net::IpAddr;
 

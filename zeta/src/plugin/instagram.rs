@@ -1,7 +1,7 @@
-//! Instagram integration.
+//! Summarises Instagram links and mirrors their videos to S3.
 //!
-//! Summarises Instagram media links — feed posts, reels, and IGTV videos — and, if mirroring is
-//! configured, downloads the videos with `yt-dlp` and mirrors them to an S3-compatible bucket,
+//! Handles feed posts, reels, and IGTV videos; if mirroring is configured, it downloads the
+//! videos with `yt-dlp` and mirrors them to an S3-compatible bucket,
 //! replying with a public link to the mirrored file. Stories are mirrored without a summary:
 //! their pages carry no metadata without an authenticated session.
 //!

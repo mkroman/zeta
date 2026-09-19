@@ -1,8 +1,13 @@
-#![allow(clippy::doc_markdown)]
-
-//! PornHub platform integration.
+//! Expands PornHub links with video details.
 //!
-//! This plugin provides functionality to display information about linked PornHub videos.
+//! `view_video.php?viewkey=<id>` links on `www.pornhub.com` are looked up through the legacy
+//! webmasters API and replied to with the video title and view count. A missing video maps to
+//! a not-found error; every other lookup failure is silently ignored, leaving the link
+//! unexpanded.
+//!
+//! The plugin has no settings.
+
+#![allow(clippy::doc_markdown)]
 
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;

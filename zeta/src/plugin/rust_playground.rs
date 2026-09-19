@@ -1,6 +1,13 @@
-//! Rust Playground integration.
+//! Evaluates Rust expressions on the online Rust Playground.
 //!
-//! Evaluates Rust code using the online Rust Playground.
+//! The `.rs <expr>` command wraps the expression in `fn main() { println!("{:?}", { expr }); }`
+//! and executes it on `play.rust-lang.org`, replying with the printed output — or the compiler
+//! errors when it fails to build. Output has its control characters (including newlines)
+//! stripped and is truncated to `max_output_length` characters with an ellipsis suffix; an
+//! empty expression replies with usage.
+//!
+//! The playground channel (`stable`), build mode (`debug`), edition (`2024`), and output limit
+//! are set in `[plugins.rust_playground]`.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};

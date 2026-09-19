@@ -1,4 +1,13 @@
-//! Helpful calculator features based on rink.
+//! Evaluates calculations with unit conversions through rink.
+//!
+//! The `.r <expression>` command evaluates the whole argument as a rink expression and replies
+//! with the one-line result as a notice — arithmetic, physical unit conversions, currency
+//! lookups (via the bundled dataset), and more. Evaluation errors are reported inline as
+//! `Error: <message>`.
+//!
+//! A rink context is built once at plugin initialization; evaluation calls are serialized
+//! through it, and a failed context build aborts plugin initialization. The plugin has no
+//! settings.
 
 use std::sync::Mutex;
 

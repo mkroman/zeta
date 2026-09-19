@@ -1,3 +1,10 @@
+//! Looks up terms in Urban Dictionary.
+//!
+//! The `.ud <query>` command requests the term from Urban Dictionary's API and replies with
+//! the definition and example of the top entry, with runs of whitespace collapsed. The
+//! definition and example text is truncated to `max_definition_length` characters (default
+//! 400) with an ellipsis suffix; an empty query replies with usage.
+
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
@@ -160,10 +167,10 @@ impl UrbanDictionary {
     ///
     /// The list of definitions may be empty.
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// On success, returns [`Ok(Definitions)`]
-    ///
+    /// Returns an [`Error`] if the request to Urban Dictionary fails or the response cannot be
+    /// parsed.
     pub async fn definitions(&self, term: &str) -> Result<Definitions, Error> {
         debug!(%term, "requesting definitions");
         let params = [("term", term)];

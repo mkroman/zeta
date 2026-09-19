@@ -1,8 +1,8 @@
-//! Reddit integration.
+//! Summarises reddit links and mirrors their hosted videos to S3.
 //!
-//! Summarises reddit links using the Reddit API and, if mirroring is configured, downloads the
-//! hosted videos of linked submissions with `yt-dlp` and mirrors them to an S3-compatible bucket,
-//! replying with a public link to the mirrored file.
+//! Link details are fetched from the Reddit API and, if mirroring is configured, the hosted
+//! videos of linked submissions are downloaded with `yt-dlp` and mirrored to an S3-compatible
+//! bucket, replying with a public link to the mirrored file.
 //!
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
 //! environment variables); without it, the plugin only posts summaries.

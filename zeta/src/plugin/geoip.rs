@@ -1,3 +1,13 @@
+//! Looks up the geolocation and network ownership of IP addresses and hostnames.
+//!
+//! The `.geoip <domain-or-ip>` command queries the ip2location.io API and replies with the
+//! autonomous system (name and ASN), country, region, and city of the address — or "No location
+//! data available" when the API reports none. Domains are first resolved through the bot's
+//! shared DNS resolver and only the first resolved address is geolocated.
+//!
+//! The API key is set in `[plugins.geoip]`, falling back to the `GEOIP_API_KEY` environment
+//! variable; a missing key fails plugin initialization and the plugin is skipped at startup.
+
 use std::fmt::Display;
 
 use argh::{ArgsInfo, FromArgs};

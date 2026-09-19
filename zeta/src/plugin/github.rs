@@ -1,3 +1,14 @@
+//! Searches GitHub repositories and reports the most starred match.
+//!
+//! The `.gh <query>` command searches the GitHub repository search API (sorted by stars) and
+//! replies with the top repository: full name, description, URL, language, and star count,
+//! prefixed with a fork mark for forks. An empty query replies with usage; API errors and
+//! empty results are reported in the reply.
+//!
+//! A GitHub API token — set in `[plugins.github]`, falling back to the `GITHUB_TOKEN`
+//! environment variable — raises the API rate limit. The token is optional: a missing one
+//! does not prevent the plugin from initializing.
+
 use std::fmt::Write;
 
 use reqwest::{

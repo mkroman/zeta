@@ -1,3 +1,13 @@
+//! Reports the bot's process health.
+//!
+//! The `.health` command replies with a snapshot of the process: physical and virtual memory
+//! in MiB (via `memory-stats`), the tokio runtime's worker count, alive task count, and global
+//! queue depth — and, when the `database` feature is compiled in, the sqlx connection pool
+//! stats (established/max connections, idle, or `closed`).
+//!
+//! The command description changes with the database feature, so `.help` advertises the right
+//! fields either way.
+
 use std::fmt::Display;
 
 use tokio::runtime::Handle;

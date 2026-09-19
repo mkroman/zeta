@@ -1,9 +1,14 @@
-#![allow(clippy::doc_markdown)]
-
-//! TVmaze API integration plugin.
+//! Looks up TV shows in TVmaze and reports their next episode.
 //!
-//! This plugin provides functionality to search for TV shows and display information
-//! about upcoming episodes using the TVmaze API.
+//! The `.next <show>` command searches TVmaze for the show (single search, first match) and
+//! replies with when its next episode airs — title, season and episode numbers, and the time
+//! until the airstamp in words — or, when no next episode is scheduled, with the show's
+//! current status ("Running", "Ended"). An unknown show, a failed request, and other errors
+//! are reported in the channel.
+//!
+//! The TVmaze API is public and needs no credentials. The plugin has no settings.
+
+#![allow(clippy::doc_markdown)]
 use reqwest::{StatusCode, Url};
 use serde::Deserialize;
 use tracing::{debug, error, instrument};

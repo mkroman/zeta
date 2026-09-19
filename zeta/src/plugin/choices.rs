@@ -1,3 +1,13 @@
+//! Settles a choice between options with a random pick.
+//!
+//! When a message addressed to the bot contains options separated by one of the configured
+//! or-keywords, e.g. `zeta: pizza eller pasta`, one of the options is chosen at random and sent
+//! back as `<nick>: pizza`. A trailing `?` on the last option is stripped.
+//!
+//! The keywords that separate the options and the separator between them — `eller` and `, ` by
+//! default, since the plugin is written for a Danish channel — are configured in
+//! `[plugins.choices]`.
+
 use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 

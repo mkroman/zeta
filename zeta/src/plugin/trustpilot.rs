@@ -1,6 +1,13 @@
-//! Trustpilot integration plugin.
+//! Looks up a business's Trustpilot score and review count.
 //!
-//! This plugin allows users to query Trustpilot for business scores and reviews via the `.tp` command.
+//! The `.tp <business>` command searches Trustpilot for the business and replies with its
+//! name, star score (halved when the API reports a 0–10 scale), number of reviews, and a link
+//! to its review page on the domain configured by `review_domain` (default `dk`). An empty
+//! query replies with usage.
+//!
+//! The API key is set in `[plugins.trustpilot]`, falling back to the `TRUSTPILOT_API_KEY`
+//! environment variable; a missing key fails plugin initialization and the plugin is skipped
+//! at startup.
 
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};

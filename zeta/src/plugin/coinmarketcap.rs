@@ -12,6 +12,11 @@
 //! Fiat currencies for price conversion are fetched from the fiat map endpoint and cached the
 //! same way; while the fiat cache is empty, validation of the optional currency argument is
 //! deferred to the API.
+//!
+//! The CoinMarketCap API key is set in `[plugins.coinmarketcap]`, falling back to the
+//! `COINMARKETCAP_API_KEY` environment variable; a missing key fails plugin initialization and
+//! the plugin is skipped at startup. The `default_currency` (USD), `cache_ttl` (24 hours), and
+//! `max_name_typos` (2) settings tune quoting and fuzzy name lookups.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;

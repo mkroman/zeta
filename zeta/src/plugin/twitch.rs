@@ -1,3 +1,18 @@
+//! Expands Twitch links with stream, clip, and video details.
+//!
+//! Links to `twitch.tv`, `www.twitch.tv`, and `clips.twitch.tv` are resolved through the
+//! Twitch Helix API: a channel URL shows the live stream's title, game, and viewer count (or a
+//! plain `<channel> - Twitch` line when offline), a clip URL shows its title, broadcaster,
+//! creator, and view count, and a `videos/<id>` URL shows the video's title, user, and view
+//! count. URLs that match none of the resource kinds — including channel subpaths — are
+//! ignored.
+//!
+//! Authentication uses the OAuth2 client-credentials flow: the application client id and
+//! secret are set in `[plugins.twitch]`, falling back to the `TWITCH_CLIENT_ID` and
+//! `TWITCH_CLIENT_SECRET` environment variables, with the access token cached and refreshed by
+//! the shared `TokenCache`. Missing credentials fail plugin initialization and the plugin is
+//! skipped at startup.
+
 #![allow(clippy::doc_markdown)]
 
 use num_format::{Locale, ToFormattedString};

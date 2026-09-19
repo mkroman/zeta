@@ -1,7 +1,7 @@
-//! TikTok integration.
+//! Summarises TikTok video links and mirrors them to S3.
 //!
-//! Summarises TikTok video links using TikTok's oEmbed API and, if mirroring is configured,
-//! downloads the videos with `yt-dlp` and mirrors them to an S3-compatible bucket, replying with a
+//! Video details are fetched from TikTok's oEmbed API and, if mirroring is configured, the
+//! videos are downloaded with `yt-dlp` and mirrored to an S3-compatible bucket, replying with a
 //! public link to the mirrored file.
 //!
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
