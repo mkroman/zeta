@@ -31,29 +31,6 @@ pub fn plugin_err<E: StdError + Send + Sync + 'static>(e: E) -> Error {
     Error::Plugin(Box::new(e))
 }
 
-/// Reads a required environment variable, returning a descriptive error on failure.
-///
-/// # Errors
-///
-/// Returns [`Error::Plugin`] if the variable is not set or contains invalid
-/// UTF-8. The error message includes the variable name.
-///
-/// # Example
-///
-/// ```ignore
-/// fn new(_ctx: &Context, _settings: &Settings) -> Result<Self, ZetaError> {
-///     let api_key = require_env("API_KEY")?;
-///     Ok(Self { api_key })
-/// }
-/// ```
-pub fn require_env(name: &str) -> Result<String, Error> {
-    std::env::var(name).map_err(|e| {
-        Error::Plugin(Box::new(std::io::Error::other(format!(
-            "environment variable `{name}`: {e}"
-        ))))
-    })
-}
-
 /// Resolves a secret from an optional configured value, falling back to an environment variable.
 ///
 /// The configured value takes precedence when it is set and non-empty; otherwise the value of the

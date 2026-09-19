@@ -17,7 +17,7 @@ pub use command::{ArgsError, CommandSpec};
 pub use error::Error;
 pub use event::{
     CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
-    NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, Tag, UrlEvent, UrlScope,
+    NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
 };
 pub use plugin::{Plugin, PluginName};
 pub use types::NoSettings;
@@ -26,10 +26,10 @@ pub mod prelude {
     pub use async_trait::async_trait;
 
     pub use super::command::{ArgsError, CommandSpec};
-    pub use super::error::{BoxError, plugin_err, require_env, resolve_secret};
+    pub use super::error::{BoxError, plugin_err, resolve_secret};
     pub use super::event::{
         CommandEvent, CtcpEvent, CtcpKind, Event, JoinEvent, KickEvent, MessageEvent, NickEvent,
-        PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, Tag, UrlEvent, UrlScope,
+        PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
     };
     pub use super::irc::{
         BOLD, COLOR, REPLY_PREFIX, RESET, notice, parse_words_or_usage, reply, reply_prefix,

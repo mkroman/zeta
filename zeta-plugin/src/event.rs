@@ -24,8 +24,6 @@ use url::Url;
 
 use crate::command::{ArgsError, CommandSpec};
 
-pub use irc::proto::message::Tag;
-
 /// Destructures a message into its `PRIVMSG` target and text.
 ///
 /// The host only constructs `PRIVMSG`-derived events for matching messages; reaching another
@@ -43,11 +41,6 @@ fn message_text(message: &Message) -> Option<(&str, &str)> {
         Command::PRIVMSG(target, text) | Command::NOTICE(target, text) => Some((target, text)),
         _ => None,
     }
-}
-
-/// Returns the IRCv3 message tags attached to `message`, if any.
-fn tags(message: &Message) -> &[Tag] {
-    message.tags.as_deref().unwrap_or(&[])
 }
 
 /// The sender of a message, as identified by its IRC prefix.
@@ -90,21 +83,15 @@ impl<'a> Sender<'a> {
     }
 }
 
-/// Generates the sender and tags accessors shared by every event type.
+/// Generates the sender accessor shared by every event type.
 ///
 /// Declared before its first use so every event struct can invoke it.
-macro_rules! sender_and_tags {
+macro_rules! event_sender {
     () => {
         /// Returns the sender of the message, if it has a nickname prefix.
         #[must_use]
         pub fn sender(&self) -> Option<Sender<'_>> {
             Sender::from_message(&self.message)
-        }
-
-        /// Returns the IRCv3 message tags attached to the message, if any.
-        #[must_use]
-        pub fn tags(&self) -> &[Tag] {
-            tags(&self.message)
         }
     };
 }
@@ -207,7 +194,7 @@ impl CommandEvent {
         self.spec.parse_words(self.args())
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// A URL was posted in a channel.
@@ -252,7 +239,7 @@ impl UrlEvent {
         privmsg(&self.message).1
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// A channel message was posted.
@@ -284,7 +271,7 @@ impl MessageEvent {
         privmsg(&self.message).1
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// A user joined a channel.
@@ -315,7 +302,7 @@ impl JoinEvent {
         Sender::from_message(&self.message).map_or("", |sender| sender.nick)
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// A user left a channel.
@@ -349,7 +336,7 @@ impl PartEvent {
         }
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// A user quit the network.
@@ -374,7 +361,7 @@ impl QuitEvent {
         }
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// A user changed their nickname; the previous identity is available through
@@ -400,7 +387,7 @@ impl NickEvent {
         }
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// A user was kicked from a channel.
@@ -443,7 +430,7 @@ impl KickEvent {
         }
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// A CTCP request or reply arrived.
@@ -497,7 +484,7 @@ impl CtcpEvent {
         parse_ctcp(self.text()).map_or("", |(_, args)| args)
     }
 
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// The kind of a [`CtcpEvent`], classified from its CTCP command.
@@ -580,13 +567,7 @@ impl RawEvent {
         }
     }
 
-    /// Returns the full IRC protocol message.
-    #[must_use]
-    pub fn message(&self) -> &Message {
-        &self.message
-    }
-
-    sender_and_tags!();
+    event_sender!();
 }
 
 /// Splits the payload of a CTCP message into its command and arguments.
@@ -842,7 +823,6 @@ mod tests {
 
         assert_eq!(event.channel(), "#test");
         assert_eq!(event.text(), "hello");
-        assert_eq!(event.tags(), &[]);
 
         let sender = event.sender().expect("prefix should be a nickname");
         assert_eq!(sender.nick, "nick");

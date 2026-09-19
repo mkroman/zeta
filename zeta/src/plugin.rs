@@ -30,8 +30,7 @@ mod prelude {
         ArgsError, BOLD, BoxError, COLOR, CommandEvent, CommandSpec, CtcpEvent, CtcpKind, Event,
         JoinEvent, KickEvent, MessageEvent, NickEvent, NoSettings, PartEvent, QuitEvent,
         REPLY_PREFIX, RESET, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope, notice,
-        parse_words_or_usage, plugin_err, reply, reply_prefix, reply_usage_lines, require_env,
-        resolve_secret,
+        parse_words_or_usage, plugin_err, reply, reply_prefix, reply_usage_lines, resolve_secret,
     };
 
     pub use super::{
