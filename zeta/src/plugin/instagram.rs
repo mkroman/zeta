@@ -50,9 +50,6 @@ use crate::{
 use self::meta::MediaDetails;
 use self::urls::{InstagramLink, MediaKind, media_url, parse_instagram_url, story_url};
 
-/// The default public URL that mirrored media are linked with.
-const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/instagram";
-
 /// The minimum interval between requests to Instagram, so that bursts of links do not trip its
 /// rate limiting.
 const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
@@ -172,12 +169,9 @@ impl Plugin<Context> for Instagram {
 
         let mirror = MirrorTarget::resolve(
             ctx.shared.get::<Mirror>(),
-            settings.prefix.as_deref(),
-            "INSTAGRAM_S3_PREFIX",
             "instagram",
+            settings.prefix.as_deref(),
             settings.public_url_base.as_deref(),
-            "INSTAGRAM_PUBLIC_URL_BASE",
-            DEFAULT_PUBLIC_URL_BASE,
         );
 
         let session_cookie = crate::utils::resolve_optional_setting(

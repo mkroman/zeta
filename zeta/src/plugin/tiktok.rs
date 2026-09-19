@@ -26,9 +26,6 @@ use crate::{
 use self::oembed::OEmbed;
 use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};
 
-/// The default public URL that mirrored videos are linked with.
-const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/tiktok";
-
 /// Settings for the tiktok plugin, from its `[plugins.tiktok]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Settings {
@@ -95,12 +92,9 @@ impl Plugin<Context> for Tiktok {
 
         let mirror = MirrorTarget::resolve(
             ctx.shared.get::<Mirror>(),
-            settings.prefix.as_deref(),
-            "TIKTOK_S3_PREFIX",
             "tiktok",
+            settings.prefix.as_deref(),
             settings.public_url_base.as_deref(),
-            "TIKTOK_PUBLIC_URL_BASE",
-            DEFAULT_PUBLIC_URL_BASE,
         );
 
         Ok(Tiktok {

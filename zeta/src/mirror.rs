@@ -391,24 +391,27 @@ impl MirrorTarget {
 
     /// Resolves a target from a plugin's configuration.
     ///
+    /// Every plugin follows the same convention: the download prefix resolves through the
+    /// `<PLUGIN>_S3_PREFIX` environment variable and defaults to the plugin name; the public
+    /// URL base resolves through `<PLUGIN>_PUBLIC_URL_BASE` and defaults to
+    /// `https://pub.rwx.im/<plugin>`.
+    ///
     /// Returns `None` when the shared mirror is unavailable or the configured public URL base is
     /// invalid, in which case the plugin should degrade to its non-mirroring behavior.
     #[must_use]
     pub fn resolve(
         mirror: Option<Arc<Mirror>>,
+        plugin: &str,
         prefix: Option<&str>,
-        prefix_env: &str,
-        prefix_default: &str,
         public_url_base: Option<&str>,
-        public_url_base_env: &str,
-        public_url_base_default: &str,
     ) -> Option<Self> {
+        let uppercase = plugin.to_ascii_uppercase();
         let public_url_base = resolve_public_url_base(
             public_url_base,
-            public_url_base_env,
-            public_url_base_default,
+            &format!("{uppercase}_PUBLIC_URL_BASE"),
+            &format!("https://pub.rwx.im/{plugin}"),
         )?;
-        let prefix = crate::utils::resolve_setting(prefix, prefix_env, prefix_default);
+        let prefix = crate::utils::resolve_setting(prefix, &format!("{uppercase}_S3_PREFIX"), plugin);
         let mirror = mirror?;
 
         Some(Self::new(mirror, prefix, public_url_base))

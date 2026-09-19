@@ -24,9 +24,6 @@ use reddit::Submission;
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
 pub const USER_AGENT: &str = concat!("linux:zeta:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");
 
-/// The default public URL that mirrored videos are linked with.
-const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/reddit";
-
 /// Settings for the reddit plugin, from its `[plugins.reddit]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Settings {
@@ -98,12 +95,9 @@ impl Plugin<Context> for Reddit {
         let client = reddit::Client::new(client_id, client_secret, user_agent, timeout);
         let mirror = MirrorTarget::resolve(
             ctx.shared.get::<Mirror>(),
-            settings.prefix.as_deref(),
-            "REDDIT_S3_PREFIX",
             "reddit",
+            settings.prefix.as_deref(),
             settings.public_url_base.as_deref(),
-            "REDDIT_PUBLIC_URL_BASE",
-            DEFAULT_PUBLIC_URL_BASE,
         );
 
         Ok(Reddit { client, mirror })
