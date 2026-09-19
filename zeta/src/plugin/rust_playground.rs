@@ -79,8 +79,8 @@ pub struct RustPlayground {
     settings: Settings,
 }
 
-#[derive(Debug, thiserror::Error)]
 /// Errors that can occur while evaluating code on the Rust Playground.
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]

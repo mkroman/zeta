@@ -23,6 +23,9 @@ on:
         default: true
         type: boolean
 
+env:
+  RUSTDOCFLAGS: "-D warnings"
+
 permissions:
   contents: read
 
