@@ -59,11 +59,8 @@ pub struct Audio {
     pub src: String,
 }
 
-/// A word definition with potential sub-definitions and related information
-///
-/// This struct represents the hierarchical nature of dictionary definitions,
-/// where a main definition can have numbered sub-definitions (1.a, 1.b, etc.)
-#[derive(Debug, Clone, Eq, PartialEq)]
+/// A word definition with related information.
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Definition {
     /// The hierarchical level of this definition
@@ -72,8 +69,6 @@ pub struct Definition {
     /// The actual definition text explaining the word's meaning
     /// Examples: "han hos visse drøvtyggere" (male of certain ruminants)
     pub description: String,
-    /// Nested sub-definitions under this definition
-    pub subdefinitions: Vec<Definition>,
     /// Example sentences or phrases demonstrating usage
     pub examples: Vec<String>,
 }
@@ -87,19 +82,6 @@ pub struct Idiom {
     /// The idiomatic phrase or expression
     /// Examples: "skille fårene fra bukkene" (separate the sheep from the goats)
     pub phrase: String,
-    // Definition and examples for this idiomatic expression
-    // pub definition: IdiomaticDefinition,
-}
-
-/// Definition structure specifically for idiomatic expressions
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct IdiomaticDefinition {
-    /// Explanation of what the idiom means
-    /// Examples: "sortere de(t) gode fra de(t) dårlige" (sort the good from the bad)
-    pub description: String,
-    /// Example sentences showing the idiom in use
-    pub examples: Vec<String>,
 }
 
 /// A complete dictionary document containing one or more entries.
@@ -130,8 +112,6 @@ impl FromHtml for Definition {
     ) -> Result<Self, Error> {
         let level = extract_required_text(element, &selectors.level, "level")?;
         let description = extract_required_text(element, &selectors.description, "description")?;
-        // TODO: let subdefinitions: Vec<Definition> = element.select(&definitions_selector);
-        let subdefinitions = vec![];
         let examples: Vec<String> = element
             .select(&selectors.example)
             .map(extract_element_text)
@@ -140,7 +120,6 @@ impl FromHtml for Definition {
         Ok(Definition {
             level,
             description,
-            subdefinitions,
             examples,
         })
     }

@@ -19,12 +19,10 @@ struct TokenCache {
     expires_at: Instant,
 }
 
-#[derive(Clone, Eq, PartialEq, Deserialize)]
+#[derive(Deserialize)]
 struct AccessTokenResponse {
     pub access_token: String,
-    pub token_type: String,
     pub expires_in: u64,
-    pub scope: String,
 }
 
 /// Reddit client.

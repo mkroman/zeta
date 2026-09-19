@@ -37,9 +37,6 @@ struct KagiMessage {
     /// The flexible payload. Using `Value` allows this struct to handle
     /// diverse message types (HTML strings, objects, or nulls) without breaking.
     pub payload: Option<Value>,
-    /// Optional version string sometimes found in the JSON body.
-    #[allow(dead_code)]
-    pub kagi_version: Option<String>,
 }
 
 /// The structured search results payload of a `search_results_json` message.

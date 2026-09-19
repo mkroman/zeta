@@ -76,7 +76,6 @@ pub enum Link {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", content = "data")]
-#[allow(unused)]
 pub enum Item {
     #[serde(rename = "t1")]
     Comment(Comment),
@@ -91,20 +90,12 @@ pub enum Item {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Listing {
-    // Not sure what this is.
-    pub dist: Option<usize>,
-    pub after: Option<String>,
-    pub before: Option<String>,
-    pub modhash: Option<String>,
-    pub geo_filter: Option<String>,
     pub children: Vec<Item>,
 }
 
 /// Details about a submission.
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Submission {
     pub subreddit: String,
     pub title: String,
@@ -193,7 +184,6 @@ pub struct RedditVideo {
 
 /// Details about a Subreddit.
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Subreddit {
     /// Display name of the subreddit.
     pub display_name: String,
@@ -209,7 +199,6 @@ pub struct Subreddit {
 
 /// Details about a comment.
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
 pub struct Comment {
     pub id: String,
     pub body: String,
