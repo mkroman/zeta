@@ -171,8 +171,8 @@ impl Plugin<Context> for NotificationPlugin {
                 if let Err(err) = client.send_privmsg(
                     channel,
                     format!(
-                        "{nickname}:\x0310 Notification\x0f {message}\x0310 from\x0f {creator}\x0310 at\x0f {created_at}"
-                    )
+                        "{nickname}:{COLOR} Notification{RESET} {message}{COLOR} from{RESET} {creator}{COLOR} at{RESET} {created_at}"
+                    ),
                 ) {
                     error!(?err, "could not deliver notification");
 

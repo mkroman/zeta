@@ -454,14 +454,14 @@ fn format_pending(pending: &[Alert]) -> String {
         .take(MAX_LISTED_ALERTS)
         .enumerate()
         .map(|(index, alert)| match index {
-            0 => format!("\x0310 Next up: {}", format_entry(alert)),
+            0 => format!("{COLOR} Next up: {}", format_entry(alert)),
             _ => format_entry(alert),
         });
 
     append_entries_within_budget(
         &mut listing,
         entries,
-        "\x0310, then: ",
+        &format!("{COLOR}, then: "),
         MAX_LISTING_LENGTH,
         0,
     );
@@ -477,7 +477,7 @@ fn format_entry(alert: &Alert) -> String {
         .truncate_with_suffix(MAX_LISTED_MESSAGE_CHARS, "…");
     let due = format_due(alert.time.with_timezone(&Local));
 
-    format!("“\x0f{message}\x0310”\x0f {due}\x0310")
+    format!("“{RESET}{message}{COLOR}”{RESET} {due}{COLOR}")
 }
 
 /// Formats the due time of an alert as `Sep 16th 11:21`.

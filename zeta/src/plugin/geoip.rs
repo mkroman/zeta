@@ -157,29 +157,31 @@ impl Display for IpInfo {
         let mut parts = Vec::new();
 
         if !self.asn_name.is_empty() {
-            parts.push(format!("AS:\x03 {}\x0310", self.asn_name));
+            parts.push(format!("AS:{RESET} {}", self.asn_name));
         }
 
         if !self.asn.is_empty() {
-            parts.push(format!("ASN:\x03 {}\x0310", self.asn));
+            parts.push(format!("ASN:{RESET} {}", self.asn));
         }
 
         if !self.country_name.is_empty() {
-            parts.push(format!("Country:\x03 {}\x0310", self.country_name));
+            parts.push(format!("Country:{RESET} {}", self.country_name));
         }
 
         if !self.region_name.is_empty() {
-            parts.push(format!("Region:\x03 {}\x0310", self.region_name));
+            parts.push(format!("Region:{RESET} {}", self.region_name));
         }
 
         if !self.city_name.is_empty() {
-            parts.push(format!("City:\x03 {}\x0310", self.city_name));
+            parts.push(format!("City:{RESET} {}", self.city_name));
         }
 
         if parts.is_empty() {
             write!(fmt, "No location data available")
         } else {
-            write!(fmt, "{}", parts.join("\x0310 "))
+            // Every part ends in the reply color, so a plain space between parts keeps the
+            // separator cyan.
+            write!(fmt, "{}", parts.join(" "))
         }
     }
 }
@@ -189,7 +191,7 @@ impl Display for LookupResult {
         let info = &self.0;
         let ip = &info.ip;
 
-        write!(fmt, "{}(\x0f{ip}\x0310): {info}", reply_prefix("GeoIP"))
+        write!(fmt, "{}({RESET}{ip}{COLOR}): {info}", reply_prefix("GeoIP"))
     }
 }
 
