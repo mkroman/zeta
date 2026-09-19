@@ -1,7 +1,17 @@
-//! Old Fucking News, aka URL post history.
+//! Old Fucking News — tracks posted URLs and calls out reposts.
 //!
-//! This plugin tracks URLs that are posted in channels and notifies when the URL has been posted
-//! before.
+//! Every URL posted in a channel is recorded in the database (scoped to the channel and
+//! network) and checked against the history; a repost is replied to with when and by whom it
+//! was previously posted. YouTube videos are additionally tracked by their video id in
+//! a dedicated table, so reposts match across `watch?v=`, `shorts/`, and `youtu.be` links.
+//!
+//! URLs matching the host-wide [`Filters`] are skipped entirely, as are `.ofn` command
+//! invocations themselves.
+//!
+//! The `.ofn stats` command shows aggregate statistics: the number of recorded URLs and
+//! YouTube videos in total, and how many were added today.
+//!
+//! The plugin requires the `database` feature and has no settings.
 
 mod model;
 
@@ -27,9 +37,18 @@ const OFN: CommandSpec = CommandSpec::with_args::<Opts>(
     "Show URL and YouTube repost statistics",
 );
 
+/// The ofn plugin: records posted URLs and reports reposts.
 pub struct Ofn;
 
+impl Default for Ofn {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Ofn {
+    /// Creates a new ofn plugin instance.
+    #[must_use]
     pub const fn new() -> Ofn {
         Ofn
     }
@@ -214,6 +233,10 @@ impl Ofn {
     }
 
     /// Returns statistics about the number of rows in the database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if the counts could not be queried from the database.
     pub async fn stats(&self, ctx: &Context) -> Result<Statistics, Error> {
         let today = Utc::now().date_naive();
         let (num_urls, num_urls_today, num_yt_ids, num_yt_ids_today): (i64, i64, i64, i64) =
@@ -494,6 +517,7 @@ enum Subcommand {
 #[argh(subcommand, name = "stats")]
 pub struct Stats {}
 
+/// The result of processing a batch of URLs: prior records found and how many were inserted.
 pub struct Report {
     /// List of URL records that were found in the database.
     found: Vec<Resource>,
@@ -501,16 +525,21 @@ pub struct Report {
     num_inserted: usize,
 }
 
+/// Errors that can occur while recording or looking up URLs.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A read from the database failed.
     #[error("could not query database: {0}")]
     QueryDatabase(#[source] sqlx::Error),
+    /// A URL could not be inserted into the database.
     #[error("could not insert url in database: {0}")]
     InsertUrl(#[source] sqlx::Error),
+    /// The URL has no host and cannot be recorded.
     #[error("can't insert url with no host")]
     InsertUrlNoHost,
 }
 
+/// A URL history resource from the database, either a YouTube video or a generic URL record.
 pub enum Resource {
     /// A YouTube video.
     YouTubeRecord(YouTubeRecord),

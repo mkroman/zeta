@@ -14,7 +14,7 @@ use super::{
 use zeta_plugin::Sender;
 use crate::database::Database;
 
-/// Stores filters in the database and mirrors them in an in-memory [`FilterIndex`].
+/// Stores filters in the database and mirrors them in an in-memory index.
 ///
 /// The database is the source of truth; the index is rebuilt from it on [`load`](Self::load) and
 /// kept in sync by [`add`](Self::add) and [`delete_ids`](Self::delete_ids). The hot lookup path
@@ -41,7 +41,7 @@ impl FilterService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Load`] if the filters could not be fetched from the database.
+    /// Returns [`Error::Database`] if the filters could not be fetched from the database.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
         let filters = self.repo.list().await?;
@@ -63,7 +63,7 @@ impl FilterService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Insert`] if the filter could not be inserted into the database.
+    /// Returns [`Error::Database`] if the filter could not be inserted into the database.
     #[instrument(skip_all, err)]
     pub async fn add(&self, filter: NewFilter) -> Result<Filter, Error> {
         let filter = self.repo.insert(filter).await?;
@@ -78,7 +78,7 @@ impl FilterService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Delete`] if the filters could not be deleted from the database.
+    /// Returns [`Error::Database`] if the filters could not be deleted from the database.
     #[instrument(skip_all, err)]
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         let removed = self.repo.delete_all(ids).await?;

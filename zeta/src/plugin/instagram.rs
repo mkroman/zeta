@@ -1,7 +1,7 @@
-//! Instagram integration.
+//! Summarises Instagram links and mirrors their videos to S3.
 //!
-//! Summarises Instagram media links — feed posts, reels, and IGTV videos — and, if mirroring is
-//! configured, downloads the videos with `yt-dlp` and mirrors them to an S3-compatible bucket,
+//! Handles feed posts, reels, and IGTV videos; if mirroring is configured, it downloads the
+//! videos with `yt-dlp` and mirrors them to an S3-compatible bucket,
 //! replying with a public link to the mirrored file. Stories are mirrored without a summary:
 //! their pages carry no metadata without an authenticated session.
 //!
@@ -121,6 +121,7 @@ const fn default_title_length() -> usize {
     150
 }
 
+/// The Instagram plugin: summarizes and mirrors Instagram media links.
 pub struct Instagram {
     /// The HTTP client used for fetching pages, emulating a modern browser.
     client: wreq::Client,
@@ -140,10 +141,13 @@ pub struct Instagram {
     details: TtlMap<String, MediaDetails>,
 }
 
+/// Errors that can occur while summarizing or mirroring Instagram media.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] wreq::Error),
+    /// A share link did not resolve to a valid Instagram media URL.
     #[error("share link did not resolve to a valid url")]
     InvalidRedirect,
     /// Every consulted metadata source failed with a request error, rather than answering

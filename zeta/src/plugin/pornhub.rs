@@ -1,8 +1,11 @@
-#![allow(clippy::doc_markdown)]
-
-//! PornHub platform integration.
+//! Expands PornHub links with video details.
 //!
-//! This plugin provides functionality to display information about linked PornHub videos.
+//! `view_video.php?viewkey=<id>` links on `www.pornhub.com` are looked up through the legacy
+//! webmasters API and replied to with the video title and view count. A missing video maps to
+//! a not-found error; every other lookup failure is silently ignored, leaving the link
+//! unexpanded.
+//!
+//! The plugin has no settings.
 
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
@@ -25,12 +28,16 @@ pub struct PornHub {
 /// Errors that can occur when interacting with the PornHub API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The API response could not be deserialized.
     #[error("could not deserialize response: {0}")]
     Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
+    /// The requested video does not exist.
     #[error("resource not found")]
     NotFound,
+    /// The API returned an error other than a missing video.
     #[error("invalid response")]
     InvalidResponse,
 }
@@ -93,7 +100,7 @@ pub struct Video {
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
 pub struct Thumb {
-    /// The size of the thumbnail in "WIDTHxHEIGHT" format.
+    /// The size of the thumbnail in "`WIDTHxHEIGHT`" format.
     pub size: String,
     /// The width of the thumbnail in pixels, as a string.
     pub width: String,
@@ -218,6 +225,7 @@ impl PornHub {
 }
 
 /// Checks if the URL is a valid PornHub video URL.
+#[must_use]
 pub fn is_pornhub_video_url(url: &Url) -> bool {
     url.host_str() == Some(PORNHUB_HOST) && url.path() == "/view_video.php"
 }

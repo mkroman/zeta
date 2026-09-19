@@ -1,4 +1,4 @@
-//! Channel-scoped URL and sender filters.
+//! Silences matched messages in channels with URL and sender filters.
 //!
 //! Filters are managed with the `.filter add|list|delete` command and stored in the database,
 //! from which they are loaded into memory at launch. Every filter carries optional criteria —
@@ -11,8 +11,8 @@
 //! supports wildcards. With no hostmasks configured, nobody is an admin.
 //!
 //! The filter service is published to [`Context::shared`] when the plugin is constructed, so the
-//! URL-handling plugins can consult it through the
-//! [`Filters`](crate::plugin::filtering::Filters) facade.
+//! URL-handling plugins can consult it through the [`Filters`
+//! facade](crate::plugin::filtering::Filters).
 
 mod error;
 mod index;

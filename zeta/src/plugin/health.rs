@@ -1,3 +1,13 @@
+//! Reports the bot's process health.
+//!
+//! The `.health` command replies with a snapshot of the process: physical and virtual memory
+//! in MiB (via `memory-stats`), the tokio runtime's worker count, alive task count, and global
+//! queue depth — and, when the `database` feature is compiled in, the sqlx connection pool
+//! stats (established/max connections, idle, or `closed`).
+//!
+//! The command description changes with the database feature, so `.help` advertises the right
+//! fields either way.
+
 use std::fmt::Display;
 
 use tokio::runtime::Handle;
@@ -17,6 +27,7 @@ const HEALTH_DESCRIPTION: &str = "Show memory usage and runtime task stats";
 /// The `.health` command.
 const HEALTH: CommandSpec = CommandSpec::new(".health", HEALTH_DESCRIPTION);
 
+/// The health plugin: reports process telemetry for `.health` commands.
 pub struct Health;
 
 /// Process telemetry snapshot.
@@ -52,6 +63,7 @@ pub struct PoolStats {
 #[cfg(feature = "database")]
 impl PoolStats {
     /// Captures the statistics of the database connection pool.
+    #[must_use]
     pub fn capture(db: &Database) -> PoolStats {
         PoolStats {
             size: db.size(),
@@ -98,6 +110,11 @@ fn capture_pool_stats(snapshot: &mut Snapshot, ctx: &Context) {
 fn capture_pool_stats(_: &mut Snapshot, _: &Context) {}
 
 impl Snapshot {
+    /// Captures a snapshot of the process' memory usage and runtime task stats.
+    ///
+    /// Returns `None` when the platform cannot report memory usage, in which case the command
+    /// replies with nothing.
+    #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn capture() -> Option<Snapshot> {
         if let Some(memory) = memory_stats::memory_stats() {

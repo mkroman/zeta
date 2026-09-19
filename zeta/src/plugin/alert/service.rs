@@ -105,7 +105,7 @@ impl AlertService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
+    /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
         self.scheduler.sync().await.map(|_| ())
@@ -116,7 +116,7 @@ impl AlertService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Insert`] if the alert could not be inserted into the database.
+    /// Returns [`Error::Database`] if the alert could not be inserted into the database.
     #[instrument(skip_all, err)]
     pub async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
         self.scheduler.create(alert).await
@@ -126,7 +126,7 @@ impl AlertService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
+    /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
     #[instrument(skip_all, err)]
     pub async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
         self.scheduler.pending_for(channel, nickname).await
@@ -151,7 +151,7 @@ impl Scheduler {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
+    /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
     async fn sync(&self) -> Result<usize, Error> {
         let cutoff = Utc::now() + self.window;
 
@@ -177,7 +177,7 @@ impl Scheduler {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Insert`] if the alert could not be inserted into the database.
+    /// Returns [`Error::Database`] if the alert could not be inserted into the database.
     async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
         let alert = self.repo.insert(alert).await?;
 
@@ -196,7 +196,7 @@ impl Scheduler {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Load`] if the alerts could not be fetched from the database.
+    /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
     async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
         self.repo.list_for(channel, nickname).await
     }

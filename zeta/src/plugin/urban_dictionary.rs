@@ -1,3 +1,10 @@
+//! Looks up terms in Urban Dictionary.
+//!
+//! The `.ud <query>` command requests the term from Urban Dictionary's API and replies with
+//! the definition and example of the top entry, with runs of whitespace collapsed. The
+//! definition and example text is truncated to `max_definition_length` characters (default
+//! 400) with an ellipsis suffix; an empty query replies with usage.
+
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
@@ -6,10 +13,13 @@ use tracing::debug;
 
 use crate::{config::HttpConfig, http, plugin::prelude::*, utils::Truncatable, utils::collapse_whitespace};
 
+/// The usage line sent for empty `.ud` queries.
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
+
+/// The Urban Dictionary API base URL.
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
 
-/// Settings for the urban_dictionary plugin, from its `[plugins.urban_dictionary]` configuration
+/// Settings for the `urban_dictionary` plugin, from its `[plugins.urban_dictionary]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Settings {
@@ -46,6 +56,7 @@ pub struct UrbanDictionary {
 /// Errors that can occur during execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// The Urban Dictionary API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
 }
@@ -53,6 +64,7 @@ pub enum Error {
 /// List of definitions.
 #[derive(Debug, Deserialize)]
 pub struct Definitions {
+    /// The definitions, most relevant first.
     pub list: Vec<Definition>,
 }
 
@@ -150,6 +162,8 @@ impl Display for DefinitionFormatter<'_> {
 }
 
 impl UrbanDictionary {
+    /// Creates a new plugin instance around a client built for the given HTTP configuration.
+    #[must_use]
     pub fn new(config: &HttpConfig, settings: Settings) -> Self {
         let client = http::build_client(config);
 
@@ -160,10 +174,10 @@ impl UrbanDictionary {
     ///
     /// The list of definitions may be empty.
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// On success, returns [`Ok(Definitions)`]
-    ///
+    /// Returns an [`Error`] if the request to Urban Dictionary fails or the response cannot be
+    /// parsed.
     pub async fn definitions(&self, term: &str) -> Result<Definitions, Error> {
         debug!(%term, "requesting definitions");
         let params = [("term", term)];

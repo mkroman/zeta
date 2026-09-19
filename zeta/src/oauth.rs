@@ -2,8 +2,8 @@
 //!
 //! Plugins that talk to an OAuth2-secured API (Twitch, Spotify, ..) all need the same
 //! machinery: request an access token with the client-credentials grant, cache it, and refresh
-//! it shortly before it expires. [`TokenCache`] implements that, parameterized over the
-//! plugin-specific token request itself.
+//! it shortly before it expires. [`TokenCache`](crate::oauth::TokenCache) implements that,
+//! parameterized over the plugin-specific token request itself.
 
 use std::future::Future;
 use std::time::{Duration, Instant};
@@ -48,7 +48,7 @@ impl TokenCache {
     }
 
     /// Returns a valid access token, requesting a new one through `refresh` when the cached
-    /// token is missing or within [`EXPIRY_BUFFER`] of expiring.
+    /// token is missing or within `EXPIRY_BUFFER` of expiring.
     ///
     /// `refresh` should perform the client-credentials grant request and return the token
     /// endpoint's response.

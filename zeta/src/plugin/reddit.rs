@@ -1,8 +1,8 @@
-//! Reddit integration.
+//! Summarises reddit links and mirrors their hosted videos to S3.
 //!
-//! Summarises reddit links using the Reddit API and, if mirroring is configured, downloads the
-//! hosted videos of linked submissions with `yt-dlp` and mirrors them to an S3-compatible bucket,
-//! replying with a public link to the mirrored file.
+//! Link details are fetched from the Reddit API and, if mirroring is configured, the hosted
+//! videos of linked submissions are downloaded with `yt-dlp` and mirrored to an S3-compatible
+//! bucket, replying with a public link to the mirrored file.
 //!
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
 //! environment variables); without it, the plugin only posts summaries.
@@ -59,8 +59,10 @@ pub struct Settings {
 /// Errors that can occur during Reddit interaction
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The Reddit API returned an error response.
     #[error("reddit api error: {0}")]
     Reddit(#[from] reddit::Error),
+    /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
 }
@@ -128,6 +130,12 @@ impl Plugin<Context> for Reddit {
 }
 
 impl Reddit {
+    /// Processes each reddit link in `urls`, posting a summary for every recognized link kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if a Reddit API request fails or a reply cannot be sent; individual
+    /// unrecognized URLs are skipped.
     pub async fn process_urls(
         &self,
         urls: &Vec<Url>,

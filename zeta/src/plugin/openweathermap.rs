@@ -1,9 +1,15 @@
-#![allow(clippy::doc_markdown)]
-
-//! OpenWeatherMap integration plugin.
+//! Shows the current weather for a location.
 //!
-//! This plugin allows users to query current weather information via the OpenWeatherMap API
-//! using the `.w` command.
+//! The `.w <location>` command geocodes the location through the OpenWeatherMap geocoding API
+//! (first match) and then queries the current weather, replying with the temperature, condition
+//! description, humidity, wind speed, and pressure — unit labels follow the `units` setting
+//! (metric by default; imperial switches °C to °F and m/s to mph). Condition descriptions are
+//! requested in the `language` setting.
+//!
+//! The API key is set in `[plugins.openweathermap]`, falling back to the
+//! `OPENWEATHERMAP_APP_ID` environment variable; a missing key fails plugin initialization and
+//! the plugin is skipped at startup. Invoking `.w` without arguments uses the
+//! `default_location` setting, or replies with usage when unset.
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};

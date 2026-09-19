@@ -1,3 +1,14 @@
+//! Resolves DNS records through hickory-resolver.
+//!
+//! The `.dig <domain> [record-type]` command looks up `domain` through the configured
+//! nameservers — Cloudflare's public resolvers by default — and replies with one line per
+//! record: name, TTL, class, type, and data, in `dig` output format. The record type defaults
+//! to `A`, parses case-insensitively (`.dig example.com AAAA`), and resolves against the
+//! nameservers configured in `[plugins.dig]` (an empty list is rejected at startup).
+//!
+//! A resolver is built once at plugin initialization, querying the nameservers over both UDP
+//! and TCP; the host file is never consulted.
+
 use std::fmt::Display;
 use std::net::IpAddr;
 
@@ -75,8 +86,10 @@ pub struct Opts {
     record_type: RecordType,
 }
 
+/// Errors that can occur while resolving DNS records.
 #[derive(Error, Debug, Diagnostic)]
 pub enum Error {
+    /// The domain could not be resolved through the configured nameservers.
     #[error("could not resolve domain: {0}")]
     Resolve(#[source] NetError),
 }
@@ -85,10 +98,13 @@ pub enum Error {
 const DIG: CommandSpec =
     CommandSpec::with_args::<Opts>(".dig", "Look up DNS records for a domain");
 
+/// The dig plugin: resolves DNS records on behalf of `.dig` commands.
 pub struct Dig {
     resolver: TokioResolver,
 }
 
+/// A successful DNS lookup, formatting one `dig`-style reply line per record.
+#[must_use]
 pub struct LookupResult(Lookup);
 
 impl Display for LookupResult {
@@ -182,6 +198,12 @@ fn build_resolver(nameservers: &[IpAddr]) -> Result<TokioResolver, BoxError> {
 }
 
 impl Dig {
+    /// Looks up `record_type` records for `name` through the configured nameservers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Resolve`] if the lookup fails, e.g. when the domain has no records of
+    /// the requested type or the nameservers are unreachable.
     pub async fn resolve(
         &self,
         name: &str,

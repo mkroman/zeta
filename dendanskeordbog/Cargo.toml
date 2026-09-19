@@ -37,8 +37,6 @@ pedantic = "warn"
 nursery = "warn"
 # Disable cargo-related lints (often too noisy for dependencies)
 cargo = "allow"
-# Disable markdown formatting enforcement in doc comments
-doc_markdown = "allow"
 
 [lints.rust]
 # Completely disallow unsafe code - no unsafe blocks, functions, or traits

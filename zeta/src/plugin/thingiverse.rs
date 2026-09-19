@@ -1,7 +1,13 @@
-//! Thingiverse integration plugin.
+//! Expands Thingiverse links with details about the 3D model.
 //!
-//! This plugin detects Thingiverse URLs in messages and fetches information
-//! about the linked "thing" using the Thingiverse API.
+//! Links to `/thing:<id>` pages on `thingiverse.com` are looked up through the Thingiverse API
+//! and replied to with the thing's name, creator, and like, download, and collection counts —
+//! describing work-in-progress and featured things as such. A missing thing is noted in the
+//! channel.
+//!
+//! The API token is set in `[plugins.thingiverse]`, falling back to the `THINGIVERSE_APP_TOKEN`
+//! environment variable, and is sent as a bearer token; a missing token fails plugin
+//! initialization and the plugin is skipped at startup.
 
 use std::fmt::{self, Display};
 
@@ -42,10 +48,13 @@ pub struct Thingiverse {
 /// Errors that can occur during plugin execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The linked thing does not exist.
     #[error("resource not found")]
     NotFound,
+    /// The Thingiverse API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
 }

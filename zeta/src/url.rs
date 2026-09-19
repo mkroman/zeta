@@ -62,7 +62,7 @@ pub struct ExtractUrls<'a> {
 }
 
 impl<'a> ExtractUrls<'a> {
-    /// Creates a new `ExtractUrls` for the given string, accepting [`DEFAULT_SCHEMES`].
+    /// Creates a new `ExtractUrls` for the given string, accepting `DEFAULT_SCHEMES`.
     #[inline]
     #[must_use]
     pub fn new(s: &'a str) -> ExtractUrls<'a> {

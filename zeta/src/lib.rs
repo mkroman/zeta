@@ -27,7 +27,8 @@ pub mod mirror;
 /// OAuth2 client-credentials token caching
 #[cfg(feature = "http")]
 pub mod oauth;
-mod plugin;
+/// Plugin system: registry, event dispatching, and the bundled plugins
+pub mod plugin;
 /// URL helper utillities
 pub mod url;
 mod utils;

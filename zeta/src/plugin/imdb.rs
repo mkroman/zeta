@@ -1,9 +1,12 @@
-#![allow(clippy::doc_markdown)]
-
-//! IMDb integration plugin.
+//! Expands IMDb links with title and person details, and searches IMDb.
 //!
-//! Monitors IRC messages for links to IMDb resources and prints details about them, and handles the
-//! `!imdb <title>` command for searching IMDb.
+//! Links to titles and people on `imdb.com`, `www.imdb.com`, and `m.imdb.com` are looked up
+//! through IMDb's internal GraphQL endpoint and replied to with formatted details about them.
+//! The `!imdb <title>` command searches IMDb for the title and replies with the top match.
+//!
+//! The GraphQL endpoint needs no authentication; requests are localized with the
+//! `user_country` and `user_language` settings, and adult titles are included in searches when
+//! the `include_adult` setting is set (default). The plugin has no other settings.
 
 use ::url::Url;
 use argh::{ArgsInfo, FromArgs};

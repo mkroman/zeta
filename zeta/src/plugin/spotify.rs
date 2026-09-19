@@ -1,3 +1,17 @@
+//! Expands Spotify links and bare URIs into track, album, artist, and playlist details.
+//!
+//! Links to `open.spotify.com` and `play.spotify.com`, as well as bare `spotify:type:id` URIs
+//! pasted as text, are resolved through the Spotify Web API and replied to with the resource
+//! name and its artists — plus genres and follower counts for artists, owner and counts for
+//! playlists, and the external `spotify:` link only for bare URIs (for link matches it would
+//! be redundant). Unknown resource types are ignored; missing resources are noted in the
+//! channel.
+//!
+//! Authentication uses the OAuth2 client-credentials flow: the client id and secret are set in
+//! `[plugins.spotify]`, falling back to the `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`
+//! environment variables, with the token cached and refreshed by the shared `TokenCache`.
+//! Missing credentials fail plugin initialization and the plugin is skipped at startup.
+
 use std::fmt::Write;
 
 use base64::prelude::*;
@@ -44,12 +58,16 @@ pub struct Spotify {
     uri_regex: Regex,
 }
 
+/// Errors that can occur while talking to the Spotify API.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The Spotify API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
+    /// The token response could not be deserialized.
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 }

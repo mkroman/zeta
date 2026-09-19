@@ -1,3 +1,14 @@
+//! Searches GitHub repositories and reports the most starred match.
+//!
+//! The `.gh <query>` command searches the GitHub repository search API (sorted by stars) and
+//! replies with the top repository: full name, description, URL, language, and star count,
+//! prefixed with a fork mark for forks. An empty query replies with usage; API errors and
+//! empty results are reported in the reply.
+//!
+//! A GitHub API token — set in `[plugins.github]`, falling back to the `GITHUB_TOKEN`
+//! environment variable — raises the API rate limit. The token is optional: a missing one
+//! does not prevent the plugin from initializing.
+
 use std::fmt::Write;
 
 use reqwest::{
@@ -22,10 +33,13 @@ pub struct Settings {
 /// Errors that can occur during GitHub interaction.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Sending the HTTP request failed.
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
+    /// The configured token is not a valid header value.
     #[error("invalid header value: {0}")]
     InvalidToken(#[from] reqwest::header::InvalidHeaderValue),
+    /// The GitHub API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
 }
@@ -131,6 +145,11 @@ impl GitHubPlugin {
     ///
     /// # Returns
     /// * `Result<Option<String>>` - Some(message) to reply, or None if no reply needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if the GitHub search request fails or its response cannot be
+    /// parsed.
     pub async fn run(&self, channel: &str, args: Option<&str>) -> Result<Option<String>, Error> {
         // 1. Check arguments
         let query = match args {

@@ -2,8 +2,9 @@
 //!
 //! Instead of raw IRC protocol messages, plugins receive events — typed values derived from the
 //! incoming IRC traffic they registered an interest in during initialization. A plugin declares
-//! its interests in [`Plugin::new`] through a [`Subscriptions`] set; the host only routes
-//! messages that match it, so a plugin's handlers are called only for the events it asked for.
+//! its interests in [`Plugin::new`](crate::Plugin::new) through a [`Subscriptions`] set;
+//! the host only routes messages that match it, so a plugin's handlers are called only for
+//! the events it asked for.
 //!
 //! Every event borrows its data from the IRC message it was derived from: the message is shared
 //! behind an [`Arc`], and the event accessors (`channel()`, `text()`, `sender()`, …) return
@@ -111,7 +112,7 @@ macro_rules! sender_and_tags {
 /// An event delivered to a plugin.
 ///
 /// A plugin receives only the event kinds it registered during initialization; each kind is
-/// handled through its own [`Plugin`](crate::Plugin) method (`handle_command`, `handle_url`,
+/// handled through its own [`Plugin`](super::Plugin) method (`handle_command`, `handle_url`,
 /// `handle_join`, ...), which is only called when the plugin registered that kind.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -660,8 +661,9 @@ impl EventKind {
 
 /// The events a plugin registers interest in during initialization.
 ///
-/// The host passes a fresh, empty `Subscriptions` to [`Plugin::new`]
-/// (`zeta_plugin::Plugin::new`), where the plugin registers everything it wants to receive:
+/// The host passes a fresh, empty `Subscriptions` to
+/// [`Plugin::new`](super::Plugin::new), where the plugin registers everything it wants to
+/// receive:
 ///
 /// ```
 /// use zeta_plugin::{CommandSpec, Subscriptions, UrlScope};
@@ -707,7 +709,7 @@ impl Subscriptions {
     /// Registers interest in a command.
     ///
     /// Every channel message whose first word matches the command's trigger is delivered to
-    /// [`Plugin::handle_command`](crate::Plugin::handle_command).
+    /// [`Plugin::handle_command`](super::Plugin::handle_command).
     pub fn command(&mut self, command: CommandSpec) -> &mut Self {
         self.commands.push(command);
         self

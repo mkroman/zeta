@@ -1,3 +1,13 @@
+//! Offline string utilities.
+//!
+//! `.b <string>` prints the string's UTF-8 bytes as `\x..` hex escapes, `.len <string>` counts
+//! its characters, `.ord <chars>` lists each character's Unicode codepoint, and `.rev <string>`
+//! reverses it. An empty argument replies with the command's usage. Results are sent as a
+//! notice.
+//!
+//! The registered `.uni` command ("Show a character's Unicode properties") is not yet
+//! implemented and is silently ignored.
+
 use std::fmt::Write;
 
 use crate::plugin::prelude::*;
@@ -16,7 +26,14 @@ const UNICODE: CommandSpec = CommandSpec::new(
     "Show a character's Unicode properties (not implemented)",
 );
 
+/// The string utilities plugin: offline text transformations for its commands.
 pub struct StringUtils;
+
+impl Default for StringUtils {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Plugin<Context> for StringUtils {
@@ -94,6 +111,8 @@ fn str_to_hex_string(s: &str) -> String {
 }
 
 impl StringUtils {
+    /// Creates a new string utils plugin instance.
+    #[must_use]
     pub const fn new() -> StringUtils {
         StringUtils
     }

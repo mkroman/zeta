@@ -134,6 +134,7 @@ impl EventIndex {
     ///
     /// Returns the names of the plugins whose mailboxes are closed — their tasks have stopped,
     /// so the caller should evict them with [`EventIndex::evict`].
+    #[must_use]
     pub fn dispatch(&self, filters: &Filters, message: Message) -> Vec<String> {
         let message = Arc::new(message);
         let mut stopped = Vec::new();
@@ -360,7 +361,7 @@ mod tests {
 
         // Longer words are not matched, and leading whitespace breaks the first word.
         for text in [".digg example.com", "  .dig example.com", "look at .dig"] {
-            index.dispatch(&Filters::default(), privmsg(text));
+            let _ = index.dispatch(&Filters::default(), privmsg(text));
 
             assert!(drain(&mut mailbox).is_empty(), "`{text}` must not dispatch");
         }
@@ -375,7 +376,7 @@ mod tests {
                 .command(CommandSpec::new(".gis", "images"));
         });
 
-        index.dispatch(&Filters::default(), privmsg(".gis black cats"));
+        let _ = index.dispatch(&Filters::default(), privmsg(".gis black cats"));
 
         assert!(matches!(
             drain(&mut kagi)[..],
@@ -392,7 +393,7 @@ mod tests {
         let mut titles = subscribe(&mut index, "titles", |s| { s.urls(UrlScope::Any); });
 
         // A claimed host is delivered to its plugin and to generic handlers.
-        index.dispatch(&Filters::default(), privmsg("https://youtube.com/watch?v=1"));
+        let _ = index.dispatch(&Filters::default(), privmsg("https://youtube.com/watch?v=1"));
 
         assert!(matches!(
             drain(&mut youtube)[..],
@@ -404,13 +405,13 @@ mod tests {
         ));
 
         // Host matching is case-insensitive.
-        index.dispatch(&Filters::default(), privmsg("https://WWW.YOUTUBE.COM/x"));
+        let _ = index.dispatch(&Filters::default(), privmsg("https://WWW.YOUTUBE.COM/x"));
 
         assert_eq!(drain(&mut youtube).len(), 1);
         assert_eq!(drain(&mut titles).len(), 1);
 
         // An unclaimed host only reaches generic handlers.
-        index.dispatch(&Filters::default(), privmsg("https://example.com/x"));
+        let _ = index.dispatch(&Filters::default(), privmsg("https://example.com/x"));
 
         assert!(drain(&mut youtube).is_empty());
         assert_eq!(drain(&mut titles).len(), 1);
@@ -421,7 +422,7 @@ mod tests {
         let mut index = EventIndex::default();
         let mut titles = subscribe(&mut index, "titles", |s| { s.urls(UrlScope::Any); });
 
-        index.dispatch(
+        let _ = index.dispatch(
             &Filters::default(),
             privmsg("https://a.example/x https://a.example/x https://b.example/y"),
         );
@@ -438,7 +439,7 @@ mod tests {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
 
-        index.dispatch(&Filters::default(), privmsg("\x01ACTION slaps .dig\x01"));
+        let _ = index.dispatch(&Filters::default(), privmsg("\x01ACTION slaps .dig\x01"));
 
         assert!(matches!(
             drain(&mut ctcp)[..],
@@ -454,7 +455,7 @@ mod tests {
         let mut ctcp = subscribe(&mut index, "ctcp", |s| { s.receive_ctcp(); });
         let mut watcher = subscribe(&mut index, "watcher", |s| { s.receive_message(); });
 
-        index.dispatch(
+        let _ = index.dispatch(
             &Filters::default(),
             message("service.example", "NOTICE", &["zeta", "\x01VERSION 1.0\x01"]),
         );
@@ -471,7 +472,7 @@ mod tests {
         let mut index = EventIndex::default();
         let mut ctcp = subscribe(&mut index, "ctcp", |s| { s.receive_ctcp(); });
 
-        index.dispatch(
+        let _ = index.dispatch(
             &Filters::default(),
             message("server.example", "NOTICE", &["zeta", "server maintenance"]),
         );
@@ -487,7 +488,7 @@ mod tests {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
 
-        index.dispatch(&Filters::default(), privmsg(".dig example.com"));
+        let _ = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
 
         assert!(matches!(
             drain(&mut dig)[..],
@@ -498,7 +499,7 @@ mod tests {
             [Event::Message(..)]
         ));
 
-        index.dispatch(&Filters::default(), privmsg("no events at all?"));
+        let _ = index.dispatch(&Filters::default(), privmsg("no events at all?"));
 
         assert!(drain(&mut dig).is_empty());
         assert_eq!(drain(&mut watcher).len(), 1);
@@ -511,8 +512,8 @@ mod tests {
         let mut quits = subscribe(&mut index, "quits", |s| { s.receive_quit(); });
         let mut parts = subscribe(&mut index, "parts", |s| { s.receive_part(); });
 
-        index.dispatch(&Filters::default(), message("nick!u@h", "JOIN", &["#test"]));
-        index.dispatch(&Filters::default(), message("nick!u@h", "QUIT", &["gone"]));
+        let _ = index.dispatch(&Filters::default(), message("nick!u@h", "JOIN", &["#test"]));
+        let _ = index.dispatch(&Filters::default(), message("nick!u@h", "QUIT", &["gone"]));
 
         assert!(matches!(
             drain(&mut joins)[..],
@@ -530,7 +531,7 @@ mod tests {
         let mut index = EventIndex::default();
         let mut raw = subscribe(&mut index, "raw", |s| { s.receive_raw(); });
 
-        index.dispatch(
+        let _ = index.dispatch(
             &Filters::default(),
             message("server.example", "SOMECMD", &["#test", "data"]),
         );

@@ -1,5 +1,3 @@
-#![allow(clippy::doc_markdown)]
-
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -87,9 +85,9 @@ macro_rules! declare_plugins {
             $mod_name:ident :: $struct_name:ident => $settings:ty
         ),* $(,)?
     ) => {
-        // Generate module declarations
+        // Generate module declarations. Each plugin module documents itself in its own file;
+        // the doc comments in this invocation are only used on the settings fields below.
         $(
-            $(#[doc = $doc])*
             #[cfg(feature = $feature)]
             pub mod $mod_name;
         )*
@@ -113,7 +111,8 @@ macro_rules! declare_plugins {
         /// Keys under `[plugins]` that do not match a bundled plugin name are collected in
         /// [`PluginsConfig::unknown`] so the host can warn about likely typos. Unknown keys
         /// inside a section are ignored and reported through
-        /// [`PluginConfig::unknown_keys`], which the host also warns about.
+        /// [`PluginConfig::unknown_keys`](crate::config::PluginConfig::unknown_keys), which the
+        /// host also warns about.
         #[derive(Clone, Debug, Default, Serialize)]
         pub struct PluginsConfig {
             $(
@@ -212,9 +211,9 @@ macro_rules! declare_plugins {
 
 /// Filtering support shared with plugins that react to URLs.
 ///
-/// Unlike the plugin modules below, this module is always compiled: it provides the [`Filters`]
-/// facade that lets URL-handling plugins consult the filter service without depending on the
-/// `plugin-filter` feature themselves.
+/// Unlike the plugin modules below, this module is always compiled: it provides the
+/// [`Filters`](filtering::Filters) facade that lets URL-handling plugins consult the filter
+/// service without depending on the `plugin-filter` feature themselves.
 // Without any URL-handling plugin compiled in, nothing consumes the facade.
 #[allow(dead_code)]
 pub mod filtering;
