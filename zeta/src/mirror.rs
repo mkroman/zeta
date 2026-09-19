@@ -267,7 +267,7 @@ impl Mirror {
     fn mark_in_flight(&self, prefix: &str, id: &str) -> bool {
         self.in_flight
             .lock()
-            .expect("in-flight lock is poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert((prefix.to_string(), id.to_string()))
     }
 
@@ -275,7 +275,7 @@ impl Mirror {
     fn clear_in_flight(&self, prefix: &str, id: &str) {
         self.in_flight
             .lock()
-            .expect("in-flight lock is poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&(prefix.to_string(), id.to_string()));
     }
 

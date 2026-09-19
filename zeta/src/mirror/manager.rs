@@ -134,7 +134,6 @@ impl DownloadManager {
             status: status_rx,
             active: HashMap::new(),
             queue: VecDeque::new(),
-            running: 0,
             next_id: 0,
         };
 
@@ -179,8 +178,6 @@ struct Manager {
     active: HashMap<u64, ActiveDownload>,
     /// The requests waiting for a download slot.
     queue: VecDeque<DownloadRequest>,
-    /// The number of currently running downloads.
-    running: usize,
     /// The id to assign to the next download.
     next_id: u64,
 }
@@ -207,6 +204,8 @@ impl Manager {
                     self.on_request(request);
                 }
                 status = self.status.recv() => {
+                    // The sending end lives in `self`, so the status channel cannot close
+                    // while the manager runs; the match only makes the select total.
                     let Some(status) = status else { break };
                     self.on_status(status).await;
                 }
@@ -218,12 +217,12 @@ impl Manager {
 
     /// Handles an incoming download request, starting it or queueing it for later.
     fn on_request(&mut self, request: DownloadRequest) {
-        if self.running < self.max_concurrent {
+        if self.active.len() < self.max_concurrent {
             self.start_download(request);
         } else {
             debug!(
                 media_id = %request.id,
-                running = self.running,
+                running = self.active.len(),
                 "queued download request"
             );
 
@@ -243,7 +242,6 @@ impl Manager {
 
         let id = self.next_id;
         self.next_id += 1;
-        self.running += 1;
 
         let tempdir = match tempdir_builder().tempdir_in(&self.download_dir) {
             Ok(tempdir) => tempdir,
@@ -254,7 +252,6 @@ impl Manager {
                     "could not create a temporary download directory"
                 );
 
-                self.running -= 1;
                 (request.on_finish)(Err(Error::TempDir(err)));
 
                 return;
@@ -341,8 +338,6 @@ impl Manager {
         active: ActiveDownload,
         result: Result<Vec<DownloadedFile>, ytdlp::Error>,
     ) {
-        self.running -= 1;
-
         let ActiveDownload {
             request:
                 DownloadRequest {
