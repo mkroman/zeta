@@ -100,14 +100,13 @@ impl Client {
         let request = self.client.get(url).query(&[(QUERY_WORD_PARAM, word)]);
         let response = request.send().await.map_err(Error::Request)?;
 
-        match response.error_for_status() {
-            Ok(response) => {
-                let body = response.text().await.map_err(Error::Request)?;
-
-                DictionaryDocument::from_html(&body)
-            }
-            Err(err) => Err(Error::Request(err)),
+        if !response.status().is_success() {
+            return Err(Error::Status(response.status()));
         }
+
+        let body = response.text().await.map_err(Error::Request)?;
+
+        DictionaryDocument::from_html(&body)
     }
 }
 

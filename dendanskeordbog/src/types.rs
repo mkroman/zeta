@@ -171,31 +171,31 @@ impl DictionaryDocument {
 
     /// Parse all dictionary entries from the document.
     ///
-    /// This method collects parsing errors for individual entries but continues processing,
-    /// allowing partial success when some entries fail to parse.
+    /// Entries that fail to parse are skipped and the failure logged; when no entry parses at
+    /// all, the first parse error is returned.
     fn parse_entries(
         document: &Html,
         selectors: &Selectors,
     ) -> Result<Vec<DictionaryEntry>, Error> {
         let mut entries = Vec::new();
-        let mut parse_errors = Vec::new();
+        let mut first_error = None;
 
         for element in document.select(&selectors.article) {
             match DictionaryEntry::from_html_with_selectors(&element, selectors) {
                 Ok(entry) => entries.push(entry),
                 Err(err) => {
-                    // Log the error but continue processing other entries
+                    // Log the error but continue processing other entries.
                     #[cfg(feature = "log")]
                     warn!(?err, "failed to parse dictionary entry");
 
-                    parse_errors.push(err);
+                    first_error.get_or_insert(err);
                 }
             }
         }
 
-        // If no entries were parsed successfully and we have errors, return the first error
-        if entries.is_empty() && !parse_errors.is_empty() {
-            return Err(parse_errors.into_iter().next().unwrap());
+        // When nothing parsed, surface the first parse error.
+        if entries.is_empty() && let Some(err) = first_error {
+            return Err(err);
         }
 
         Ok(entries)
