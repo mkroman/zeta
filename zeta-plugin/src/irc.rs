@@ -71,8 +71,27 @@ pub fn reply_usage_lines(
     Ok(())
 }
 
-/// Parses the arguments of `command` with [`CommandEvent::parse_words`], replying with the
-/// usage lines to the command's channel when the parse fails.
+/// Parses the trailing arguments of `command` with [`CommandEvent::parse_args`], replying with
+/// the usage lines to the command's channel when the parse fails.
+///
+/// Unlike [`parse_words_or_usage`], the arguments are tokenized like a POSIX shell (via
+/// [`CommandEvent::parse_args`]), so quoted arguments and escapes are supported.
+///
+/// Returns `Ok(None)` when the usage was replied to and the command should be abandoned.
+///
+/// # Errors
+///
+/// Returns any error produced while sending the usage lines.
+pub fn parse_args_or_usage<T: FromArgs>(
+    client: &Client,
+    command: &CommandEvent,
+    format: impl Fn(&str) -> String,
+) -> Result<Option<T>, irc::error::Error> {
+    parse_or_usage(command.parse_args(), client, command.channel(), format)
+}
+
+/// Parses the trailing arguments of `command` with [`CommandEvent::parse_words`], replying with
+/// the usage lines to the command's channel when the parse fails.
 ///
 /// Returns `Ok(None)` when the usage was replied to and the command should be abandoned.
 ///
@@ -84,10 +103,21 @@ pub fn parse_words_or_usage<T: FromArgs>(
     command: &CommandEvent,
     format: impl Fn(&str) -> String,
 ) -> Result<Option<T>, irc::error::Error> {
-    match command.parse_words() {
+    parse_or_usage(command.parse_words(), client, command.channel(), format)
+}
+
+/// Replies `error`'s usage lines through `format` and yields `None` for the caller to abandon
+/// the command with, or passes a successful parse result through.
+fn parse_or_usage<T>(
+    result: Result<T, ArgsError>,
+    client: &Client,
+    channel: &str,
+    format: impl Fn(&str) -> String,
+) -> Result<Option<T>, irc::error::Error> {
+    match result {
         Ok(args) => Ok(Some(args)),
         Err(error) => {
-            reply_usage_lines(client, command.channel(), &error, format)?;
+            reply_usage_lines(client, channel, &error, format)?;
 
             Ok(None)
         }

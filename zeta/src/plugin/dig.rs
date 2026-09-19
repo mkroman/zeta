@@ -145,12 +145,10 @@ impl Plugin<Context> for Dig {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let opts = match command.parse_args::<Opts>() {
-            Ok(opts) => opts,
-            Err(err) => {
-                client.send_privmsg(command.channel(), err.to_string())?;
-                return Ok(());
-            }
+        let Some(opts) =
+            parse_args_or_usage::<Opts>(client, command, |line: &str| reply("Dig", line))?
+        else {
+            return Ok(());
         };
 
         match self.resolve(&opts.name, opts.record_type).await {

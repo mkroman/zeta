@@ -132,12 +132,10 @@ impl Plugin<Context> for Imdb {
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
-        let opts = match command.parse_args::<Opts>() {
-            Ok(opts) => opts,
-            Err(err) => {
-                client.send_privmsg(channel, err.to_string())?;
-                return Ok(());
-            }
+        let Some(opts) = parse_args_or_usage::<Opts>(client, command, |line: &str| {
+            format!("{} {line}", prefix())
+        })? else {
+            return Ok(());
         };
 
         let query = opts.query();
