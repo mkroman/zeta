@@ -19,6 +19,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test (${{ matrix.rust }})
@@ -26,7 +29,7 @@ jobs:
       fail-fast: true
       matrix:
         rust: [stable, nightly]
-    uses: ./.github/workflows/test.yaml
+    uses: $/.github/workflows/test.yaml
     with:
       toolchain: ${{ matrix.rust }}
 
@@ -40,7 +43,7 @@ jobs:
     name: Container Image
     needs:
       - test
-    uses: ./.github/workflows/container-image.yaml
+    uses: $/.github/workflows/container-image.yaml
     with:
       images: ghcr.io/${{ github.repository }}
       push: ${{ github.ref == 'refs/heads/main' }}
@@ -51,5 +54,11 @@ jobs:
       # per-branch cache images in the registry.
       cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/buildcache
       cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/{0}/buildcache,mode=max', github.repository) || '' }}
+    # Pushing the image and registry buildcache to ghcr needs packages: write.
+    # Job-level permissions replace the workflow-level ones entirely, and the
+    # called workflow requests contents: read for its checkout.
+    permissions:
+      contents: read
+      packages: write
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
