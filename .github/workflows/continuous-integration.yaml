@@ -49,7 +49,10 @@ jobs:
       cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/buildcache
       cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/{0}/buildcache,mode=max', github.repository) || '' }}
     # Pushing the image and registry buildcache to ghcr needs packages: write.
+    # Job-level permissions replace the workflow-level ones entirely, and the
+    # called workflow requests contents: read for its checkout.
     permissions:
+      contents: read
       packages: write
     secrets:
       password: ${{ secrets.GITHUB_TOKEN }}
