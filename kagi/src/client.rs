@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, OnceLock},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -70,7 +70,7 @@ pub struct Client {
     /// Kagi login token.
     token: SecretString,
     /// Session details.
-    session: Arc<RwLock<Option<Session>>>,
+    session: RwLock<Option<Session>>,
     /// The duration of a single session.
     session_duration: Duration,
     /// The `Accept-Language` header sent with requests.
@@ -130,7 +130,7 @@ impl Client {
         Ok(Client {
             http: client,
             token: token.into(),
-            session: Arc::new(RwLock::new(None)),
+            session: RwLock::new(None),
             session_duration: options.session_duration,
             language: HeaderValue::from_str(&options.language)?,
         })

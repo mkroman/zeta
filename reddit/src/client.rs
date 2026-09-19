@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION};
@@ -34,7 +33,7 @@ pub struct Client {
     /// Reddit application client secret.
     client_secret: SecretString,
     /// Current authentication token state.
-    token_state: Arc<RwLock<Option<TokenCache>>>,
+    token_state: RwLock<Option<TokenCache>>,
 }
 
 impl TokenCache {
@@ -61,7 +60,7 @@ impl Client {
     ) -> Client {
         let client_id = client_id.into();
         let client_secret = client_secret.into();
-        let token_state = Arc::new(RwLock::new(None));
+        let token_state = RwLock::new(None);
         let user_agent = user_agent.unwrap_or_else(|| USER_AGENT.to_string());
         let client = reqwest::ClientBuilder::new()
             .redirect(Policy::none())
