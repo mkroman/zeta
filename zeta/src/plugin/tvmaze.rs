@@ -285,7 +285,7 @@ impl Tvmaze {
             Error::Api(_) => "Failed to fetch show information".to_string(),
         };
 
-        Self::build_formatted_message(None, &format!("Error: {content}"))
+        Self::build_formatted_message(None, &content)
     }
 
     /// Builds the search URL with query parameters.

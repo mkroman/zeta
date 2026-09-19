@@ -323,7 +323,7 @@ impl Plugin<Context> for YouTube {
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
+                client.send_privmsg(channel, notice(err))?;
             }
         }
 
@@ -426,7 +426,7 @@ impl YouTube {
                     client.send_privmsg(channel, message)?;
                 }
                 Err(e) => {
-                    client.send_privmsg(channel, format!("Error: {e}"))?;
+                    client.send_privmsg(channel, notice(e))?;
                 }
             }
         }

@@ -133,7 +133,7 @@ impl Plugin<Context> for UrbanDictionary {
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, reply("Urban Dictionary", format!("Error: {err}")))?;
+                client.send_privmsg(channel, reply("Urban Dictionary", err))?;
             }
         }
 

@@ -230,7 +230,7 @@ impl Plugin<Context> for OpenWeatherMap {
             }
             Err(e) => {
                 warn!(error = ?e, "openweathermap error");
-                client.send_privmsg(channel, notice(format!("Error: {e}")))?;
+                client.send_privmsg(channel, notice(e))?;
             }
         }
 

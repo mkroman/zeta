@@ -127,7 +127,7 @@ impl KagiPlugin {
             }
             Err(err) => {
                 warn!(?err, "kagi search failed");
-                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
+                client.send_privmsg(channel, notice(err))?;
             }
         }
 
@@ -160,7 +160,7 @@ impl KagiPlugin {
             }
             Err(err) => {
                 warn!(?err, "kagi image search failed");
-                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
+                client.send_privmsg(channel, notice(err))?;
             }
         }
 

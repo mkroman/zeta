@@ -138,8 +138,7 @@ impl Thingiverse {
                 }
                 Err(e) => {
                     warn!(error = ?e, "thingiverse api error");
-                    client
-                        .send_privmsg(channel, reply("Thingiverse", format!("http error: {e}")))?;
+                    client.send_privmsg(channel, reply("Thingiverse", e))?;
                 }
             }
         }

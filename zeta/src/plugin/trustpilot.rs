@@ -148,7 +148,7 @@ impl Plugin<Context> for Trustpilot {
             Err(e) => {
                 warn!(error = ?e, "trustpilot error");
                 // The error is already safe for display
-                client.send_privmsg(channel, notice(format!("Error: {e}")))?;
+                client.send_privmsg(channel, notice(e))?;
             }
         }
 

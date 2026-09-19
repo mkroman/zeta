@@ -147,13 +147,10 @@ impl Plugin<Context> for RustPlayground {
             Ok(output) => {
                 client.send_privmsg(channel, reply("Rust Playground", &output))?;
             }
-            Err(e) => {
-                warn!("rust playground error: {}", e);
-                client.send_privmsg(
-                    channel,
-                    reply("Rust Playground", format!("http error: {e}")),
-                )?;
-            }
+                Err(e) => {
+                    warn!("rust playground error: {}", e);
+                    client.send_privmsg(channel, reply("Rust Playground", e))?;
+                }
         }
 
         Ok(())

@@ -256,7 +256,7 @@ impl Plugin<Context> for HowLongToBeat {
             }
             Err(err) => {
                 warn!(?err, "hltb search failed");
-                client.send_privmsg(channel, notice(format!("Failed to fetch data: {err}")))?;
+                client.send_privmsg(channel, notice(err))?;
             }
         }
 

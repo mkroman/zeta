@@ -295,11 +295,11 @@ impl IsItOpen {
                     client.send_privmsg(channel, &message)?;
                 }
                 Err(Error::NotFound) => {
-                    client.send_privmsg(channel, notice("Error: place not found"))?;
+                    client.send_privmsg(channel, notice("place not found"))?;
                 }
                 Err(e) => {
                     warn!(?e, "isitopen error");
-                    client.send_privmsg(channel, notice(format!("Error: {e}")))?;
+                    client.send_privmsg(channel, notice(e))?;
                 }
             }
         }

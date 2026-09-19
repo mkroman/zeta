@@ -49,7 +49,7 @@ impl Plugin<Context> for Rink {
     ) -> Result<(), ZetaError> {
         let message = match self.eval(command.args()) {
             Ok(result) => notice(result),
-            Err(err) => notice(format!("Error: {err}")),
+            Err(err) => notice(err),
         };
 
         client.send_privmsg(command.channel(), message)?;
