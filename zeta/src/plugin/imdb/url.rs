@@ -2,6 +2,8 @@
 
 use url::Url;
 
+use crate::url::{is_prefixed_numeric_segment, path_segments};
+
 /// A link to an IMDb resource.
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[non_exhaustive]
@@ -20,25 +22,19 @@ pub fn classify_imdb_url(url: &Url) -> Option<Link> {
         return None;
     }
 
-    let segments: Vec<&str> = url.path_segments()?.collect();
+    let segments = path_segments(url);
 
-    match segments.as_slice() {
+    match segments.as_deref() {
         // `/title/<id>[/…]` — any sub-page of a title (e.g. photo galleries) refers to the title.
-        ["title", id, ..] if is_title_id(id) => Some(Link::Title((*id).to_string())),
+        Some(["title", id, ..]) if is_prefixed_numeric_segment(id, "tt") => {
+            Some(Link::Title((*id).to_string()))
+        }
         // `/name/<id>[/…]`
-        ["name", id, ..] if is_name_id(id) => Some(Link::Name((*id).to_string())),
+        Some(["name", id, ..]) if is_prefixed_numeric_segment(id, "nm") => {
+            Some(Link::Name((*id).to_string()))
+        }
         _ => None,
     }
-}
-
-/// Checks if `id` looks like a title id (e.g. `tt1375666`).
-fn is_title_id(id: &str) -> bool {
-    id.len() > 2 && id.starts_with("tt") && id[2..].bytes().all(|byte| byte.is_ascii_digit())
-}
-
-/// Checks if `id` looks like a person id (e.g. `nm0186505`).
-fn is_name_id(id: &str) -> bool {
-    id.len() > 2 && id.starts_with("nm") && id[2..].bytes().all(|byte| byte.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -124,18 +120,11 @@ mod tests {
     }
 
     #[test]
-    fn is_title_id_rejects_non_ids() {
-        assert!(is_title_id("tt1375666"));
-        assert!(!is_title_id("nm0000138"));
-        assert!(!is_title_id("tt"));
-        assert!(!is_title_id("ttbuster"));
-    }
-
-    #[test]
-    fn is_name_id_rejects_non_ids() {
-        assert!(is_name_id("nm0186505"));
-        assert!(!is_name_id("tt1375666"));
-        assert!(!is_name_id("nm"));
-        assert!(!is_name_id("nmbuster"));
+    fn ids_must_be_prefixed_numeric() {
+        assert!(is_prefixed_numeric_segment("tt1375666", "tt"));
+        assert!(!is_prefixed_numeric_segment("nm0000138", "tt"));
+        assert!(!is_prefixed_numeric_segment("tt", "tt"));
+        assert!(!is_prefixed_numeric_segment("ttbuster", "tt"));
+        assert!(!is_prefixed_numeric_segment("nmbuster", "nm"));
     }
 }

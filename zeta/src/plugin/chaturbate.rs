@@ -10,7 +10,12 @@ use serde::Deserialize;
 use tracing::debug;
 use url::Url;
 
-use crate::{config::HttpConfig, http, plugin::prelude::*};
+use crate::{
+    config::HttpConfig,
+    http,
+    plugin::prelude::*,
+    url::{is_id_segment, path_segments},
+};
 
 /// The Chaturbate hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["chaturbate.com", "www.chaturbate.com"];
@@ -147,6 +152,12 @@ fn parse_room_dossier_with_re(re: &Regex, html: &str) -> Result<RoomDossier, Err
     Ok(dossier)
 }
 
+/// Path segments that name site resources rather than broadcaster rooms.
+const RESERVED_SEGMENTS: &[&str] = &[
+    "auth", "affiliates", "tags", "search", "followed-cams", "new-cams", "female-cams",
+    "male-cams", "couple-cams", "trans-cams",
+];
+
 /// Returns the broadcaster username from a Chaturbate URL, if present.
 fn extract_username(url: &Url) -> Option<String> {
     let host = url.host_str()?;
@@ -155,14 +166,12 @@ fn extract_username(url: &Url) -> Option<String> {
         return None;
     }
 
-    let mut segments = url.path_segments()?;
-    let username = segments.next().filter(|s| !s.is_empty())?;
-
-    // Exclude well-known non-broadcaster paths.
-    match username {
-        "auth" | "affiliates" | "tags" | "search" | "followed-cams" | "new-cams"
-        | "female-cams" | "male-cams" | "couple-cams" | "trans-cams" => None,
-        name => Some(name.to_string()),
+    match path_segments(url)?.as_slice() {
+        // Exclude well-known non-broadcaster paths.
+        [username, ..] if is_id_segment(username, "_") && !RESERVED_SEGMENTS.contains(username) => {
+            Some((*username).to_string())
+        }
+        _ => None,
     }
 }
 

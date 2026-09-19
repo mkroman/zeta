@@ -27,6 +27,7 @@ use crate::{
     http,
     oauth::{TokenCache, TokenResponse},
     plugin::prelude::*,
+    url::path_segments,
 };
 
 /// The Spotify hosts whose links this plugin handles.
@@ -420,11 +421,9 @@ fn to_sentence(words: &[String]) -> String {
 
 fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
     // path segments: ["track", "4uLU6hMCjMI75M1A2tKUQC"]
-    let segments: Vec<&str> = url.path_segments()?.collect();
-    if segments.len() >= 2 {
-        Some((segments[0], segments[1]))
-    } else {
-        None
+    match path_segments(url)?.as_slice() {
+        [kind, id] => Some((kind, id)),
+        _ => None,
     }
 }
 
