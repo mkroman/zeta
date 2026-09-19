@@ -389,7 +389,7 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
     // Mimic Ruby behavior: simplistic error messages for common HTTP codes could be added here
     // For now, we generally don't spam the channel with errors unless it's critical,
     // but the Ruby plugin did print "Invalid track ID" etc.
-    if let Error::Api(http::ApiError::Status(status)) = error
+    if let Error::Api(http::ApiError::Status { status, .. }) = error
         && *status == reqwest::StatusCode::NOT_FOUND
     {
         client.send_privmsg(channel, reply("Spotify", "Resource not found"))?;

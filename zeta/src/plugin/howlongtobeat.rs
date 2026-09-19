@@ -318,7 +318,10 @@ impl HowLongToBeat {
 
         match self.perform_search_request(&auth, query).await {
             Ok(results) => Ok(results),
-            Err(Error::Api(http::ApiError::Status(StatusCode::FORBIDDEN))) => {
+            Err(Error::Api(http::ApiError::Status {
+                status: StatusCode::FORBIDDEN,
+                ..
+            })) => {
                 warn!("hltb token expired, refreshing...");
                 let new_auth = self.refresh_auth().await?;
                 self.perform_search_request(&new_auth, query).await

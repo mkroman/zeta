@@ -202,11 +202,14 @@ impl Tvmaze {
                 debug!(?show, "finished parsing show");
                 Ok(show)
             }
-            Err(http::ApiError::Status(StatusCode::NOT_FOUND)) => {
+            Err(http::ApiError::Status {
+                status: StatusCode::NOT_FOUND,
+                ..
+            }) => {
                 debug!("show not found");
                 Err(Error::NotFound)
             }
-            Err(http::ApiError::Status(status)) => {
+            Err(http::ApiError::Status { status, .. }) => {
                 error!("unexpected response status: {status}");
                 Err(Error::UnexpectedResponse)
             }

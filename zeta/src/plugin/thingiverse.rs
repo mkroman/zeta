@@ -158,11 +158,7 @@ impl Thingiverse {
             .send()
             .await?;
 
-        match http::parse_response(response).await {
-            Ok(thing) => Ok(thing),
-            Err(http::ApiError::Status(reqwest::StatusCode::NOT_FOUND)) => Err(Error::NotFound),
-            Err(error) => Err(Error::from(error)),
-        }
+        http::parse_response_or_404(response, Error::NotFound).await
     }
 }
 
