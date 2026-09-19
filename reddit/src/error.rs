@@ -8,12 +8,18 @@ use url::ParseError;
 /// Errors that can occur while using the Reddit API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// The HTTP client could not be built.
+    #[error("could not build http client")]
+    BuildClient(#[source] reqwest::Error),
     /// A request could not be sent, or its body could not be read.
     #[error("request error: {0}")]
     Reqwest(#[source] reqwest::Error),
     /// The comments listing could not be parsed.
     #[error("could not deserialize comments json: {0}")]
     DeserializeComments(#[source] ErrorWithSerdePath<JsonError>),
+    /// The submission response could not be parsed.
+    #[error("could not deserialize submission json: {0}")]
+    DeserializeSubmission(#[source] ErrorWithSerdePath<JsonError>),
     /// The subreddit response could not be parsed.
     #[error("could not deserialize subreddit json: {0}")]
     DeserializeSubreddit(#[source] ErrorWithSerdePath<JsonError>),

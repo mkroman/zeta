@@ -90,9 +90,15 @@ impl Plugin<Context> for Reddit {
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =
             resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();
-        let user_agent = Some(USER_AGENT.to_string());
-        let timeout = Some(ctx.config.http.timeout);
-        let client = reddit::Client::new(client_id, client_secret, user_agent, timeout);
+        let client = reddit::Client::with_options(
+            client_id,
+            client_secret,
+            reddit::ClientOptions {
+                user_agent: Some(USER_AGENT.to_string()),
+                timeout: Some(ctx.config.http.timeout),
+            },
+        )
+        .map_err(plugin_err)?;
         let mirror = MirrorTarget::resolve(
             ctx.shared.get::<Mirror>(),
             "reddit",

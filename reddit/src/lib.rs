@@ -7,7 +7,7 @@ use url::Url;
 mod client;
 mod error;
 
-pub use client::Client;
+pub use client::{Client, ClientOptions};
 pub use error::Error;
 
 /// Reddit API base URL.
