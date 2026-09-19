@@ -129,14 +129,7 @@ impl CommandSpec {
             // Input is exactly the trigger — no arguments.
             None => Some(""),
             // Trigger followed by whitespace — skip all leading whitespace.
-            Some(c) if c.is_whitespace() => {
-                let skipped: usize = suffix
-                    .chars()
-                    .take_while(|c| c.is_whitespace())
-                    .map(char::len_utf8)
-                    .sum();
-                Some(&suffix[skipped..])
-            }
+            Some(c) if c.is_whitespace() => Some(suffix.trim_start()),
             // Trigger followed by a non-whitespace character — not a match (e.g. `.y` vs `.yt`).
             Some(_) => None,
         }
@@ -176,7 +169,7 @@ impl CommandSpec {
         let tokens = shlex::split(args).ok_or(ArgsError::Quoting)?;
         let tokens = tokens.iter().map(String::as_str).collect::<Vec<_>>();
 
-        T::from_args(&[self.trigger], &tokens).map_err(|early_exit| ArgsError::Usage(early_exit.output))
+        self.parse_tokens(&tokens)
     }
 
     /// Parses the trailing arguments of the command into a [`FromArgs`]-derived struct, splitting
@@ -213,7 +206,12 @@ impl CommandSpec {
     pub fn parse_words<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
         let tokens: Vec<&str> = args.split_whitespace().collect();
 
-        T::from_args(&[self.trigger], &tokens).map_err(|early_exit| ArgsError::Usage(early_exit.output))
+        self.parse_tokens(&tokens)
+    }
+
+    /// Parses `tokens` into `T`, with the trigger as the command name in the usage output.
+    fn parse_tokens<T: FromArgs>(&self, tokens: &[&str]) -> Result<T, ArgsError> {
+        T::from_args(&[self.trigger], tokens).map_err(|early_exit| ArgsError::Usage(early_exit.output))
     }
 
     /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
