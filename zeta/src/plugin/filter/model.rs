@@ -35,6 +35,24 @@ pub struct Filter {
     pub created_at: DateTime<Utc>,
 }
 
+#[cfg(test)]
+impl Filter {
+    /// Builds a filter from the fields of `new`, for tests that need one without a database.
+    pub(crate) fn from_new_filter(id: i32, new: NewFilter) -> Self {
+        Self {
+            id,
+            channel: new.channel,
+            host: new.host,
+            path: new.path,
+            nickname: new.nickname,
+            username: new.username,
+            hostname: new.hostname,
+            created_by: new.created_by,
+            created_at: Utc::now(),
+        }
+    }
+}
+
 /// A filter to be inserted into the database.
 #[derive(Debug, Clone)]
 pub struct NewFilter {

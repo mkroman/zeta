@@ -13,6 +13,7 @@
 use argh::{CommandInfoWithArgs, FlagInfo, FlagInfoKind, Optionality, PositionalInfo};
 
 use crate::plugin::prelude::*;
+use crate::utils::append_entries_within_budget;
 
 /// The `.help` command.
 const HELP: CommandSpec = CommandSpec::new(
@@ -254,22 +255,20 @@ fn with_list(header: &str, entries: &[String]) -> Vec<String> {
 /// an entry.
 fn pack(entries: &[String], max_length: usize) -> Vec<String> {
     let mut messages = Vec::new();
-    let mut message = String::new();
+    let mut remaining = entries;
 
-    for entry in entries {
-        if !message.is_empty() && message.len() + SEPARATOR.len() + entry.len() > max_length {
-            messages.push(std::mem::take(&mut message));
-        }
+    while !remaining.is_empty() {
+        let mut message = String::new();
+        let appended = append_entries_within_budget(
+            &mut message,
+            remaining.iter().cloned(),
+            SEPARATOR,
+            max_length,
+            0,
+        );
 
-        if !message.is_empty() {
-            message.push_str(SEPARATOR);
-        }
-
-        message.push_str(entry);
-    }
-
-    if !message.is_empty() {
         messages.push(message);
+        remaining = &remaining[appended..];
     }
 
     messages
@@ -400,7 +399,7 @@ fn positional_label(positional: &PositionalInfo<'_>) -> String {
 
 /// Formats `s` in bold.
 fn bold(s: &str) -> String {
-    format!("\x02{s}\x02")
+    format!("{BOLD}{s}{BOLD}")
 }
 
 /// Formats `s` in the muted scaffolding color.

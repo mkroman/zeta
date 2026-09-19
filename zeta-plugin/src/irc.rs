@@ -7,9 +7,11 @@
 
 use std::fmt;
 
+use argh::FromArgs;
 use irc::client::Client;
 
 use crate::command::ArgsError;
+use crate::event::CommandEvent;
 
 /// The teal color (mIRC color 10) used for plugin replies.
 pub const COLOR: &str = "\x0310";
@@ -67,6 +69,29 @@ pub fn reply_usage_lines(
     }
 
     Ok(())
+}
+
+/// Parses the arguments of `command` with [`CommandEvent::parse_words`], replying with the
+/// usage lines to the command's channel when the parse fails.
+///
+/// Returns `Ok(None)` when the usage was replied to and the command should be abandoned.
+///
+/// # Errors
+///
+/// Returns any error produced while sending the usage lines.
+pub fn parse_words_or_usage<T: FromArgs>(
+    client: &Client,
+    command: &CommandEvent,
+    format: impl Fn(&str) -> String,
+) -> Result<Option<T>, irc::error::Error> {
+    match command.parse_words() {
+        Ok(args) => Ok(Some(args)),
+        Err(error) => {
+            reply_usage_lines(client, command.channel(), &error, format)?;
+
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]

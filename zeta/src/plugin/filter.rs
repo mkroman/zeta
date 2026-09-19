@@ -34,17 +34,13 @@ use tracing::{debug, warn};
 use wildmatch::WildMatch;
 
 use crate::plugin::prelude::*;
-use crate::utils::append_entries_within_budget;
+use crate::utils::{MAX_LISTING_LENGTH, append_entries_within_budget};
 
 /// The `.filter` command.
 const FILTER: CommandSpec = CommandSpec::with_args::<Opts>(
     ".filter",
     "Manage URL and sender filters (add/list/delete)",
 );
-
-/// The maximum length of a listing, leaving room for `PRIVMSG` framing overhead within the
-/// classic 512-byte IRC line limit.
-const MAX_LISTING_LENGTH: usize = 400;
 
 /// Manage URL and sender filters.
 #[derive(FromArgs, ArgsInfo, Debug)]
@@ -260,26 +256,25 @@ impl From<&List> for Criteria {
     }
 }
 
+impl From<&Delete> for Criteria {
+    fn from(delete: &Delete) -> Criteria {
+        Criteria {
+            channel: delete.channel.clone(),
+            host: delete.host.clone(),
+            path: delete.path.clone(),
+            nickname: delete.nick.clone(),
+            username: delete.user.clone(),
+            hostname: delete.hostname.clone(),
+        }
+    }
+}
+
 impl Delete {
     /// Returns the deletion criteria, or `None` if no criterion was given.
     fn criteria(&self) -> Option<Criteria> {
-        let criteria = Criteria {
-            channel: self.channel.clone(),
-            host: self.host.clone(),
-            path: self.path.clone(),
-            nickname: self.nick.clone(),
-            username: self.user.clone(),
-            hostname: self.hostname.clone(),
-        };
+        let criteria = Criteria::from(self);
 
-        let is_empty = criteria.channel.is_none()
-            && criteria.host.is_none()
-            && criteria.path.is_none()
-            && criteria.nickname.is_none()
-            && criteria.username.is_none()
-            && criteria.hostname.is_none();
-
-        (!is_empty).then_some(criteria)
+        (!criteria.is_empty()).then_some(criteria)
     }
 }
 
@@ -527,13 +522,10 @@ impl Plugin<Context> for FilterPlugin {
             return Ok(());
         }
 
-        let opts = match command.spec.parse_words::<Opts>(command.args()) {
-            Ok(opts) => opts,
-            Err(err) => {
-                reply_usage_lines(client, channel, &err, |line| reply("Filter", line))?;
-
-                return Ok(());
-            }
+        let Some(opts) =
+            parse_words_or_usage::<Opts>(client, command, |line| reply("Filter", line))?
+        else {
+            return Ok(());
         };
 
         match opts.command {
@@ -804,7 +796,7 @@ mod tests {
     fn listings_stay_within_the_budget() {
         let mut message = reply("Filter", "2 filters matching your criteria: ");
 
-        let complete = append_entries_within_budget(
+        let appended = append_entries_within_budget(
             &mut message,
             [
                 format!("long entry {}", "x".repeat(180)),
@@ -815,7 +807,7 @@ mod tests {
             0,
         );
 
-        assert!(!complete);
+        assert_eq!(appended, 1);
         assert!(message.len() <= MAX_LISTING_LENGTH);
         assert!(message.contains("long entry xxx"));
     }

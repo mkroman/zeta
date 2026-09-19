@@ -2,6 +2,8 @@
 
 use url::Url;
 
+use crate::url::{is_id_segment, is_numeric_segment, path_segments, query_param};
+
 /// The standard hostname.
 const INSTAGRAM_COM: &str = "instagram.com";
 
@@ -129,10 +131,7 @@ pub fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
         }
         // Link wrappers point at the target through their `u` query parameter.
         L_INSTAGRAM_COM => {
-            let target = url
-                .query_pairs()
-                .find(|(name, _)| name == "u")
-                .map(|(_, value)| value)?;
+            let target = query_param(url, "u")?;
 
             let target = Url::parse(&target).ok()?;
             if target.host_str() == Some(L_INSTAGRAM_COM) {
@@ -147,21 +146,14 @@ pub fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
 
 /// Parses the path structure shared by the standard Instagram hosts.
 fn parse_instagram_com_url(url: &Url) -> Option<InstagramLink> {
-    let mut segments: Vec<&str> = url.path_segments()?.collect();
-
-    // A trailing slash shows up as an empty final segment; ignore it.
-    if segments.last() == Some(&"") {
-        segments.pop();
-    }
-
-    match segments.as_slice() {
+    match path_segments(url)?.as_slice() {
         // `/share/<token>` — app share links, resolved through a redirect.
         ["share", token] if is_valid_shortcode(token) => {
             Some(InstagramLink::Shortened(url.clone()))
         }
         // `/stories/<user>/<id>` — a story or highlight.
         ["stories", username, id]
-            if is_valid_username(username) && is_valid_story_id(id) =>
+            if is_valid_username(username) && is_numeric_segment(id) =>
         {
             Some(InstagramLink::Story {
                 username: (*username).to_string(),
@@ -169,21 +161,15 @@ fn parse_instagram_com_url(url: &Url) -> Option<InstagramLink> {
             })
         }
         // `/p/<id>`, `/reel/<id>`, `/reels/<id>`, or `/tv/<id>`, optionally followed by an `embed`
-        // or `embed/captioned` suffix.
-        [segment, id, rest @ ..]
-            if is_media_segment(segment) && is_valid_shortcode(id) && is_embed_suffix(rest) =>
-        {
+        // or `embed/captioned` suffix — with an optional user prefix in front.
+        [segment, id, rest @ ..] if is_valid_media(segment, id, rest) => {
             Some(InstagramLink::Media {
                 kind: MediaKind::from_segment(segment)?,
                 id: (*id).to_string(),
             })
         }
-        // `/<user>/p/<id>` etc. — legacy user-prefixed media links.
         [username, segment, id, rest @ ..]
-            if is_valid_username(username)
-                && is_media_segment(segment)
-                && is_valid_shortcode(id)
-                && is_embed_suffix(rest) =>
+            if is_valid_username(username) && is_valid_media(segment, id, rest) =>
         {
             Some(InstagramLink::Media {
                 kind: MediaKind::from_segment(segment)?,
@@ -198,10 +184,11 @@ fn parse_instagram_com_url(url: &Url) -> Option<InstagramLink> {
     }
 }
 
-/// Returns whether the segment names a media path: `p`, `reel`, `reels`, or `tv`.
+/// Returns whether `segment`, `id`, and the following segments form a media path: one of the
+/// media segments with a valid shortcode, optionally followed by an ignorable embed suffix.
 #[must_use]
-fn is_media_segment(segment: &str) -> bool {
-    MediaKind::from_segment(segment).is_some()
+fn is_valid_media(segment: &str, id: &str, rest: &[&str]) -> bool {
+    MediaKind::from_segment(segment).is_some() && is_valid_shortcode(id) && is_embed_suffix(rest)
 }
 
 /// Returns whether the segments following a media path in a URL are an ignorable embed suffix.
@@ -212,32 +199,16 @@ fn is_embed_suffix(segments: &[&str]) -> bool {
 
 /// Returns whether the segment is a valid username: 1-30 ASCII alphanumerics, periods, or
 /// underscores, as accepted by Instagram.
-///
-/// Path segments are percent-decoded, so this guards against characters that could alter the
-/// meaning of canonical URLs built from these segments.
 #[must_use]
 fn is_valid_username(segment: &str) -> bool {
-    !segment.is_empty()
-        && segment.len() <= 30
-        && segment
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+    segment.len() <= 30 && is_id_segment(segment, "._")
 }
 
 /// Returns whether the segment is a valid media shortcode: base64url characters, as assigned by
 /// Instagram.
 #[must_use]
 fn is_valid_shortcode(segment: &str) -> bool {
-    !segment.is_empty()
-        && segment
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
-/// Returns whether the segment is a valid story media id (Instagram story ids are numeric).
-#[must_use]
-fn is_valid_story_id(segment: &str) -> bool {
-    !segment.is_empty() && segment.chars().all(|c| c.is_ascii_digit())
+    is_id_segment(segment, "_-")
 }
 
 #[cfg(test)]

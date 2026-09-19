@@ -1,12 +1,19 @@
 //! HTTP features
+//!
+//! Two independent clients live here: the plain `reqwest` client shared by the API plugins
+//! (behind the `http` feature) and the browser-emulated `wreq` client for anti-bot-protected
+//! sites (behind the `emulated` feature).
 
+#[cfg(feature = "http")]
 use crate::config::HttpConfig;
+#[cfg(feature = "http")]
 use serde::de::DeserializeOwned;
 
 /// JSON response parsing shared by the API client plugins.
 ///
 /// Bodies are parsed with [`serde_path_to_error`] so parse failures report the path to the
 /// offending part of the document, and the offending body is logged.
+#[cfg(feature = "http")]
 pub mod json {
     use serde::de::DeserializeOwned;
     use tracing::error;
@@ -32,6 +39,7 @@ pub mod json {
 }
 
 /// The errors produced when sending a request and parsing its JSON response.
+#[cfg(feature = "http")]
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
     /// The request could not be sent, or the response body could not be read.
@@ -55,6 +63,7 @@ pub enum ApiError {
 ///
 /// Returns an [`ApiError`] if the request fails, the response status is not a success, or the
 /// body cannot be parsed as JSON.
+#[cfg(feature = "http")]
 pub async fn parse_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ApiError> {
@@ -70,6 +79,7 @@ pub async fn parse_response<T: DeserializeOwned>(
 }
 
 /// HTTP client integration
+#[cfg(feature = "http")]
 pub mod client {
     use crate::config::HttpConfig;
 
@@ -104,6 +114,51 @@ pub mod client {
 /// This is equivalent to calling [`client::build`].
 #[must_use]
 #[allow(unused)]
+#[cfg(feature = "http")]
 pub fn build_client(config: &HttpConfig) -> client::Client {
     client::build(config)
+}
+
+/// Client building for anti-bot-protected sites.
+///
+/// These are fetched with [`wreq`] browser emulation: plain `reqwest` gets TLS-fingerprinted by
+/// them regardless of headers. Built behind the `emulated` feature, which the anti-bot-protected
+/// plugins enable.
+#[cfg(feature = "emulated")]
+pub mod emulated {
+    use wreq::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING, USER_AGENT};
+    use zeta_plugin::{Error, prelude::plugin_err};
+
+    /// Returns a `wreq` client builder emulating Firefox 142, layered with the headers the
+    /// emulation must not omit.
+    ///
+    /// `Accept-Encoding` must be set explicitly: like reqwest, wreq does not advertise the
+    /// header itself even though it decompresses responses — and its absence is enough to get
+    /// flagged.
+    ///
+    /// The profile's user agent is overridden with `user_agent` when given. This skews with the
+    /// emulated Firefox 142 fingerprint, and that is deliberate: the profile defaults to macOS —
+    /// which anti-bot systems score far more aggressively when requests originate from
+    /// datacenter networks — and the matching Linux Firefox 142 user agent is rejected by
+    /// DataDome outright, while Firefox 151 passes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `user_agent` cannot be used as a header value.
+    pub fn builder(user_agent: Option<&str>) -> Result<wreq::ClientBuilder, Error> {
+        let mut headers = HeaderMap::new();
+
+        headers.insert(
+            ACCEPT_ENCODING,
+            HeaderValue::from_static("gzip, deflate, br, zstd"),
+        );
+
+        if let Some(user_agent) = user_agent {
+            let value = HeaderValue::from_str(user_agent).map_err(plugin_err)?;
+
+            headers.insert(USER_AGENT, value);
+        }
+
+        Ok(wreq::Client::builder().emulation(wreq_util::Emulation::Firefox142).default_headers(headers))
+    }
 }

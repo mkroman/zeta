@@ -13,6 +13,8 @@ pub use error::Error;
 /// Reddit API base URL.
 pub const BASE_URL: &str = "https://www.reddit.com";
 pub const OAUTH_BASE_URL: &str = "https://oauth.reddit.com";
+/// The OAuth2 client-credentials token endpoint.
+pub const TOKEN_URL: &str = "https://www.reddit.com/api/v1/access_token";
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
 pub const USER_AGENT: &str = concat!("rust:reddit:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");
 /// The duration before a HTTP request times out.

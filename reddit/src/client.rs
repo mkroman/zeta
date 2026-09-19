@@ -5,11 +5,13 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION};
 use reqwest::{StatusCode, redirect::Policy};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use serde_json::Error as JsonError;
+use serde_path_to_error::Error as ErrorWithSerdePath;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, trace};
 use url::Url;
 
-use crate::{BASE_URL, HTTP_TIMEOUT, OAUTH_BASE_URL, USER_AGENT};
+use crate::{BASE_URL, HTTP_TIMEOUT, OAUTH_BASE_URL, TOKEN_URL, USER_AGENT};
 use crate::{Error, Item, Link, Submission, Subreddit};
 
 struct TokenCache {
@@ -116,7 +118,7 @@ impl Client {
     async fn request_access_token(&self) -> Result<AccessTokenResponse, Error> {
         let request = self
             .client
-            .post("https://www.reddit.com/api/v1/access_token")
+            .post(TOKEN_URL)
             .basic_auth(&self.client_id, Some(self.client_secret.expose_secret()))
             .body("grant_type=client_credentials");
         let response = request.send().await.map_err(Error::RequestAuthToken)?;
@@ -129,61 +131,80 @@ impl Client {
         Ok(access_token)
     }
 
+    /// Sends the request and parses its JSON body into an [`Item`].
+    ///
+    /// A `404` status maps to `not_found`, any other error status to [`Error::Http`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, the response is an error status, or the body
+    /// cannot be parsed.
+    async fn send_json(
+        &self,
+        request: reqwest::RequestBuilder,
+        not_found: fn() -> Error,
+        on_parse: fn(ErrorWithSerdePath<JsonError>) -> Error,
+    ) -> Result<Item, Error> {
+        let response = request.send().await.map_err(Error::Reqwest)?;
+
+        match response.error_for_status() {
+            Ok(response) => {
+                trace!("response is ok, parsing response");
+
+                let text = response.text().await.map_err(Error::Reqwest)?;
+                let deserializer = &mut serde_json::Deserializer::from_str(&text);
+
+                serde_path_to_error::deserialize(deserializer)
+                    .inspect_err(|err| error!(?err, %text, "could not parse response"))
+                    .map_err(on_parse)
+            }
+            Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
+                info!(%err, "resource not found");
+
+                Err(not_found())
+            }
+            Err(err) => Err(Error::Http(err)),
+        }
+    }
+
     /// Fetches and returns details about a given submission.
     #[instrument(skip(self))]
     pub async fn submission(&self, article: &str) -> Result<Submission, Error> {
         let access_token = self.get_valid_token().await?;
-        debug!("requesting submission");
+        debug!(%article, "requesting submission");
 
         let request = self
             .client
             .get(format!("{OAUTH_BASE_URL}/by_id/t3_{article}"))
             .header(AUTHORIZATION, format!("bearer {access_token}"))
             .header(CONTENT_TYPE, "application/json");
-        let response = request.send().await.map_err(Error::Reqwest)?;
 
-        match response.error_for_status() {
-            Ok(response) => {
-                trace!("response is ok, parsing list");
-
-                let text = response.text().await.map_err(Error::Reqwest)?;
-                let jd = &mut serde_json::Deserializer::from_str(&text);
-                let listing: Item = serde_path_to_error::deserialize(jd)
-                    .inspect_err(|err| error!(?err, %text, "could not parse list"))
-                    .map_err(Error::DeserializeComments)?;
-                trace!(x = ?(&listing), "finished parsing list");
-
-                match listing {
-                    Item::Listing(listing) => listing
-                        .children
-                        .into_iter()
-                        .find_map(|x| match x {
-                            Item::Submission(s) => Some(s),
-                            _ => None,
-                        })
-                        .ok_or_else(|| Error::InvalidResponse),
-                    _ => Err(Error::InvalidResponse),
-                }
-            }
-            Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
-                info!(%article, %err, "could not fetch details for article");
-
-                Err(Error::SubmissionNotFound)
-            }
-            Err(err) => Err(Error::Http(err)),
+        match self
+            .send_json(request, || Error::SubmissionNotFound, Error::DeserializeComments)
+            .await?
+        {
+            Item::Listing(listing) => listing
+                .children
+                .into_iter()
+                .find_map(|x| match x {
+                    Item::Submission(s) => Some(s),
+                    _ => None,
+                })
+                .ok_or(Error::InvalidResponse),
+            _ => Err(Error::InvalidResponse),
         }
     }
 
     /// Fetches and returns details about a given video submission.
     #[instrument(skip(self))]
     pub async fn video(&self, id: &str) -> Result<Submission, Error> {
-        debug!("requesting video redirect location");
-        let Ok(url) = self
+        debug!(%id, "requesting video redirect location");
+
+        let url = self
             .get_redirect_location(&format!("{BASE_URL}/video/{id}"))
             .await
-        else {
-            return Err(Error::VideoRedirect);
-        };
+            .inspect_err(|error| debug!(%id, %error, "the video link did not redirect"))
+            .map_err(|_| Error::VideoRedirect)?;
 
         match crate::classify_reddit_com_url(&url) {
             Some(Link::Submission { id, .. }) => self.submission(&id).await,
@@ -195,7 +216,7 @@ impl Client {
     #[instrument(skip(self))]
     pub async fn subreddit_about_info(&self, name: &str) -> Result<Subreddit, Error> {
         let access_token = self.get_valid_token().await?;
-        debug!("requesting submission");
+        debug!(%name, "requesting subreddit details");
 
         let request = self
             .client
@@ -203,31 +224,12 @@ impl Client {
             .header(AUTHORIZATION, format!("bearer {access_token}"))
             .header(CONTENT_TYPE, "application/json");
 
-        debug!("requesting subreddit details");
-        let response = request.send().await.map_err(Error::Reqwest)?;
-
-        match response.error_for_status() {
-            Ok(response) => {
-                trace!("response is ok, parsing subreddit");
-
-                let text = response.text().await.map_err(Error::Reqwest)?;
-                let jd = &mut serde_json::Deserializer::from_str(&text);
-                let item: Item = serde_path_to_error::deserialize(jd)
-                    .inspect_err(|err| error!(?err, %text, "could not parse subreddit response"))
-                    .map_err(Error::DeserializeSubreddit)?;
-                debug!(?item, "finished parsing item");
-
-                match item {
-                    Item::Subreddit(subreddit) => Ok(subreddit),
-                    _ => Err(Error::InvalidResponse),
-                }
-            }
-            Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
-                info!(%name, %err, "subreddit not found");
-
-                Err(Error::SubredditNotFound)
-            }
-            Err(err) => Err(Error::Http(err)),
+        match self
+            .send_json(request, || Error::SubredditNotFound, Error::DeserializeSubreddit)
+            .await?
+        {
+            Item::Subreddit(subreddit) => Ok(subreddit),
+            _ => Err(Error::InvalidResponse),
         }
     }
 

@@ -3,7 +3,6 @@
 #![allow(clippy::use_self)]
 
 /// Single-slot time-to-live caching
-#[cfg(feature = "http")]
 pub mod cache;
 /// Configuration loading and validation
 pub mod config;
@@ -19,7 +18,11 @@ pub mod dns;
 /// Duration formatting and parsing utilities
 mod duration;
 mod error;
-#[cfg(feature = "http")]
+/// HTTP client integration.
+///
+/// Enabled by the `http` feature (plain reqwest) or the `emulated` feature (browser-emulated
+/// wreq for anti-bot-protected sites).
+#[cfg(any(feature = "http", feature = "emulated"))]
 mod http;
 /// Shared media mirroring
 #[cfg(feature = "mirror")]

@@ -26,7 +26,6 @@ use std::time::Duration;
 
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
 use indefinite::indefinite_article_only;
@@ -41,17 +40,9 @@ use crate::{
     url::ExtractUrlsExt,
 };
 
-/// The hostname of shortened YouTube URLs.
-const YOUTU_BE_HOST: &str = "youtu.be";
+mod urls;
 
-/// The YouTube.com hostname.
-const YOUTUBE_COM_HOST: &str = "youtube.com";
-
-/// The www-prefixed YouTube.com hostname.
-const YOUTUBE_COM_WWW_HOST: &str = "www.youtube.com";
-
-/// The YouTube hosts whose links this plugin handles.
-const URL_HOSTS: &[&str] = &[YOUTU_BE_HOST, YOUTUBE_COM_HOST, YOUTUBE_COM_WWW_HOST];
+pub use self::urls::{UrlKind, parse_youtube_url};
 
 /// YouTube Data API v3 base endpoint URL.
 const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
@@ -154,45 +145,20 @@ pub struct YouTube {
 /// YouTube API and plugin-specific error types.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// The API returned a response the plugin does not handle.
-    #[error("server returned invalid response")]
-    InvalidResponse,
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    /// The API responded with a non-success status or an invalid body.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     /// The search or video lookup matched nothing.
     #[error("no results")]
     NoResults,
-    /// The API response could not be deserialized.
-    #[error("deserialization error: {0}")]
-    Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
 }
 
-/// The kind of YouTube resource a URL points at.
-#[derive(Eq, PartialEq, Debug)]
-#[non_exhaustive]
-pub enum UrlKind {
-    /// Direct link to a video (e.g., `youtube.com/watch?v=VIDEO_ID` or `youtu.be/VIDEO_ID`)
-    Video(String),
-    /// Link to a short video (e.g., `youtube.com/shorts/VIDEO_ID`)
-    Short(String),
-    /// Direct link to a channel using channel ID (e.g., `youtube.com/channel/CHANNEL_ID`)
-    Channel(String),
-    /// Link to a channel using the @ handle (e.g., `youtube.com/@ChannelName`)
-    ChannelHandle(String),
-    /// Direct link to a playlist (e.g., `youtube.com/playlist?list=PLAYLIST_ID`)
-    Playlist(String),
-}
-
-/// Basic details about the video, such as its title, description, and category.
+/// Basic details about the video, such as its title and category.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct Snippet {
     /// The video title, possibly containing HTML entities.
     pub title: String,
-    /// The video description.
-    pub description: String,
     /// The title of the channel that uploaded the video.
     pub channel_title: String,
     /// The video category id, resolvable through the video categories map.
@@ -204,7 +170,6 @@ pub struct Snippet {
 /// Statistics about a video.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct Statistics {
     /// The number of times the video has been viewed, as a decimal string.
     pub view_count: String,
@@ -213,7 +178,6 @@ pub struct Statistics {
 /// Details about the content of a video, such as its duration.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct ContentDetails {
     /// The video duration as an ISO 8601 duration string (e.g. `PT4M13S`).
     pub duration: String,
@@ -222,7 +186,6 @@ pub struct ContentDetails {
 /// Details about a live stream.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct LiveStreamingDetails {
     /// The number of concurrent viewers, present while the stream is live.
     pub concurrent_viewers: Option<String>,
@@ -231,14 +194,7 @@ pub struct LiveStreamingDetails {
 /// A YouTube video.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct Video {
-    /// The API resource type, e.g. `youtube#video`.
-    pub kind: String,
-    /// The etag of the resource.
-    pub etag: String,
-    /// The video id.
-    pub id: String,
     /// The video's basic details, present in the `snippet` API part.
     pub snippet: Option<Snippet>,
     /// The video's statistics, present in the `statistics` API part.
@@ -252,12 +208,7 @@ pub struct Video {
 /// Search Result.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct Search {
-    /// The API resource type, e.g. `youtube#searchResult`.
-    pub kind: String,
-    /// The etag of the search result.
-    pub etag: String,
     /// The id of the matched resource, typed by its kind.
     pub id: SearchId,
     /// The matched resource's basic details.
@@ -267,75 +218,31 @@ pub struct Search {
 /// The id of a search result, typed by the kind of resource the search matched.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct SearchId {
-    /// The API resource type of the matched id, e.g. `youtube#video`.
-    pub kind: String,
     /// The video id, present for video results.
     pub video_id: Option<String>,
-    /// The channel id, present for channel results.
-    pub channel_id: Option<String>,
-    /// The playlist id, present for playlist results.
-    pub playlist_id: Option<String>,
 }
 
 /// The snippet of a search result.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct SearchSnippet {
     /// The matched resource's title, possibly containing HTML entities.
     pub title: String,
-    /// The matched resource's description.
-    pub description: String,
-    /// The id of the channel the matched resource belongs to.
-    pub channel_id: String,
-    /// The title of the channel the matched resource belongs to.
-    pub channel_title: String,
-    /// The available thumbnails, keyed by their resolution name (e.g. `default`, `high`).
-    pub thumbnails: HashMap<String, SearchSnippetThumbnail>,
-    /// When the matched resource was published.
-    #[serde(with = "time::serde::rfc3339")]
-    pub published_at: OffsetDateTime,
-    /// Whether the resource is a `"live"`, `"upcoming"`, or regular broadcast.
-    pub live_broadcast_content: String,
-}
-
-/// A search result thumbnail.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct SearchSnippetThumbnail {
-    /// The thumbnail image URL.
-    pub url: String,
-    /// The image width, in pixels.
-    pub width: u32,
-    /// The image height, in pixels.
-    pub height: u32,
 }
 
 /// Details about a video category.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct CategorySnippet {
-    /// The id of the category's channel (usually the YouTube channel id).
-    pub channel_id: String,
     /// The category title, e.g. "Music".
     pub title: String,
-    /// Whether videos can be assigned to this category.
-    pub assignable: bool,
 }
 
 /// A video category result.
 #[derive(Clone, Debug, Deserialize)]
-#[allow(unused)]
 #[serde(rename_all = "camelCase")]
 pub struct Category {
-    /// The API resource type, e.g. `youtube#videoCategory`.
-    pub kind: String,
-    /// The etag of the category.
-    pub etag: String,
     /// The category id.
     pub id: String,
     /// The category's details.
@@ -345,12 +252,7 @@ pub struct Category {
 /// Generic response type for list results.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct ApiListResponse<R> {
-    /// The API resource type of the list, e.g. `youtube#videoListResponse`.
-    pub kind: String,
-    /// The etag of the list.
-    pub etag: String,
     /// The list items.
     pub items: Vec<R>,
 }
@@ -375,7 +277,7 @@ impl Plugin<Context> for YouTube {
     ) -> Result<YouTube, ZetaError> {
         subscriptions
             .command(YOUTUBE)
-            .urls(UrlScope::Hosts(URL_HOSTS));
+            .urls(UrlScope::Hosts(urls::URL_HOSTS));
 
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
 
@@ -434,8 +336,7 @@ impl Plugin<Context> for YouTube {
         client: &Client,
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        self.process_urls(vec![url.url().clone()], url.channel(), client)
-            .await?;
+        self.process_url(url.url(), url.channel(), client).await?;
 
         Ok(())
     }
@@ -495,46 +396,37 @@ impl YouTube {
         });
     }
 
-    /// Processes URLs found in a message
-    async fn process_urls(
-        &self,
-        urls: Vec<Url>,
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        for ref url in urls {
-            if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
-                parse_youtube_url(url)
-            {
-                match self.get_video(&video_id).await {
-                    Ok(video) => {
-                        let snippet = video.snippet.as_ref();
-                        let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
+    /// Processes a URL found in a message.
+    async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), ZetaError> {
+        if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
+            match self.get_video(&video_id).await {
+                Ok(video) => {
+                    let snippet = video.snippet.as_ref();
+                    let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
 
-                        // The map is refreshed by the task started on load; the read is
-                        // stale-tolerant, so an unavailable API keeps serving the last known
-                        // categories.
-                        let category = self.video_categories.read(|cache| {
-                            cache
-                                .and_then(|categories| categories.get(&category_id))
-                                .map_or_else(
-                                    || "unknown category".to_string(),
-                                    |category| category.snippet.title.clone(),
-                                )
-                        });
+                    // The map is refreshed by the task started on load; the read is
+                    // stale-tolerant, so an unavailable API keeps serving the last known
+                    // categories.
+                    let category = self.video_categories.read(|cache| {
+                        cache
+                            .and_then(|categories| categories.get(&category_id))
+                            .map_or_else(
+                                || "unknown category".to_string(),
+                                |category| category.snippet.title.clone(),
+                            )
+                    });
 
-                        let view_count = video
-                            .statistics
-                            .as_ref()
-                            .and_then(|s| str::parse::<u64>(&s.view_count).ok())
-                            .unwrap_or(0);
+                    let view_count = video
+                        .statistics
+                        .as_ref()
+                        .and_then(|s| str::parse::<u64>(&s.view_count).ok())
+                        .unwrap_or(0);
 
-                        let message = format_video_message(&video, &category, view_count);
-                        client.send_privmsg(channel, message)?;
-                    }
-                    Err(e) => {
-                        client.send_privmsg(channel, format!("Error: {e}"))?;
-                    }
+                    let message = format_video_message(&video, &category, view_count);
+                    client.send_privmsg(channel, message)?;
+                }
+                Err(e) => {
+                    client.send_privmsg(channel, format!("Error: {e}"))?;
                 }
             }
         }
@@ -557,11 +449,12 @@ impl YouTube {
         debug!(?params, "searching for videos");
 
         let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
-        let response = request.send().await?.error_for_status()?;
+        let response = request
+            .send()
+            .await
+            .map_err(http::ApiError::Request)?;
 
-        debug!("response is ok, parsing as json");
-        let text = response.text().await.map_err(Error::Request)?;
-        let result: SearchListResponse = http::json::from_str(&text).map_err(Error::Deserialize)?;
+        let result: SearchListResponse = http::parse_response(response).await?;
 
         let items = result.items;
 
@@ -588,16 +481,12 @@ impl YouTube {
         let response = request
             .send()
             .await
-            .map_err(|_| Error::InvalidResponse)?
-            .error_for_status()?;
-        let list: VideosResponse = response.json().await?;
+            .map_err(http::ApiError::Request)?;
+        let list: VideosResponse = http::parse_response(response).await?;
+
         debug!("fetched metadata for video");
 
-        if let Some(video) = list.items.first() {
-            return Ok(video.clone());
-        }
-
-        Err(Error::NoResults)
+        list.items.into_iter().next().ok_or(Error::NoResults)
     }
 }
 
@@ -605,9 +494,8 @@ impl YouTube {
 ///
 /// # Errors
 ///
-/// Returns [`Error::InvalidResponse`] if the request failed or the response was an error
-/// status, [`Error::NoResults`] if the API returned no categories, and [`Error::Request`] or
-/// [`Error::Deserialize`] if the response could not be read or parsed.
+/// Returns [`Error::Api`] if the request failed or the response could not be parsed, and
+/// [`Error::NoResults`] if the API returned no categories.
 async fn fetch_video_categories(
     client: &reqwest::Client,
     api_key: &str,
@@ -623,12 +511,8 @@ async fn fetch_video_categories(
     let request = client
         .get(format!("{BASE_URL}/videoCategories"))
         .query(&params);
-    let response = request
-        .send()
-        .await
-        .map_err(|_| Error::InvalidResponse)?
-        .error_for_status()?;
-    let list: CategoriesResponse = response.json().await?;
+    let response = request.send().await.map_err(http::ApiError::Request)?;
+    let list: CategoriesResponse = http::parse_response(response).await?;
 
     debug!("fetched video category list");
 
@@ -691,58 +575,6 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
     ))
 }
 
-/// Extracts a query parameter value from a URL
-fn extract_query_param(url: &Url, param: &str) -> Option<String> {
-    url.query_pairs()
-        .find(|(key, _)| key == param)
-        .map(|(_, value)| value.to_string())
-}
-
-/// Parses the given `url` and returns a [`UrlKind`] depending on the type of YouTube URL.
-#[must_use]
-pub fn parse_youtube_url(url: &Url) -> Option<UrlKind> {
-    match url.host_str()? {
-        YOUTU_BE_HOST => parse_youtu_be_url(url),
-        YOUTUBE_COM_HOST | YOUTUBE_COM_WWW_HOST => parse_youtube_com_url(url),
-        _ => None,
-    }
-}
-
-/// Parses youtube.com URLs
-fn parse_youtube_com_url(url: &Url) -> Option<UrlKind> {
-    let segments: Vec<&str> = url.path_segments()?.collect();
-
-    match segments.as_slice() {
-        // `/watch?v=<video_id>`
-        ["watch"] => extract_query_param(url, "v").map(UrlKind::Video),
-        // `/playlist?list=<playlist_id>`
-        ["playlist"] => extract_query_param(url, "list").map(UrlKind::Playlist),
-        // `/channel/<channel_id>`
-        ["channel", channel_id] if !channel_id.is_empty() => {
-            Some(UrlKind::Channel((*channel_id).to_string()))
-        }
-        ["shorts", video_id] if !video_id.is_empty() => {
-            Some(UrlKind::Short((*video_id).to_string()))
-        }
-        // `/*`
-        [path] if path.starts_with('@') && path.len() > 1 => {
-            Some(UrlKind::ChannelHandle(path[1..].to_string()))
-        }
-        _ => None,
-    }
-}
-
-/// Parses youtu.be URLs
-fn parse_youtu_be_url(url: &Url) -> Option<UrlKind> {
-    let path = url.path();
-
-    if path.len() > 1 {
-        return Some(UrlKind::Video(path[1..].to_owned()));
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -766,98 +598,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_parse_video_urls() {
-        let test_cases = [
-            (
-                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
-            ),
-            (
-                "https://youtube.com/watch?v=dQw4w9WgXcQ",
-                Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
-            ),
-            (
-                "https://youtu.be/dQw4w9WgXcQ",
-                Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
-            ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected, "for {url_str}");
-        }
-    }
-
-    #[test]
-    fn test_parse_shorts_urls() {
-        let test_cases = [
-            (
-                "https://www.youtube.com/shorts/l4s8y-O_ols",
-                Some(UrlKind::Short("l4s8y-O_ols".to_string())),
-            ),
-            (
-                "https://youtube.com/shorts/l4s8y-O_ols",
-                Some(UrlKind::Short("l4s8y-O_ols".to_string())),
-            ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected, "for {url_str}");
-        }
-    }
-
-    #[test]
-    fn test_parse_playlist_urls() {
-        let test_cases = [(
-            "https://www.youtube.com/playlist?list=PLF37D334894B07EEA",
-            Some(UrlKind::Playlist("PLF37D334894B07EEA".to_string())),
-        )];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected);
-        }
-    }
-
-    #[test]
-    fn test_invalid_urls() {
-        let invalid_urls = [
-            "https://example.com/watch?v=test",
-            "https://youtube.com/channel/",
-            "https://youtu.be/",
-        ];
-
-        for url_str in invalid_urls {
-            let url = Url::parse(url_str).unwrap();
-            assert_eq!(parse_youtube_url(&url), None);
-        }
-    }
-
-    #[test]
-    fn it_should_parse_channel_urls() {
-        let test_cases = [
-            (
-                "https://www.youtube.com/channel/UChuZAo1RKL85gev3Eal9_zg",
-                Some(UrlKind::Channel("UChuZAo1RKL85gev3Eal9_zg".to_string())),
-            ),
-            (
-                "https://www.youtube.com/@BreakingTaps",
-                Some(UrlKind::ChannelHandle("BreakingTaps".to_string())),
-            ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected);
-        }
-    }
-
     /// Returns a video with the given live status, duration, and concurrent viewer count.
     fn test_video(
         live_broadcast_content: &str,
@@ -865,12 +605,8 @@ mod tests {
         concurrent_viewers: Option<&str>,
     ) -> Video {
         Video {
-            kind: "youtube#video".to_string(),
-            etag: String::new(),
-            id: "dQw4w9WgXcQ".to_string(),
             snippet: Some(Snippet {
                 title: "Test Video".to_string(),
-                description: String::new(),
                 channel_title: "Test Channel".to_string(),
                 category_id: "10".to_string(),
                 live_broadcast_content: live_broadcast_content.to_string(),

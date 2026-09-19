@@ -16,6 +16,8 @@ path = "src/main.rs"
 
 [features]
 default = ["plugins-all", "rustls", "database"]
+# Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
+emulated = ["dep:wreq", "dep:wreq-util"]
 database = ["dep:sqlx", "dep:chrono"]
 http = ["dep:reqwest"]
 mirror = [
@@ -61,7 +63,7 @@ plugin-health = ["dep:memory-stats"]
 plugin-help = []
 plugin-howlongtobeat = ["http"]
 plugin-imdb = ["http", "dep:num-format", "dep:serde_path_to_error"]
-plugin-instagram = ["mirror", "dep:scraper", "dep:wreq", "dep:wreq-util"]
+plugin-instagram = ["mirror", "emulated", "dep:scraper"]
 plugin-isitopen = ["http", "dep:regex", "time"]
 plugin-kagi = ["dep:kagi"]
 plugin-notification = ["database", "dep:chrono"]
@@ -75,7 +77,7 @@ plugin-spotify = ["http", "dep:base64", "dep:indefinite", "dep:num-format", "dep
 plugin-string-utils = []
 plugin-thingiverse = ["http", "dep:num-format", "dep:regex"]
 plugin-tiktok = ["mirror", "http"]
-plugin-titles = ["dep:html5ever", "dep:wreq", "dep:wreq-util"]
+plugin-titles = ["emulated", "dep:html5ever"]
 plugin-trustpilot = ["http", "dep:num-format"]
 plugin-tvmaze = ["http", "time", "dep:serde_path_to_error"]
 plugin-twitch = ["http", "dep:num-format"]

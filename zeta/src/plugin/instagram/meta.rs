@@ -8,7 +8,6 @@ use std::sync::OnceLock;
 
 use scraper::{Html, Selector};
 use tracing::debug;
-use wreq::header::ACCEPT_ENCODING;
 
 /// The CSS selector for the `og:title` meta tag.
 fn og_title_selector() -> &'static Selector {
@@ -146,9 +145,7 @@ pub async fn fetch(
 ) -> Result<PageMetadata, Error> {
     debug!(%url, "fetching page metadata");
 
-    let mut request = client
-        .get(url)
-        .header(ACCEPT_ENCODING, "gzip, deflate, br, zstd");
+    let mut request = client.get(url);
 
     if let Some(session_cookie) = session_cookie {
         request = request.header(wreq::header::COOKIE, format!("sessionid={session_cookie}"));

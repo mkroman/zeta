@@ -1,5 +1,5 @@
 use std::{
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -128,7 +128,7 @@ impl Client {
             .timeout(options.timeout)
             .user_agent(options.user_agent)
             .build()
-            .expect("could not build http client");
+            .map_err(Error::BuildClient)?;
 
         Ok(Client {
             http: client,
@@ -303,10 +303,17 @@ fn url_with_query(path: &str, params: &[(&str, &str)]) -> reqwest::Url {
 
 // Extracts the `window.sse_nonce` value from the raw HTML content.
 fn extract_nonce(html: &str) -> Option<String> {
-    let re = Regex::new(r#"window\.sse_nonce\s*=\s*"([^"]+)""#).ok()?;
-
-    re.captures(html)
+    nonce_regex().captures(html)
         .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+}
+
+/// Returns the regex matching the `window.sse_nonce` value in the page's HTML, compiled once.
+fn nonce_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+
+    RE.get_or_init(|| {
+        Regex::new(r#"window\.sse_nonce\s*=\s*"([^"]+)""#).expect("the nonce pattern is valid")
+    })
 }
 
 /// Parses a raw stream response body into a vector of `KagiMessage`s, detecting whether the
@@ -568,7 +575,7 @@ mod tests {
         let messages = parse_stream(&stream);
         let results = parse_search_result_messages(&messages);
 
-        assert!(!results.is_empty());
+        assert_ne!(results, Vec::new());
 
         let result = results.first().unwrap();
 
@@ -585,7 +592,6 @@ mod tests {
         let messages = parse_kagi_stream(&stream);
         let results = parse_search_result_messages(&messages);
 
-        assert!(!results.is_empty());
         assert_eq!(results.len(), 19);
 
         let result = results.first().unwrap();

@@ -30,6 +30,7 @@ mod meta;
 mod urls;
 
 use std::fmt::Write;
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -37,10 +38,10 @@ use tokio::sync::Mutex;
 use tracing::{debug, error};
 use url::Url;
 use wreq::redirect::Policy;
-use wreq_util::Emulation;
 
 use crate::{
     cache::{TtlCache, TtlMap},
+    http,
     mirror::{Mirror, MirrorTarget},
     plugin::prelude::*,
     utils::{Truncatable, collapse_whitespace},
@@ -163,8 +164,7 @@ impl Plugin<Context> for Instagram {
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Instagram, ZetaError> {
         subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
 
-        let client = wreq::Client::builder()
-            .emulation(Emulation::Firefox142)
+        let client = http::emulated::builder(None)?
             .redirect(Policy::limited(4))
             .timeout(ctx.config.http.timeout)
             .build()
@@ -180,11 +180,11 @@ impl Plugin<Context> for Instagram {
             DEFAULT_PUBLIC_URL_BASE,
         );
 
-        let session_cookie = resolve_optional_setting(
+        let session_cookie = crate::utils::resolve_optional_setting(
             settings.session_cookie.as_deref(),
             "INSTAGRAM_SESSION_COOKIE",
         );
-        let metadata_proxy = resolve_optional_setting(
+        let metadata_proxy = crate::utils::resolve_optional_setting(
             settings.metadata_proxy.as_deref(),
             "INSTAGRAM_METADATA_PROXY",
         );
@@ -210,11 +210,8 @@ impl Plugin<Context> for Instagram {
     }
 
     async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
-        if let Err(err) = self
-            .process_urls(&[url.url().clone()], url.channel(), client)
-            .await
-        {
-            error!("could not process urls: {err}");
+        if let Err(err) = self.process_url(url.url(), url.channel(), client).await {
+            error!("could not process url: {err}");
         }
 
         Ok(())
@@ -222,19 +219,6 @@ impl Plugin<Context> for Instagram {
 }
 
 impl Instagram {
-    async fn process_urls(
-        &self,
-        urls: &[Url],
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), Error> {
-        for url in urls {
-            self.process_url(url, channel, client).await?;
-        }
-
-        Ok(())
-    }
-
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
         match parse_instagram_url(url) {
             Some(InstagramLink::Media { kind, id }) => {
@@ -266,6 +250,9 @@ impl Instagram {
         Ok(())
     }
 
+    /// Posts a summary of the media with the given kind and id, and queues it for mirroring.
+    ///
+    /// The details are fetched and cached through [`Self::post_summary`].
     async fn process_media(
         &self,
         kind: &MediaKind,
@@ -274,32 +261,18 @@ impl Instagram {
         client: &Client,
     ) -> Result<(), Error> {
         let url = media_url(*kind, id);
-        let details = match self
-            .details
-            .get_or_refresh(id.to_string(), || async {
-                self.fetch_media_details(id, &url, *kind).await
-            })
-            .await
-        {
-            Ok(details) => details,
-            Err(error) => {
-                debug!(%id, %error, "could not fetch media details");
 
-                None
-            }
-        };
-
-        if let Some(summary) =
-            details.as_ref().and_then(|details| format_summary(details, kind.label(), self.settings.title_length))
-        {
-            let _ = client.send_privmsg(channel, notice(&summary));
-        }
-
-        self.mirror_video(&url, id, channel, client).await;
-
-        Ok(())
+        self.post_summary(id, &url, kind.label(), || async {
+            self.fetch_media_details(id, &url, *kind).await
+        }, channel, client)
+        .await
     }
 
+    /// Posts a summary of the story published by `username` with the given id, and queues it
+    /// for mirroring.
+    ///
+    /// Stories have no anonymously accessible API, so only their page is consulted, which
+    /// generally carries details only with a session cookie configured.
     async fn process_story(
         &self,
         username: &str,
@@ -308,26 +281,48 @@ impl Instagram {
         client: &Client,
     ) -> Result<(), Error> {
         let url = story_url(username, id);
-        let details = match self
-            .details
-            .get_or_refresh(id.to_string(), || async { self.fetch_story_details(&url).await })
-            .await
-        {
+
+        self.post_summary(id, &url, "story", || async {
+            self.fetch_page_details(&url, self.session_cookie.as_deref()).await
+        }, channel, client)
+        .await
+    }
+
+    /// Posts the summary for the cached details of a media or story, and queues the video for
+    /// mirroring.
+    ///
+    /// The details for `id` are fetched through `refresh` when the cache is stale; a failed
+    /// refresh is logged and skips the summary only.
+    async fn post_summary<E, F, Fut>(
+        &self,
+        id: &str,
+        url: &str,
+        label: &str,
+        refresh: F,
+        channel: &str,
+        client: &Client,
+    ) -> Result<(), Error>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<Option<MediaDetails>, E>> + Send,
+        E: std::fmt::Display,
+    {
+        let details = match self.details.get_or_refresh(id.to_string(), refresh).await {
             Ok(details) => details,
             Err(error) => {
-                debug!(%id, %error, "could not fetch story details");
+                debug!(%id, %error, "could not fetch {label} details");
 
                 None
             }
         };
 
-        if let Some(summary) =
-            details.as_ref().and_then(|details| format_summary(details, "story", self.settings.title_length))
-        {
+        if let Some(summary) = details.as_ref().and_then(|details| {
+            format_summary(details, label, self.settings.title_length)
+        }) {
             let _ = client.send_privmsg(channel, notice(&summary));
         }
 
-        self.mirror_video(&url, id, channel, client).await;
+        self.mirror_video(url, id, channel, client).await;
 
         Ok(())
     }
@@ -351,40 +346,19 @@ impl Instagram {
         let mut details = None;
         let mut failed = false;
 
-        match self.fetch_page_details(canonical, self.session_cookie.as_deref()).await {
-            Ok(page_details) => details = page_details,
-            Err(error) => {
-                debug!(%id, %error, "the media page request failed");
-
-                failed = true;
-            }
-        }
+        self.try_source(id, "media page", self.fetch_page_details(canonical, self.session_cookie.as_deref()), &mut details, &mut failed).await;
 
         if details.is_none() {
             debug!(%id, "falling back to the graphql api");
 
-            match self.fetch_graphql_details(id).await {
-                Ok(graphql_details) => details = graphql_details,
-                Err(error) => {
-                    debug!(%id, %error, "the graphql api request failed");
-
-                    failed = true;
-                }
-            }
+            self.try_source(id, "graphql api", self.fetch_graphql_details(id), &mut details, &mut failed).await;
         }
 
         if details.is_none() && let Some(proxy) = &self.metadata_proxy {
             let url = proxy_media_url(proxy, kind, id);
             debug!(%url, "falling back to the metadata proxy");
 
-            match self.fetch_page_details(&url, None).await {
-                Ok(proxy_details) => details = proxy_details,
-                Err(error) => {
-                    debug!(%id, %error, "the metadata proxy request failed");
-
-                    failed = true;
-                }
-            }
+            self.try_source(id, "metadata proxy", self.fetch_page_details(&url, None), &mut details, &mut failed).await;
         }
 
         if details.is_none() && failed {
@@ -392,6 +366,32 @@ impl Instagram {
         }
 
         Ok(details)
+    }
+
+    /// Awaits one source of details, storing the result in `details` and logging a failure.
+    ///
+    /// A failed source sets `failed`, which turns into an error when no source ends up carrying
+    /// details: the outcome is unknown then, and the caller does not cache it, so a later
+    /// mention of the same link tries again.
+    async fn try_source<E, Fut>(
+        &self,
+        id: &str,
+        context: &str,
+        source: Fut,
+        details: &mut Option<MediaDetails>,
+        failed: &mut bool,
+    ) where
+        Fut: Future<Output = Result<Option<MediaDetails>, E>>,
+        E: std::fmt::Display,
+    {
+        match source.await {
+            Ok(source_details) => *details = source_details,
+            Err(error) => {
+                debug!(%id, %error, "the {context} request failed");
+
+                *failed = true;
+            }
+        }
     }
 
     /// Fetches the media details through the anonymous GraphQL API.
@@ -420,15 +420,6 @@ impl Instagram {
             }
             Err(error) => Err(error),
         }
-    }
-
-    /// Fetches the details of the story with the given id from its page.
-    ///
-    /// Stories have no anonymously accessible API, so only their page is consulted, which
-    /// generally carries details only with a session cookie configured. Returns `Ok(None)` when
-    /// the page carried no details, and an error when the request failed.
-    async fn fetch_story_details(&self, url: &str) -> Result<Option<MediaDetails>, meta::Error> {
-        self.fetch_page_details(url, self.session_cookie.as_deref()).await
     }
 
     /// Fetches a page and extracts its OpenGraph details.
@@ -537,16 +528,6 @@ impl Instagram {
             }
         }
     }
-}
-
-/// Returns the value of an optional setting, preferring the configured value over the environment
-/// variable, and ignoring empty values.
-fn resolve_optional_setting(value: Option<&str>, env: &str) -> Option<String> {
-    let value = value
-        .map(str::to_string)
-        .or_else(|| std::env::var(env).ok());
-
-    value.filter(|value| !value.trim().is_empty())
 }
 
 /// Returns the URL of the media's page on the configured metadata proxy.
@@ -696,12 +677,15 @@ mod tests {
     fn test_resolve_optional_setting() {
         // A configured value wins over the environment; empty values are ignored.
         assert_eq!(
-            resolve_optional_setting(Some("value"), "UNUSED_ENV_VAR"),
+            crate::utils::resolve_optional_setting(Some("value"), "UNUSED_ENV_VAR"),
             Some("value".to_string())
         );
-        assert_eq!(resolve_optional_setting(Some(""), "UNUSED_ENV"), None);
-        assert_eq!(resolve_optional_setting(None, "DEFINITELY_UNUSED_ENV"), None);
-        assert_eq!(resolve_optional_setting(Some("  "), "DEFINITELY_UNUSED_ENV"), None);
+        assert_eq!(crate::utils::resolve_optional_setting(Some(""), "UNUSED_ENV"), None);
+        assert_eq!(crate::utils::resolve_optional_setting(None, "DEFINITELY_UNUSED_ENV"), None);
+        assert_eq!(
+            crate::utils::resolve_optional_setting(Some("  "), "DEFINITELY_UNUSED_ENV"),
+            None
+        );
     }
 
     #[test]
@@ -725,8 +709,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs network access"]
     async fn live_media_links() {
-        let client = wreq::Client::builder()
-            .emulation(Emulation::Firefox142)
+        let client = http::emulated::builder(None)
+            .expect("the headers are valid")
             .redirect(Policy::limited(4))
             .timeout(Duration::from_secs(30))
             .build()

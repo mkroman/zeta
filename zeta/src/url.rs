@@ -87,6 +87,57 @@ impl<'a> ExtractUrls<'a> {
     }
 }
 
+/// Returns the path segments of `url`, with the empty segment a trailing slash produces removed.
+///
+/// The `url` crate keeps path segments percent-encoded, and a trailing slash shows up as an empty
+/// final segment, which otherwise has to be special-cased in every path parser.
+#[must_use]
+pub fn path_segments(url: &Url) -> Option<Vec<&str>> {
+    let mut segments: Vec<&str> = url.path_segments()?.collect();
+
+    if segments.last() == Some(&"") {
+        segments.pop();
+    }
+
+    Some(segments)
+}
+
+/// Returns the value of the first query parameter named `name`, if `url` has one.
+#[must_use]
+pub fn query_param(url: &Url, name: &str) -> Option<String> {
+    url.query_pairs()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.into_owned())
+}
+
+/// Returns whether `segment` is non-empty and contains only ASCII digits.
+#[must_use]
+pub fn is_numeric_segment(segment: &str) -> bool {
+    !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Returns whether `segment` is non-empty and contains only ASCII alphanumeric characters plus
+/// any of the characters in `extra`.
+///
+/// Path segments stay percent-encoded in the `url` crate, so a segment can never contain a raw
+/// `/` — but it can contain percent-encoded separators such as `%2F`. Restricting a component to
+/// the identifier alphabet therefore both rejects such junk and guarantees that canonical URLs
+/// built from the segment (and ids passed as API query parameters) keep their meaning.
+#[must_use]
+pub fn is_id_segment(segment: &str, extra: &str) -> bool {
+    !segment.is_empty()
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || extra.chars().any(|extra| extra == c))
+}
+
+/// Returns whether `id` starts with `prefix` followed by at least one ASCII digit, e.g. an IMDb
+/// `tt1375666`.
+#[must_use]
+pub fn is_prefixed_numeric_segment(id: &str, prefix: &str) -> bool {
+    id.len() > prefix.len() && id.starts_with(prefix) && is_numeric_segment(&id[prefix.len()..])
+}
+
 /// Returns the scheme entry that `word` starts with, preferring the longest match.
 fn matched_scheme(word: &str, schemes: SchemeMap) -> Option<(&'static str, Option<&'static str>)> {
     let bytes = word.as_bytes();
@@ -151,6 +202,51 @@ impl Iterator for ExtractUrls<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_segments_should_drop_the_trailing_slash_segment() {
+        let url = Url::parse("https://example.com/a/b/").unwrap();
+
+        assert_eq!(path_segments(&url), Some(vec!["a", "b"]));
+
+        let url = Url::parse("https://example.com/").unwrap();
+
+        assert_eq!(path_segments(&url), Some(Vec::new()));
+    }
+
+    #[test]
+    fn query_param_should_return_the_named_parameter() {
+        let url = Url::parse("https://example.com/watch?v=abc&list=xyz").unwrap();
+
+        assert_eq!(query_param(&url, "v").as_deref(), Some("abc"));
+        assert_eq!(query_param(&url, "list").as_deref(), Some("xyz"));
+        assert_eq!(query_param(&url, "missing"), None);
+    }
+
+    #[test]
+    fn is_numeric_segment_should_only_accept_digits() {
+        assert!(is_numeric_segment("123"));
+        assert!(!is_numeric_segment(""));
+        assert!(!is_numeric_segment("12a"));
+        assert!(!is_numeric_segment("12%2F"));
+    }
+
+    #[test]
+    fn is_id_segment_should_accept_identifier_characters() {
+        assert!(is_id_segment("abc_123", "_-"));
+        assert!(is_id_segment("a.b", "."));
+        assert!(!is_id_segment("", "_"));
+        assert!(!is_id_segment("ab%2Fcd", ""));
+        assert!(!is_id_segment("ab;cd", ""));
+    }
+
+    #[test]
+    fn is_prefixed_numeric_segment_should_only_accept_prefixed_digits() {
+        assert!(is_prefixed_numeric_segment("tt1375666", "tt"));
+        assert!(!is_prefixed_numeric_segment("nm0000138", "tt"));
+        assert!(!is_prefixed_numeric_segment("tt", "tt"));
+        assert!(!is_prefixed_numeric_segment("ttbuster", "tt"));
+    }
 
     /// Scheme map with the broken `ttp`/`ttps` variants, as used by the titles plugin.
     const TTP_SCHEMES: SchemeMap = &[

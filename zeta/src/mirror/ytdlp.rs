@@ -178,13 +178,15 @@ impl YtDlp {
     #[must_use]
     pub fn new(options: YtDlpOptions) -> Self {
         Self {
-            command: options
-                .command
-                .or_else(|| std::env::var(COMMAND_ENV).ok())
-                .unwrap_or_else(|| DEFAULT_COMMAND.to_string()),
+            command: crate::utils::resolve_setting(
+                options.command.as_deref(),
+                COMMAND_ENV,
+                DEFAULT_COMMAND,
+            ),
             max_filesize: options.max_filesize,
             download_timeout: options.download_timeout,
         }
+
     }
 
     /// Creates a runner that invokes the given command.
@@ -434,7 +436,7 @@ mod tests {
         assert!(!download.is_unsupported_codec());
 
         let output: JsonDump = serde_json::from_str("{}").unwrap();
-        assert!(output.requested_downloads.is_empty());
+        assert_eq!(output.requested_downloads, Vec::new());
     }
 
     #[test]

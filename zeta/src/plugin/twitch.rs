@@ -16,7 +16,6 @@
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
-use url::Url;
 
 use crate::{
     http,
@@ -24,19 +23,11 @@ use crate::{
     plugin::prelude::*,
 };
 
+mod urls;
+
+use self::urls::{UrlKind, parse_twitch_url};
+
 /// Twitch OAuth2 token endpoint.
-/// The Twitch.tv hostname.
-const TWITCH_HOST: &str = "twitch.tv";
-
-/// The www-prefixed Twitch.tv hostname.
-const TWITCH_WWW_HOST: &str = "www.twitch.tv";
-
-/// The hostname of Twitch clip URLs.
-const CLIPS_HOST: &str = "clips.twitch.tv";
-
-/// The Twitch hosts whose links this plugin handles.
-const URL_HOSTS: &[&str] = &[CLIPS_HOST, TWITCH_HOST, TWITCH_WWW_HOST];
-
 const AUTH_URL: &str = "https://id.twitch.tv/oauth2/token";
 /// Twitch Helix API base URL.
 const BASE_URL: &str = "https://api.twitch.tv/helix";
@@ -125,20 +116,12 @@ struct Video {
     view_count: u64,
 }
 
-/// The type of Twitch resource found in a URL.
-#[derive(Debug)]
-enum UrlKind {
-    Stream(String),
-    Clip(String),
-    Video(String),
-}
-
 #[async_trait]
 impl Plugin<Context> for Twitch {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
+        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
 
         let client_id = resolve_secret(settings.client_id.as_deref(), "TWITCH_CLIENT_ID")?;
         let client_secret =
@@ -156,7 +139,7 @@ impl Plugin<Context> for Twitch {
     async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
         let channel = url.channel();
 
-        if let Some(kind) = Self::parse_url(url.url()) {
+        if let Some(kind) = parse_twitch_url(url.url()) {
             let result = match kind {
                 UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
                 UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
@@ -213,34 +196,6 @@ impl Twitch {
             .await?;
 
         http::parse_response(response).await.map_err(Error::from)
-    }
-
-    /// Parses a Twitch URL and determines the resource type.
-    fn parse_url(url: &Url) -> Option<UrlKind> {
-        let host = url.host_str()?;
-        let segments: Vec<&str> = url.path_segments()?.collect();
-
-        if host == TWITCH_HOST || host == TWITCH_WWW_HOST {
-            match segments.as_slice() {
-                // twitch.tv/videos/<id>
-                ["videos", id] if !id.is_empty() => Some(UrlKind::Video(id.to_string())),
-                // twitch.tv/<channel>/clip/<id>
-                [_, "clip", id] if !id.is_empty() => Some(UrlKind::Clip(id.to_string())),
-                // twitch.tv/<channel>
-                [channel] if is_valid_username(channel) => {
-                    Some(UrlKind::Stream(channel.to_string()))
-                }
-                _ => None,
-            }
-        } else if host == CLIPS_HOST {
-            // clips.twitch.tv/<id>
-            match segments.as_slice() {
-                [id] if !id.is_empty() => Some(UrlKind::Clip(id.to_string())),
-                _ => None,
-            }
-        } else {
-            None
-        }
     }
 
     /// Fetches stream information and sends a message to the channel.
@@ -317,15 +272,6 @@ impl Twitch {
 
         Ok(())
     }
-}
-
-/// Checks if a string looks like a valid Twitch username.
-///
-/// Twitch usernames are 4-25 characters long and contain alphanumeric characters
-/// and underscores.
-fn is_valid_username(s: &str) -> bool {
-    let len = s.len();
-    (4..=25).contains(&len) && s.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]

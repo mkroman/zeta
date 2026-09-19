@@ -253,17 +253,7 @@ mod tests {
     use super::*;
 
     fn filter(id: i32, criteria: NewFilter) -> Filter {
-        Filter {
-            id,
-            channel: criteria.channel,
-            host: criteria.host,
-            path: criteria.path,
-            nickname: criteria.nickname,
-            username: criteria.username,
-            hostname: criteria.hostname,
-            created_by: "smoke".into(),
-            created_at: sqlx::types::chrono::Utc::now(),
-        }
+        Filter::from_new_filter(id, criteria)
     }
 
     fn new_filter(channel: Option<&str>, host: Option<&str>) -> NewFilter {

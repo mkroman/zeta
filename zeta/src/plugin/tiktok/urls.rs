@@ -2,6 +2,8 @@
 
 use url::Url;
 
+use crate::url::{is_id_segment, is_numeric_segment, path_segments};
+
 /// The hostname used for shortened URLs.
 const TIKTOK_SHORT_HOST: &str = "vm.tiktok.com";
 
@@ -55,26 +57,22 @@ pub fn parse_tiktok_url(url: &Url) -> Option<TiktokLink> {
 
 /// Parses vm.tiktok.com URLs.
 fn parse_shortened_tiktok_url(url: &Url) -> Option<TiktokLink> {
-    let segments: Vec<&str> = url.path_segments()?.collect();
-
-    match segments.as_slice() {
-        [id] | [id, ""] if is_valid_short_id(id) => Some(TiktokLink::Shortened((*id).to_string())),
+    match path_segments(url)?.as_slice() {
+        [id] if is_valid_short_id(id) => Some(TiktokLink::Shortened((*id).to_string())),
         _ => None,
     }
 }
 
 /// Parses tiktok.com URLs
 fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
-    let segments: Vec<&str> = url.path_segments()?.collect();
-
-    match segments.as_slice() {
+    match path_segments(url)?.as_slice() {
         // `/@somechannel`
         [channel] if is_valid_channel_slug(channel) => {
             Some(TiktokLink::Channel((*channel).to_string()))
         }
         // `/@somechannel/video/7551110927479754006`
-        [channel, "video", video_id] | [channel, "video", video_id, ""]
-            if is_valid_channel_slug(channel) && is_valid_video_id(video_id) =>
+        [channel, "video", video_id]
+            if is_valid_channel_slug(channel) && is_numeric_segment(video_id) =>
         {
             Some(TiktokLink::Video {
                 channel: (*channel).to_string(),
@@ -86,28 +84,15 @@ fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
 }
 
 /// Returns whether the segment is a valid channel slug (`@` followed by username characters).
-///
-/// Path segments are percent-decoded, so this guards against characters that could alter the
-/// meaning of canonical URLs built from these segments.
 #[must_use]
 fn is_valid_channel_slug(segment: &str) -> bool {
-    segment.len() > 1
-        && segment.starts_with('@')
-        && segment[1..]
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-}
-
-/// Returns whether the segment is a valid video id (TikTok video ids are numeric).
-#[must_use]
-fn is_valid_video_id(video_id: &str) -> bool {
-    !video_id.is_empty() && video_id.chars().all(|c| c.is_ascii_digit())
+    segment.starts_with('@') && is_id_segment(&segment[1..], "._-")
 }
 
 /// Returns whether the segment is a valid shortened-link id.
 #[must_use]
 fn is_valid_short_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric())
+    is_id_segment(id, "")
 }
 
 #[cfg(test)]
