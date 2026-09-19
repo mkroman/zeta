@@ -829,7 +829,6 @@ mod tests {
         let catalog = PluginCatalog {
             entries: vec![CatalogEntry {
                 name: "imdb".into(),
-                authors: vec![],
                 commands: Vec::new(),
                 url_hosts: vec!["imdb.com", "www.imdb.com"],
             }],

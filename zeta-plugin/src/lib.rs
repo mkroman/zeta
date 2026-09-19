@@ -20,7 +20,7 @@ pub use event::{
     NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, Tag, UrlEvent, UrlScope,
 };
 pub use plugin::{Plugin, PluginName};
-pub use types::{Author, Metadata, Name, NoSettings};
+pub use types::NoSettings;
 
 pub mod prelude {
     pub use async_trait::async_trait;
@@ -37,5 +37,5 @@ pub mod prelude {
     };
     pub use super::plugin::PluginName;
     pub use super::types::NoSettings;
-    pub use super::{Author, Error, Metadata, Name, Plugin};
+    pub use super::{Error, Plugin};
 }

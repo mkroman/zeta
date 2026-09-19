@@ -512,31 +512,26 @@ mod tests {
             entries: vec![
                 CatalogEntry {
                     name: "alert".into(),
-                    authors: vec!["John Doe <john.doe@example.com>".into()],
                     commands: ALERT_COMMANDS.to_vec(),
                     url_hosts: Vec::new(),
                 },
                 CatalogEntry {
                     name: "dig".into(),
-                    authors: vec![],
                     commands: DIG_COMMANDS.to_vec(),
                     url_hosts: Vec::new(),
                 },
                 CatalogEntry {
                     name: "imdb".into(),
-                    authors: vec![],
                     commands: IMDB_COMMANDS.to_vec(),
                     url_hosts: Vec::new(),
                 },
                 CatalogEntry {
                     name: "openweathermap".into(),
-                    authors: vec![],
                     commands: WEATHER_COMMANDS.to_vec(),
                     url_hosts: Vec::new(),
                 },
                 CatalogEntry {
                     name: "hooks".into(),
-                    authors: vec![],
                     commands: Vec::new(),
                     url_hosts: Vec::new(),
                 },
@@ -746,7 +741,6 @@ mod tests {
             entries: (0..100)
                 .map(|index| CatalogEntry {
                     name: format!("plugin-{index:03}{}", "x".repeat(90)),
-                    authors: vec![],
                     commands: vec![HELP],
                     url_hosts: Vec::new(),
                 })

@@ -5,11 +5,7 @@ use crate::event::{
     CommandEvent, CtcpEvent, JoinEvent, KickEvent, MessageEvent, NickEvent, PartEvent, QuitEvent,
     RawEvent, Subscriptions, UrlEvent,
 };
-use crate::types::{Author, Name};
-use crate::{Error, Metadata};
-
-/// The default author attributed to plugins that do not declare their own authorship.
-pub const DEFAULT_AUTHOR: &str = "Mikkel Kroman <mk@maero.dk>";
+use crate::Error;
 
 /// Supplies the name of a plugin.
 ///
@@ -144,20 +140,6 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     ) -> Result<Self, Error>
     where
         Self: Sized;
-
-    /// Metadata describing the plugin and its authorship.
-    ///
-    /// Derived from [`PluginName::NAME`] by default, attributing the plugin to
-    /// `DEFAULT_AUTHOR`. Override it to credit other authors.
-    fn metadata() -> Metadata
-    where
-        Self: Sized,
-    {
-        Metadata {
-            name: Name::new(Self::NAME),
-            authors: vec![Author::new(DEFAULT_AUTHOR)],
-        }
-    }
 
     /// Handles a command invocation.
     ///
