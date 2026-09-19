@@ -15,6 +15,7 @@
 use std::fmt::Write;
 
 use base64::prelude::*;
+use indefinite::indefinite_article_only;
 use num_format::{Locale, ToFormattedString};
 use regex::Regex;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -331,7 +332,8 @@ impl Spotify {
                 if artist.genres.is_empty() {
                     let _ = write!(msg, " an");
                 } else {
-                    let _ = write!(msg, " a {genres}");
+                    let article = indefinite_article_only(&genres);
+                    let _ = write!(msg, " {article} {genres}");
                 }
                 let _ = write!(msg, " artist with \x0f{followers}\x0310 followers");
 

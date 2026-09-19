@@ -71,7 +71,7 @@ plugin-pornhub = ["http", "dep:num-format", "dep:serde_path_to_error"]
 plugin-reddit = ["mirror", "dep:reddit", "dep:secrecy"]
 plugin-rink = ["dep:rink-core"]
 plugin-rust-playground = ["http", "dep:regex"]
-plugin-spotify = ["http", "dep:base64", "dep:num-format", "dep:regex"]
+plugin-spotify = ["http", "dep:base64", "dep:indefinite", "dep:num-format", "dep:regex"]
 plugin-string-utils = []
 plugin-thingiverse = ["http", "dep:num-format", "dep:regex"]
 plugin-tiktok = ["mirror", "http"]
@@ -80,7 +80,7 @@ plugin-trustpilot = ["http", "dep:num-format"]
 plugin-tvmaze = ["http", "time", "dep:serde_path_to_error"]
 plugin-twitch = ["http", "dep:num-format"]
 plugin-urban-dictionary = ["http", "time"]
-plugin-youtube = ["http", "dep:htmlize", "dep:num-format", "dep:serde_path_to_error", "time"]
+plugin-youtube = ["http", "dep:htmlize", "dep:indefinite", "dep:num-format", "dep:serde_path_to_error", "time"]
 plugins-all = [
     "plugin-alert",
     "plugin-chaturbate",
@@ -134,6 +134,7 @@ hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
 html5ever = { version = "0.40.0", optional = true }
 htmlize = { version = "1.1.0", features = ["unescape"], optional = true }
 humantime-serde = "1.1.1"
+indefinite = { version = "0.1.11", optional = true }
 interim = { version = "0.2.1", features = ["chrono_0_4"], optional = true }
 irc.workspace = true
 kagi = { path = "../kagi", default-features = false, optional = true }

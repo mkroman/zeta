@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
+use indefinite::indefinite_article_only;
 use url::Url;
 
 use crate::{
@@ -522,7 +523,6 @@ impl YouTube {
                                 )
                         });
 
-                        // TODO: use indefinite form: https://crates.io/crates/indefinite
                         let view_count = video
                             .statistics
                             .as_ref()
@@ -657,22 +657,23 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         snippet.is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
 
     if is_live_stream {
-        let concurrent_viewers = video
+        let article = indefinite_article_only(category);
+
+        if let Some(viewers) = video
             .live_streaming_details
             .as_ref()
             .and_then(|details| details.concurrent_viewers.as_deref())
-            .and_then(|viewers| viewers.parse::<u64>().ok());
-
-        if let Some(viewers) = concurrent_viewers {
+            .and_then(|viewers| viewers.parse::<u64>().ok())
+        {
             return notice(format!(
-                "“\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
+                "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
                  {channel_name}\x0310 with\x0f {}\x0310 viewers",
                 viewers.to_formatted_string(&Locale::en),
             ));
         }
 
         return notice(format!(
-            "“\x0f{title}\x0310” is a\x0f {category}\x0310 live stream by\x0f \
+            "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
              {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
         ));
     }
@@ -682,9 +683,10 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         .as_ref()
         .and_then(|details| parse_iso8601_duration(&details.duration))
         .map_or_else(|| "unknown duration".to_string(), format_duration);
+    let article = indefinite_article_only(&duration);
 
     notice(format!(
-        "“\x0f{title}\x0310” is a\x0f {duration}\x0310 video by\x0f \
+        "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
          {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
     ))
 }
@@ -899,7 +901,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Music", 1),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f unknown duration\x0310 video by\x0f Test Channel\x0310 with\x0f 1\x0310 views",
+            "\x0310> “\x0fTest Video\x0310” is an\x0f unknown duration\x0310 video by\x0f Test Channel\x0310 with\x0f 1\x0310 views",
         );
     }
 
@@ -910,6 +912,16 @@ mod tests {
         assert_eq!(
             format_video_message(&video, "Music", 42),
             "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
+        );
+    }
+
+    #[test]
+    fn formats_live_stream_message_with_vowel_category() {
+        let video = test_video("live", None, Some("1234"));
+
+        assert_eq!(
+            format_video_message(&video, "Education", 42),
+            "\x0310> “\x0fTest Video\x0310” is an\x0f Education\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
         );
     }
 
