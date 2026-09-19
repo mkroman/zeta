@@ -243,29 +243,48 @@ impl Add {
     }
 }
 
+/// Builds selection criteria from the pattern options the list and delete subcommands share.
+fn criteria_from(
+    channel: Option<&str>,
+    host: Option<&str>,
+    path: Option<&str>,
+    nick: Option<&str>,
+    user: Option<&str>,
+    hostname: Option<&str>,
+) -> Criteria {
+    Criteria {
+        channel: channel.map(str::to_owned),
+        host: host.map(str::to_owned),
+        path: path.map(str::to_owned),
+        nickname: nick.map(str::to_owned),
+        username: user.map(str::to_owned),
+        hostname: hostname.map(str::to_owned),
+    }
+}
+
 impl From<&List> for Criteria {
-    fn from(list: &List) -> Criteria {
-        Criteria {
-            channel: list.channel.clone(),
-            host: list.host.clone(),
-            path: list.path.clone(),
-            nickname: list.nick.clone(),
-            username: list.user.clone(),
-            hostname: list.hostname.clone(),
-        }
+    fn from(list: &List) -> Self {
+        criteria_from(
+            list.channel.as_deref(),
+            list.host.as_deref(),
+            list.path.as_deref(),
+            list.nick.as_deref(),
+            list.user.as_deref(),
+            list.hostname.as_deref(),
+        )
     }
 }
 
 impl From<&Delete> for Criteria {
-    fn from(delete: &Delete) -> Criteria {
-        Criteria {
-            channel: delete.channel.clone(),
-            host: delete.host.clone(),
-            path: delete.path.clone(),
-            nickname: delete.nick.clone(),
-            username: delete.user.clone(),
-            hostname: delete.hostname.clone(),
-        }
+    fn from(delete: &Delete) -> Self {
+        criteria_from(
+            delete.channel.as_deref(),
+            delete.host.as_deref(),
+            delete.path.as_deref(),
+            delete.nick.as_deref(),
+            delete.user.as_deref(),
+            delete.hostname.as_deref(),
+        )
     }
 }
 
