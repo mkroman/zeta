@@ -30,8 +30,8 @@ use thiserror::Error;
 ///
 /// Because every field is a `&'static str` or function pointer, `CommandSpec` is [`Copy`],
 /// requires no heap allocation, and can be constructed in `const` context. The same constant
-/// serves every role: it is registered through [`Subscriptions`](crate::Subscriptions) during
-/// initialization, and matched against the [`CommandEvent`](crate::CommandEvent)'s specification
+/// serves every role: it is registered through [`Subscriptions`](super::Subscriptions) during
+/// initialization, and matched against the [`CommandEvent`](super::CommandEvent)'s specification
 /// in the command handler.
 ///
 /// # Matching commands by identity

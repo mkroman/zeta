@@ -148,7 +148,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// Metadata describing the plugin and its authorship.
     ///
     /// Derived from [`PluginName::NAME`] by default, attributing the plugin to
-    /// [`DEFAULT_AUTHOR`]. Override it to credit other authors.
+    /// `DEFAULT_AUTHOR`. Override it to credit other authors.
     fn metadata() -> Metadata
     where
         Self: Sized,
@@ -162,12 +162,13 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// Handles a command invocation.
     ///
     /// Called when a channel message's first word matches the trigger of one of the commands
-    /// registered in [`Plugin::new`]. The event carries the [`CommandSpec`] that matched and
-    /// the trailing arguments of the invocation.
+    /// registered in [`Plugin::new`]. The event carries the
+    /// [`CommandSpec`](super::CommandSpec) that matched and the trailing arguments of the
+    /// invocation.
     ///
     /// Plugins handling multiple commands should dispatch on the identity of their declared
-    /// command constants (see [`CommandSpec`]'s documentation on matching by identity), for
-    /// example:
+    /// command constants (see [`CommandSpec`](super::CommandSpec)'s documentation on matching
+    /// by identity), for example:
     ///
     /// ```
     /// # use irc::client::Client;

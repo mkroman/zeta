@@ -5,7 +5,8 @@
 //! of command handlers that peek at the cache synchronously while refreshes happen in `async`
 //! code.
 //!
-//! Also provides [`TtlMap`], a keyed variant whose entries expire individually.
+//! Also provides [`TtlMap`](crate::cache::TtlMap), a keyed variant whose entries expire
+//! individually.
 
 use std::collections::HashMap;
 use std::future::Future;

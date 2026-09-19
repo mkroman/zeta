@@ -6,14 +6,15 @@
 //! `S3_*` environment variables; when the configuration is incomplete, plugins degrade to their
 //! non-mirroring behavior.
 //!
-//! The actual mirroring is managed by [`DownloadManager`], a long-running task that downloads
-//! media (streaming progress status back), uploads it to the bucket and notifies the requester
-//! with the public link. Downloads happen inside temporary directories that are owned by the
-//! manager and removed when the download finishes; directories left behind by a killed or crashed
-//! process are removed on startup.
+//! The actual mirroring is managed by [`DownloadManager`](crate::mirror::DownloadManager), a
+//! long-running task that downloads media (streaming progress status back), uploads it to the
+//! bucket and notifies the requester with the public link. Downloads happen inside temporary
+//! directories that are owned by the manager and removed when the download finishes; directories
+//! left behind by a killed or crashed process are removed on startup.
 //!
-//! Plugins access the shared mirror through a [`MirrorTarget`], which carries the key prefix and
-//! the public URL base used for their links, and is resolved from their own configuration.
+//! Plugins access the shared mirror through a [`MirrorTarget`](crate::mirror::MirrorTarget),
+//! which carries the key prefix and the public URL base used for their links, and is resolved
+//! from their own configuration.
 
 use std::{
     collections::HashSet,
