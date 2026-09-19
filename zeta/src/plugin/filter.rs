@@ -339,18 +339,9 @@ impl FilterPlugin {
         };
 
         let new_filters = opts.new_filters(scope.as_deref(), nickname);
+        let count = new_filters.len();
 
-        for new_filter in &new_filters {
-            if let Err(error) = self.service.add(new_filter.clone()).await {
-                client.send_privmsg(
-                    channel,
-                    reply("Filter", format!("could not add the filter: {error}")),
-                )?;
-
-                return Ok(());
-            }
-        }
-
+        // A single plain host filter gets a tailored confirmation.
         let response = if let [new_filter] = new_filters.as_slice()
             && new_filter.path.is_none()
             && new_filter.nickname.is_none()
@@ -363,7 +354,18 @@ impl FilterPlugin {
             "The filter has been added.".to_string()
         };
 
-        debug!(count = new_filters.len(), "added filters");
+        for new_filter in new_filters {
+            if let Err(error) = self.service.add(new_filter).await {
+                client.send_privmsg(
+                    channel,
+                    reply("Filter", format!("could not add the filter: {error}")),
+                )?;
+
+                return Ok(());
+            }
+        }
+
+        debug!(count, "added filters");
 
         client.send_privmsg(channel, reply("Filter", &response))?;
 
