@@ -236,6 +236,15 @@ name = "#zeta.dev"
   # The base URL used when linking to mirrored media. Falls back to the
   # `INSTAGRAM_PUBLIC_URL_BASE` environment variable when unset.
   # public_url_base = "https://pub.rwx.im/instagram"
+  # An authenticated Instagram session cookie (the `sessionid` cookie value of a logged-in browser
+  # session). Lifts the login wall for media that would otherwise not be readable anonymously,
+  # including stories. Falls back to the `INSTAGRAM_SESSION_COOKIE` environment variable when
+  # unset; prefer the environment over committing the cookie to this file.
+  # session_cookie = "..."
+  # The base URL of a proxy serving the OpenGraph metadata of Instagram media — e.g. a self-hosted
+  # InstaFix instance — used as a last resort when the other metadata sources fail. Falls back to
+  # the `INSTAGRAM_METADATA_PROXY` environment variable when unset.
+  # metadata_proxy = "https://d.example.com"
 
   # Is it open.
   [plugins.isitopen]

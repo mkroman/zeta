@@ -14,10 +14,15 @@ const M_INSTAGRAM_COM: &str = "m.instagram.com";
 /// The short hostname.
 const INSTAGRAM_AM: &str = "instagr.am";
 
+/// The hostname wrapping links shared from Instagram, pointing at the target through its `u`
+/// query parameter.
+const L_INSTAGRAM_COM: &str = "l.instagram.com";
+
 /// The Instagram hosts whose links this plugin handles.
 pub(super) const URL_HOSTS: &[&str] = &[
     INSTAGRAM_COM,
     INSTAGRAM_AM,
+    L_INSTAGRAM_COM,
     M_INSTAGRAM_COM,
     WWW_INSTAGRAM_COM,
 ];
@@ -73,7 +78,7 @@ impl MediaKind {
 
     /// The URL path segment identifying the kind of media in canonical URLs.
     #[must_use]
-    const fn segment(self) -> &'static str {
+    pub(super) const fn segment(self) -> &'static str {
         match self {
             Self::Post => "p",
             Self::Reel => "reel",
@@ -121,6 +126,20 @@ pub fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
         INSTAGRAM_COM | M_INSTAGRAM_COM => parse_instagram_com_url(url),
         INSTAGRAM_AM => {
             parse_instagram_com_url(url).or_else(|| Some(InstagramLink::Shortened(url.clone())))
+        }
+        // Link wrappers point at the target through their `u` query parameter.
+        L_INSTAGRAM_COM => {
+            let target = url
+                .query_pairs()
+                .find(|(name, _)| name == "u")
+                .map(|(_, value)| value)?;
+
+            let target = Url::parse(&target).ok()?;
+            if target.host_str() == Some(L_INSTAGRAM_COM) {
+                return None;
+            }
+
+            parse_instagram_url(&target)
         }
         _ => None,
     }
@@ -298,6 +317,23 @@ mod tests {
             ("https://instagr.am/AbCdEf_", Some(InstagramLink::Profile("AbCdEf_".to_string()))),
             // Short-domain links that do not parse as a profile are resolved through a redirect.
             ("https://instagr.am/AbC-dEf", shortened("https://instagr.am/AbC-dEf")),
+            // Link wrappers point at the target through their `u` query parameter.
+            (
+                "https://l.instagram.com/?u=https%3A%2F%2Fwww.instagram.com%2Fp%2FDdUGmgAifcq%2F&e=abc",
+                media(MediaKind::Post, "DdUGmgAifcq"),
+            ),
+            (
+                "https://l.instagram.com/?u=https%3A%2F%2Fwww.instagram.com%2Fuser.name%2F",
+                Some(InstagramLink::Profile("user.name".to_string())),
+            ),
+            // Wrapped targets that are not Instagram links, missing, or nested wrappers are
+            // ignored.
+            ("https://l.instagram.com/?u=https%3A%2F%2Fexample.com%2F", None),
+            ("https://l.instagram.com/?e=abc", None),
+            (
+                "https://l.instagram.com/?u=https%3A%2F%2Fl.instagram.com%2F%3Fu%3Dx",
+                None,
+            ),
         ];
 
         for (url_str, expected) in test_cases {

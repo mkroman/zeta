@@ -4,8 +4,12 @@
 //! refresh it lazily after a configured TTL. Reads do not need to await, matching the pattern
 //! of command handlers that peek at the cache synchronously while refreshes happen in `async`
 //! code.
+//!
+//! Also provides [`TtlMap`], a keyed variant whose entries expire individually.
 
+use std::collections::HashMap;
 use std::future::Future;
+use std::hash::Hash;
 use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
@@ -150,6 +154,305 @@ impl<T> TtlCache<T> {
     /// Replaces the cached entry, tolerating a poisoned lock.
     fn replace(&self, entry: Entry<T>) {
         *self.entry.write().unwrap_or_else(PoisonError::into_inner) = Some(entry);
+    }
+}
+
+/// The default number of entries a [`TtlMap`] holds before evicting.
+const DEFAULT_TTL_MAP_CAPACITY: usize = 256;
+
+/// A keyed cache whose entries expire individually after a time-to-live.
+///
+/// Entries cache both values and *negative* results: a refresh that produces no value stores a
+/// negative entry so a burst of requests for the same missing resource does not each hit the
+/// source. Cached values are returned only while fresh — unlike [`TtlCache`], stale entries are
+/// never served.
+pub struct TtlMap<K, V> {
+    /// The cached entries, keyed by their lookup key.
+    entries: RwLock<HashMap<K, Entry<Option<V>>>>,
+    /// How long a cached value stays fresh.
+    ttl: Duration,
+    /// How long a cached negative result stays fresh.
+    negative_ttl: Duration,
+    /// The maximum number of entries held before the closest-to-expiring ones are evicted.
+    capacity: usize,
+}
+
+impl<K, V> TtlMap<K, V>
+where
+    K: Eq + Hash + Clone,
+{
+    /// Creates an empty cache where cached values expire after `ttl` and negative results after
+    /// `negative_ttl`, holding at most `capacity` entries.
+    #[must_use]
+    pub fn with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
+        Self {
+            entries: RwLock::new(HashMap::new()),
+            ttl,
+            negative_ttl,
+            capacity,
+        }
+    }
+
+    /// Creates an empty cache where cached values expire after `ttl` and negative results expire
+    /// after a tenth of it, holding up to the default number of entries.
+    #[must_use]
+    pub fn new(ttl: Duration) -> Self {
+        Self::with_negative_ttl(ttl, ttl / 10, DEFAULT_TTL_MAP_CAPACITY)
+    }
+
+    /// Returns the cached value for `key` when it has not expired.
+    ///
+    /// Poisoned locks are recovered from, mirroring [`TtlCache::read`].
+    pub fn get(&self, key: &K) -> Option<V>
+    where
+        V: Clone,
+    {
+        self.peek(key).flatten()
+    }
+
+    /// Returns the cached entry for `key` when it has not expired, including negative results.
+    ///
+    /// `Some(None)` is a cached negative result; `None` means nothing is cached for `key`.
+    ///
+    /// Poisoned locks are recovered from, mirroring [`TtlCache::read`].
+    pub fn peek(&self, key: &K) -> Option<Option<V>>
+    where
+        V: Clone,
+    {
+        let guard: RwLockReadGuard<'_, HashMap<K, Entry<Option<V>>>> =
+            self.entries.read().unwrap_or_else(PoisonError::into_inner);
+
+        guard
+            .get(key)
+            .filter(|entry| entry.expires_at > Instant::now())
+            .map(|entry| entry.value.clone())
+    }
+
+    /// Returns the cached entry for `key` when fresh, refreshing through `refresh` otherwise.
+    ///
+    /// A `Some` value is cached for the full TTL; a `None` (a negative result) is cached for the
+    /// negative TTL, so repeated misses for the same key do not each hit the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `refresh` when the value could not be refreshed. Nothing is
+    /// cached in that case.
+    pub async fn get_or_refresh<E, F, Fut>(&self, key: K, refresh: F) -> Result<Option<V>, E>
+    where
+        V: Clone + Send + Sync,
+        K: Send + Sync,
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<Option<V>, E>> + Send,
+    {
+        if let Some(cached) = self.peek(&key) {
+            return Ok(cached);
+        }
+
+        let value = refresh().await?;
+        self.insert(key, value.clone());
+
+        Ok(value)
+    }
+
+    /// Inserts an entry for `key`, evicting expired and closest-to-expiring entries first when
+    /// the cache is at capacity.
+    fn insert(&self, key: K, value: Option<V>) {
+        let ttl = if value.is_some() { self.ttl } else { self.negative_ttl };
+        let entry = Entry {
+            value,
+            expires_at: Instant::now() + ttl,
+        };
+
+        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+
+        if entries.len() >= self.capacity && !entries.contains_key(&key) {
+            Self::evict(&mut entries, self.capacity);
+        }
+
+        entries.insert(key, entry);
+    }
+
+    /// Makes room for a new entry by removing expired entries, then the entries closest to
+    /// expiring, until at least one slot is free.
+    fn evict(entries: &mut HashMap<K, Entry<Option<V>>>, capacity: usize) {
+        let now = Instant::now();
+
+        entries.retain(|_, entry| entry.expires_at > now);
+
+        while entries.len() >= capacity {
+            let oldest = entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.expires_at)
+                .map(|(key, _)| key.clone());
+
+            let Some(oldest) = oldest else {
+                break;
+            };
+
+            entries.remove(&oldest);
+        }
+    }
+}
+
+#[cfg(test)]
+mod ttl_map_tests {
+    use super::*;
+
+    fn ttl_map(ttl: Duration) -> TtlMap<String, u8> {
+        TtlMap::with_negative_ttl(ttl, ttl / 2, 4)
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_populates_and_reuses_entries() {
+        let cache = ttl_map(Duration::from_mins(1));
+        let mut refreshes = 0;
+
+        let first = cache
+            .get_or_refresh("a".to_string(), || async {
+                refreshes += 1;
+                Ok::<_, ()>(Some(7))
+            })
+            .await
+            .unwrap();
+        let second = cache
+            .get_or_refresh("a".to_string(), || async {
+                refreshes += 1;
+                Ok::<_, ()>(Some(9))
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(first, Some(7));
+        assert_eq!(second, Some(7));
+        assert_eq!(refreshes, 1);
+        assert_eq!(cache.get(&"a".to_string()), Some(7));
+    }
+
+    #[tokio::test]
+    async fn keys_expire_independently() {
+        let cache = ttl_map(Duration::from_mins(1));
+
+        cache
+            .get_or_refresh("a".to_string(), || async { Ok::<_, ()>(Some(7)) })
+            .await
+            .unwrap();
+        cache
+            .get_or_refresh("b".to_string(), || async { Ok::<_, ()>(Some(9)) })
+            .await
+            .unwrap();
+
+        // Expire only `a`'s entry.
+        cache
+            .entries
+            .write()
+            .unwrap()
+            .get_mut(&"a".to_string())
+            .unwrap()
+            .expires_at = Instant::now();
+
+        assert_eq!(cache.get(&"a".to_string()), None);
+        assert_eq!(cache.get(&"b".to_string()), Some(9));
+
+        let refreshes = std::sync::atomic::AtomicU8::new(0);
+        let value = cache
+            .get_or_refresh("a".to_string(), || async {
+                refreshes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok::<_, ()>(Some(11))
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(value, Some(11));
+        assert_eq!(refreshes.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn negative_results_are_cached_and_expire_sooner() {
+        let cache = ttl_map(Duration::from_mins(1));
+        let mut refreshes = 0;
+
+        let first = cache
+            .get_or_refresh("missing".to_string(), || async {
+                refreshes += 1;
+                Ok::<_, ()>(None)
+            })
+            .await
+            .unwrap();
+        let second = cache
+            .get_or_refresh("missing".to_string(), || async {
+                refreshes += 1;
+                Ok::<_, ()>(None)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(first, None);
+        assert_eq!(second, None);
+        assert_eq!(refreshes, 1);
+
+        // Negative results expire before values do.
+        let entry_expires_at = |key: &str| {
+            cache
+                .entries
+                .read()
+                .unwrap()
+                .get(key)
+                .map(|entry| entry.expires_at)
+        };
+
+        cache
+            .get_or_refresh("present".to_string(), || async { Ok::<_, ()>(Some(7)) })
+            .await
+            .unwrap();
+
+        assert!(
+            entry_expires_at("missing") < entry_expires_at("present")
+        );
+    }
+
+    #[tokio::test]
+    async fn errors_are_not_cached() {
+        let cache = ttl_map(Duration::from_mins(1));
+        let mut refreshes = 0;
+
+        let error = cache
+            .get_or_refresh("a".to_string(), || async {
+                refreshes += 1;
+                Err::<Option<u8>, _>("denied")
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, "denied");
+        assert_eq!(refreshes, 1);
+        assert_eq!(cache.get(&"a".to_string()), None);
+    }
+
+    #[tokio::test]
+    async fn evicts_when_full() {
+        let cache = ttl_map(Duration::from_hours(1));
+
+        for key in ["a", "b", "c", "d"] {
+            cache
+                .get_or_refresh(key.to_string(), || async { Ok::<_, ()>(Some(7)) })
+                .await
+                .unwrap();
+        }
+        assert_eq!(cache.entries.read().unwrap().len(), 4);
+
+        // A fifth entry evicts the closest-to-expiring one, keeping the cache bounded.
+        cache
+            .get_or_refresh("e".to_string(), || async { Ok::<_, ()>(Some(7)) })
+            .await
+            .unwrap();
+
+        let (len, contains_e) = {
+            let entries = cache.entries.read().unwrap();
+            (entries.len(), entries.contains_key(&"e".to_string()))
+        };
+
+        assert_eq!(len, 4);
+        assert!(contains_e);
     }
 }
 

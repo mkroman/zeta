@@ -1,4 +1,4 @@
-//! OpenGraph metadata of Instagram pages.
+//! OpenGraph metadata and media details of Instagram pages.
 //!
 //! Media pages carry their author and caption in the `og:title` and `og:description` meta tags of
 //! the document head. Instagram serves a login wall to requests it scores as bot traffic, in which
@@ -37,6 +37,88 @@ pub struct PageMetadata {
     pub og_description: Option<String>,
 }
 
+/// The details of a piece of Instagram media, extracted from whichever source provided them.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MediaDetails {
+    /// The username of the media's author.
+    pub author: Option<String>,
+    /// The media's caption.
+    pub caption: Option<String>,
+}
+
+impl MediaDetails {
+    /// Extracts the details from the OpenGraph metadata of a media page.
+    ///
+    /// The `og:title` of a media page has the form `<author> on Instagram: "<caption>"`; when the
+    /// title is generic — as it is on login walls — no details can be extracted. An empty caption
+    /// falls back to the `og:description`.
+    #[must_use]
+    pub fn from_og(meta: &PageMetadata) -> Option<Self> {
+        let title = meta
+            .og_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !is_generic_title(title))?;
+
+        let (author, caption) = split_author_title(title);
+        let caption = [Some(caption), meta.og_description.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|caption| !caption.is_empty());
+
+        Some(Self {
+            author: author.map(str::to_string),
+            caption: caption.map(str::to_string),
+        })
+    }
+}
+
+/// Returns whether the title is the generic title of a login or placeholder page.
+const fn is_generic_title(title: &str) -> bool {
+    title.eq_ignore_ascii_case("Instagram") || title.eq_ignore_ascii_case("Login • Instagram")
+}
+
+/// Splits an `og:title` of the form `<author> on Instagram: "<caption>"` into its author and
+/// caption, trimming the quotes wrapping the caption.
+#[must_use]
+fn split_author_title(title: &str) -> (Option<&str>, &str) {
+    match title.split_once(" on Instagram: ") {
+        Some((author, caption)) => (Some(author.trim()), caption.trim_matches('"').trim()),
+        None => (None, title),
+    }
+}
+
+/// The alphabet Instagram media shortcodes are encoded in: base64url.
+const SHORTCODE_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/// Decodes the numeric media id a media shortcode encodes.
+///
+/// Shortcodes are the media id encoded in base64url; long shortcodes appended for private posts
+/// decode to numbers beyond `u64`, so `u128` is used to leave room for shortcodes to keep growing.
+///
+/// Returns `None` when the shortcode is empty, carries a character outside the alphabet, or does
+/// not fit a `u128`.
+#[must_use]
+pub fn shortcode_to_media_pk(shortcode: &str) -> Option<u128> {
+    if shortcode.is_empty() {
+        return None;
+    }
+
+    let mut pk = 0_u128;
+
+    for byte in shortcode.bytes() {
+        let digit = SHORTCODE_ALPHABET
+            .iter()
+            .position(|&c| c == byte)? as u128;
+
+        pk = pk.checked_mul(64)?.checked_add(digit)?;
+    }
+
+    Some(pk)
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// The request failed, or the response body could not be read.
@@ -50,19 +132,29 @@ pub enum Error {
 /// Fetches `url` and extracts its OpenGraph metadata.
 ///
 /// `Accept-Encoding` must be set explicitly: like reqwest, wreq does not advertise the header
-/// itself even though it decompresses responses — and its absence is enough to get flagged.
+/// itself even though it decompresses responses — and its absence is enough to get flagged. When
+/// `session_cookie` is given, it is sent along, lifting the login wall for media that would
+/// otherwise not be readable anonymously.
 ///
 /// # Errors
 ///
 /// Returns an error if the request fails or the server responds with an error status.
-pub async fn fetch(client: &wreq::Client, url: &str) -> Result<PageMetadata, Error> {
+pub async fn fetch(
+    client: &wreq::Client,
+    url: &str,
+    session_cookie: Option<&str>,
+) -> Result<PageMetadata, Error> {
     debug!(%url, "fetching page metadata");
 
-    let response = client
+    let mut request = client
         .get(url)
-        .header(ACCEPT_ENCODING, "gzip, deflate, br, zstd")
-        .send()
-        .await?;
+        .header(ACCEPT_ENCODING, "gzip, deflate, br, zstd");
+
+    if let Some(session_cookie) = session_cookie {
+        request = request.header(wreq::header::COOKIE, format!("sessionid={session_cookie}"));
+    }
+
+    let response = request.send().await?;
 
     if !response.status().is_success() {
         return Err(Error::Status(response.status()));
@@ -150,5 +242,45 @@ mod tests {
         // Pages without a content attribute carry no metadata.
         let html = r#"<meta property="og:title" />"#;
         assert_eq!(extract(html), PageMetadata::default());
+    }
+
+    #[test]
+    fn test_details_from_og() {
+        let details = MediaDetails::from_og(&extract(MEDIA_PAGE)).unwrap();
+
+        assert_eq!(details.author.as_deref(), Some("user.name"));
+        assert_eq!(details.caption.as_deref(), Some("Some caption & more"));
+
+        // Login walls carry no details.
+        assert_eq!(MediaDetails::from_og(&extract(LOGIN_PAGE)), None);
+
+        // An empty caption falls back to the description.
+        let metadata = PageMetadata {
+            og_title: Some("user.name on Instagram: \"\"".to_string()),
+            og_description: Some("description text".to_string()),
+        };
+        assert_eq!(
+            MediaDetails::from_og(&metadata).unwrap().caption.as_deref(),
+            Some("description text")
+        );
+
+        // A title without an author keeps its caption.
+        let metadata = PageMetadata {
+            og_title: Some("Just a title".to_string()),
+            og_description: None,
+        };
+        let details = MediaDetails::from_og(&metadata).unwrap();
+        assert_eq!(details.author, None);
+        assert_eq!(details.caption.as_deref(), Some("Just a title"));
+    }
+
+    #[test]
+    fn test_shortcode_to_media_pk() {
+        // The media pk of the shortcode, as computed independently.
+        assert_eq!(shortcode_to_media_pk("DdUGmgAifcq"), Some(3_986_840_604_117_694_250));
+        assert_eq!(shortcode_to_media_pk("C7_Hlo8y9aP"), Some(3_386_458_817_721_783_951));
+        assert_eq!(shortcode_to_media_pk(""), None);
+        assert_eq!(shortcode_to_media_pk("ab;cd"), None);
+        assert_eq!(shortcode_to_media_pk("ab.cd"), None);
     }
 }

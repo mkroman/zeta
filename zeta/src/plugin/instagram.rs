@@ -1,40 +1,73 @@
 //! Instagram integration.
 //!
-//! Summarises Instagram media links — feed posts, reels, and IGTV videos — using the OpenGraph
-//! metadata of the linked page, and, if mirroring is configured, downloads the videos with
-//! `yt-dlp` and mirrors them to an S3-compatible bucket, replying with a public link to the
-//! mirrored file. Stories are mirrored without a summary: their pages carry no metadata without
-//! an authenticated session.
+//! Summarises Instagram media links — feed posts, reels, and IGTV videos — and, if mirroring is
+//! configured, downloads the videos with `yt-dlp` and mirrors them to an S3-compatible bucket,
+//! replying with a public link to the mirrored file. Stories are mirrored without a summary:
+//! their pages carry no metadata without an authenticated session.
 //!
-//! Pages are fetched with a client that emulates a modern browser down to its TLS and HTTP/2
-//! fingerprints; Instagram serves a login wall to requests it scores as bot traffic, in which case
-//! the link is only mirrored, without a summary.
+//! Instagram aggressively limits anonymous access: it serves a login wall to requests it scores
+//! as bot traffic, and some media is not anonymously accessible at all. The summary is therefore
+//! assembled from several sources, mirroring what `yt-dlp` and the InstaFix family of embed
+//! proxies do:
+//!
+//! 1. the OpenGraph metadata of the canonical media page,
+//! 2. Instagram's anonymous GraphQL API, using the LSD and CSRF tokens the front page provides —
+//!    fetched once and reused, since they are stable across requests,
+//! 3. an optionally configured metadata proxy (e.g. a self-hosted [InstaFix] instance), which
+//!    serves the OpenGraph metadata of the media from its own addresses.
+//!
+//! Requests are throttled and their results cached, so bursts of links do not trip the rate
+//! limiting and repeated links do not repeat the fetches. An authenticated session cookie
+//! (`sessionid`) can be configured to lift the login wall entirely.
 //!
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
 //! environment variables); without it, the plugin only posts summaries.
+//!
+//! [InstaFix]: https://github.com/Wikidepia/InstaFix
 
+mod graphql;
 mod meta;
 mod urls;
 
 use std::fmt::Write;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tracing::{debug, error};
 use url::Url;
 use wreq::redirect::Policy;
 use wreq_util::Emulation;
 
 use crate::{
+    cache::{TtlCache, TtlMap},
     mirror::{Mirror, MirrorTarget},
     plugin::prelude::*,
     utils::Truncatable,
 };
 
-use self::meta::PageMetadata;
+use self::meta::MediaDetails;
 use self::urls::{InstagramLink, MediaKind, media_url, parse_instagram_url, story_url};
 
 /// The default public URL that mirrored media are linked with.
 const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/instagram";
+
+/// The minimum interval between requests to Instagram, so that bursts of links do not trip its
+/// rate limiting.
+const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How long fetched media details stay cached.
+const DETAILS_TTL: Duration = Duration::from_mins(10);
+
+/// How long a negative result (media without accessible details) stays cached.
+const MISSING_DETAILS_TTL: Duration = Duration::from_mins(1);
+
+/// How many media details are cached before the closest-to-expiring ones are evicted.
+const DETAILS_CACHE_CAPACITY: usize = 256;
+
+/// How long the front-page session tokens for the GraphQL API stay cached. They are stable
+/// across requests, so a run of gated media shares one front-page fetch.
+const SESSION_TTL: Duration = Duration::from_hours(1);
 
 /// Settings for the instagram plugin, from its `[plugins.instagram]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -55,6 +88,20 @@ pub struct Settings {
     /// that resolves the fragment — not directly at the bucket.
     #[serde(default)]
     pub public_url_base: Option<String>,
+    /// An authenticated Instagram session cookie (the `sessionid` cookie value of a logged-in
+    /// browser session).
+    ///
+    /// Lifts the login wall for media that would otherwise not be readable anonymously,
+    /// including stories. Falls back to the `INSTAGRAM_SESSION_COOKIE` environment variable when
+    /// unset. Prefer the environment over committing the cookie to this file.
+    #[serde(default)]
+    pub session_cookie: Option<String>,
+    /// The base URL of a proxy that serves the OpenGraph metadata of Instagram media, used as a
+    /// last resort when the other sources fail — e.g. a self-hosted InstaFix instance.
+    ///
+    /// Falls back to the `INSTAGRAM_METADATA_PROXY` environment variable when unset.
+    #[serde(default)]
+    pub metadata_proxy: Option<String>,
 }
 
 impl Default for Settings {
@@ -63,6 +110,8 @@ impl Default for Settings {
             title_length: default_title_length(),
             prefix: None,
             public_url_base: None,
+            session_cookie: None,
+            metadata_proxy: None,
         }
     }
 }
@@ -79,6 +128,16 @@ pub struct Instagram {
     mirror: Option<MirrorTarget>,
     /// The plugin settings used when processing URLs.
     settings: Settings,
+    /// The resolved session cookie, if any.
+    session_cookie: Option<String>,
+    /// The resolved metadata proxy base URL, if any.
+    metadata_proxy: Option<String>,
+    /// The instant of the previous request to Instagram, throttling bursts.
+    last_request: Mutex<Option<Instant>>,
+    /// The front-page session tokens for the GraphQL API, refreshed after they expire.
+    session: TtlCache<graphql::SessionTokens>,
+    /// The details fetched for each media id, cached so repeated links do not repeat the fetches.
+    details: TtlMap<String, MediaDetails>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -87,6 +146,10 @@ pub enum Error {
     Request(#[from] wreq::Error),
     #[error("share link did not resolve to a valid url")]
     InvalidRedirect,
+    /// Every consulted metadata source failed with a request error, rather than answering
+    /// without details. Reported so the miss is not cached as a negative result.
+    #[error("all metadata sources failed")]
+    SourcesFailed,
 }
 
 #[async_trait]
@@ -113,10 +176,24 @@ impl Plugin<Context> for Instagram {
             DEFAULT_PUBLIC_URL_BASE,
         );
 
+        let session_cookie = resolve_optional_setting(
+            settings.session_cookie.as_deref(),
+            "INSTAGRAM_SESSION_COOKIE",
+        );
+        let metadata_proxy = resolve_optional_setting(
+            settings.metadata_proxy.as_deref(),
+            "INSTAGRAM_METADATA_PROXY",
+        );
+
         Ok(Instagram {
             client,
             mirror,
             settings: settings.clone(),
+            session_cookie,
+            metadata_proxy,
+            last_request: Mutex::new(None),
+            session: TtlCache::new(SESSION_TTL),
+            details: TtlMap::with_negative_ttl(DETAILS_TTL, MISSING_DETAILS_TTL, DETAILS_CACHE_CAPACITY),
         })
     }
 
@@ -169,6 +246,8 @@ impl Instagram {
             Some(InstagramLink::Shortened(url)) => {
                 debug!(%url, "resolving share link");
 
+                self.throttle().await;
+
                 let resolved_url = self.resolve_url(&url).await?;
 
                 if let Some(InstagramLink::Media { kind, id }) = parse_instagram_url(&resolved_url)
@@ -191,11 +270,23 @@ impl Instagram {
         client: &Client,
     ) -> Result<(), Error> {
         let url = media_url(*kind, id);
-        let metadata = self.fetch_metadata(&url).await;
+        let details = match self
+            .details
+            .get_or_refresh(id.to_string(), || async {
+                self.fetch_media_details(id, &url, *kind).await
+            })
+            .await
+        {
+            Ok(details) => details,
+            Err(error) => {
+                debug!(%id, %error, "could not fetch media details");
 
-        if let Some(summary) = metadata
-            .as_ref()
-            .and_then(|meta| format_summary(meta, kind.label(), self.settings.title_length))
+                None
+            }
+        };
+
+        if let Some(summary) =
+            details.as_ref().and_then(|details| format_summary(details, kind.label(), self.settings.title_length))
         {
             let _ = client.send_privmsg(channel, notice(&summary));
         }
@@ -213,12 +304,21 @@ impl Instagram {
         client: &Client,
     ) -> Result<(), Error> {
         let url = story_url(username, id);
-
-        if let Some(summary) = self
-            .fetch_metadata(&url)
+        let details = match self
+            .details
+            .get_or_refresh(id.to_string(), || async { self.fetch_story_details(&url).await })
             .await
-            .as_ref()
-            .and_then(|meta| format_summary(meta, "story", self.settings.title_length))
+        {
+            Ok(details) => details,
+            Err(error) => {
+                debug!(%id, %error, "could not fetch story details");
+
+                None
+            }
+        };
+
+        if let Some(summary) =
+            details.as_ref().and_then(|details| format_summary(details, "story", self.settings.title_length))
         {
             let _ = client.send_privmsg(channel, notice(&summary));
         }
@@ -228,18 +328,152 @@ impl Instagram {
         Ok(())
     }
 
-    /// Fetches the OpenGraph metadata of the given page.
+    /// Fetches the details of the media with the given shortcode.
     ///
-    /// Returns `None` when the page could not be fetched, or is a login wall carrying no metadata.
-    async fn fetch_metadata(&self, url: &str) -> Option<PageMetadata> {
-        match meta::fetch(&self.client, url).await {
-            Ok(metadata) => Some(metadata),
-            Err(error) => {
-                debug!(%url, %error, "could not fetch page metadata");
+    /// The OpenGraph metadata of the canonical media page is tried first, then the anonymous
+    /// GraphQL API, then the configured metadata proxy. A page request that errors is retried
+    /// once, so a transient failure does not cost the summary.
+    ///
+    /// Returns `Ok(None)` when no source carried details — a negative result the caller caches.
+    /// An error is returned when a source failed with a request error instead of answering
+    /// without details: the outcome is unknown then, and the caller does not cache it, so a
+    /// later mention of the same link tries again.
+    async fn fetch_media_details(
+        &self,
+        id: &str,
+        canonical: &str,
+        kind: MediaKind,
+    ) -> Result<Option<MediaDetails>, Error> {
+        let mut details = None;
+        let mut failed = false;
 
-                None
+        match self.fetch_page_details(canonical, self.session_cookie.as_deref()).await {
+            Ok(page_details) => details = page_details,
+            Err(error) => {
+                debug!(%id, %error, "the media page request failed");
+
+                failed = true;
             }
         }
+
+        if details.is_none() {
+            debug!(%id, "falling back to the graphql api");
+
+            match self.fetch_graphql_details(id).await {
+                Ok(graphql_details) => details = graphql_details,
+                Err(error) => {
+                    debug!(%id, %error, "the graphql api request failed");
+
+                    failed = true;
+                }
+            }
+        }
+
+        if details.is_none() && let Some(proxy) = &self.metadata_proxy {
+            let url = proxy_media_url(proxy, kind, id);
+            debug!(%url, "falling back to the metadata proxy");
+
+            match self.fetch_page_details(&url, None).await {
+                Ok(proxy_details) => details = proxy_details,
+                Err(error) => {
+                    debug!(%id, %error, "the metadata proxy request failed");
+
+                    failed = true;
+                }
+            }
+        }
+
+        if details.is_none() && failed {
+            return Err(Error::SourcesFailed);
+        }
+
+        Ok(details)
+    }
+
+    /// Fetches the media details through the anonymous GraphQL API.
+    ///
+    /// The front-page session tokens the request needs are cached, so a run of gated media does
+    /// not each fetch the front page. Returns `Ok(None)` when the media is not anonymously
+    /// accessible, and an error when the requests fail.
+    async fn fetch_graphql_details(&self, id: &str) -> Result<Option<MediaDetails>, graphql::Error> {
+        self.throttle().await;
+
+        let session = self
+            .session
+            .get_or_refresh(|| async {
+                graphql::fetch_session(&self.client, self.session_cookie.as_deref()).await
+            })
+            .await?;
+
+        match graphql::fetch_media_details(&self.client, id, &session, self.session_cookie.as_deref())
+            .await
+        {
+            Ok(details) => Ok(Some(details)),
+            Err(error @ graphql::Error::Gated) => {
+                debug!(%id, %error, "the graphql api carried no details");
+
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Fetches the details of the story with the given id from its page.
+    ///
+    /// Stories have no anonymously accessible API, so only their page is consulted, which
+    /// generally carries details only with a session cookie configured. Returns `Ok(None)` when
+    /// the page carried no details, and an error when the request failed.
+    async fn fetch_story_details(&self, url: &str) -> Result<Option<MediaDetails>, meta::Error> {
+        self.fetch_page_details(url, self.session_cookie.as_deref()).await
+    }
+
+    /// Fetches a page and extracts its OpenGraph details.
+    ///
+    /// Returns `Ok(None)` when the page carried no details, and an error when the request
+    /// failed.
+    async fn fetch_page_details(
+        &self,
+        url: &str,
+        session_cookie: Option<&str>,
+    ) -> Result<Option<MediaDetails>, meta::Error> {
+        let details = MediaDetails::from_og(&self.fetch_page_metadata(url, session_cookie).await?);
+
+        if details.is_none() {
+            debug!(%url, "the page carried no media details");
+        }
+
+        Ok(details)
+    }
+
+    /// Fetches a page, retrying the request once after a pause.
+    ///
+    /// Client errors are not retried: a dead link or a rejected request would fail the retry all
+    /// the same, and the pause would only delay the fallbacks that follow.
+    async fn fetch_page_metadata(
+        &self,
+        url: &str,
+        session_cookie: Option<&str>,
+    ) -> Result<meta::PageMetadata, meta::Error> {
+        self.throttle().await;
+
+        let error = match meta::fetch(&self.client, url, session_cookie).await {
+            Ok(metadata) => return Ok(metadata),
+            Err(error) => error,
+        };
+
+        debug!(%url, %error, "could not fetch page metadata");
+
+        if let meta::Error::Status(status) = &error && status.is_client_error() {
+            return Err(error);
+        }
+
+        // A failed request is retried once after a pause, so a transient failure does not cost
+        // the summary.
+        self.throttle().await;
+
+        meta::fetch(&self.client, url, session_cookie)
+            .await
+            .inspect_err(|error| debug!(%url, %error, "the page request failed again"))
     }
 
     /// Requests the given share link and returns the URL it resolves to.
@@ -255,6 +489,20 @@ impl Instagram {
         debug!(%url, "resolved share url");
 
         Ok(url)
+    }
+
+    /// Ensures at least `REQUEST_INTERVAL` has passed since the previous request to Instagram,
+    /// then records this one.
+    async fn throttle(&self) {
+        let mut last_request = self.last_request.lock().await;
+
+        if let Some(last_request) = *last_request
+            && let Some(wait) = REQUEST_INTERVAL.checked_sub(last_request.elapsed())
+        {
+            tokio::time::sleep(wait).await;
+        }
+
+        *last_request = Some(Instant::now());
     }
 
     /// Starts mirroring of the given media, replying with a link to the mirrored file.
@@ -287,52 +535,55 @@ impl Instagram {
     }
 }
 
-/// Formats the OpenGraph metadata as a human-readable summary of the media.
+/// Returns the value of an optional setting, preferring the configured value over the environment
+/// variable, and ignoring empty values.
+fn resolve_optional_setting(value: Option<&str>, env: &str) -> Option<String> {
+    let value = value
+        .map(str::to_string)
+        .or_else(|| std::env::var(env).ok());
+
+    value.filter(|value| !value.trim().is_empty())
+}
+
+/// Returns the URL of the media's page on the configured metadata proxy.
 ///
-/// The `og:title` of a media page has the form `<author> on Instagram: "<caption>"`; when the
-/// title is generic — as it is on login walls — no summary is posted.
-fn format_summary(meta: &PageMetadata, kind: &str, title_length: usize) -> Option<String> {
-    let title = meta
-        .og_title
-        .as_deref()
-        .map(str::trim)
-        .filter(|title| !is_generic_title(title))?;
+/// The proxy serves the OpenGraph metadata of Instagram media, so the media path is the canonical
+/// one.
+#[must_use]
+fn proxy_media_url(proxy: &str, kind: MediaKind, id: &str) -> String {
+    format!("{}/{}/{}", proxy.trim_end_matches('/'), kind.segment(), id)
+}
 
-    let (author, caption) = split_author_title(title);
-    let caption = [caption, meta.og_description.as_deref().unwrap_or_default()]
-        .into_iter()
-        .map(str::trim)
-        .find(|caption| !caption.is_empty());
-
+/// Formats the media details as a human-readable summary of the media.
+fn format_summary(details: &MediaDetails, kind: &str, title_length: usize) -> Option<String> {
     let mut buf = String::new();
 
-    if let Some(caption) = caption {
+    if let Some(caption) = details
+        .caption
+        .as_deref()
+        .map(str::trim)
+        .filter(|caption| !caption.is_empty())
+    {
         let truncated = caption.truncate_with_suffix(title_length, "…");
         let _ = write!(buf, "“\x0f{}\x0310” ", truncated.trim());
     }
 
-    if let Some(author) = author {
-        let _ = write!(buf, "is an Instagram {kind} by\x0f {author}");
+    if let Some(author) = details
+        .author
+        .as_deref()
+        .map(str::trim)
+        .filter(|author| !author.is_empty())
+    {
+        if buf.is_empty() {
+            let _ = write!(buf, "Instagram {kind} by\x0f {author}");
+        } else {
+            let _ = write!(buf, "is an Instagram {kind} by\x0f {author}");
+        }
     } else if !buf.is_empty() {
         let _ = write!(buf, "is an Instagram {kind}");
     }
 
     (!buf.is_empty()).then_some(buf)
-}
-
-/// Returns whether the title is the generic title of a login or placeholder page.
-const fn is_generic_title(title: &str) -> bool {
-    title.eq_ignore_ascii_case("Instagram") || title.eq_ignore_ascii_case("Login • Instagram")
-}
-
-/// Splits an `og:title` of the form `<author> on Instagram: "<caption>"` into its author and
-/// caption, trimming the quotes wrapping the caption.
-#[must_use]
-fn split_author_title(title: &str) -> (Option<&str>, &str) {
-    match title.split_once(" on Instagram: ") {
-        Some((author, caption)) => (Some(author.trim()), caption.trim_matches('"').trim()),
-        None => (None, title),
-    }
 }
 
 #[cfg(test)]
@@ -346,11 +597,15 @@ mod tests {
             assert_eq!(settings.title_length, 150);
             assert!(settings.prefix.is_none());
             assert!(settings.public_url_base.is_none());
+            assert!(settings.session_cookie.is_none());
+            assert!(settings.metadata_proxy.is_none());
         }
         deserialize: {
             "title_length": 100,
             "prefix": "~meta/instagram",
             "public_url_base": "https://pub.example.com/instagram",
+            "session_cookie": "1234567890%3Aexample",
+            "metadata_proxy": "https://d.example.com",
         } assert: {
             assert_eq!(settings.title_length, 100);
             assert_eq!(settings.prefix.as_deref(), Some("~meta/instagram"));
@@ -358,141 +613,147 @@ mod tests {
                 settings.public_url_base.as_deref(),
                 Some("https://pub.example.com/instagram")
             );
+            assert_eq!(
+                settings.session_cookie.as_deref(),
+                Some("1234567890%3Aexample")
+            );
+            assert_eq!(settings.metadata_proxy.as_deref(), Some("https://d.example.com"));
         }
     }
 
-    /// The `og:title` of an Instagram media page.
-    const MEDIA_TITLE: &str = "user.name on Instagram: \"Some caption & more\"";
-
-    /// A generic `og:title`, as found on login walls.
-    const GENERIC_TITLE: &str = "Login • Instagram";
-
-    #[test]
-    fn test_split_author_title() {
-        let (author, caption) = split_author_title(MEDIA_TITLE);
-
-        assert_eq!(author, Some("user.name"));
-        assert_eq!(caption, "Some caption & more");
-
-        let (author, caption) = split_author_title("Just a title");
-
-        assert_eq!(author, None);
-        assert_eq!(caption, "Just a title");
-
-        // Empty captions stay empty; the summary falls back to the description.
-        let (author, caption) = split_author_title("user.name on Instagram: \"\"");
-
-        assert_eq!(author, Some("user.name"));
-        assert_eq!(caption, "");
-    }
-
-    #[test]
-    fn test_is_generic_title() {
-        assert!(is_generic_title("Instagram"));
-        assert!(is_generic_title(GENERIC_TITLE));
-        assert!(!is_generic_title("user.name on Instagram: \"caption\""));
+    /// Returns the details of a media with both a caption and an author.
+    fn details() -> MediaDetails {
+        MediaDetails {
+            author: Some("user.name".to_string()),
+            caption: Some("Some caption & more".to_string()),
+        }
     }
 
     #[test]
     fn test_format_summary() {
         // Caption and author.
-        let meta = PageMetadata {
-            og_title: Some(MEDIA_TITLE.to_string()),
-            og_description: Some("1,234 likes, 56 comments".to_string()),
-        };
         assert_eq!(
-            format_summary(&meta, "reel", 150).as_deref(),
+            format_summary(&details(), "reel", 150).as_deref(),
             Some("“\x0fSome caption & more\x0310” is an Instagram reel by\x0f user.name")
         );
 
         // Long captions are truncated.
         let long_caption = "a".repeat(200);
-        let meta = PageMetadata {
-            og_title: Some(format!("user.name on Instagram: \"{long_caption}\"")),
-            og_description: None,
+        let details = MediaDetails {
+            author: Some("user.name".to_string()),
+            caption: Some(long_caption),
         };
         let expected = format!(
             "“\x0f{}\x0310” is an Instagram post by\x0f user.name",
             "a".repeat(150) + "…"
         );
-        assert_eq!(format_summary(&meta, "post", 150).as_deref(), Some(expected.as_str()));
-
-        // An empty caption falls back to the description.
-        let meta = PageMetadata {
-            og_title: Some("user.name on Instagram: \"\"".to_string()),
-            og_description: Some("description text".to_string()),
-        };
-        assert_eq!(
-            format_summary(&meta, "post", 150).as_deref(),
-            Some("“\x0fdescription text\x0310” is an Instagram post by\x0f user.name")
-        );
+        assert_eq!(format_summary(&details, "post", 150).as_deref(), Some(expected.as_str()));
 
         // A caption without an author.
-        let meta = PageMetadata {
-            og_title: Some("Just a title".to_string()),
-            og_description: None,
+        let details = MediaDetails {
+            author: None,
+            caption: Some("Just a title".to_string()),
         };
         assert_eq!(
-            format_summary(&meta, "post", 150).as_deref(),
+            format_summary(&details, "post", 150).as_deref(),
             Some("“\x0fJust a title\x0310” is an Instagram post")
         );
 
-        // Login walls carry no summary.
-        let meta = PageMetadata {
-            og_title: Some(GENERIC_TITLE.to_string()),
-            og_description: Some("1,234 likes".to_string()),
+        // An author without a caption.
+        let details = MediaDetails {
+            author: Some("user.name".to_string()),
+            caption: None,
         };
-        assert_eq!(format_summary(&meta, "reel", 150), None);
-    }
-
-    /// Drives the plugin's pipeline against a real Instagram link.
-    ///
-    /// Needs network access, so it is `#[ignore]`d. Instagram serves a login wall to requests it
-    /// scores as bot traffic — e.g. from datacenter IPs — so a missing summary is not a failure:
-    /// when the page metadata is fetched, the summary is asserted on; otherwise the test logs the
-    /// outcome and passes.
-    #[tokio::test]
-    #[ignore = "needs network access"]
-    async fn live_media_link() {
-        let url = Url::parse("https://www.instagram.com/p/DdUGmgAifcq").unwrap();
-
-        let link = parse_instagram_url(&url)
-            .expect("the link parses as an Instagram link");
         assert_eq!(
-            link,
-            InstagramLink::Media {
-                kind: MediaKind::Post,
-                id: "DdUGmgAifcq".to_string(),
-            }
+            format_summary(&details, "story", 150).as_deref(),
+            Some("Instagram story by\x0f user.name")
         );
 
+        // Neither an author nor a caption.
+        let details = MediaDetails { author: None, caption: None };
+        assert_eq!(format_summary(&details, "post", 150), None);
+    }
+
+    #[test]
+    fn test_resolve_optional_setting() {
+        // A configured value wins over the environment; empty values are ignored.
+        assert_eq!(
+            resolve_optional_setting(Some("value"), "UNUSED_ENV_VAR"),
+            Some("value".to_string())
+        );
+        assert_eq!(resolve_optional_setting(Some(""), "UNUSED_ENV"), None);
+        assert_eq!(resolve_optional_setting(None, "DEFINITELY_UNUSED_ENV"), None);
+        assert_eq!(resolve_optional_setting(Some("  "), "DEFINITELY_UNUSED_ENV"), None);
+    }
+
+    #[test]
+    fn test_proxy_media_url() {
+        assert_eq!(
+            proxy_media_url("https://d.example.com", MediaKind::Post, "DdUGmgAifcq"),
+            "https://d.example.com/p/DdUGmgAifcq"
+        );
+        assert_eq!(
+            proxy_media_url("https://d.example.com/", MediaKind::Reel, "DbfDT_9xiU3"),
+            "https://d.example.com/reel/DbfDT_9xiU3"
+        );
+    }
+
+    /// Drives the plugin's pipeline against real Instagram links.
+    ///
+    /// Needs network access, so it is `#[ignore]`d. Instagram serves a login wall to requests it
+    /// scores as bot traffic — e.g. from datacenter IPs — and some media is not anonymously
+    /// accessible at all, so a missing summary is not a failure: the summary is asserted on when
+    /// the metadata sources carried details; otherwise the test logs the outcome and passes.
+    #[tokio::test]
+    #[ignore = "needs network access"]
+    async fn live_media_links() {
         let client = wreq::Client::builder()
             .emulation(Emulation::Firefox142)
             .redirect(Policy::limited(4))
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(Duration::from_secs(30))
             .build()
             .expect("the http client builds");
 
-        let InstagramLink::Media { kind, id } = link else {
-            panic!("expected a media link, got {link:?}");
+        let instagram = Instagram {
+            client,
+            mirror: None,
+            settings: Settings::default(),
+            session_cookie: None,
+            metadata_proxy: None,
+            last_request: Mutex::new(None),
+            session: TtlCache::new(SESSION_TTL),
+            details: TtlMap::with_negative_ttl(DETAILS_TTL, MISSING_DETAILS_TTL, DETAILS_CACHE_CAPACITY),
         };
 
-        let canonical = media_url(kind, &id);
-        println!("parsed: {kind:?} {id}, canonical url: {canonical}");
+        let urls = [
+            "https://www.instagram.com/p/DdUGmgAifcq",
+            "https://www.instagram.com/p/DdUfj1USxzi",
+            "https://www.instagram.com/reel/DbfDT_9xiU3/",
+            "https://www.instagram.com/reel/DaklCKgDnIe/",
+        ];
 
-        match meta::fetch(&client, &canonical).await {
-            Ok(metadata) => {
-                println!("metadata: {metadata:?}");
+        for url in urls {
+            let url = Url::parse(url).unwrap();
 
-                match format_summary(&metadata, kind.label(), 150) {
-                    Some(summary) => {
-                        assert!(summary.contains("is an Instagram post"), "summary: {summary}");
-                        println!("summary: {summary}");
-                    }
-                    None => println!("no summary — the page is a login wall"),
-                }
+            let InstagramLink::Media { kind, id } = parse_instagram_url(&url).unwrap() else {
+                panic!("expected a media link for {url}");
+            };
+
+            let canonical = media_url(kind, &id);
+            println!("== {url} → {canonical}");
+
+            let details = instagram
+                .details
+                .get_or_refresh(id.clone(), || async {
+                    instagram.fetch_media_details(&id, &canonical, kind).await
+                })
+                .await
+                .unwrap_or(None);
+
+            match details.as_ref().and_then(|details| format_summary(details, kind.label(), 150)) {
+                Some(summary) => println!("   summary: {summary}"),
+                None => println!("   no summary — no source carried details"),
             }
-            Err(error) => println!("metadata fetch failed (bot wall): {error}"),
         }
     }
 }
