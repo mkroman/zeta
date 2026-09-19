@@ -59,6 +59,12 @@ pub enum ApiError {
     Deserialize(json::Error),
 }
 
+impl From<reqwest::Error> for ApiError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error)
+    }
+}
+
 /// Sends a request built by [`reqwest::Client::get`] (or a sibling builder method) and parses
 /// its JSON body into `T`.
 ///

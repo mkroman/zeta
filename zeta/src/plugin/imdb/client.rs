@@ -123,8 +123,7 @@ impl GraphQlClient {
 
         let http = http::client::builder(config)
             .default_headers(headers)
-            .build()
-            .map_err(Error::Request)?;
+            .build()?;
 
         Ok(Self {
             http,
@@ -205,9 +204,9 @@ impl GraphQlClient {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Request`] if the request failed, [`Error::Deserialize`] if the response
-    /// could not be parsed, [`Error::GraphQL`] if the API reported any errors, and
-    /// [`Error::UnexpectedResponse`] if the response contains no data.
+    /// Returns an error if the request fails or the response cannot be parsed,
+    /// [`Error::GraphQL`] if the API reported any errors, and [`Error::UnexpectedResponse`] if
+    /// the response contains no data.
     async fn execute<T: DeserializeOwned>(
         &self,
         query: &str,
@@ -220,16 +219,9 @@ impl GraphQlClient {
             "operationName": operation_name,
         });
 
-        let response = self
-            .http
-            .post(GRAPHQL_URL)
-            .json(&payload)
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = self.http.post(GRAPHQL_URL).json(&payload).send().await?;
 
-        let text = response.text().await?;
-        let response: GraphQlResponse<T> = http::json::from_str(&text)?;
+        let response: GraphQlResponse<T> = http::parse_response(response).await?;
 
         if let Some(errors) = response.errors.filter(|errors| !errors.is_empty()) {
             let messages = errors

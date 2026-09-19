@@ -1,14 +1,13 @@
 //! Errors that can occur during IMDb interaction.
 
+use crate::http;
+
 /// Errors that can occur during IMDb interaction.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// The API response could not be deserialized.
-    #[error("could not deserialize response: {0}")]
-    Deserialize(#[from] serde_path_to_error::Error<serde_json::Error>),
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    /// The API request failed or its response could not be handled.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     /// A configured request header is not a valid header value.
     #[error("invalid header value: {0}")]
     InvalidHeader(#[from] reqwest::header::InvalidHeaderValue),
@@ -21,4 +20,10 @@ pub enum Error {
     /// The API returned a response the client does not handle.
     #[error("unexpected response from api")]
     UnexpectedResponse,
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Api(error.into())
+    }
 }
