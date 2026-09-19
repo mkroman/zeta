@@ -77,7 +77,9 @@ impl Plugin<Context> for Choices {
         {
             let source_nickname = event.sender().map_or("", |sender| sender.nick);
             let mut rng = rand::rng();
-            let selection = options.iter().choose(&mut rng).unwrap();
+            let Some(selection) = options.iter().choose(&mut rng) else {
+                return Ok(());
+            };
 
             client.send_privmsg(event.channel(), format!("{source_nickname}: {selection}"))?;
         }

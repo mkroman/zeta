@@ -104,7 +104,7 @@ fn str_to_hex_string(s: &str) -> String {
     let mut buf = String::with_capacity(s.len() * 4);
 
     for b in s.bytes() {
-        write!(buf, "\\x{b:x}").unwrap();
+        let _ = write!(buf, "\\x{b:x}");
     }
 
     buf

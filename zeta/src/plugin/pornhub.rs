@@ -178,7 +178,7 @@ impl PornHub {
             "https://www.pornhub.com/webmasters/video_by_id",
             [("id", video_id)],
         )
-        .unwrap();
+        .map_err(|_| Error::InvalidResponse)?;
 
         let response = self.client.get(url).send().await.map_err(Error::Request)?;
         debug!("request went ok, parsing response");

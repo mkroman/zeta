@@ -150,7 +150,8 @@ impl Plugin<Context> for Spotify {
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
         let client = http::build_client(&ctx.config.http);
-        let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)").unwrap();
+        let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)")
+            .expect("spotify uri regex");
 
         Ok(Self {
             client,
