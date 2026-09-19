@@ -210,11 +210,8 @@ impl Plugin<Context> for Instagram {
     }
 
     async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
-        if let Err(err) = self
-            .process_urls(&[url.url().clone()], url.channel(), client)
-            .await
-        {
-            error!("could not process urls: {err}");
+        if let Err(err) = self.process_url(url.url(), url.channel(), client).await {
+            error!("could not process url: {err}");
         }
 
         Ok(())
@@ -222,19 +219,6 @@ impl Plugin<Context> for Instagram {
 }
 
 impl Instagram {
-    async fn process_urls(
-        &self,
-        urls: &[Url],
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), Error> {
-        for url in urls {
-            self.process_url(url, channel, client).await?;
-        }
-
-        Ok(())
-    }
-
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
         match parse_instagram_url(url) {
             Some(InstagramLink::Media { kind, id }) => {

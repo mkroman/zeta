@@ -61,14 +61,6 @@ name = "#zeta.dev"
 # name = "#otherchannel"
 # …
 
-# DNS Configuration.
-[dns]
-# The number of retries after lookup failure before giving up.
-# attempts = 2
-
-# The size in number of records the cache can hold.
-# cache_size = 32
-
 # HTTP Configuration.
 [http]
 # The duration before an HTTP request times out.

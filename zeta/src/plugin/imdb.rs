@@ -171,8 +171,7 @@ impl Plugin<Context> for Imdb {
         client: &Client,
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        self.process_urls(&[url.url().clone()], url.channel(), client)
-            .await?;
+        self.process_url(url.url(), url.channel(), client).await?;
 
         Ok(())
     }
@@ -193,31 +192,25 @@ impl Imdb {
         Ok(())
     }
 
-    /// Processes URLs found in a message, printing details about any IMDb resources.
+    /// Processes a URL found in a message, printing details about any IMDb resource it points
+    /// at.
     ///
     /// URLs matching a filter — e.g. links to IMDb posted by another bot — are skipped.
-    async fn process_urls(
-        &self,
-        urls: &[Url],
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        for url in urls {
-            match classify_imdb_url(url) {
-                Some(Link::Title(id)) => {
-                    debug!(%id, "fetching details for posted title link");
+    async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), ZetaError> {
+        match classify_imdb_url(url) {
+            Some(Link::Title(id)) => {
+                debug!(%id, "fetching details for posted title link");
 
-                    let lookup = self.client.title(&id).await;
-                    Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
-                }
-                Some(Link::Name(id)) => {
-                    debug!(%id, "fetching details for posted person link");
-
-                    let lookup = self.client.person(&id).await;
-                    Self::reply(client, channel, lookup.map(|person| format_person(&person)))?;
-                }
-                None => {}
+                let lookup = self.client.title(&id).await;
+                Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
             }
+            Some(Link::Name(id)) => {
+                debug!(%id, "fetching details for posted person link");
+
+                let lookup = self.client.person(&id).await;
+                Self::reply(client, channel, lookup.map(|person| format_person(&person)))?;
+            }
+            None => {}
         }
 
         Ok(())

@@ -26,7 +26,6 @@ use std::time::Duration;
 
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
 use indefinite::indefinite_article_only;
@@ -160,15 +159,12 @@ pub enum Error {
     Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
 }
 
-/// Basic details about the video, such as its title, description, and category.
+/// Basic details about the video, such as its title and category.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct Snippet {
     /// The video title, possibly containing HTML entities.
     pub title: String,
-    /// The video description.
-    pub description: String,
     /// The title of the channel that uploaded the video.
     pub channel_title: String,
     /// The video category id, resolvable through the video categories map.
@@ -180,7 +176,6 @@ pub struct Snippet {
 /// Statistics about a video.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct Statistics {
     /// The number of times the video has been viewed, as a decimal string.
     pub view_count: String,
@@ -189,7 +184,6 @@ pub struct Statistics {
 /// Details about the content of a video, such as its duration.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct ContentDetails {
     /// The video duration as an ISO 8601 duration string (e.g. `PT4M13S`).
     pub duration: String,
@@ -198,7 +192,6 @@ pub struct ContentDetails {
 /// Details about a live stream.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct LiveStreamingDetails {
     /// The number of concurrent viewers, present while the stream is live.
     pub concurrent_viewers: Option<String>,
@@ -207,14 +200,7 @@ pub struct LiveStreamingDetails {
 /// A YouTube video.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct Video {
-    /// The API resource type, e.g. `youtube#video`.
-    pub kind: String,
-    /// The etag of the resource.
-    pub etag: String,
-    /// The video id.
-    pub id: String,
     /// The video's basic details, present in the `snippet` API part.
     pub snippet: Option<Snippet>,
     /// The video's statistics, present in the `statistics` API part.
@@ -228,12 +214,7 @@ pub struct Video {
 /// Search Result.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct Search {
-    /// The API resource type, e.g. `youtube#searchResult`.
-    pub kind: String,
-    /// The etag of the search result.
-    pub etag: String,
     /// The id of the matched resource, typed by its kind.
     pub id: SearchId,
     /// The matched resource's basic details.
@@ -243,75 +224,31 @@ pub struct Search {
 /// The id of a search result, typed by the kind of resource the search matched.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct SearchId {
-    /// The API resource type of the matched id, e.g. `youtube#video`.
-    pub kind: String,
     /// The video id, present for video results.
     pub video_id: Option<String>,
-    /// The channel id, present for channel results.
-    pub channel_id: Option<String>,
-    /// The playlist id, present for playlist results.
-    pub playlist_id: Option<String>,
 }
 
 /// The snippet of a search result.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct SearchSnippet {
     /// The matched resource's title, possibly containing HTML entities.
     pub title: String,
-    /// The matched resource's description.
-    pub description: String,
-    /// The id of the channel the matched resource belongs to.
-    pub channel_id: String,
-    /// The title of the channel the matched resource belongs to.
-    pub channel_title: String,
-    /// The available thumbnails, keyed by their resolution name (e.g. `default`, `high`).
-    pub thumbnails: HashMap<String, SearchSnippetThumbnail>,
-    /// When the matched resource was published.
-    #[serde(with = "time::serde::rfc3339")]
-    pub published_at: OffsetDateTime,
-    /// Whether the resource is a `"live"`, `"upcoming"`, or regular broadcast.
-    pub live_broadcast_content: String,
-}
-
-/// A search result thumbnail.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-pub struct SearchSnippetThumbnail {
-    /// The thumbnail image URL.
-    pub url: String,
-    /// The image width, in pixels.
-    pub width: u32,
-    /// The image height, in pixels.
-    pub height: u32,
 }
 
 /// Details about a video category.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct CategorySnippet {
-    /// The id of the category's channel (usually the YouTube channel id).
-    pub channel_id: String,
     /// The category title, e.g. "Music".
     pub title: String,
-    /// Whether videos can be assigned to this category.
-    pub assignable: bool,
 }
 
 /// A video category result.
 #[derive(Clone, Debug, Deserialize)]
-#[allow(unused)]
 #[serde(rename_all = "camelCase")]
 pub struct Category {
-    /// The API resource type, e.g. `youtube#videoCategory`.
-    pub kind: String,
-    /// The etag of the category.
-    pub etag: String,
     /// The category id.
     pub id: String,
     /// The category's details.
@@ -321,12 +258,7 @@ pub struct Category {
 /// Generic response type for list results.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-#[allow(unused)]
 pub struct ApiListResponse<R> {
-    /// The API resource type of the list, e.g. `youtube#videoListResponse`.
-    pub kind: String,
-    /// The etag of the list.
-    pub etag: String,
     /// The list items.
     pub items: Vec<R>,
 }
@@ -410,8 +342,7 @@ impl Plugin<Context> for YouTube {
         client: &Client,
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        self.process_urls(vec![url.url().clone()], url.channel(), client)
-            .await?;
+        self.process_url(url.url(), url.channel(), client).await?;
 
         Ok(())
     }
@@ -471,46 +402,37 @@ impl YouTube {
         });
     }
 
-    /// Processes URLs found in a message
-    async fn process_urls(
-        &self,
-        urls: Vec<Url>,
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        for ref url in urls {
-            if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
-                parse_youtube_url(url)
-            {
-                match self.get_video(&video_id).await {
-                    Ok(video) => {
-                        let snippet = video.snippet.as_ref();
-                        let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
+    /// Processes a URL found in a message.
+    async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), ZetaError> {
+        if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
+            match self.get_video(&video_id).await {
+                Ok(video) => {
+                    let snippet = video.snippet.as_ref();
+                    let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
 
-                        // The map is refreshed by the task started on load; the read is
-                        // stale-tolerant, so an unavailable API keeps serving the last known
-                        // categories.
-                        let category = self.video_categories.read(|cache| {
-                            cache
-                                .and_then(|categories| categories.get(&category_id))
-                                .map_or_else(
-                                    || "unknown category".to_string(),
-                                    |category| category.snippet.title.clone(),
-                                )
-                        });
+                    // The map is refreshed by the task started on load; the read is
+                    // stale-tolerant, so an unavailable API keeps serving the last known
+                    // categories.
+                    let category = self.video_categories.read(|cache| {
+                        cache
+                            .and_then(|categories| categories.get(&category_id))
+                            .map_or_else(
+                                || "unknown category".to_string(),
+                                |category| category.snippet.title.clone(),
+                            )
+                    });
 
-                        let view_count = video
-                            .statistics
-                            .as_ref()
-                            .and_then(|s| str::parse::<u64>(&s.view_count).ok())
-                            .unwrap_or(0);
+                    let view_count = video
+                        .statistics
+                        .as_ref()
+                        .and_then(|s| str::parse::<u64>(&s.view_count).ok())
+                        .unwrap_or(0);
 
-                        let message = format_video_message(&video, &category, view_count);
-                        client.send_privmsg(channel, message)?;
-                    }
-                    Err(e) => {
-                        client.send_privmsg(channel, format!("Error: {e}"))?;
-                    }
+                    let message = format_video_message(&video, &category, view_count);
+                    client.send_privmsg(channel, message)?;
+                }
+                Err(e) => {
+                    client.send_privmsg(channel, format!("Error: {e}"))?;
                 }
             }
         }
@@ -697,12 +619,8 @@ mod tests {
         concurrent_viewers: Option<&str>,
     ) -> Video {
         Video {
-            kind: "youtube#video".to_string(),
-            etag: String::new(),
-            id: "dQw4w9WgXcQ".to_string(),
             snippet: Some(Snippet {
                 title: "Test Video".to_string(),
-                description: String::new(),
                 channel_title: "Test Channel".to_string(),
                 category_id: "10".to_string(),
                 live_broadcast_content: live_broadcast_content.to_string(),

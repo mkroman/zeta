@@ -149,29 +149,13 @@ impl Plugin<Context> for PornHub {
 
     /// Processes incoming PornHub URLs.
     async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
-        let _ = self
-            .process_urls(vec![url.url().clone()], url.channel(), client)
-            .await;
+        let _ = self.process_url(url.url(), url.channel(), client).await;
 
         Ok(())
     }
 }
 
 impl PornHub {
-    /// Processes multiple URLs, handling each one that matches the PornHub pattern.
-    async fn process_urls(
-        &self,
-        urls: Vec<Url>,
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), Error> {
-        for url in &urls {
-            self.process_url(url, channel, client).await?;
-        }
-
-        Ok(())
-    }
-
     // Processes a single URL if it's a valid PornHub video URL.
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
         if is_pornhub_video_url(url)

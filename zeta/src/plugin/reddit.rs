@@ -11,7 +11,6 @@ use reddit::Link;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tracing::error;
-use url::Url;
 
 use crate::{
     mirror::{Mirror, MirrorTarget},
@@ -120,37 +119,24 @@ impl Plugin<Context> for Reddit {
     }
 
     async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
-        let _ = self
-            .process_urls(&vec![url.url().clone()], url.channel(), client)
-            .await
-            .inspect_err(|e| error!("error when processing urls: {e}"));
+        if let Some(link) = reddit::classify_reddit_url(url.url()) {
+            let _ = self
+                .process_url(link, url.channel(), client)
+                .await
+                .inspect_err(|e| error!("could not process url: {e}"));
+        }
 
         Ok(())
     }
 }
 
 impl Reddit {
-    /// Processes each reddit link in `urls`, posting a summary for every recognized link kind.
+    /// Processes a reddit link, posting a summary for every recognized link kind.
     ///
     /// # Errors
     ///
-    /// Returns an [`Error`] if a Reddit API request fails or a reply cannot be sent; individual
-    /// unrecognized URLs are skipped.
-    pub async fn process_urls(
-        &self,
-        urls: &Vec<Url>,
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), Error> {
-        for url in urls {
-            if let Some(link) = reddit::classify_reddit_url(url) {
-                self.process_url(link, channel, client).await?;
-            }
-        }
-
-        Ok(())
-    }
-
+    /// Returns an [`Error`] if a Reddit API request fails or a reply cannot be sent;
+    /// unrecognized links are skipped.
     async fn process_url(&self, link: Link, channel: &str, client: &Client) -> Result<(), Error> {
         match link {
             Link::Gallery(id) | Link::Comments { id } | Link::Submission { id, .. } => {
