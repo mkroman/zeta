@@ -36,6 +36,7 @@ pub use s3::S3;
 pub use ytdlp::{YtDlp, YtDlpOptions};
 
 use crate::context::Context;
+use crate::url::is_id_segment;
 
 /// Configuration for the shared media mirror, from the `[mirror]` configuration section.
 ///
@@ -302,7 +303,7 @@ impl Mirror {
         // The id ends up in file names, object keys and the public link fragment; ids that are
         // not safe are never mirrored. It is validated here (before the fast-path check) and
         // again by the download manager before it reaches the file system.
-        if !is_safe_id(id) {
+        if !is_id_segment(id, "_-") {
             warn!(%id, "ignoring mirror request with an unsafe id");
 
             return Ok(None);
@@ -498,16 +499,6 @@ pub(crate) fn tempdir_builder() -> tempfile::Builder<'static, 'static> {
     builder.permissions(std::fs::Permissions::from_mode(0o700));
 
     builder
-}
-
-/// Returns whether `id` is safe to use in file names and object keys: it must be non-empty and
-/// consist of ASCII alphanumerics, `_` or `-`.
-#[must_use]
-pub(crate) fn is_safe_id(id: &str) -> bool {
-    !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Removes any temporary download directories left behind by a previous run.
@@ -707,18 +698,6 @@ mod tests {
         assert_eq!(base.as_str(), "https://pub.rwx.im/reddit");
 
         assert!(resolve_public_url_base(Some("not a url"), "X_PUBLIC_URL_BASE", "").is_none());
-    }
-
-    #[test]
-    fn test_is_safe_id() {
-        assert!(is_safe_id("123"));
-        assert!(is_safe_id("pxtf7mx2xqzg1"));
-        assert!(is_safe_id("a-b_c"));
-        assert!(!is_safe_id(""));
-        assert!(!is_safe_id("../evil"));
-        assert!(!is_safe_id("a/b"));
-        assert!(!is_safe_id("a b"));
-        assert!(!is_safe_id("%(id)s"));
     }
 
     #[test]

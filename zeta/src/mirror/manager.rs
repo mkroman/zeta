@@ -21,11 +21,12 @@ use tracing::{debug, error, warn};
 use url::Url;
 
 use super::{
-    is_safe_id, object_key, public_url_for,
+    object_key, public_url_for,
     s3::S3,
     tempdir_builder,
     ytdlp::{self, DownloadedFile, Progress, YtDlp},
 };
+use crate::url::is_id_segment;
 
 #[cfg(test)]
 use super::TEMP_DIR_PREFIX;
@@ -232,7 +233,7 @@ impl Manager {
 
     /// Starts a download task for the given request, creating its temporary download directory.
     fn start_download(&mut self, request: DownloadRequest) {
-        if !is_safe_id(&request.id) {
+        if !is_id_segment(&request.id, "_-") {
             error!(id = %request.id, "rejecting download with an unsafe id");
 
             (request.on_finish)(Err(Error::InvalidId(request.id)));

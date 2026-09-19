@@ -234,10 +234,13 @@ mod tests {
     #[test]
     fn is_id_segment_should_accept_identifier_characters() {
         assert!(is_id_segment("abc_123", "_-"));
+        assert!(is_id_segment("a-b_c", "_-"));
         assert!(is_id_segment("a.b", "."));
         assert!(!is_id_segment("", "_"));
         assert!(!is_id_segment("ab%2Fcd", ""));
         assert!(!is_id_segment("ab;cd", ""));
+        assert!(!is_id_segment("a/b", "_-"));
+        assert!(!is_id_segment("a b", "_-"));
     }
 
     #[test]
