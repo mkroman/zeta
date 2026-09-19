@@ -1,0 +1,22 @@
+# Brand names used in documentation that are not code fragments (RFC 1574 style:
+# backticks are reserved for actual code). The ".." entry appends to Clippy's
+# default `doc-valid-idents` list instead of replacing it.
+doc-valid-idents = [
+    "YouTube",
+    "TikTok",
+    "TVmaze",
+    "TVRage",
+    "TheTVDB",
+    "IMDb",
+    "OpenGraph",
+    "OpenWeatherMap",
+    "PornHub",
+    "CoinMarketCap",
+    "DataDome",
+    "InstaFix",
+    "HowLongToBeat",
+    "OAuth2",
+    "IRCv3",
+    "MinIO",
+    "..",
+]

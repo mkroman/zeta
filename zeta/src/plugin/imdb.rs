@@ -8,8 +8,6 @@
 //! `user_country` and `user_language` settings, and adult titles are included in searches when
 //! the `include_adult` setting is set (default). The plugin has no other settings.
 
-#![allow(clippy::doc_markdown)]
-
 use ::url::Url;
 use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};

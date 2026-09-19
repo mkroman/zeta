@@ -19,8 +19,6 @@
 //! The URL parser behind link detection is [`parse_youtube_url`], reused by other plugins
 //! (e.g. `ofn`) to identify video links.
 
-#![allow(clippy::doc_markdown)]
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

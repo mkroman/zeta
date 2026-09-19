@@ -13,8 +13,6 @@
 //! the shared `TokenCache`. Missing credentials fail plugin initialization and the plugin is
 //! skipped at startup.
 
-#![allow(clippy::doc_markdown)]
-
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};

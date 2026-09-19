@@ -7,8 +7,6 @@
 //! are reported in the channel.
 //!
 //! The TVmaze API is public and needs no credentials. The plugin has no settings.
-
-#![allow(clippy::doc_markdown)]
 use reqwest::{StatusCode, Url};
 use serde::Deserialize;
 use tracing::{debug, error, instrument};

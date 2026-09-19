@@ -19,7 +19,7 @@ pub const USAGE: &str = "Usage: .ud\x0f <query>";
 /// The Urban Dictionary API base URL.
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
 
-/// Settings for the urban_dictionary plugin, from its `[plugins.urban_dictionary]` configuration
+/// Settings for the `urban_dictionary` plugin, from its `[plugins.urban_dictionary]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Settings {

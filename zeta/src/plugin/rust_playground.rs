@@ -17,7 +17,7 @@ use crate::{http, plugin::prelude::*, utils::Truncatable};
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
 
-/// Settings for the rust_playground plugin, from its `[plugins.rust_playground]` configuration
+/// Settings for the `rust_playground` plugin, from its `[plugins.rust_playground]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Settings {

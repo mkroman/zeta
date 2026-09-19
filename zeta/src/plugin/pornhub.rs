@@ -7,8 +7,6 @@
 //!
 //! The plugin has no settings.
 
-#![allow(clippy::doc_markdown)]
-
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
 use tracing::debug;
@@ -102,7 +100,7 @@ pub struct Video {
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
 pub struct Thumb {
-    /// The size of the thumbnail in "WIDTHxHEIGHT" format.
+    /// The size of the thumbnail in "`WIDTHxHEIGHT`" format.
     pub size: String,
     /// The width of the thumbnail in pixels, as a string.
     pub width: String,

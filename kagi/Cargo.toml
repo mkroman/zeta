@@ -51,8 +51,6 @@ pedantic = "warn"
 nursery = "warn"
 # Disable cargo-related lints (often too noisy for dependencies)
 cargo = "allow"
-# Disable markdown formatting enforcement in doc comments
-doc_markdown = "allow"
 # Allow for higher complexity since it's not a reliable estimate
 cognitive_complexity = "allow"
 

@@ -11,8 +11,6 @@
 //! the plugin is skipped at startup. Invoking `.w` without arguments uses the
 //! `default_location` setting, or replies with usage when unset.
 
-#![allow(clippy::doc_markdown)]
-
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 

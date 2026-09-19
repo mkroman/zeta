@@ -9,8 +9,6 @@
 //! them as request headers, and on a `403 Forbidden` refreshes the credentials and retries the
 //! search once.
 
-#![allow(clippy::doc_markdown)]
-
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 

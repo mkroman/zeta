@@ -1,5 +1,3 @@
-#![allow(clippy::doc_markdown)]
-
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
