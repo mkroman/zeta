@@ -43,7 +43,7 @@ use crate::{
     cache::{TtlCache, TtlMap},
     mirror::{Mirror, MirrorTarget},
     plugin::prelude::*,
-    utils::Truncatable,
+    utils::{Truncatable, collapse_whitespace},
 };
 
 use self::meta::MediaDetails;
@@ -561,7 +561,7 @@ fn format_summary(details: &MediaDetails, kind: &str, title_length: usize) -> Op
     if let Some(caption) = details
         .caption
         .as_deref()
-        .map(str::trim)
+        .map(collapse_whitespace)
         .filter(|caption| !caption.is_empty())
     {
         let truncated = caption.truncate_with_suffix(title_length, "…");
@@ -571,7 +571,7 @@ fn format_summary(details: &MediaDetails, kind: &str, title_length: usize) -> Op
     if let Some(author) = details
         .author
         .as_deref()
-        .map(str::trim)
+        .map(collapse_whitespace)
         .filter(|author| !author.is_empty())
     {
         if buf.is_empty() {
@@ -672,6 +672,20 @@ mod tests {
         // Neither an author nor a caption.
         let details = MediaDetails { author: None, caption: None };
         assert_eq!(format_summary(&details, "post", 150), None);
+    }
+
+    #[test]
+    fn format_summary_collapses_caption_whitespace() {
+        // Captions carry line breaks, which an IRC message cannot contain: everything after
+        // the first one would be lost.
+        let details = MediaDetails {
+            author: Some("user.name".to_string()),
+            caption: Some("First line\n\nsecond\tline\r\nthird".to_string()),
+        };
+        assert_eq!(
+            format_summary(&details, "post", 150).as_deref(),
+            Some("“\x0fFirst line second line third\x0310” is an Instagram post by\x0f user.name")
+        );
     }
 
     #[test]
