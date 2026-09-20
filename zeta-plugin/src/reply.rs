@@ -1,9 +1,16 @@
-//! IRC formatting shared by bundled plugins.
+//! Reply formatting shared by bundled plugins.
 //!
-//! Plugin replies follow a common visual convention: a teal `>` marker (mIRC color 10), an
-//! optional bold plugin name, and the message body with values emphasized by switching between
-//! the reply color and the default color. The helpers here produce those byte sequences so the
-//! exact escape codes are written down in one place.
+//! The reply conventions live in the [`zeta-fmt`] crate: a plugin's
+//! [`Banner`] is defined once and produces the teal `>` marker, the optional
+//! bold plugin name, and the scaffolding color; the [`Reply`] builder tracks
+//! the formatting state so control codes are emitted only on transitions,
+//! and interpolated values are stripped of control characters.
+//!
+//! The helpers here are the byte-compatible bridge to the old free-function
+//! API (`reply`, `reply_prefix`, `notice`) plus the usage-line senders used
+//! by command handlers.
+//!
+//! [`zeta-fmt`]: zeta_fmt
 
 use std::fmt;
 
@@ -12,41 +19,32 @@ use irc::client::Client;
 
 use crate::command::ArgsError;
 use crate::event::CommandEvent;
+use zeta_fmt::Banner;
 
-/// The teal color (mIRC color 10) used for plugin replies.
-pub const COLOR: &str = "\x0310";
-
-/// Resets bold, color, and any other text formatting back to the default.
-pub const RESET: &str = "\x0f";
-
-/// Starts bold text.
-pub const BOLD: &str = "\x02";
-
-/// The prefix shared by every reply format, bold name or not.
-pub const REPLY_PREFIX: &str = "\x0310>";
+pub use zeta_fmt::{BOLD, COLOR, REPLY_PREFIX, RESET, plain};
 
 /// Formats `message` as a reply from the plugin named `name`.
 ///
-/// The reply starts with [`REPLY_PREFIX`], followed by the bold plugin name, e.g.
-/// `> Twitch: <message>`.
+/// The reply starts with the reply marker, followed by the bold plugin name,
+/// e.g. `> Twitch: <message>`.
 #[must_use]
 pub fn reply(name: &str, message: impl fmt::Display) -> String {
-    format!("{}{}", reply_prefix(name), message)
+    Banner::named(name.to_owned()).message(message)
 }
 
 /// Returns the bold-name prefix that [`reply`] starts its replies with.
 ///
-/// Unlike [`reply`], the prefix can be written to an incrementally built message, e.g. from a
-/// `Display` implementation.
+/// Unlike [`reply`], the prefix can be written to an incrementally built
+/// message, e.g. from a `Display` implementation.
 #[must_use]
 pub fn reply_prefix(name: &str) -> String {
-    format!("{REPLY_PREFIX}{RESET}{BOLD} {name}:{BOLD}{COLOR} ")
+    Banner::named(name.to_owned()).prefix()
 }
 
 /// Formats `message` as a plain reply without a plugin name.
 #[must_use]
 pub fn notice(message: impl fmt::Display) -> String {
-    format!("{REPLY_PREFIX} {message}")
+    Banner::BARE.message(message)
 }
 
 /// Sends the output of a failed argument parse to `channel`, one message per non-empty line.
@@ -139,5 +137,10 @@ mod tests {
     #[test]
     fn notice_prefixes_the_message_with_the_marker() {
         assert_eq!(notice("No results found"), "\x0310> No results found");
+    }
+
+    #[test]
+    fn reply_prefix_matches_the_banner_prefix() {
+        assert_eq!(reply_prefix("Dig"), "\x0310>\x0f\x02 Dig:\x02\x0310 ");
     }
 }

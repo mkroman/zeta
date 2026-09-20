@@ -11,3 +11,4 @@ serde.workspace = true
 shlex.workspace = true
 thiserror.workspace = true
 url.workspace = true
+zeta-fmt = { path = "../zeta-fmt" }
