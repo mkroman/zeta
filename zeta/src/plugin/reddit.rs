@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use crate::{
-    mirror::{Mirror, MirrorTarget},
+    mirror::{Mirror, MirrorHandle},
     plugin::prelude::*,
     utils::Truncatable,
 };
@@ -23,9 +23,6 @@ use reddit::Submission;
 
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
 pub const USER_AGENT: &str = concat!("linux:zeta:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");
-
-/// The default public URL that mirrored videos are linked with.
-const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/reddit";
 
 /// Settings for the reddit plugin, from its `[plugins.reddit]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -71,7 +68,7 @@ pub struct Reddit {
     /// Reddit API client
     client: reddit::Client,
     /// Mirror for downloading and re-hosting hosted videos.
-    mirror: Option<MirrorTarget>,
+    mirror: Option<MirrorHandle>,
 }
 
 #[async_trait]
@@ -93,17 +90,20 @@ impl Plugin<Context> for Reddit {
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =
             resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();
-        let user_agent = Some(USER_AGENT.to_string());
-        let timeout = Some(ctx.config.http.timeout);
-        let client = reddit::Client::new(client_id, client_secret, user_agent, timeout);
-        let mirror = MirrorTarget::resolve(
+        let client = reddit::Client::with_options(
+            client_id,
+            client_secret,
+            reddit::ClientOptions {
+                user_agent: Some(USER_AGENT.to_string()),
+                timeout: Some(ctx.config.http.timeout),
+            },
+        )
+        .map_err(plugin_err)?;
+        let mirror = MirrorHandle::resolve(
             ctx.shared.get::<Mirror>(),
-            settings.prefix.as_deref(),
-            "REDDIT_S3_PREFIX",
             "reddit",
+            settings.prefix.as_deref(),
             settings.public_url_base.as_deref(),
-            "REDDIT_PUBLIC_URL_BASE",
-            DEFAULT_PUBLIC_URL_BASE,
         );
 
         Ok(Reddit { client, mirror })

@@ -42,16 +42,13 @@ use wreq::redirect::Policy;
 use crate::{
     cache::{TtlCache, TtlMap},
     http,
-    mirror::{Mirror, MirrorTarget},
+    mirror::{Mirror, MirrorHandle},
     plugin::prelude::*,
     utils::{Truncatable, collapse_whitespace},
 };
 
 use self::meta::MediaDetails;
 use self::urls::{InstagramLink, MediaKind, media_url, parse_instagram_url, story_url};
-
-/// The default public URL that mirrored media are linked with.
-const DEFAULT_PUBLIC_URL_BASE: &str = "https://pub.rwx.im/instagram";
 
 /// The minimum interval between requests to Instagram, so that bursts of links do not trip its
 /// rate limiting.
@@ -127,7 +124,7 @@ pub struct Instagram {
     /// The HTTP client used for fetching pages, emulating a modern browser.
     client: wreq::Client,
     /// The shared mirror handle, when mirroring is configured.
-    mirror: Option<MirrorTarget>,
+    mirror: Option<MirrorHandle>,
     /// The plugin settings used when processing URLs.
     settings: Settings,
     /// The resolved session cookie, if any.
@@ -170,14 +167,11 @@ impl Plugin<Context> for Instagram {
             .build()
             .map_err(plugin_err)?;
 
-        let mirror = MirrorTarget::resolve(
+        let mirror = MirrorHandle::resolve(
             ctx.shared.get::<Mirror>(),
-            settings.prefix.as_deref(),
-            "INSTAGRAM_S3_PREFIX",
             "instagram",
+            settings.prefix.as_deref(),
             settings.public_url_base.as_deref(),
-            "INSTAGRAM_PUBLIC_URL_BASE",
-            DEFAULT_PUBLIC_URL_BASE,
         );
 
         let session_cookie = crate::utils::resolve_optional_setting(

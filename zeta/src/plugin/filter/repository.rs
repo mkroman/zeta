@@ -36,7 +36,7 @@ impl FilterRepository {
                 channel, host, path, nickname, username, hostname, created_by
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
-            ) RETURNING id, channel, host, path, nickname, username, hostname, created_by, created_at",
+            ) RETURNING id, channel, host, path, nickname, username, hostname",
         )
         .bind(filter.channel)
         .bind(filter.host)
@@ -60,7 +60,7 @@ impl FilterRepository {
         trace!("loading filters from database");
 
         sqlx::query_as(
-            r"SELECT id, channel, host, path, nickname, username, hostname, created_by, created_at
+            r"SELECT id, channel, host, path, nickname, username, hostname
               FROM filters
               ORDER BY id",
         )

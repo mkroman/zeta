@@ -26,8 +26,11 @@ use serde::{Deserialize, Serialize};
 use strsim::jaro_winkler;
 use tracing::{debug, warn};
 
-use crate::cache::TtlCache;
-use crate::plugin::prelude::*;
+use crate::{
+    cache::TtlCache,
+    plugin::prelude::*,
+    utils::strip_control_chars,
+};
 
 mod client;
 mod error;
@@ -478,7 +481,8 @@ fn parse_currency(
     default_currency: &str,
     is_valid: impl Fn(&str) -> bool,
 ) -> Result<String, Error> {
-    let currency = sanitize(currency.unwrap_or(default_currency)).to_ascii_uppercase();
+    let currency =
+        strip_control_chars(currency.unwrap_or(default_currency)).to_ascii_uppercase();
 
     if is_valid(&currency) {
         Ok(currency)
@@ -568,25 +572,16 @@ fn matches_within(needle: &str, haystack: &str, max_typos: usize) -> bool {
     needle.len() - previous[haystack.len()] <= max_typos
 }
 
-/// Strips control characters from user-supplied input.
-///
-/// All IRC formatting bytes (color, bold, underline, reset, ...) are control characters, so
-/// stripping them prevents user input from injecting formatting when echoed back to the
-/// channel.
-fn sanitize(input: &str) -> String {
-    input.chars().filter(|c| !c.is_control()).collect()
-}
-
 /// Formats a coin quote as an IRC message, e.g.:
 ///
-/// `\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x03 $97231.50\x0310 (...)`
+/// `\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x0f $97231.50\x0310 (...)`
 fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String {
     let name = &quote.name;
     let symbol = &quote.symbol;
 
     let Some(fiat) = quote.quote.get(currency) else {
         return notice(format!(
-            "{name} (\x0f{symbol}\x0310) has no quote in {currency}"
+            "{name} ({RESET}{symbol}{COLOR}) has no quote in {currency}"
         ));
     };
 
@@ -600,9 +595,9 @@ fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String
     let change_week = format_change(fiat.percent_change_7d);
 
     notice(format!(
-        "{name} (\x0f{symbol}\x0310) is currently trading at\x03 {price}\x0310 (1 Hour Change:\
-         \x0f {change_hour}\x0310 24 Hour Change:\x0f {change_day}\x0310 7 Day Change:\
-         \x0f {change_week}\x0310)"
+        "{name} ({RESET}{symbol}{COLOR}) is currently trading at{RESET} {price}{COLOR} \
+         (1 Hour Change:{RESET} {change_hour}{COLOR} 24 Hour Change:{RESET} {change_day}{COLOR} \
+         7 Day Change:{RESET} {change_week}{COLOR})"
     ))
 }
 
@@ -921,7 +916,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x03 $97231.50\x0310 \
+            "\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x0f $97231.50\x0310 \
              (1 Hour Change:\x0f \x033+0.50%\x0f\x0310 24 Hour Change:\x0f \
              \x034-1.20%\x0f\x0310 7 Day Change:\x0f \x033+10.25%\x0f\x0310)"
         );

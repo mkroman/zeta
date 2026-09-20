@@ -58,22 +58,8 @@ pub struct EventIndex {
     url_hosts: HashMap<String, Vec<Subscriber>>,
     /// Plugins subscribed to every URL, including hosts other plugins handle.
     url_any: Vec<Subscriber>,
-    /// Plugins subscribed to every channel message.
-    message: Vec<Subscriber>,
-    /// Plugins subscribed to users joining channels.
-    join: Vec<Subscriber>,
-    /// Plugins subscribed to users leaving channels.
-    part: Vec<Subscriber>,
-    /// Plugins subscribed to users quitting the network.
-    quit: Vec<Subscriber>,
-    /// Plugins subscribed to nickname changes.
-    nick: Vec<Subscriber>,
-    /// Plugins subscribed to kicks.
-    kick: Vec<Subscriber>,
-    /// Plugins subscribed to CTCP messages.
-    ctcp: Vec<Subscriber>,
-    /// Plugins subscribed to raw, unmodeled IRC commands.
-    raw: Vec<Subscriber>,
+    /// Plugins subscribed to plain-interest event kinds, keyed by the kind.
+    kinds: HashMap<EventKind, Vec<Subscriber>>,
 }
 
 impl EventIndex {
@@ -126,7 +112,7 @@ impl EventIndex {
         }
 
         for kind in subscriptions.events() {
-            self.bucket_mut(*kind).push(subscriber.clone());
+            self.kinds.entry(*kind).or_default().push(subscriber.clone());
         }
     }
 
@@ -143,36 +129,41 @@ impl EventIndex {
             Command::PRIVMSG(..) => self.dispatch_privmsg(filters, &message, &mut stopped),
             // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
             // ordinary notices are not an event kind.
-            Command::NOTICE(..) if !self.ctcp.is_empty() => {
-                if let Some(event) = CtcpEvent::new(Arc::clone(&message)) {
-                    let event = Event::Ctcp(event);
-                    Self::deliver(&event, &self.ctcp, &mut stopped);
-                }
-            }
-            Command::JOIN(..) if !self.join.is_empty() => {
-                let event = JoinEvent::new(Arc::clone(&message));
-                Self::deliver(&Event::Join(event), &self.join, &mut stopped);
-            }
-            Command::PART(..) if !self.part.is_empty() => {
-                let event = PartEvent::new(Arc::clone(&message));
-                Self::deliver(&Event::Part(event), &self.part, &mut stopped);
-            }
-            Command::QUIT(..) if !self.quit.is_empty() => {
-                let event = QuitEvent::new(Arc::clone(&message));
-                Self::deliver(&Event::Quit(event), &self.quit, &mut stopped);
-            }
-            Command::NICK(..) if !self.nick.is_empty() => {
-                let event = NickEvent::new(Arc::clone(&message));
-                Self::deliver(&Event::Nick(event), &self.nick, &mut stopped);
-            }
-            Command::KICK(..) if !self.kick.is_empty() => {
-                let event = KickEvent::new(Arc::clone(&message));
-                Self::deliver(&Event::Kick(event), &self.kick, &mut stopped);
-            }
-            Command::Raw(..) if !self.raw.is_empty() => {
-                let event = RawEvent::new(Arc::clone(&message));
-                Self::deliver(&Event::Raw(event), &self.raw, &mut stopped);
-            }
+            Command::NOTICE(..) => self.deliver_kind(
+                EventKind::Ctcp,
+                CtcpEvent::new(Arc::clone(&message)).map(Event::Ctcp),
+                &mut stopped,
+            ),
+            Command::JOIN(..) => self.deliver_kind(
+                EventKind::Join,
+                Some(Event::Join(JoinEvent::new(Arc::clone(&message)))),
+                &mut stopped,
+            ),
+            Command::PART(..) => self.deliver_kind(
+                EventKind::Part,
+                Some(Event::Part(PartEvent::new(Arc::clone(&message)))),
+                &mut stopped,
+            ),
+            Command::QUIT(..) => self.deliver_kind(
+                EventKind::Quit,
+                Some(Event::Quit(QuitEvent::new(Arc::clone(&message)))),
+                &mut stopped,
+            ),
+            Command::NICK(..) => self.deliver_kind(
+                EventKind::Nick,
+                Some(Event::Nick(NickEvent::new(Arc::clone(&message)))),
+                &mut stopped,
+            ),
+            Command::KICK(..) => self.deliver_kind(
+                EventKind::Kick,
+                Some(Event::Kick(KickEvent::new(Arc::clone(&message)))),
+                &mut stopped,
+            ),
+            Command::Raw(..) => self.deliver_kind(
+                EventKind::Raw,
+                Some(Event::Raw(RawEvent::new(Arc::clone(&message)))),
+                &mut stopped,
+            ),
             // Everything else is connection protocol the plugins have no events for.
             _ => {}
         }
@@ -197,22 +188,25 @@ impl EventIndex {
         });
         self.url_any.retain(|subscriber| other(subscriber));
 
-        for kind in EventKind::ALL {
-            self.bucket_mut(kind).retain(|subscriber| other(subscriber));
-        }
+        self.kinds.retain(|_, subscribers| {
+            subscribers.retain(|subscriber| other(subscriber));
+            !subscribers.is_empty()
+        });
     }
 
-    /// Returns the subscriber list of a plain-interest event kind.
-    const fn bucket_mut(&mut self, kind: EventKind) -> &mut Vec<Subscriber> {
-        match kind {
-            EventKind::Message => &mut self.message,
-            EventKind::Join => &mut self.join,
-            EventKind::Part => &mut self.part,
-            EventKind::Quit => &mut self.quit,
-            EventKind::Nick => &mut self.nick,
-            EventKind::Kick => &mut self.kick,
-            EventKind::Ctcp => &mut self.ctcp,
-            EventKind::Raw => &mut self.raw,
+    /// Returns the subscriber list of a plain-interest event kind, if any are registered.
+    fn subscribers(&self, kind: EventKind) -> Option<&[Subscriber]> {
+        let subscribers = self.kinds.get(&kind)?;
+
+        (!subscribers.is_empty()).then_some(subscribers.as_slice())
+    }
+
+    /// Delivers an optional event to the subscribers of `kind`, if any are registered.
+    fn deliver_kind(&self, kind: EventKind, event: Option<Event>, stopped: &mut Vec<String>) {
+        if let Some(event) = event
+            && let Some(subscribers) = self.subscribers(kind)
+        {
+            Self::deliver(&event, subscribers, stopped);
         }
     }
 
@@ -231,9 +225,11 @@ impl EventIndex {
 
         // CTCP messages are their own event kind and are routed to nothing else.
         if text.starts_with('\x01') {
-            if let Some(event) = CtcpEvent::new(Arc::clone(message)) {
+            if let Some(event) = CtcpEvent::new(Arc::clone(message))
+                && let Some(subscribers) = self.subscribers(EventKind::Ctcp)
+            {
                 let event = Event::Ctcp(event);
-                Self::deliver(&event, &self.ctcp, stopped);
+                Self::deliver(&event, subscribers, stopped);
             }
 
             return;
@@ -252,9 +248,9 @@ impl EventIndex {
         }
 
         // Message subscribers observe every non-CTCP channel message.
-        if !self.message.is_empty() {
+        if let Some(subscribers) = self.subscribers(EventKind::Message) {
             let event = Event::Message(MessageEvent::new(Arc::clone(message)));
-            Self::deliver(&event, &self.message, stopped);
+            Self::deliver(&event, subscribers, stopped);
         }
 
         // URLs — extracted once per message, deduplicated and filtered before routing by host.

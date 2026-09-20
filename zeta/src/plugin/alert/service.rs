@@ -211,10 +211,16 @@ impl Scheduler {
         let mut next_sync = tokio::time::Instant::now() + self.sync_interval;
 
         loop {
-            if self.tick().await.is_err() {
-                debug!("retrying scheduler tick shortly");
+            match self.tick().await {
+                // The delivery channel is closed: the plugin's delivery task has stopped, so
+                // nothing can be delivered until the bot restarts.
+                Err(Error::Closed) => break,
+                Err(_) => {
+                    debug!("retrying scheduler tick shortly");
 
-                tokio::time::sleep(self.retry_delay).await;
+                    tokio::time::sleep(self.retry_delay).await;
+                }
+                Ok(()) => {}
             }
 
             if tokio::time::Instant::now() >= next_sync {

@@ -15,7 +15,7 @@ pub mod dispatch;
 
 pub use crate::context::{Context, SharedState};
 
-pub use zeta_plugin::{Author, Error, Metadata, Name, Plugin};
+pub use zeta_plugin::{Error, Plugin};
 
 #[allow(unused_imports)]
 use zeta_plugin::NoSettings;
@@ -30,12 +30,12 @@ mod prelude {
         ArgsError, BOLD, BoxError, COLOR, CommandEvent, CommandSpec, CtcpEvent, CtcpKind, Event,
         JoinEvent, KickEvent, MessageEvent, NickEvent, NoSettings, PartEvent, QuitEvent,
         REPLY_PREFIX, RESET, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope, notice,
-        parse_words_or_usage, plugin_err, reply, reply_prefix, reply_usage_lines, require_env,
-        resolve_secret,
+        parse_args_or_usage, parse_words_or_usage, plugin_err, reply, reply_prefix,
+        reply_usage_lines, resolve_secret,
     };
 
     pub use super::{
-        Author, CatalogEntry, Context, Metadata, Name, Plugin, PluginCatalog, SharedState,
+        CatalogEntry, Context, Plugin, PluginCatalog, SharedState,
     };
 
     pub use super::filtering::Filters;
@@ -93,8 +93,7 @@ macro_rules! declare_plugins {
             pub mod $mod_name;
         )*
 
-        // The plugin name is the module name, shared by [`Plugin::metadata`]'s default
-        // implementation.
+        // The plugin name is the module name.
         $(
             #[cfg(feature = $feature)]
             impl zeta_plugin::PluginName for $mod_name::$struct_name {
@@ -199,7 +198,7 @@ macro_rules! declare_plugins {
                             self.register::<$mod_name::$struct_name>(ctx, &section.settings);
                         } else {
                             ::tracing::info!(
-                                plugin = %<$mod_name::$struct_name as Plugin<Context>>::metadata().name,
+                                plugin = stringify!($mod_name),
                                 "plugin is disabled by configuration"
                             );
                         }
@@ -458,8 +457,6 @@ pub struct RegisteredPlugin {
 pub struct CatalogEntry {
     /// The name of the plugin.
     pub name: String,
-    /// The authors of the plugin.
-    pub authors: Vec<Author>,
     /// The commands handled by the plugin.
     pub commands: Vec<CommandSpec>,
     /// The URL hosts whose links the plugin handles itself.
@@ -546,8 +543,7 @@ impl Registry {
         ctx: &Context,
         settings: &P::Settings,
     ) -> bool {
-        let metadata = P::metadata();
-        let name = metadata.name.to_string();
+        let name = P::NAME.to_string();
         let mut subscriptions = Subscriptions::new();
 
         match P::new(ctx, settings, &mut subscriptions) {
@@ -561,7 +557,6 @@ impl Registry {
 
                 self.catalog.entries.push(CatalogEntry {
                     name: name.clone(),
-                    authors: metadata.authors,
                     commands: subscriptions.commands().to_vec(),
                     url_hosts,
                 });

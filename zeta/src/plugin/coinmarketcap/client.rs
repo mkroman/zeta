@@ -149,14 +149,13 @@ impl Client {
             .await
             .map_err(Error::Request)?;
 
-        let status = response.status();
-        let text = response.text().await.map_err(Error::Request)?;
-
-        if !status.is_success() {
-            return Err(api_error(status, &text));
-        }
-
-        http::json::from_str(&text).map_err(Error::Deserialize)
+        http::parse_response(response)
+            .await
+            .map_err(|error| match error {
+                http::ApiError::Status { status, body } => api_error(status, &body),
+                http::ApiError::Request(error) => Error::Request(error),
+                http::ApiError::Deserialize(error) => Error::Deserialize(error),
+            })
     }
 }
 

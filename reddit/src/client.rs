@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION};
@@ -19,12 +18,10 @@ struct TokenCache {
     expires_at: Instant,
 }
 
-#[derive(Clone, Eq, PartialEq, Deserialize)]
+#[derive(Deserialize)]
 struct AccessTokenResponse {
     pub access_token: String,
-    pub token_type: String,
     pub expires_in: u64,
-    pub scope: String,
 }
 
 /// Reddit client.
@@ -36,7 +33,7 @@ pub struct Client {
     /// Reddit application client secret.
     client_secret: SecretString,
     /// Current authentication token state.
-    token_state: Arc<RwLock<Option<TokenCache>>>,
+    token_state: RwLock<Option<TokenCache>>,
 }
 
 impl TokenCache {
@@ -45,41 +42,73 @@ impl TokenCache {
     }
 }
 
+/// Options for building a Reddit [`Client`].
+#[derive(Clone, Debug, Default)]
+pub struct ClientOptions {
+    /// The HTTP user agent sent with every request.
+    ///
+    /// Defaults to [`USER_AGENT`](crate::USER_AGENT) when unset.
+    pub user_agent: Option<String>,
+    /// The duration before a HTTP request times out.
+    ///
+    /// Defaults to [`HTTP_TIMEOUT`](crate::HTTP_TIMEOUT) when unset.
+    pub timeout: Option<Duration>,
+}
+
 impl Client {
-    /// Constructs a new [`Client`] for interacting with the Reddit API.
+    /// Constructs a new [`Client`] for interacting with the Reddit API using the default
+    /// [`ClientOptions`].
     ///
     /// # Examples
     ///
     /// ```
     /// let client_id = "reddit client id";
     /// let client_secret = "reddit client secret";
-    /// let client = reddit::Client::new(client_id, client_secret, None, None);
+    /// let client = reddit::Client::new(client_id, client_secret);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client fails to build.
     pub fn new(
         client_id: impl Into<String>,
         client_secret: impl Into<SecretString>,
-        user_agent: Option<String>,
-        timeout: Option<Duration>,
     ) -> Client {
+        Self::with_options(client_id, client_secret, ClientOptions::default())
+            .expect("could not build http client")
+    }
+
+    /// Constructs a new [`Client`] for interacting with the Reddit API using the given options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::BuildClient`] if the HTTP client fails to build.
+    pub fn with_options(
+        client_id: impl Into<String>,
+        client_secret: impl Into<SecretString>,
+        options: ClientOptions,
+    ) -> Result<Client, Error> {
         let client_id = client_id.into();
         let client_secret = client_secret.into();
-        let token_state = Arc::new(RwLock::new(None));
-        let user_agent = user_agent.unwrap_or_else(|| USER_AGENT.to_string());
+        let token_state = RwLock::new(None);
+        let user_agent = options
+            .user_agent
+            .unwrap_or_else(|| USER_AGENT.to_string());
         let client = reqwest::ClientBuilder::new()
             .redirect(Policy::none())
-            .timeout(timeout.unwrap_or(HTTP_TIMEOUT))
+            .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
             .user_agent(user_agent.clone())
             .build()
-            .expect("could not build http client");
+            .map_err(Error::BuildClient)?;
 
         debug!("using client id {client_id}");
 
-        Client {
+        Ok(Client {
             client,
             client_id,
             client_secret,
             token_state,
-        }
+        })
     }
 
     async fn get_valid_token(&self) -> Result<String, Error> {
@@ -180,7 +209,7 @@ impl Client {
             .header(CONTENT_TYPE, "application/json");
 
         match self
-            .send_json(request, || Error::SubmissionNotFound, Error::DeserializeComments)
+            .send_json(request, || Error::SubmissionNotFound, Error::DeserializeSubmission)
             .await?
         {
             Item::Listing(listing) => listing

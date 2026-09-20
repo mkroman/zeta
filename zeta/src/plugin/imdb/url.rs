@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::url::{is_prefixed_numeric_segment, path_segments};
+use crate::url::{is_prefixed_numeric_id, path_segments};
 
 /// A link to an IMDb resource.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -26,11 +26,11 @@ pub fn classify_imdb_url(url: &Url) -> Option<Link> {
 
     match segments.as_deref() {
         // `/title/<id>[/…]` — any sub-page of a title (e.g. photo galleries) refers to the title.
-        Some(["title", id, ..]) if is_prefixed_numeric_segment(id, "tt") => {
+        Some(["title", id, ..]) if is_prefixed_numeric_id(id, "tt") => {
             Some(Link::Title((*id).to_string()))
         }
         // `/name/<id>[/…]`
-        Some(["name", id, ..]) if is_prefixed_numeric_segment(id, "nm") => {
+        Some(["name", id, ..]) if is_prefixed_numeric_id(id, "nm") => {
             Some(Link::Name((*id).to_string()))
         }
         _ => None,
@@ -121,10 +121,10 @@ mod tests {
 
     #[test]
     fn ids_must_be_prefixed_numeric() {
-        assert!(is_prefixed_numeric_segment("tt1375666", "tt"));
-        assert!(!is_prefixed_numeric_segment("nm0000138", "tt"));
-        assert!(!is_prefixed_numeric_segment("tt", "tt"));
-        assert!(!is_prefixed_numeric_segment("ttbuster", "tt"));
-        assert!(!is_prefixed_numeric_segment("nmbuster", "nm"));
+        assert!(is_prefixed_numeric_id("tt1375666", "tt"));
+        assert!(!is_prefixed_numeric_id("nm0000138", "tt"));
+        assert!(!is_prefixed_numeric_id("tt", "tt"));
+        assert!(!is_prefixed_numeric_id("ttbuster", "tt"));
+        assert!(!is_prefixed_numeric_id("nmbuster", "nm"));
     }
 }

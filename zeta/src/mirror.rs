@@ -12,7 +12,7 @@
 //! directories that are owned by the manager and removed when the download finishes; directories
 //! left behind by a killed or crashed process are removed on startup.
 //!
-//! Plugins access the shared mirror through a [`MirrorTarget`](crate::mirror::MirrorTarget),
+//! Plugins access the shared mirror through a [`MirrorHandle`](crate::mirror::MirrorHandle),
 //! which carries the key prefix and the public URL base used for their links, and is resolved
 //! from their own configuration.
 
@@ -36,6 +36,7 @@ pub use s3::S3;
 pub use ytdlp::{YtDlp, YtDlpOptions};
 
 use crate::context::Context;
+use crate::url::is_identifier;
 
 /// Configuration for the shared media mirror, from the `[mirror]` configuration section.
 ///
@@ -266,7 +267,7 @@ impl Mirror {
     fn mark_in_flight(&self, prefix: &str, id: &str) -> bool {
         self.in_flight
             .lock()
-            .expect("in-flight lock is poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert((prefix.to_string(), id.to_string()))
     }
 
@@ -274,7 +275,7 @@ impl Mirror {
     fn clear_in_flight(&self, prefix: &str, id: &str) {
         self.in_flight
             .lock()
-            .expect("in-flight lock is poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&(prefix.to_string(), id.to_string()));
     }
 
@@ -302,7 +303,7 @@ impl Mirror {
         // The id ends up in file names, object keys and the public link fragment; ids that are
         // not safe are never mirrored. It is validated here (before the fast-path check) and
         // again by the download manager before it reaches the file system.
-        if !is_safe_id(id) {
+        if !is_identifier(id, "_-") {
             warn!(%id, "ignoring mirror request with an unsafe id");
 
             return Ok(None);
@@ -368,7 +369,7 @@ impl Mirror {
 /// Carries the key prefix the plugin's mirrored files are uploaded under and the base URL its
 /// public links are built from.
 #[derive(Clone)]
-pub struct MirrorTarget {
+pub struct MirrorHandle {
     /// The shared mirror.
     mirror: Arc<Mirror>,
     /// The key prefix for the plugin's uploads.
@@ -377,8 +378,8 @@ pub struct MirrorTarget {
     public_url_base: Url,
 }
 
-impl MirrorTarget {
-    /// Creates a target for the given mirror.
+impl MirrorHandle {
+    /// Creates a handle for the given mirror.
     #[must_use]
     pub const fn new(mirror: Arc<Mirror>, prefix: String, public_url_base: Url) -> Self {
         Self {
@@ -388,26 +389,29 @@ impl MirrorTarget {
         }
     }
 
-    /// Resolves a target from a plugin's configuration.
+    /// Resolves a handle from a plugin's configuration.
+    ///
+    /// Every plugin follows the same convention: the download prefix resolves through the
+    /// `<PLUGIN>_S3_PREFIX` environment variable and defaults to the plugin name; the public
+    /// URL base resolves through `<PLUGIN>_PUBLIC_URL_BASE` and defaults to
+    /// `https://pub.rwx.im/<plugin>`.
     ///
     /// Returns `None` when the shared mirror is unavailable or the configured public URL base is
     /// invalid, in which case the plugin should degrade to its non-mirroring behavior.
     #[must_use]
     pub fn resolve(
         mirror: Option<Arc<Mirror>>,
+        plugin: &str,
         prefix: Option<&str>,
-        prefix_env: &str,
-        prefix_default: &str,
         public_url_base: Option<&str>,
-        public_url_base_env: &str,
-        public_url_base_default: &str,
     ) -> Option<Self> {
+        let uppercase = plugin.to_ascii_uppercase();
         let public_url_base = resolve_public_url_base(
             public_url_base,
-            public_url_base_env,
-            public_url_base_default,
+            &format!("{uppercase}_PUBLIC_URL_BASE"),
+            &format!("https://pub.rwx.im/{plugin}"),
         )?;
-        let prefix = crate::utils::resolve_setting(prefix, prefix_env, prefix_default);
+        let prefix = crate::utils::resolve_setting(prefix, &format!("{uppercase}_S3_PREFIX"), plugin);
         let mirror = mirror?;
 
         Some(Self::new(mirror, prefix, public_url_base))
@@ -498,16 +502,6 @@ pub(crate) fn tempdir_builder() -> tempfile::Builder<'static, 'static> {
     builder.permissions(std::fs::Permissions::from_mode(0o700));
 
     builder
-}
-
-/// Returns whether `id` is safe to use in file names and object keys: it must be non-empty and
-/// consist of ASCII alphanumerics, `_` or `-`.
-#[must_use]
-pub(crate) fn is_safe_id(id: &str) -> bool {
-    !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Removes any temporary download directories left behind by a previous run.
@@ -707,18 +701,6 @@ mod tests {
         assert_eq!(base.as_str(), "https://pub.rwx.im/reddit");
 
         assert!(resolve_public_url_base(Some("not a url"), "X_PUBLIC_URL_BASE", "").is_none());
-    }
-
-    #[test]
-    fn test_is_safe_id() {
-        assert!(is_safe_id("123"));
-        assert!(is_safe_id("pxtf7mx2xqzg1"));
-        assert!(is_safe_id("a-b_c"));
-        assert!(!is_safe_id(""));
-        assert!(!is_safe_id("../evil"));
-        assert!(!is_safe_id("a/b"));
-        assert!(!is_safe_id("a b"));
-        assert!(!is_safe_id("%(id)s"));
     }
 
     #[test]

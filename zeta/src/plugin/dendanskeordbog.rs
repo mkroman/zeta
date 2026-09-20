@@ -132,7 +132,7 @@ impl Plugin<Context> for DenDanskeOrdbog {
                     client.send_privmsg(channel, formatter.to_string())?;
                 }
                 Err(err) => {
-                    client.send_privmsg(channel, notice(format!("Error: {err}")))?;
+                    client.send_privmsg(channel, notice(err))?;
                 }
             }
         }

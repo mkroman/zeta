@@ -148,7 +148,7 @@ impl Plugin<Context> for Trustpilot {
             Err(e) => {
                 warn!(error = ?e, "trustpilot error");
                 // The error is already safe for display
-                client.send_privmsg(channel, notice(format!("Error: {e}")))?;
+                client.send_privmsg(channel, notice(e))?;
             }
         }
 
@@ -181,11 +181,7 @@ impl Trustpilot {
             .send()
             .await?;
 
-        match http::parse_response(response).await {
-            Ok(business) => Ok(business),
-            Err(http::ApiError::Status(reqwest::StatusCode::NOT_FOUND)) => Err(Error::NotFound),
-            Err(error) => Err(Error::from(error)),
-        }
+        http::parse_response_or_404(response, Error::NotFound).await
     }
 }
 

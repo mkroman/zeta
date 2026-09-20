@@ -243,29 +243,48 @@ impl Add {
     }
 }
 
+/// Builds selection criteria from the pattern options the list and delete subcommands share.
+fn criteria_from(
+    channel: Option<&str>,
+    host: Option<&str>,
+    path: Option<&str>,
+    nick: Option<&str>,
+    user: Option<&str>,
+    hostname: Option<&str>,
+) -> Criteria {
+    Criteria {
+        channel: channel.map(str::to_owned),
+        host: host.map(str::to_owned),
+        path: path.map(str::to_owned),
+        nickname: nick.map(str::to_owned),
+        username: user.map(str::to_owned),
+        hostname: hostname.map(str::to_owned),
+    }
+}
+
 impl From<&List> for Criteria {
-    fn from(list: &List) -> Criteria {
-        Criteria {
-            channel: list.channel.clone(),
-            host: list.host.clone(),
-            path: list.path.clone(),
-            nickname: list.nick.clone(),
-            username: list.user.clone(),
-            hostname: list.hostname.clone(),
-        }
+    fn from(list: &List) -> Self {
+        criteria_from(
+            list.channel.as_deref(),
+            list.host.as_deref(),
+            list.path.as_deref(),
+            list.nick.as_deref(),
+            list.user.as_deref(),
+            list.hostname.as_deref(),
+        )
     }
 }
 
 impl From<&Delete> for Criteria {
-    fn from(delete: &Delete) -> Criteria {
-        Criteria {
-            channel: delete.channel.clone(),
-            host: delete.host.clone(),
-            path: delete.path.clone(),
-            nickname: delete.nick.clone(),
-            username: delete.user.clone(),
-            hostname: delete.hostname.clone(),
-        }
+    fn from(delete: &Delete) -> Self {
+        criteria_from(
+            delete.channel.as_deref(),
+            delete.host.as_deref(),
+            delete.path.as_deref(),
+            delete.nick.as_deref(),
+            delete.user.as_deref(),
+            delete.hostname.as_deref(),
+        )
     }
 }
 
@@ -339,18 +358,9 @@ impl FilterPlugin {
         };
 
         let new_filters = opts.new_filters(scope.as_deref(), nickname);
+        let count = new_filters.len();
 
-        for new_filter in &new_filters {
-            if let Err(error) = self.service.add(new_filter.clone()).await {
-                client.send_privmsg(
-                    channel,
-                    reply("Filter", format!("could not add the filter: {error}")),
-                )?;
-
-                return Ok(());
-            }
-        }
-
+        // A single plain host filter gets a tailored confirmation.
         let response = if let [new_filter] = new_filters.as_slice()
             && new_filter.path.is_none()
             && new_filter.nickname.is_none()
@@ -363,7 +373,18 @@ impl FilterPlugin {
             "The filter has been added.".to_string()
         };
 
-        debug!(count = new_filters.len(), "added filters");
+        for new_filter in new_filters {
+            if let Err(error) = self.service.add(new_filter).await {
+                client.send_privmsg(
+                    channel,
+                    reply("Filter", format!("could not add the filter: {error}")),
+                )?;
+
+                return Ok(());
+            }
+        }
+
+        debug!(count, "added filters");
 
         client.send_privmsg(channel, reply("Filter", &response))?;
 
@@ -654,7 +675,6 @@ mod tests {
                 .iter()
                 .all(|filter| filter.channel.as_deref() == Some("#chan"))
         );
-        assert!(filters.iter().all(|filter| filter.created_by == "smoke"));
     }
 
     #[test]
@@ -771,8 +791,6 @@ mod tests {
             nickname: None,
             username: Some("*other".into()),
             hostname: None,
-            created_by: "smoke".into(),
-            created_at: sqlx::types::chrono::Utc::now(),
         };
 
         assert_eq!(describe(&filter), "#12: host=*.com user=*other (#foo)");
@@ -785,8 +803,6 @@ mod tests {
             nickname: None,
             username: None,
             hostname: None,
-            created_by: "smoke".into(),
-            created_at: sqlx::types::chrono::Utc::now(),
         };
 
         assert_eq!(describe(&global), "#3: path=/title/* (all channels)");

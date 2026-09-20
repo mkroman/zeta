@@ -307,8 +307,11 @@ impl Plugin<Context> for YouTube {
 
         match self.search(args).await {
             Ok(results) => {
-                if let Some(result) = results.first() {
-                    let id = result.id.video_id.as_ref().unwrap();
+                if let Some((result, id)) = results.iter().find_map(|result| {
+                    let id = result.id.video_id.as_deref()?;
+
+                    Some((result, id))
+                }) {
                     let title = htmlize::unescape(&result.snippet.title);
 
                     client.send_privmsg(
@@ -323,7 +326,7 @@ impl Plugin<Context> for YouTube {
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, notice(format!("Error: {err}")))?;
+                client.send_privmsg(channel, notice(err))?;
             }
         }
 
@@ -426,7 +429,7 @@ impl YouTube {
                     client.send_privmsg(channel, message)?;
                 }
                 Err(e) => {
-                    client.send_privmsg(channel, format!("Error: {e}"))?;
+                    client.send_privmsg(channel, notice(e))?;
                 }
             }
         }
@@ -445,8 +448,6 @@ impl YouTube {
             ("type", "video"),
             ("safeSearch", self.safe_search.as_str()),
         ];
-
-        debug!(?params, "searching for videos");
 
         let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
         let response = request

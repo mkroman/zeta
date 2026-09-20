@@ -16,7 +16,7 @@ use reqwest::{
     header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::info;
 
 use crate::{config::HttpConfig, http, plugin::prelude::*};
 
@@ -92,21 +92,31 @@ impl Plugin<Context> for GitHubPlugin {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let args = command.args();
+        let channel = command.channel();
+        let query = command.args().trim();
 
-        if let Ok(Some(response)) = self.run(command.channel(), Some(args)).await {
-            client.send_privmsg(command.channel(), response)?;
+        let response = if query.is_empty() {
+            reply("GitHub", ".gh <query>")
         } else {
-            client.send_privmsg(command.channel(), "no results")?;
-        }
+            info!(query, %channel, "searching github");
+
+            match self.search_repos(query).await {
+                Ok(response) => response.items.first().map_or_else(
+                    || reply("GitHub", "No results"),
+                    Self::format_repo_details,
+                ),
+                Err(err) => reply("GitHub", err),
+            }
+        };
+
+        client.send_privmsg(channel, response)?;
 
         Ok(())
     }
 }
 
 impl GitHubPlugin {
-    /// Create a new instance of the GitHub plugin.
-    /// Initializes a generic HTTP client with standard timeouts.
+    /// Creates a new instance of the GitHub plugin.
     ///
     /// # Errors
     ///
@@ -137,46 +147,12 @@ impl GitHubPlugin {
         Ok(Self { http: client })
     }
 
-    /// The main entry point for processing the `.gh` command.
-    ///
-    /// # Arguments
-    /// * `channel` - The target channel (used for logging or context).
-    /// * `args` - The command arguments (the query).
-    ///
-    /// # Returns
-    /// * `Result<Option<String>>` - Some(message) to reply, or None if no reply needed.
+    /// Searches for repositories matching `query`.
     ///
     /// # Errors
     ///
     /// Returns an [`Error`] if the GitHub search request fails or its response cannot be
     /// parsed.
-    pub async fn run(&self, channel: &str, args: Option<&str>) -> Result<Option<String>, Error> {
-        // 1. Check arguments
-        let query = match args {
-            Some(q) if !q.trim().is_empty() => q.trim(),
-            _ => return Ok(Some(Self::usage_information())),
-        };
-
-        info!("Searching GitHub for '{}' in channel {}", query, channel);
-
-        // 2. Perform Search
-        match self.search_repos(query).await {
-            Ok(response) => {
-                // 3. Process Result
-                response.items.first().map_or_else(
-                    || Ok(Some(Self::format_message("No results"))),
-                    |first_result| Ok(Some(Self::format_repo_details(first_result))),
-                )
-            }
-            Err(e) => {
-                error!("GitHub API error: {:?}", e);
-                // In a real bot, you might want to sanitize this error message
-                Ok(Some(Self::format_message(&format!("http error: {e}"))))
-            }
-        }
-    }
-
-    /// Searches for repositories based on the given query.
     async fn search_repos(&self, query: &str) -> Result<SearchResponse, Error> {
         let params = [("q", query), ("sort", "stars"), ("order", "desc")];
 
@@ -216,17 +192,7 @@ impl GitHubPlugin {
             lang, item.stargazers_count
         );
 
-        Self::format_message(&line)
-    }
-
-    /// Usage information helper.
-    fn usage_information() -> String {
-        Self::format_message(".gh <query>")
-    }
-
-    /// Formats the final message with the standard prefix.
-    fn format_message(message: &str) -> String {
-        reply("GitHub", message)
+        reply("GitHub", &line)
     }
 }
 

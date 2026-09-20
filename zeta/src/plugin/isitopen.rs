@@ -11,7 +11,7 @@
 //! `GOOGLE_MAPS_API_KEY` environment variable; a missing key fails plugin initialization and
 //! the plugin is skipped at startup.
 
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -34,10 +34,18 @@ pub struct Settings {
     pub api_key: Option<String>,
 }
 
-static RE_OPENING_TIME: OnceLock<Regex> = OnceLock::new();
-static RE_CLOSING_TIME: OnceLock<Regex> = OnceLock::new();
-static RE_IS_OPEN: OnceLock<Regex> = OnceLock::new();
-static RE_IS_CLOSED: OnceLock<Regex> = OnceLock::new();
+static RE_OPENING_TIME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:hvornår|hvad tid) åbner (?P<place>.*?)\?$").expect("invalid regex")
+});
+static RE_CLOSING_TIME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:hvornår|hvad tid) lukker (?P<place>.*?)\?$").expect("invalid regex")
+});
+static RE_IS_OPEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:har|er) (?P<place>.*?) (?:åbent|åben)\?$").expect("invalid regex")
+});
+static RE_IS_CLOSED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:har|er) (?P<place>.*?) lukket\?$").expect("invalid regex")
+});
 
 /// Plugin that allows users to query opening hours for places using the Google Maps API.
 ///
@@ -220,19 +228,6 @@ impl Plugin<Context> for IsItOpen {
         let api_key = resolve_secret(settings.api_key.as_deref(), "GOOGLE_MAPS_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 
-        // Initialize regexes (case insensitive)
-        let _ = RE_OPENING_TIME.get_or_init(|| {
-            Regex::new(r"(?i)^(?:hvornår|hvad tid) åbner (?P<place>.*?)\?$").unwrap()
-        });
-        let _ = RE_CLOSING_TIME.get_or_init(|| {
-            Regex::new(r"(?i)^(?:hvornår|hvad tid) lukker (?P<place>.*?)\?$").unwrap()
-        });
-        let _ = RE_IS_OPEN.get_or_init(|| {
-            Regex::new(r"(?i)^(?:har|er) (?P<place>.*?) (?:åbent|åben)\?$").unwrap()
-        });
-        let _ = RE_IS_CLOSED
-            .get_or_init(|| Regex::new(r"(?i)^(?:har|er) (?P<place>.*?) lukket\?$").unwrap());
-
         Ok(IsItOpen { client, api_key })
     }
 
@@ -268,16 +263,16 @@ impl IsItOpen {
         let mut action = QueryAction::None;
 
         // Determine intent based on regex matches
-        if let Some(caps) = RE_OPENING_TIME.get().unwrap().captures(query) {
+        if let Some(caps) = RE_OPENING_TIME.captures(query) {
             place_name = Some(caps["place"].to_string());
             action = QueryAction::OpeningTime;
-        } else if let Some(caps) = RE_CLOSING_TIME.get().unwrap().captures(query) {
+        } else if let Some(caps) = RE_CLOSING_TIME.captures(query) {
             place_name = Some(caps["place"].to_string());
             action = QueryAction::ClosingTime;
-        } else if let Some(caps) = RE_IS_OPEN.get().unwrap().captures(query) {
+        } else if let Some(caps) = RE_IS_OPEN.captures(query) {
             place_name = Some(caps["place"].to_string());
             action = QueryAction::IsOpen;
-        } else if let Some(caps) = RE_IS_CLOSED.get().unwrap().captures(query) {
+        } else if let Some(caps) = RE_IS_CLOSED.captures(query) {
             place_name = Some(caps["place"].to_string());
             action = QueryAction::IsClosed;
         }
@@ -295,11 +290,11 @@ impl IsItOpen {
                     client.send_privmsg(channel, &message)?;
                 }
                 Err(Error::NotFound) => {
-                    client.send_privmsg(channel, notice("Error: place not found"))?;
+                    client.send_privmsg(channel, notice("place not found"))?;
                 }
                 Err(e) => {
                     warn!(?e, "isitopen error");
-                    client.send_privmsg(channel, notice(format!("Error: {e}")))?;
+                    client.send_privmsg(channel, notice(e))?;
                 }
             }
         }

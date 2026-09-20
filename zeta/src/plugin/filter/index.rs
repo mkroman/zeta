@@ -149,16 +149,22 @@ impl HostIndex {
         }
     }
 
-    /// Removes the entries with the given filter ids.
+    /// Removes the entries with the given filter ids, dropping host buckets that become empty.
     fn remove_ids(&mut self, ids: &[i32]) {
-        for entries in self.exact.values_mut() {
+        self.exact.retain(|_, entries| {
             entries.retain(|entry| !ids.contains(&entry.filter.id));
-        }
+            !entries.is_empty()
+        });
 
         self.wildcard
             .retain(|entry| !ids.contains(&entry.filter.id));
         self.any_host
             .retain(|entry| !ids.contains(&entry.filter.id));
+    }
+
+    /// Whether the bucket holds no filters at all.
+    fn is_empty(&self) -> bool {
+        self.exact.is_empty() && self.wildcard.is_empty() && self.any_host.is_empty()
     }
 
     /// All filters in the bucket, in insertion order.
@@ -205,11 +211,13 @@ impl FilterIndex {
         self.channels.entry(channel).or_default().insert(entry);
     }
 
-    /// Removes the filters with the given ids.
+    /// Removes the filters with the given ids, dropping channel buckets that become empty.
     pub(super) fn remove_ids(&mut self, ids: &[i32]) {
-        self.channels
-            .values_mut()
-            .for_each(|bucket| bucket.remove_ids(ids));
+        self.channels.retain(|_, bucket| {
+            bucket.remove_ids(ids);
+
+            !bucket.is_empty()
+        });
     }
 
     /// All filters in the index, ordered by id.

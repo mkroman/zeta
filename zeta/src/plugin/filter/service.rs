@@ -195,8 +195,6 @@ mod tests {
             nickname: None,
             username: None,
             hostname: None,
-            created_by: "smoke".into(),
-            created_at: sqlx::types::chrono::Utc::now(),
         }
     }
 

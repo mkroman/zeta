@@ -117,24 +117,22 @@ pub fn is_numeric_segment(segment: &str) -> bool {
 }
 
 /// Returns whether `segment` is non-empty and contains only ASCII alphanumeric characters plus
-/// any of the characters in `extra`.
+/// any of the characters in `allowed`.
 ///
 /// Path segments stay percent-encoded in the `url` crate, so a segment can never contain a raw
 /// `/` — but it can contain percent-encoded separators such as `%2F`. Restricting a component to
 /// the identifier alphabet therefore both rejects such junk and guarantees that canonical URLs
 /// built from the segment (and ids passed as API query parameters) keep their meaning.
 #[must_use]
-pub fn is_id_segment(segment: &str, extra: &str) -> bool {
+pub fn is_identifier(segment: &str, allowed: &str) -> bool {
     !segment.is_empty()
-        && segment
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || extra.chars().any(|extra| extra == c))
+        && segment.chars().all(|c| c.is_ascii_alphanumeric() || allowed.contains(c))
 }
 
 /// Returns whether `id` starts with `prefix` followed by at least one ASCII digit, e.g. an IMDb
 /// `tt1375666`.
 #[must_use]
-pub fn is_prefixed_numeric_segment(id: &str, prefix: &str) -> bool {
+pub fn is_prefixed_numeric_id(id: &str, prefix: &str) -> bool {
     id.len() > prefix.len() && id.starts_with(prefix) && is_numeric_segment(&id[prefix.len()..])
 }
 
@@ -232,20 +230,23 @@ mod tests {
     }
 
     #[test]
-    fn is_id_segment_should_accept_identifier_characters() {
-        assert!(is_id_segment("abc_123", "_-"));
-        assert!(is_id_segment("a.b", "."));
-        assert!(!is_id_segment("", "_"));
-        assert!(!is_id_segment("ab%2Fcd", ""));
-        assert!(!is_id_segment("ab;cd", ""));
+    fn is_identifier_should_accept_identifier_characters() {
+        assert!(is_identifier("abc_123", "_-"));
+        assert!(is_identifier("a-b_c", "_-"));
+        assert!(is_identifier("a.b", "."));
+        assert!(!is_identifier("", "_"));
+        assert!(!is_identifier("ab%2Fcd", ""));
+        assert!(!is_identifier("ab;cd", ""));
+        assert!(!is_identifier("a/b", "_-"));
+        assert!(!is_identifier("a b", "_-"));
     }
 
     #[test]
-    fn is_prefixed_numeric_segment_should_only_accept_prefixed_digits() {
-        assert!(is_prefixed_numeric_segment("tt1375666", "tt"));
-        assert!(!is_prefixed_numeric_segment("nm0000138", "tt"));
-        assert!(!is_prefixed_numeric_segment("tt", "tt"));
-        assert!(!is_prefixed_numeric_segment("ttbuster", "tt"));
+    fn is_prefixed_numeric_id_should_only_accept_prefixed_digits() {
+        assert!(is_prefixed_numeric_id("tt1375666", "tt"));
+        assert!(!is_prefixed_numeric_id("nm0000138", "tt"));
+        assert!(!is_prefixed_numeric_id("tt", "tt"));
+        assert!(!is_prefixed_numeric_id("ttbuster", "tt"));
     }
 
     /// Scheme map with the broken `ttp`/`ttps` variants, as used by the titles plugin.

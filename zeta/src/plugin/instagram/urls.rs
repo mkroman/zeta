@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::url::{is_id_segment, is_numeric_segment, path_segments, query_param};
+use crate::url::{is_identifier, is_numeric_segment, path_segments, query_param};
 
 /// The standard hostname.
 const INSTAGRAM_COM: &str = "instagram.com";
@@ -201,14 +201,14 @@ fn is_embed_suffix(segments: &[&str]) -> bool {
 /// underscores, as accepted by Instagram.
 #[must_use]
 fn is_valid_username(segment: &str) -> bool {
-    segment.len() <= 30 && is_id_segment(segment, "._")
+    segment.len() <= 30 && is_identifier(segment, "._")
 }
 
 /// Returns whether the segment is a valid media shortcode: base64url characters, as assigned by
 /// Instagram.
 #[must_use]
 fn is_valid_shortcode(segment: &str) -> bool {
-    is_id_segment(segment, "_-")
+    is_identifier(segment, "_-")
 }
 
 #[cfg(test)]

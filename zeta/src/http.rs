@@ -46,18 +46,30 @@ pub enum ApiError {
     #[error("request error: {0}")]
     Request(reqwest::Error),
     /// The server responded with a non-success status code, e.g. `404 Not Found`.
-    #[error("{0}")]
-    Status(reqwest::StatusCode),
+    #[error("{status}")]
+    Status {
+        /// The response status.
+        status: reqwest::StatusCode,
+        /// The error response body, read so callers can diagnose the failure (e.g. an API
+        /// error message inside it).
+        body: String,
+    },
     /// The response body could not be parsed as JSON.
     #[error("could not deserialize response: {0}")]
     Deserialize(json::Error),
 }
 
+impl From<reqwest::Error> for ApiError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error)
+    }
+}
+
 /// Sends a request built by [`reqwest::Client::get`] (or a sibling builder method) and parses
 /// its JSON body into `T`.
 ///
-/// Non-success statuses are reported as [`ApiError::Status`] without reading the body; the
-/// response is only parsed when the status is a success.
+/// Non-success statuses are reported as [`ApiError::Status`], carrying the response body; the
+/// response is only parsed as JSON when the status is a success.
 ///
 /// # Errors
 ///
@@ -70,12 +82,37 @@ pub async fn parse_response<T: DeserializeOwned>(
     let status = response.status();
 
     if !status.is_success() {
-        return Err(ApiError::Status(status));
+        let body = response.text().await.map_err(ApiError::Request)?;
+
+        return Err(ApiError::Status { status, body });
     }
 
     let text = response.text().await.map_err(ApiError::Request)?;
 
     json::from_str(&text).map_err(ApiError::Deserialize)
+}
+
+/// Parses a JSON response like [`parse_response`], mapping a `404` status to `not_found`.
+///
+/// The remaining [`ApiError`]s are converted into `E`.
+///
+/// # Errors
+///
+/// Returns `not_found` if the response status is `404 Not Found`; any other [`parse_response`]
+/// error is converted into `E`.
+#[cfg(feature = "http")]
+pub async fn parse_response_or_404<T: DeserializeOwned, E: From<ApiError>>(
+    response: reqwest::Response,
+    not_found: E,
+) -> Result<T, E> {
+    match parse_response(response).await {
+        Ok(value) => Ok(value),
+        Err(ApiError::Status {
+            status: reqwest::StatusCode::NOT_FOUND,
+            ..
+        }) => Err(not_found),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// HTTP client integration
@@ -92,7 +129,6 @@ pub mod client {
     ///
     /// Panics if the default HTTP client fails to build.
     #[must_use]
-    #[allow(unused)]
     pub fn build(config: &HttpConfig) -> Client {
         builder(config)
             .build()
@@ -100,7 +136,6 @@ pub mod client {
     }
 
     /// Returns a default HTTP client builder configured by [`HttpConfig`].
-    #[allow(unused)]
     pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
         reqwest::ClientBuilder::new()
             .redirect(Policy::none())
@@ -113,7 +148,6 @@ pub mod client {
 ///
 /// This is equivalent to calling [`client::build`].
 #[must_use]
-#[allow(unused)]
 #[cfg(feature = "http")]
 pub fn build_client(config: &HttpConfig) -> client::Client {
     client::build(config)

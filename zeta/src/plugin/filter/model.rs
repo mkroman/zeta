@@ -1,9 +1,6 @@
 //! The data model of the filter plugin.
 
-use sqlx::{
-    prelude::FromRow,
-    types::chrono::{DateTime, Utc},
-};
+use sqlx::prelude::FromRow;
 
 /// A filter, as stored in the database.
 ///
@@ -11,9 +8,10 @@ use sqlx::{
 /// the channel the message was posted in, the host and path of a URL in it, and the nickname,
 /// username (ident), and hostname of its sender. Patterns may contain `*` and `?` wildcards;
 /// paths are matched case-sensitively, everything else case-insensitively.
-// Some fields are only populated from the database and never read.
+///
+/// The creator nickname and creation time columns are written on insert but not part of the
+/// row model, which only carries what the plugin reads.
 #[derive(Debug, FromRow, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct Filter {
     /// The database id of the filter.
     pub id: i32,
@@ -29,10 +27,6 @@ pub struct Filter {
     pub username: Option<String>,
     /// The sender hostname pattern, or `None` for any hostname.
     pub hostname: Option<String>,
-    /// The nickname of the user who created the filter.
-    pub created_by: String,
-    /// The time the filter was created.
-    pub created_at: DateTime<Utc>,
 }
 
 #[cfg(test)]
@@ -47,8 +41,6 @@ impl Filter {
             nickname: new.nickname,
             username: new.username,
             hostname: new.hostname,
-            created_by: new.created_by,
-            created_at: Utc::now(),
         }
     }
 }

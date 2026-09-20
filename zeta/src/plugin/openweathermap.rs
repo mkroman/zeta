@@ -230,7 +230,7 @@ impl Plugin<Context> for OpenWeatherMap {
             }
             Err(e) => {
                 warn!(error = ?e, "openweathermap error");
-                client.send_privmsg(channel, notice(format!("Error: {e}")))?;
+                client.send_privmsg(channel, notice(e))?;
             }
         }
 
@@ -291,7 +291,7 @@ impl OpenWeatherMap {
 /// Maps an API error into an [`Error`], prefixing status errors with `context`.
 fn contextual_api_error(context: &str, error: http::ApiError) -> Error {
     match error {
-        http::ApiError::Status(status) => Error::Api(format!("{context}: {status}")),
+        http::ApiError::Status { status, .. } => Error::Api(format!("{context}: {status}")),
         http::ApiError::Request(error) => Error::Request(error),
         http::ApiError::Deserialize(error) => Error::Api(error.to_string()),
     }

@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, OnceLock},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -37,9 +37,6 @@ struct KagiMessage {
     /// The flexible payload. Using `Value` allows this struct to handle
     /// diverse message types (HTML strings, objects, or nulls) without breaking.
     pub payload: Option<Value>,
-    /// Optional version string sometimes found in the JSON body.
-    #[allow(dead_code)]
-    pub kagi_version: Option<String>,
 }
 
 /// The structured search results payload of a `search_results_json` message.
@@ -73,7 +70,7 @@ pub struct Client {
     /// Kagi login token.
     token: SecretString,
     /// Session details.
-    session: Arc<RwLock<Option<Session>>>,
+    session: RwLock<Option<Session>>,
     /// The duration of a single session.
     session_duration: Duration,
     /// The `Accept-Language` header sent with requests.
@@ -133,7 +130,7 @@ impl Client {
         Ok(Client {
             http: client,
             token: token.into(),
-            session: Arc::new(RwLock::new(None)),
+            session: RwLock::new(None),
             session_duration: options.session_duration,
             language: HeaderValue::from_str(&options.language)?,
         })
@@ -413,19 +410,56 @@ fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResult> {
     result
 }
 
+/// The CSS selectors for parsing the search and image result fragments.
+struct Selectors {
+    /// A search result block.
+    search_result: Selector,
+    /// The title link of a search result block.
+    title_link: Selector,
+    /// The description of a search result block.
+    description: Selector,
+    /// An image result block.
+    image_item: Selector,
+    /// The thumbnail image of an image result block.
+    image_thumbnail: Selector,
+}
+
+impl Selectors {
+    /// Parses the result selectors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a selector is invalid; the selectors are compile-time constants.
+    fn new() -> Self {
+        Self {
+            search_result: Selector::parse("div.search-result").expect("search result selector"),
+            title_link: Selector::parse("h3.__sri-title-box > a.__sri_title_link")
+                .expect("title link selector"),
+            description: Selector::parse("div.__sri-desc > div").expect("description selector"),
+            image_item: Selector::parse("div._0_img-results > div.item").expect("item selector"),
+            image_thumbnail: Selector::parse("img._0_img_src").expect("thumbnail selector"),
+        }
+    }
+}
+
+/// Returns the pre-compiled result selectors.
+fn selectors() -> &'static Selectors {
+    static SELECTORS: OnceLock<Selectors> = OnceLock::new();
+
+    SELECTORS.get_or_init(Selectors::new)
+}
+
 fn parse_search_results_html(html: &str) -> Vec<SearchResult> {
     let fragment = Html::parse_fragment(html);
-    let search_result_selector = Selector::parse("div.search-result").unwrap();
-    let title_link_selector = Selector::parse("h3.__sri-title-box > a.__sri_title_link").unwrap();
-    let description_selector = Selector::parse("div.__sri-desc > div").unwrap();
+    let selectors = selectors();
 
-    let search_results = fragment.select(&search_result_selector);
+    let search_results = fragment.select(&selectors.search_result);
 
-    let mut results: Vec<SearchResult> = vec![];
+    let mut results = Vec::new();
 
     for result_div in search_results {
-        let title = result_div.select(&title_link_selector).next();
-        let description = result_div.select(&description_selector).next();
+        let title = result_div.select(&selectors.title_link).next();
+        let description = result_div.select(&selectors.description).next();
 
         if let (Some(title), Some(description)) = (title, description) {
             let url = title.attr("href").unwrap_or("").to_string();
@@ -442,7 +476,7 @@ fn parse_search_results_html(html: &str) -> Vec<SearchResult> {
 }
 
 fn parse_image_result_messages(messages: &[KagiMessage]) -> Vec<ImageResult> {
-    let mut result: Vec<ImageResult> = vec![];
+    let mut result: Vec<ImageResult> = Vec::new();
 
     for message in messages.iter().filter(|message| message.tag == "images") {
         if let Some(content) = message
@@ -450,9 +484,7 @@ fn parse_image_result_messages(messages: &[KagiMessage]) -> Vec<ImageResult> {
             .as_ref()
             .and_then(|payload| payload.get("content").and_then(Value::as_str))
         {
-            let mut results = parse_image_results_html(content);
-
-            result.append(&mut results);
+            result.extend(parse_image_results_html(content));
         }
     }
 
@@ -461,12 +493,11 @@ fn parse_image_result_messages(messages: &[KagiMessage]) -> Vec<ImageResult> {
 
 fn parse_image_results_html(html: &str) -> Vec<ImageResult> {
     let fragment = Html::parse_fragment(html);
-    let item_selector = Selector::parse("div._0_img-results > div.item").unwrap();
-    let thumbnail_selector = Selector::parse("img._0_img_src").unwrap();
+    let selectors = selectors();
 
-    let mut results: Vec<ImageResult> = vec![];
+    let mut results = Vec::new();
 
-    for item in fragment.select(&item_selector) {
+    for item in fragment.select(&selectors.image_item) {
         let value = item.value();
         let (Some(title), Some(page_url), Some(image_url)) = (
             value.attr("data-title"),
@@ -476,7 +507,7 @@ fn parse_image_results_html(html: &str) -> Vec<ImageResult> {
             continue;
         };
         let Some(thumbnail) = item
-            .select(&thumbnail_selector)
+            .select(&selectors.image_thumbnail)
             .next()
             .and_then(|img| img.attr("src"))
         else {

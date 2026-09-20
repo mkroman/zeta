@@ -9,7 +9,7 @@
 //! The TVmaze API is public and needs no credentials. The plugin has no settings.
 use reqwest::{StatusCode, Url};
 use serde::Deserialize;
-use tracing::{debug, error, instrument};
+use tracing::{debug, instrument};
 
 use crate::{config::HttpConfig, duration::TimeInWords, http, plugin::prelude::*};
 
@@ -19,18 +19,18 @@ pub const API_BASE_URL: &str = "https://api.tvmaze.com";
 /// Errors that can occur while talking to the TVmaze API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// The API response could not be deserialized.
-    #[error("could not deserialize response: {0}")]
-    Deserialize(#[from] serde_path_to_error::Error<serde_json::Error>),
+    /// The API request failed or its response could not be handled.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     /// No show matches the search query.
     #[error("resource not found")]
     NotFound,
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
-    /// The API returned a status the plugin does not handle.
-    #[error("unexpected http response")]
-    UnexpectedResponse,
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Api(error.into())
+    }
 }
 
 /// The `.next` command.
@@ -187,9 +187,8 @@ impl Tvmaze {
     ///
     /// # Errors
     ///
-    /// Returns `Error::NotFound` if no show matches the search query.
-    /// Returns `Error::Request` if the HTTP request fails.
-    /// Returns `Error::Deserialize` if the response cannot be parsed.
+    /// Returns [`Error::NotFound`] if no show matches the search query, and an
+    /// [`Error::Api`] if the request fails or the response cannot be handled.
     #[instrument(skip(self))]
     pub async fn single_search(&self, name: &str) -> Result<Show, Error> {
         let url = self.build_search_url(name);
@@ -202,16 +201,17 @@ impl Tvmaze {
                 debug!(?show, "finished parsing show");
                 Ok(show)
             }
-            Err(http::ApiError::Status(StatusCode::NOT_FOUND)) => {
+            Err(http::ApiError::Status {
+                status: StatusCode::NOT_FOUND,
+                ..
+            }) => {
                 debug!("show not found");
                 Err(Error::NotFound)
             }
-            Err(http::ApiError::Status(status)) => {
-                error!("unexpected response status: {status}");
-                Err(Error::UnexpectedResponse)
+            Err(error) => {
+                debug!(%error, "unexpected api response");
+                Err(Error::Api(error))
             }
-            Err(http::ApiError::Request(error)) => Err(Error::Request(error)),
-            Err(http::ApiError::Deserialize(error)) => Err(Error::Deserialize(error)),
         }
     }
 
@@ -282,12 +282,10 @@ impl Tvmaze {
     fn format_error_message(error: &Error) -> String {
         let content = match error {
             Error::NotFound => "Show not found".to_string(),
-            Error::Request(_) => "Failed to fetch show information".to_string(),
-            Error::Deserialize(_) => "Failed to parse show information".to_string(),
-            Error::UnexpectedResponse => "Received unexpected response from API".to_string(),
+            Error::Api(_) => "Failed to fetch show information".to_string(),
         };
 
-        Self::build_formatted_message(None, &format!("Error: {content}"))
+        Self::build_formatted_message(None, &content)
     }
 
     /// Builds the search URL with query parameters.

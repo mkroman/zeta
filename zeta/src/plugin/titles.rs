@@ -239,7 +239,7 @@ enum Error {
     #[error("{0}")]
     Status(StatusCode),
     /// The request failed.
-    #[error("Error: {0}")]
+    #[error("{0}")]
     Request(#[from] wreq::Error),
     /// The tokenizer task failed.
     #[error("could not tokenize the response")]
@@ -829,7 +829,6 @@ mod tests {
         let catalog = PluginCatalog {
             entries: vec![CatalogEntry {
                 name: "imdb".into(),
-                authors: vec![],
                 commands: Vec::new(),
                 url_hosts: vec!["imdb.com", "www.imdb.com"],
             }],

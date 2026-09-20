@@ -6,26 +6,21 @@ use sqlx::{
 };
 
 /// A scheduled alert, as stored in the database.
-// Some fields are only populated from the database and never read.
+///
+/// The username, hostname and creation time columns are written on insert but not part of the
+/// row model, which only carries what the plugin reads.
 #[derive(Debug, FromRow, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct Alert {
     /// The database id of the alert.
     pub id: i32,
     /// The nickname of the user who created the alert.
     pub nickname: String,
-    /// The username of the user who created the alert.
-    pub username: String,
-    /// The hostname of the user who created the alert.
-    pub hostname: String,
     /// The channel the alert is delivered in.
     pub channel: String,
     /// The alert message.
     pub message: String,
     /// The time the alert is scheduled for.
     pub time: DateTime<Utc>,
-    /// The time the alert was created.
-    pub created_at: DateTime<Utc>,
 }
 
 /// An alert to be inserted into the database.

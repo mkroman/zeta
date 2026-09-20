@@ -1,6 +1,5 @@
 //! Database access for notifications.
 
-use futures::TryStreamExt;
 use tracing::{instrument, trace};
 
 use super::{
@@ -32,14 +31,13 @@ impl NotificationRepository {
     pub async fn list(&self) -> Result<Vec<Notification>, Error> {
         trace!("loading notifications from database");
 
-        let mut notifications = Vec::new();
-        let mut stream = sqlx::query_as("SELECT * FROM notifications").fetch(&self.db);
-
-        while let Some(notification) = stream.try_next().await.map_err(Error::load)? {
-            notifications.push(notification);
-        }
-
-        Ok(notifications)
+        sqlx::query_as(
+            r"SELECT id, target, nickname, channel, message, created_at
+              FROM notifications",
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(Error::load)
     }
 
     /// Inserts `notification` into the database, returning the stored instance.
