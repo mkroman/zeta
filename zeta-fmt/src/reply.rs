@@ -610,19 +610,23 @@ impl<'s> Reply<'s> {
                     // resets colors only, and the following text must be
                     // guarded against a leading digit.
                     self.sink_write("\x03");
+                    self.arm = Some(Arm::Bare);
                     self.state.fg = None;
                     self.state.bg = None;
                 }
             }
         }
 
-        // Toggle diffs.
+        // Toggle diffs. The `was` half reads the state as it stands after
+        // the color section: clearing a background resets the wire state,
+        // dropping toggles with it, so a toggle the target retains has to
+        // be re-applied here.
         for (code, (was, now)) in [
-            (BOLD, (current.bold, target.bold)),
-            (ITALIC, (current.italic, target.italic)),
-            (UNDERLINE, (current.underline, target.underline)),
-            (STRIKE, (current.strike, target.strike)),
-            (MONO, (current.mono, target.mono)),
+            (BOLD, (self.state.bold, target.bold)),
+            (ITALIC, (self.state.italic, target.italic)),
+            (UNDERLINE, (self.state.underline, target.underline)),
+            (STRIKE, (self.state.strike, target.strike)),
+            (MONO, (self.state.mono, target.mono)),
         ] {
             if was != now {
                 // A toggle character terminates the color payload of a
@@ -936,6 +940,47 @@ mod tests {
     }
 
     #[test]
+    fn a_colors_off_transition_guards_a_leading_digit() {
+        // Colors drop while the italic toggle survives: the bare color code
+        // resets colors only, so the leading digit of the following text
+        // must be guarded against being eaten as a color.
+        let ops = seq!(
+            .text(Style::new().fg(Color::Red).italic(), "a")
+            .text(Style::new().italic(), "13 things")
+        );
+        let expected = "\x0310> \x0304\x1da\x03\x02\x0213 things\x1d";
+
+        assert_eq!(owned(&Banner::BARE, ops), expected);
+        assert_eq!(lazy(&Banner::BARE, ops), expected);
+        assert_eq!(into_formatter(&Banner::BARE, ops), expected);
+    }
+
+    #[test]
+    fn a_background_clear_reapplies_surviving_toggles() {
+        // Clearing a background resets the wire state, dropping the bold
+        // toggle with it: a toggle the target retains must be re-applied,
+        // and a later toggle operation becomes a no-op.
+        let expected = "\x0310> \x0304,05\x02x\x0f\x0304\x02y\x02";
+        let ops = seq!(
+            .text(Style::new().fg(Color::Red).bg(Color::Brown).bold(), "x")
+            .text(Style::new().fg(Color::Red).bold(), "y")
+        );
+
+        assert_eq!(owned(&Banner::BARE, ops), expected);
+        assert_eq!(lazy(&Banner::BARE, ops), expected);
+
+        let expected = "\x0310> \x0304,05\x02x\x0f\x0304\x02yZ\x02";
+        let ops = seq!(
+            .text(Style::new().fg(Color::Red).bg(Color::Brown).bold(), "x")
+            .text(Style::new().fg(Color::Red).bold(), "y")
+            .bold("Z")
+        );
+
+        assert_eq!(owned(&Banner::BARE, ops), expected);
+        assert_eq!(lazy(&Banner::BARE, ops), expected);
+    }
+
+    #[test]
     fn quoted_wraps_a_value_in_cyan_quotes() {
         assert_eq!(
             owned(&Banner::new("Alert"), seq!(.quoted("hello world"))),
@@ -1008,6 +1053,14 @@ mod tests {
             owned(&Banner::BARE, seq!(.spoiler(Color::Green, "hidden"))),
             owned(&BANNER, seq!(.label(",13 votes"))),
             owned(&Banner::BARE, seq!(.data(Style::new().fg(Color::Cyan).bold(), "\x0f clean"))),
+            owned(&Banner::BARE, seq!(
+                .text(Style::new().fg(Color::Red).italic(), "a")
+                .text(Style::new().italic(), "13 things")
+            )),
+            owned(&Banner::BARE, seq!(
+                .text(Style::new().fg(Color::Red).bg(Color::Brown).bold(), "x")
+                .text(Style::new().fg(Color::Red).bold(), "y")
+            )),
         ] {
             grammar(&text).unwrap_or_else(|error| panic!("{error}"));
         }
@@ -1042,7 +1095,7 @@ mod tests {
                 let mut reply = Banner::BARE.reply(&mut buf);
 
                 for _ in 0..24 {
-                    match xorshift(&mut state) % 7 {
+                    match xorshift(&mut state) % 8 {
                         0 => {
                             reply.label(pick(&mut state, &clean));
                         }
@@ -1058,15 +1111,37 @@ mod tests {
                             reply.field(label, text);
                         }
                         4 => {
-                            let color = Color::from_code((xorshift(&mut state) % 16) as u8).expect("color");
-                            let text = pick(&mut state, &clean);
-                            reply.fg(color, text);
+                            // Alternates between a foreground color and the
+                            // colors-off form: the bare `\x03` code resets
+                            // colors only, so a toggle the target retains
+                            // arms the leading-digit hazard.
+                            if xorshift(&mut state).is_multiple_of(2) {
+                                let color =
+                                    Color::from_code((xorshift(&mut state) % 16) as u8).expect("color");
+                                reply.fg(color, pick(&mut state, &clean));
+                            } else {
+                                let style = if xorshift(&mut state).is_multiple_of(2) {
+                                    Style::new().mono()
+                                } else {
+                                    Style::new().bold()
+                                };
+                                reply.data(style, pick(&mut state, &dirty));
+                            }
                         }
                         5 => {
                             reply.bold("bold");
                         }
-                        _ => {
+                        6 => {
                             reply.quoted("hello");
+                        }
+                        _ => {
+                            // A background color with a toggle: a later
+                            // foreground-only target clears the background
+                            // with a reset and must re-apply the toggle.
+                            let color =
+                                Color::from_code((xorshift(&mut state) % 16) as u8).expect("color");
+                            let text = pick(&mut state, &dirty);
+                            reply.data(Style::new().fg(color).bg(Color::Brown).bold(), text);
                         }
                     }
                 }

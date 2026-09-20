@@ -55,6 +55,7 @@ pub(crate) fn into_formatter(
 ///
 /// - every color code is `\x03` followed by exactly two ASCII digits, and a
 ///   background pair only ever follows the foreground digits;
+/// - a bare `\x03` (colors off) is never directly followed by a digit;
 /// - a `,<digit>` fragment never directly follows a foreground-only code
 ///   (the machine guards it with a bold cancel-pair);
 /// - toggle attributes are balanced by the end of the message;
@@ -80,29 +81,42 @@ pub(crate) fn grammar(text: &str) -> Result<(), String> {
 
         match byte {
             0x03 => {
-                let Some(fg) = bytes.get(index + 1..index + 3) else {
-                    return Err(format!("color code without two digits: {text:?}"));
-                };
+                // Two digits are read for the foreground when available;
+                // a code followed by anything else is the colors-off form,
+                // which must not be followed directly by a digit — it
+                // would be eaten as a color.
+                match bytes.get(index + 1..index + 3) {
+                    Some(fg) if fg.iter().all(u8::is_ascii_digit) => {
+                        index += 3;
 
-                if !fg.iter().all(u8::is_ascii_digit) {
-                    return Err(format!("color code without two digits: {text:?}"));
-                }
-
-                index += 3;
-
-                // Optional background: `<fg>,<bg>`.
-                if bytes.get(index) == Some(&b',') {
-                    match bytes.get(index + 1..index + 3) {
-                        Some(bg) if bg.iter().all(u8::is_ascii_digit) => index += 3,
-                        // A `,<digit>` fragment following a foreground-only
-                        // code would be eaten as a background — it must have
-                        // been guarded by the cancel-pair instead.
-                        Some(bg) if bg[0].is_ascii_digit() => {
+                        // Optional background: `<fg>,<bg>`.
+                        if bytes.get(index) == Some(&b',') {
+                            match bytes.get(index + 1..index + 3) {
+                                Some(bg) if bg.iter().all(u8::is_ascii_digit) => index += 3,
+                                // A `,<digit>` fragment following a foreground-only
+                                // code would be eaten as a background — it must have
+                                // been guarded by the cancel-pair instead.
+                                Some(bg) if bg[0].is_ascii_digit() => {
+                                    return Err(format!(
+                                        "unguarded `,<digit>` after a color code: {text:?}"
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {
+                        // Colors off (a bare `\x03` resets colors only).
+                        // A digit directly after the code would be eaten
+                        // as a color — the text must have been guarded by
+                        // the cancel-pair instead.
+                        if bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
                             return Err(format!(
-                                "unguarded `,<digit>` after a color code: {text:?}"
+                                "unguarded digit after a bare color code: {text:?}"
                             ));
                         }
-                        _ => {}
+
+                        index += 1;
                     }
                 }
             }
