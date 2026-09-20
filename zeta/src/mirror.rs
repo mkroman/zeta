@@ -12,7 +12,7 @@
 //! directories that are owned by the manager and removed when the download finishes; directories
 //! left behind by a killed or crashed process are removed on startup.
 //!
-//! Plugins access the shared mirror through a [`MirrorTarget`](crate::mirror::MirrorTarget),
+//! Plugins access the shared mirror through a [`MirrorHandle`](crate::mirror::MirrorHandle),
 //! which carries the key prefix and the public URL base used for their links, and is resolved
 //! from their own configuration.
 
@@ -36,7 +36,7 @@ pub use s3::S3;
 pub use ytdlp::{YtDlp, YtDlpOptions};
 
 use crate::context::Context;
-use crate::url::is_id_segment;
+use crate::url::is_identifier;
 
 /// Configuration for the shared media mirror, from the `[mirror]` configuration section.
 ///
@@ -303,7 +303,7 @@ impl Mirror {
         // The id ends up in file names, object keys and the public link fragment; ids that are
         // not safe are never mirrored. It is validated here (before the fast-path check) and
         // again by the download manager before it reaches the file system.
-        if !is_id_segment(id, "_-") {
+        if !is_identifier(id, "_-") {
             warn!(%id, "ignoring mirror request with an unsafe id");
 
             return Ok(None);
@@ -369,7 +369,7 @@ impl Mirror {
 /// Carries the key prefix the plugin's mirrored files are uploaded under and the base URL its
 /// public links are built from.
 #[derive(Clone)]
-pub struct MirrorTarget {
+pub struct MirrorHandle {
     /// The shared mirror.
     mirror: Arc<Mirror>,
     /// The key prefix for the plugin's uploads.
@@ -378,8 +378,8 @@ pub struct MirrorTarget {
     public_url_base: Url,
 }
 
-impl MirrorTarget {
-    /// Creates a target for the given mirror.
+impl MirrorHandle {
+    /// Creates a handle for the given mirror.
     #[must_use]
     pub const fn new(mirror: Arc<Mirror>, prefix: String, public_url_base: Url) -> Self {
         Self {
@@ -389,7 +389,7 @@ impl MirrorTarget {
         }
     }
 
-    /// Resolves a target from a plugin's configuration.
+    /// Resolves a handle from a plugin's configuration.
     ///
     /// Every plugin follows the same convention: the download prefix resolves through the
     /// `<PLUGIN>_S3_PREFIX` environment variable and defaults to the plugin name; the public

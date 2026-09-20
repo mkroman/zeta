@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use crate::{
-    mirror::{Mirror, MirrorTarget},
+    mirror::{Mirror, MirrorHandle},
     plugin::prelude::*,
     utils::Truncatable,
 };
@@ -68,7 +68,7 @@ pub struct Reddit {
     /// Reddit API client
     client: reddit::Client,
     /// Mirror for downloading and re-hosting hosted videos.
-    mirror: Option<MirrorTarget>,
+    mirror: Option<MirrorHandle>,
 }
 
 #[async_trait]
@@ -99,7 +99,7 @@ impl Plugin<Context> for Reddit {
             },
         )
         .map_err(plugin_err)?;
-        let mirror = MirrorTarget::resolve(
+        let mirror = MirrorHandle::resolve(
             ctx.shared.get::<Mirror>(),
             "reddit",
             settings.prefix.as_deref(),

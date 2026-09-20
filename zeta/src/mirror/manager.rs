@@ -26,7 +26,7 @@ use super::{
     tempdir_builder,
     ytdlp::{self, DownloadedFile, Progress, YtDlp},
 };
-use crate::url::is_id_segment;
+use crate::url::is_identifier;
 
 #[cfg(test)]
 use super::TEMP_DIR_PREFIX;
@@ -232,7 +232,7 @@ impl Manager {
 
     /// Starts a download task for the given request, creating its temporary download directory.
     fn start_download(&mut self, request: DownloadRequest) {
-        if !is_id_segment(&request.id, "_-") {
+        if !is_identifier(&request.id, "_-") {
             error!(id = %request.id, "rejecting download with an unsafe id");
 
             (request.on_finish)(Err(Error::InvalidId(request.id)));

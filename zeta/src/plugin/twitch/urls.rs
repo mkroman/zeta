@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::url::{is_id_segment, is_numeric_segment, path_segments};
+use crate::url::{is_identifier, is_numeric_segment, path_segments};
 
 /// The Twitch.tv hostname.
 pub(super) const TWITCH_HOST: &str = "twitch.tv";
@@ -69,7 +69,7 @@ fn parse_clips_url(url: &Url) -> Option<UrlKind> {
 /// Returns whether the segment is a valid Twitch clip id (a base62 slug).
 #[must_use]
 fn is_valid_clip_id(id: &str) -> bool {
-    is_id_segment(id, "")
+    is_identifier(id, "")
 }
 
 /// Checks if a string looks like a valid Twitch username.
@@ -77,7 +77,7 @@ fn is_valid_clip_id(id: &str) -> bool {
 /// Twitch usernames are 4-25 characters long and contain alphanumeric characters and
 /// underscores.
 fn is_valid_username(s: &str) -> bool {
-    (4..=25).contains(&s.len()) && is_id_segment(s, "_")
+    (4..=25).contains(&s.len()) && is_identifier(s, "_")
 }
 
 #[cfg(test)]

@@ -42,7 +42,7 @@ use wreq::redirect::Policy;
 use crate::{
     cache::{TtlCache, TtlMap},
     http,
-    mirror::{Mirror, MirrorTarget},
+    mirror::{Mirror, MirrorHandle},
     plugin::prelude::*,
     utils::{Truncatable, collapse_whitespace},
 };
@@ -124,7 +124,7 @@ pub struct Instagram {
     /// The HTTP client used for fetching pages, emulating a modern browser.
     client: wreq::Client,
     /// The shared mirror handle, when mirroring is configured.
-    mirror: Option<MirrorTarget>,
+    mirror: Option<MirrorHandle>,
     /// The plugin settings used when processing URLs.
     settings: Settings,
     /// The resolved session cookie, if any.
@@ -167,7 +167,7 @@ impl Plugin<Context> for Instagram {
             .build()
             .map_err(plugin_err)?;
 
-        let mirror = MirrorTarget::resolve(
+        let mirror = MirrorHandle::resolve(
             ctx.shared.get::<Mirror>(),
             "instagram",
             settings.prefix.as_deref(),

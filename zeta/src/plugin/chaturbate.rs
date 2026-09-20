@@ -14,7 +14,7 @@ use crate::{
     config::HttpConfig,
     http,
     plugin::prelude::*,
-    url::{is_id_segment, path_segments},
+    url::{is_identifier, path_segments},
 };
 
 /// The Chaturbate hosts whose links this plugin handles.
@@ -168,7 +168,7 @@ fn extract_username(url: &Url) -> Option<String> {
 
     match path_segments(url)?.as_slice() {
         // Exclude well-known non-broadcaster paths.
-        [username, ..] if is_id_segment(username, "_") && !RESERVED_SEGMENTS.contains(username) => {
+        [username, ..] if is_identifier(username, "_") && !RESERVED_SEGMENTS.contains(username) => {
             Some((*username).to_string())
         }
         _ => None,

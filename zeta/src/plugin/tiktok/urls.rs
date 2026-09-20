@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::url::{is_id_segment, is_numeric_segment, path_segments};
+use crate::url::{is_identifier, is_numeric_segment, path_segments};
 
 /// The hostname used for shortened URLs.
 const TIKTOK_SHORT_HOST: &str = "vm.tiktok.com";
@@ -86,13 +86,13 @@ fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
 /// Returns whether the segment is a valid channel slug (`@` followed by username characters).
 #[must_use]
 fn is_valid_channel_slug(segment: &str) -> bool {
-    segment.starts_with('@') && is_id_segment(&segment[1..], "._-")
+    segment.starts_with('@') && is_identifier(&segment[1..], "._-")
 }
 
 /// Returns whether the segment is a valid shortened-link id.
 #[must_use]
 fn is_valid_short_id(id: &str) -> bool {
-    is_id_segment(id, "")
+    is_identifier(id, "")
 }
 
 #[cfg(test)]

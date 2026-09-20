@@ -17,7 +17,7 @@ use url::Url;
 
 use crate::{
     http,
-    mirror::{Mirror, MirrorTarget},
+    mirror::{Mirror, MirrorHandle},
     plugin::prelude::*,
     utils::Truncatable,
 };
@@ -64,7 +64,7 @@ const fn default_title_length() -> usize {
 /// The TikTok plugin: summarizes and mirrors TikTok video links.
 pub struct Tiktok {
     client: reqwest::Client,
-    mirror: Option<MirrorTarget>,
+    mirror: Option<MirrorHandle>,
     settings: Settings,
 }
 
@@ -89,7 +89,7 @@ impl Plugin<Context> for Tiktok {
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Tiktok, ZetaError> {
         subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
 
-        let mirror = MirrorTarget::resolve(
+        let mirror = MirrorHandle::resolve(
             ctx.shared.get::<Mirror>(),
             "tiktok",
             settings.prefix.as_deref(),
