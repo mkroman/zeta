@@ -26,6 +26,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, warn};
 use url::Url;
+use zeta_plugin::irc::notice;
 
 pub mod manager;
 pub mod s3;
@@ -440,6 +441,41 @@ impl MirrorHandle {
         self.mirror
             .ensure_mirrored(&self.prefix, &self.public_url_base, url, id, on_mirrored)
             .await
+    }
+
+    /// Mirrors the media at `url` with the given `id`, replying with the mirrored file's link
+    /// to `channel` through `client`.
+    ///
+    /// This bundles the reply flow every mirroring plugin uses: if the media has already been
+    /// mirrored, its existing link is sent immediately; otherwise the download and upload happen
+    /// in a background task that replies with the link once it is ready. A failed mirror check is
+    /// logged and leaves the channel without a reply.
+    pub async fn ensure_mirrored_and_reply(
+        &self,
+        url: &str,
+        id: &str,
+        channel: &str,
+        client: &irc::client::Client,
+    ) {
+        let sender = client.sender();
+        let channel = channel.to_string();
+
+        let on_mirrored = {
+            let channel = channel.clone();
+            move |link: String| {
+                let _ = sender.send_privmsg(&channel, notice(link));
+            }
+        };
+
+        match self.ensure_mirrored(url, id, on_mirrored).await {
+            Ok(Some(link)) => {
+                let _ = client.send_privmsg(&channel, notice(&link));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                error!(%id, %error, "could not check if the media is already mirrored");
+            }
+        }
     }
 }
 

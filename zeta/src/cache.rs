@@ -152,6 +152,30 @@ impl<T> TtlCache<T> {
         Ok(())
     }
 
+    /// Refreshes the cache through `refresh` regardless of its current freshness, caching and
+    /// returning the refreshed value.
+    ///
+    /// Unlike [`TtlCache::get_or_refresh`], the refresh is unconditional — for callers that
+    /// know the cached value is wrong (e.g. a credential that the server just rejected).
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `refresh` when the value could not be refreshed.
+    pub async fn force_refresh<E, F, Fut>(&self, refresh: F) -> Result<T, E>
+    where
+        T: Clone + Send + Sync,
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<T, E>> + Send,
+    {
+        let value = refresh().await?;
+        self.replace(Entry {
+            value: value.clone(),
+            expires_at: Instant::now() + self.ttl,
+        });
+
+        Ok(value)
+    }
+
     /// Replaces the cached entry, tolerating a poisoned lock.
     fn replace(&self, entry: Entry<T>) {
         *self.entry.write().unwrap_or_else(PoisonError::into_inner) = Some(entry);

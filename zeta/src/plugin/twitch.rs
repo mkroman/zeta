@@ -15,13 +15,9 @@
 
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::warn;
 
-use crate::{
-    http,
-    oauth::{TokenCache, TokenResponse},
-    plugin::prelude::*,
-};
+use crate::{http, oauth::Credentials, plugin::prelude::*};
 
 mod urls;
 
@@ -52,22 +48,13 @@ pub struct Settings {
 /// This plugin listens for Twitch.tv URLs in messages and expands them with
 /// information about the stream, clip, or video.
 pub struct Twitch {
-    /// HTTP client used for requests.
-    client: reqwest::Client,
-    /// Twitch application client ID.
-    client_id: String,
-    /// Twitch application client secret.
-    client_secret: String,
-    /// Cached OAuth2 access token.
-    token: TokenCache,
+    /// The client-credentials API client.
+    credentials: Credentials,
 }
 
 /// Errors that can occur during Twitch plugin execution.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
     /// The Twitch API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
@@ -127,13 +114,9 @@ impl Plugin<Context> for Twitch {
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "TWITCH_CLIENT_SECRET")?;
         let client = http::build_client(&ctx.config.http);
+        let credentials = Credentials::new(client, AUTH_URL, client_id, client_secret);
 
-        Ok(Self {
-            client,
-            client_id,
-            client_secret,
-            token: TokenCache::new(),
-        })
+        Ok(Self { credentials })
     }
 
     async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
@@ -156,25 +139,16 @@ impl Plugin<Context> for Twitch {
 }
 
 impl Twitch {
-    /// Authenticates with Twitch using Client Credentials Flow.
-    ///
-    /// Returns a valid access token, refreshing it if necessary.
-    async fn get_token(&self) -> Result<String, Error> {
-        self.token
-            .get(|| async {
-                debug!("refreshing twitch access token");
-                let params = [
-                    ("client_id", self.client_id.as_str()),
-                    ("client_secret", self.client_secret.as_str()),
-                    ("grant_type", "client_credentials"),
-                ];
+    /// Builds the token request for the Twitch client-credentials grant, authenticating the
+    /// application with form-encoded credentials.
+    fn token_grant(client: &reqwest::Client, credentials: &Credentials) -> reqwest::RequestBuilder {
+        let params = [
+            ("client_id", credentials.client_id()),
+            ("client_secret", credentials.client_secret()),
+            ("grant_type", "client_credentials"),
+        ];
 
-                let response = self.client.post(AUTH_URL).form(&params).send().await?;
-                let auth: TokenResponse = http::parse_response(response).await?;
-
-                Ok(auth)
-            })
-            .await
+        client.post(AUTH_URL).form(&params)
     }
 
     /// Helper to make authenticated GET requests to the Helix API.
@@ -183,17 +157,23 @@ impl Twitch {
         endpoint: &str,
         query: &[(&str, &str)],
     ) -> Result<Response<T>, Error> {
-        let token = self.get_token().await?;
+        let token = self
+            .credentials
+            .access_token(Twitch::token_grant)
+            .await
+            .map_err(Error::from)?;
         let url = format!("{BASE_URL}/{endpoint}");
 
         let response = self
-            .client
+            .credentials
+            .client()
             .get(&url)
-            .header("Client-ID", &self.client_id)
+            .header("Client-ID", self.credentials.client_id())
             .header("Authorization", format!("Bearer {token}"))
             .query(query)
             .send()
-            .await?;
+            .await
+            .map_err(http::ApiError::Request)?;
 
         http::parse_response(response).await.map_err(Error::from)
     }

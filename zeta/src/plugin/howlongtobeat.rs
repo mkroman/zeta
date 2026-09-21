@@ -10,17 +10,17 @@
 //! search once.
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::{
     StatusCode,
     header::{CONTENT_TYPE, REFERER},
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use crate::{
+    cache::TtlCache,
     duration::{HOURS_AND_MINUTES, words},
     http,
     plugin::prelude::*,
@@ -28,6 +28,13 @@ use crate::{
 
 const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
+
+/// How long the cached API credentials stay in use before a new set is requested.
+///
+/// The credentials are valid until the API starts rejecting them with a `403 Forbidden`, which
+/// triggers an unconditional refresh, so the TTL only bounds how long outdated credentials can
+/// survive without triggering the rejection path.
+const AUTH_TTL: Duration = Duration::from_secs(60 * 60);
 
 /// The `.hltb` command.
 const HLTB: CommandSpec = CommandSpec::new(".hltb", "Look up a game's completion times");
@@ -40,7 +47,7 @@ pub struct HowLongToBeat {
     /// The HTTP client used for requests.
     client: reqwest::Client,
     /// Cached authentication data (token and homepage key/value).
-    auth: RwLock<Option<AuthData>>,
+    auth: TtlCache<AuthData>,
 }
 
 /// Errors that can occur during API interactions.
@@ -227,7 +234,7 @@ impl Plugin<Context> for HowLongToBeat {
 
         Ok(Self {
             client,
-            auth: RwLock::new(None),
+            auth: TtlCache::new(AUTH_TTL),
         })
     }
 
@@ -269,15 +276,11 @@ impl HowLongToBeat {
     ///
     /// Returns the cached data if it exists, otherwise requests new data from the initialization endpoint.
     async fn get_auth(&self) -> Result<AuthData, Error> {
-        if let Some(auth) = self.auth.read().await.as_ref() {
-            return Ok(auth.clone());
-        }
-
-        self.refresh_auth().await
+        self.auth.get_or_refresh(|| self.fetch_auth()).await
     }
 
     /// Fetches a fresh authorization token and homepage key/value pair from the API.
-    async fn refresh_auth(&self) -> Result<AuthData, Error> {
+    async fn fetch_auth(&self) -> Result<AuthData, Error> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -295,18 +298,11 @@ impl HowLongToBeat {
 
         let init: InitResponse = http::parse_response(response).await?;
 
-        let auth_data = AuthData {
+        Ok(AuthData {
             token: init.token,
             hp_key: init.hp_key,
             hp_val: init.hp_val,
-        };
-
-        {
-            let mut auth_lock = self.auth.write().await;
-            *auth_lock = Some(auth_data.clone());
-        }
-
-        Ok(auth_data)
+        })
     }
 
     /// Performs a search for a specific game query.
@@ -323,7 +319,7 @@ impl HowLongToBeat {
                 ..
             })) => {
                 warn!("hltb token expired, refreshing...");
-                let new_auth = self.refresh_auth().await?;
+                let new_auth = self.auth.force_refresh(|| self.fetch_auth()).await?;
                 self.perform_search_request(&new_auth, query).await
             }
             Err(e) => Err(e),

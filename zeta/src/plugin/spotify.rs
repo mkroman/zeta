@@ -25,7 +25,7 @@ use url::Url;
 
 use crate::{
     http,
-    oauth::{TokenCache, TokenResponse},
+    oauth::Credentials,
     plugin::prelude::*,
     url::path_segments,
 };
@@ -53,19 +53,13 @@ pub struct Settings {
 
 /// Spotify integration plugin.
 pub struct Spotify {
-    client: reqwest::Client,
-    client_id: String,
-    client_secret: String,
-    token: TokenCache,
+    credentials: Credentials,
     uri_regex: Regex,
 }
 
 /// Errors that can occur while talking to the Spotify API.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
     /// The Spotify API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
@@ -147,16 +141,11 @@ impl Plugin<Context> for Spotify {
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
         let client = http::build_client(&ctx.config.http);
+        let credentials = Credentials::new(client, AUTH_URL, client_id, client_secret);
         let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)")
             .expect("spotify uri regex");
 
-        Ok(Self {
-            client,
-            client_id,
-            client_secret,
-            token: TokenCache::new(),
-            uri_regex,
-        })
+        Ok(Self { credentials, uri_regex })
     }
 
     async fn handle_url(&self, _ctx: &Context, client: &Client, url: &UrlEvent) -> Result<(), ZetaError> {
@@ -194,28 +183,17 @@ impl Plugin<Context> for Spotify {
 }
 
 impl Spotify {
-    /// Authenticates with Spotify using Client Credentials Flow.
-    async fn get_token(&self) -> Result<String, Error> {
-        self.token
-            .get(|| async {
-                debug!("refreshing spotify token");
-                let creds = format!("{}:{}", self.client_id, self.client_secret);
-                let encoded = BASE64_STANDARD.encode(creds);
+    /// Builds the token request for the Spotify client-credentials grant, authenticating the
+    /// application with a Basic authorization header.
+    fn token_grant(client: &reqwest::Client, credentials: &Credentials) -> reqwest::RequestBuilder {
+        let encoded = BASE64_STANDARD
+            .encode(format!("{}:{}", credentials.client_id(), credentials.client_secret()));
 
-                let response = self
-                    .client
-                    .post(AUTH_URL)
-                    .header(AUTHORIZATION, format!("Basic {encoded}"))
-                    .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-                    .form(&[("grant_type", "client_credentials")])
-                    .send()
-                    .await?;
-
-                http::parse_response::<TokenResponse>(response)
-                    .await
-                    .map_err(Error::from)
-            })
-            .await
+        client
+            .post(AUTH_URL)
+            .header(AUTHORIZATION, format!("Basic {encoded}"))
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .form(&[("grant_type", "client_credentials")])
     }
 
     async fn handle_spotify_resource(
@@ -251,15 +229,21 @@ impl Spotify {
     }
 
     async fn fetch<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, Error> {
-        let token = self.get_token().await?;
+        let token = self
+            .credentials
+            .access_token(Spotify::token_grant)
+            .await
+            .map_err(Error::from)?;
         let url = format!("{API_BASE_URL}/{path}");
 
         let response = self
-            .client
+            .credentials
+            .client()
             .get(&url)
             .header(AUTHORIZATION, format!("Bearer {token}"))
             .send()
-            .await?;
+            .await
+            .map_err(http::ApiError::Request)?;
 
         http::parse_response(response).await.map_err(Error::from)
     }
