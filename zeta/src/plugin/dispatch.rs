@@ -225,12 +225,11 @@ impl EventIndex {
 
         // CTCP messages are their own event kind and are routed to nothing else.
         if text.starts_with('\x01') {
-            if let Some(event) = CtcpEvent::new(Arc::clone(message))
-                && let Some(subscribers) = self.subscribers(EventKind::Ctcp)
-            {
-                let event = Event::Ctcp(event);
-                Self::deliver(&event, subscribers, stopped);
-            }
+            self.deliver_kind(
+                EventKind::Ctcp,
+                CtcpEvent::new(Arc::clone(message)).map(Event::Ctcp),
+                stopped,
+            );
 
             return;
         }
@@ -248,10 +247,11 @@ impl EventIndex {
         }
 
         // Message subscribers observe every non-CTCP channel message.
-        if let Some(subscribers) = self.subscribers(EventKind::Message) {
-            let event = Event::Message(MessageEvent::new(Arc::clone(message)));
-            Self::deliver(&event, subscribers, stopped);
-        }
+        self.deliver_kind(
+            EventKind::Message,
+            Some(Event::Message(MessageEvent::new(Arc::clone(message)))),
+            stopped,
+        );
 
         // URLs — extracted once per message, deduplicated and filtered before routing by host.
         if self.url_hosts.is_empty() && self.url_any.is_empty() {

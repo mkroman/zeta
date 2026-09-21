@@ -152,7 +152,7 @@ impl Credentials {
     ///
     /// # Errors
     ///
-    /// Returns an [`http::ApiError`] when the token request fails or its response cannot be
+    /// Returns an `http::ApiError` when the token request fails or its response cannot be
     /// parsed.
     pub async fn access_token(
         &self,

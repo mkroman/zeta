@@ -96,6 +96,38 @@ macro_rules! event_sender {
     };
 }
 
+/// Generates a single-field event kind: its struct, constructor, the accessors given in the
+/// trailing block, and the shared [`event_sender!`] accessor.
+///
+/// Every event that carries nothing but the message it was derived from shares this shape;
+/// only the accessors differ, so they are passed as a block and stay hand-written with their
+/// own documentation and `unreachable!` messages.
+macro_rules! event_kind {
+    (
+        $(#[$event_doc:meta])*
+        $event:ident, $ctor:literal,
+        { $($accessors:tt)* }
+    ) => {
+        $(#[$event_doc])*
+        #[derive(Clone, Debug)]
+        pub struct $event {
+            message: Arc<Message>,
+        }
+
+        impl $event {
+            #[must_use]
+            #[doc = concat!("Creates a ", $ctor, ".")]
+            pub fn new(message: Arc<Message>) -> Self {
+                Self { message }
+            }
+
+            $($accessors)*
+
+            event_sender!();
+        }
+    };
+}
+
 /// An event delivered to a plugin.
 ///
 /// A plugin receives only the event kinds it registered during initialization; each kind is
@@ -242,195 +274,135 @@ impl UrlEvent {
     event_sender!();
 }
 
-/// A channel message was posted.
-///
-/// Delivered to plugins that subscribed with [`Subscriptions::receive_message`]; every channel
-/// `PRIVMSG` that is not a CTCP message produces one event, whether or not it matches any
-/// registered command.
-#[derive(Clone, Debug)]
-pub struct MessageEvent {
-    message: Arc<Message>,
-}
+event_kind! {
+    /// A channel message was posted.
+    ///
+    /// Delivered to plugins that subscribed with [`Subscriptions::receive_message`]; every channel
+    /// `PRIVMSG` that is not a CTCP message produces one event, whether or not it matches any
+    /// registered command.
+    MessageEvent, "message event",
+    {
+        /// Returns the channel the message was posted in.
+        #[must_use]
+        pub fn channel(&self) -> &str {
+            privmsg(&self.message).0
+        }
 
-impl MessageEvent {
-    /// Creates a message event.
-    #[must_use]
-    pub fn new(message: Arc<Message>) -> Self {
-        Self { message }
-    }
-
-    /// Returns the channel the message was posted in.
-    #[must_use]
-    pub fn channel(&self) -> &str {
-        privmsg(&self.message).0
-    }
-
-    /// Returns the text of the message.
-    #[must_use]
-    pub fn text(&self) -> &str {
-        privmsg(&self.message).1
-    }
-
-    event_sender!();
-}
-
-/// A user joined a channel.
-#[derive(Clone, Debug)]
-pub struct JoinEvent {
-    message: Arc<Message>,
-}
-
-impl JoinEvent {
-    /// Creates a join event.
-    #[must_use]
-    pub fn new(message: Arc<Message>) -> Self {
-        Self { message }
-    }
-
-    /// Returns the channel that was joined.
-    #[must_use]
-    pub fn channel(&self) -> &str {
-        match &self.message.command {
-            Command::JOIN(channel, ..) => channel,
-            _ => unreachable!("join events are only delivered for JOIN messages"),
+        /// Returns the text of the message.
+        #[must_use]
+        pub fn text(&self) -> &str {
+            privmsg(&self.message).1
         }
     }
-
-    /// Returns the nickname of the user that joined.
-    #[must_use]
-    pub fn nick(&self) -> &str {
-        Sender::from_message(&self.message).map_or("", |sender| sender.nick)
-    }
-
-    event_sender!();
 }
 
-/// A user left a channel.
-#[derive(Clone, Debug)]
-pub struct PartEvent {
-    message: Arc<Message>,
-}
+event_kind! {
+    /// A user joined a channel.
+    JoinEvent, "join event",
+    {
+        /// Returns the channel that was joined.
+        #[must_use]
+        pub fn channel(&self) -> &str {
+            match &self.message.command {
+                Command::JOIN(channel, ..) => channel,
+                _ => unreachable!("join events are only delivered for JOIN messages"),
+            }
+        }
 
-impl PartEvent {
-    /// Creates a part event.
-    #[must_use]
-    pub fn new(message: Arc<Message>) -> Self {
-        Self { message }
-    }
-
-    /// Returns the channel that was left.
-    #[must_use]
-    pub fn channel(&self) -> &str {
-        match &self.message.command {
-            Command::PART(channel, ..) => channel,
-            _ => unreachable!("part events are only delivered for PART messages"),
+        /// Returns the nickname of the user that joined.
+        #[must_use]
+        pub fn nick(&self) -> &str {
+            Sender::from_message(&self.message).map_or("", |sender| sender.nick)
         }
     }
-
-    /// Returns the parting comment, if any.
-    #[must_use]
-    pub fn reason(&self) -> Option<&str> {
-        match &self.message.command {
-            Command::PART(_, reason) => reason.as_deref(),
-            _ => unreachable!("part events are only delivered for PART messages"),
-        }
-    }
-
-    event_sender!();
 }
 
-/// A user quit the network.
-#[derive(Clone, Debug)]
-pub struct QuitEvent {
-    message: Arc<Message>,
-}
+event_kind! {
+    /// A user left a channel.
+    PartEvent, "part event",
+    {
+        /// Returns the channel that was left.
+        #[must_use]
+        pub fn channel(&self) -> &str {
+            match &self.message.command {
+                Command::PART(channel, ..) => channel,
+                _ => unreachable!("part events are only delivered for PART messages"),
+            }
+        }
 
-impl QuitEvent {
-    /// Creates a quit event.
-    #[must_use]
-    pub fn new(message: Arc<Message>) -> Self {
-        Self { message }
-    }
-
-    /// Returns the quit message, if any.
-    #[must_use]
-    pub fn reason(&self) -> Option<&str> {
-        match &self.message.command {
-            Command::QUIT(reason) => reason.as_deref(),
-            _ => unreachable!("quit events are only delivered for QUIT messages"),
+        /// Returns the parting comment, if any.
+        #[must_use]
+        pub fn reason(&self) -> Option<&str> {
+            match &self.message.command {
+                Command::PART(_, reason) => reason.as_deref(),
+                _ => unreachable!("part events are only delivered for PART messages"),
+            }
         }
     }
-
-    event_sender!();
 }
 
-/// A user changed their nickname; the previous identity is available through
-/// [`sender`](Self::sender).
-#[derive(Clone, Debug)]
-pub struct NickEvent {
-    message: Arc<Message>,
+event_kind! {
+    /// A user quit the network.
+    QuitEvent, "quit event",
+    {
+        /// Returns the quit message, if any.
+        #[must_use]
+        pub fn reason(&self) -> Option<&str> {
+            match &self.message.command {
+                Command::QUIT(reason) => reason.as_deref(),
+                _ => unreachable!("quit events are only delivered for QUIT messages"),
+            }
+        }
+    }
 }
 
-impl NickEvent {
-    /// Creates a nick change event.
-    #[must_use]
-    pub fn new(message: Arc<Message>) -> Self {
-        Self { message }
-    }
-
-    /// Returns the new nickname.
-    #[must_use]
-    pub fn new_nick(&self) -> &str {
-        match &self.message.command {
-            Command::NICK(nick) => nick,
-            _ => unreachable!("nick events are only delivered for NICK messages"),
+event_kind! {
+    /// A user changed their nickname; the previous identity is available through
+    /// [`sender`](Self::sender).
+    NickEvent, "nick change event",
+    {
+        /// Returns the new nickname.
+        #[must_use]
+        pub fn new_nick(&self) -> &str {
+            match &self.message.command {
+                Command::NICK(nick) => nick,
+                _ => unreachable!("nick events are only delivered for NICK messages"),
+            }
         }
     }
-
-    event_sender!();
 }
 
-/// A user was kicked from a channel.
-#[derive(Clone, Debug)]
-pub struct KickEvent {
-    message: Arc<Message>,
-}
+event_kind! {
+    /// A user was kicked from a channel.
+    KickEvent, "kick event",
+    {
+        /// Returns the channel the user was kicked from.
+        #[must_use]
+        pub fn channel(&self) -> &str {
+            match &self.message.command {
+                Command::KICK(channel, ..) => channel,
+                _ => unreachable!("kick events are only delivered for KICK messages"),
+            }
+        }
 
-impl KickEvent {
-    /// Creates a kick event.
-    #[must_use]
-    pub fn new(message: Arc<Message>) -> Self {
-        Self { message }
-    }
+        /// Returns the nickname of the user that was kicked.
+        #[must_use]
+        pub fn target(&self) -> &str {
+            match &self.message.command {
+                Command::KICK(_, target, _) => target,
+                _ => unreachable!("kick events are only delivered for KICK messages"),
+            }
+        }
 
-    /// Returns the channel the user was kicked from.
-    #[must_use]
-    pub fn channel(&self) -> &str {
-        match &self.message.command {
-            Command::KICK(channel, ..) => channel,
-            _ => unreachable!("kick events are only delivered for KICK messages"),
+        /// Returns the kick reason, if any.
+        #[must_use]
+        pub fn reason(&self) -> Option<&str> {
+            match &self.message.command {
+                Command::KICK(.., reason) => reason.as_deref(),
+                _ => unreachable!("kick events are only delivered for KICK messages"),
+            }
         }
     }
-
-    /// Returns the nickname of the user that was kicked.
-    #[must_use]
-    pub fn target(&self) -> &str {
-        match &self.message.command {
-            Command::KICK(_, target, _) => target,
-            _ => unreachable!("kick events are only delivered for KICK messages"),
-        }
-    }
-
-    /// Returns the kick reason, if any.
-    #[must_use]
-    pub fn reason(&self) -> Option<&str> {
-        match &self.message.command {
-            Command::KICK(.., reason) => reason.as_deref(),
-            _ => unreachable!("kick events are only delivered for KICK messages"),
-        }
-    }
-
-    event_sender!();
 }
 
 /// A CTCP request or reply arrived.
@@ -532,42 +504,32 @@ impl CtcpKind {
     }
 }
 
-/// An unmodeled IRC command arrived.
-///
-/// Delivered only to plugins that subscribed with [`Subscriptions::receive_raw`]; numeric
-/// replies and
-/// the connection's own protocol traffic are never delivered to plugins.
-#[derive(Clone, Debug)]
-pub struct RawEvent {
-    message: Arc<Message>,
-}
+event_kind! {
+    /// An unmodeled IRC command arrived.
+    ///
+    /// Delivered only to plugins that subscribed with [`Subscriptions::receive_raw`]; numeric
+    /// replies and
+    /// the connection's own protocol traffic are never delivered to plugins.
+    RawEvent, "raw event",
+    {
+        /// Returns the raw command as received, e.g. `SOMECMD`.
+        #[must_use]
+        pub fn command(&self) -> &str {
+            match &self.message.command {
+                Command::Raw(command, _) => command,
+                _ => unreachable!("raw events are only delivered for Raw commands"),
+            }
+        }
 
-impl RawEvent {
-    /// Creates a raw event.
-    #[must_use]
-    pub fn new(message: Arc<Message>) -> Self {
-        Self { message }
-    }
-
-    /// Returns the raw command as received, e.g. `SOMECMD`.
-    #[must_use]
-    pub fn command(&self) -> &str {
-        match &self.message.command {
-            Command::Raw(command, _) => command,
-            _ => unreachable!("raw events are only delivered for Raw commands"),
+        /// Returns the arguments of the raw command.
+        #[must_use]
+        pub fn args(&self) -> &[String] {
+            match &self.message.command {
+                Command::Raw(_, args) => args,
+                _ => unreachable!("raw events are only delivered for Raw commands"),
+            }
         }
     }
-
-    /// Returns the arguments of the raw command.
-    #[must_use]
-    pub fn args(&self) -> &[String] {
-        match &self.message.command {
-            Command::Raw(_, args) => args,
-            _ => unreachable!("raw events are only delivered for Raw commands"),
-        }
-    }
-
-    event_sender!();
 }
 
 /// Splits the payload of a CTCP message into its command and arguments.
@@ -602,42 +564,66 @@ pub enum UrlScope {
     Any,
 }
 
-/// The kind of an event a plugin subscribes to with a plain flag — one per per-kind handler.
+/// Generates the [`EventKind`] flag enum, its [`EventKind::ALL`] list, and the matching
+/// [`Subscriptions::receive_*`] registration methods from a single table — the enum, the list
+/// and the registration methods cannot drift apart.
 ///
-/// Commands and URLs are excluded: their subscriptions carry payloads ([`CommandSpec`],
-/// [`UrlScope`]) instead of a plain flag.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum EventKind {
-    /// Channel messages ([`MessageEvent`]).
-    Message,
-    /// Users joining channels ([`JoinEvent`]).
-    Join,
-    /// Users leaving channels ([`PartEvent`]).
-    Part,
-    /// Users quitting the network ([`QuitEvent`]).
-    Quit,
-    /// Nickname changes ([`NickEvent`]).
-    Nick,
-    /// Users kicked from channels ([`KickEvent`]).
-    Kick,
-    /// CTCP messages ([`CtcpEvent`]).
-    Ctcp,
-    /// Raw, unmodeled IRC commands ([`RawEvent`]).
-    Raw,
+/// Each entry pairs the `EventKind` variant with its `Subscriptions::receive_*` method and the
+/// doc fragments of both (the variant summary and "Registers interest in *…*.").
+///
+/// The per-kind `Plugin::handle_*` defaults in `zeta-plugin/src/plugin.rs` are deliberately
+/// *not* generated from this table: `#[async_trait]` expands before the trait body's macro
+/// invocations, so generated `async fn` defaults would not be desugared and would mismatch
+/// every `#[async_trait]`-generated impl.
+macro_rules! event_kind_flags {
+    ($(
+        $kind:ident($receive:ident, $kind_doc:literal, $receive_doc:literal $(,)?)
+    ),* $(,)?) => {
+        /// The kind of an event a plugin subscribes to with a plain flag — one per per-kind handler.
+        ///
+        /// Commands and URLs are excluded: their subscriptions carry payloads ([`CommandSpec`],
+        /// [`UrlScope`]) instead of a plain flag.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum EventKind {
+            $(
+                #[doc = $kind_doc]
+                $kind,
+            )*
+        }
+
+        impl EventKind {
+            /// Every kind, in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$kind,)*];
+        }
+
+        impl Subscriptions {
+            $(
+                #[doc = concat!("Registers interest in ", $receive_doc, ".")]
+                pub fn $receive(&mut self) -> &mut Self {
+                    self.receive(EventKind::$kind)
+                }
+            )*
+        }
+    };
 }
 
-impl EventKind {
-    /// Every kind, in declaration order.
-    pub const ALL: [Self; 8] = [
-        Self::Message,
-        Self::Join,
-        Self::Part,
-        Self::Quit,
-        Self::Nick,
-        Self::Kick,
-        Self::Ctcp,
-        Self::Raw,
-    ];
+event_kind_flags! {
+    Message(receive_message, "Channel messages ([`MessageEvent`]).",
+        "every channel message, whether or not it matches a registered command"),
+    Join(receive_join, "Users joining channels ([`JoinEvent`]).",
+        "users joining channels"),
+    Part(receive_part, "Users leaving channels ([`PartEvent`]).",
+        "users leaving channels"),
+    Quit(receive_quit, "Users quitting the network ([`QuitEvent`]).",
+        "users quitting the network"),
+    Nick(receive_nick, "Nickname changes ([`NickEvent`]).",
+        "nickname changes"),
+    Kick(receive_kick, "Users kicked from channels ([`KickEvent`]).",
+        "users kicked from channels"),
+    Ctcp(receive_ctcp, "CTCP messages ([`CtcpEvent`]).",
+        "CTCP messages"),
+    Raw(receive_raw, "Raw, unmodeled IRC commands ([`RawEvent`]).",
+        "raw, unmodeled IRC commands"),
 }
 
 /// The events a plugin registers interest in during initialization.
@@ -704,47 +690,8 @@ impl Subscriptions {
         self
     }
 
-    /// Registers interest in every channel message, whether or not it matches a registered
-    /// command.
-    pub fn receive_message(&mut self) -> &mut Self {
-        self.receive(EventKind::Message)
-    }
-
-    /// Registers interest in users joining channels.
-    pub fn receive_join(&mut self) -> &mut Self {
-        self.receive(EventKind::Join)
-    }
-
-    /// Registers interest in users leaving channels.
-    pub fn receive_part(&mut self) -> &mut Self {
-        self.receive(EventKind::Part)
-    }
-
-    /// Registers interest in users quitting the network.
-    pub fn receive_quit(&mut self) -> &mut Self {
-        self.receive(EventKind::Quit)
-    }
-
-    /// Registers interest in nickname changes.
-    pub fn receive_nick(&mut self) -> &mut Self {
-        self.receive(EventKind::Nick)
-    }
-
-    /// Registers interest in kicks.
-    pub fn receive_kick(&mut self) -> &mut Self {
-        self.receive(EventKind::Kick)
-    }
-
-    /// Registers interest in CTCP messages.
-    pub fn receive_ctcp(&mut self) -> &mut Self {
-        self.receive(EventKind::Ctcp)
-    }
-
-    /// Registers interest in raw, unmodeled IRC commands.
-    pub fn receive_raw(&mut self) -> &mut Self {
-        self.receive(EventKind::Raw)
-    }
-
+    // The public `receive_*` registration methods are generated together with the
+    // `EventKind` enum by `event_kind_flags!`.
     /// Adds `kind` to the set of event kinds the plugin receives.
     fn receive(&mut self, kind: EventKind) -> &mut Self {
         self.events.insert(kind);
