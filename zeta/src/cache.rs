@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
-use std::sync::{PoisonError, RwLock, RwLockReadGuard};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 /// A single-slot cache holding a value until its time-to-live expires.
@@ -25,6 +25,9 @@ pub struct TtlCache<T> {
     entry: RwLock<Option<Entry<T>>>,
     /// How long a cached value stays fresh.
     ttl: Duration,
+    /// The single-flight lock: concurrent misses refresh once, the tasks that wait for the
+    /// lock pick up the value the first refresh produced.
+    refreshing: tokio::sync::Mutex<()>,
 }
 
 /// A cached value with its absolute expiry time.
@@ -40,6 +43,7 @@ impl<T> TtlCache<T> {
         Self {
             entry: RwLock::new(None),
             ttl,
+            refreshing: tokio::sync::Mutex::const_new(()),
         }
     }
 
@@ -52,6 +56,7 @@ impl<T> TtlCache<T> {
                 expires_at: Instant::now() + ttl,
             })),
             ttl,
+            refreshing: tokio::sync::Mutex::const_new(()),
         }
     }
 
@@ -63,15 +68,14 @@ impl<T> TtlCache<T> {
     /// Poisoned locks are recovered from, mirroring how plugins read their caches: a panic in
     /// another task must not take the command handlers down.
     pub fn read<R>(&self, read: impl FnOnce(Option<&T>) -> R) -> R {
-        let guard: RwLockReadGuard<'_, Option<Entry<T>>> =
-            self.entry.read().unwrap_or_else(PoisonError::into_inner);
+        let guard = crate::sync::read(&self.entry);
 
         read(guard.as_ref().map(|entry| &entry.value))
     }
 
     /// Returns whether the cache holds a value that has not expired.
     fn is_fresh(&self) -> bool {
-        let guard = self.entry.read().unwrap_or_else(PoisonError::into_inner);
+        let guard = crate::sync::read(&self.entry);
 
         guard
             .as_ref()
@@ -87,7 +91,7 @@ impl<T> TtlCache<T> {
     where
         T: Clone,
     {
-        let guard = self.entry.read().unwrap_or_else(PoisonError::into_inner);
+        let guard = crate::sync::read(&self.entry);
 
         guard
             .as_ref()
@@ -101,6 +105,9 @@ impl<T> TtlCache<T> {
     /// triggers a refresh, whose result is cached and returned. Failures are returned without
     /// caching anything, leaving any stale value in place.
     ///
+    /// Concurrent misses refresh once: the first task refreshes while the others wait, and
+    /// pick up the refreshed value through the double-check afterwards.
+    ///
     /// # Errors
     ///
     /// Returns the error produced by `refresh` when the value could not be refreshed.
@@ -110,6 +117,12 @@ impl<T> TtlCache<T> {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<T, E>> + Send,
     {
+        if let Some(value) = self.get() {
+            return Ok(value);
+        }
+
+        let _flight = self.refreshing.lock().await;
+
         if let Some(value) = self.get() {
             return Ok(value);
         }
@@ -130,6 +143,9 @@ impl<T> TtlCache<T> {
     /// Unlike [`TtlCache::get_or_refresh`], the refreshed value is not returned and `T` needs
     /// no `Clone`; readers access it through [`TtlCache::read`] or [`TtlCache::get`].
     ///
+    /// Concurrent refresh attempts are single-flight: the first refreshes while the others
+    /// wait and return once it has populated the cache.
+    ///
     /// # Errors
     ///
     /// Returns the error produced by `refresh` when the value could not be refreshed.
@@ -139,6 +155,12 @@ impl<T> TtlCache<T> {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<T, E>> + Send,
     {
+        if self.is_fresh() {
+            return Ok(());
+        }
+
+        let _flight = self.refreshing.lock().await;
+
         if self.is_fresh() {
             return Ok(());
         }
@@ -157,6 +179,7 @@ impl<T> TtlCache<T> {
     ///
     /// Unlike [`TtlCache::get_or_refresh`], the refresh is unconditional — for callers that
     /// know the cached value is wrong (e.g. a credential that the server just rejected).
+    /// Concurrent force-refreshes are serialized.
     ///
     /// # Errors
     ///
@@ -167,6 +190,8 @@ impl<T> TtlCache<T> {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<T, E>> + Send,
     {
+        let _flight = self.refreshing.lock().await;
+
         let value = refresh().await?;
         self.replace(Entry {
             value: value.clone(),
@@ -178,7 +203,7 @@ impl<T> TtlCache<T> {
 
     /// Replaces the cached entry, tolerating a poisoned lock.
     fn replace(&self, entry: Entry<T>) {
-        *self.entry.write().unwrap_or_else(PoisonError::into_inner) = Some(entry);
+        *crate::sync::write(&self.entry) = Some(entry);
     }
 }
 
@@ -194,6 +219,9 @@ const DEFAULT_TTL_MAP_CAPACITY: usize = 256;
 pub struct TtlMap<K, V> {
     /// The cached entries, keyed by their lookup key.
     entries: RwLock<HashMap<K, Entry<Option<V>>>>,
+    /// Per-key single-flight locks: concurrent misses for the same key refresh once. Entries
+    /// are removed once they are uncontended, so the map does not grow with refreshed keys.
+    flights: tokio::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
     /// How long a cached value stays fresh.
     ttl: Duration,
     /// How long a cached negative result stays fresh.
@@ -212,6 +240,7 @@ where
     pub fn with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
         Self {
             entries: RwLock::new(HashMap::new()),
+            flights: tokio::sync::Mutex::new(HashMap::new()),
             ttl,
             negative_ttl,
             capacity,
@@ -244,8 +273,7 @@ where
     where
         V: Clone,
     {
-        let guard: RwLockReadGuard<'_, HashMap<K, Entry<Option<V>>>> =
-            self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        let guard = crate::sync::read(&self.entries);
 
         guard
             .get(key)
@@ -257,6 +285,9 @@ where
     ///
     /// A `Some` value is cached for the full TTL; a `None` (a negative result) is cached for the
     /// negative TTL, so repeated misses for the same key do not each hit the source.
+    ///
+    /// Concurrent misses for the same key refresh once: the first task refreshes while the
+    /// others wait, and pick up the refreshed entry through the double-check afterwards.
     ///
     /// # Errors
     ///
@@ -273,8 +304,35 @@ where
             return Ok(cached);
         }
 
+        let flight = {
+            let mut flights = self.flights.lock().await;
+
+            Arc::clone(flights.entry(key.clone()).or_default())
+        };
+        let flight_guard = flight.lock().await;
+
+        if let Some(cached) = self.peek(&key) {
+            return Ok(cached);
+        }
+
         let value = refresh().await?;
-        self.insert(key, value.clone());
+        self.insert(key.clone(), value.clone());
+
+        // Drop the flight entry once it is uncontended, so the flight map does not grow with
+        // every refreshed key; a waiter that already holds the clone keeps working, and the
+        // double-check at the top hands it the freshly inserted entry.
+        drop(flight_guard);
+
+        {
+            let mut flights = self.flights.lock().await;
+
+            if flights
+                .get(&key)
+                .is_some_and(|flight| flight.try_lock().is_ok())
+            {
+                flights.remove(&key);
+            }
+        }
 
         Ok(value)
     }
@@ -288,7 +346,7 @@ where
             expires_at: Instant::now() + ttl,
         };
 
-        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = crate::sync::write(&self.entries);
 
         if entries.len() >= self.capacity && !entries.contains_key(&key) {
             Self::evict(&mut entries, self.capacity);
@@ -350,6 +408,43 @@ mod ttl_map_tests {
         assert_eq!(first, Some(7));
         assert_eq!(second, Some(7));
         assert_eq!(refreshes, 1);
+        assert_eq!(cache.get(&"a".to_string()), Some(7));
+
+        // The uncontended flight entry is cleaned up afterwards.
+        assert!(cache.flights.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_misses_for_the_same_key_refresh_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cache = Arc::new(ttl_map(Duration::from_mins(1)));
+        let refreshes = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+
+        for _ in 0..8 {
+            let cache = Arc::clone(&cache);
+            let refreshes = Arc::clone(&refreshes);
+
+            handles.push(tokio::spawn(async move {
+                cache
+                    .get_or_refresh("a".to_string(), || async {
+                        refreshes.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+
+                        Ok::<_, ()>(Some(7))
+                    })
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), Some(7));
+        }
+
+        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
         assert_eq!(cache.get(&"a".to_string()), Some(7));
     }
 
@@ -528,8 +623,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_or_refresh_surfacing_errors_without_caching() {
-        let cache = cache_with(Duration::from_mins(1));
+    async fn concurrent_misses_refresh_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cache = Arc::new(cache_with(Duration::from_mins(1)));
+        let refreshes = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+
+        for _ in 0..8 {
+            let cache = Arc::clone(&cache);
+            let refreshes = Arc::clone(&refreshes);
+
+            handles.push(tokio::spawn(async move {
+                cache
+                    .get_or_refresh(|| async {
+                        refreshes.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+
+                        Ok::<_, ()>(7)
+                    })
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), 7);
+        }
+
+        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_surfacing_errors_without_caching() {        let cache = cache_with(Duration::from_mins(1));
 
         let error = cache
             .get_or_refresh(|| async { Err("denied") })

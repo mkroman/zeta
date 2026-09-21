@@ -711,19 +711,13 @@ mod tests {
             _: &Client,
             _: &MessageEvent,
         ) -> Result<(), Error> {
-            self.recording
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push("message");
+            crate::sync::lock(&self.recording).push("message");
 
             Ok(())
         }
 
         async fn shutdown(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
-            self.recording
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push("shutdown");
+            crate::sync::lock(&self.recording).push("shutdown");
 
             Ok(())
         }
@@ -798,9 +792,7 @@ channels = []
         let (_, handle) = task.into_handle();
         handle.await.expect("task should finish");
 
-        let log = recording
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let log = crate::sync::lock(&recording);
 
         assert_eq!(*log, ["message", "message", "shutdown"]);
     }

@@ -54,11 +54,16 @@ impl TokenCache {
     /// token is missing or within `EXPIRY_BUFFER` of expiring.
     ///
     /// `refresh` should perform the client-credentials grant request and return the token
-    /// endpoint's response.
+    /// endpoint's response. Concurrent misses request one token: the write guard is held across
+    /// the refresh, so the tasks that wait for it pick up the token the first refresh produced
+    /// through the double-check.
     ///
     /// # Errors
     ///
     /// Returns the error produced by `refresh` if it fails to obtain a new token.
+    // The write guard is deliberately held across the refresh — that is what serializes
+    // concurrent misses into a single token request.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn get<E, F, R>(&self, refresh: R) -> Result<String, E>
     where
         R: FnOnce() -> F,
@@ -70,10 +75,20 @@ impl TokenCache {
             return Ok(token.access_token.clone());
         }
 
+        let mut guard = self.token.write().await;
+
+        // Double-check and return the current token if another task refreshed it while this
+        // one waited for the write guard.
+        if let Some(token) = guard.as_ref()
+            && token.expires_at > Instant::now() + EXPIRY_BUFFER
+        {
+            return Ok(token.access_token.clone());
+        }
+
         let response = refresh().await?;
         let expires_at = Instant::now() + Duration::from_secs(response.expires_in);
 
-        *self.token.write().await = Some(CachedToken {
+        *guard = Some(CachedToken {
             access_token: response.access_token.clone(),
             expires_at,
         });
@@ -222,5 +237,42 @@ mod tests {
 
         assert_eq!(cache.get(refresh).await, Err("denied"));
         assert_eq!(cached_token(&cache).await, None);
+    }
+
+    #[tokio::test]
+    async fn concurrent_misses_request_one_token() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let cache = Arc::new(TokenCache::new());
+        let requests = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+
+        for _ in 0..8 {
+            let cache = Arc::clone(&cache);
+            let requests = Arc::clone(&requests);
+
+            handles.push(tokio::spawn(async move {
+                cache
+                    .get(|| async {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+
+                        Ok::<_, ()>(TokenResponse {
+                            access_token: "token".to_owned(),
+                            expires_in: 3600,
+                        })
+                    })
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), "token");
+        }
+
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 }

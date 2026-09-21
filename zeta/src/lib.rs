@@ -32,6 +32,8 @@ pub mod mirror;
 pub mod oauth;
 /// Plugin system: registry, event dispatching, and the bundled plugins
 pub mod plugin;
+/// Poisoning-recovery helpers for standard locks
+mod sync;
 /// URL helper utillities
 pub mod url;
 mod utils;

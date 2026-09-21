@@ -266,17 +266,13 @@ impl Mirror {
 
     /// Returns `false` if the media is already being mirrored, otherwise marks it as in-flight.
     fn mark_in_flight(&self, prefix: &str, id: &str) -> bool {
-        self.in_flight
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        crate::sync::lock(&self.in_flight)
             .insert((prefix.to_string(), id.to_string()))
     }
 
     /// Removes media from the in-flight set.
     fn clear_in_flight(&self, prefix: &str, id: &str) {
-        self.in_flight
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        crate::sync::lock(&self.in_flight)
             .remove(&(prefix.to_string(), id.to_string()));
     }
 

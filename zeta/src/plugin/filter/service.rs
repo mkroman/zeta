@@ -1,6 +1,6 @@
 //! Filter service, persisting filters in the database and keeping them indexed in memory.
 
-use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use tracing::{debug, instrument};
 use url::Url;
@@ -111,12 +111,12 @@ impl FilterService {
 
     /// Locks the index for reading, continuing on poisoning.
     fn lock_index(&self) -> RwLockReadGuard<'_, FilterIndex> {
-        self.index.read().unwrap_or_else(PoisonError::into_inner)
+        crate::sync::read(&self.index)
     }
 
     /// Locks the index for writing, continuing on poisoning.
     fn lock_index_mut(&self) -> RwLockWriteGuard<'_, FilterIndex> {
-        self.index.write().unwrap_or_else(PoisonError::into_inner)
+        crate::sync::write(&self.index)
     }
 }
 

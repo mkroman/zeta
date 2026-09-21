@@ -11,6 +11,8 @@ use crate::Error;
 use crate::Registry;
 use crate::config::Config;
 use crate::consts::SHUTDOWN_GRACE;
+use crate::plugin::dispatch::EventIndex;
+use crate::plugin::filtering::Filters;
 use crate::plugin::{Context, PluginTask};
 
 /// Returns the name of the first shutdown signal received by the process.
@@ -73,6 +75,86 @@ async fn drain_plugin_handles(handles: Vec<(String, JoinHandle<()>)>, grace: Dur
             }
         }
     }
+}
+
+/// Drives the client's outgoing sink independently of the dispatch loop.
+///
+/// The sink is normally driven by the `ClientStream`'s polling, which would leave a queued
+/// `QUIT` unflushed after the dispatch loop stops. Driving it separately writes sent messages
+/// to the socket as they are queued.
+///
+/// # Panics
+///
+/// Panics if the outgoing future is unavailable — only possible if `stream()` had already been
+/// called on the client.
+fn drive_outgoing(client: &mut Client) {
+    let outgoing = client
+        .outgoing()
+        .expect("the outgoing future is only available before the stream is taken");
+
+    tokio::spawn(async move {
+        if let Err(error) = outgoing.await {
+            warn!(%error, "the IRC connection write path failed");
+        }
+    });
+}
+
+/// Dispatches incoming IRC messages as events to the plugins that registered interest, until
+/// the stream ends.
+///
+/// # Errors
+///
+/// Returns any IRC protocol error that ends the stream.
+async fn dispatch_messages(
+    context: &Context,
+    stream: &mut irc::client::ClientStream,
+    index: &mut EventIndex,
+) -> Result<(), Error> {
+    while let Some(message) = stream.next().await.transpose()? {
+        debug!(payload = %message, "processing irc message");
+
+        let filters = Filters::from_context(context);
+
+        for stopped in index.dispatch(&filters, message) {
+            warn!(plugin = %stopped, "plugin task has stopped");
+
+            index.evict(&stopped);
+        }
+    }
+
+    Ok(())
+}
+
+/// Sends the configured `QUIT` message on shutdown and waits briefly for the outgoing task to
+/// flush it to the server.
+///
+/// `send_quit` only queues the message on an unbounded channel, written to the socket by the
+/// task spawned by [`drive_outgoing`]; the stream has already ended, so nothing is read back.
+async fn flush_quit(client: &Client, quitting: bool, quit_message: &str) {
+    if !quitting {
+        return;
+    }
+
+    if let Err(error) = client.send_quit(quit_message) {
+        warn!(%error, "failed to send the QUIT message");
+    }
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+}
+
+/// Exits the process immediately when a second shutdown signal arrives.
+///
+/// The signal handlers stay installed after the first signal is received, so a second one
+/// resolves here instead of terminating the process with the default handler.
+fn exit_on_second_signal() {
+    tokio::spawn(async move {
+        let signal = shutdown_signal().await;
+        let code = if signal == "SIGTERM" { 143 } else { 130 };
+
+        warn!(signal = %signal, "received a second shutdown signal; exiting now");
+
+        std::process::exit(code);
+    });
 }
 
 /// The main IRC bot struct that manages connection state and message handling.
@@ -154,65 +236,19 @@ impl Zeta {
 
         client.identify().map_err(Error::IrcRegistration)?;
 
-        // The outgoing sink is normally driven by the `ClientStream`'s polling, which would leave
-        // a queued `QUIT` unflushed after the dispatch loop stops. Drive it independently instead,
-        // so sent messages are written to the socket as they are queued.
-        let outgoing = client
-            .outgoing()
-            .expect("the outgoing future is only available before the stream is taken");
-        tokio::spawn(async move {
-            if let Err(error) = outgoing.await {
-                warn!(%error, "the IRC connection write path failed");
-            }
-        });
+        drive_outgoing(&mut client);
 
         let mut stream = client.stream()?;
-
-        let context = Arc::clone(&self.context);
         let client = Arc::new(client);
         let quit_message = self.config.irc.quit_message.clone();
 
         // Each plugin gets its own long-lived task with an unbounded mailbox, so a slow or
-        // failing plugin cannot block the IRC connection or the other plugins. The dispatcher
-        // holds the sending ends; dropping it — when the dispatch future ends — closes every
-        // mailbox at once, making the plugins drain and run their shutdown hooks.
-        let mut index = crate::plugin::dispatch::EventIndex::default();
-        let mut plugins = Vec::new();
-
-        for registered in self.registry.take_plugins() {
-            let name = registered.name;
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-
-            plugins.push(PluginTask::spawn(
-                name.clone(),
-                registered.plugin,
-                Arc::clone(&context),
-                Arc::clone(&client),
-                receiver,
-            ));
-            index.add(&name, &registered.subscriptions, sender);
-        }
+        // failing plugin cannot block the IRC connection or the other plugins.
+        let (mut index, plugins) = self.spawn_plugin_tasks(&client);
 
         // Dispatching incoming IRC messages as events to the plugins that registered interest,
         // until the stream ends or a shutdown signal arrives.
-        let dispatch = {
-            let stream = &mut stream;
-            async move {
-                while let Some(message) = stream.next().await.transpose()? {
-                    debug!(payload = %message, "processing irc message");
-
-                    let filters = crate::plugin::filtering::Filters::from_context(&context);
-
-                    for stopped in index.dispatch(&filters, message) {
-                        warn!(plugin = %stopped, "plugin task has stopped");
-
-                        index.evict(&stopped);
-                    }
-                }
-
-                Ok::<(), Error>(())
-            }
-        };
+        let dispatch = dispatch_messages(&self.context, &mut stream, &mut index);
 
         let mut quitting = false;
         let mut dispatch_error = None;
@@ -227,32 +263,12 @@ impl Zeta {
                 info!(signal = %signal, "shutting down");
                 quitting = true;
 
-                // The signal handlers stay installed after the first signal is received, so a
-                // second one resolves here instead of terminating the process. Re-arm: another
-                // signal during the grace period forces an immediate exit.
-                tokio::spawn(async move {
-                    let signal = shutdown_signal().await;
-                    let code = if signal == "SIGTERM" { 143 } else { 130 };
-
-                    warn!(signal = %signal, "received a second shutdown signal; exiting now");
-
-                    std::process::exit(code);
-                });
+                // Another signal during the grace period forces an immediate exit.
+                exit_on_second_signal();
             }
         }
 
-        if quitting
-            && let Err(error) = client.send_quit(&quit_message)
-        {
-            warn!(%error, "failed to send the QUIT message");
-        }
-
-        if quitting {
-            // `send_quit` only queues the message on an unbounded channel, written to the socket
-            // by a separate task. Wait briefly for it to flush the `QUIT` to the server before
-            // the process exits; the stream has already ended so nothing is read back.
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
+        flush_quit(&client, quitting, &quit_message).await;
 
         let handles = plugins
             .into_iter()
@@ -262,6 +278,32 @@ impl Zeta {
         drain_plugin_handles(handles, SHUTDOWN_GRACE).await;
 
         dispatch_error.map_or_else(|| Ok(()), Err)
+    }
+
+    /// Spawns a long-lived task per registered plugin and indexes its subscriptions.
+    ///
+    /// Returns the dispatch index — which holds the mailboxes' sending ends, so dropping it
+    /// closes every mailbox at once, making the plugins drain and run their shutdown hooks —
+    /// together with the spawned tasks.
+    fn spawn_plugin_tasks(&mut self, client: &Arc<Client>) -> (EventIndex, Vec<PluginTask>) {
+        let mut index = EventIndex::default();
+        let mut plugins = Vec::new();
+
+        for registered in self.registry.take_plugins() {
+            let name = registered.name;
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+
+            plugins.push(PluginTask::spawn(
+                name.clone(),
+                registered.plugin,
+                Arc::clone(&self.context),
+                Arc::clone(client),
+                receiver,
+            ));
+            index.add(&name, &registered.subscriptions, sender);
+        }
+
+        (index, plugins)
     }
 }
 
