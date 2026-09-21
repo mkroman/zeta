@@ -69,9 +69,6 @@ pub enum Error {
     /// The Spotify API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
-    /// The token response could not be deserialized.
-    #[error("json error: {0}")]
-    Json(#[from] serde_json::Error),
 }
 
 #[derive(Deserialize)]
@@ -205,14 +202,16 @@ impl Spotify {
                 let creds = format!("{}:{}", self.client_id, self.client_secret);
                 let encoded = BASE64_STANDARD.encode(creds);
 
-                self.client
+                let response = self
+                    .client
                     .post(AUTH_URL)
                     .header(AUTHORIZATION, format!("Basic {encoded}"))
                     .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
                     .form(&[("grant_type", "client_credentials")])
                     .send()
-                    .await?
-                    .json::<TokenResponse>()
+                    .await?;
+
+                http::parse_response::<TokenResponse>(response)
                     .await
                     .map_err(Error::from)
             })

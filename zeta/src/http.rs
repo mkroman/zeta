@@ -44,7 +44,7 @@ pub mod json {
 pub enum ApiError {
     /// The request could not be sent, or the response body could not be read.
     #[error("request error: {0}")]
-    Request(reqwest::Error),
+    Request(#[from] reqwest::Error),
     /// The server responded with a non-success status code, e.g. `404 Not Found`.
     #[error("{status}")]
     Status {
@@ -57,12 +57,6 @@ pub enum ApiError {
     /// The response body could not be parsed as JSON.
     #[error("could not deserialize response: {0}")]
     Deserialize(json::Error),
-}
-
-impl From<reqwest::Error> for ApiError {
-    fn from(error: reqwest::Error) -> Self {
-        Self::Request(error)
-    }
 }
 
 /// Sends a request built by [`reqwest::Client::get`] (or a sibling builder method) and parses

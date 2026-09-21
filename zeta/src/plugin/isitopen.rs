@@ -58,15 +58,15 @@ pub struct IsItOpen {
 /// Errors that can occur during plugin execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    /// The request failed, or the API response was unusable.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     /// No matching place was found, or the place has no opening hours.
     #[error("place not found")]
     NotFound,
     /// The Google Maps API returned an error response.
     #[error("api error: {0}")]
-    Api(String),
+    Places(String),
 }
 
 /// Response from the Text Search API.
@@ -309,11 +309,17 @@ impl IsItOpen {
         let search_url = format!("{API_BASE_URL}/maps/api/place/textsearch/json");
         let params = [("query", query), ("key", &self.api_key)];
 
-        let response = self.client.get(&search_url).query(&params).send().await?;
-        let search_res: PlaceSearchResponse = response.json().await?;
+        let response = self
+            .client
+            .get(&search_url)
+            .query(&params)
+            .send()
+            .await
+            .map_err(http::ApiError::Request)?;
+        let search_res: PlaceSearchResponse = http::parse_response(response).await?;
 
         if search_res.status != "OK" && search_res.status != "ZERO_RESULTS" {
-            return Err(Error::Api(search_res.status));
+            return Err(Error::Places(search_res.status));
         }
 
         let place_id = search_res
@@ -333,11 +339,12 @@ impl IsItOpen {
             .get(&details_url)
             .query(&details_params)
             .send()
-            .await?;
-        let details_res: PlaceDetailsResponse = response.json().await?;
+            .await
+            .map_err(http::ApiError::Request)?;
+        let details_res: PlaceDetailsResponse = http::parse_response(response).await?;
 
         if details_res.status != "OK" {
-            return Err(Error::Api(details_res.status));
+            return Err(Error::Places(details_res.status));
         }
 
         Ok(details_res.result)

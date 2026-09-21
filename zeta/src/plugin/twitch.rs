@@ -170,7 +170,7 @@ impl Twitch {
                 ];
 
                 let response = self.client.post(AUTH_URL).form(&params).send().await?;
-                let auth: TokenResponse = response.error_for_status()?.json().await?;
+                let auth: TokenResponse = http::parse_response(response).await?;
 
                 Ok(auth)
             })
