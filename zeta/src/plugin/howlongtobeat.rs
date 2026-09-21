@@ -34,7 +34,7 @@ const REFERER_URL: &str = "https://howlongtobeat.com/";
 /// The credentials are valid until the API starts rejecting them with a `403 Forbidden`, which
 /// triggers an unconditional refresh, so the TTL only bounds how long outdated credentials can
 /// survive without triggering the rejection path.
-const AUTH_TTL: Duration = Duration::from_secs(60 * 60);
+const AUTH_TTL: Duration = Duration::from_hours(1);
 
 /// The `.hltb` command.
 const HLTB: CommandSpec = CommandSpec::new(".hltb", "Look up a game's completion times");

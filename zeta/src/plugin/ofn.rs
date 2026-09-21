@@ -24,12 +24,12 @@ use url::Url;
 use crate::{
     duration::TimeInWords,
     plugin::{
-        ofn::model::{InsertYouTubeRecord, YouTubeRecord},
+        ofn::model::YouTubeRecord,
         prelude::*,
         youtube::{self, UrlKind},
     },
 };
-use model::{InsertUrlRecord, UrlRecord};
+use model::UrlRecord;
 
 /// The `.ofn` command.
 const OFN: CommandSpec = CommandSpec::with_args::<Opts>(
@@ -85,7 +85,7 @@ impl Ofn {
             debug!(%video_id, "inserting youtube record");
 
             return match self.insert_youtube_video(ctx, origin, &video_id).await {
-                Ok(_) => {
+                Ok(()) => {
                     debug!(?origin, %video_id, "inserted youtube record");
 
                     Ok(Recorded::Inserted)
@@ -103,7 +103,7 @@ impl Ofn {
         }
 
         match self.insert_url(ctx, origin, url).await {
-            Ok(_) => {
+            Ok(()) => {
                 debug!(?origin, ?url, "inserted url record");
 
                 Ok(Recorded::Inserted)
@@ -184,8 +184,6 @@ impl Ofn {
     }
 
     /// Inserts the given `url` into the database with the associated `origin`.
-    ///
-    /// Returns the [`InsertUrlRecord`] used for the operation if the insert was successful.
     #[tracing::instrument(
         skip_all,
         err,
@@ -196,25 +194,8 @@ impl Ofn {
         ctx: &Context,
         origin: &ChannelMessageOrigin<'_>,
         url: &Url,
-    ) -> Result<InsertUrlRecord, Error> {
-        let host = url
-            .host_str()
-            .map(String::from)
-            .ok_or_else(|| Error::InsertUrlNoHost)?;
-
-        let insert = InsertUrlRecord {
-            scheme: url.scheme().to_owned(),
-            host,
-            port: url.port_or_known_default().map(i32::from),
-            path: url.path().to_owned(),
-            query: url.query().map(String::from),
-            fragment: url.fragment().map(String::from),
-            nickname: origin.nickname.to_owned(),
-            username: origin.username.to_owned(),
-            hostname: origin.hostname.to_owned(),
-            channel: origin.channel.to_owned(),
-            network_id: origin.network.to_owned(),
-        };
+    ) -> Result<(), Error> {
+        let host = url.host_str().ok_or_else(|| Error::InsertUrlNoHost)?;
 
         debug!("inserting url into database");
 
@@ -233,43 +214,32 @@ impl Ofn {
                 network_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id",
         )
-        .bind(&insert.scheme)
-        .bind(&insert.host)
-        .bind(insert.port)
-        .bind(&insert.path)
-        .bind(&insert.query)
-        .bind(&insert.fragment)
-        .bind(&insert.nickname)
-        .bind(&insert.username)
-        .bind(&insert.hostname)
-        .bind(&insert.channel)
-        .bind(&insert.network_id)
+        .bind(url.scheme())
+        .bind(host)
+        .bind(url.port_or_known_default().map(i32::from))
+        .bind(url.path())
+        .bind(url.query())
+        .bind(url.fragment())
+        .bind(origin.nickname)
+        .bind(origin.username)
+        .bind(origin.hostname)
+        .bind(origin.channel)
+        .bind(origin.network)
         .fetch_one(&ctx.db)
         .await
         .map_err(Error::InsertUrl)?;
 
-        Ok(insert)
+        Ok(())
     }
 
     /// Inserts the given YouTube `video_id` into the database with the associated `origin`.
-    ///
-    /// Returns the [`InsertYouTubeRecord`] used for the operation if the insert was succesful.
     #[tracing::instrument(skip(self, ctx, origin), err)]
     async fn insert_youtube_video(
         &self,
         ctx: &Context,
         origin: &ChannelMessageOrigin<'_>,
         video_id: &str,
-    ) -> Result<InsertYouTubeRecord, Error> {
-        let insert = InsertYouTubeRecord {
-            video_id: video_id.to_string(),
-            nickname: origin.nickname.to_owned(),
-            username: origin.username.to_owned(),
-            hostname: origin.hostname.to_owned(),
-            channel: origin.channel.to_owned(),
-            network_id: origin.network.to_owned(),
-        };
-
+    ) -> Result<(), Error> {
         debug!("inserting youtube video into database");
 
         sqlx::query(
@@ -282,17 +252,17 @@ impl Ofn {
                 network_id
             ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         )
-        .bind(&insert.video_id)
-        .bind(&insert.nickname)
-        .bind(&insert.username)
-        .bind(&insert.hostname)
-        .bind(&insert.channel)
-        .bind(&insert.network_id)
+        .bind(video_id)
+        .bind(origin.nickname)
+        .bind(origin.username)
+        .bind(origin.hostname)
+        .bind(origin.channel)
+        .bind(origin.network)
         .fetch_one(&ctx.db)
         .await
         .map_err(Error::InsertUrl)?;
 
-        Ok(insert)
+        Ok(())
     }
 
     /// Returns statistics about the number of rows in the database.

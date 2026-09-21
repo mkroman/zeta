@@ -28,12 +28,9 @@ pub struct PornHub {
 /// Errors that can occur when interacting with the PornHub API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
-    /// The API response could not be deserialized.
-    #[error("could not deserialize response: {0}")]
-    Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
+    /// The request failed, or the response could not be handled.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     /// The requested video does not exist.
     #[error("resource not found")]
     NotFound,
@@ -180,10 +177,15 @@ impl PornHub {
         )
         .map_err(|_| Error::InvalidResponse)?;
 
-        let response = self.client.get(url).send().await.map_err(Error::Request)?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(http::ApiError::Request)?;
         debug!("request went ok, parsing response");
-        let text = response.text().await.map_err(Error::Request)?;
-        let json: ApiResponse = http::json::from_str(&text).map_err(Error::Deserialize)?;
+        let text = response.text().await.map_err(http::ApiError::Request)?;
+        let json: ApiResponse = http::json::from_str(&text).map_err(http::ApiError::Deserialize)?;
 
         match json {
             ApiResponse::Error { code, .. } => {
