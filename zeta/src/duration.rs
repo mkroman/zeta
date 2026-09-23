@@ -1,5 +1,8 @@
 //! Helpers for formatting and parsing points in time and durations.
-#![allow(unused)]
+//
+// Every helper here is reached only from feature-gated plugins and their tests, so a build
+// without those plugins has no in-crate callers for any of them.
+#![allow(dead_code)]
 
 use std::fmt::Write;
 use std::time::Duration;
