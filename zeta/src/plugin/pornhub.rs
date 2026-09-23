@@ -182,9 +182,9 @@ impl PornHub {
             .get(url)
             .send()
             .await
-            .map_err(http::ApiError::Request)?;
+            .map_err(http::ApiError::from)?;
         debug!("request went ok, parsing response");
-        let text = response.text().await.map_err(http::ApiError::Request)?;
+        let text = response.text().await.map_err(http::ApiError::from)?;
         let json: ApiResponse = http::json::from_str(&text).map_err(http::ApiError::Deserialize)?;
 
         match json {

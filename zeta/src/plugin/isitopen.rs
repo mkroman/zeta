@@ -315,7 +315,7 @@ impl IsItOpen {
             .query(&params)
             .send()
             .await
-            .map_err(http::ApiError::Request)?;
+            .map_err(http::ApiError::from)?;
         let search_res: PlaceSearchResponse = http::parse_response(response).await?;
 
         if search_res.status != "OK" && search_res.status != "ZERO_RESULTS" {
@@ -340,7 +340,7 @@ impl IsItOpen {
             .query(&details_params)
             .send()
             .await
-            .map_err(http::ApiError::Request)?;
+            .map_err(http::ApiError::from)?;
         let details_res: PlaceDetailsResponse = http::parse_response(response).await?;
 
         if details_res.status != "OK" {

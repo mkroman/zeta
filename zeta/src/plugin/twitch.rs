@@ -173,7 +173,7 @@ impl Twitch {
             .query(query)
             .send()
             .await
-            .map_err(http::ApiError::Request)?;
+            .map_err(http::ApiError::from)?;
 
         http::parse_response(response).await.map_err(Error::from)
     }

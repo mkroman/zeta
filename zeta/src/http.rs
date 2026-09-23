@@ -47,8 +47,12 @@ pub mod json {
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
     /// The request could not be sent, or the response body could not be read.
+    ///
+    /// Built through [`From<reqwest::Error>`], which strips the URL: these APIs carry their key
+    /// in the query string, and the error reaches `Display` (and `Debug`) in plugin and
+    /// dispatcher logs.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[source] reqwest::Error),
     /// The server responded with a non-success status code, e.g. `404 Not Found`.
     #[error("{status}")]
     Status {
@@ -61,6 +65,14 @@ pub enum ApiError {
     /// The response body could not be parsed as JSON.
     #[error("could not deserialize response: {0}")]
     Deserialize(json::Error),
+}
+
+impl From<reqwest::Error> for ApiError {
+    /// Strips the URL from `error` before wrapping it, so no logged error can carry a query
+    /// string with a credential in it.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 /// Returns `url` with every query parameter value emptied, keeping the parameter names.
@@ -138,7 +150,7 @@ pub async fn parse_response<T: DeserializeOwned>(
             );
         }
 
-        let body = response.text().await.map_err(ApiError::Request)?;
+        let body = response.text().await.map_err(ApiError::from)?;
 
         return Err(ApiError::Status { status, body });
     }
@@ -151,7 +163,7 @@ pub async fn parse_response<T: DeserializeOwned>(
         "http response received",
     );
 
-    let text = response.text().await.map_err(ApiError::Request)?;
+    let text = response.text().await.map_err(ApiError::from)?;
 
     json::from_str(&text).map_err(ApiError::Deserialize)
 }
@@ -300,5 +312,28 @@ mod tests {
 
             assert_eq!(redact_url(&url), href);
         }
+    }
+
+    #[tokio::test]
+    async fn request_errors_never_carry_the_url() {
+        // Bind and drop a listener, so the connection is refused deterministically while the
+        // request still carries a credential-looking query.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("address");
+        drop(listener);
+
+        let error = reqwest::Client::new()
+            .get(format!("http://{address}/?key=secret"))
+            .send()
+            .await
+            .expect_err("nothing listens on that address");
+
+        // Sanity: reqwest attaches the request URL to the error — stripping it is on us.
+        assert!(error.url().is_some(), "reqwest attaches the request url");
+
+        let error = ApiError::from(error);
+
+        assert!(!error.to_string().contains("secret"), "{error}");
+        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
     }
 }
