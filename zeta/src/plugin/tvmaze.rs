@@ -14,7 +14,6 @@ use tracing::{debug, instrument};
 use crate::{
     config::HttpConfig,
     duration::TimeInWords,
-    error::RequestError,
     http,
     plugin::prelude::*,
     url::redact_url,
@@ -32,12 +31,6 @@ pub enum Error {
     /// No show matches the search query.
     #[error("resource not found")]
     NotFound,
-}
-
-impl From<RequestError> for Error {
-    fn from(error: RequestError) -> Self {
-        Self::Api(error.into())
-    }
 }
 
 /// The `.next` command.
@@ -173,8 +166,7 @@ impl Tvmaze {
             "requesting single search for show: {name}"
         );
 
-        let response = http::send(self.client.get(url)).await?;
-        let show = http::parse_response_or_404(response, Error::NotFound).await?;
+        let show = http::get_json_or_404(self.client.get(url), Error::NotFound).await?;
 
         debug!(?show, "finished parsing show");
 
@@ -188,18 +180,12 @@ impl Tvmaze {
         channel: &str,
         client: &Client,
     ) -> Result<(), ZetaError> {
-        match self.single_search(name).await {
-            Ok(show) => {
-                let message = Self::format_show_message(&show);
+        let message = match self.single_search(name).await {
+            Ok(show) => Self::format_show_message(&show),
+            Err(err) => Self::format_error_message(&err),
+        };
 
-                client.send_privmsg(channel, message)?;
-            }
-            Err(err) => {
-                let error_message = Self::format_error_message(&err);
-
-                client.send_privmsg(channel, &error_message)?;
-            }
-        }
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }

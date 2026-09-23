@@ -242,8 +242,7 @@ impl GeoIp {
             ("format", "json"),
         ];
         let request = self.client.get(BASE_URL).query(&params);
-        let response = http::send(request).await.map_err(http::ApiError::from)?;
-        let info: IpInfo = http::parse_response(response).await
+        let info: IpInfo = http::get_json(request).await
             // `parse_response` already logs the status of a failed response; keeping the
             // looked-up name at debug avoids logging one failure three times over.
             .inspect_err(|error| debug!(%name, %error, "error when querying for geoip"))?;

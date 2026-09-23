@@ -57,12 +57,7 @@ pub struct RustPlayground {
 }
 
 /// Errors that can occur while evaluating code on the Rust Playground.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// The playground returned an unusable response.
-    #[error(transparent)]
-    Api(#[from] http::ApiError),
-}
+pub type Error = http::ApiError;
 
 /// The request payload sent to the Rust Playground.
 #[derive(Serialize)]
@@ -111,20 +106,16 @@ impl Plugin<Context> for RustPlayground {
         let channel = command.channel();
         let expr = command.args();
 
-        // Early return if input is empty
-        if expr.trim().is_empty() {
-            client.send_privmsg(channel, reply("Rust Playground", "Usage: .rs\x0f <expr>"))?;
-            return Ok(());
-        }
-
-        match self.evaluate(expr).await {
-            Ok(output) => {
-                client.send_privmsg(channel, reply("Rust Playground", &output))?;
+        let message = if expr.trim().is_empty() {
+            reply("Rust Playground", "Usage: .rs\x0f <expr>")
+        } else {
+            match self.evaluate(expr).await {
+                Ok(output) => reply("Rust Playground", &output),
+                Err(e) => reply("Rust Playground", e),
             }
-                Err(e) => {
-                    client.send_privmsg(channel, reply("Rust Playground", e))?;
-                }
-        }
+        };
+
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }
@@ -148,11 +139,8 @@ impl RustPlayground {
 
         debug!("sending code to rust playground");
 
-        let response = http::send(self.client.post(BASE_URL).json(&request))
-            .await
-            .map_err(http::ApiError::from)?;
-
-        let result: ExecuteResponse = http::parse_response(response).await?;
+        let result: ExecuteResponse =
+            http::get_json(self.client.post(BASE_URL).json(&request)).await?;
 
         if result.success {
             let output = sanitize_output(&result.stdout);

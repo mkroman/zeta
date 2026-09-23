@@ -145,25 +145,22 @@ impl KagiPlugin {
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Result<Vec<(String, String)>, kagi::Error>>,
     {
-        if query.trim().is_empty() {
-            client.send_privmsg(channel, notice(usage))?;
-
-            return Ok(());
-        }
-
-        match search(query.to_string()).await {
-            Ok(results) => {
-                if let Some((title, url)) = results.first() {
-                    client.send_privmsg(channel, reply("Kagi", format!("{title} - {url}")))?;
-                } else {
-                    client.send_privmsg(channel, notice("No results"))?;
+        let message = if query.trim().is_empty() {
+            notice(usage)
+        } else {
+            match search(query.to_string()).await {
+                Ok(results) => results.first().map_or_else(
+                    || notice("No results"),
+                    |(title, url)| reply("Kagi", format!("{title} - {url}")),
+                ),
+                Err(err) => {
+                    warn!(?err, "kagi search failed");
+                    notice(err)
                 }
             }
-            Err(err) => {
-                warn!(?err, "kagi search failed");
-                client.send_privmsg(channel, notice(err))?;
-            }
-        }
+        };
+
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }

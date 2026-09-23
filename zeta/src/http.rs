@@ -242,6 +242,41 @@ pub async fn parse_response_or_404<T: DeserializeOwned, E: From<ApiError>>(
     }
 }
 
+/// Sends `request` and parses the JSON body of the successful response into `T`.
+///
+/// Combines [`send`] and [`parse_response`]: a failed send is logged once by [`send`] and
+/// reported as [`ApiError::Request`], so callers write one statement instead of two.
+///
+/// # Errors
+///
+/// Returns an [`ApiError`] if the request fails, the response status is not a success, or the
+/// body cannot be parsed as JSON.
+#[cfg(feature = "http")]
+pub async fn get_json<T: DeserializeOwned>(
+    request: reqwest::RequestBuilder,
+) -> Result<T, ApiError> {
+    let response = send(request).await?;
+
+    parse_response(response).await
+}
+
+/// Sends `request` and parses the JSON body like [`get_json`], mapping a `404` status to
+/// `not_found`.
+///
+/// # Errors
+///
+/// Returns `not_found` if the response status is `404 Not Found`; any other failure is
+/// converted into `E`.
+#[cfg(feature = "http")]
+pub async fn get_json_or_404<T: DeserializeOwned, E: From<ApiError>>(
+    request: reqwest::RequestBuilder,
+    not_found: E,
+) -> Result<T, E> {
+    let response = send(request).await.map_err(|error| E::from(error.into()))?;
+
+    parse_response_or_404(response, not_found).await
+}
+
 /// Returns a default HTTP client configured by [`HttpConfig`].
 ///
 /// # Panics

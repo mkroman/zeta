@@ -105,28 +105,16 @@ impl Plugin<Context> for NotificationPlugin {
             message: message.to_owned(),
         };
 
-        match self.service.create(notification).await {
-            Ok(_) => {
-                client.send_privmsg(channel, notice("The notification has been stored."))?;
-            }
-            Err(Error::TooManyPending(max)) => {
-                client.send_privmsg(
-                    channel,
-                    reply(
-                        "Notification",
-                        format!(
-                            "{target} already has {max} pending notifications in this channel"
-                        ),
-                    ),
-                )?;
-            }
-            Err(_) => {
-                client.send_privmsg(
-                    channel,
-                    reply("Notification", "could not store the notification"),
-                )?;
-            }
-        }
+        let message = match self.service.create(notification).await {
+            Ok(_) => notice("The notification has been stored."),
+            Err(Error::TooManyPending(max)) => reply(
+                "Notification",
+                format!("{target} already has {max} pending notifications in this channel"),
+            ),
+            Err(_) => reply("Notification", "could not store the notification"),
+        };
+
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }

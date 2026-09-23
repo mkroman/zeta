@@ -278,25 +278,22 @@ impl IsItOpen {
         }
 
         if let Some(place_name) = place_name {
-            match self.find_place(&place_name).await {
-                Ok(place) => {
-                    let message = match action {
-                        QueryAction::OpeningTime => Self::format_opening_time(&place, nick),
-                        QueryAction::ClosingTime => Self::format_closing_time(&place, nick),
-                        QueryAction::IsOpen => Self::format_is_open(&place, nick),
-                        QueryAction::IsClosed => Self::format_is_closed(&place, nick),
-                        QueryAction::None => return Ok(()),
-                    };
-                    client.send_privmsg(channel, &message)?;
-                }
-                Err(Error::NotFound) => {
-                    client.send_privmsg(channel, notice("place not found"))?;
-                }
+            let message = match self.find_place(&place_name).await {
+                Ok(place) => match action {
+                    QueryAction::OpeningTime => Self::format_opening_time(&place, nick),
+                    QueryAction::ClosingTime => Self::format_closing_time(&place, nick),
+                    QueryAction::IsOpen => Self::format_is_open(&place, nick),
+                    QueryAction::IsClosed => Self::format_is_closed(&place, nick),
+                    QueryAction::None => return Ok(()),
+                },
+                Err(Error::NotFound) => notice("place not found"),
                 Err(e) => {
                     warn!(?e, "isitopen error");
-                    client.send_privmsg(channel, notice(e))?;
+                    notice(e)
                 }
-            }
+            };
+
+            client.send_privmsg(channel, message)?;
         }
 
         Ok(())
@@ -309,10 +306,8 @@ impl IsItOpen {
         let search_url = format!("{API_BASE_URL}/maps/api/place/textsearch/json");
         let params = [("query", query), ("key", &self.api_key)];
 
-        let response = http::send(self.client.get(&search_url).query(&params))
-            .await
-            .map_err(http::ApiError::from)?;
-        let search_res: PlaceSearchResponse = http::parse_response(response).await?;
+        let search_res: PlaceSearchResponse =
+            http::get_json(self.client.get(&search_url).query(&params)).await?;
 
         if search_res.status != "OK" && search_res.status != "ZERO_RESULTS" {
             return Err(Error::Places(search_res.status));
@@ -330,10 +325,8 @@ impl IsItOpen {
         let details_url = format!("{API_BASE_URL}/maps/api/place/details/json");
         let details_params = [("placeid", &place_id), ("key", &self.api_key)];
 
-        let response = http::send(self.client.get(&details_url).query(&details_params))
-            .await
-            .map_err(http::ApiError::from)?;
-        let details_res: PlaceDetailsResponse = http::parse_response(response).await?;
+        let details_res: PlaceDetailsResponse =
+            http::get_json(self.client.get(&details_url).query(&details_params)).await?;
 
         if details_res.status != "OK" {
             return Err(Error::Places(details_res.status));

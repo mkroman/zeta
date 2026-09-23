@@ -221,18 +221,16 @@ impl Plugin<Context> for OpenWeatherMap {
             args.trim()
         };
 
-        match self.fetch_weather(location).await {
-            Ok(weather) => {
-                client.send_privmsg(channel, format_weather(&weather, self.units))?;
-            }
-            Err(Error::LocationNotFound) => {
-                client.send_privmsg(channel, notice("Location not found"))?;
-            }
+        let message = match self.fetch_weather(location).await {
+            Ok(weather) => format_weather(&weather, self.units),
+            Err(Error::LocationNotFound) => notice("Location not found"),
             Err(e) => {
                 warn!(error = ?e, "openweathermap error");
-                client.send_privmsg(channel, notice(e))?;
+                notice(e)
             }
-        }
+        };
+
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }
@@ -255,9 +253,7 @@ impl OpenWeatherMap {
         let url = format!("{API_BASE_URL}/geo/1.0/direct");
         let params = [("q", query), ("limit", "1"), ("appid", &self.app_id)];
 
-        let response = http::send(self.client.get(&url).query(&params)).await?;
-
-        let results: Vec<GeocodingResult> = http::parse_response(response)
+        let results: Vec<GeocodingResult> = http::get_json(self.client.get(&url).query(&params))
             .await
             .map_err(|error| contextual_api_error("geocoding failed", error))?;
         results.into_iter().next().ok_or(Error::LocationNotFound)
@@ -280,9 +276,7 @@ impl OpenWeatherMap {
             params.push(("lang", language));
         }
 
-        let response = http::send(self.client.get(&url).query(&params)).await?;
-
-        http::parse_response(response)
+        http::get_json(self.client.get(&url).query(&params))
             .await
             .map_err(|error| contextual_api_error("weather fetch failed", error))
     }
