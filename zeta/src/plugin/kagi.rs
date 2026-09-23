@@ -10,6 +10,7 @@
 //! the `language` setting). A missing token fails plugin initialization and the plugin is
 //! skipped at startup; the HTTP timeout and user agent come from the shared `[http]` settings.
 
+use std::future::Future;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -91,8 +92,46 @@ impl Plugin<Context> for KagiPlugin {
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         match command.spec {
-            IMAGES => return self.handle_images(client, command.channel(), command.args()).await,
-            KAGI => return self.handle_search(client, command.channel(), command.args()).await,
+            KAGI => {
+                let search = |query: String| async move {
+                    self.client.search(&query).await.map(|results| {
+                        results
+                            .into_iter()
+                            .map(|result| (result.title, result.url))
+                            .collect()
+                    })
+                };
+
+                return self
+                    .handle_lookup(
+                        client,
+                        command.channel(),
+                        command.args(),
+                        "Usage: .g\x0f <query>",
+                        search,
+                    )
+                    .await;
+            }
+            IMAGES => {
+                let search = |query: String| async move {
+                    self.client.images(&query).await.map(|results| {
+                        results
+                            .into_iter()
+                            .map(|result| (result.title, result.image_url))
+                            .collect()
+                    })
+                };
+
+                return self
+                    .handle_lookup(
+                        client,
+                        command.channel(),
+                        command.args(),
+                        "Usage: .gis\x0f <query>",
+                        search,
+                    )
+                    .await;
+            }
             _ => {}
         }
 
@@ -101,65 +140,38 @@ impl Plugin<Context> for KagiPlugin {
 }
 
 impl KagiPlugin {
-    /// Handles the `.g` command by linking the top search result for the query.
-    async fn handle_search(
+    /// Handles the `.g` and `.gis` commands by linking the top result for the query.
+    ///
+    /// `search` runs the query and yields the results as `(title, url)` pairs; only the top
+    /// result is linked.
+    async fn handle_lookup<F, Fut>(
         &self,
         client: &Client,
         channel: &str,
         query: &str,
-    ) -> Result<(), ZetaError> {
+        usage: &str,
+        search: F,
+    ) -> Result<(), ZetaError>
+    where
+        F: FnOnce(String) -> Fut,
+        Fut: Future<Output = Result<Vec<(String, String)>, kagi::Error>>,
+    {
         if query.trim().is_empty() {
-            client.send_privmsg(channel, notice("Usage: .g\x0f <query>"))?;
+            client.send_privmsg(channel, notice(usage))?;
 
             return Ok(());
         }
 
-        match self.client.search(query).await {
+        match search(query.to_string()).await {
             Ok(results) => {
-                if let Some(result) = results.first() {
-                    let title = &result.title;
-                    let url = &result.url;
-
-                    client.send_privmsg(channel, notice(format!("{title} - {url}")))?;
-                } else {
-                    client.send_privmsg(channel, notice("No results"))?;
-                }
-            }
-            Err(err) => {
-                warn!(?err, "kagi search failed");
-                client.send_privmsg(channel, notice(err))?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Handles the `.gis` command by linking the first image result for the query.
-    async fn handle_images(
-        &self,
-        client: &Client,
-        channel: &str,
-        query: &str,
-    ) -> Result<(), ZetaError> {
-        if query.trim().is_empty() {
-            client.send_privmsg(channel, notice("Usage: .gis\x0f <query>"))?;
-
-            return Ok(());
-        }
-
-        match self.client.images(query).await {
-            Ok(results) => {
-                if let Some(result) = results.first() {
-                    let title = &result.title;
-                    let url = &result.image_url;
-
+                if let Some((title, url)) = results.first() {
                     client.send_privmsg(channel, reply("Kagi", format!("{title} - {url}")))?;
                 } else {
                     client.send_privmsg(channel, notice("No results"))?;
                 }
             }
             Err(err) => {
-                warn!(?err, "kagi image search failed");
+                warn!(?err, "kagi search failed");
                 client.send_privmsg(channel, notice(err))?;
             }
         }

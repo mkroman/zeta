@@ -250,33 +250,14 @@ impl Reddit {
         channel: &str,
         client: &Client,
     ) {
-        let Some(mirror) = &self.mirror else {
-            return;
-        };
-
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
         let Some(url) = submission.video_url() else {
             return;
         };
 
-        let sender = client.sender();
-
-        let on_mirrored = {
-            let channel = channel.to_string();
-            move |link: String| {
-                let _ = sender.send_privmsg(&channel, notice(link));
-            }
-        };
-
-        match mirror.ensure_mirrored(url, id, on_mirrored).await {
-            Ok(Some(link)) => {
-                let _ = client.send_privmsg(channel, notice(link));
-            }
-            Ok(None) => {}
-            Err(err) => {
-                error!(%id, error = %err, "could not check if the video is already mirrored");
-            }
+        if let Some(mirror) = &self.mirror {
+            mirror.ensure_mirrored_and_reply(url, id, channel, client).await;
         }
     }
 }

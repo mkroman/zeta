@@ -211,6 +211,10 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
         Ok(())
     }
 
+    // The per-kind `handle_message`..`handle_raw` defaults below stay hand-written: they
+    // cannot be generated from the event kind table, because `#[async_trait]` expands before
+    // the trait body's macro invocations — the generated `async fn`s would never be desugared
+    // and would mismatch every `#[async_trait]`-generated impl (lifetime error E0195).
     /// Handles a channel message.
     ///
     /// Called for every channel `PRIVMSG` that is not a CTCP message, whether or not it

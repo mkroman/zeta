@@ -82,12 +82,9 @@ pub struct RustPlayground {
 /// Errors that can occur while evaluating code on the Rust Playground.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
-    /// The playground response could not be deserialized.
-    #[error("json error: {0}")]
-    Json(#[from] serde_json::Error),
+    /// The playground returned an unusable response.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
 }
 
 /// The request payload sent to the Rust Playground.
@@ -175,9 +172,9 @@ impl RustPlayground {
 
         debug!("sending code to rust playground");
 
-        let response = self.client.post(BASE_URL).json(&request).send().await?;
+        let response = self.client.post(BASE_URL).json(&request).send().await.map_err(http::ApiError::Request)?;
 
-        let result: ExecuteResponse = response.error_for_status()?.json().await?;
+        let result: ExecuteResponse = http::parse_response(response).await?;
 
         if result.success {
             let output = sanitize_output(&result.stdout);

@@ -294,7 +294,7 @@ impl Manager {
 
     /// Handles a status update reported by a download task.
     async fn on_status(&mut self, status: DownloadStatus) {
-        match status {
+        let (id, result) = match status {
             DownloadStatus::Progress { id, progress } => {
                 if let Some(active) = self.active.get_mut(&id) {
                     active.last_progress = Some(progress);
@@ -306,28 +306,26 @@ impl Manager {
                         "download progress"
                     );
                 }
-            }
-            DownloadStatus::Completed { id, files } => {
-                let Some(active) = self.active.remove(&id) else {
-                    return;
-                };
 
-                self.finish(active, Ok(files)).await;
+                return;
             }
-            DownloadStatus::Failed { id, error } => {
-                let Some(active) = self.active.remove(&id) else {
-                    return;
-                };
+            DownloadStatus::Completed { id, files } => (id, Ok(files)),
+            DownloadStatus::Failed { id, error } => (id, Err(error)),
+        };
 
-                error!(
-                    media_id = %active.request.id,
-                    error = %error,
-                    "could not download media"
-                );
+        let Some(active) = self.active.remove(&id) else {
+            return;
+        };
 
-                self.finish(active, Err(error)).await;
-            }
+        if let Err(error) = &result {
+            error!(
+                media_id = %active.request.id,
+                error = %error,
+                "could not download media"
+            );
         }
+
+        self.finish(active, result).await;
     }
 
     /// Finishes a download: uploads the downloaded files to the bucket (if any), notifies the

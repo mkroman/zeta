@@ -46,11 +46,77 @@ impl Default for Ofn {
     }
 }
 
+/// The result of recording one URL in the database.
+// The enum only lives for the duration of one URL's processing; boxing the full row in
+// `Found` would only add an allocation on the common repost path.
+#[allow(clippy::large_enum_variant)]
+enum Recorded {
+    /// The resource was already known.
+    Found(Resource),
+    /// A new record was inserted.
+    Inserted,
+    /// The insert failed; the error has been logged.
+    Failed,
+}
+
 impl Ofn {
     /// Creates a new ofn plugin instance.
     #[must_use]
     pub const fn new() -> Ofn {
         Ofn
+    }
+
+    /// Records `url` in the database: finding the already-known record for it, or inserting
+    /// a new one — YouTube video links are tracked by video id in the dedicated table,
+    /// everything else in the url records table.
+    ///
+    /// A failed insert is logged and reported as [`Recorded::Failed`]; a failed lookup is
+    /// returned as an error.
+    async fn record_url(
+        &self,
+        ctx: &Context,
+        origin: &ChannelMessageOrigin<'_>,
+        url: &Url,
+    ) -> Result<Recorded, Error> {
+        if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
+            youtube::parse_youtube_url(url)
+        {
+            if let Some(video) = self.find_youtube_video(ctx, origin, &video_id).await? {
+                return Ok(Recorded::Found(Resource::YouTubeRecord(video)));
+            }
+
+            debug!(%video_id, "inserting youtube record");
+
+            return match self.insert_youtube_video(ctx, origin, &video_id).await {
+                Ok(_) => {
+                    debug!(?origin, %video_id, "inserted youtube record");
+
+                    Ok(Recorded::Inserted)
+                }
+                Err(error) => {
+                    error!("could not insert youtube record: {error}");
+
+                    Ok(Recorded::Failed)
+                }
+            };
+        }
+
+        if let Some(record) = self.find_url(ctx, origin, url).await? {
+            return Ok(Recorded::Found(Resource::UrlRecord(record)));
+        }
+
+        match self.insert_url(ctx, origin, url).await {
+            Ok(_) => {
+                debug!(?origin, ?url, "inserted url record");
+
+                Ok(Recorded::Inserted)
+            }
+            Err(error) => {
+                error!("could not insert url record: {error}");
+
+                Ok(Recorded::Failed)
+            }
+        }
     }
 
     /// Find and return a [`UrlRecord`] for the given `url` and associated `origin` if present in
@@ -371,38 +437,10 @@ impl Ofn {
                 continue;
             }
 
-            if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) =
-                youtube::parse_youtube_url(url)
-            {
-                if let Some(video) = self.find_youtube_video(ctx, origin, &video_id).await? {
-                    found.push(Resource::YouTubeRecord(video));
-                } else {
-                    debug!(%video_id, "inserting youtube record");
-
-                    match self.insert_youtube_video(ctx, origin, &video_id).await {
-                        Ok(_record) => {
-                            debug!(?origin, %video_id, "inserted youtube record");
-                            num_inserted += 1;
-                        }
-                        Err(error) => {
-                            error!("could not insert youtube record: {error}");
-                        }
-                    }
-                }
-            } else {
-                if let Some(record) = self.find_url(ctx, origin, url).await? {
-                    found.push(Resource::UrlRecord(record));
-                } else {
-                    match self.insert_url(ctx, origin, url).await {
-                        Ok(_) => {
-                            debug!(?origin, ?url, "inserted url record");
-                            num_inserted += 1;
-                        }
-                        Err(error) => {
-                            error!("could not insert url record: {error}");
-                        }
-                    }
-                }
+            match self.record_url(ctx, origin, url).await? {
+                Recorded::Found(resource) => found.push(resource),
+                Recorded::Inserted => num_inserted += 1,
+                Recorded::Failed => {}
             }
         }
 

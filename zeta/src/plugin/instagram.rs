@@ -499,27 +499,8 @@ impl Instagram {
     /// If the media has already been mirrored, the existing link is sent immediately; otherwise
     /// the download and upload happens in a background task that replies with the link.
     async fn mirror_video(&self, url: &str, id: &str, channel: &str, client: &Client) {
-        let Some(mirror) = &self.mirror else {
-            return;
-        };
-
-        let sender = client.sender();
-
-        let on_mirrored = {
-            let channel = channel.to_string();
-            move |link: String| {
-                let _ = sender.send_privmsg(&channel, notice(&link));
-            }
-        };
-
-        match mirror.ensure_mirrored(url, id, on_mirrored).await {
-            Ok(Some(link)) => {
-                let _ = client.send_privmsg(channel, notice(&link));
-            }
-            Ok(None) => {}
-            Err(err) => {
-                error!(%id, error = %err, "could not check if the media is already mirrored");
-            }
+        if let Some(mirror) = &self.mirror {
+            mirror.ensure_mirrored_and_reply(url, id, channel, client).await;
         }
     }
 }

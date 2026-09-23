@@ -19,7 +19,7 @@ default = ["plugins-all", "rustls", "database"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
 emulated = ["dep:wreq", "dep:wreq-util"]
 database = ["dep:sqlx", "dep:chrono"]
-http = ["dep:reqwest"]
+http = ["dep:reqwest", "dep:serde_path_to_error"]
 mirror = [
     "dep:reqwest",
     "reqwest/stream",
@@ -52,7 +52,7 @@ rustls = [
 plugin-alert = ["database", "dep:chrono", "dep:interim"]
 plugin-chaturbate = ["http", "dep:regex"]
 plugin-choices = []
-plugin-coinmarketcap = ["http", "dep:strsim", "dep:serde_path_to_error"]
+plugin-coinmarketcap = ["http", "dep:strsim"]
 plugin-dendanskeordbog = ["http", "dep:dendanskeordbog"]
 plugin-dig = []
 plugin-filter = ["database", "dep:wildmatch"]
@@ -62,14 +62,14 @@ plugin-github = ["http"]
 plugin-health = ["dep:memory-stats"]
 plugin-help = []
 plugin-howlongtobeat = ["http"]
-plugin-imdb = ["http", "dep:num-format", "dep:serde_path_to_error"]
+plugin-imdb = ["http", "dep:num-format"]
 plugin-instagram = ["mirror", "emulated", "dep:scraper"]
 plugin-isitopen = ["http", "dep:regex", "time"]
 plugin-kagi = ["dep:kagi"]
 plugin-notification = ["database", "dep:chrono"]
 plugin-ofn = ["database", "http", "plugin-youtube", "dep:num-format"]
 plugin-openweathermap = ["http"]
-plugin-pornhub = ["http", "dep:num-format", "dep:serde_path_to_error"]
+plugin-pornhub = ["http", "dep:num-format"]
 plugin-reddit = ["mirror", "dep:reddit", "dep:secrecy"]
 plugin-rink = ["dep:rink-core"]
 plugin-rust-playground = ["http", "dep:regex"]
@@ -79,10 +79,10 @@ plugin-thingiverse = ["http", "dep:num-format", "dep:regex"]
 plugin-tiktok = ["mirror", "http"]
 plugin-titles = ["emulated", "dep:html5ever"]
 plugin-trustpilot = ["http", "dep:num-format"]
-plugin-tvmaze = ["http", "time", "dep:serde_path_to_error"]
+plugin-tvmaze = ["http", "time"]
 plugin-twitch = ["http", "dep:num-format"]
 plugin-urban-dictionary = ["http", "time"]
-plugin-youtube = ["http", "dep:htmlize", "dep:indefinite", "dep:num-format", "dep:serde_path_to_error", "time"]
+plugin-youtube = ["http", "dep:htmlize", "dep:indefinite", "dep:num-format", "time"]
 plugins-all = [
     "plugin-alert",
     "plugin-chaturbate",
@@ -167,7 +167,7 @@ secrecy = { optional = true, workspace = true }
 serde.workspace = true
 serde_ignored = "0.1.2"
 serde_json.workspace = true
-serde_path_to_error = { optional = true, workspace = true }
+serde_path_to_error = { version = "0.1.17", optional = true }
 sha2 = { version = "0.11", optional = true }
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"], optional = true }
 strsim = { version = "0.11", optional = true }

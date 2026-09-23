@@ -278,7 +278,8 @@ fn classify_redd_it_url(url: &Url) -> Option<Link> {
             let mut request_uri = url.path().to_string();
 
             if let Some(query) = url.query() {
-                write!(request_uri, "?{query}").ok()?;
+                // Writing to a `String` cannot fail, so the write result needs no handling.
+                let _ = write!(request_uri, "?{query}");
             }
 
             Some(Link::Preview(request_uri))

@@ -7,7 +7,7 @@
 //! are reported in the channel.
 //!
 //! The TVmaze API is public and needs no credentials. The plugin has no settings.
-use reqwest::{StatusCode, Url};
+use reqwest::Url;
 use serde::Deserialize;
 use tracing::{debug, instrument};
 
@@ -47,7 +47,7 @@ pub struct Tvmaze {
 /// Represents a TV show from the TVmaze API.
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-#[serde(rename = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct Show {
     /// Unique TVmaze identifier for the show.
     id: u64,
@@ -195,24 +195,11 @@ impl Tvmaze {
         debug!(url.full = %url, "requesting single search for show: {name}");
 
         let response = self.client.get(url).send().await?;
+        let show = http::parse_response_or_404(response, Error::NotFound).await?;
 
-        match http::parse_response(response).await {
-            Ok(show) => {
-                debug!(?show, "finished parsing show");
-                Ok(show)
-            }
-            Err(http::ApiError::Status {
-                status: StatusCode::NOT_FOUND,
-                ..
-            }) => {
-                debug!("show not found");
-                Err(Error::NotFound)
-            }
-            Err(error) => {
-                debug!(%error, "unexpected api response");
-                Err(Error::Api(error))
-            }
-        }
+        debug!(?show, "finished parsing show");
+
+        Ok(show)
     }
 
     /// Handles the search response and parses the show data.

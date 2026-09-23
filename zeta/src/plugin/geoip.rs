@@ -13,7 +13,7 @@ use std::fmt::Display;
 use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 use url::Host;
 
 use crate::{http, plugin::prelude::*};
@@ -51,12 +51,9 @@ pub struct LookupResult(IpInfo);
 /// Errors that can occur while geolocating an address.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// The API response could not be deserialized.
-    #[error("could not deserialize response: {0}")]
-    Deserialize(#[source] reqwest::Error),
-    /// Sending the HTTP request failed.
-    #[error("http request failed")]
-    Request(#[from] reqwest::Error),
+    /// The API request failed, or the response was unusable.
+    #[error(transparent)]
+    Api(#[from] http::ApiError),
     /// The domain could not be resolved to an IP address.
     #[error("could not resolve domain: {0}")]
     Resolve(#[source] hickory_resolver::net::NetError),
@@ -230,20 +227,11 @@ impl GeoIp {
             ("format", "json"),
         ];
         let request = self.client.get(BASE_URL).query(&params);
-        let response = request.send().await?;
+        let response = request.send().await.map_err(http::ApiError::Request)?;
+        let info: IpInfo = http::parse_response(response).await?;
+        info!(response = %info.ip, "resolved");
 
-        match response.error_for_status() {
-            Ok(response) => {
-                info!(response = %response.status(), "resolved");
-                let info: IpInfo = response.json().await.map_err(Error::Deserialize)?;
-                Ok(LookupResult(info))
-            }
-            Err(err) => {
-                error!(?err, %name, "error when querying for geoip");
-
-                Err(err.into())
-            }
-        }
+        Ok(LookupResult(info))
     }
 }
 

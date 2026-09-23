@@ -1,5 +1,7 @@
 //! Errors that can occur during coin lookups.
 
+use crate::http;
+
 /// Errors that can occur during coin lookups.
 ///
 /// The [`Display`](std::fmt::Display) representation of each variant is the message that is
@@ -11,7 +13,7 @@ pub enum Error {
     Request(#[source] reqwest::Error),
     /// The response could not be parsed.
     #[error("Could not parse the response from the CoinMarketCap API")]
-    Deserialize(#[source] serde_path_to_error::Error<serde_json::Error>),
+    Deserialize(#[source] http::json::Error),
     /// The API returned an error status (e.g. an invalid symbol).
     #[error("Could not retrieve coin information: {0}")]
     Api(String),
