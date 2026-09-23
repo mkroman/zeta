@@ -8,7 +8,7 @@ use irc::client::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{Instrument, debug, warn};
+use tracing::{Instrument, debug, error, warn};
 use zeta_plugin::{CommandSpec, Event, Subscriptions};
 
 pub mod dispatch;
@@ -628,7 +628,7 @@ impl PluginTask {
                 // only ever reach stdout.
                 async {
                     if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
-                        warn!(plugin = %task_name, %error, "plugin error during event handling");
+                        error!(plugin = %task_name, %error, "plugin error during event handling");
                     }
                 }
                 .instrument(tracing::info_span!("handle_event", plugin = %task_name))

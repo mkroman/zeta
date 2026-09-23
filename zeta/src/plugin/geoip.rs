@@ -13,7 +13,7 @@ use std::fmt::Display;
 use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use url::Host;
 
 use crate::{http, plugin::prelude::*};
@@ -231,8 +231,10 @@ impl GeoIp {
             ("format", "json"),
         ];
         let request = self.client.get(BASE_URL).query(&params);
-        let response = request.send().await.map_err(http::ApiError::Request)?;
-        let info: IpInfo = http::parse_response(response).await?;
+        let response = request.send().await.map_err(http::ApiError::from)?;
+        let info: IpInfo = http::parse_response(response)
+            .await
+            .inspect_err(|error| error!(%name, %error, "error when querying for geoip"))?;
         // `dns.answers` is the OpenTelemetry convention for the addresses a DNS lookup resolved
         // to, which is what `info.ip` is — the address the queried name resolved to (the input
         // itself when it already was an IP address):
