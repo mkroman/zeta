@@ -417,4 +417,60 @@ mod tests {
             assert_eq!(settings.client_secret.as_deref(), Some("secret"));
         }
     }
+
+    #[test]
+    fn parses_spotify_resource_urls() {
+        fn parse(url: &str) -> Option<(String, String)> {
+            parse_spotify_url(&Url::parse(url).unwrap())
+                .map(|(kind, id)| (kind.to_string(), id.to_string()))
+        }
+
+        assert_eq!(
+            parse("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"),
+            Some((
+                "track".to_string(),
+                "4uLU6hMCjMI75M1A2tKUQC".to_string()
+            ))
+        );
+        assert_eq!(
+            parse("https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3?si=abc"),
+            Some((
+                "album".to_string(),
+                "1DFixLWuPkv3KT3TnV35m3".to_string()
+            ))
+        );
+
+        // Root paths and deeper nesting are not resources.
+        assert_eq!(parse("https://open.spotify.com/"), None);
+        assert_eq!(
+            parse("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC/extra"),
+            None
+        );
+    }
+
+    #[test]
+    fn joins_artists_into_a_sentence() {
+        let artists = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| ArtistSimple {
+                    name: (*name).to_string(),
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(join_artists(&artists(&[])), "");
+        assert_eq!(
+            join_artists(&artists(&["Aurora"])),
+            "\x0fAurora\x0310"
+        );
+        assert_eq!(
+            join_artists(&artists(&["Aurora", "Sigrid"])),
+            "\x0fAurora\x0310 and \x0fSigrid\x0310"
+        );
+        assert_eq!(
+            join_artists(&artists(&["Aurora", "Sigrid", "Agnes Obel"])),
+            "\x0fAurora\x0310, \x0fSigrid\x0310 and \x0fAgnes Obel\x0310"
+        );
+    }
 }

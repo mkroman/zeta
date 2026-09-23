@@ -215,4 +215,68 @@ mod tests {
             assert_eq!(settings.api_key.as_deref(), Some("secret"));
         }
     }
+
+    /// Returns a thing fixture with the given flags and counters.
+    fn thing(
+        is_wip: usize,
+        is_featured: Option<bool>,
+        like_count: u64,
+        download_count: u64,
+        collect_count: u64,
+    ) -> Thing {
+        Thing {
+            name: "Bracket".to_string(),
+            creator: Creator {
+                name: "mk".to_string(),
+            },
+            is_wip,
+            is_featured,
+            like_count,
+            download_count,
+            collect_count,
+        }
+    }
+
+    #[test]
+    fn formats_a_thing_with_thousands_separators_and_singular_nouns() {
+        let thing = thing(0, Some(false), 1204, 1, 0);
+
+        assert_eq!(
+            thing.to_string(),
+            "“\x0fBracket\x0310” is a thing created by\x0f mk\x0310 with\x0f 1,204\x0310 likes, \
+             \x0f1\x0310 download"
+        );
+    }
+
+    #[test]
+    fn labels_work_in_progress_and_featured_things() {
+        let wip = thing(1, None, 0, 0, 0);
+
+        assert!(
+            wip.to_string()
+                .contains("is a\x0f work in progress\x0310 created by"),
+            "{wip}"
+        );
+
+        let featured = thing(0, Some(true), 0, 0, 0);
+
+        assert!(
+            featured
+                .to_string()
+                .contains("is a \x0ffeatured\x0310 created by"),
+            "{featured}"
+        );
+    }
+
+    #[test]
+    fn appends_collections_when_collected() {
+        let thing = thing(0, Some(false), 2, 3, 1);
+
+        assert!(
+            thing
+                .to_string()
+                .ends_with(" and is part of\x0f 1\x0310 collection"),
+            "{thing}"
+        );
+    }
 }

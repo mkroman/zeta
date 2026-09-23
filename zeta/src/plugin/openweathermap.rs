@@ -390,6 +390,31 @@ mod tests {
     }
 
     #[test]
+    fn decodes_the_api_response() {
+        // The field names follow the API's recorded responses; extra fields are ignored.
+        let response: WeatherResponse = serde_json::from_str(
+            r#"{
+                "name": "Copenhagen",
+                "sys": {"country": "DK"},
+                "main": {"temp": 12.5, "feels_like": 11.0, "humidity": 72, "pressure": 1013},
+                "weather": [{"id": 500, "main": "Rain", "description": "light rain", "icon": "10d"}],
+                "wind": {"speed": 3.0, "deg": 240, "gust": 6.5},
+                "clouds": {"all": 75},
+                "coord": {"lon": 12.56, "lat": 55.68},
+                "dt": 1758600000
+            }"#,
+        )
+        .expect("the api response should decode");
+
+        assert_eq!(response.name, "Copenhagen");
+        assert_eq!(response.sys.country.as_deref(), Some("DK"));
+        assert!((response.main.temp - 12.5).abs() < f64::EPSILON);
+        assert_eq!(response.weather[0].description, "light rain");
+        assert_eq!(response.wind.gust, Some(6.5));
+        assert_eq!(response.clouds.map(|clouds| clouds.all), Some(75));
+    }
+
+    #[test]
     fn formats_metric_weather() {
         let formatted = format_weather(&test_response(), Units::Metric);
 
@@ -403,7 +428,9 @@ mod tests {
     }
 
     #[test]
-    fn formats_imperial_weather() {
+    fn imperial_weather_swaps_the_unit_labels() {
+        // The API converts the values itself, so formatting only swaps the labels: the same
+        // fixture numbers are rendered with the imperial unit names.
         let formatted = format_weather(&test_response(), Units::Imperial);
 
         assert!(formatted.contains("12.5 °F"), "{formatted}");

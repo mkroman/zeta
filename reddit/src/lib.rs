@@ -406,8 +406,25 @@ mod tests {
         let (item1, item2): (Item, Item) = serde_path_to_error::deserialize(jd)
             .inspect_err(|err| error!(?err, %text, "could not parse comments response"))?;
 
-        assert!(matches!(item1, Item::Listing(_)));
-        assert!(matches!(item2, Item::Listing(_)));
+        // The response is the submission listing followed by the comment listing.
+        let Item::Listing(submission_listing) = &item1 else {
+            panic!("the first item should be a listing");
+        };
+        assert!(matches!(
+            submission_listing.children.as_slice(),
+            [Item::Submission(_)]
+        ));
+
+        let Item::Listing(comment_listing) = &item2 else {
+            panic!("the second item should be a listing");
+        };
+        assert_eq!(comment_listing.children.len(), 9);
+        assert!(
+            comment_listing
+                .children
+                .iter()
+                .all(|child| matches!(child, Item::Comment(_)))
+        );
 
         Ok(())
     }

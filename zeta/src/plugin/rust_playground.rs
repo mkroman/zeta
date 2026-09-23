@@ -201,4 +201,16 @@ mod tests {
             assert_eq!(settings.max_output_length, 100);
         }
     }
+
+    #[test]
+    fn sanitizes_playground_output() {
+        // Control characters (which include newlines) are stripped...
+        assert_eq!(sanitize_output("hello\nworld\r\t"), "helloworld");
+        // ...and the result is trimmed.
+        assert_eq!(
+            sanitize_output("  leading and trailing  \n"),
+            "leading and trailing"
+        );
+        assert_eq!(sanitize_output("unchanged"), "unchanged");
+    }
 }

@@ -245,4 +245,38 @@ mod tests {
             "{message}"
         );
     }
+
+    #[test]
+    fn decodes_the_api_response() {
+        let definitions: Definitions = serde_json::from_str(
+            r#"{
+                "list": [
+                    {
+                        "defid": 123,
+                        "author": "author",
+                        "definition": "the definition",
+                        "example": "the example",
+                        "permalink": "https://www.urbandictionary.com/define.php?term=word",
+                        "word": "word",
+                        "thumbs_up": 10,
+                        "thumbs_down": 2,
+                        "written_on": "2024-01-01T12:00:00.000Z"
+                    }
+                ]
+            }"#,
+        )
+        .expect("the api response should decode");
+
+        assert_eq!(definitions.list.len(), 1);
+
+        let definition = &definitions.list[0];
+        assert_eq!(definition.id, 123);
+        assert_eq!(definition.word, "word");
+        assert_eq!(definition.thumbs_up, 10);
+        // The RFC 3339 timestamp decodes.
+        assert_eq!(
+            definition.written_on,
+            OffsetDateTime::from_unix_timestamp(1_704_110_400).unwrap()
+        );
+    }
 }

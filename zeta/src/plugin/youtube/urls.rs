@@ -132,6 +132,8 @@ mod tests {
             ("https://youtube.com/shorts/", None),
             ("https://youtu.be/", None),
             ("https://youtu.be/dQw4w9WgXcQ/subpage", None),
+            // An empty handle is not a channel.
+            ("https://youtube.com/@", None),
         ]);
     }
 
@@ -154,6 +156,22 @@ mod tests {
                 "https://www.youtube.com/@BreakingTaps/",
                 Some(UrlKind::ChannelHandle("BreakingTaps".to_string())),
             ),
+        ]);
+    }
+
+    #[test]
+    fn test_empty_query_ids_are_kept_verbatim() {
+        // Unlike `/channel/` and `/shorts/`, which reject empty ids, an empty query id is
+        // passed through as-is — pinned here so a change to that asymmetry is conscious.
+        assert_parses(parse_youtube_url, &[
+            ("https://youtube.com/watch?v=", Some(UrlKind::Video(String::new()))),
+            (
+                "https://youtube.com/playlist?list=",
+                Some(UrlKind::Playlist(String::new())),
+            ),
+            // A missing id parses to nothing at all.
+            ("https://youtube.com/watch", None),
+            ("https://youtube.com/playlist", None),
         ]);
     }
 }
