@@ -13,7 +13,7 @@ use std::fmt::Display;
 use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use url::Host;
 
 use crate::{http, plugin::prelude::*};
@@ -139,6 +139,8 @@ impl Plugin<Context> for GeoIp {
                 }
             }
             Err(err) => {
+                warn!(?err, name = %opts.name, "geoip lookup failed");
+
                 client.send_privmsg(command.channel(), reply("GeoIP", err))?;
             }
         }
@@ -229,7 +231,7 @@ impl GeoIp {
         let request = self.client.get(BASE_URL).query(&params);
         let response = request.send().await.map_err(http::ApiError::Request)?;
         let info: IpInfo = http::parse_response(response).await?;
-        info!(response = %info.ip, "resolved");
+        info!(ip = %info.ip, "resolved");
 
         Ok(LookupResult(info))
     }
