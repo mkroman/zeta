@@ -311,30 +311,47 @@ where
         };
         let flight_guard = flight.lock().await;
 
-        if let Some(cached) = self.peek(&key) {
-            return Ok(cached);
-        }
+        // No `?` before the release below: every exit — including a failing refresh and the
+        // double-check — has to give the flight entry a chance to be cleaned up.
+        let outcome = match self.peek(&key) {
+            // Another task refreshed the key while this one waited for the flight lock.
+            Some(cached) => Ok(cached),
+            None => match refresh().await {
+                Ok(value) => {
+                    self.insert(key.clone(), value.clone());
 
-        let value = refresh().await?;
-        self.insert(key.clone(), value.clone());
+                    Ok(value)
+                }
+                Err(error) => Err(error),
+            },
+        };
 
-        // Drop the flight entry once it is uncontended, so the flight map does not grow with
-        // every refreshed key; a waiter that already holds the clone keeps working, and the
-        // double-check at the top hands it the freshly inserted entry.
+        // Whoever releases the flight last removes the entry, so the flight map does not grow
+        // with every refreshed — or every failing — key; a waiter that already holds the clone
+        // keeps working, and the double-check above hands it the freshly inserted entry.
         drop(flight_guard);
+        self.release_flight(&key).await;
 
+        outcome
+    }
+
+    /// Removes `key`'s flight entry once no task holds or waits for it.
+    ///
+    /// A task that is still queued on the flight keeps its clone and cleans up when it in turn
+    /// releases, so the entry survives at most until its last holder runs this.
+    async fn release_flight(&self, key: &K)
+    where
+        K: Send + Sync,
+        V: Send + Sync,
+    {
+        let mut flights = self.flights.lock().await;
+
+        if flights
+            .get(key)
+            .is_some_and(|flight| flight.try_lock().is_ok())
         {
-            let mut flights = self.flights.lock().await;
-
-            if flights
-                .get(&key)
-                .is_some_and(|flight| flight.try_lock().is_ok())
-            {
-                flights.remove(&key);
-            }
+            flights.remove(key);
         }
-
-        Ok(value)
     }
 
     /// Inserts an entry for `key`, evicting expired and closest-to-expiring entries first when
@@ -446,6 +463,45 @@ mod ttl_map_tests {
 
         assert_eq!(refreshes.load(Ordering::SeqCst), 1);
         assert_eq!(cache.get(&"a".to_string()), Some(7));
+
+        // The last flight holder cleaned up, even though every waiter went through the
+        // double-check instead of refreshing.
+        assert!(cache.flights.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_failures_leave_no_flight_entry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cache = Arc::new(ttl_map(Duration::from_mins(1)));
+        let attempts = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+
+        for _ in 0..8 {
+            let cache = Arc::clone(&cache);
+            let attempts = Arc::clone(&attempts);
+
+            handles.push(tokio::spawn(async move {
+                cache
+                    .get_or_refresh("a".to_string(), || async {
+                        attempts.fetch_add(1, Ordering::SeqCst);
+
+                        Err::<Option<u8>, _>("denied")
+                    })
+                    .await
+            }));
+        }
+
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), Err("denied"));
+        }
+
+        // Nothing is ever cached, so every task retried the refresh after the previous one
+        // released its flight — and every one of them released its own afterwards.
+        assert_eq!(attempts.load(Ordering::SeqCst), 8);
+        assert_eq!(cache.get(&"a".to_string()), None);
+        assert!(cache.flights.lock().await.is_empty());
     }
 
     #[tokio::test]
@@ -546,6 +602,10 @@ mod ttl_map_tests {
         assert_eq!(error, "denied");
         assert_eq!(refreshes, 1);
         assert_eq!(cache.get(&"a".to_string()), None);
+
+        // A failing refresh must not leave its flight entry behind: unlike `entries`, the
+        // flight map is neither bounded nor expired.
+        assert!(cache.flights.lock().await.is_empty());
     }
 
     #[tokio::test]
@@ -656,7 +716,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_or_refresh_surfacing_errors_without_caching() {        let cache = cache_with(Duration::from_mins(1));
+    async fn get_or_refresh_surfacing_errors_without_caching() {
+        let cache = cache_with(Duration::from_mins(1));
 
         let error = cache
             .get_or_refresh(|| async { Err("denied") })

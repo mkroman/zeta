@@ -1,4 +1,5 @@
 //! Helpers for formatting and parsing points in time and durations.
+#![allow(unused)]
 
 use std::fmt::Write;
 use std::time::Duration;

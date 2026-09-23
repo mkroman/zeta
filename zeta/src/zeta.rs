@@ -268,6 +268,11 @@ impl Zeta {
             }
         }
 
+        // Dropping the index closes every plugin mailbox: the tasks drain their queued events
+        // and run `Plugin::shutdown`. The dispatch future only borrows the index, so ending the
+        // `select!` above does not drop it — without this the tasks sit out the grace period.
+        drop(index);
+
         flush_quit(&client, quitting, &quit_message).await;
 
         let handles = plugins
