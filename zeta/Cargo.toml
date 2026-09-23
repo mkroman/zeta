@@ -150,6 +150,7 @@ opentelemetry-otlp = { version = "0.32.0", default-features = false, features = 
     "trace",
 ] }
 opentelemetry-resource-detectors = "0.12.0"
+opentelemetry-semantic-conventions = "0.32"
 opentelemetry_sdk = { version = "0.32.0", default-features = false, features = [
     "experimental_trace_batch_span_processor_with_async_runtime",
     "rt-tokio",

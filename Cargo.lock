@@ -5164,6 +5164,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-resource-detectors",
+ "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
  "rand 0.10.3",
  "rand_mt",
