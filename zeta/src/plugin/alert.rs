@@ -34,7 +34,7 @@ use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
-use tracing::{debug, error, trace};
+use tracing::{Instrument, debug, error, trace};
 
 use crate::{
     plugin::prelude::*,
@@ -150,22 +150,25 @@ impl AlertPlugin {
     fn start_delivery(client: &Client, mut receiver: mpsc::UnboundedReceiver<Alert>) {
         let sender = client.sender();
 
-        tokio::spawn(async move {
-            debug!("starting alert delivery task");
+        tokio::spawn(
+            async move {
+                debug!("starting alert delivery task");
 
-            while let Some(alert) = receiver.recv().await {
-                trace!(?alert, "delivering alert");
+                while let Some(alert) = receiver.recv().await {
+                    trace!(?alert, "delivering alert");
 
-                if let Err(err) = sender.send_privmsg(
-                    &alert.channel,
-                    format!("{}: {}", alert.nickname, alert.message),
-                ) {
-                    error!(?err, alert_id = alert.id, "could not deliver alert");
+                    if let Err(err) = sender.send_privmsg(
+                        &alert.channel,
+                        format!("{}: {}", alert.nickname, alert.message),
+                    ) {
+                        error!(?err, alert_id = alert.id, "could not deliver alert");
+                    }
                 }
-            }
 
-            debug!("alert delivery channel is closed");
-        });
+                debug!("alert delivery channel is closed");
+            }
+            .instrument(tracing::info_span!("alert_delivery")),
+        );
     }
 }
 

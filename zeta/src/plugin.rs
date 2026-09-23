@@ -8,7 +8,7 @@ use irc::client::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, warn};
+use tracing::{Instrument, debug, error, warn};
 use zeta_plugin::{CommandSpec, Event, Subscriptions};
 
 pub mod dispatch;
@@ -616,22 +616,47 @@ impl PluginTask {
         let handle = tokio::spawn(async move {
             debug!(plugin = %task_name, "plugin task started");
 
-            if let Err(error) = plugin.loaded(&ctx, &client).await {
-                warn!(plugin = %task_name, %error, "plugin failed to load");
+            // The load and shutdown hooks run inside spans for the same reason the handler
+            // does: without a span, their warnings only ever reach stdout — the `loaded` span
+            // above closed before this one fires.
+            let failed_to_load = async {
+                if let Err(error) = plugin.loaded(&ctx, &client).await {
+                    warn!(plugin = %task_name, %error, "plugin failed to load");
 
+                    true
+                } else {
+                    false
+                }
+            }
+            .instrument(tracing::info_span!("loaded", plugin = %task_name))
+            .await;
+
+            if failed_to_load {
                 return;
             }
 
             while let Some(event) = receiver.recv().await {
-                if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
-                    warn!(plugin = %task_name, %error, "plugin error during event handling");
+                // The handler runs inside a span: the OpenTelemetry layer drops events that
+                // are not in the context of a span, so without it the plugin's logs would
+                // only ever reach stdout.
+                async {
+                    if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
+                        error!(plugin = %task_name, %error, "plugin error during event handling");
+                    }
                 }
+                .instrument(tracing::info_span!("handle_event", plugin = %task_name))
+                .await;
             }
 
-            // The mailbox is closed: the bot is shutting down.
-            if let Err(error) = plugin.shutdown(&ctx, &client).await {
-                warn!(plugin = %task_name, %error, "plugin error during shutdown");
+            // The mailbox is closed: the bot is shutting down. The warning goes inside the
+            // span, for the same reason as the load one above.
+            async {
+                if let Err(error) = plugin.shutdown(&ctx, &client).await {
+                    warn!(plugin = %task_name, %error, "plugin error during shutdown");
+                }
             }
+            .instrument(tracing::info_span!("shutdown", plugin = %task_name))
+            .await;
 
             debug!(plugin = %task_name, "plugin task stopped");
         });

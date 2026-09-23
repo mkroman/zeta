@@ -11,7 +11,14 @@ use reqwest::Url;
 use serde::Deserialize;
 use tracing::{debug, instrument};
 
-use crate::{config::HttpConfig, duration::TimeInWords, http, plugin::prelude::*};
+use crate::{
+    config::HttpConfig,
+    duration::TimeInWords,
+    error::RequestError,
+    http,
+    plugin::prelude::*,
+    url::redact_url,
+};
 
 /// Base URL for the TVmaze API.
 pub const API_BASE_URL: &str = "https://api.tvmaze.com";
@@ -27,8 +34,8 @@ pub enum Error {
     NotFound,
 }
 
-impl From<reqwest::Error> for Error {
-    fn from(error: reqwest::Error) -> Self {
+impl From<RequestError> for Error {
+    fn from(error: RequestError) -> Self {
         Self::Api(error.into())
     }
 }
@@ -192,9 +199,12 @@ impl Tvmaze {
     #[instrument(skip(self))]
     pub async fn single_search(&self, name: &str) -> Result<Show, Error> {
         let url = self.build_search_url(name);
-        debug!(url.full = %url, "requesting single search for show: {name}");
+        debug!(
+            url.full = %redact_url(&url),
+            "requesting single search for show: {name}"
+        );
 
-        let response = self.client.get(url).send().await?;
+        let response = http::send(self.client.get(url)).await?;
         let show = http::parse_response_or_404(response, Error::NotFound).await?;
 
         debug!(?show, "finished parsing show");

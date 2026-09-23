@@ -185,7 +185,7 @@ impl UrbanDictionary {
             .client
             .get(format!("{BASE_URL}/v0/define"))
             .query(&params);
-        let response = request.send().await.map_err(http::ApiError::Request)?;
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
 
         let definitions: Definitions = http::parse_response(response).await?;
         debug!(num_definitions = %definitions.list.len(), "fetched definitions");

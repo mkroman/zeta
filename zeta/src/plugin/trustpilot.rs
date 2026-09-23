@@ -13,7 +13,7 @@ use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use crate::{http, plugin::prelude::*};
+use crate::{error::RequestError, http, plugin::prelude::*};
 
 /// The base URL for the Trustpilot API.
 const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
@@ -99,7 +99,7 @@ struct NumberOfReviews {
 pub enum Error {
     /// An error occurred while performing the HTTP request.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] RequestError),
     /// The API returned an error, e.g. a non-success status or an unparseable body.
     #[error(transparent)]
     Api(#[from] http::ApiError),
@@ -173,13 +173,12 @@ impl Trustpilot {
 
         debug!(%url, ?params, "searching trustpilot");
 
-        let response = self
+        let request = self
             .client
             .get(&url)
             .header("apikey", &self.api_key)
-            .query(&params)
-            .send()
-            .await?;
+            .query(&params);
+        let response = http::send(request).await?;
 
         http::parse_response_or_404(response, Error::NotFound).await
     }

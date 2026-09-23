@@ -18,7 +18,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::{config::HttpConfig, http, plugin::prelude::*};
+use crate::{config::HttpConfig, error::RequestError, http, plugin::prelude::*};
 
 /// Settings for the github plugin, from its `[plugins.github]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -35,7 +35,7 @@ pub struct Settings {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] RequestError),
     /// The configured token is not a valid header value.
     #[error("invalid header value: {0}")]
     InvalidToken(#[from] reqwest::header::InvalidHeaderValue),
@@ -142,7 +142,8 @@ impl GitHubPlugin {
 
         let client = http::client::builder(config)
             .default_headers(headers)
-            .build()?;
+            .build()
+            .map_err(|error| Error::Request(RequestError::from(error)))?;
 
         Ok(Self { http: client })
     }
@@ -156,12 +157,11 @@ impl GitHubPlugin {
     async fn search_repos(&self, query: &str) -> Result<SearchResponse, Error> {
         let params = [("q", query), ("sort", "stars"), ("order", "desc")];
 
-        let response = self
+        let request = self
             .http
             .get("https://api.github.com/search/repositories")
-            .query(&params)
-            .send()
-            .await?;
+            .query(&params);
+        let response = http::send(request).await?;
 
         http::parse_response(response).await.map_err(Error::from)
     }

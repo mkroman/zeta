@@ -10,6 +10,7 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
+use opentelemetry_semantic_conventions::{SCHEMA_URL, resource::SERVICE_VERSION};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -42,14 +43,24 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
             .with_span_processor(BatchSpanProcessor::builder(otlp_exporter, Tokio).build())
             .with_resource(
                 Resource::builder_empty()
+                    // `service.name` and `service.version` are the resource attributes every
+                    // consumer groups by: https://opentelemetry.io/docs/specs/semconv/registry/attributes/service/
                     .with_service_name(env!("CARGO_PKG_NAME"))
+                    .with_attribute(opentelemetry::KeyValue::new(
+                        SERVICE_VERSION,
+                        env!("CARGO_PKG_VERSION"),
+                    ))
                     .with_detectors(&res_detectors)
+                    // The schema URL identifies the semantic-convention version the resource
+                    // follows, and must be a retrievable schema file:
+                    // https://opentelemetry.io/docs/specs/otel/schemas/#schema-url
+                    .with_schema_url(None::<opentelemetry::KeyValue>, SCHEMA_URL)
                     .build(),
             )
             .build();
         let scope = InstrumentationScope::builder(env!("CARGO_PKG_NAME"))
             .with_version(env!("CARGO_PKG_VERSION"))
-            .with_schema_url("https://opentelemetry.io/schema/1.0.0")
+            .with_schema_url(SCHEMA_URL)
             .build();
         let tracer = provider.tracer_with_scope(scope);
         let layer = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -64,8 +75,9 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
     // initialize tracing
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "zeta=debug,reddit=debug,dendanskeordbog=debug".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "zeta=debug,reddit=debug,dendanskeordbog=debug,kagi=debug".into()
+            }),
         )
         .with(telemetry_layer)
         .with(stdout_layer)

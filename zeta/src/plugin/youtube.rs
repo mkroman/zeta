@@ -27,7 +27,7 @@ use std::time::Duration;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tokio::time::MissedTickBehavior;
-use tracing::{debug, warn};
+use tracing::{Instrument, debug, warn};
 use indefinite::indefinite_article_only;
 use url::Url;
 
@@ -374,27 +374,30 @@ impl YouTube {
             Arc::clone(&self.video_categories),
         );
 
-        tokio::spawn(async move {
-            debug!("starting video category refresh task");
+        tokio::spawn(
+            async move {
+                debug!("starting video category refresh task");
 
-            // The first tick completes immediately, populating the cache at startup.
-            let mut interval = tokio::time::interval(CATEGORIES_CHECK_INTERVAL);
-            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                // The first tick completes immediately, populating the cache at startup.
+                let mut interval = tokio::time::interval(CATEGORIES_CHECK_INTERVAL);
+                interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-            loop {
-                interval.tick().await;
+                loop {
+                    interval.tick().await;
 
-                let refreshed = cache
-                    .refresh(|| async {
-                        fetch_video_categories(&client, &api_key, &region_code).await
-                    })
-                    .await;
+                    let refreshed = cache
+                        .refresh(|| async {
+                            fetch_video_categories(&client, &api_key, &region_code).await
+                        })
+                        .await;
 
-                if let Err(error) = refreshed {
-                    warn!(%error, "could not refresh video categories");
+                    if let Err(error) = refreshed {
+                        warn!(%error, "could not refresh video categories");
+                    }
                 }
             }
-        });
+            .instrument(tracing::info_span!("video_category_refresh")),
+        );
     }
 
     /// Processes a URL found in a message.
@@ -448,10 +451,7 @@ impl YouTube {
         ];
 
         let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
-        let response = request
-            .send()
-            .await
-            .map_err(http::ApiError::Request)?;
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
 
         let result: SearchListResponse = http::parse_response(response).await?;
 
@@ -477,10 +477,7 @@ impl YouTube {
             ),
         ];
         let request = self.client.get(format!("{BASE_URL}/videos")).query(&params);
-        let response = request
-            .send()
-            .await
-            .map_err(http::ApiError::Request)?;
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
         let list: VideosResponse = http::parse_response(response).await?;
 
         debug!("fetched metadata for video");
@@ -510,7 +507,7 @@ async fn fetch_video_categories(
     let request = client
         .get(format!("{BASE_URL}/videoCategories"))
         .query(&params);
-    let response = request.send().await.map_err(http::ApiError::Request)?;
+    let response = http::send(request).await.map_err(http::ApiError::from)?;
     let list: CategoriesResponse = http::parse_response(response).await?;
 
     debug!("fetched video category list");

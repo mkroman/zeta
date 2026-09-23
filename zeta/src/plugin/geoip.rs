@@ -16,7 +16,7 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 use url::Host;
 
-use crate::{http, plugin::prelude::*};
+use crate::{error::RequestError, http, plugin::prelude::*};
 
 const BASE_URL: &str = "https://api.ip2location.io";
 
@@ -115,7 +115,7 @@ impl Plugin<Context> for GeoIp {
         let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
         let client = http::client::builder(&ctx.config.http)
             .build()
-            .map_err(plugin_err)?;
+            .map_err(|error| plugin_err(RequestError::from(error)))?;
 
         Ok(GeoIp { client, api_key })
     }
@@ -199,13 +199,26 @@ impl GeoIp {
             Ok(Host::Ipv6(addr)) => Ok(addr.to_string()),
             Ok(Host::Domain(domain)) => {
                 let resolver = crate::dns::resolver();
-                debug!(%domain, "resolving domain");
+                // `dns.question.name` is the OpenTelemetry convention for the name a DNS query
+                // asks for: https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
+                debug!(dns.question.name = %domain, "resolving domain");
 
-                resolver
-                    .lookup_ip(domain)
-                    .await
-                    .map_err(Error::Resolve)
-                    .map(|lookup| lookup.iter().next().ok_or_else(|| Error::NoDomainRecords))?
+                let lookup = resolver.lookup_ip(domain).await.map_err(Error::Resolve)?;
+
+                // `dns.answers` is the OpenTelemetry convention for the addresses a lookup
+                // resolved to:
+                // https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
+                let addresses: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
+                if !addresses.is_empty() {
+                    // The answers are a string array per convention; tracing macros have no
+                    // array value type, so they go through Debug as a single string.
+                    debug!(dns.answers = ?addresses, "resolved domain");
+                }
+
+                lookup
+                    .iter()
+                    .next()
+                    .ok_or_else(|| Error::NoDomainRecords)
                     .map(|ip| ip.to_string())
             }
             Err(_) => Err(Error::InvalidInput),
@@ -229,8 +242,12 @@ impl GeoIp {
             ("format", "json"),
         ];
         let request = self.client.get(BASE_URL).query(&params);
-        let response = request.send().await.map_err(http::ApiError::Request)?;
-        let info: IpInfo = http::parse_response(response).await?;
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
+        let info: IpInfo = http::parse_response(response).await
+            // `parse_response` already logs the status of a failed response; keeping the
+            // looked-up name at debug avoids logging one failure three times over.
+            .inspect_err(|error| debug!(%name, %error, "error when querying for geoip"))?;
+
         info!(ip = %info.ip, "resolved");
 
         Ok(LookupResult(info))

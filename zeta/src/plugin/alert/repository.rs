@@ -28,7 +28,18 @@ impl AlertRepository {
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the alert could not be inserted.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "INSERT alerts",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "INSERT",
+            db.collection.name = "alerts",
+            db.query.summary = "INSERT alerts",
+        )
+    )]
     pub async fn insert(&self, alert: NewAlert) -> Result<Alert, Error> {
         trace!("inserting alert into database");
 
@@ -55,7 +66,18 @@ impl AlertRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "SELECT alerts",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "SELECT",
+            db.collection.name = "alerts",
+            db.query.summary = "SELECT alerts",
+        )
+    )]
     pub async fn list_due_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<Alert>, Error> {
         trace!(?cutoff, "loading alerts from database");
 
@@ -76,7 +98,18 @@ impl AlertRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "SELECT alerts",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "SELECT",
+            db.collection.name = "alerts",
+            db.query.summary = "SELECT alerts",
+        )
+    )]
     pub async fn list_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
         trace!(channel, nickname, "loading pending alerts from database");
 
@@ -98,7 +131,18 @@ impl AlertRepository {
     /// # Errors
     ///
     /// Returns [`Error::Delete`] if the alerts could not be deleted.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "DELETE alerts",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "DELETE",
+            db.collection.name = "alerts",
+            db.query.summary = "DELETE alerts",
+        )
+    )]
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting alerts from database");
 

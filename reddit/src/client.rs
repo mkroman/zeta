@@ -11,7 +11,24 @@ use tracing::{debug, error, info, instrument, trace};
 use url::Url;
 
 use crate::{BASE_URL, HTTP_TIMEOUT, OAUTH_BASE_URL, TOKEN_URL, USER_AGENT};
-use crate::{Error, Item, Link, Submission, Subreddit};
+use crate::{Error, Item, Link, RequestError, Submission, Subreddit};
+
+/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
+/// URL without its query, so a logged error never carries a credential from the query string.
+fn request_error(error: reqwest::Error) -> RequestError {
+    let error = RequestError::from(error);
+
+    if let Some(url) = error.url() {
+        error!(
+            url.full = %url,
+            error.type = error.error_type(),
+            error = %error.full(),
+            "request failed"
+        );
+    }
+
+    error
+}
 
 struct TokenCache {
     access_token: String,
@@ -94,7 +111,7 @@ impl Client {
             .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
             .user_agent(user_agent.clone())
             .build()
-            .map_err(Error::BuildClient)?;
+            .map_err(|error| Error::BuildClient(error.into()))?;
 
         debug!("using client id {client_id}");
 
@@ -145,12 +162,18 @@ impl Client {
             .post(TOKEN_URL)
             .basic_auth(&self.client_id, Some(self.client_secret.expose_secret()))
             .body("grant_type=client_credentials");
-        let response = request.send().await.map_err(Error::RequestAuthToken)?;
+        let response = request
+            .send()
+            .await
+            .map_err(|error| Error::RequestAuthToken(request_error(error)))?;
         let access_token = response
             .json::<AccessTokenResponse>()
             .await
-            .inspect_err(|e| error!("auth token response is invalid: {e}"))
-            .map_err(Error::InvalidAuthTokenResponse)?;
+            .map_err(|error| {
+                let error = RequestError::from(error);
+                error!("auth token response is invalid: {error}");
+                Error::InvalidAuthTokenResponse(error)
+            })?;
 
         Ok(access_token)
     }
@@ -169,13 +192,19 @@ impl Client {
         not_found: fn() -> Error,
         on_parse: fn(ErrorWithSerdePath<JsonError>) -> Error,
     ) -> Result<Item, Error> {
-        let response = request.send().await.map_err(Error::Reqwest)?;
+        let response = request
+            .send()
+            .await
+            .map_err(|error| Error::Reqwest(request_error(error)))?;
 
         match response.error_for_status() {
             Ok(response) => {
                 trace!("response is ok, parsing response");
 
-                let text = response.text().await.map_err(Error::Reqwest)?;
+                let text = response
+                    .text()
+                    .await
+                    .map_err(|error| Error::Reqwest(request_error(error)))?;
                 let deserializer = &mut serde_json::Deserializer::from_str(&text);
 
                 serde_path_to_error::deserialize(deserializer)
@@ -183,11 +212,12 @@ impl Client {
                     .map_err(on_parse)
             }
             Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
+                let err = RequestError::from(err);
                 info!(%err, "resource not found");
 
                 Err(not_found())
             }
-            Err(err) => Err(Error::Http(err)),
+            Err(err) => Err(Error::Http(request_error(err))),
         }
     }
 
@@ -280,11 +310,14 @@ impl Client {
     async fn get_redirect_location(&self, url: &str) -> Result<Url, Error> {
         debug!("fetching redirect location for url {url}");
         let request = self.client.head(url);
-        let response = request.send().await.map_err(Error::Reqwest)?;
+        let response = request
+            .send()
+            .await
+            .map_err(|error| Error::Reqwest(request_error(error)))?;
         let location = response
             .headers()
             .get(LOCATION)
-            .ok_or_else(|| Error::LocationHeaderMissing)?
+            .ok_or(Error::LocationHeaderMissing)?
             .as_bytes();
         let location = str::from_utf8(location).map_err(Error::LocationHeaderEncoding)?;
         let location = Url::parse(location).map_err(Error::LocationHeaderUrl)?;

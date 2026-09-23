@@ -41,9 +41,11 @@ use wreq::redirect::Policy;
 
 use crate::{
     cache::{TtlCache, TtlMap},
+    error::WreqError,
     http,
     mirror::{Mirror, MirrorHandle},
     plugin::prelude::*,
+    url::redact_url_str,
     utils::{Truncatable, collapse_whitespace},
 };
 
@@ -144,7 +146,7 @@ pub struct Instagram {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] wreq::Error),
+    Request(WreqError),
     /// A share link did not resolve to a valid Instagram media URL.
     #[error("share link did not resolve to a valid url")]
     InvalidRedirect,
@@ -152,6 +154,14 @@ pub enum Error {
     /// without details. Reported so the miss is not cached as a negative result.
     #[error("all metadata sources failed")]
     SourcesFailed,
+}
+
+impl From<wreq::Error> for Error {
+    /// Wraps `error` in a [`WreqError`], which redacts the request URL: the metadata proxy
+    /// URL can carry a credential in its query string.
+    fn from(error: wreq::Error) -> Self {
+        Self::Request(error.into())
+    }
 }
 
 #[async_trait]
@@ -165,7 +175,7 @@ impl Plugin<Context> for Instagram {
             .redirect(Policy::limited(4))
             .timeout(ctx.config.http.timeout)
             .build()
-            .map_err(plugin_err)?;
+            .map_err(|error| plugin_err(WreqError::from(error)))?;
 
         let mirror = MirrorHandle::resolve(
             ctx.shared.get::<Mirror>(),
@@ -350,7 +360,7 @@ impl Instagram {
 
         if details.is_none() && let Some(proxy) = &self.metadata_proxy {
             let url = proxy_media_url(proxy, kind, id);
-            debug!(%url, "falling back to the metadata proxy");
+            debug!(url.full = %redact_url_str(&url), "falling back to the metadata proxy");
 
             self.try_source(id, "metadata proxy", self.fetch_page_details(&url, None), &mut details, &mut failed).await;
         }
@@ -428,7 +438,7 @@ impl Instagram {
         let details = MediaDetails::from_og(&self.fetch_page_metadata(url, session_cookie).await?);
 
         if details.is_none() {
-            debug!(%url, "the page carried no media details");
+            debug!(url.full = %redact_url_str(url), "the page carried no media details");
         }
 
         Ok(details)
@@ -450,7 +460,7 @@ impl Instagram {
             Err(error) => error,
         };
 
-        debug!(%url, %error, "could not fetch page metadata");
+        debug!(url.full = %redact_url_str(url), %error, "could not fetch page metadata");
 
         if let meta::Error::Status(status) = &error && status.is_client_error() {
             return Err(error);
@@ -462,7 +472,7 @@ impl Instagram {
 
         meta::fetch(&self.client, url, session_cookie)
             .await
-            .inspect_err(|error| debug!(%url, %error, "the page request failed again"))
+            .inspect_err(|error| debug!(url.full = %redact_url_str(url), %error, "the page request failed again"))
     }
 
     /// Requests the given share link and returns the URL it resolves to.

@@ -15,6 +15,8 @@ use tracing::debug;
 use url::form_urlencoded::Serializer;
 use wreq::header::{COOKIE, SET_COOKIE};
 
+use crate::error::WreqError;
+
 use super::meta::{MediaDetails, shortcode_to_media_pk};
 
 /// The site URL whose response provides the session tokens.
@@ -47,7 +49,7 @@ pub struct SessionTokens {
 pub enum Error {
     /// The request failed, or the response body could not be read.
     #[error("request error: {0}")]
-    Request(#[from] wreq::Error),
+    Request(WreqError),
     /// The server responded with an unsuccessful status code.
     #[error("the graphql request failed with status {0}")]
     Status(wreq::StatusCode),
@@ -57,6 +59,13 @@ pub enum Error {
     /// The media is not anonymously accessible, or the response could not be understood.
     #[error("the media is not anonymously accessible")]
     Gated,
+}
+
+impl From<wreq::Error> for Error {
+    /// Wraps `error` in a [`WreqError`], which redacts the request URL.
+    fn from(error: wreq::Error) -> Self {
+        Self::Request(error.into())
+    }
 }
 
 /// The GraphQL response for a logged-out media request.

@@ -27,7 +27,18 @@ impl NotificationRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the notifications could not be fetched.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "SELECT notifications",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "SELECT",
+            db.collection.name = "notifications",
+            db.query.summary = "SELECT notifications",
+        )
+    )]
     pub async fn list(&self) -> Result<Vec<Notification>, Error> {
         trace!("loading notifications from database");
 
@@ -45,7 +56,18 @@ impl NotificationRepository {
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the notification could not be inserted.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "INSERT notifications",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "INSERT",
+            db.collection.name = "notifications",
+            db.query.summary = "INSERT notifications",
+        )
+    )]
     pub async fn insert(&self, notification: NewNotification) -> Result<Notification, Error> {
         trace!("inserting notification into database");
 
@@ -72,7 +94,18 @@ impl NotificationRepository {
     /// # Errors
     ///
     /// Returns [`Error::Delete`] if the notification could not be deleted.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "DELETE notifications",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "DELETE",
+            db.collection.name = "notifications",
+            db.query.summary = "DELETE notifications",
+        )
+    )]
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting notifications from database");
 

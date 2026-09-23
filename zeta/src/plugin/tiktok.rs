@@ -16,6 +16,7 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::{
+    error::RequestError,
     http,
     mirror::{Mirror, MirrorHandle},
     plugin::prelude::*,
@@ -73,7 +74,7 @@ pub struct Tiktok {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] RequestError),
     /// A shortened link did not redirect to a valid TikTok URL.
     #[error("shortened link did not redirect to a valid url")]
     InvalidRedirect,
@@ -183,7 +184,7 @@ impl Tiktok {
     /// Requests the redirect with the given id and returns the location it redirects to.
     async fn resolve_redirect_url(&self, id: &str) -> Result<Url, Error> {
         debug!(%id, "fetching redirect url");
-        let response = self.client.get(short_url(id)).send().await?;
+        let response = http::send(self.client.get(short_url(id))).await?;
 
         let location = response
             .headers()

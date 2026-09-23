@@ -1,6 +1,6 @@
 //! Errors that can occur during coin lookups.
 
-use crate::http;
+use crate::{error::RequestError, http};
 
 /// Errors that can occur during coin lookups.
 ///
@@ -10,7 +10,7 @@ use crate::http;
 pub enum Error {
     /// The HTTP request failed.
     #[error("Could not reach the CoinMarketCap API")]
-    Request(#[source] reqwest::Error),
+    Request(#[from] RequestError),
     /// The response could not be parsed.
     #[error("Could not parse the response from the CoinMarketCap API")]
     Deserialize(#[source] http::json::Error),

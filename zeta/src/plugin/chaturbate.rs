@@ -12,6 +12,7 @@ use url::Url;
 
 use crate::{
     config::HttpConfig,
+    error::RequestError,
     http,
     plugin::prelude::*,
     url::{is_identifier, path_segments},
@@ -31,7 +32,7 @@ pub struct Chaturbate {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] RequestError),
     /// The room page did not contain a room dossier.
     #[error("room dossier not found in page")]
     DossierNotFound,
@@ -121,8 +122,8 @@ impl Chaturbate {
         let url = format!("https://chaturbate.com/{username}/");
         debug!(%url, "fetching chaturbate page");
 
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
+        let response = http::send(self.client.get(&url)).await?;
+        let html = http::text(response).await?;
 
         let dossier = parse_room_dossier_with_re(&self.room_dossier_re, &html)?;
         debug!(?dossier, "parsed room dossier");

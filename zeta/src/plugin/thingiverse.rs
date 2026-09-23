@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{http, plugin::prelude::*};
+use crate::{error::RequestError, http, plugin::prelude::*};
 
 /// The Thingiverse hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
@@ -50,7 +50,7 @@ pub struct Thingiverse {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] RequestError),
     /// The linked thing does not exist.
     #[error("resource not found")]
     NotFound,
@@ -150,12 +150,11 @@ impl Thingiverse {
     async fn fetch_thing(&self, id: &str) -> Result<Thing, Error> {
         let url = format!("{API_BASE_URL}/things/{id}/");
 
-        let response = self
+        let request = self
             .client
             .get(&url)
-            .header(AUTHORIZATION, format!("Bearer {}", self.app_token))
-            .send()
-            .await?;
+            .header(AUTHORIZATION, format!("Bearer {}", self.app_token));
+        let response = http::send(request).await?;
 
         http::parse_response_or_404(response, Error::NotFound).await
     }

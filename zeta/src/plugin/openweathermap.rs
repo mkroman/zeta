@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use crate::{http, plugin::prelude::*};
+use crate::{error::RequestError, http, plugin::prelude::*};
 
 /// Base URL for the OpenWeatherMap API.
 const API_BASE_URL: &str = "https://api.openweathermap.org";
@@ -104,7 +104,7 @@ pub struct OpenWeatherMap {
 pub enum Error {
     /// An error occurred while performing the HTTP request.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] RequestError),
     /// The location could not be found via the geocoding API.
     #[error("location not found")]
     LocationNotFound,
@@ -255,7 +255,7 @@ impl OpenWeatherMap {
         let url = format!("{API_BASE_URL}/geo/1.0/direct");
         let params = [("q", query), ("limit", "1"), ("appid", &self.app_id)];
 
-        let response = self.client.get(&url).query(&params).send().await?;
+        let response = http::send(self.client.get(&url).query(&params)).await?;
 
         let results: Vec<GeocodingResult> = http::parse_response(response)
             .await
@@ -280,7 +280,7 @@ impl OpenWeatherMap {
             params.push(("lang", language));
         }
 
-        let response = self.client.get(&url).query(&params).send().await?;
+        let response = http::send(self.client.get(&url).query(&params)).await?;
 
         http::parse_response(response)
             .await
@@ -371,6 +371,21 @@ mod tests {
             },
             clouds: Some(Clouds { all: 75 }),
         }
+    }
+
+    #[tokio::test]
+    async fn request_errors_redact_the_url_but_keep_the_cause() {
+        let address = http::refused_address();
+        let error = reqwest::Client::new()
+            .get(format!("http://{address}/?appid=secret"))
+            .send()
+            .await
+            .expect_err("nothing listens on that address");
+
+        let error = Error::from(RequestError::from(error));
+
+        assert!(!error.to_string().contains("secret"), "{error}");
+        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
     }
 
     settings_tests! {

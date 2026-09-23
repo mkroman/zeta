@@ -8,7 +8,7 @@ mod client;
 mod error;
 
 pub use client::{Client, ClientOptions};
-pub use error::Error;
+pub use error::{Error, RequestError};
 
 /// Reddit API base URL.
 pub const BASE_URL: &str = "https://www.reddit.com";

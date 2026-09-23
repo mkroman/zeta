@@ -309,13 +309,9 @@ impl IsItOpen {
         let search_url = format!("{API_BASE_URL}/maps/api/place/textsearch/json");
         let params = [("query", query), ("key", &self.api_key)];
 
-        let response = self
-            .client
-            .get(&search_url)
-            .query(&params)
-            .send()
+        let response = http::send(self.client.get(&search_url).query(&params))
             .await
-            .map_err(http::ApiError::Request)?;
+            .map_err(http::ApiError::from)?;
         let search_res: PlaceSearchResponse = http::parse_response(response).await?;
 
         if search_res.status != "OK" && search_res.status != "ZERO_RESULTS" {
@@ -334,13 +330,9 @@ impl IsItOpen {
         let details_url = format!("{API_BASE_URL}/maps/api/place/details/json");
         let details_params = [("placeid", &place_id), ("key", &self.api_key)];
 
-        let response = self
-            .client
-            .get(&details_url)
-            .query(&details_params)
-            .send()
+        let response = http::send(self.client.get(&details_url).query(&details_params))
             .await
-            .map_err(http::ApiError::Request)?;
+            .map_err(http::ApiError::from)?;
         let details_res: PlaceDetailsResponse = http::parse_response(response).await?;
 
         if details_res.status != "OK" {

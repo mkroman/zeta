@@ -19,12 +19,19 @@ use html5ever::tokenizer::{
 use irc::client::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{Instrument, debug, warn};
 use url::Url;
 use wreq::StatusCode;
 use wreq::redirect::Policy;
 
-use crate::{http, plugin::prelude::*, utils::Truncatable, utils::collapse_whitespace};
+use crate::{
+    error::WreqError,
+    http,
+    plugin::prelude::*,
+    url::redact_url,
+    utils::Truncatable,
+    utils::collapse_whitespace,
+};
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
@@ -240,10 +247,18 @@ enum Error {
     Status(StatusCode),
     /// The request failed.
     #[error("{0}")]
-    Request(#[from] wreq::Error),
+    Request(WreqError),
     /// The tokenizer task failed.
     #[error("could not tokenize the response")]
     Task(#[from] tokio::task::JoinError),
+}
+
+impl From<wreq::Error> for Error {
+    /// Wraps `error` in a [`WreqError`], which redacts the request URL: a logged request URL
+    /// can carry a credential in its query string.
+    fn from(error: wreq::Error) -> Self {
+        Self::Request(error.into())
+    }
 }
 
 /// Fetches `url` and extracts the metadata of its document head.
@@ -323,7 +338,7 @@ async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMetadata
     // The reader finishes once the tokenizer stops reading from the channel, aborting the rest of
     // the response.
     if let Err(error) = reader.await {
-        warn!(%url, %error, "reader task failed");
+        warn!(url.full = %redact_url(url), %error, "reader task failed");
     }
 
     Ok(metadata)
@@ -384,7 +399,7 @@ impl Plugin<Context> for Titles {
             .redirect(Policy::limited(settings.max_redirects))
             .timeout(ctx.config.http.timeout)
             .build()
-            .map_err(plugin_err)?;
+            .map_err(|error| plugin_err(WreqError::from(error)))?;
 
         subscriptions.urls(UrlScope::Any);
 
@@ -449,28 +464,39 @@ impl Titles {
         let channel = channel.to_string();
         let settings = self.settings.clone();
 
-        tokio::spawn(async move {
-            let metadata = match fetch_metadata(&http_client, &url).await {
-                Ok(metadata) => metadata,
-                Err(error) => {
-                    warn!(%url, %error, "could not fetch page metadata");
+        // The span carries the redacted URL: without it, this task's logs would only ever
+        // reach stdout.
+        let span = tracing::info_span!("fetch_page_metadata", url.full = %redact_url(&url));
 
-                    if let Err(send_error) =
-                        sender.send_privmsg(&channel, format!("{REPLY_PREFIX} {error}"))
-                    {
-                        warn!(%send_error, "could not send fetch error");
+        tokio::spawn(
+            async move {
+                let metadata = match fetch_metadata(&http_client, &url).await {
+                    Ok(metadata) => metadata,
+                    Err(error) => {
+                        warn!(
+                            url.full = %redact_url(&url),
+                            %error,
+                            "could not fetch page metadata"
+                        );
+
+                        if let Err(send_error) =
+                            sender.send_privmsg(&channel, format!("{REPLY_PREFIX} {error}"))
+                        {
+                            warn!(%send_error, "could not send fetch error");
+                        }
+
+                        return;
                     }
+                };
 
-                    return;
+                if let Some(message) = format_page(&metadata, &url, &settings)
+                    && let Err(error) = sender.send_privmsg(&channel, message)
+                {
+                    warn!(%error, "could not send page metadata");
                 }
-            };
-
-            if let Some(message) = format_page(&metadata, &url, &settings)
-                && let Err(error) = sender.send_privmsg(&channel, message)
-            {
-                warn!(%error, "could not send page metadata");
             }
-        });
+            .instrument(span),
+        );
     }
 }
 

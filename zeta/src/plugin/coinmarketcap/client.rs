@@ -11,6 +11,7 @@ use tracing::debug;
 use super::error::Error;
 use super::model::{Coin, CoinQuery, Envelope, Fiat, QuoteData};
 use crate::config::HttpConfig;
+use crate::error::RequestError;
 use crate::http;
 use crate::plugin::prelude::{ZetaError, plugin_err};
 
@@ -55,7 +56,7 @@ impl Client {
         let inner = http::client::builder(config)
             .default_headers(headers)
             .build()
-            .map_err(plugin_err)?;
+            .map_err(|error| plugin_err(RequestError::from(error)))?;
 
         Ok(Self { inner })
     }
@@ -141,13 +142,11 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T, Error> {
-        let response = self
+        let request = self
             .inner
             .get(format!("{API_BASE_URL}{path}"))
-            .query(query)
-            .send()
-            .await
-            .map_err(Error::Request)?;
+            .query(query);
+        let response = http::send(request).await.map_err(Error::Request)?;
 
         http::parse_response(response)
             .await

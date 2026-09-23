@@ -17,7 +17,7 @@ use std::{
 use std::path::Path;
 
 use tokio::sync::mpsc;
-use tracing::{debug, error, warn};
+use tracing::{Instrument, debug, error, warn};
 use url::Url;
 
 use super::{
@@ -137,7 +137,11 @@ impl DownloadManager {
             next_id: 0,
         };
 
-        tokio::spawn(manager.run());
+        tokio::spawn(
+            manager
+                .run()
+                .instrument(tracing::info_span!("download_manager")),
+        );
 
         Self { requests }
     }
@@ -271,16 +275,25 @@ impl Manager {
         let media_id = request.id.clone();
         let path = tempdir.path().to_path_buf();
 
-        tokio::spawn(async move {
-            let result = ytdlp
-                .download_with_progress(&url, &media_id, &path, |progress| task.progress(progress))
-                .await;
+        // The span carries the media id: the download runs in its own task, so without it the
+        // yt-dlp and upload diagnostics below only ever reach stdout.
+        let span = tracing::info_span!("download_media", media_id = %media_id);
 
-            match result {
-                Ok(files) => task.completed(files),
-                Err(error) => task.failed(error),
+        tokio::spawn(
+            async move {
+                let result = ytdlp
+                    .download_with_progress(&url, &media_id, &path, |progress| {
+                        task.progress(progress);
+                    })
+                    .await;
+
+                match result {
+                    Ok(files) => task.completed(files),
+                    Err(error) => task.failed(error),
+                }
             }
-        });
+            .instrument(span),
+        );
 
         self.active.insert(
             id,

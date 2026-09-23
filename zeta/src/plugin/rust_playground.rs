@@ -11,7 +11,7 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::{http, plugin::prelude::*, utils::{Truncatable, strip_control_chars}};
 
@@ -145,7 +145,6 @@ impl Plugin<Context> for RustPlayground {
                 client.send_privmsg(channel, reply("Rust Playground", &output))?;
             }
                 Err(e) => {
-                    warn!("rust playground error: {}", e);
                     client.send_privmsg(channel, reply("Rust Playground", e))?;
                 }
         }
@@ -172,7 +171,9 @@ impl RustPlayground {
 
         debug!("sending code to rust playground");
 
-        let response = self.client.post(BASE_URL).json(&request).send().await.map_err(http::ApiError::Request)?;
+        let response = http::send(self.client.post(BASE_URL).json(&request))
+            .await
+            .map_err(http::ApiError::from)?;
 
         let result: ExecuteResponse = http::parse_response(response).await?;
 
