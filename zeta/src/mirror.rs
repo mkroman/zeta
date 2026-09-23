@@ -45,7 +45,7 @@ use crate::url::is_identifier;
 /// top-level section shared by all media plugins, and a typo'd or removed key is a hard
 /// configuration mistake worth failing fast on.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct MirrorConfig {
     /// The directory that downloads are buffered in.
     ///
@@ -53,50 +53,41 @@ pub struct MirrorConfig {
     /// when the bot shuts down. Prefer a dedicated directory outside the system temporary
     /// directory: its cleanup services may remove in-progress downloads. The directory is owned
     /// by the process and must not be shared between concurrently running instances.
-    #[serde(default)]
     pub download_dir: Option<PathBuf>,
     /// The maximum size of a file to download, as passed to `yt-dlp`.
     ///
     /// Files that report a larger size upfront are skipped.
-    #[serde(default = "default_max_filesize")]
     pub max_filesize: String,
     /// The maximum duration of a download before it gets killed.
-    #[serde(default = "default_download_timeout", with = "humantime_serde")]
+    #[serde(with = "humantime_serde")]
     pub download_timeout: Duration,
     /// The maximum number of downloads that run concurrently.
-    #[serde(default = "default_max_concurrent_downloads")]
     pub max_concurrent_downloads: usize,
     /// The command used to run `yt-dlp`.
     ///
     /// Falls back to the `ZETA_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
     /// neither is set.
-    #[serde(default)]
     pub ytdlp_command: Option<String>,
     /// The S3 access key id used for mirroring.
     ///
     /// Falls back to the `S3_ACCESS_KEY_ID` environment variable when unset. Mirroring is
     /// disabled when the S3 configuration is incomplete.
-    #[serde(default)]
     pub s3_access_key_id: Option<String>,
     /// The S3 secret access key used for mirroring.
     ///
     /// Falls back to the `S3_SECRET_ACCESS_KEY` environment variable when unset.
-    #[serde(default)]
     pub s3_secret_access_key: Option<String>,
     /// The bucket that mirrored media is uploaded to.
     ///
     /// Falls back to the `S3_BUCKET_NAME` environment variable when unset.
-    #[serde(default)]
     pub s3_bucket_name: Option<String>,
     /// The S3 region.
     ///
     /// Falls back to the `S3_REGION` environment variable, and to `auto` when neither is set.
-    #[serde(default)]
     pub s3_region: Option<String>,
     /// The endpoint URL for S3-compatible services.
     ///
     /// Falls back to the `S3_ENDPOINT` environment variable when unset.
-    #[serde(default)]
     pub s3_endpoint: Option<String>,
 }
 
@@ -104,9 +95,9 @@ impl Default for MirrorConfig {
     fn default() -> Self {
         Self {
             download_dir: None,
-            max_filesize: default_max_filesize(),
-            download_timeout: default_download_timeout(),
-            max_concurrent_downloads: default_max_concurrent_downloads(),
+            max_filesize: "500M".to_string(),
+            download_timeout: Duration::from_mins(10),
+            max_concurrent_downloads: 4,
             ytdlp_command: None,
             s3_access_key_id: None,
             s3_secret_access_key: None,
@@ -115,21 +106,6 @@ impl Default for MirrorConfig {
             s3_endpoint: None,
         }
     }
-}
-
-/// Returns the default maximum file size.
-fn default_max_filesize() -> String {
-    "500M".to_string()
-}
-
-/// Returns the default download timeout.
-const fn default_download_timeout() -> Duration {
-    Duration::from_mins(10)
-}
-
-/// Returns the default maximum number of concurrent downloads.
-const fn default_max_concurrent_downloads() -> usize {
-    4
 }
 
 /// Mirrors media: downloads it with `yt-dlp` and uploads it to S3.

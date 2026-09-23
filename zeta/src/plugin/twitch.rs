@@ -171,9 +171,7 @@ impl Twitch {
             .header("Client-ID", self.credentials.client_id())
             .header("Authorization", format!("Bearer {token}"))
             .query(query);
-        let response = http::send(request).await.map_err(http::ApiError::from)?;
-
-        http::parse_response(response).await.map_err(Error::from)
+        http::get_json(request).await.map_err(Error::from)
     }
 
     /// Fetches stream information and sends a message to the channel.

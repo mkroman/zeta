@@ -177,23 +177,16 @@ pub fn is_prefixed_numeric_id(id: &str, prefix: &str) -> bool {
 /// Returns the scheme entry that `word` starts with, preferring the longest match.
 fn matched_scheme(word: &str, schemes: SchemeMap) -> Option<(&'static str, Option<&'static str>)> {
     let bytes = word.as_bytes();
-    let mut matched: Option<(&'static str, Option<&'static str>)> = None;
-    let mut matched_len = 0;
 
-    for &(scheme, canonical) in schemes {
-        // Only schemes longer than the current match are of interest — a matching scheme of the
-        // same length would be the same scheme.
-        if scheme.len() > matched_len
-            && bytes
+    schemes
+        .iter()
+        .copied()
+        .filter(|(scheme, _)| {
+            bytes
                 .get(..scheme.len())
                 .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme.as_bytes()))
-        {
-            matched = Some((scheme, canonical));
-            matched_len = scheme.len();
-        }
-    }
-
-    matched
+        })
+        .max_by_key(|(scheme, _)| scheme.len())
 }
 
 impl Iterator for ExtractUrls<'_> {
@@ -232,6 +225,20 @@ impl Iterator for ExtractUrls<'_> {
         }
 
         None
+    }
+}
+
+/// Asserts that `parse` classifies every `input` of `cases` as its expected result, naming the
+/// input when an assertion fails.
+#[cfg(test)]
+pub(crate) fn assert_parses<T: std::fmt::Debug + PartialEq>(
+    parse: impl Fn(&Url) -> T,
+    cases: &[(&str, T)],
+) {
+    for (input, expected) in cases {
+        let url = Url::parse(input).unwrap();
+
+        assert_eq!(&parse(&url), expected, "for {input}");
     }
 }
 
@@ -315,6 +322,7 @@ mod tests {
         assert!(!is_prefixed_numeric_id("nm0000138", "tt"));
         assert!(!is_prefixed_numeric_id("tt", "tt"));
         assert!(!is_prefixed_numeric_id("ttbuster", "tt"));
+        assert!(!is_prefixed_numeric_id("nmbuster", "nm"));
     }
 
     /// Scheme map with the broken `ttp`/`ttps` variants, as used by the titles plugin.
@@ -328,25 +336,10 @@ mod tests {
     const TEST_STRING: &str = r#"> Hetzner on X: "We've spun up an exploratory platform where you can find an experimental open-weight LLM inference API. Free, no SLAs. Test your own use cases and tell us what works and what doesn't 🫡No promises this becomes a permanent product: https://t.co/CE6YWbrTHz https://t.co/0j6aNULi86" / X"#;
 
     #[test]
-    fn iter_should_extract_urls() {
-        let urls = ExtractUrls::new(TEST_STRING);
-
-        assert_eq!(urls.count(), 2);
-    }
-
-    #[test]
-    fn str_ext_should_extract_urls() {
-        let urls = TEST_STRING.urls();
-
-        assert_eq!(urls.count(), 2);
-    }
-
-    #[test]
-    fn string_ext_should_extract_urls() {
-        let s = String::from(TEST_STRING);
-        let urls = s.urls();
-
-        assert_eq!(urls.count(), 2);
+    fn extract_urls_from_iterators_str_and_string_all_yield_the_same_urls() {
+        assert_eq!(ExtractUrls::new(TEST_STRING).count(), 2);
+        assert_eq!(TEST_STRING.urls().count(), 2);
+        assert_eq!(String::from(TEST_STRING).urls().count(), 2);
     }
 
     #[test]

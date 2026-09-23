@@ -29,21 +29,24 @@ use crate::plugin::prelude::*;
 
 /// Settings for the dig plugin, from its `[plugins.dig]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// Nameservers to query over UDP and TCP.
     ///
     /// Defaults to Cloudflare's public resolvers.
-    #[serde(
-        default = "default_nameservers",
-        deserialize_with = "deserialize_nameservers"
-    )]
+    #[serde(deserialize_with = "deserialize_nameservers")]
     pub nameservers: Vec<IpAddr>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            nameservers: default_nameservers(),
+            nameservers: vec![
+                IpAddr::from([1, 1, 1, 1]),
+                IpAddr::from([1, 0, 0, 1]),
+                IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111]),
+                IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001]),
+            ],
         }
     }
 }
@@ -60,16 +63,6 @@ where
     }
 
     Ok(nameservers)
-}
-
-/// Returns the default nameservers: Cloudflare's public resolvers.
-fn default_nameservers() -> Vec<IpAddr> {
-    vec![
-        IpAddr::from([1, 1, 1, 1]),
-        IpAddr::from([1, 0, 0, 1]),
-        IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111]),
-        IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001]),
-    ]
 }
 
 /// Look up DNS records for a domain.
@@ -241,28 +234,22 @@ impl Dig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use figment::value::{Dict, Value};
 
-    #[test]
-    fn default_settings_build_a_resolver() {
-        let settings = Settings::default();
-        assert_ne!(settings.nameservers, Vec::<IpAddr>::new());
-
-        assert!(
-            build_resolver(&settings.nameservers).is_ok(),
-            "could not build a resolver from the default nameservers"
-        );
-    }
-
-    #[test]
-    fn configured_settings_build_a_resolver() {
-        let settings: Settings = Deserialize::deserialize(&Value::from(Dict::from([(
-            String::from("nameservers"),
-            Value::from(&["192.0.2.53"]),
-        )])))
-        .expect("could not deserialize settings");
-
-        assert_eq!(settings.nameservers, vec![IpAddr::from([192, 0, 2, 53])]);
-        assert!(build_resolver(&settings.nameservers).is_ok());
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_ne!(settings.nameservers, Vec::<IpAddr>::new());
+            assert!(
+                build_resolver(&settings.nameservers).is_ok(),
+                "could not build a resolver from the default nameservers"
+            );
+        }
+        deserialize: {
+            "nameservers": ["192.0.2.53"],
+        } assert: {
+            assert_eq!(settings.nameservers, vec![IpAddr::from([192, 0, 2, 53])]);
+            assert!(build_resolver(&settings.nameservers).is_ok());
+        }
     }
 }

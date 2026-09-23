@@ -678,10 +678,7 @@ impl PluginTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Config;
     use async_trait::async_trait;
-    use figment::Figment;
-    use figment::providers::{Format, Toml};
     use irc::proto::Message;
     use zeta_plugin::MessageEvent;
 
@@ -749,32 +746,7 @@ mod tests {
     #[cfg(feature = "database")]
     #[tokio::test]
     async fn plugin_task_drains_messages_before_shutdown() {
-        let db = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgresql://invalid/zeta_test")
-            .expect("lazy database pool");
-
-        let mut config: Config = Figment::new()
-            .merge(Toml::string(
-                r#"
-[database]
-url = "postgresql://invalid/zeta_test"
-
-[tracing]
-enabled = false
-
-[irc]
-nickname = "zeta-test"
-hostname = "mock"
-alt_nicks = []
-channels = []
-"#,
-            ))
-            .extract()
-            .expect("test configuration should parse");
-
-        let _ = config.take_plugins();
-
-        let ctx = Arc::new(Context::new(db, crate::dns::new(), config));
+        let ctx = Arc::new(Context::for_tests());
         let recording = publish_recording(&ctx);
 
         let client = Arc::new(

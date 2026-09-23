@@ -176,8 +176,7 @@ impl Credentials {
         self.token
             .get(|| async {
                 debug!(auth_url = %self.auth_url, "refreshing oauth2 access token");
-                let response = crate::http::send(grant(&self.client, self)).await?;
-                let token = crate::http::parse_response::<TokenResponse>(response).await?;
+                let token = crate::http::get_json(grant(&self.client, self)).await?;
 
                 Ok(token)
             })

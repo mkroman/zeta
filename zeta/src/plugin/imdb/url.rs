@@ -40,10 +40,11 @@ pub fn classify_imdb_url(url: &Url) -> Option<Link> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::url::assert_parses;
 
     #[test]
     fn classify_title_urls() {
-        let test_cases = [
+        assert_parses(classify_imdb_url, &[
             (
                 "https://www.imdb.com/title/tt1375666/",
                 Some(Link::Title("tt1375666".to_string())),
@@ -69,18 +70,12 @@ mod tests {
                 "https://www.imdb.com/title/tt0959621/?ref_=ttep_ep1",
                 Some(Link::Title("tt0959621".to_string())),
             ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(classify_imdb_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]
     fn classify_name_urls() {
-        let test_cases = [
+        assert_parses(classify_imdb_url, &[
             (
                 "https://www.imdb.com/name/nm0000138/",
                 Some(Link::Name("nm0000138".to_string())),
@@ -93,38 +88,17 @@ mod tests {
                 "https://www.imdb.com/name/nm0186505/awards",
                 Some(Link::Name("nm0186505".to_string())),
             ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(classify_imdb_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]
     fn classify_unrecognized_urls() {
-        let test_cases = [
-            "https://www.imdb.com/chart/top/",
-            "https://www.imdb.com/title/",
-            "https://www.imdb.com/name/",
-            "https://www.imdb.com/name/nmbuster",
-            "https://example.com/title/tt1375666",
-        ];
-
-        for url_str in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(classify_imdb_url(&url), None, "for {url_str}");
-        }
-    }
-
-    #[test]
-    fn ids_must_be_prefixed_numeric() {
-        assert!(is_prefixed_numeric_id("tt1375666", "tt"));
-        assert!(!is_prefixed_numeric_id("nm0000138", "tt"));
-        assert!(!is_prefixed_numeric_id("tt", "tt"));
-        assert!(!is_prefixed_numeric_id("ttbuster", "tt"));
-        assert!(!is_prefixed_numeric_id("nmbuster", "nm"));
+        assert_parses(classify_imdb_url, &[
+            ("https://www.imdb.com/chart/top/", None),
+            ("https://www.imdb.com/title/", None),
+            ("https://www.imdb.com/name/", None),
+            ("https://www.imdb.com/name/nmbuster", None),
+            ("https://example.com/title/tt1375666", None),
+        ]);
     }
 }

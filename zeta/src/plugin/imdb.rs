@@ -42,41 +42,24 @@ const SEARCH_LIMIT: usize = 5;
 
 /// Settings for the imdb plugin, from its `[plugins.imdb]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// Whether to include adult titles in search results.
-    #[serde(default = "default_include_adult")]
     pub include_adult: bool,
     /// The country the IMDb API localises results for.
-    #[serde(default = "default_user_country")]
     pub user_country: String,
     /// The language the IMDb API localises results for.
-    #[serde(default = "default_user_language")]
     pub user_language: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            include_adult: default_include_adult(),
-            user_country: default_user_country(),
-            user_language: default_user_language(),
+            include_adult: true,
+            user_country: "US".to_string(),
+            user_language: "en-US".to_string(),
         }
     }
-}
-
-/// Returns whether adult titles are included by default.
-const fn default_include_adult() -> bool {
-    true
-}
-
-/// Returns the default country the IMDb API localises results for.
-fn default_user_country() -> String {
-    "US".to_string()
-}
-
-/// Returns the default language the IMDb API localises results for.
-fn default_user_language() -> String {
-    "en-US".to_string()
 }
 
 /// The `!imdb` command.

@@ -53,7 +53,7 @@ impl Client {
             ),
         ]);
 
-        let inner = http::client::builder(config)
+        let inner = http::builder(config)
             .default_headers(headers)
             .build()
             .map_err(|error| plugin_err(RequestError::from(error)))?;
@@ -146,9 +146,7 @@ impl Client {
             .inner
             .get(format!("{API_BASE_URL}{path}"))
             .query(query);
-        let response = http::send(request).await.map_err(Error::Request)?;
-
-        http::parse_response(response)
+        http::get_json(request)
             .await
             .map_err(|error| match error {
                 http::ApiError::Status { status, body } => api_error(status, &body),

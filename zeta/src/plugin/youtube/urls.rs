@@ -77,10 +77,11 @@ fn parse_youtu_be_url(url: &Url) -> Option<UrlKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::url::assert_parses;
 
     #[test]
     fn test_parse_video_urls() {
-        let test_cases = [
+        assert_parses(parse_youtube_url, &[
             (
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
@@ -98,18 +99,12 @@ mod tests {
                 "https://youtu.be/dQw4w9WgXcQ/",
                 Some(UrlKind::Video("dQw4w9WgXcQ".to_string())),
             ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]
     fn test_parse_shorts_urls() {
-        let test_cases = [
+        assert_parses(parse_youtube_url, &[
             (
                 "https://www.youtube.com/shorts/l4s8y-O_ols",
                 Some(UrlKind::Short("l4s8y-O_ols".to_string())),
@@ -118,48 +113,31 @@ mod tests {
                 "https://youtube.com/shorts/l4s8y-O_ols/",
                 Some(UrlKind::Short("l4s8y-O_ols".to_string())),
             ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]
     fn test_parse_playlist_urls() {
-        let test_cases = [(
+        assert_parses(parse_youtube_url, &[(
             "https://www.youtube.com/playlist?list=PLF37D334894B07EEA",
             Some(UrlKind::Playlist("PLF37D334894B07EEA".to_string())),
-        )];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected, "for {url_str}");
-        }
+        )]);
     }
 
     #[test]
     fn test_invalid_urls() {
-        let invalid_urls = [
-            "https://example.com/watch?v=test",
-            "https://youtube.com/channel/",
-            "https://youtube.com/shorts/",
-            "https://youtu.be/",
-            "https://youtu.be/dQw4w9WgXcQ/subpage",
-        ];
-
-        for url_str in invalid_urls {
-            let url = Url::parse(url_str).unwrap();
-            assert_eq!(parse_youtube_url(&url), None, "for {url_str}");
-        }
+        assert_parses(parse_youtube_url, &[
+            ("https://example.com/watch?v=test", None),
+            ("https://youtube.com/channel/", None),
+            ("https://youtube.com/shorts/", None),
+            ("https://youtu.be/", None),
+            ("https://youtu.be/dQw4w9WgXcQ/subpage", None),
+        ]);
     }
 
     #[test]
     fn it_should_parse_channel_urls() {
-        let test_cases = [
+        assert_parses(parse_youtube_url, &[
             (
                 "https://www.youtube.com/channel/UChuZAo1RKL85gev3Eal9_zg",
                 Some(UrlKind::Channel("UChuZAo1RKL85gev3Eal9_zg".to_string())),
@@ -176,12 +154,6 @@ mod tests {
                 "https://www.youtube.com/@BreakingTaps/",
                 Some(UrlKind::ChannelHandle("BreakingTaps".to_string())),
             ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_youtube_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 }

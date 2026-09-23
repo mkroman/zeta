@@ -214,6 +214,7 @@ fn is_valid_shortcode(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::url::assert_parses;
 
     #[test]
     fn test_parse_valid_urls() {
@@ -233,7 +234,7 @@ mod tests {
             Some(InstagramLink::Shortened(Url::parse(url).unwrap()))
         };
 
-        let test_cases = [
+        assert_parses(parse_instagram_url, &[
             // Profiles.
             ("https://www.instagram.com/nike/", Some(InstagramLink::Profile("nike".to_string()))),
             ("https://www.instagram.com/nike", Some(InstagramLink::Profile("nike".to_string()))),
@@ -301,22 +302,15 @@ mod tests {
             // ignored.
             ("https://l.instagram.com/?u=https%3A%2F%2Fexample.com%2F", None),
             ("https://l.instagram.com/?e=abc", None),
-            (
-                "https://l.instagram.com/?u=https%3A%2F%2Fl.instagram.com%2F%3Fu%3Dx",
+            ("https://l.instagram.com/?u=https%3A%2F%2Fl.instagram.com%2F%3Fu%3Dx",
                 None,
             ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_instagram_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]
     fn test_parse_invalid_urls() {
-        let test_cases = [
+        assert_parses(parse_instagram_url, &[
             ("https://www.instagram.com/p/", None),
             ("https://www.instagram.com/p/C7_Hlo8y9aP/other", None),
             ("https://www.instagram.com/stories/fruits_zipper/", None),
@@ -342,13 +336,7 @@ mod tests {
             ("https://www.instagram.com/reels/audio/Cop84x6u7CP/", None),
             // Other hosts are not Instagram links.
             ("https://www.example.com/p/C7_Hlo8y9aP/", None),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_instagram_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]

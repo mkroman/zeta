@@ -58,12 +58,7 @@ pub struct Spotify {
 }
 
 /// Errors that can occur while talking to the Spotify API.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// The Spotify API returned an error response.
-    #[error(transparent)]
-    Api(#[from] http::ApiError),
-}
+pub type Error = http::ApiError;
 
 #[derive(Deserialize)]
 struct Track {
@@ -229,11 +224,7 @@ impl Spotify {
     }
 
     async fn fetch<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, Error> {
-        let token = self
-            .credentials
-            .access_token(Spotify::token_grant)
-            .await
-            .map_err(Error::from)?;
+        let token = self.credentials.access_token(Spotify::token_grant).await?;
         let url = format!("{API_BASE_URL}/{path}");
 
         let request = self
@@ -241,9 +232,7 @@ impl Spotify {
             .client()
             .get(&url)
             .header(AUTHORIZATION, format!("Bearer {token}"));
-        let response = http::send(request).await.map_err(http::ApiError::from)?;
-
-        http::parse_response(response).await.map_err(Error::from)
+        http::get_json(request).await
     }
 
     async fn send_track_details(
@@ -371,7 +360,7 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
     // Mimic Ruby behavior: simplistic error messages for common HTTP codes could be added here
     // For now, we generally don't spam the channel with errors unless it's critical,
     // but the Ruby plugin did print "Invalid track ID" etc.
-    if let Error::Api(http::ApiError::Status { status, .. }) = error
+    if let http::ApiError::Status { status, .. } = error
         && *status == reqwest::StatusCode::NOT_FOUND
     {
         client.send_privmsg(channel, reply("Spotify", "Resource not found"))?;

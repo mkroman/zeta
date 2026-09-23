@@ -22,23 +22,18 @@ pub const BASE_URL: &str = "https://api.urbandictionary.com";
 /// Settings for the `urban_dictionary` plugin, from its `[plugins.urban_dictionary]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The maximum length of the definition and example text, in characters.
-    #[serde(default = "default_max_definition_length")]
     pub max_definition_length: usize,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            max_definition_length: default_max_definition_length(),
+            max_definition_length: 400,
         }
     }
-}
-
-/// Returns the default maximum length of the definition and example text.
-const fn default_max_definition_length() -> usize {
-    400
 }
 
 /// The `.ud` command.
@@ -54,12 +49,7 @@ pub struct UrbanDictionary {
 }
 
 /// Errors that can occur during execution.
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    /// The Urban Dictionary API returned an error response.
-    #[error(transparent)]
-    Api(#[from] http::ApiError),
-}
+pub type Error = http::ApiError;
 
 /// List of definitions.
 #[derive(Debug, Deserialize)]
@@ -113,29 +103,26 @@ impl Plugin<Context> for UrbanDictionary {
         let channel = command.channel();
         let query = command.args();
 
-        if query.is_empty() {
-            client.send_privmsg(channel, reply("Urban Dictionary", USAGE))?;
-            return Ok(());
-        }
+        let message = if query.is_empty() {
+            reply("Urban Dictionary", USAGE)
+        } else {
+            match self.definitions(query).await {
+                Ok(definitions) => definitions.list.first().map_or_else(
+                    || reply("Urban Dictionary", "No results"),
+                    |definition| {
+                        let formatter = DefinitionFormatter {
+                            definition,
+                            max_length: self.settings.max_definition_length,
+                        };
 
-        match self.definitions(query).await {
-            Ok(definitions) => {
-                if let Some(definition) = definitions.list.first() {
-                    let formatter = DefinitionFormatter {
-                        definition,
-                        max_length: self.settings.max_definition_length,
-                    };
-                    let s = reply("Urban Dictionary", formatter.to_string());
+                        reply("Urban Dictionary", formatter.to_string())
+                    },
+                ),
+                Err(err) => reply("Urban Dictionary", err),
+            }
+        };
 
-                    client.send_privmsg(channel, s)?;
-                } else {
-                    client.send_privmsg(channel, reply("Urban Dictionary", "No results"))?;
-                }
-            }
-            Err(err) => {
-                client.send_privmsg(channel, reply("Urban Dictionary", err))?;
-            }
-        }
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }
@@ -185,9 +172,7 @@ impl UrbanDictionary {
             .client
             .get(format!("{BASE_URL}/v0/define"))
             .query(&params);
-        let response = http::send(request).await.map_err(http::ApiError::from)?;
-
-        let definitions: Definitions = http::parse_response(response).await?;
+        let definitions: Definitions = http::get_json(request).await?;
         debug!(num_definitions = %definitions.list.len(), "fetched definitions");
 
         Ok(definitions)

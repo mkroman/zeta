@@ -140,7 +140,7 @@ impl GitHubPlugin {
             );
         }
 
-        let client = http::client::builder(config)
+        let client = http::builder(config)
             .default_headers(headers)
             .build()
             .map_err(|error| Error::Request(RequestError::from(error)))?;
@@ -161,9 +161,7 @@ impl GitHubPlugin {
             .http
             .get("https://api.github.com/search/repositories")
             .query(&params);
-        let response = http::send(request).await?;
-
-        http::parse_response(response).await.map_err(Error::from)
+        http::get_json(request).await.map_err(Error::from)
     }
 
     /// Formats a specific repository item into an IRC-friendly string.

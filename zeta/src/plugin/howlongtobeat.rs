@@ -22,7 +22,6 @@ use tracing::{debug, warn};
 use crate::{
     cache::TtlCache,
     duration::{HOURS_AND_MINUTES, words},
-    error::RequestError,
     http,
     plugin::prelude::*,
 };
@@ -52,15 +51,7 @@ pub struct HowLongToBeat {
 }
 
 /// Errors that can occur during API interactions.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] RequestError),
-    /// The HowLongToBeat API returned an error response.
-    #[error(transparent)]
-    Api(#[from] http::ApiError),
-}
+pub type Error = http::ApiError;
 
 /// Cached authentication credentials required by the API.
 #[derive(Debug, Clone)]
@@ -248,24 +239,18 @@ impl Plugin<Context> for HowLongToBeat {
         let channel = command.channel();
         let query = command.args();
 
-        if query.trim().is_empty() {
-            client.send_privmsg(channel, notice("Usage: .hltb\x0f <game>"))?;
-            return Ok(());
-        }
+        let message = if query.trim().is_empty() {
+            notice("Usage: .hltb\x0f <game>")
+        } else {
+            match self.search(query).await {
+                Ok(games) => games
+                    .first()
+                    .map_or_else(|| notice("No results found"), format_game),
+                Err(err) => notice(err),
+            }
+        };
 
-        match self.search(query).await {
-            Ok(games) => {
-                if let Some(game) = games.first() {
-                    let msg = format_game(game);
-                    client.send_privmsg(channel, msg)?;
-                } else {
-                    client.send_privmsg(channel, notice("No results found"))?;
-                }
-            }
-            Err(err) => {
-                client.send_privmsg(channel, notice(err))?;
-            }
-        }
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }
@@ -293,9 +278,7 @@ impl HowLongToBeat {
             .client
             .get(&url)
             .header(REFERER, REFERER_URL);
-        let response = http::send(request).await?;
-
-        let init: InitResponse = http::parse_response(response).await?;
+        let init: InitResponse = http::get_json(request).await?;
 
         Ok(AuthData {
             token: init.token,
@@ -313,10 +296,10 @@ impl HowLongToBeat {
 
         match self.perform_search_request(&auth, query).await {
             Ok(results) => Ok(results),
-            Err(Error::Api(http::ApiError::Status {
+            Err(http::ApiError::Status {
                 status: StatusCode::FORBIDDEN,
                 ..
-            })) => {
+            }) => {
                 warn!("hltb token expired, refreshing...");
                 let new_auth = self.auth.force_refresh(|| self.fetch_auth()).await?;
                 self.perform_search_request(&new_auth, query).await
@@ -357,9 +340,7 @@ impl HowLongToBeat {
             .header("x-hp-val", &auth.hp_val)
             .header(CONTENT_TYPE, "application/json")
             .json(&body);
-        let response = http::send(request).await?;
-
-        let response_data: SearchResponse = http::parse_response(response).await?;
+        let response_data: SearchResponse = http::get_json(request).await?;
 
         Ok(response_data.data)
     }

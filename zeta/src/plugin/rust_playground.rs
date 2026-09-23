@@ -20,50 +20,27 @@ const BASE_URL: &str = "https://play.rust-lang.org/execute";
 /// Settings for the `rust_playground` plugin, from its `[plugins.rust_playground]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The release channel used for evaluation: `stable`, `beta` or `nightly`.
-    #[serde(default = "default_channel")]
     pub channel: String,
     /// The build mode: `debug` or `release`.
-    #[serde(default = "default_mode")]
     pub mode: String,
     /// The Rust edition: `2015`, `2018`, `2021` or `2024`.
-    #[serde(default = "default_edition")]
     pub edition: String,
     /// The maximum output length, in characters.
-    #[serde(default = "default_max_output_length")]
     pub max_output_length: usize,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            channel: default_channel(),
-            mode: default_mode(),
-            edition: default_edition(),
-            max_output_length: default_max_output_length(),
+            channel: "stable".to_string(),
+            mode: "debug".to_string(),
+            edition: "2024".to_string(),
+            max_output_length: 250,
         }
     }
-}
-
-/// Returns the default release channel.
-fn default_channel() -> String {
-    "stable".to_string()
-}
-
-/// Returns the default build mode.
-fn default_mode() -> String {
-    "debug".to_string()
-}
-
-/// Returns the default Rust edition.
-fn default_edition() -> String {
-    "2024".to_string()
-}
-
-/// Returns the default maximum output length, in characters.
-const fn default_max_output_length() -> usize {
-    250
 }
 
 /// The `.rs` command.
@@ -80,12 +57,7 @@ pub struct RustPlayground {
 }
 
 /// Errors that can occur while evaluating code on the Rust Playground.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// The playground returned an unusable response.
-    #[error(transparent)]
-    Api(#[from] http::ApiError),
-}
+pub type Error = http::ApiError;
 
 /// The request payload sent to the Rust Playground.
 #[derive(Serialize)]
@@ -134,20 +106,16 @@ impl Plugin<Context> for RustPlayground {
         let channel = command.channel();
         let expr = command.args();
 
-        // Early return if input is empty
-        if expr.trim().is_empty() {
-            client.send_privmsg(channel, reply("Rust Playground", "Usage: .rs\x0f <expr>"))?;
-            return Ok(());
-        }
-
-        match self.evaluate(expr).await {
-            Ok(output) => {
-                client.send_privmsg(channel, reply("Rust Playground", &output))?;
+        let message = if expr.trim().is_empty() {
+            reply("Rust Playground", "Usage: .rs\x0f <expr>")
+        } else {
+            match self.evaluate(expr).await {
+                Ok(output) => reply("Rust Playground", &output),
+                Err(e) => reply("Rust Playground", e),
             }
-                Err(e) => {
-                    client.send_privmsg(channel, reply("Rust Playground", e))?;
-                }
-        }
+        };
+
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }
@@ -171,11 +139,8 @@ impl RustPlayground {
 
         debug!("sending code to rust playground");
 
-        let response = http::send(self.client.post(BASE_URL).json(&request))
-            .await
-            .map_err(http::ApiError::from)?;
-
-        let result: ExecuteResponse = http::parse_response(response).await?;
+        let result: ExecuteResponse =
+            http::get_json(self.client.post(BASE_URL).json(&request)).await?;
 
         if result.success {
             let output = sanitize_output(&result.stdout);

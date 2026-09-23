@@ -107,12 +107,7 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
         let error = RequestError::from(error);
 
         if let Some(url) = error.url() {
-            error!(
-                url.full = %url,
-                error.type = error.error_type(),
-                error = %error.full(),
-                "request failed"
-            );
+            log_request_error(&error, url, "request failed");
         }
 
         error
@@ -134,15 +129,16 @@ pub async fn text(response: reqwest::Response) -> Result<String, RequestError> {
     response.text().await.map_err(|error| {
         let error = RequestError::from(error);
 
-        error!(
-            url.full = %url,
-            error.type = error.error_type(),
-            error = %error.full(),
-            "reading response body failed"
-        );
+        log_request_error(&error, &url, "reading response body failed");
 
         error
     })
+}
+
+/// Logs a failed request or body read once, with its redacted URL and error type.
+#[cfg(feature = "http")]
+fn log_request_error(error: &RequestError, url: &str, message: &str) {
+    error!(url.full = %url, error.type = error.error_type(), error = %error.full(), "{message}");
 }
 
 /// Parses the response's JSON body into `T`.
@@ -246,42 +242,61 @@ pub async fn parse_response_or_404<T: DeserializeOwned, E: From<ApiError>>(
     }
 }
 
-/// HTTP client integration
+/// Sends `request` and parses the JSON body of the successful response into `T`.
+///
+/// Combines [`send`] and [`parse_response`]: a failed send is logged once by [`send`] and
+/// reported as [`ApiError::Request`], so callers write one statement instead of two.
+///
+/// # Errors
+///
+/// Returns an [`ApiError`] if the request fails, the response status is not a success, or the
+/// body cannot be parsed as JSON.
 #[cfg(feature = "http")]
-pub mod client {
-    use crate::config::HttpConfig;
+pub async fn get_json<T: DeserializeOwned>(
+    request: reqwest::RequestBuilder,
+) -> Result<T, ApiError> {
+    let response = send(request).await?;
 
-    pub use reqwest::Client;
-    use reqwest::redirect::Policy;
-
-    /// Returns a default HTTP client configured by [`HttpConfig`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if the default HTTP client fails to build.
-    #[must_use]
-    pub fn build(config: &HttpConfig) -> Client {
-        builder(config)
-            .build()
-            .expect("could not build http client")
-    }
-
-    /// Returns a default HTTP client builder configured by [`HttpConfig`].
-    pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
-        reqwest::ClientBuilder::new()
-            .redirect(Policy::none())
-            .timeout(config.timeout)
-            .user_agent(config.user_agent.clone())
-    }
+    parse_response(response).await
 }
 
-/// Builds a default HTTP client configured by [`HttpConfig`].
+/// Sends `request` and parses the JSON body like [`get_json`], mapping a `404` status to
+/// `not_found`.
 ///
-/// This is equivalent to calling [`client::build`].
+/// # Errors
+///
+/// Returns `not_found` if the response status is `404 Not Found`; any other failure is
+/// converted into `E`.
+#[cfg(feature = "http")]
+pub async fn get_json_or_404<T: DeserializeOwned, E: From<ApiError>>(
+    request: reqwest::RequestBuilder,
+    not_found: E,
+) -> Result<T, E> {
+    let response = send(request).await.map_err(|error| E::from(error.into()))?;
+
+    parse_response_or_404(response, not_found).await
+}
+
+/// Returns a default HTTP client configured by [`HttpConfig`].
+///
+/// # Panics
+///
+/// Panics if the default HTTP client fails to build.
 #[must_use]
 #[cfg(feature = "http")]
-pub fn build_client(config: &HttpConfig) -> client::Client {
-    client::build(config)
+pub fn build_client(config: &HttpConfig) -> reqwest::Client {
+    builder(config)
+        .build()
+        .expect("could not build http client")
+}
+
+/// Returns a default HTTP client builder configured by [`HttpConfig`].
+#[cfg(feature = "http")]
+pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
+    reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(config.timeout)
+        .user_agent(config.user_agent.clone())
 }
 
 /// Client building for anti-bot-protected sites.
@@ -340,6 +355,23 @@ pub fn refused_address() -> std::net::SocketAddr {
     address
 }
 
+/// Asserts the redaction guarantees every transport wrapper makes: the short rendering (what a
+/// channel reply gets) is classified, host-only and bounded; the full rendering (what a log line
+/// gets) carries the redacted URL and the cause; `Debug` leaks no query either.
+#[cfg(all(test, any(feature = "http", feature = "emulated")))]
+pub fn assert_redactions(message: &str, full: &str, debug: &str, address: &std::net::SocketAddr) {
+    assert!(!message.contains("secret"), "{message}");
+    assert!(message.starts_with("could not connect"), "{message}");
+    assert!(message.contains(&address.ip().to_string()), "{message}");
+    assert!(message.len() < 64, "{message}");
+
+    assert!(!full.contains("secret"), "{full}");
+    assert!(full.contains(&format!("http://{address}/")), "{full}");
+    assert!(full.contains("refused"), "{full}");
+
+    assert!(!debug.contains("secret"), "{debug}");
+}
+
 #[cfg(all(test, feature = "http"))]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -374,6 +406,18 @@ mod tests {
         }
     }
 
+    /// Captures tracing output emitted while the returned guard is alive.
+    fn capture_logs() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(buffer.clone()),
+        );
+
+        (buffer, tracing::subscriber::set_default(subscriber))
+    }
+
     #[tokio::test]
     async fn request_errors_redact_the_url_but_keep_the_cause() {
         let address = refused_address();
@@ -387,27 +431,16 @@ mod tests {
         assert!(error.url().is_some(), "reqwest attaches the request url");
 
         let error = RequestError::from(error);
-        let message = error.to_string();
-        let full = error.full();
 
-        // The short rendering a channel reply gets: classified, host only — no query, no path,
-        // no cause chain, and bounded so it cannot overflow an IRC line.
-        assert!(!message.contains("secret"), "{message}");
-        assert!(message.starts_with("could not connect"), "{message}");
-        assert!(message.contains(&address.ip().to_string()), "{message}");
-        assert!(message.len() < 64, "{message}");
+        assert_redactions(
+            &error.to_string(),
+            error.full(),
+            &format!("{error:?}"),
+            &address,
+        );
 
-        // The full rendering a log line gets: the redacted URL and the cause that reqwest only
-        // keeps in `source()`.
-        assert!(!full.contains("secret"), "{full}");
-        assert!(full.contains(&format!("http://{address}/")), "{full}");
-        assert!(full.contains("refused"), "{full}");
-
-        // `Debug` stays free of the query as well...
-        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
-
-        // ...and the chain ends here, so nothing that walks `source()` can reach a raw error.
-        assert!(std::error::Error::source(&error).is_none(), "{full}");
+        // The chain ends at the wrapper, so nothing that walks `source()` can reach a raw error.
+        assert!(std::error::Error::source(&error).is_none(), "{error:?}");
 
         let error = ApiError::from(error);
 
@@ -420,13 +453,7 @@ mod tests {
         let address = refused_address();
         let request_url = format!("http://{address}/?key=secret");
 
-        let buffer = LogBuffer::default();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(buffer.clone()),
-        );
-        let guard = tracing::subscriber::set_default(subscriber);
+        let (buffer, guard) = capture_logs();
 
         let error = send(reqwest::Client::new().get(&request_url))
             .await
@@ -483,13 +510,7 @@ mod tests {
             stream.write_all(response.as_bytes()).expect("write");
         });
 
-        let buffer = LogBuffer::default();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(buffer.clone()),
-        );
-        let guard = tracing::subscriber::set_default(subscriber);
+        let (buffer, guard) = capture_logs();
 
         let response = reqwest::Client::new()
             .get(format!("http://{address}/?key=secret"))
@@ -522,7 +543,7 @@ mod tests {
 /// (`plugin-titles`) reach it without the `http` feature that gates the module above.
 #[cfg(all(test, feature = "emulated"))]
 mod emulated_tests {
-    use super::refused_address;
+    use super::{assert_redactions, refused_address};
 
     #[tokio::test]
     async fn emulated_request_errors_redact_the_uri_but_keep_the_cause() {
@@ -539,25 +560,14 @@ mod emulated_tests {
         assert!(error.uri().is_some(), "wreq attaches the request uri");
 
         let error = crate::error::WreqError::from(error);
-        let message = error.to_string();
         let full = error.full();
 
-        // The short rendering a channel reply gets: classified, host only, bounded.
-        assert!(!message.contains("secret"), "{message}");
-        assert!(message.starts_with("could not connect"), "{message}");
-        assert!(message.contains(&address.ip().to_string()), "{message}");
-        assert!(message.len() < 64, "{message}");
-
-        // The full rendering a log line gets: the redacted URI and the cause.
-        assert!(!full.contains("secret"), "{full}");
-        assert!(full.contains(&format!("http://{address}/")), "{full}");
-        assert!(full.contains("refused"), "{full}");
+        assert_redactions(&error.to_string(), full, &format!("{error:?}"), &address);
 
         // `wreq` renders its first source itself; walking the chain again would print that
         // link twice.
         assert_eq!(full.matches("client error").count(), 1, "{full}");
 
-        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
         assert!(std::error::Error::source(&error).is_none(), "{full}");
     }
 }

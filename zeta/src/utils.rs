@@ -3,47 +3,37 @@
 use std::borrow::Cow;
 
 /// Helpers for truncating text.
-pub trait Truncatable {
-    fn truncate_with_suffix(&self, len: usize, suffix: &str) -> Cow<'_, str>;
-
-    /// Truncates the text so that it is at most `len` characters *including* `suffix`, which is
-    /// appended when truncation happens.
-    fn truncate_within(&self, len: usize, suffix: &str) -> String;
-}
-
-impl Truncatable for String {
+pub trait Truncatable: AsRef<str> {
     fn truncate_with_suffix(&self, len: usize, suffix: &str) -> Cow<'_, str> {
-        self.as_str().truncate_with_suffix(len, suffix)
-    }
+        let text = self.as_ref();
 
-    fn truncate_within(&self, len: usize, suffix: &str) -> String {
-        self.as_str().truncate_within(len, suffix)
-    }
-}
-
-impl Truncatable for str {
-    fn truncate_with_suffix(&self, len: usize, suffix: &str) -> Cow<'_, str> {
-        match self.char_indices().nth(len) {
+        match text.char_indices().nth(len) {
             Some((byte_idx, _)) => {
                 let mut truncated = String::with_capacity(byte_idx + suffix.len());
-                truncated.push_str(&self[..byte_idx]);
+                truncated.push_str(&text[..byte_idx]);
                 truncated.push_str(suffix);
                 Cow::Owned(truncated)
             }
-            None => Cow::Borrowed(self),
+            None => Cow::Borrowed(text),
         }
     }
 
+    /// Truncates the text so that it is at most `len` characters *including* `suffix`, which is
+    /// appended when truncation happens.
     fn truncate_within(&self, len: usize, suffix: &str) -> String {
-        if self.chars().count() <= len {
-            return self.to_string();
+        let text = self.as_ref();
+
+        if text.chars().count() <= len {
+            return text.to_string();
         }
 
-        let mut truncated: String = self.chars().take(len.saturating_sub(1)).collect();
+        let mut truncated: String = text.chars().take(len.saturating_sub(1)).collect();
         truncated.push_str(suffix);
         truncated
     }
 }
+
+impl<T: ?Sized + AsRef<str>> Truncatable for T {}
 
 /// Strips a nickname mention (`<nick>, ...` or `<nick>: ...`) from the start of `s`.
 ///

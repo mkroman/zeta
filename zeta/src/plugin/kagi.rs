@@ -26,17 +26,16 @@ const IMAGES: CommandSpec = CommandSpec::new(".gis", "Search Kagi Images and lin
 
 /// Settings for the kagi plugin, from its `[plugins.kagi]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The Kagi session token (the `kagi_session` cookie value).
     ///
     /// Falls back to the `KAGI_SESSION_TOKEN` environment variable when unset.
-    #[serde(default)]
     pub session_token: Option<String>,
     /// How long a search session stays valid before it is refreshed.
-    #[serde(default = "default_session_duration", with = "humantime_serde")]
+    #[serde(with = "humantime_serde")]
     pub session_duration: Duration,
     /// The `Accept-Language` header sent with requests.
-    #[serde(default = "default_language")]
     pub language: String,
 }
 
@@ -44,20 +43,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             session_token: None,
-            session_duration: default_session_duration(),
-            language: default_language(),
+            session_duration: kagi::SESSION_DURATION,
+            language: kagi::LANGUAGE.to_string(),
         }
     }
-}
-
-/// Returns the default session duration.
-const fn default_session_duration() -> Duration {
-    kagi::SESSION_DURATION
-}
-
-/// Returns the default `Accept-Language` header.
-fn default_language() -> String {
-    kagi::LANGUAGE.to_string()
 }
 
 /// Kagi search integration.
@@ -156,25 +145,22 @@ impl KagiPlugin {
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Result<Vec<(String, String)>, kagi::Error>>,
     {
-        if query.trim().is_empty() {
-            client.send_privmsg(channel, notice(usage))?;
-
-            return Ok(());
-        }
-
-        match search(query.to_string()).await {
-            Ok(results) => {
-                if let Some((title, url)) = results.first() {
-                    client.send_privmsg(channel, reply("Kagi", format!("{title} - {url}")))?;
-                } else {
-                    client.send_privmsg(channel, notice("No results"))?;
+        let message = if query.trim().is_empty() {
+            notice(usage)
+        } else {
+            match search(query.to_string()).await {
+                Ok(results) => results.first().map_or_else(
+                    || notice("No results"),
+                    |(title, url)| reply("Kagi", format!("{title} - {url}")),
+                ),
+                Err(err) => {
+                    warn!(?err, "kagi search failed");
+                    notice(err)
                 }
             }
-            Err(err) => {
-                warn!(?err, "kagi search failed");
-                client.send_privmsg(channel, notice(err))?;
-            }
-        }
+        };
+
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }

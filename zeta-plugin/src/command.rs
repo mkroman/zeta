@@ -237,40 +237,36 @@ pub enum ArgsError {
 mod tests {
     use super::*;
 
+    #[derive(FromArgs, Debug, PartialEq)]
+    /// Test options.
+    struct NameOpts {
+        /// the required positional argument
+        #[argh(positional)]
+        #[allow(dead_code)]
+        name: String,
+    }
+
+    #[derive(FromArgs, Debug, PartialEq)]
+    /// Test options.
+    struct GreedyOpts {
+        /// the message and datetime
+        #[argh(positional, greedy)]
+        #[allow(dead_code)]
+        args: Vec<String>,
+    }
+
     #[test]
-    fn parse_extracts_args() {
+    fn parse_matches_the_trigger_prefix() {
         const CMD: CommandSpec = CommandSpec::new("!test", "test");
 
         assert_eq!(CMD.parse("!test --help"), Some("--help"));
-    }
-
-    #[test]
-    fn parse_command_is_some() {
-        const CMD: CommandSpec = CommandSpec::new("!test", "test");
-
         assert_eq!(CMD.parse("!test"), Some(""));
-    }
-
-    #[test]
-    fn parse_normalizes_whitespace() {
-        const CMD: CommandSpec = CommandSpec::new("!test", "test");
-
+        // Repeated whitespace between the trigger and the arguments collapses.
         assert_eq!(CMD.parse("!test   --help"), Some("--help"));
         assert_eq!(CMD.parse("!test  \t  args"), Some("args"));
-    }
-
-    #[test]
-    fn skip_on_non_whitespace_chars() {
-        const CMD: CommandSpec = CommandSpec::new("!test", "test");
-
+        // Only the exact trigger prefix matches.
         assert_eq!(CMD.parse("!testing --help"), None);
-    }
-
-    #[test]
-    fn unicode_whitespace_is_safe() {
         // Ideographic space (U+3000) is 3 bytes — must not panic on byte slice.
-        const CMD: CommandSpec = CommandSpec::new("!test", "test");
-
         assert_eq!(CMD.parse("!test\u{3000}args"), Some("args"));
     }
 
@@ -328,77 +324,41 @@ mod tests {
 
     #[test]
     fn parse_args_reports_usage_on_error() {
-        #[derive(FromArgs, Debug)]
-        /// Test options.
-        struct Opts {
-            /// the required positional argument
-            #[argh(positional)]
-            #[allow(dead_code)]
-            name: String,
-        }
-
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
-        let err = CMD.parse_args::<Opts>("").unwrap_err();
+        let err = CMD.parse_args::<NameOpts>("").unwrap_err();
 
         assert!(matches!(err, ArgsError::Usage(ref out) if out.contains("name")));
     }
 
     #[test]
     fn parse_args_reports_quoting_error() {
-        #[derive(FromArgs, Debug, PartialEq)]
-        /// Test options.
-        struct Opts {
-            /// the required positional argument
-            #[argh(positional)]
-            #[allow(dead_code)]
-            name: String,
-        }
-
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
         assert_eq!(
-            CMD.parse_args::<Opts>("\"unbalanced"),
+            CMD.parse_args::<NameOpts>("\"unbalanced"),
             Err(ArgsError::Quoting)
         );
     }
 
     #[test]
     fn parse_words_splits_on_whitespace() {
-        #[derive(FromArgs, Debug, PartialEq)]
-        /// Test options.
-        struct Opts {
-            /// the message and datetime
-            #[argh(positional, greedy)]
-            #[allow(dead_code)]
-            args: Vec<String>,
-        }
-
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
-        let opts: Opts = CMD.parse_words("  hello\tworld  ").unwrap();
+        let opts: GreedyOpts = CMD.parse_words("  hello\tworld  ").unwrap();
 
         assert_eq!(opts.args, vec!["hello".to_owned(), "world".to_owned()]);
 
-        let opts: Opts = CMD.parse_words("").unwrap();
+        let opts: GreedyOpts = CMD.parse_words("").unwrap();
 
         assert!(opts.args.is_empty());
     }
 
     #[test]
     fn parse_words_keeps_quotes_and_apostrophes_verbatim() {
-        #[derive(FromArgs, Debug, PartialEq)]
-        /// Test options.
-        struct Opts {
-            /// the message and datetime
-            #[argh(positional, greedy)]
-            #[allow(dead_code)]
-            args: Vec<String>,
-        }
-
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
-        let opts: Opts = CMD.parse_words(r#"don't "forget me" at 4:20"#).unwrap();
+        let opts: GreedyOpts = CMD.parse_words(r#"don't "forget me" at 4:20"#).unwrap();
 
         assert_eq!(opts.args.join(" "), r#"don't "forget me" at 4:20"#);
     }
@@ -432,18 +392,9 @@ mod tests {
 
     #[test]
     fn parse_words_reports_usage_on_error() {
-        #[derive(FromArgs, Debug, PartialEq)]
-        /// Test options.
-        struct Opts {
-            /// the message and datetime
-            #[argh(positional, greedy)]
-            #[allow(dead_code)]
-            args: Vec<String>,
-        }
-
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
-        let err = CMD.parse_words::<Opts>("-x").unwrap_err();
+        let err = CMD.parse_words::<GreedyOpts>("-x").unwrap_err();
 
         assert!(matches!(err, ArgsError::Usage(ref out) if out.contains("-x")));
     }

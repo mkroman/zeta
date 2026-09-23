@@ -122,7 +122,7 @@ impl GraphQlClient {
             HeaderValue::from_str(&settings.user_language)?,
         );
 
-        let http = http::client::builder(config)
+        let http = http::builder(config)
             .default_headers(headers)
             .build()
             .map_err(|error| Error::from(RequestError::from(error)))?;
@@ -221,9 +221,8 @@ impl GraphQlClient {
             "operationName": operation_name,
         });
 
-        let response = http::send(self.http.post(GRAPHQL_URL).json(&payload)).await?;
-
-        let response: GraphQlResponse<T> = http::parse_response(response).await?;
+        let response: GraphQlResponse<T> =
+            http::get_json(self.http.post(GRAPHQL_URL).json(&payload)).await?;
 
         if let Some(errors) = response.errors.filter(|errors| !errors.is_empty()) {
             let messages = errors

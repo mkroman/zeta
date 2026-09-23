@@ -28,38 +28,31 @@ use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};
 
 /// Settings for the tiktok plugin, from its `[plugins.tiktok]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The maximum length of a video title before it gets truncated.
-    #[serde(default = "default_title_length")]
     pub title_length: usize,
     /// The key prefix that mirrored videos are uploaded under.
     ///
     /// Falls back to the `TIKTOK_S3_PREFIX` environment variable, and to `tiktok` when neither is
     /// set.
-    #[serde(default)]
     pub prefix: Option<String>,
     /// The base URL used when linking to mirrored videos.
     ///
     /// Falls back to the `TIKTOK_PUBLIC_URL_BASE` environment variable when unset. Links are
     /// built by appending the video id as a URL fragment, so the base must point at a viewer page
     /// that resolves the fragment — not directly at the bucket.
-    #[serde(default)]
     pub public_url_base: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            title_length: default_title_length(),
+            title_length: 150,
             prefix: None,
             public_url_base: None,
         }
     }
-}
-
-/// Returns the default maximum title length.
-const fn default_title_length() -> usize {
-    150
 }
 
 /// The TikTok plugin: summarizes and mirrors TikTok video links.

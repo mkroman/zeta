@@ -13,21 +13,20 @@ use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use crate::{error::RequestError, http, plugin::prelude::*};
+use crate::{http, plugin::prelude::*};
 
 /// The base URL for the Trustpilot API.
 const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
 
 /// Settings for the trustpilot plugin, from its `[plugins.trustpilot]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The Trustpilot API key.
     ///
     /// Falls back to the `TRUSTPILOT_API_KEY` environment variable when unset.
-    #[serde(default)]
     pub api_key: Option<String>,
     /// The Trustpilot domain used for review links (e.g. `dk`).
-    #[serde(default = "default_review_domain")]
     pub review_domain: String,
 }
 
@@ -35,14 +34,9 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             api_key: None,
-            review_domain: default_review_domain(),
+            review_domain: "dk".to_string(),
         }
     }
-}
-
-/// Returns the default Trustpilot domain used for review links.
-fn default_review_domain() -> String {
-    "dk".to_string()
 }
 
 /// The `.tp` command.
@@ -97,9 +91,6 @@ struct NumberOfReviews {
 /// Errors that can occur during Trustpilot lookups.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// An error occurred while performing the HTTP request.
-    #[error("request error: {0}")]
-    Request(#[from] RequestError),
     /// The API returned an error, e.g. a non-success status or an unparseable body.
     #[error(transparent)]
     Api(#[from] http::ApiError),
@@ -133,24 +124,21 @@ impl Plugin<Context> for Trustpilot {
         let channel = command.channel();
         let query = command.args();
 
-        if query.trim().is_empty() {
-            client.send_privmsg(channel, notice("Usage: .tp\x0f <domain name>"))?;
-            return Ok(());
-        }
+        let message = if query.trim().is_empty() {
+            notice("Usage: .tp\x0f <domain name>")
+        } else {
+            match self.search(query).await {
+                Ok(business) => format_business(&business, &self.review_domain),
+                Err(Error::NotFound) => notice("No results found"),
+                Err(e) => {
+                    warn!(error = ?e, "trustpilot error");
+                    // The error is already safe for display
+                    notice(e)
+                }
+            }
+        };
 
-        match self.search(query).await {
-            Ok(business) => {
-                client.send_privmsg(channel, format_business(&business, &self.review_domain))?;
-            }
-            Err(Error::NotFound) => {
-                client.send_privmsg(channel, notice("No results found"))?;
-            }
-            Err(e) => {
-                warn!(error = ?e, "trustpilot error");
-                // The error is already safe for display
-                client.send_privmsg(channel, notice(e))?;
-            }
-        }
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }
@@ -178,9 +166,7 @@ impl Trustpilot {
             .get(&url)
             .header("apikey", &self.api_key)
             .query(&params);
-        let response = http::send(request).await?;
-
-        http::parse_response_or_404(response, Error::NotFound).await
+        http::get_json_or_404(request, Error::NotFound).await
     }
 }
 

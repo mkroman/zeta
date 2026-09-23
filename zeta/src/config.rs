@@ -133,20 +133,20 @@ pub struct DbConfig {
 
 /// HTTP client configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct HttpConfig {
     /// Duration before an HTTP request times out.
-    #[serde(default = "default_http_timeout", with = "humantime_serde")]
+    #[serde(with = "humantime_serde")]
     pub timeout: Duration,
     /// The `User-Agent` header sent with HTTP requests.
-    #[serde(default = "default_http_user_agent")]
     pub user_agent: String,
 }
 
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
-            timeout: default_http_timeout(),
-            user_agent: default_http_user_agent(),
+            timeout: HTTP_TIMEOUT,
+            user_agent: HTTP_USER_AGENT.to_string(),
         }
     }
 }
@@ -294,16 +294,6 @@ const fn default_db_idle_timeout() -> Duration {
     DEFAULT_DB_IDLE_TIMEOUT
 }
 
-/// Returns the default duration before an HTTP request times out.
-const fn default_http_timeout() -> Duration {
-    HTTP_TIMEOUT
-}
-
-/// Returns the default `User-Agent` header sent with HTTP requests.
-fn default_http_user_agent() -> String {
-    HTTP_USER_AGENT.to_string()
-}
-
 /// Returns the default message sent in the `QUIT` when the bot shuts down.
 fn default_shutdown_quit_message() -> String {
     DEFAULT_SHUTDOWN_QUIT_MESSAGE.to_string()
@@ -318,6 +308,21 @@ mod tests {
         Error, Figment,
         providers::{Format, Toml},
     };
+
+    /// The base configuration the full-config tests start from.
+    const FULL_BASE: &str = r#"
+[database]
+url = "postgresql://localhost/zeta_test"
+
+[tracing]
+enabled = true
+
+[irc]
+nickname = "zeta"
+hostname = "localhost"
+alt_nicks = []
+channels = []
+"#;
 
     /// Extracts the `[plugins]` subtree from an inline TOML document.
     fn extract(toml: &str) -> Result<PluginsConfig, Box<Error>> {
@@ -532,21 +537,7 @@ enabled = false
     #[test]
     fn full_config_without_plugins_section_parses() {
         let config = Figment::new()
-            .merge(Toml::string(
-                r#"
-[database]
-url = "postgresql://localhost/zeta_test"
-
-[tracing]
-enabled = true
-
-[irc]
-nickname = "zeta"
-hostname = "localhost"
-alt_nicks = []
-channels = []
-"#,
-            ))
+            .merge(Toml::string(FULL_BASE))
             .extract::<Config>()
             .expect("configuration without a [plugins] section should parse");
 
@@ -558,24 +549,9 @@ channels = []
     #[test]
     fn take_plugins_removes_sections() {
         let mut config = Figment::new()
-            .merge(Toml::string(
-                r#"
-[database]
-url = "postgresql://localhost/zeta_test"
-
-[tracing]
-enabled = true
-
-[irc]
-nickname = "zeta"
-hostname = "localhost"
-alt_nicks = []
-channels = []
-
-[plugins.dig]
-nameservers = ["1.1.1.1"]
-"#,
-            ))
+            .merge(Toml::string(&format!(
+                "{FULL_BASE}\n[plugins.dig]\nnameservers = [\"1.1.1.1\"]\n"
+            )))
             .extract::<Config>()
             .expect("configuration should parse");
 

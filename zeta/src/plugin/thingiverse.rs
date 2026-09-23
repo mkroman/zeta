@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{error::RequestError, http, plugin::prelude::*};
+use crate::{http, plugin::prelude::*};
 
 /// The Thingiverse hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
@@ -48,9 +48,6 @@ pub struct Thingiverse {
 /// Errors that can occur during plugin execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Sending the HTTP request failed.
-    #[error("request error: {0}")]
-    Request(#[from] RequestError),
     /// The linked thing does not exist.
     #[error("resource not found")]
     NotFound,
@@ -129,18 +126,16 @@ impl Thingiverse {
             let thing_id = id_match.as_str();
             debug!(%thing_id, "fetching thingiverse thing");
 
-            match self.fetch_thing(thing_id).await {
-                Ok(thing) => {
-                    client.send_privmsg(channel, reply("Thingiverse", thing.to_string()))?;
-                }
-                Err(Error::NotFound) => {
-                    client.send_privmsg(channel, reply("Thingiverse", "Thing not found"))?;
-                }
+            let message = match self.fetch_thing(thing_id).await {
+                Ok(thing) => reply("Thingiverse", thing.to_string()),
+                Err(Error::NotFound) => reply("Thingiverse", "Thing not found"),
                 Err(e) => {
                     warn!(error = ?e, "thingiverse api error");
-                    client.send_privmsg(channel, reply("Thingiverse", e))?;
+                    reply("Thingiverse", e)
                 }
-            }
+            };
+
+            client.send_privmsg(channel, message)?;
         }
 
         Ok(())
@@ -154,9 +149,7 @@ impl Thingiverse {
             .client
             .get(&url)
             .header(AUTHORIZATION, format!("Bearer {}", self.app_token));
-        let response = http::send(request).await?;
-
-        http::parse_response_or_404(response, Error::NotFound).await
+        http::get_json_or_404(request, Error::NotFound).await
     }
 }
 
