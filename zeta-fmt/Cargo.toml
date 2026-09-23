@@ -1,0 +1,35 @@
+[package]
+name = "zeta-fmt"
+version = "0.1.0"
+edition = "2024"
+description = "IRC message formatting shared by the zeta IRC bot and its plugins."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+keywords = ["irc", "formatting", "mirc"]
+categories = ["text-processing"]
+
+[lints.clippy]
+# Enable all basic clippy lints
+all = "warn"
+# Enable pedantic lints for stricter code quality
+pedantic = "warn"
+# Enable experimental/unstable lints that may have false positives
+nursery = "warn"
+# Disable cargo-related lints (often too noisy for dependencies)
+cargo = "allow"
+
+[lints.rust]
+# Completely disallow unsafe code - no unsafe blocks, functions, or traits
+unsafe_code = "forbid"
+# Require documentation for public items
+missing_docs = "warn"
+# Enforce modern Rust 2018+ idioms and patterns
+rust_2018_idioms = "warn"
+# Catch unnecessary casts between identical types
+trivial_casts = "warn"
+# Catch unnecessary numeric type casts (e.g., u32 as u32)
+trivial_numeric_casts = "warn"
+# Warn when import braces are used unnecessarily (use foo::{bar} vs use foo::bar)
+unused_import_braces = "warn"
+# Catch redundant path qualifications (self::foo when foo would suffice)
+unused_qualifications = "warn"

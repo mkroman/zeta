@@ -34,6 +34,8 @@ COPY --parents \
     zeta/src/lib.rs \
     zeta-plugin/Cargo.toml \
     zeta-plugin/src/lib.rs \
+    zeta-fmt/Cargo.toml \
+    zeta-fmt/src/lib.rs \
     dendanskeordbog/Cargo.toml \
     dendanskeordbog/src/lib.rs \
     reddit/Cargo.toml \
@@ -64,6 +66,8 @@ COPY --parents \
     zeta/migrations \
     zeta-plugin/Cargo.toml \
     zeta-plugin/src \
+    zeta-fmt/Cargo.toml \
+    zeta-fmt/src \
     dendanskeordbog/Cargo.toml \
     dendanskeordbog/src \
     reddit/Cargo.toml \

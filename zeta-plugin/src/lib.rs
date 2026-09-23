@@ -6,7 +6,7 @@
 
 pub mod command;
 pub mod event;
-pub mod irc;
+pub mod reply;
 
 mod error;
 mod plugin;
@@ -31,11 +31,12 @@ pub mod prelude {
         CommandEvent, CtcpEvent, CtcpKind, Event, JoinEvent, KickEvent, MessageEvent, NickEvent,
         PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
     };
-    pub use super::irc::{
+    pub use super::reply::{
         BOLD, COLOR, REPLY_PREFIX, RESET, notice, parse_args_or_usage, parse_words_or_usage,
         reply, reply_prefix, reply_usage_lines,
     };
     pub use super::plugin::PluginName;
     pub use super::types::NoSettings;
     pub use super::{Error, Plugin};
+    pub use zeta_fmt::{Banner, Color, Reply, Style, plain};
 }

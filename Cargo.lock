@@ -5196,6 +5196,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeta-fmt"
+version = "0.1.0"
+
+[[package]]
 name = "zeta-plugin"
 version = "0.5.0"
 dependencies = [
@@ -5206,6 +5210,7 @@ dependencies = [
  "shlex 2.0.1",
  "thiserror 2.0.20",
  "url",
+ "zeta-fmt",
 ]
 
 [[package]]

@@ -27,11 +27,11 @@ mod prelude {
     pub use irc::client::Client;
     pub use zeta_plugin::Error as ZetaError;
     pub use zeta_plugin::prelude::{
-        ArgsError, BOLD, BoxError, COLOR, CommandEvent, CommandSpec, CtcpEvent, CtcpKind, Event,
-        JoinEvent, KickEvent, MessageEvent, NickEvent, NoSettings, PartEvent, QuitEvent,
-        REPLY_PREFIX, RESET, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope, notice,
-        parse_args_or_usage, parse_words_or_usage, plugin_err, reply, reply_prefix,
-        reply_usage_lines, resolve_secret,
+        ArgsError, Banner, BOLD, BoxError, COLOR, CommandEvent, CommandSpec, Color, CtcpEvent,
+        CtcpKind, Event, JoinEvent, KickEvent, MessageEvent, NickEvent, NoSettings, PartEvent,
+        QuitEvent, REPLY_PREFIX, RESET, RawEvent, Reply, Sender, Style, Subscriptions, UrlEvent,
+        UrlScope, notice, parse_args_or_usage, parse_words_or_usage, plain, plugin_err, reply,
+        reply_prefix, reply_usage_lines, resolve_secret,
     };
 
     pub use super::{
