@@ -27,7 +27,18 @@ impl FilterRepository {
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the filter could not be inserted.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "INSERT filters",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "INSERT",
+            db.collection.name = "filters",
+            db.query.summary = "INSERT filters",
+        )
+    )]
     pub async fn insert(&self, filter: NewFilter) -> Result<Filter, Error> {
         trace!("inserting filter into database");
 
@@ -55,7 +66,18 @@ impl FilterRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the filters could not be fetched.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "SELECT filters",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "SELECT",
+            db.collection.name = "filters",
+            db.query.summary = "SELECT filters",
+        )
+    )]
     pub async fn list(&self) -> Result<Vec<Filter>, Error> {
         trace!("loading filters from database");
 
@@ -74,7 +96,18 @@ impl FilterRepository {
     /// # Errors
     ///
     /// Returns [`Error::Delete`] if the filters could not be deleted.
-    #[instrument(skip_all, err)]
+    #[instrument(
+        name = "DELETE filters",
+        skip_all,
+        err,
+        fields(
+            db.system.name = "postgresql",
+            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.operation.name = "DELETE",
+            db.collection.name = "filters",
+            db.query.summary = "DELETE filters",
+        )
+    )]
     pub async fn delete_all(&self, ids: &[i32]) -> Result<u64, Error> {
         trace!(?ids, "deleting filters from database");
 
