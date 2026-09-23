@@ -309,6 +309,21 @@ mod tests {
         providers::{Format, Toml},
     };
 
+    /// The base configuration the full-config tests start from.
+    const FULL_BASE: &str = r#"
+[database]
+url = "postgresql://localhost/zeta_test"
+
+[tracing]
+enabled = true
+
+[irc]
+nickname = "zeta"
+hostname = "localhost"
+alt_nicks = []
+channels = []
+"#;
+
     /// Extracts the `[plugins]` subtree from an inline TOML document.
     fn extract(toml: &str) -> Result<PluginsConfig, Box<Error>> {
         Figment::new()
@@ -522,21 +537,7 @@ enabled = false
     #[test]
     fn full_config_without_plugins_section_parses() {
         let config = Figment::new()
-            .merge(Toml::string(
-                r#"
-[database]
-url = "postgresql://localhost/zeta_test"
-
-[tracing]
-enabled = true
-
-[irc]
-nickname = "zeta"
-hostname = "localhost"
-alt_nicks = []
-channels = []
-"#,
-            ))
+            .merge(Toml::string(FULL_BASE))
             .extract::<Config>()
             .expect("configuration without a [plugins] section should parse");
 
@@ -548,24 +549,9 @@ channels = []
     #[test]
     fn take_plugins_removes_sections() {
         let mut config = Figment::new()
-            .merge(Toml::string(
-                r#"
-[database]
-url = "postgresql://localhost/zeta_test"
-
-[tracing]
-enabled = true
-
-[irc]
-nickname = "zeta"
-hostname = "localhost"
-alt_nicks = []
-channels = []
-
-[plugins.dig]
-nameservers = ["1.1.1.1"]
-"#,
-            ))
+            .merge(Toml::string(&format!(
+                "{FULL_BASE}\n[plugins.dig]\nnameservers = [\"1.1.1.1\"]\n"
+            )))
             .extract::<Config>()
             .expect("configuration should parse");
 

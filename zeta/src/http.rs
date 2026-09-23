@@ -355,6 +355,23 @@ pub fn refused_address() -> std::net::SocketAddr {
     address
 }
 
+/// Asserts the redaction guarantees every transport wrapper makes: the short rendering (what a
+/// channel reply gets) is classified, host-only and bounded; the full rendering (what a log line
+/// gets) carries the redacted URL and the cause; `Debug` leaks no query either.
+#[cfg(all(test, any(feature = "http", feature = "emulated")))]
+pub fn assert_redactions(message: &str, full: &str, debug: &str, address: &std::net::SocketAddr) {
+    assert!(!message.contains("secret"), "{message}");
+    assert!(message.starts_with("could not connect"), "{message}");
+    assert!(message.contains(&address.ip().to_string()), "{message}");
+    assert!(message.len() < 64, "{message}");
+
+    assert!(!full.contains("secret"), "{full}");
+    assert!(full.contains(&format!("http://{address}/")), "{full}");
+    assert!(full.contains("refused"), "{full}");
+
+    assert!(!debug.contains("secret"), "{debug}");
+}
+
 #[cfg(all(test, feature = "http"))]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -389,6 +406,18 @@ mod tests {
         }
     }
 
+    /// Captures tracing output emitted while the returned guard is alive.
+    fn capture_logs() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(buffer.clone()),
+        );
+
+        (buffer, tracing::subscriber::set_default(subscriber))
+    }
+
     #[tokio::test]
     async fn request_errors_redact_the_url_but_keep_the_cause() {
         let address = refused_address();
@@ -402,27 +431,16 @@ mod tests {
         assert!(error.url().is_some(), "reqwest attaches the request url");
 
         let error = RequestError::from(error);
-        let message = error.to_string();
-        let full = error.full();
 
-        // The short rendering a channel reply gets: classified, host only — no query, no path,
-        // no cause chain, and bounded so it cannot overflow an IRC line.
-        assert!(!message.contains("secret"), "{message}");
-        assert!(message.starts_with("could not connect"), "{message}");
-        assert!(message.contains(&address.ip().to_string()), "{message}");
-        assert!(message.len() < 64, "{message}");
+        assert_redactions(
+            &error.to_string(),
+            error.full(),
+            &format!("{error:?}"),
+            &address,
+        );
 
-        // The full rendering a log line gets: the redacted URL and the cause that reqwest only
-        // keeps in `source()`.
-        assert!(!full.contains("secret"), "{full}");
-        assert!(full.contains(&format!("http://{address}/")), "{full}");
-        assert!(full.contains("refused"), "{full}");
-
-        // `Debug` stays free of the query as well...
-        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
-
-        // ...and the chain ends here, so nothing that walks `source()` can reach a raw error.
-        assert!(std::error::Error::source(&error).is_none(), "{full}");
+        // The chain ends at the wrapper, so nothing that walks `source()` can reach a raw error.
+        assert!(std::error::Error::source(&error).is_none(), "{error:?}");
 
         let error = ApiError::from(error);
 
@@ -435,13 +453,7 @@ mod tests {
         let address = refused_address();
         let request_url = format!("http://{address}/?key=secret");
 
-        let buffer = LogBuffer::default();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(buffer.clone()),
-        );
-        let guard = tracing::subscriber::set_default(subscriber);
+        let (buffer, guard) = capture_logs();
 
         let error = send(reqwest::Client::new().get(&request_url))
             .await
@@ -498,13 +510,7 @@ mod tests {
             stream.write_all(response.as_bytes()).expect("write");
         });
 
-        let buffer = LogBuffer::default();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(buffer.clone()),
-        );
-        let guard = tracing::subscriber::set_default(subscriber);
+        let (buffer, guard) = capture_logs();
 
         let response = reqwest::Client::new()
             .get(format!("http://{address}/?key=secret"))
@@ -537,7 +543,7 @@ mod tests {
 /// (`plugin-titles`) reach it without the `http` feature that gates the module above.
 #[cfg(all(test, feature = "emulated"))]
 mod emulated_tests {
-    use super::refused_address;
+    use super::{assert_redactions, refused_address};
 
     #[tokio::test]
     async fn emulated_request_errors_redact_the_uri_but_keep_the_cause() {
@@ -554,25 +560,14 @@ mod emulated_tests {
         assert!(error.uri().is_some(), "wreq attaches the request uri");
 
         let error = crate::error::WreqError::from(error);
-        let message = error.to_string();
         let full = error.full();
 
-        // The short rendering a channel reply gets: classified, host only, bounded.
-        assert!(!message.contains("secret"), "{message}");
-        assert!(message.starts_with("could not connect"), "{message}");
-        assert!(message.contains(&address.ip().to_string()), "{message}");
-        assert!(message.len() < 64, "{message}");
-
-        // The full rendering a log line gets: the redacted URI and the cause.
-        assert!(!full.contains("secret"), "{full}");
-        assert!(full.contains(&format!("http://{address}/")), "{full}");
-        assert!(full.contains("refused"), "{full}");
+        assert_redactions(&error.to_string(), full, &format!("{error:?}"), &address);
 
         // `wreq` renders its first source itself; walking the chain again would print that
         // link twice.
         assert_eq!(full.matches("client error").count(), 1, "{full}");
 
-        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
         assert!(std::error::Error::source(&error).is_none(), "{full}");
     }
 }
