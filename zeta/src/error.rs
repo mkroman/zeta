@@ -411,21 +411,40 @@ mod tests {
         line.contains("without_url()") || line.contains("without_uri()")
     }
 
+    /// The wrapper files across the workspace — the only places that may strip a transport
+    /// error's URL. The standalone client crates keep their own copy of the wrapper, which this
+    /// crate cannot share with them.
+    const WRAPPER_FILES: &[&str] = &[
+        "zeta/src/error.rs",
+        "kagi/src/error.rs",
+        "reddit/src/error.rs",
+        "dendanskeordbog/src/error.rs",
+    ];
+
+    /// The workspace members whose sources are scanned alongside this crate's.
+    const WORKSPACE_MEMBERS: &[&str] = &["kagi", "reddit", "dendanskeordbog"];
+
     /// The rule that keeps credentials out of formatted output is enforced here, because
     /// `AGENTS.md` — which states it — is not committed: no error enum anywhere may hold a raw
-    /// transport error, and `without_url()`/`without_uri()` may only appear in the wrapper.
+    /// transport error, and `without_url()`/`without_uri()` may only appear in a wrapper.
     #[test]
     fn no_raw_transport_errors_outside_the_wrapper() {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = manifest.parent().expect("the crate is a workspace member");
+
         let mut files = Vec::new();
         sources(&manifest.join("src"), &mut files);
+
+        for member in WORKSPACE_MEMBERS {
+            sources(&workspace.join(member).join("src"), &mut files);
+        }
 
         let violations = files
             .iter()
             .flat_map(|file| {
                 let source = std::fs::read_to_string(file).expect("read source file");
                 let relative = file
-                    .strip_prefix(manifest)
+                    .strip_prefix(workspace)
                     .unwrap_or(file)
                     .display()
                     .to_string();
@@ -440,7 +459,8 @@ mod tests {
                         }
 
                         let raw_error = holds_raw_transport_error(line);
-                        let strips = strips_url(line) && relative != "src/error.rs";
+                        let strips =
+                            strips_url(line) && !WRAPPER_FILES.contains(&relative.as_str());
 
                         if raw_error || strips {
                             Some(format!("{relative}:{}: {}", index + 1, line.trim()))
@@ -454,7 +474,7 @@ mod tests {
 
         assert!(
             violations.is_empty(),
-            "raw transport errors outside `error.rs`:\n{}",
+            "raw transport errors outside the wrappers:\n{}",
             violations.join("\n")
         );
     }

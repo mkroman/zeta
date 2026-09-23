@@ -215,3 +215,51 @@ pub enum Error {
     #[error("the video link redirects to something other than a submission")]
     VideoRedirectsToNonSubmission,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wrapper's guarantees hold for a real transport failure: no rendering leaks the query
+    /// string, the short form is classified and host-only, the full form carries the redacted
+    /// URL and the cause, and the chain ends at the wrapper.
+    #[tokio::test]
+    async fn request_errors_redact_the_url_but_keep_the_cause() {
+        // Bind-then-drop, so the connection below is refused deterministically.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a local port");
+        let address = listener.local_addr().expect("listener address");
+        drop(listener);
+
+        let error = reqwest::Client::new()
+            .get(format!("http://{address}/?token=secret"))
+            .send()
+            .await
+            .expect_err("nothing listens on that address");
+
+        // Sanity: reqwest attaches the request URL to the error — redacting it is on us.
+        assert!(error.url().is_some(), "reqwest attaches the request url");
+
+        let error = RequestError::from(error);
+        let message = error.to_string();
+        let full = error.full();
+        let debug = format!("{error:?}");
+
+        // The token in the query string must not reach any rendering.
+        assert!(!message.contains("secret"), "{message}");
+        assert!(!full.contains("secret"), "{full}");
+        assert!(!debug.contains("secret"), "{debug}");
+
+        // The short rendering is classified, names only the host and stays bounded.
+        assert!(message.starts_with("could not connect"), "{message}");
+        assert!(message.contains(&address.ip().to_string()), "{message}");
+        assert!(message.len() < 64, "{message}");
+
+        // The full rendering carries the redacted URL and the cause chain.
+        assert!(full.contains(&format!("http://{address}/")), "{full}");
+        assert!(full.contains("refused"), "{full}");
+        assert_eq!(error.error_type(), "connection_error");
+
+        // The chain ends at the wrapper, so nothing walking `source()` reaches a raw error.
+        assert!(std::error::Error::source(&error).is_none(), "{debug}");
+    }
+}
