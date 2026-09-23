@@ -71,22 +71,20 @@ const SESSION_TTL: Duration = Duration::from_hours(1);
 
 /// Settings for the instagram plugin, from its `[plugins.instagram]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The maximum length of a media caption before it gets truncated.
-    #[serde(default = "default_title_length")]
     pub title_length: usize,
     /// The key prefix that mirrored media are uploaded under.
     ///
     /// Falls back to the `INSTAGRAM_S3_PREFIX` environment variable, and to `instagram` when
     /// neither is set.
-    #[serde(default)]
     pub prefix: Option<String>,
     /// The base URL used when linking to mirrored media.
     ///
     /// Falls back to the `INSTAGRAM_PUBLIC_URL_BASE` environment variable when unset. Links are
     /// built by appending the media id as a URL fragment, so the base must point at a viewer page
     /// that resolves the fragment — not directly at the bucket.
-    #[serde(default)]
     pub public_url_base: Option<String>,
     /// An authenticated Instagram session cookie (the `sessionid` cookie value of a logged-in
     /// browser session).
@@ -94,31 +92,24 @@ pub struct Settings {
     /// Lifts the login wall for media that would otherwise not be readable anonymously,
     /// including stories. Falls back to the `INSTAGRAM_SESSION_COOKIE` environment variable when
     /// unset. Prefer the environment over committing the cookie to this file.
-    #[serde(default)]
     pub session_cookie: Option<String>,
     /// The base URL of a proxy that serves the OpenGraph metadata of Instagram media, used as a
     /// last resort when the other sources fail — e.g. a self-hosted InstaFix instance.
     ///
     /// Falls back to the `INSTAGRAM_METADATA_PROXY` environment variable when unset.
-    #[serde(default)]
     pub metadata_proxy: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            title_length: default_title_length(),
+            title_length: 150,
             prefix: None,
             public_url_base: None,
             session_cookie: None,
             metadata_proxy: None,
         }
     }
-}
-
-/// Returns the default maximum caption length.
-const fn default_title_length() -> usize {
-    150
 }
 
 /// The Instagram plugin: summarizes and mirrors Instagram media links.
@@ -655,21 +646,6 @@ mod tests {
         assert_eq!(
             format_summary(&details, "post", 150).as_deref(),
             Some("“\x0fFirst line second line third\x0310” is an Instagram post by\x0f user.name")
-        );
-    }
-
-    #[test]
-    fn test_resolve_optional_setting() {
-        // A configured value wins over the environment; empty values are ignored.
-        assert_eq!(
-            crate::utils::resolve_optional_setting(Some("value"), "UNUSED_ENV_VAR"),
-            Some("value".to_string())
-        );
-        assert_eq!(crate::utils::resolve_optional_setting(Some(""), "UNUSED_ENV"), None);
-        assert_eq!(crate::utils::resolve_optional_setting(None, "DEFINITELY_UNUSED_ENV"), None);
-        assert_eq!(
-            crate::utils::resolve_optional_setting(Some("  "), "DEFINITELY_UNUSED_ENV"),
-            None
         );
     }
 

@@ -21,31 +21,24 @@ const DDO: CommandSpec = CommandSpec::new(".ddo", "Look up a word in Den Danske 
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// Whether to show the morphology (inflection) of the entry.
-    #[serde(default = "default_true")]
     pub show_morphology: bool,
     /// Whether to show the etymology (origin) of the entry.
-    #[serde(default = "default_true")]
     pub show_etymology: bool,
     /// Whether to show an example sentence for the definition.
-    #[serde(default = "default_true")]
     pub show_examples: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            show_morphology: default_true(),
-            show_etymology: default_true(),
-            show_examples: default_true(),
+            show_morphology: true,
+            show_etymology: true,
+            show_examples: true,
         }
     }
-}
-
-/// Returns the default value for the boolean display settings.
-const fn default_true() -> bool {
-    true
 }
 
 /// The Den Danske Ordbog plugin: looks up Danish words on behalf of `.ddo` commands.

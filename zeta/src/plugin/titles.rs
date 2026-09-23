@@ -44,22 +44,19 @@ const BINARY_EXTENSIONS: &[&str] = &[
 
 /// Settings for the titles plugin, from its `[plugins.titles]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
     /// Empty by default: the hosts that loaded plugins advertise through the plugin catalog
     /// (see [`Subscriptions::urls`]) are left alone without any configuration, including hosts
     /// of plugins added after this configuration was written.
-    #[serde(default)]
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
-    #[serde(default = "default_max_redirects")]
     pub max_redirects: usize,
     /// The maximum length of a posted message, in characters.
-    #[serde(default = "default_max_message_length")]
     pub max_message_length: usize,
     /// The maximum length of a posted description, in characters.
-    #[serde(default = "default_max_description_length")]
     pub max_description_length: usize,
 }
 
@@ -67,26 +64,11 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             ignored_hosts: Vec::new(),
-            max_redirects: default_max_redirects(),
-            max_message_length: default_max_message_length(),
-            max_description_length: default_max_description_length(),
+            max_redirects: 3,
+            max_message_length: 400,
+            max_description_length: 200,
         }
     }
-}
-
-/// Returns the default maximum number of redirects to follow.
-const fn default_max_redirects() -> usize {
-    3
-}
-
-/// Returns the default maximum length of a posted message, in characters.
-const fn default_max_message_length() -> usize {
-    400
-}
-
-/// Returns the default maximum length of a posted description, in characters.
-const fn default_max_description_length() -> usize {
-    200
 }
 
 /// Titles plugin.

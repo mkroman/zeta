@@ -486,22 +486,15 @@ impl CtcpKind {
     /// Classifies a CTCP command, matching case-insensitively.
     #[must_use]
     pub fn classify(command: &str) -> Self {
-        if command.eq_ignore_ascii_case("ACTION") {
-            Self::Action
-        } else if command.eq_ignore_ascii_case("DCC") {
-            Self::Dcc
-        } else if command.eq_ignore_ascii_case("PING") {
-            Self::Ping
-        } else if command.eq_ignore_ascii_case("VERSION") {
-            Self::Version
-        } else if command.eq_ignore_ascii_case("TIME") {
-            Self::Time
-        } else if command.eq_ignore_ascii_case("CLIENTINFO") {
-            Self::Clientinfo
-        } else if command.eq_ignore_ascii_case("USERINFO") {
-            Self::Userinfo
-        } else {
-            Self::Other
+        match command.to_ascii_uppercase().as_str() {
+            "ACTION" => Self::Action,
+            "DCC" => Self::Dcc,
+            "PING" => Self::Ping,
+            "VERSION" => Self::Version,
+            "TIME" => Self::Time,
+            "CLIENTINFO" => Self::Clientinfo,
+            "USERINFO" => Self::Userinfo,
+            _ => Self::Other,
         }
     }
 }

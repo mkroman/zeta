@@ -98,6 +98,7 @@ fn is_valid_short_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::url::assert_parses;
 
     #[test]
     fn test_parse_urls() {
@@ -108,7 +109,7 @@ mod tests {
             })
         };
 
-        let test_cases = [
+        assert_parses(parse_tiktok_url, &[
             // Channels.
             (
                 "https://www.tiktok.com/@dailymail",
@@ -152,13 +153,7 @@ mod tests {
             // Channel slugs and short ids are limited to username/identifier characters.
             ("https://www.tiktok.com/@user;rm/video/123", None),
             ("https://vm.tiktok.com/ab-cd/", None),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_tiktok_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]

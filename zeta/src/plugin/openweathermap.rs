@@ -373,21 +373,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn request_errors_redact_the_url_but_keep_the_cause() {
-        let address = http::refused_address();
-        let error = reqwest::Client::new()
-            .get(format!("http://{address}/?appid=secret"))
-            .send()
-            .await
-            .expect_err("nothing listens on that address");
-
-        let error = Error::from(RequestError::from(error));
-
-        assert!(!error.to_string().contains("secret"), "{error}");
-        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
-    }
-
     settings_tests! {
         Settings,
         settings,

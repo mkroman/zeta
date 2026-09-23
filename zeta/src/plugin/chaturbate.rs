@@ -39,18 +39,9 @@ pub enum Error {
     /// The room dossier could not be deserialized.
     #[error("failed to deserialize room dossier: {0}")]
     Deserialize(#[from] serde_json::Error),
-    /// A zeta error occurred while sending the reply.
-    #[error("zeta error: {0}")]
-    Zeta(#[from] ZetaError),
     /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
-}
-
-impl From<Error> for ZetaError {
-    fn from(err: Error) -> Self {
-        ZetaError::Plugin(Box::new(err))
-    }
 }
 
 /// The parsed contents of `window.initialRoomDossier`.
@@ -179,6 +170,7 @@ fn extract_username(url: &Url) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::url::assert_parses;
 
     fn fixture_html(name: &str) -> String {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -220,36 +212,25 @@ mod tests {
 
     #[test]
     fn test_extract_username_valid() {
-        let cases = [
+        assert_parses(extract_username, &[
             (
                 "https://chaturbate.com/fiery_redhead/",
-                Some("fiery_redhead"),
+                Some("fiery_redhead".to_string()),
             ),
-            ("https://www.chaturbate.com/some_user", Some("some_user")),
-        ];
-
-        for (url_str, expected) in cases {
-            let url = Url::parse(url_str).unwrap();
-            assert_eq!(
-                extract_username(&url).as_deref(),
-                expected,
-                "url: {url_str}"
-            );
-        }
+            (
+                "https://www.chaturbate.com/some_user",
+                Some("some_user".to_string()),
+            ),
+        ]);
     }
 
     #[test]
     fn test_extract_username_excluded_paths() {
-        let cases = [
-            "https://chaturbate.com/auth/login/",
-            "https://chaturbate.com/tags/redhead/",
-            "https://chaturbate.com/search/",
-        ];
-
-        for url_str in cases {
-            let url = Url::parse(url_str).unwrap();
-            assert_eq!(extract_username(&url), None, "url: {url_str}");
-        }
+        assert_parses(extract_username, &[
+            ("https://chaturbate.com/auth/login/", None),
+            ("https://chaturbate.com/tags/redhead/", None),
+            ("https://chaturbate.com/search/", None),
+        ]);
     }
 
     #[test]

@@ -86,17 +86,15 @@ impl SafeSearch {
 
 /// Settings for the youtube plugin, from its `[plugins.youtube]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The YouTube Data API v3 key.
     ///
     /// Falls back to the `YOUTUBE_API_KEY` environment variable when unset.
-    #[serde(default)]
     pub api_key: Option<String>,
     /// The region code used when fetching video categories.
-    #[serde(default = "default_region_code")]
     pub region_code: String,
     /// The safe search filter applied to search requests.
-    #[serde(default)]
     pub safe_search: SafeSearch,
 }
 
@@ -104,15 +102,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             api_key: None,
-            region_code: default_region_code(),
+            region_code: "US".to_string(),
             safe_search: SafeSearch::default(),
         }
     }
-}
-
-/// Returns the default region code for video categories.
-fn default_region_code() -> String {
-    "US".to_string()
 }
 
 /// IRC bot plugin for YouTube URL detection and metadata retrieval.

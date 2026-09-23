@@ -71,47 +71,33 @@ impl Opts {
 
 /// Settings for the alert plugin, from its `[plugins.alert]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// How long the scheduler waits before retrying after a failed tick.
-    #[serde(default = "default_retry_delay", with = "humantime_serde")]
+    #[serde(with = "humantime_serde")]
     pub retry_delay: Duration,
     /// How often the window of upcoming alerts is synced from the database.
     ///
     /// Alerts are only delivered on time if the window is at least as large as this interval,
     /// as the last sync before an alert is due can be a full interval earlier.
-    #[serde(default = "default_sync_interval", with = "humantime_serde")]
+    #[serde(with = "humantime_serde")]
     pub sync_interval: Duration,
     /// How far ahead of their due time alerts are kept in memory.
     ///
     /// Should be at least [`Settings::sync_interval`], so every alert is cached before it is
     /// due.
-    #[serde(default = "default_window", with = "humantime_serde")]
+    #[serde(with = "humantime_serde")]
     pub window: Duration,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            retry_delay: default_retry_delay(),
-            sync_interval: default_sync_interval(),
-            window: default_window(),
+            retry_delay: Duration::from_secs(30),
+            sync_interval: Duration::from_mins(5),
+            window: Duration::from_mins(15),
         }
     }
-}
-
-/// Returns the default scheduler retry delay.
-const fn default_retry_delay() -> Duration {
-    Duration::from_secs(30)
-}
-
-/// Returns the default alert window sync interval.
-const fn default_sync_interval() -> Duration {
-    Duration::from_mins(5)
-}
-
-/// Returns the default alert window.
-const fn default_window() -> Duration {
-    Duration::from_mins(15)
 }
 
 /// Reply messages used when an alert has been stored.

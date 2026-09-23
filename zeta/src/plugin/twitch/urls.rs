@@ -83,10 +83,11 @@ fn is_valid_username(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::url::assert_parses;
 
     #[test]
     fn test_parse_stream_urls() {
-        let test_cases = [
+        assert_parses(parse_twitch_url, &[
             (
                 "https://twitch.tv/lirik",
                 Some(UrlKind::Stream("lirik".to_string())),
@@ -95,18 +96,12 @@ mod tests {
                 "https://www.twitch.tv/lirik/",
                 Some(UrlKind::Stream("lirik".to_string())),
             ),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_twitch_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]
     fn test_parse_video_urls() {
-        let test_cases = [
+        assert_parses(parse_twitch_url, &[
             (
                 "https://twitch.tv/videos/2119948564",
                 Some(UrlKind::Video("2119948564".to_string())),
@@ -117,18 +112,12 @@ mod tests {
             ),
             // Video ids are numeric.
             ("https://twitch.tv/videos/abc123", None),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_twitch_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]
     fn test_parse_clip_urls() {
-        let test_cases = [
+        assert_parses(parse_twitch_url, &[
             (
                 "https://clips.twitch.tv/AbrasiveFurryDolphGJ7K8WfDb4g",
                 Some(UrlKind::Clip("AbrasiveFurryDolphGJ7K8WfDb4g".to_string())),
@@ -143,31 +132,19 @@ mod tests {
             ),
             // Clip ids are alphanumeric.
             ("https://clips.twitch.tv/ab;cd", None),
-        ];
-
-        for (url_str, expected) in test_cases {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_twitch_url(&url), expected, "for {url_str}");
-        }
+        ]);
     }
 
     #[test]
     fn test_invalid_urls() {
-        let invalid_urls = [
-            "https://example.com/lirik",
-            "https://twitch.tv/",
-            "https://twitch.tv/li;rik",
-            "https://twitch.tv/videos/",
-            "https://twitch.tv/lirik/videos/2119948564",
-            "https://clips.twitch.tv/",
-            "https://youtu.be/dQw4w9WgXcQ",
-        ];
-
-        for url_str in invalid_urls {
-            let url = Url::parse(url_str).unwrap();
-
-            assert_eq!(parse_twitch_url(&url), None, "for {url_str}");
-        }
+        assert_parses(parse_twitch_url, &[
+            ("https://example.com/lirik", None),
+            ("https://twitch.tv/", None),
+            ("https://twitch.tv/li;rik", None),
+            ("https://twitch.tv/videos/", None),
+            ("https://twitch.tv/lirik/videos/2119948564", None),
+            ("https://clips.twitch.tv/", None),
+            ("https://youtu.be/dQw4w9WgXcQ", None),
+        ]);
     }
 }

@@ -47,8 +47,6 @@ const NEXT: CommandSpec = CommandSpec::new(".next", "Show when a show's next epi
 pub struct Tvmaze {
     /// HTTP client for API requests.
     client: reqwest::Client,
-    /// Cached endpoint URLs for performance.
-    urls: EndpointUrls,
 }
 
 /// Represents a TV show from the TVmaze API.
@@ -129,34 +127,6 @@ pub struct Episode {
     pub airstamp: Option<time::OffsetDateTime>,
 }
 
-/// Cached collection of API endpoint URLs.
-pub struct EndpointUrls {
-    /// URL for single show search endpoint.
-    pub single_search: Url,
-}
-
-impl Default for EndpointUrls {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EndpointUrls {
-    /// Builds the collection of TVmaze endpoint URLs.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the API base URL fails to parse, which can only happen on a programming error
-    /// since the base URL is a constant.
-    #[must_use]
-    pub fn new() -> EndpointUrls {
-        EndpointUrls {
-            single_search: Url::parse(&format!("{API_BASE_URL}/singlesearch/shows"))
-                .expect("single search url"),
-        }
-    }
-}
-
 #[async_trait]
 impl Plugin<Context> for Tvmaze {
     type Settings = NoSettings;
@@ -181,9 +151,8 @@ impl Tvmaze {
     #[must_use]
     pub fn new(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
-        let urls = EndpointUrls::new();
 
-        Tvmaze { client, urls }
+        Tvmaze { client }
     }
 
     /// Searches for a single show using the TVmaze API.
@@ -198,7 +167,7 @@ impl Tvmaze {
     /// [`Error::Api`] if the request fails or the response cannot be handled.
     #[instrument(skip(self))]
     pub async fn single_search(&self, name: &str) -> Result<Show, Error> {
-        let url = self.build_search_url(name);
+        let url = Self::build_search_url(name);
         debug!(
             url.full = %redact_url(&url),
             "requesting single search for show: {name}"
@@ -286,8 +255,9 @@ impl Tvmaze {
     }
 
     /// Builds the search URL with query parameters.
-    fn build_search_url(&self, query: &str) -> Url {
-        let mut url = self.urls.single_search.clone();
+    fn build_search_url(query: &str) -> Url {
+        let mut url =
+            Url::parse(&format!("{API_BASE_URL}/singlesearch/shows")).expect("single search url");
 
         url.query_pairs_mut()
             .append_pair("q", query)

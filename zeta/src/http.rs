@@ -107,12 +107,7 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
         let error = RequestError::from(error);
 
         if let Some(url) = error.url() {
-            error!(
-                url.full = %url,
-                error.type = error.error_type(),
-                error = %error.full(),
-                "request failed"
-            );
+            log_request_error(&error, url, "request failed");
         }
 
         error
@@ -134,15 +129,16 @@ pub async fn text(response: reqwest::Response) -> Result<String, RequestError> {
     response.text().await.map_err(|error| {
         let error = RequestError::from(error);
 
-        error!(
-            url.full = %url,
-            error.type = error.error_type(),
-            error = %error.full(),
-            "reading response body failed"
-        );
+        log_request_error(&error, &url, "reading response body failed");
 
         error
     })
+}
+
+/// Logs a failed request or body read once, with its redacted URL and error type.
+#[cfg(feature = "http")]
+fn log_request_error(error: &RequestError, url: &str, message: &str) {
+    error!(url.full = %url, error.type = error.error_type(), error = %error.full(), "{message}");
 }
 
 /// Parses the response's JSON body into `T`.
@@ -246,42 +242,26 @@ pub async fn parse_response_or_404<T: DeserializeOwned, E: From<ApiError>>(
     }
 }
 
-/// HTTP client integration
-#[cfg(feature = "http")]
-pub mod client {
-    use crate::config::HttpConfig;
-
-    pub use reqwest::Client;
-    use reqwest::redirect::Policy;
-
-    /// Returns a default HTTP client configured by [`HttpConfig`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if the default HTTP client fails to build.
-    #[must_use]
-    pub fn build(config: &HttpConfig) -> Client {
-        builder(config)
-            .build()
-            .expect("could not build http client")
-    }
-
-    /// Returns a default HTTP client builder configured by [`HttpConfig`].
-    pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
-        reqwest::ClientBuilder::new()
-            .redirect(Policy::none())
-            .timeout(config.timeout)
-            .user_agent(config.user_agent.clone())
-    }
-}
-
-/// Builds a default HTTP client configured by [`HttpConfig`].
+/// Returns a default HTTP client configured by [`HttpConfig`].
 ///
-/// This is equivalent to calling [`client::build`].
+/// # Panics
+///
+/// Panics if the default HTTP client fails to build.
 #[must_use]
 #[cfg(feature = "http")]
-pub fn build_client(config: &HttpConfig) -> client::Client {
-    client::build(config)
+pub fn build_client(config: &HttpConfig) -> reqwest::Client {
+    builder(config)
+        .build()
+        .expect("could not build http client")
+}
+
+/// Returns a default HTTP client builder configured by [`HttpConfig`].
+#[cfg(feature = "http")]
+pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
+    reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(config.timeout)
+        .user_agent(config.user_agent.clone())
 }
 
 /// Client building for anti-bot-protected sites.

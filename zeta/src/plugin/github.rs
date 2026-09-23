@@ -140,7 +140,7 @@ impl GitHubPlugin {
             );
         }
 
-        let client = http::client::builder(config)
+        let client = http::builder(config)
             .default_headers(headers)
             .build()
             .map_err(|error| Error::Request(RequestError::from(error)))?;

@@ -133,20 +133,20 @@ pub struct DbConfig {
 
 /// HTTP client configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct HttpConfig {
     /// Duration before an HTTP request times out.
-    #[serde(default = "default_http_timeout", with = "humantime_serde")]
+    #[serde(with = "humantime_serde")]
     pub timeout: Duration,
     /// The `User-Agent` header sent with HTTP requests.
-    #[serde(default = "default_http_user_agent")]
     pub user_agent: String,
 }
 
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
-            timeout: default_http_timeout(),
-            user_agent: default_http_user_agent(),
+            timeout: HTTP_TIMEOUT,
+            user_agent: HTTP_USER_AGENT.to_string(),
         }
     }
 }
@@ -292,16 +292,6 @@ const fn default_max_db_connections() -> u32 {
 /// Returns the default duration a connection can be idle before it is dropped.
 const fn default_db_idle_timeout() -> Duration {
     DEFAULT_DB_IDLE_TIMEOUT
-}
-
-/// Returns the default duration before an HTTP request times out.
-const fn default_http_timeout() -> Duration {
-    HTTP_TIMEOUT
-}
-
-/// Returns the default `User-Agent` header sent with HTTP requests.
-fn default_http_user_agent() -> String {
-    HTTP_USER_AGENT.to_string()
 }
 
 /// Returns the default message sent in the `QUIT` when the bot shuts down.

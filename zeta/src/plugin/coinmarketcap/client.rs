@@ -53,7 +53,7 @@ impl Client {
             ),
         ]);
 
-        let inner = http::client::builder(config)
+        let inner = http::builder(config)
             .default_headers(headers)
             .build()
             .map_err(|error| plugin_err(RequestError::from(error)))?;

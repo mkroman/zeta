@@ -22,23 +22,18 @@ pub const BASE_URL: &str = "https://api.urbandictionary.com";
 /// Settings for the `urban_dictionary` plugin, from its `[plugins.urban_dictionary]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The maximum length of the definition and example text, in characters.
-    #[serde(default = "default_max_definition_length")]
     pub max_definition_length: usize,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            max_definition_length: default_max_definition_length(),
+            max_definition_length: 400,
         }
     }
-}
-
-/// Returns the default maximum length of the definition and example text.
-const fn default_max_definition_length() -> usize {
-    400
 }
 
 /// The `.ud` command.

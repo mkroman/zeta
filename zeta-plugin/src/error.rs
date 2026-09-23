@@ -14,13 +14,7 @@ pub enum Error {
     #[error("IRC error: {0}")]
     Irc(#[from] irc::error::Error),
     #[error("Plugin error: {0}")]
-    Plugin(BoxError),
-}
-
-impl From<BoxError> for Error {
-    fn from(e: BoxError) -> Self {
-        Self::Plugin(e)
-    }
+    Plugin(#[from] BoxError),
 }
 
 /// Wraps any error into [`Error::Plugin`].

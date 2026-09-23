@@ -113,7 +113,7 @@ impl Plugin<Context> for GeoIp {
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<GeoIp, ZetaError> {
         subscriptions.command(GEOIP);
         let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
-        let client = http::client::builder(&ctx.config.http)
+        let client = http::builder(&ctx.config.http)
             .build()
             .map_err(|error| plugin_err(RequestError::from(error)))?;
 

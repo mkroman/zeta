@@ -122,7 +122,7 @@ impl GraphQlClient {
             HeaderValue::from_str(&settings.user_language)?,
         );
 
-        let http = http::client::builder(config)
+        let http = http::builder(config)
             .default_headers(headers)
             .build()
             .map_err(|error| Error::from(RequestError::from(error)))?;

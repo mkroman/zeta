@@ -4,7 +4,6 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 pub use irc::error::Error as IrcError;
-pub use zeta_plugin::Error as PluginError;
 
 #[cfg(feature = "database")]
 pub use sqlx::{Error as SqlxError, migrate::MigrateError as SqlxMigrateError};
@@ -30,16 +29,9 @@ pub enum Error {
     #[error("Database migration failed")]
     #[cfg(feature = "database")]
     DatabaseMigration(#[source] SqlxMigrateError),
-    /// A database query operation failed.
-    #[error("Database query failed")]
-    #[cfg(feature = "database")]
-    DatabaseQueryFailed(#[from] SqlxError),
     /// General IRC communication error.
     #[error("IRC error")]
     Irc(#[from] IrcError),
-    /// Plugin system error.
-    #[error("Plugin error: {0}")]
-    Plugin(#[from] PluginError),
 }
 
 /// Request errors rendered once at construction, so formatting one can never put a credential

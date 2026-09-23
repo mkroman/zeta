@@ -15,32 +15,21 @@ use crate::{plugin::prelude::*, utils::strip_nick_prefix};
 
 /// Settings for the choices plugin, from its `[plugins.choices]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The keywords that separate the options.
-    #[serde(default = "default_or_keywords")]
     pub or_keywords: Vec<String>,
     /// The separator between individual options.
-    #[serde(default = "default_option_separator")]
     pub option_separator: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            or_keywords: default_or_keywords(),
-            option_separator: default_option_separator(),
+            or_keywords: vec!["eller".to_string()],
+            option_separator: ", ".to_string(),
         }
     }
-}
-
-/// Returns the default keywords that separate the options.
-fn default_or_keywords() -> Vec<String> {
-    vec!["eller".to_string()]
-}
-
-/// Returns the default separator between individual options.
-fn default_option_separator() -> String {
-    ", ".to_string()
 }
 
 /// The choices plugin: picks an option at random from bot-addressed messages.

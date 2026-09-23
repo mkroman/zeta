@@ -26,29 +26,26 @@ pub const USER_AGENT: &str = concat!("linux:zeta:", env!("CARGO_PKG_VERSION"), "
 
 /// Settings for the reddit plugin, from its `[plugins.reddit]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The Reddit application client id.
     ///
     /// Falls back to the `REDDIT_CLIENT_ID` environment variable when unset.
-    #[serde(default)]
     pub client_id: Option<String>,
     /// The Reddit application client secret.
     ///
     /// Falls back to the `REDDIT_CLIENT_SECRET` environment variable when unset.
-    #[serde(default)]
     pub client_secret: Option<String>,
     /// The key prefix that mirrored videos are uploaded under.
     ///
     /// Falls back to the `REDDIT_S3_PREFIX` environment variable, and to `reddit` when neither is
     /// set.
-    #[serde(default)]
     pub prefix: Option<String>,
     /// The base URL used when linking to mirrored videos.
     ///
     /// Falls back to the `REDDIT_PUBLIC_URL_BASE` environment variable when unset. Links are
     /// built by appending the submission id as a URL fragment, so the base must point at a viewer
     /// page that resolves the fragment — not directly at the bucket.
-    #[serde(default)]
     pub public_url_base: Option<String>,
 }
 

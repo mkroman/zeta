@@ -33,23 +33,18 @@ const NOTIFY: CommandSpec = CommandSpec::new(
 /// Settings for the notification plugin, from its `[plugins.notification]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The maximum number of pending notifications a target may have in a channel.
-    #[serde(default = "default_max_pending_per_target")]
     pub max_pending_per_target: usize,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            max_pending_per_target: default_max_pending_per_target(),
+            max_pending_per_target: 10,
         }
     }
-}
-
-/// Returns the default maximum number of pending notifications per target.
-const fn default_max_pending_per_target() -> usize {
-    10
 }
 
 /// Notification plugin.

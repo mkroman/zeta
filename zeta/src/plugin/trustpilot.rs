@@ -20,14 +20,13 @@ const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
 
 /// Settings for the trustpilot plugin, from its `[plugins.trustpilot]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The Trustpilot API key.
     ///
     /// Falls back to the `TRUSTPILOT_API_KEY` environment variable when unset.
-    #[serde(default)]
     pub api_key: Option<String>,
     /// The Trustpilot domain used for review links (e.g. `dk`).
-    #[serde(default = "default_review_domain")]
     pub review_domain: String,
 }
 
@@ -35,14 +34,9 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             api_key: None,
-            review_domain: default_review_domain(),
+            review_domain: "dk".to_string(),
         }
     }
-}
-
-/// Returns the default Trustpilot domain used for review links.
-fn default_review_domain() -> String {
-    "dk".to_string()
 }
 
 /// The `.tp` command.

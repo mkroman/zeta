@@ -42,21 +42,19 @@ use model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat, QuoteData};
 /// Settings for the coinmarketcap plugin, from its `[plugins.coinmarketcap]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The CoinMarketCap API key.
     ///
     /// Falls back to the `COINMARKETCAP_API_KEY` environment variable when unset.
-    #[serde(default)]
     pub api_key: Option<String>,
     /// The fiat currency used when a command does not specify one.
-    #[serde(default = "default_currency")]
     pub default_currency: String,
     /// How long the cached coins and fiat currencies stay valid before being refreshed.
-    #[serde(default = "default_cache_ttl", with = "humantime_serde")]
+    #[serde(with = "humantime_serde")]
     pub cache_ttl: Duration,
     /// The maximum number of typos (needle characters missing from the name) allowed when
     /// fuzzy matching a coin name.
-    #[serde(default = "default_max_name_typos")]
     pub max_name_typos: u16,
 }
 
@@ -64,26 +62,11 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             api_key: None,
-            default_currency: default_currency(),
-            cache_ttl: default_cache_ttl(),
-            max_name_typos: default_max_name_typos(),
+            default_currency: DEFAULT_CURRENCY.to_string(),
+            cache_ttl: Duration::from_hours(24),
+            max_name_typos: 2,
         }
     }
-}
-
-/// Returns the default fiat currency used when a command does not specify one.
-fn default_currency() -> String {
-    DEFAULT_CURRENCY.to_string()
-}
-
-/// Returns the default cache TTL for the coin and fiat caches.
-const fn default_cache_ttl() -> Duration {
-    Duration::from_hours(24)
-}
-
-/// Returns the default maximum number of typos allowed when fuzzy matching a coin name.
-const fn default_max_name_typos() -> u16 {
-    2
 }
 
 /// The `.cc` command.
@@ -676,12 +659,15 @@ mod tests {
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
             client: client::Client::new("test-api-key", &HttpConfig::default()).unwrap(),
-            coins: TtlCache::with_value(CoinCache::from(test_coins()), default_cache_ttl()),
-            fiat: TtlCache::new(default_cache_ttl()),
+            coins: TtlCache::with_value(CoinCache::from(test_coins()), CACHE_TTL),
+            fiat: TtlCache::new(CACHE_TTL),
             default_currency: DEFAULT_CURRENCY.to_string(),
-            max_name_typos: default_max_name_typos(),
+            max_name_typos: 2,
         }
     }
+
+    /// The default cache lifetime, as configured in [`Settings::default`].
+    const CACHE_TTL: Duration = Duration::from_hours(24);
 
     settings_tests! {
         Settings,
@@ -866,7 +852,7 @@ mod tests {
                 sign: "$".to_string(),
                 symbol: "USD".to_string(),
             }]),
-            default_cache_ttl(),
+            CACHE_TTL,
         );
 
         assert!(plugin.is_valid_currency("USD"));
