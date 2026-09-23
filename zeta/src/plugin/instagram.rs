@@ -582,8 +582,9 @@ mod tests {
         }
     }
 
-    /// Returns the details of a media with both a caption and an author.
-    fn details() -> MediaDetails {
+    /// Returns the details of a media with both a caption and an author, to be partially
+    /// overridden per case.
+    fn full_details() -> MediaDetails {
         MediaDetails {
             author: Some("user.name".to_string()),
             caption: Some("Some caption & more".to_string()),
@@ -594,15 +595,15 @@ mod tests {
     fn test_format_summary() {
         // Caption and author.
         assert_eq!(
-            format_summary(&details(), "reel", 150).as_deref(),
+            format_summary(&full_details(), "reel", 150).as_deref(),
             Some("“\x0fSome caption & more\x0310” is an Instagram reel by\x0f user.name")
         );
 
         // Long captions are truncated.
         let long_caption = "a".repeat(200);
         let details = MediaDetails {
-            author: Some("user.name".to_string()),
             caption: Some(long_caption),
+            ..full_details()
         };
         let expected = format!(
             "“\x0f{}\x0310” is an Instagram post by\x0f user.name",
@@ -622,8 +623,8 @@ mod tests {
 
         // An author without a caption.
         let details = MediaDetails {
-            author: Some("user.name".to_string()),
             caption: None,
+            ..full_details()
         };
         assert_eq!(
             format_summary(&details, "story", 150).as_deref(),
@@ -631,7 +632,10 @@ mod tests {
         );
 
         // Neither an author nor a caption.
-        let details = MediaDetails { author: None, caption: None };
+        let details = MediaDetails {
+            author: None,
+            caption: None,
+        };
         assert_eq!(format_summary(&details, "post", 150), None);
     }
 
@@ -640,8 +644,8 @@ mod tests {
         // Captions carry line breaks, which an IRC message cannot contain: everything after
         // the first one would be lost.
         let details = MediaDetails {
-            author: Some("user.name".to_string()),
             caption: Some("First line\n\nsecond\tline\r\nthird".to_string()),
+            ..full_details()
         };
         assert_eq!(
             format_summary(&details, "post", 150).as_deref(),

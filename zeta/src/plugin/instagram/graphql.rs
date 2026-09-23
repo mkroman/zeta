@@ -303,27 +303,28 @@ mod tests {
             }
         }"#;
         let item = serde_json::from_str::<GraphqlResponse>(body)
-            .unwrap()
+            .expect("the response should deserialize")
             .data
-            .unwrap()
+            .expect("the media should be present")
             .xig_polaris_media
-            .unwrap()
+            .expect("the media payload should be present")
             .if_not_gated_logged_out
-            .unwrap();
+            .expect("the media should not be gated");
 
         assert_eq!(item.user.unwrap().username.as_deref(), Some("user.name"));
         assert_eq!(item.caption.unwrap().text.as_deref(), Some("the caption"));
 
         // A gated media has no logged-out payload.
         let body = r#"{"data": {"xig_polaris_media": {}}}"#;
-        let item = serde_json::from_str::<GraphqlResponse>(body)
-            .unwrap()
+        let response = serde_json::from_str::<GraphqlResponse>(body)
+            .expect("the response should deserialize");
+
+        assert!(response
             .data
-            .unwrap()
+            .expect("the media should be present")
             .xig_polaris_media
-            .unwrap()
+            .expect("the media payload should be present")
             .if_not_gated_logged_out
-            .is_none();
-        assert!(item);
+            .is_none());
     }
 }

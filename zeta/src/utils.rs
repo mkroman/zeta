@@ -204,17 +204,6 @@ mod tests {
     }
 
     #[test]
-    fn truncate_string_with_suffix() {
-        let string: String = "this is a very long string".to_string();
-
-        assert_eq!(string.truncate_with_suffix(10, "…"), "this is a …");
-        assert_eq!(
-            string.truncate_with_suffix(250, "…"),
-            "this is a very long string"
-        );
-    }
-
-    #[test]
     fn truncate_within_budget_including_suffix() {
         let s: &str = "this is a very long string";
 

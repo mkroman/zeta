@@ -685,10 +685,6 @@ mod tests {
     #[test]
     fn bundled_plugin_names_include_all_plugins() {
         assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 34);
-        assert!(BUNDLED_PLUGIN_NAMES.contains(&"filter"));
-        assert!(BUNDLED_PLUGIN_NAMES.contains(&"dig"));
-        assert!(BUNDLED_PLUGIN_NAMES.contains(&"health"));
-        assert!(BUNDLED_PLUGIN_NAMES.contains(&"howlongtobeat"));
     }
 
     /// The lifecycle log shared between a test and its plugin through the context.

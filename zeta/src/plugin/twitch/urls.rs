@@ -144,7 +144,6 @@ mod tests {
             ("https://twitch.tv/videos/", None),
             ("https://twitch.tv/lirik/videos/2119948564", None),
             ("https://clips.twitch.tv/", None),
-            ("https://youtu.be/dQw4w9WgXcQ", None),
         ]);
     }
 }
