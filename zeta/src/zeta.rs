@@ -113,6 +113,13 @@ async fn dispatch_messages(
     index: &mut EventIndex,
 ) -> Result<(), Error> {
     while let Some(message) = stream.next().await.transpose()? {
+        // Everything logged while this message is routed runs inside a span: the
+        // OpenTelemetry layer drops events that are not in the context of a span, so without
+        // it the routing logs would only ever reach stdout. The span is at info level, not
+        // debug, because the loop below logs warnings: an `info` filter must not be what
+        // keeps them out of the backend.
+        let _dispatch = tracing::info_span!("dispatch").entered();
+
         debug!(payload = %message, "processing irc message");
 
         let filters = Filters::from_context(context);

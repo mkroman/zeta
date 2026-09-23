@@ -8,7 +8,7 @@ use irc::client::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, warn};
+use tracing::{Instrument, debug, warn};
 use zeta_plugin::{CommandSpec, Event, Subscriptions};
 
 pub mod dispatch;
@@ -623,9 +623,16 @@ impl PluginTask {
             }
 
             while let Some(event) = receiver.recv().await {
-                if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
-                    warn!(plugin = %task_name, %error, "plugin error during event handling");
+                // The handler runs inside a span: the OpenTelemetry layer drops events that
+                // are not in the context of a span, so without it the plugin's logs would
+                // only ever reach stdout.
+                async {
+                    if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
+                        warn!(plugin = %task_name, %error, "plugin error during event handling");
+                    }
                 }
+                .instrument(tracing::info_span!("handle_event", plugin = %task_name))
+                .await;
             }
 
             // The mailbox is closed: the bot is shutting down.
