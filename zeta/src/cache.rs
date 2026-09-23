@@ -716,7 +716,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_or_refresh_surfacing_errors_without_caching() {        let cache = cache_with(Duration::from_mins(1));
+    async fn get_or_refresh_surfacing_errors_without_caching() {
+        let cache = cache_with(Duration::from_mins(1));
 
         let error = cache
             .get_or_refresh(|| async { Err("denied") })
