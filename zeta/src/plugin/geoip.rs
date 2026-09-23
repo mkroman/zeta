@@ -199,7 +199,9 @@ impl GeoIp {
             Ok(Host::Ipv6(addr)) => Ok(addr.to_string()),
             Ok(Host::Domain(domain)) => {
                 let resolver = crate::dns::resolver();
-                debug!(%domain, "resolving domain");
+                // `dns.question.name` is the OpenTelemetry convention for the name a DNS query
+                // asks for: https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
+                debug!(dns.question.name = %domain, "resolving domain");
 
                 resolver
                     .lookup_ip(domain)
@@ -231,7 +233,11 @@ impl GeoIp {
         let request = self.client.get(BASE_URL).query(&params);
         let response = request.send().await.map_err(http::ApiError::Request)?;
         let info: IpInfo = http::parse_response(response).await?;
-        info!(ip = %info.ip, "resolved");
+        // `dns.answers` is the OpenTelemetry convention for the addresses a DNS lookup resolved
+        // to, which is what `info.ip` is — the address the queried name resolved to (the input
+        // itself when it already was an IP address):
+        // https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
+        info!(dns.answers = %info.ip, "resolved");
 
         Ok(LookupResult(info))
     }

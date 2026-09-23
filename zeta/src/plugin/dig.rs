@@ -23,6 +23,7 @@ use hickory_resolver::{
 use miette::Diagnostic;
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
+use tracing::debug;
 
 use crate::plugin::prelude::*;
 
@@ -207,11 +208,37 @@ impl Dig {
         name: &str,
         record_type: RecordType,
     ) -> Result<LookupResult, Error> {
-        self.resolver
+        // `dns.question.name` is the OpenTelemetry convention for the name a DNS query asks
+        // for: https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
+        debug!(
+            dns.question.name = %name,
+            dns.question.type = %record_type,
+            "resolving dns records",
+        );
+
+        let lookup = self
+            .resolver
             .lookup(name, record_type)
             .await
-            .map(LookupResult)
-            .map_err(Error::Resolve)
+            .map_err(Error::Resolve)?;
+
+        // `dns.answers` is the OpenTelemetry convention for the addresses a lookup resolved
+        // to, so only address records go through it — the answers of any other record type
+        // are not addresses and stay in the reply to the channel.
+        let addresses: Vec<String> = lookup
+            .answers()
+            .iter()
+            .filter(|record| matches!(record.record_type(), RecordType::A | RecordType::AAAA))
+            .map(|record| record.data.to_string())
+            .collect();
+
+        if !addresses.is_empty() {
+            // `dns.answers` is a string array per convention; tracing macros have no array
+            // value type, so it goes through Debug as a single string.
+            debug!(dns.answers = ?addresses, "resolved dns records");
+        }
+
+        Ok(LookupResult(lookup))
     }
 }
 
