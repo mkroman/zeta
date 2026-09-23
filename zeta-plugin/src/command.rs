@@ -211,7 +211,8 @@ impl CommandSpec {
 
     /// Parses `tokens` into `T`, with the trigger as the command name in the usage output.
     fn parse_tokens<T: FromArgs>(&self, tokens: &[&str]) -> Result<T, ArgsError> {
-        T::from_args(&[self.trigger], tokens).map_err(|early_exit| ArgsError::Usage(early_exit.output))
+        T::from_args(&[self.trigger], tokens)
+            .map_err(|early_exit| ArgsError::Usage(early_exit.output))
     }
 
     /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
@@ -458,10 +459,8 @@ mod tests {
             name: String,
         }
 
-        const DIG: CommandSpec = CommandSpec::with_args::<Opts>(
-            ".dig",
-            "Look up DNS records for a domain",
-        );
+        const DIG: CommandSpec =
+            CommandSpec::with_args::<Opts>(".dig", "Look up DNS records for a domain");
 
         assert_eq!(DIG.description(), "Look up DNS records for a domain");
 

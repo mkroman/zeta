@@ -266,14 +266,12 @@ impl Mirror {
 
     /// Returns `false` if the media is already being mirrored, otherwise marks it as in-flight.
     fn mark_in_flight(&self, prefix: &str, id: &str) -> bool {
-        crate::sync::lock(&self.in_flight)
-            .insert((prefix.to_string(), id.to_string()))
+        crate::sync::lock(&self.in_flight).insert((prefix.to_string(), id.to_string()))
     }
 
     /// Removes media from the in-flight set.
     fn clear_in_flight(&self, prefix: &str, id: &str) {
-        crate::sync::lock(&self.in_flight)
-            .remove(&(prefix.to_string(), id.to_string()));
+        crate::sync::lock(&self.in_flight).remove(&(prefix.to_string(), id.to_string()));
     }
 
     /// Mirrors the media at `url` unless it has already been mirrored or a mirror of it is
@@ -408,7 +406,8 @@ impl MirrorHandle {
             &format!("{uppercase}_PUBLIC_URL_BASE"),
             &format!("https://pub.rwx.im/{plugin}"),
         )?;
-        let prefix = crate::utils::resolve_setting(prefix, &format!("{uppercase}_S3_PREFIX"), plugin);
+        let prefix =
+            crate::utils::resolve_setting(prefix, &format!("{uppercase}_S3_PREFIX"), plugin);
         let mirror = mirror?;
 
         Some(Self::new(mirror, prefix, public_url_base))

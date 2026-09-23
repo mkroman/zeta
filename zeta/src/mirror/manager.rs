@@ -624,7 +624,10 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
         assert!(matches!(error, Error::Upload(_)));
 
         // The temporary download directory was removed.
-        assert_eq!(stale_download_dirs(download_dir.path()), Vec::<PathBuf>::new());
+        assert_eq!(
+            stale_download_dirs(download_dir.path()),
+            Vec::<PathBuf>::new()
+        );
 
         std::fs::remove_file(&script).unwrap();
     }

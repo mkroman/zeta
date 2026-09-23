@@ -126,7 +126,9 @@ pub fn is_numeric_segment(segment: &str) -> bool {
 #[must_use]
 pub fn is_identifier(segment: &str, allowed: &str) -> bool {
     !segment.is_empty()
-        && segment.chars().all(|c| c.is_ascii_alphanumeric() || allowed.contains(c))
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || allowed.contains(c))
 }
 
 /// Returns whether `id` starts with `prefix` followed by at least one ASCII digit, e.g. an IMDb

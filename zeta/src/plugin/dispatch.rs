@@ -112,7 +112,10 @@ impl EventIndex {
         }
 
         for kind in subscriptions.events() {
-            self.kinds.entry(*kind).or_default().push(subscriber.clone());
+            self.kinds
+                .entry(*kind)
+                .or_default()
+                .push(subscriber.clone());
         }
     }
 
@@ -218,7 +221,12 @@ impl EventIndex {
     }
 
     /// Routes a `PRIVMSG` to the plugins whose subscriptions match.
-    fn dispatch_privmsg(&self, filters: &Filters, message: &Arc<Message>, stopped: &mut Vec<String>) {
+    fn dispatch_privmsg(
+        &self,
+        filters: &Filters,
+        message: &Arc<Message>,
+        stopped: &mut Vec<String>,
+    ) {
         let Command::PRIVMSG(target, text) = &message.command else {
             return;
         };
@@ -287,7 +295,6 @@ impl EventIndex {
             }
         }
     }
-
 }
 
 #[cfg(test)]
@@ -386,19 +393,18 @@ mod tests {
         let mut youtube = subscribe(&mut index, "youtube", |subscriptions| {
             subscriptions.urls(UrlScope::Hosts(&["youtube.com", "www.youtube.com"]));
         });
-        let mut titles = subscribe(&mut index, "titles", |s| { s.urls(UrlScope::Any); });
+        let mut titles = subscribe(&mut index, "titles", |s| {
+            s.urls(UrlScope::Any);
+        });
 
         // A claimed host is delivered to its plugin and to generic handlers.
-        let _ = index.dispatch(&Filters::default(), privmsg("https://youtube.com/watch?v=1"));
+        let _ = index.dispatch(
+            &Filters::default(),
+            privmsg("https://youtube.com/watch?v=1"),
+        );
 
-        assert!(matches!(
-            drain(&mut youtube)[..],
-            [Event::Url(..)]
-        ));
-        assert!(matches!(
-            drain(&mut titles)[..],
-            [Event::Url(..)]
-        ));
+        assert!(matches!(drain(&mut youtube)[..], [Event::Url(..)]));
+        assert!(matches!(drain(&mut titles)[..], [Event::Url(..)]));
 
         // Host matching is case-insensitive.
         let _ = index.dispatch(&Filters::default(), privmsg("https://WWW.YOUTUBE.COM/x"));
@@ -416,21 +422,31 @@ mod tests {
     #[test]
     fn multiple_urls_yield_one_event_each() {
         let mut index = EventIndex::default();
-        let mut titles = subscribe(&mut index, "titles", |s| { s.urls(UrlScope::Any); });
+        let mut titles = subscribe(&mut index, "titles", |s| {
+            s.urls(UrlScope::Any);
+        });
 
         let _ = index.dispatch(
             &Filters::default(),
             privmsg("https://a.example/x https://a.example/x https://b.example/y"),
         );
 
-        assert_eq!(drain(&mut titles).len(), 2, "duplicate URLs are deduplicated");
+        assert_eq!(
+            drain(&mut titles).len(),
+            2,
+            "duplicate URLs are deduplicated"
+        );
     }
 
     #[test]
     fn ctcp_messages_bypass_everything_else() {
         let mut index = EventIndex::default();
-        let mut ctcp = subscribe(&mut index, "ctcp", |s| { s.receive_ctcp(); });
-        let mut messages = subscribe(&mut index, "messages", |s| { s.receive_message(); });
+        let mut ctcp = subscribe(&mut index, "ctcp", |s| {
+            s.receive_ctcp();
+        });
+        let mut messages = subscribe(&mut index, "messages", |s| {
+            s.receive_message();
+        });
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
@@ -448,12 +464,20 @@ mod tests {
     #[test]
     fn ctcp_replies_arrive_through_notices() {
         let mut index = EventIndex::default();
-        let mut ctcp = subscribe(&mut index, "ctcp", |s| { s.receive_ctcp(); });
-        let mut watcher = subscribe(&mut index, "watcher", |s| { s.receive_message(); });
+        let mut ctcp = subscribe(&mut index, "ctcp", |s| {
+            s.receive_ctcp();
+        });
+        let mut watcher = subscribe(&mut index, "watcher", |s| {
+            s.receive_message();
+        });
 
         let _ = index.dispatch(
             &Filters::default(),
-            message("service.example", "NOTICE", &["zeta", "\x01VERSION 1.0\x01"]),
+            message(
+                "service.example",
+                "NOTICE",
+                &["zeta", "\x01VERSION 1.0\x01"],
+            ),
         );
 
         assert!(matches!(
@@ -466,7 +490,9 @@ mod tests {
     #[test]
     fn plain_notices_are_not_delivered() {
         let mut index = EventIndex::default();
-        let mut ctcp = subscribe(&mut index, "ctcp", |s| { s.receive_ctcp(); });
+        let mut ctcp = subscribe(&mut index, "ctcp", |s| {
+            s.receive_ctcp();
+        });
 
         let _ = index.dispatch(
             &Filters::default(),
@@ -479,21 +505,17 @@ mod tests {
     #[test]
     fn messages_reach_subscribers_regardless_of_matches() {
         let mut index = EventIndex::default();
-        let mut watcher = subscribe(&mut index, "watcher", |s| { s.receive_message(); });
+        let mut watcher = subscribe(&mut index, "watcher", |s| {
+            s.receive_message();
+        });
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
 
         let _ = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
 
-        assert!(matches!(
-            drain(&mut dig)[..],
-            [Event::Command(..)]
-        ));
-        assert!(matches!(
-            drain(&mut watcher)[..],
-            [Event::Message(..)]
-        ));
+        assert!(matches!(drain(&mut dig)[..], [Event::Command(..)]));
+        assert!(matches!(drain(&mut watcher)[..], [Event::Message(..)]));
 
         let _ = index.dispatch(&Filters::default(), privmsg("no events at all?"));
 
@@ -504,9 +526,15 @@ mod tests {
     #[test]
     fn presence_events_route_by_kind() {
         let mut index = EventIndex::default();
-        let mut joins = subscribe(&mut index, "joins", |s| { s.receive_join(); });
-        let mut quits = subscribe(&mut index, "quits", |s| { s.receive_quit(); });
-        let mut parts = subscribe(&mut index, "parts", |s| { s.receive_part(); });
+        let mut joins = subscribe(&mut index, "joins", |s| {
+            s.receive_join();
+        });
+        let mut quits = subscribe(&mut index, "quits", |s| {
+            s.receive_quit();
+        });
+        let mut parts = subscribe(&mut index, "parts", |s| {
+            s.receive_part();
+        });
 
         let _ = index.dispatch(&Filters::default(), message("nick!u@h", "JOIN", &["#test"]));
         let _ = index.dispatch(&Filters::default(), message("nick!u@h", "QUIT", &["gone"]));
@@ -525,7 +553,9 @@ mod tests {
     #[test]
     fn unmodeled_commands_reach_raw_subscribers() {
         let mut index = EventIndex::default();
-        let mut raw = subscribe(&mut index, "raw", |s| { s.receive_raw(); });
+        let mut raw = subscribe(&mut index, "raw", |s| {
+            s.receive_raw();
+        });
 
         let _ = index.dispatch(
             &Filters::default(),
@@ -542,7 +572,9 @@ mod tests {
     fn stopped_plugins_are_evicted() {
         let mut index = EventIndex::default();
         let dig = subscribe(&mut index, "dig", |subscriptions| {
-            subscriptions.command(CommandSpec::new(".dig", "dig")).receive_join();
+            subscriptions
+                .command(CommandSpec::new(".dig", "dig"))
+                .receive_join();
         });
 
         drop(dig);
