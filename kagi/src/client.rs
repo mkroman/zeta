@@ -19,6 +19,24 @@ use tracing::{debug, error};
 
 use super::{BASE_URL, ClientOptions, Error, ImageResult, SearchResult};
 
+/// Strips the URL from `error` and logs the failed request's URL without its query, so a
+/// logged error never carries a credential from the query string — the login token is part
+/// of Kagi's query strings.
+fn request_error(error: reqwest::Error) -> reqwest::Error {
+    let url = error.url().map(|url| {
+        let mut url = url.clone();
+        url.set_query(None);
+        url
+    });
+    let error = error.without_url();
+
+    if let Some(url) = url {
+        error!(url.full = %url, %error, "request failed");
+    }
+
+    error
+}
+
 /// The `Accept` header sent for document (navigation) requests.
 const ACCEPT_DOCUMENT: HeaderValue =
     HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -174,7 +192,10 @@ impl Client {
         let req = self.document_request(token_url.as_str());
         debug!("requesting session cookies");
 
-        let res = req.send().await.map_err(Error::RequestSession)?;
+        let res = req
+            .send()
+            .await
+            .map_err(|error| Error::RequestSession(request_error(error)))?;
         if !res.headers().contains_key(SET_COOKIE) {
             error!("the response does not include set-cookie headers!");
             return Err(Error::SessionCookies);
@@ -183,8 +204,14 @@ impl Client {
         // Request the main page to receive a nonce for the first stream request.
         debug!("requesting nonce");
         let req = self.document_request(BASE_URL);
-        let res = req.send().await.map_err(Error::RequestNonce)?;
-        let body = res.text().await.map_err(Error::ReadNonce)?;
+        let res = req
+            .send()
+            .await
+            .map_err(|error| Error::RequestNonce(request_error(error)))?;
+        let body = res
+            .text()
+            .await
+            .map_err(|error| Error::ReadNonce(request_error(error)))?;
 
         extract_nonce(&body).ok_or(Error::Nonce)
     }
@@ -256,9 +283,17 @@ impl Client {
         };
 
         debug!(%endpoint, "connecting to stream");
-        let res = req.send().await.map_err(Error::StreamRequest)?;
-        let res = res.error_for_status().map_err(Error::StreamStatus)?;
-        let body = res.text().await.map_err(Error::StreamRequestBody)?;
+        let res = req
+            .send()
+            .await
+            .map_err(|error| Error::StreamRequest(request_error(error)))?;
+        let res = res
+            .error_for_status()
+            .map_err(|error| Error::StreamStatus(request_error(error)))?;
+        let body = res
+            .text()
+            .await
+            .map_err(|error| Error::StreamRequestBody(request_error(error)))?;
 
         Ok(parse_stream(&body))
     }

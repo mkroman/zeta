@@ -78,7 +78,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
     /// The HTTP request failed.
     #[error("request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// The request could not be signed.
     #[error("could not sign request: {0}")]
     Signing(#[from] aws_sigv4::http_request::SigningError),
@@ -93,6 +93,31 @@ pub enum Error {
         /// The response body.
         body: String,
     },
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
+}
+
+/// Strips the URL from `error` and logs the failed request's URL without its query, so a
+/// logged error never carries a credential from the query string.
+fn request_error(error: reqwest::Error) -> Error {
+    let url = error.url().map(|url| {
+        let mut url = url.clone();
+        url.set_query(None);
+        url
+    });
+    let error = error.without_url();
+
+    if let Some(url) = url {
+        tracing::error!(url.full = %url, %error, "s3 request failed");
+    }
+
+    Error::Request(error)
 }
 
 /// Client for uploading mirrored files to an S3-compatible bucket.
@@ -199,7 +224,7 @@ impl S3 {
         let response = send_with_retry(|| async {
             let request = apply_headers(self.client.head(url.clone()), &headers);
 
-            Ok(request.send().await?)
+            request.send().await.map_err(request_error)
         })
         .await?;
 
@@ -239,7 +264,7 @@ impl S3 {
                 &headers,
             );
 
-            Ok(request.send().await?)
+            request.send().await.map_err(request_error)
         })
         .await?;
 

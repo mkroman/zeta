@@ -73,13 +73,21 @@ pub struct Tiktok {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// A shortened link did not redirect to a valid TikTok URL.
     #[error("shortened link did not redirect to a valid url")]
     InvalidRedirect,
     /// TikTok's oEmbed API returned an error response.
     #[error("oembed error: {0}")]
     OEmbed(#[from] oembed::Error),
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 #[async_trait]
@@ -183,7 +191,7 @@ impl Tiktok {
     /// Requests the redirect with the given id and returns the location it redirects to.
     async fn resolve_redirect_url(&self, id: &str) -> Result<Url, Error> {
         debug!(%id, "fetching redirect url");
-        let response = self.client.get(short_url(id)).send().await?;
+        let response = http::send(self.client.get(short_url(id))).await?;
 
         let location = response
             .headers()

@@ -236,14 +236,12 @@ impl Spotify {
             .map_err(Error::from)?;
         let url = format!("{API_BASE_URL}/{path}");
 
-        let response = self
+        let request = self
             .credentials
             .client()
             .get(&url)
-            .header(AUTHORIZATION, format!("Bearer {token}"))
-            .send()
-            .await
-            .map_err(http::ApiError::from)?;
+            .header(AUTHORIZATION, format!("Bearer {token}"));
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
 
         http::parse_response(response).await.map_err(Error::from)
     }

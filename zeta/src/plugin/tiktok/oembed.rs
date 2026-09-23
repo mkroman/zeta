@@ -52,10 +52,18 @@ impl OEmbed {
 pub enum Error {
     /// Sending the request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// The oEmbed API responded with a non-success status or an invalid body.
     #[error(transparent)]
     Api(#[from] http::ApiError),
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 /// Fetches the oEmbed details for the given video `url`.
@@ -65,10 +73,7 @@ pub enum Error {
 /// Returns an error if the request fails or TikTok returns an invalid response.
 pub async fn fetch(http_client: &reqwest::Client, url: &str) -> Result<OEmbed, Error> {
     debug!(%url, "fetching oembed data");
-    let response = http_client
-        .get(TIKTOK_OEMBED_API)
-        .query(&[("url", url)])
-        .send()
+    let response = http::send(http_client.get(TIKTOK_OEMBED_API).query(&[("url", url)]))
         .await?;
 
     http::parse_response(response).await.map_err(Error::from)

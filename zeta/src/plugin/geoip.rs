@@ -231,7 +231,7 @@ impl GeoIp {
             ("format", "json"),
         ];
         let request = self.client.get(BASE_URL).query(&params);
-        let response = request.send().await.map_err(http::ApiError::from)?;
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
         let info: IpInfo = http::parse_response(response)
             .await
             .inspect_err(|error| error!(%name, %error, "error when querying for geoip"))?;

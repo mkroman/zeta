@@ -219,7 +219,7 @@ impl GraphQlClient {
             "operationName": operation_name,
         });
 
-        let response = self.http.post(GRAPHQL_URL).json(&payload).send().await?;
+        let response = http::send(self.http.post(GRAPHQL_URL).json(&payload)).await?;
 
         let response: GraphQlResponse<T> = http::parse_response(response).await?;
 

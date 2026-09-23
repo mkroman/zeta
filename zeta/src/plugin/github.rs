@@ -35,13 +35,21 @@ pub struct Settings {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// The configured token is not a valid header value.
     #[error("invalid header value: {0}")]
     InvalidToken(#[from] reqwest::header::InvalidHeaderValue),
     /// The GitHub API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 /// The `.gh` command.
@@ -156,12 +164,11 @@ impl GitHubPlugin {
     async fn search_repos(&self, query: &str) -> Result<SearchResponse, Error> {
         let params = [("q", query), ("sort", "stars"), ("order", "desc")];
 
-        let response = self
+        let request = self
             .http
             .get("https://api.github.com/search/repositories")
-            .query(&params)
-            .send()
-            .await?;
+            .query(&params);
+        let response = http::send(request).await?;
 
         http::parse_response(response).await.map_err(Error::from)
     }

@@ -172,7 +172,9 @@ impl RustPlayground {
 
         debug!("sending code to rust playground");
 
-        let response = self.client.post(BASE_URL).json(&request).send().await.map_err(http::ApiError::from)?;
+        let response = http::send(self.client.post(BASE_URL).json(&request))
+            .await
+            .map_err(http::ApiError::from)?;
 
         let result: ExecuteResponse = http::parse_response(response).await?;
 

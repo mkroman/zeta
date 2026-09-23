@@ -9,6 +9,25 @@ use reqwest::{ClientBuilder, redirect::Policy};
 
 use crate::{DictionaryDocument, Error};
 
+/// Strips the URL from `error` and — with the `log` feature — logs the failed request's URL
+/// without its query, so a logged error never carries a credential from the query string.
+fn request_error(error: reqwest::Error) -> reqwest::Error {
+    #[cfg(feature = "log")]
+    let url = error.url().map(|url| {
+        let mut url = url.clone();
+        url.set_query(None);
+        url
+    });
+    let error = error.without_url();
+
+    #[cfg(feature = "log")]
+    if let Some(url) = url {
+        tracing::error!(url.full = %url, %error, "request failed");
+    }
+
+    error
+}
+
 /// The base URL of the dictionary's service.
 const BASE_URL: &str = "https://ws.dsl.dk";
 /// The relative path of the query endpoint.
@@ -98,13 +117,19 @@ impl Client {
     pub async fn query(&self, word: &str) -> Result<DictionaryDocument, Error> {
         let url = format!("{base_url}{QUERY_PATH}", base_url = self.base_url);
         let request = self.client.get(url).query(&[(QUERY_WORD_PARAM, word)]);
-        let response = request.send().await.map_err(Error::Request)?;
+        let response = request
+            .send()
+            .await
+            .map_err(|error| Error::Request(request_error(error)))?;
 
         if !response.status().is_success() {
             return Err(Error::Status(response.status()));
         }
 
-        let body = response.text().await.map_err(Error::Request)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|error| Error::Request(request_error(error)))?;
 
         DictionaryDocument::from_html(&body)
     }

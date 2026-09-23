@@ -194,7 +194,7 @@ impl Tvmaze {
         let url = self.build_search_url(name);
         debug!(url.full = %url, "requesting single search for show: {name}");
 
-        let response = self.client.get(url).send().await?;
+        let response = http::send(self.client.get(url)).await?;
         let show = http::parse_response_or_404(response, Error::NotFound).await?;
 
         debug!(?show, "finished parsing show");

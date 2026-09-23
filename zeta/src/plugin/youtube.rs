@@ -448,10 +448,7 @@ impl YouTube {
         ];
 
         let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
-        let response = request
-            .send()
-            .await
-            .map_err(http::ApiError::from)?;
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
 
         let result: SearchListResponse = http::parse_response(response).await?;
 
@@ -477,10 +474,7 @@ impl YouTube {
             ),
         ];
         let request = self.client.get(format!("{BASE_URL}/videos")).query(&params);
-        let response = request
-            .send()
-            .await
-            .map_err(http::ApiError::from)?;
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
         let list: VideosResponse = http::parse_response(response).await?;
 
         debug!("fetched metadata for video");
@@ -510,7 +504,7 @@ async fn fetch_video_categories(
     let request = client
         .get(format!("{BASE_URL}/videoCategories"))
         .query(&params);
-    let response = request.send().await.map_err(http::ApiError::from)?;
+    let response = http::send(request).await.map_err(http::ApiError::from)?;
     let list: CategoriesResponse = http::parse_response(response).await?;
 
     debug!("fetched video category list");

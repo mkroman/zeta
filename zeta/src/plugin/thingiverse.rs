@@ -50,13 +50,21 @@ pub struct Thingiverse {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// The linked thing does not exist.
     #[error("resource not found")]
     NotFound,
     /// The Thingiverse API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 /// Represents a "Thing" (3D model) from the Thingiverse API.
@@ -150,12 +158,11 @@ impl Thingiverse {
     async fn fetch_thing(&self, id: &str) -> Result<Thing, Error> {
         let url = format!("{API_BASE_URL}/things/{id}/");
 
-        let response = self
+        let request = self
             .client
             .get(&url)
-            .header(AUTHORIZATION, format!("Bearer {}", self.app_token))
-            .send()
-            .await?;
+            .header(AUTHORIZATION, format!("Bearer {}", self.app_token));
+        let response = http::send(request).await?;
 
         http::parse_response_or_404(response, Error::NotFound).await
     }

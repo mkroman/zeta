@@ -55,10 +55,18 @@ pub struct HowLongToBeat {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// The HowLongToBeat API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 /// Cached authentication credentials required by the API.
@@ -289,12 +297,11 @@ impl HowLongToBeat {
         let url = format!("{BASE_URL}/api/bleed/init?t={timestamp}");
         debug!("refreshing hltb token and homepage data");
 
-        let response = self
+        let request = self
             .client
             .get(&url)
-            .header(REFERER, REFERER_URL)
-            .send()
-            .await?;
+            .header(REFERER, REFERER_URL);
+        let response = http::send(request).await?;
 
         let init: InitResponse = http::parse_response(response).await?;
 
@@ -349,7 +356,7 @@ impl HowLongToBeat {
             homepage_data,
         };
 
-        let response = self
+        let request = self
             .client
             .post(&url)
             .header(REFERER, REFERER_URL)
@@ -357,9 +364,8 @@ impl HowLongToBeat {
             .header("x-hp-key", &auth.hp_key)
             .header("x-hp-val", &auth.hp_val)
             .header(CONTENT_TYPE, "application/json")
-            .json(&body)
-            .send()
-            .await?;
+            .json(&body);
+        let response = http::send(request).await?;
 
         let response_data: SearchResponse = http::parse_response(response).await?;
 

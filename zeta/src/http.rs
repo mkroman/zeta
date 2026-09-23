@@ -10,8 +10,6 @@ use crate::config::HttpConfig;
 use serde::de::DeserializeOwned;
 #[cfg(feature = "http")]
 use tracing::{debug, error, instrument};
-#[cfg(feature = "http")]
-use url::Url;
 
 /// JSON response parsing shared by the API client plugins.
 ///
@@ -75,32 +73,32 @@ impl From<reqwest::Error> for ApiError {
     }
 }
 
-/// Returns `url` with every query parameter value emptied, keeping the parameter names.
+/// Sends `request` and returns the response.
 ///
-/// The logged URL then shows which parameters a request carried without carrying any of their
-/// values: the message around the log line already names what was looked up, and the values
-/// are the part that can hold a credential:
-/// <https://opentelemetry.io/docs/specs/semconv/registry/attributes/url/>
-#[must_use]
+/// A failed send is logged once with `url.full` — the request URL without its query — before
+/// the URL is stripped from the returned [`reqwest::Error`]: these APIs carry their key in
+/// the query string, and the error reaches `Display` (and `Debug`) in plugin and dispatcher
+/// logs, while a log line still needs to say which request failed.
+///
+/// # Errors
+///
+/// Returns the [`reqwest::Error`] of the failed send, with its URL stripped.
 #[cfg(feature = "http")]
-pub fn redact_url(url: &Url) -> String {
-    let Some(query) = url.query() else {
-        return url.to_string();
-    };
+pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response, reqwest::Error> {
+    request.send().await.map_err(|error| {
+        let url = error.url().map(|url| {
+            let mut url = url.clone();
+            url.set_query(None);
+            url
+        });
+        let error = error.without_url();
 
-    // Sliced from the raw query, so the parameter names are kept exactly as they were sent
-    // instead of being decoded and re-encoded.
-    let scrubbed = query
-        .split('&')
-        .filter(|pair| !pair.is_empty())
-        .map(|pair| format!("{}=", pair.split('=').next().unwrap_or(pair)))
-        .collect::<Vec<_>>()
-        .join("&");
+        if let Some(url) = url {
+            error!(url.full = %url, %error, "request failed");
+        }
 
-    let mut redacted = url.clone();
-    redacted.set_query(Some(&scrubbed));
-
-    redacted.to_string()
+        error
+    })
 }
 
 /// Sends a request built by [`reqwest::Client::get`] (or a sibling builder method) and parses
@@ -112,8 +110,8 @@ pub fn redact_url(url: &Url) -> String {
 /// Every response is logged once, with the attributes the OpenTelemetry HTTP conventions
 /// define for an outbound request: <https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client-span>.
 /// `http.request.method` is missing on purpose — a `reqwest::Response` no longer exposes the
-/// request it belongs to — and the URL goes through [`redact_url`] first, which empties the
-/// query values: these APIs carry their key in the query string. A `404` is logged at debug
+/// request it belongs to — and the logged URL carries no query: these APIs carry their key in
+/// the query string. A `404` is logged at debug
 /// level (it is the routine answer [`parse_response_or_404`] turns into `not_found`); every
 /// other non-success status is logged as an error.
 ///
@@ -122,12 +120,23 @@ pub fn redact_url(url: &Url) -> String {
 /// Returns an [`ApiError`] if the request fails, the response status is not a success, or the
 /// body cannot be parsed as JSON.
 #[cfg(feature = "http")]
-#[instrument(skip(response), fields(url.full = %redact_url(response.url())))]
+#[instrument(
+    skip(response),
+    fields(url.full = %({
+        let mut url = response.url().clone();
+        url.set_query(None);
+        url
+    }))
+)]
 pub async fn parse_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ApiError> {
     let status = response.status();
-    let url = redact_url(response.url());
+    let url = {
+        let mut url = response.url().clone();
+        url.set_query(None);
+        url
+    };
     let server_address = response.url().host_str().unwrap_or_default().to_owned();
     let server_port = response.url().port_or_known_default();
 
@@ -275,55 +284,54 @@ pub mod emulated {
     }
 }
 
+/// Returns the address of a just-dropped local listener, so connections to it are refused
+/// deterministically while URLs built against them still carry credential-looking queries.
+#[cfg(all(test, feature = "http"))]
+pub fn refused_address() -> std::net::SocketAddr {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+    drop(listener);
+    address
+}
+
 #[cfg(all(test, feature = "http"))]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::prelude::*;
+
     use super::*;
 
-    #[test]
-    fn redact_url_empties_every_query_value() {
-        let url = Url::parse("https://api.ip2location.io/?ip=1.2.3.4&key=secret&format=json")
-            .expect("url");
+    /// A writer that collects everything logged through it, for assertions.
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
 
-        assert_eq!(
-            redact_url(&url),
-            "https://api.ip2location.io/?ip=&key=&format="
-        );
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("log buffer lock")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
-    #[test]
-    fn redact_url_keeps_every_parameter_name_as_it_was_sent() {
-        // Empty, flag and repeated parameters keep their shape; only the values go.
-        let url = Url::parse("https://api.example.com/v1?verbose=&raw_json&list=a&list=b%20c")
-            .expect("url");
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+        type Writer = LogBuffer;
 
-        assert_eq!(
-            redact_url(&url),
-            "https://api.example.com/v1?verbose=&raw_json=&list=&list="
-        );
-    }
-
-    #[test]
-    fn redact_url_leaves_urls_without_a_query_unchanged() {
-        for href in [
-            "https://api.tvmaze.com/shows/1",
-            "https://api.ip2location.io/",
-        ] {
-            let url = Url::parse(href).expect("url");
-
-            assert_eq!(redact_url(&url), href);
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
         }
     }
 
     #[tokio::test]
     async fn request_errors_never_carry_the_url() {
-        // Bind and drop a listener, so the connection is refused deterministically while the
-        // request still carries a credential-looking query.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let address = listener.local_addr().expect("address");
-        drop(listener);
-
         let error = reqwest::Client::new()
-            .get(format!("http://{address}/?key=secret"))
+            .get(format!("http://{}/?key=secret", refused_address()))
             .send()
             .await
             .expect_err("nothing listens on that address");
@@ -332,6 +340,36 @@ mod tests {
         assert!(error.url().is_some(), "reqwest attaches the request url");
 
         let error = ApiError::from(error);
+
+        assert!(!error.to_string().contains("secret"), "{error}");
+        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn send_logs_a_query_free_url_and_returns_a_stripped_error() {
+        let address = refused_address();
+        let request_url = format!("http://{address}/?key=secret");
+
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(buffer.clone()),
+        );
+        let guard = tracing::subscriber::set_default(subscriber);
+
+        let error = send(reqwest::Client::new().get(&request_url))
+            .await
+            .expect_err("nothing listens on that address");
+        drop(guard);
+
+        let logged = String::from_utf8(buffer.0.lock().expect("log buffer lock").clone())
+            .expect("log is utf-8");
+
+        let query_free = format!("http://{address}/");
+        assert!(logged.contains("url.full"), "{logged}");
+        assert!(logged.contains(&query_free), "{logged}");
+        assert!(!logged.contains("key=secret"), "{logged}");
 
         assert!(!error.to_string().contains("secret"), "{error}");
         assert!(!format!("{error:?}").contains("secret"), "{error:?}");

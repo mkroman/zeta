@@ -164,16 +164,14 @@ impl Twitch {
             .map_err(Error::from)?;
         let url = format!("{BASE_URL}/{endpoint}");
 
-        let response = self
+        let request = self
             .credentials
             .client()
             .get(&url)
             .header("Client-ID", self.credentials.client_id())
             .header("Authorization", format!("Bearer {token}"))
-            .query(query)
-            .send()
-            .await
-            .map_err(http::ApiError::from)?;
+            .query(query);
+        let response = http::send(request).await.map_err(http::ApiError::from)?;
 
         http::parse_response(response).await.map_err(Error::from)
     }

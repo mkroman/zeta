@@ -7,7 +7,7 @@
 
 use regex::Regex;
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, error};
 use url::Url;
 
 use crate::{
@@ -31,7 +31,7 @@ pub struct Chaturbate {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// The room page did not contain a room dossier.
     #[error("room dossier not found in page")]
     DossierNotFound,
@@ -44,6 +44,14 @@ pub enum Error {
     /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
     Irc(#[from] irc::error::Error),
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 impl From<Error> for ZetaError {
@@ -121,8 +129,17 @@ impl Chaturbate {
         let url = format!("https://chaturbate.com/{username}/");
         debug!(%url, "fetching chaturbate page");
 
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
+        let response = http::send(self.client.get(&url)).await?;
+        let page_url = {
+            let mut page_url = response.url().clone();
+            page_url.set_query(None);
+            page_url
+        };
+        let html = response.text().await.map_err(|error| {
+            let error = error.without_url();
+            error!(url.full = %page_url, %error, "reading response body failed");
+            error
+        })?;
 
         let dossier = parse_room_dossier_with_re(&self.room_dossier_re, &html)?;
         debug!(?dossier, "parsed room dossier");

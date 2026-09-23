@@ -141,13 +141,11 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T, Error> {
-        let response = self
+        let request = self
             .inner
             .get(format!("{API_BASE_URL}{path}"))
-            .query(query)
-            .send()
-            .await
-            .map_err(Error::Request)?;
+            .query(query);
+        let response = http::send(request).await.map_err(Error::Request)?;
 
         http::parse_response(response)
             .await

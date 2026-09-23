@@ -104,13 +104,21 @@ pub struct OpenWeatherMap {
 pub enum Error {
     /// An error occurred while performing the HTTP request.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// The location could not be found via the geocoding API.
     #[error("location not found")]
     LocationNotFound,
     /// The API returned an error status or message.
     #[error("api error: {0}")]
     Api(String),
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential (`appid` here) in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 /// Result from the Geocoding API.
@@ -255,7 +263,7 @@ impl OpenWeatherMap {
         let url = format!("{API_BASE_URL}/geo/1.0/direct");
         let params = [("q", query), ("limit", "1"), ("appid", &self.app_id)];
 
-        let response = self.client.get(&url).query(&params).send().await?;
+        let response = http::send(self.client.get(&url).query(&params)).await?;
 
         let results: Vec<GeocodingResult> = http::parse_response(response)
             .await
@@ -280,7 +288,7 @@ impl OpenWeatherMap {
             params.push(("lang", language));
         }
 
-        let response = self.client.get(&url).query(&params).send().await?;
+        let response = http::send(self.client.get(&url).query(&params)).await?;
 
         http::parse_response(response)
             .await
@@ -371,6 +379,21 @@ mod tests {
             },
             clouds: Some(Clouds { all: 75 }),
         }
+    }
+
+    #[tokio::test]
+    async fn request_errors_never_carry_the_url() {
+        let address = http::refused_address();
+        let error = reqwest::Client::new()
+            .get(format!("http://{address}/?appid=secret"))
+            .send()
+            .await
+            .expect_err("nothing listens on that address");
+
+        let error = Error::from(error);
+
+        assert!(!error.to_string().contains("secret"), "{error}");
+        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
     }
 
     settings_tests! {

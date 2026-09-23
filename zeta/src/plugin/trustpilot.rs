@@ -99,13 +99,21 @@ struct NumberOfReviews {
 pub enum Error {
     /// An error occurred while performing the HTTP request.
     #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
     /// The API returned an error, e.g. a non-success status or an unparseable body.
     #[error(transparent)]
     Api(#[from] http::ApiError),
     /// The requested business was not found.
     #[error("business not found")]
     NotFound,
+}
+
+impl From<reqwest::Error> for Error {
+    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
+    /// credential in its query string.
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 #[async_trait]
@@ -173,13 +181,12 @@ impl Trustpilot {
 
         debug!(%url, ?params, "searching trustpilot");
 
-        let response = self
+        let request = self
             .client
             .get(&url)
             .header("apikey", &self.api_key)
-            .query(&params)
-            .send()
-            .await?;
+            .query(&params);
+        let response = http::send(request).await?;
 
         http::parse_response_or_404(response, Error::NotFound).await
     }
