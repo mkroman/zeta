@@ -631,6 +631,8 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
             .expect("manager is running");
 
         // The download succeeds, but the upload fails against the unreachable test endpoint.
+        // The failure goes through `send_with_retry`, whose connect errors are retryable, so
+        // this costs the full retry backoff (~0.75s) — expected, not a hang.
         let (_, result) = rx.recv().await.expect("the download did not finish");
         let error = result.expect_err("the upload should have failed");
 
@@ -652,9 +654,11 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
 
         let (results, mut rx) = mpsc::unbounded_channel();
 
-        // The first request sleeps for two seconds; the queued ones finish without sleeping. With
-        // a single download slot they must still finish in submission order.
-        for (index, url) in ["2", "0", "0"].iter().enumerate() {
+        // The first request sleeps for 300ms; the queued ones finish without sleeping. With a
+        // single download slot they must still finish in submission order. The sleep only has to
+        // outlast the submission loop below — a fraction of a second leaves ample headroom on a
+        // loaded machine without slowing the suite.
+        for (index, url) in ["0.3", "0", "0"].iter().enumerate() {
             manager
                 .submit(request(url, &format!("123{index}"), results.clone(), index))
                 .expect("manager is running");

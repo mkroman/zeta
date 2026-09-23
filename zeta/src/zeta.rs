@@ -349,16 +349,26 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn shutdown_signal_responds_to_sigterm() {
-        let signal = tokio::spawn(shutdown_signal());
+        use futures::task::noop_waker;
+        use std::task::Poll;
 
-        // Give the signal task a chance to install the `SIGTERM` listener before sending.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut signal = Box::pin(shutdown_signal());
+
+        // Poll once with a no-op waker: the first poll installs the `SIGINT` and `SIGTERM`
+        // listeners, so the signal below can never arrive while the default disposition is
+        // still active — which would terminate the whole test process.
+        let waker = noop_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+
+        assert_eq!(signal.as_mut().poll(&mut context), Poll::Pending);
 
         std::process::Command::new("kill")
             .args(["-s", "TERM", &std::process::id().to_string()])
             .status()
             .expect("could not send SIGTERM");
 
-        assert_eq!(signal.await.unwrap(), "SIGTERM");
+        let received = signal.await;
+
+        assert_eq!(received, "SIGTERM");
     }
 }

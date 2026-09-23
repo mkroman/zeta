@@ -428,16 +428,29 @@ mod tests {
             assert_eq!(delivered.id, expected.id);
         }
 
-        // The alerts are deleted from the database once delivered.
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        // The alerts are deleted from the database once delivered. The deletion is not
+        // synchronous with the delivery, so poll until it lands — with a deadline rather than
+        // a fixed sleep, which would either flake on loaded machines or slow the happy path.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
 
-        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alerts WHERE id = ANY($1)")
-            .bind([first.id, second.id])
-            .fetch_one(&db)
-            .await
-            .unwrap();
+        loop {
+            let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alerts WHERE id = ANY($1)")
+                .bind([first.id, second.id])
+                .fetch_one(&db)
+                .await
+                .unwrap();
 
-        assert_eq!(remaining, 0);
+            if remaining == 0 {
+                break;
+            }
+
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the alerts were not deleted after delivery: {remaining} remaining"
+            );
+
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
     }
 
     #[tokio::test]

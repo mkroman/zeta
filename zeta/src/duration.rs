@@ -302,20 +302,23 @@ mod time_ago_tests {
         );
     }
 
-    // The deltas below land exactly on a day boundary, so the drift between the test's
-    // `Utc::now()` and the one inside `time_ago` cannot change the output unless the process
-    // stalls for a full day. Smaller formatting cases are pinned by the clock-free `words` and
-    // `time::Duration` tests instead.
+    // The deltas below sit inside a unit boundary with at least an hour of slack, so the drift
+    // between the test's `Utc::now()` and the one inside `time_ago` cannot change the output.
+    // The exact boundary values are pinned clock-free by the `words` tests above, which the
+    // `DateTime<Utc>` impl delegates to with `UNITS_WITH_SECONDS`.
     #[test]
     fn should_format_elapsed_time_in_words() {
-        assert_eq!((Utc::now() - TimeDelta::weeks(2)).time_ago(), "2 weeks ago");
         assert_eq!(
-            (Utc::now() - TimeDelta::days(400)).time_ago(),
-            "1 year and 5 weeks ago"
+            (Utc::now() - (TimeDelta::weeks(2) - TimeDelta::hours(1))).time_ago(),
+            "1 week, 6 days, and 23 hours ago"
         );
         assert_eq!(
-            (Utc::now() - TimeDelta::days(730)).time_ago(),
-            "2 years ago"
+            (Utc::now() - TimeDelta::days(401)).time_ago(),
+            "1 year, 5 weeks, and 1 day ago"
+        );
+        assert_eq!(
+            (Utc::now() - TimeDelta::days(731)).time_ago(),
+            "2 years and 1 day ago"
         );
     }
 }
