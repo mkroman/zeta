@@ -616,7 +616,13 @@ impl PluginTask {
         let handle = tokio::spawn(async move {
             debug!(plugin = %task_name, "plugin task started");
 
-            if let Err(error) = plugin.loaded(&ctx, &client).await {
+            // The load and shutdown hooks run inside spans for the same reason the handler
+            // does: without a span, their warnings only ever reach stdout.
+            if let Err(error) = plugin
+                .loaded(&ctx, &client)
+                .instrument(tracing::info_span!("loaded", plugin = %task_name))
+                .await
+            {
                 warn!(plugin = %task_name, %error, "plugin failed to load");
 
                 return;
@@ -636,7 +642,11 @@ impl PluginTask {
             }
 
             // The mailbox is closed: the bot is shutting down.
-            if let Err(error) = plugin.shutdown(&ctx, &client).await {
+            if let Err(error) = plugin
+                .shutdown(&ctx, &client)
+                .instrument(tracing::info_span!("shutdown", plugin = %task_name))
+                .await
+            {
                 warn!(plugin = %task_name, %error, "plugin error during shutdown");
             }
 
