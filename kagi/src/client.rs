@@ -300,7 +300,8 @@ fn url_with_query(path: &str, params: &[(&str, &str)]) -> reqwest::Url {
 
 // Extracts the `window.sse_nonce` value from the raw HTML content.
 fn extract_nonce(html: &str) -> Option<String> {
-    nonce_regex().captures(html)
+    nonce_regex()
+        .captures(html)
         .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()))
 }
 

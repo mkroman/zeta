@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use irc::client::Client;
 
+use crate::Error;
 use crate::event::{
     CommandEvent, CtcpEvent, JoinEvent, KickEvent, MessageEvent, NickEvent, PartEvent, QuitEvent,
     RawEvent, Subscriptions, UrlEvent,
 };
-use crate::Error;
 
 /// Supplies the name of a plugin.
 ///
@@ -239,7 +239,12 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// # Errors
     ///
     /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_join(&self, _ctx: &C, _client: &Client, _join: &JoinEvent) -> Result<(), Error> {
+    async fn handle_join(
+        &self,
+        _ctx: &C,
+        _client: &Client,
+        _join: &JoinEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -248,7 +253,12 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// # Errors
     ///
     /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_part(&self, _ctx: &C, _client: &Client, _part: &PartEvent) -> Result<(), Error> {
+    async fn handle_part(
+        &self,
+        _ctx: &C,
+        _client: &Client,
+        _part: &PartEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -257,7 +267,12 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// # Errors
     ///
     /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_quit(&self, _ctx: &C, _client: &Client, _quit: &QuitEvent) -> Result<(), Error> {
+    async fn handle_quit(
+        &self,
+        _ctx: &C,
+        _client: &Client,
+        _quit: &QuitEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -266,7 +281,12 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// # Errors
     ///
     /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_nick(&self, _ctx: &C, _client: &Client, _nick: &NickEvent) -> Result<(), Error> {
+    async fn handle_nick(
+        &self,
+        _ctx: &C,
+        _client: &Client,
+        _nick: &NickEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -275,7 +295,12 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// # Errors
     ///
     /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_kick(&self, _ctx: &C, _client: &Client, _kick: &KickEvent) -> Result<(), Error> {
+    async fn handle_kick(
+        &self,
+        _ctx: &C,
+        _client: &Client,
+        _kick: &KickEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -284,7 +309,12 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// # Errors
     ///
     /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_ctcp(&self, _ctx: &C, _client: &Client, _ctcp: &CtcpEvent) -> Result<(), Error> {
+    async fn handle_ctcp(
+        &self,
+        _ctx: &C,
+        _client: &Client,
+        _ctcp: &CtcpEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 

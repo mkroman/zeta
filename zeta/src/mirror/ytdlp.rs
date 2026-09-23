@@ -186,7 +186,6 @@ impl YtDlp {
             max_filesize: options.max_filesize,
             download_timeout: options.download_timeout,
         }
-
     }
 
     /// Creates a runner that invokes the given command.

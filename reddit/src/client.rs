@@ -70,10 +70,7 @@ impl Client {
     /// # Panics
     ///
     /// Panics if the HTTP client fails to build.
-    pub fn new(
-        client_id: impl Into<String>,
-        client_secret: impl Into<SecretString>,
-    ) -> Client {
+    pub fn new(client_id: impl Into<String>, client_secret: impl Into<SecretString>) -> Client {
         Self::with_options(client_id, client_secret, ClientOptions::default())
             .expect("could not build http client")
     }
@@ -91,9 +88,7 @@ impl Client {
         let client_id = client_id.into();
         let client_secret = client_secret.into();
         let token_state = RwLock::new(None);
-        let user_agent = options
-            .user_agent
-            .unwrap_or_else(|| USER_AGENT.to_string());
+        let user_agent = options.user_agent.unwrap_or_else(|| USER_AGENT.to_string());
         let client = reqwest::ClientBuilder::new()
             .redirect(Policy::none())
             .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
@@ -209,7 +204,11 @@ impl Client {
             .header(CONTENT_TYPE, "application/json");
 
         match self
-            .send_json(request, || Error::SubmissionNotFound, Error::DeserializeSubmission)
+            .send_json(
+                request,
+                || Error::SubmissionNotFound,
+                Error::DeserializeSubmission,
+            )
             .await?
         {
             Item::Listing(listing) => listing
@@ -254,7 +253,11 @@ impl Client {
             .header(CONTENT_TYPE, "application/json");
 
         match self
-            .send_json(request, || Error::SubredditNotFound, Error::DeserializeSubreddit)
+            .send_json(
+                request,
+                || Error::SubredditNotFound,
+                Error::DeserializeSubreddit,
+            )
             .await?
         {
             Item::Subreddit(subreddit) => Ok(subreddit),

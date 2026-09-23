@@ -357,7 +357,11 @@ where
     /// Inserts an entry for `key`, evicting expired and closest-to-expiring entries first when
     /// the cache is at capacity.
     fn insert(&self, key: K, value: Option<V>) {
-        let ttl = if value.is_some() { self.ttl } else { self.negative_ttl };
+        let ttl = if value.is_some() {
+            self.ttl
+        } else {
+            self.negative_ttl
+        };
         let entry = Entry {
             value,
             expires_at: Instant::now() + ttl,
@@ -581,9 +585,7 @@ mod ttl_map_tests {
             .await
             .unwrap();
 
-        assert!(
-            entry_expires_at("missing") < entry_expires_at("present")
-        );
+        assert!(entry_expires_at("missing") < entry_expires_at("present"));
     }
 
     #[tokio::test]
@@ -751,7 +753,10 @@ mod tests {
     #[tokio::test]
     async fn read_serves_the_stale_value_after_a_failed_refresh() {
         let cache = cache_with(Duration::from_mins(1));
-        cache.get_or_refresh(|| async { Ok::<_, ()>(7) }).await.unwrap();
+        cache
+            .get_or_refresh(|| async { Ok::<_, ()>(7) })
+            .await
+            .unwrap();
 
         // Expire the entry directly, so the test does not depend on wall-clock timing.
         cache.entry.write().unwrap().as_mut().unwrap().expires_at = Instant::now();
@@ -772,7 +777,10 @@ mod tests {
 
         assert_eq!(cached_value(&cache), None);
 
-        cache.get_or_refresh(|| async { Ok::<_, ()>(7) }).await.unwrap();
+        cache
+            .get_or_refresh(|| async { Ok::<_, ()>(7) })
+            .await
+            .unwrap();
         assert_eq!(cached_value(&cache), Some(7));
     }
 

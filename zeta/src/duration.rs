@@ -1,5 +1,8 @@
 //! Helpers for formatting and parsing points in time and durations.
-#![allow(unused)]
+//
+// Every helper here is reached only from feature-gated plugins and their tests, so a build
+// without those plugins has no in-crate callers for any of them.
+#![allow(dead_code)]
 
 use std::fmt::Write;
 use std::time::Duration;
@@ -41,10 +44,7 @@ pub const HOURS_AND_MINUTES: &[(i64, &str)] = &[HOURS, MINUTES];
 
 /// Splits `total_seconds` into its non-zero `(count, unit)` parts, walking `units` from
 /// largest to smallest and spending the remainder of each unit on the next smaller one.
-fn split_into_units(
-    total_seconds: i64,
-    units: &[(i64, &'static str)],
-) -> Vec<(i64, &'static str)> {
+fn split_into_units(total_seconds: i64, units: &[(i64, &'static str)]) -> Vec<(i64, &'static str)> {
     let mut parts = Vec::new();
     let mut remainder = total_seconds;
 
@@ -236,7 +236,10 @@ mod words_tests {
     #[test]
     fn should_only_include_minutes_and_above_for_the_minutes_table() {
         assert_eq!(
-            words(SECONDS_PER_HOUR + 30 * SECONDS_PER_MINUTE + 42, UNITS_TO_MINUTES),
+            words(
+                SECONDS_PER_HOUR + 30 * SECONDS_PER_MINUTE + 42,
+                UNITS_TO_MINUTES
+            ),
             "1 hour and 30 minutes"
         );
     }
@@ -244,10 +247,16 @@ mod words_tests {
     #[test]
     fn should_only_include_hours_and_minutes_for_the_hours_table() {
         assert_eq!(
-            words(2 * SECONDS_PER_HOUR + 3 * SECONDS_PER_MINUTE, HOURS_AND_MINUTES),
+            words(
+                2 * SECONDS_PER_HOUR + 3 * SECONDS_PER_MINUTE,
+                HOURS_AND_MINUTES
+            ),
             "2 hours and 3 minutes"
         );
-        assert_eq!(words(100 * SECONDS_PER_HOUR, HOURS_AND_MINUTES), "100 hours");
+        assert_eq!(
+            words(100 * SECONDS_PER_HOUR, HOURS_AND_MINUTES),
+            "100 hours"
+        );
     }
 }
 
@@ -304,7 +313,10 @@ mod time_ago_tests {
             (Utc::now() - TimeDelta::days(400)).time_ago(),
             "1 year and 5 weeks ago"
         );
-        assert_eq!((Utc::now() - TimeDelta::days(730)).time_ago(), "2 years ago");
+        assert_eq!(
+            (Utc::now() - TimeDelta::days(730)).time_ago(),
+            "2 years ago"
+        );
     }
 }
 
@@ -326,7 +338,10 @@ mod iso8601_duration_tests {
             parse_iso8601_duration("P1DT2H20M5S"),
             Some(Duration::from_secs(86_400 + 2 * 3_600 + 20 * 60 + 5)),
         );
-        assert_eq!(parse_iso8601_duration("PT45S"), Some(Duration::from_secs(45)));
+        assert_eq!(
+            parse_iso8601_duration("PT45S"),
+            Some(Duration::from_secs(45))
+        );
         assert_eq!(
             parse_iso8601_duration("P1W"),
             Some(Duration::from_hours(7 * 24)),

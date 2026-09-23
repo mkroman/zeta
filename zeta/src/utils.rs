@@ -148,7 +148,10 @@ mod tests {
 
     #[test]
     fn resolves_settings_in_priority_order() {
-        assert_eq!(resolve_setting(Some("~meta"), "UNUSED_X_PREFIX", "reddit"), "~meta");
+        assert_eq!(
+            resolve_setting(Some("~meta"), "UNUSED_X_PREFIX", "reddit"),
+            "~meta"
+        );
         assert_eq!(resolve_setting(None, "UNUSED_X_PREFIX", "reddit"), "reddit");
     }
 
@@ -248,7 +251,10 @@ mod tests {
     #[test]
     fn collapses_whitespace_runs_into_single_spaces() {
         // A line break terminates an IRC message, so text from web pages is collapsed.
-        assert_eq!(collapse_whitespace("first\nsecond\nthird"), "first second third");
+        assert_eq!(
+            collapse_whitespace("first\nsecond\nthird"),
+            "first second third"
+        );
         assert_eq!(collapse_whitespace("  a   b\t\tc  "), "a b c");
         assert_eq!(collapse_whitespace("plain"), "plain");
         assert_eq!(collapse_whitespace("   "), "");

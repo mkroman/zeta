@@ -173,7 +173,9 @@ impl DictionaryDocument {
         }
 
         // When nothing parsed, surface the first parse error.
-        if entries.is_empty() && let Some(err) = first_error {
+        if entries.is_empty()
+            && let Some(err) = first_error
+        {
             return Err(err);
         }
 

@@ -433,14 +433,16 @@ impl CtcpEvent {
     /// nickname for direct queries.
     #[must_use]
     pub fn target(&self) -> &str {
-        message_text(&self.message).expect("ctcp events are only delivered for PRIVMSG or NOTICE")
+        message_text(&self.message)
+            .expect("ctcp events are only delivered for PRIVMSG or NOTICE")
             .0
     }
 
     /// Returns the full, `\x01`-wrapped text of the CTCP message.
     #[must_use]
     pub fn text(&self) -> &str {
-        message_text(&self.message).expect("ctcp events are only delivered for PRIVMSG or NOTICE")
+        message_text(&self.message)
+            .expect("ctcp events are only delivered for PRIVMSG or NOTICE")
             .1
     }
 
@@ -729,7 +731,11 @@ mod tests {
 
     #[test]
     fn command_event_extracts_channel_and_args() {
-        let message = message("nick!user@example.com", "PRIVMSG", &["#test", ".dig example.com"]);
+        let message = message(
+            "nick!user@example.com",
+            "PRIVMSG",
+            &["#test", ".dig example.com"],
+        );
 
         let event = CommandEvent::new(
             Arc::clone(&message),
@@ -778,7 +784,11 @@ mod tests {
 
     #[test]
     fn url_event_exposes_the_url() {
-        let message = message("nick!user@host", "PRIVMSG", &["#test", "see ttps://x.example"]);
+        let message = message(
+            "nick!user@host",
+            "PRIVMSG",
+            &["#test", "see ttps://x.example"],
+        );
         let url: Url = "https://x.example".parse().expect("url");
 
         let event = UrlEvent::new(message, Arc::new(url), Some("ttps"));
@@ -790,7 +800,11 @@ mod tests {
 
     #[test]
     fn ctcp_action_is_classified() {
-        let message = message("nick!user@host", "PRIVMSG", &["#test", "\x01ACTION slaps\x01"]);
+        let message = message(
+            "nick!user@host",
+            "PRIVMSG",
+            &["#test", "\x01ACTION slaps\x01"],
+        );
 
         let event = CtcpEvent::new(message).expect("ctcp should parse");
 

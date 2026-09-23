@@ -154,7 +154,7 @@ pub fn build_client(config: &HttpConfig) -> client::Client {
 /// plugins enable.
 #[cfg(feature = "emulated")]
 pub mod emulated {
-    use wreq::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING, USER_AGENT};
+    use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
     use zeta_plugin::{Error, prelude::plugin_err};
 
     /// Returns a `wreq` client builder emulating Firefox 142, layered with the headers the
@@ -187,6 +187,8 @@ pub mod emulated {
             headers.insert(USER_AGENT, value);
         }
 
-        Ok(wreq::Client::builder().emulation(wreq_util::Emulation::Firefox142).default_headers(headers))
+        Ok(wreq::Client::builder()
+            .emulation(wreq_util::Emulation::Firefox142)
+            .default_headers(headers))
     }
 }

@@ -65,13 +65,8 @@ impl Rink {
     ///
     /// Returns the rink error message when the expression cannot be evaluated, e.g. on a
     /// syntax error or an unknown unit.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the rink context mutex is poisoned, which can only happen if an evaluation
-    /// panicked while holding the lock.
     pub fn eval(&self, line: &str) -> Result<String, String> {
-        let mut ctx = self.ctx.lock().unwrap();
+        let mut ctx = crate::sync::lock(&self.ctx);
 
         rink_core::one_line(&mut ctx, line)
     }

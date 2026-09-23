@@ -1,8 +1,8 @@
 //! Search the web and images through Kagi.
 //!
-//! The `.g <query>` command posts the title and URL of the top web result as a notice, and
-//! `.gis <query>` posts the first Kagi Images result (with its image URL). No results and
-//! search errors are sent as a notice.
+//! The `.g <query>` command posts the title and URL of the top web result, and `.gis <query>`
+//! posts the first Kagi Images result (with its image URL), both as a reply prefixed with the
+//! Kagi name. No results and search errors are sent as a notice.
 //!
 //! Kagi is a cookie-authenticated service: the client holds a session token — set in
 //! `[plugins.kagi]`, falling back to the `KAGI_SESSION_TOKEN` environment variable — and

@@ -34,9 +34,7 @@ mod prelude {
         reply_usage_lines, resolve_secret,
     };
 
-    pub use super::{
-        CatalogEntry, Context, Plugin, PluginCatalog, SharedState,
-    };
+    pub use super::{CatalogEntry, Context, Plugin, PluginCatalog, SharedState};
 
     pub use super::filtering::Filters;
 }
@@ -656,11 +654,11 @@ impl PluginTask {
 mod tests {
     use super::*;
     use crate::Config;
-    use irc::proto::Message;
-    use zeta_plugin::MessageEvent;
     use async_trait::async_trait;
     use figment::Figment;
     use figment::providers::{Format, Toml};
+    use irc::proto::Message;
+    use zeta_plugin::MessageEvent;
 
     #[test]
     fn bundled_plugin_names_include_all_plugins() {

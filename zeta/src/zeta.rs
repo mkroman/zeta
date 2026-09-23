@@ -67,7 +67,9 @@ async fn drain_plugin_handles(handles: Vec<(String, JoinHandle<()>)>, grace: Dur
             Ok(Ok(())) => {}
             // The task was cancelled by its own runtime (or this function, below).
             Ok(Err(error)) if error.is_cancelled() => {}
-            Ok(Err(error)) => warn!(plugin = %name, %error, "plugin task panicked while shutting down"),
+            Ok(Err(error)) => {
+                warn!(plugin = %name, %error, "plugin task panicked while shutting down");
+            }
             Err(_) => {
                 warn!(plugin = %name, "plugin task did not shut down in time; aborting");
 
