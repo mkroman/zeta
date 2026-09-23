@@ -9,7 +9,7 @@
 
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
-use tracing::{debug, error};
+use tracing::debug;
 use url::Url;
 
 use crate::{http, plugin::prelude::*, url::query_param};
@@ -181,16 +181,7 @@ impl PornHub {
             .await
             .map_err(http::ApiError::from)?;
         debug!("request went ok, parsing response");
-        let body_url = {
-            let mut body_url = response.url().clone();
-            body_url.set_query(None);
-            body_url
-        };
-        let text = response.text().await.map_err(|error| {
-            let error = error.without_url();
-            error!(url.full = %body_url, %error, "reading response body failed");
-            http::ApiError::Request(error)
-        })?;
+        let text = http::text(response).await.map_err(http::ApiError::from)?;
         let json: ApiResponse = http::json::from_str(&text).map_err(http::ApiError::Deserialize)?;
 
         match json {

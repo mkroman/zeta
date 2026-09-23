@@ -10,6 +10,7 @@ use super::Settings;
 use super::error::Error;
 use super::model::{Person, SearchResult, SeriesInfo, Title};
 use crate::config::HttpConfig;
+use crate::error::RequestError;
 use crate::http;
 
 /// GraphQL endpoint of IMDb's internal API.
@@ -123,7 +124,8 @@ impl GraphQlClient {
 
         let http = http::client::builder(config)
             .default_headers(headers)
-            .build()?;
+            .build()
+            .map_err(|error| Error::from(RequestError::from(error)))?;
 
         Ok(Self {
             http,

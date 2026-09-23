@@ -16,6 +16,7 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::{
+    error::RequestError,
     http,
     mirror::{Mirror, MirrorHandle},
     plugin::prelude::*,
@@ -73,21 +74,13 @@ pub struct Tiktok {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(reqwest::Error),
+    Request(#[from] RequestError),
     /// A shortened link did not redirect to a valid TikTok URL.
     #[error("shortened link did not redirect to a valid url")]
     InvalidRedirect,
     /// TikTok's oEmbed API returned an error response.
     #[error("oembed error: {0}")]
     OEmbed(#[from] oembed::Error),
-}
-
-impl From<reqwest::Error> for Error {
-    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
-    /// credential in its query string.
-    fn from(error: reqwest::Error) -> Self {
-        Self::Request(error.without_url())
-    }
 }
 
 #[async_trait]

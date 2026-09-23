@@ -1,6 +1,6 @@
 //! Errors that can occur during IMDb interaction.
 
-use crate::http;
+use crate::{error::RequestError, http};
 
 /// Errors that can occur during IMDb interaction.
 #[derive(Debug, thiserror::Error)]
@@ -22,8 +22,8 @@ pub enum Error {
     UnexpectedResponse,
 }
 
-impl From<reqwest::Error> for Error {
-    fn from(error: reqwest::Error) -> Self {
+impl From<RequestError> for Error {
+    fn from(error: RequestError) -> Self {
         Self::Api(error.into())
     }
 }

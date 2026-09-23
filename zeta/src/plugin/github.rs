@@ -18,7 +18,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::{config::HttpConfig, http, plugin::prelude::*};
+use crate::{config::HttpConfig, error::RequestError, http, plugin::prelude::*};
 
 /// Settings for the github plugin, from its `[plugins.github]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -35,21 +35,13 @@ pub struct Settings {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(reqwest::Error),
+    Request(#[from] RequestError),
     /// The configured token is not a valid header value.
     #[error("invalid header value: {0}")]
     InvalidToken(#[from] reqwest::header::InvalidHeaderValue),
     /// The GitHub API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
-}
-
-impl From<reqwest::Error> for Error {
-    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
-    /// credential in its query string.
-    fn from(error: reqwest::Error) -> Self {
-        Self::Request(error.without_url())
-    }
 }
 
 /// The `.gh` command.
@@ -150,7 +142,8 @@ impl GitHubPlugin {
 
         let client = http::client::builder(config)
             .default_headers(headers)
-            .build()?;
+            .build()
+            .map_err(|error| Error::Request(RequestError::from(error)))?;
 
         Ok(Self { http: client })
     }

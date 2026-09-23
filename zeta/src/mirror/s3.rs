@@ -22,6 +22,8 @@ use url::Url;
 use zeta_plugin::Error as ZetaError;
 use zeta_plugin::prelude::resolve_secret;
 
+use crate::error::RequestError;
+
 /// The name used to identify our credentials provider.
 const CREDENTIALS_PROVIDER_NAME: &str = "zeta-mirror";
 
@@ -78,7 +80,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
     /// The HTTP request failed.
     #[error("request failed: {0}")]
-    Request(reqwest::Error),
+    Request(RequestError),
     /// The request could not be signed.
     #[error("could not sign request: {0}")]
     Signing(#[from] aws_sigv4::http_request::SigningError),
@@ -95,26 +97,21 @@ pub enum Error {
     },
 }
 
-impl From<reqwest::Error> for Error {
-    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
-    /// credential in its query string.
-    fn from(error: reqwest::Error) -> Self {
-        Self::Request(error.without_url())
-    }
-}
-
-/// Strips the URL from `error` and logs the failed request's URL without its query, so a
-/// logged error never carries a credential from the query string.
+/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
+/// URL without its query, so a logged error never carries a credential from the query string.
+///
+/// It also maps a failed client build: `Client::builder().build()` has made no request yet, so
+/// there is no URL to redact and nothing to log.
 fn request_error(error: reqwest::Error) -> Error {
-    let url = error.url().map(|url| {
-        let mut url = url.clone();
-        url.set_query(None);
-        url
-    });
-    let error = error.without_url();
+    let error = RequestError::from(error);
 
-    if let Some(url) = url {
-        tracing::error!(url.full = %url, %error, "s3 request failed");
+    if let Some(url) = error.url() {
+        tracing::error!(
+            url.full = %url,
+            error.type = error.error_type(),
+            error = %error.full(),
+            "s3 request failed"
+        );
     }
 
     Error::Request(error)
@@ -174,7 +171,7 @@ impl S3 {
             .map_err(Error::InvalidEndpoint)?;
 
         Ok(Self {
-            client: Client::builder().build()?,
+            client: Client::builder().build().map_err(request_error)?,
             access_key_id,
             secret_access_key,
             bucket,
@@ -382,7 +379,7 @@ fn is_retryable_status(status: StatusCode) -> bool {
 }
 
 /// Whether the error denotes a transient failure worth retrying.
-fn is_retryable_error(error: &Error) -> bool {
+const fn is_retryable_error(error: &Error) -> bool {
     match error {
         Error::Request(error) => error.is_timeout() || error.is_connect() || error.is_request(),
         _ => false,

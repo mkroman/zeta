@@ -125,8 +125,7 @@ impl Plugin<Context> for NotificationPlugin {
                     ),
                 )?;
             }
-            Err(err) => {
-                error!(?err, "could not store notification");
+            Err(_) => {
                 client.send_privmsg(
                     channel,
                     reply("Notification", "could not store the notification"),

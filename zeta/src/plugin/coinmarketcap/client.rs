@@ -11,6 +11,7 @@ use tracing::debug;
 use super::error::Error;
 use super::model::{Coin, CoinQuery, Envelope, Fiat, QuoteData};
 use crate::config::HttpConfig;
+use crate::error::RequestError;
 use crate::http;
 use crate::plugin::prelude::{ZetaError, plugin_err};
 
@@ -55,7 +56,7 @@ impl Client {
         let inner = http::client::builder(config)
             .default_headers(headers)
             .build()
-            .map_err(plugin_err)?;
+            .map_err(|error| plugin_err(RequestError::from(error)))?;
 
         Ok(Self { inner })
     }

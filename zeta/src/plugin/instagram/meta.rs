@@ -9,6 +9,9 @@ use std::sync::OnceLock;
 use scraper::{Html, Selector};
 use tracing::debug;
 
+use crate::error::WreqError;
+use crate::url::redact_url_str;
+
 /// The CSS selector for the `og:title` meta tag.
 fn og_title_selector() -> &'static Selector {
     static SELECTOR: OnceLock<Selector> = OnceLock::new();
@@ -122,10 +125,17 @@ pub fn shortcode_to_media_pk(shortcode: &str) -> Option<u128> {
 pub enum Error {
     /// The request failed, or the response body could not be read.
     #[error("request error: {0}")]
-    Request(#[from] wreq::Error),
+    Request(WreqError),
     /// The server responded with an unsuccessful status code.
     #[error("the page request failed with status {0}")]
     Status(wreq::StatusCode),
+}
+
+impl From<wreq::Error> for Error {
+    /// Wraps `error` in a [`WreqError`], which redacts the request URL.
+    fn from(error: wreq::Error) -> Self {
+        Self::Request(error.into())
+    }
 }
 
 /// Fetches `url` and extracts its OpenGraph metadata.
@@ -143,7 +153,7 @@ pub async fn fetch(
     url: &str,
     session_cookie: Option<&str>,
 ) -> Result<PageMetadata, Error> {
-    debug!(%url, "fetching page metadata");
+    debug!(url.full = %redact_url_str(url), "fetching page metadata");
 
     let mut request = client.get(url);
 

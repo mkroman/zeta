@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{http, plugin::prelude::*};
+use crate::{error::RequestError, http, plugin::prelude::*};
 
 /// The Thingiverse hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
@@ -50,21 +50,13 @@ pub struct Thingiverse {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(reqwest::Error),
+    Request(#[from] RequestError),
     /// The linked thing does not exist.
     #[error("resource not found")]
     NotFound,
     /// The Thingiverse API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
-}
-
-impl From<reqwest::Error> for Error {
-    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
-    /// credential in its query string.
-    fn from(error: reqwest::Error) -> Self {
-        Self::Request(error.without_url())
-    }
 }
 
 /// Represents a "Thing" (3D model) from the Thingiverse API.

@@ -617,14 +617,21 @@ impl PluginTask {
             debug!(plugin = %task_name, "plugin task started");
 
             // The load and shutdown hooks run inside spans for the same reason the handler
-            // does: without a span, their warnings only ever reach stdout.
-            if let Err(error) = plugin
-                .loaded(&ctx, &client)
-                .instrument(tracing::info_span!("loaded", plugin = %task_name))
-                .await
-            {
-                warn!(plugin = %task_name, %error, "plugin failed to load");
+            // does: without a span, their warnings only ever reach stdout — the `loaded` span
+            // above closed before this one fires.
+            let failed_to_load = async {
+                if let Err(error) = plugin.loaded(&ctx, &client).await {
+                    warn!(plugin = %task_name, %error, "plugin failed to load");
 
+                    true
+                } else {
+                    false
+                }
+            }
+            .instrument(tracing::info_span!("loaded", plugin = %task_name))
+            .await;
+
+            if failed_to_load {
                 return;
             }
 
@@ -641,14 +648,15 @@ impl PluginTask {
                 .await;
             }
 
-            // The mailbox is closed: the bot is shutting down.
-            if let Err(error) = plugin
-                .shutdown(&ctx, &client)
-                .instrument(tracing::info_span!("shutdown", plugin = %task_name))
-                .await
-            {
-                warn!(plugin = %task_name, %error, "plugin error during shutdown");
+            // The mailbox is closed: the bot is shutting down. The warning goes inside the
+            // span, for the same reason as the load one above.
+            async {
+                if let Err(error) = plugin.shutdown(&ctx, &client).await {
+                    warn!(plugin = %task_name, %error, "plugin error during shutdown");
+                }
             }
+            .instrument(tracing::info_span!("shutdown", plugin = %task_name))
+            .await;
 
             debug!(plugin = %task_name, "plugin task stopped");
         });

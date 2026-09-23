@@ -9,7 +9,7 @@ use std::{
 
 use sqlx::types::chrono::{DateTime, Utc};
 use tokio::sync::{Mutex, Notify, mpsc};
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{Instrument, debug, error, instrument, trace, warn};
 
 use super::{
     Settings,
@@ -136,9 +136,12 @@ impl AlertService {
     pub fn start_scheduler(&self) {
         let scheduler = self.scheduler.clone();
 
-        tokio::spawn(async move {
-            scheduler.run().await;
-        });
+        tokio::spawn(
+            async move {
+                scheduler.run().await;
+            }
+            .instrument(tracing::info_span!("alert_scheduler")),
+        );
     }
 }
 

@@ -22,6 +22,7 @@ use tracing::{debug, warn};
 use crate::{
     cache::TtlCache,
     duration::{HOURS_AND_MINUTES, words},
+    error::RequestError,
     http,
     plugin::prelude::*,
 };
@@ -55,18 +56,10 @@ pub struct HowLongToBeat {
 pub enum Error {
     /// Sending the HTTP request failed.
     #[error("request error: {0}")]
-    Request(reqwest::Error),
+    Request(#[from] RequestError),
     /// The HowLongToBeat API returned an error response.
     #[error(transparent)]
     Api(#[from] http::ApiError),
-}
-
-impl From<reqwest::Error> for Error {
-    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
-    /// credential in its query string.
-    fn from(error: reqwest::Error) -> Self {
-        Self::Request(error.without_url())
-    }
 }
 
 /// Cached authentication credentials required by the API.
@@ -270,7 +263,6 @@ impl Plugin<Context> for HowLongToBeat {
                 }
             }
             Err(err) => {
-                warn!(?err, "hltb search failed");
                 client.send_privmsg(channel, notice(err))?;
             }
         }

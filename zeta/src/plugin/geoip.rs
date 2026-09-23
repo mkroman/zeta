@@ -16,7 +16,7 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 use url::Host;
 
-use crate::{http, plugin::prelude::*};
+use crate::{error::RequestError, http, plugin::prelude::*};
 
 const BASE_URL: &str = "https://api.ip2location.io";
 
@@ -115,7 +115,7 @@ impl Plugin<Context> for GeoIp {
         let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
         let client = http::client::builder(&ctx.config.http)
             .build()
-            .map_err(plugin_err)?;
+            .map_err(|error| plugin_err(RequestError::from(error)))?;
 
         Ok(GeoIp { client, api_key })
     }

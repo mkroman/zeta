@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use crate::{http, plugin::prelude::*};
+use crate::{error::RequestError, http, plugin::prelude::*};
 
 /// Base URL for the OpenWeatherMap API.
 const API_BASE_URL: &str = "https://api.openweathermap.org";
@@ -104,21 +104,13 @@ pub struct OpenWeatherMap {
 pub enum Error {
     /// An error occurred while performing the HTTP request.
     #[error("request error: {0}")]
-    Request(reqwest::Error),
+    Request(#[from] RequestError),
     /// The location could not be found via the geocoding API.
     #[error("location not found")]
     LocationNotFound,
     /// The API returned an error status or message.
     #[error("api error: {0}")]
     Api(String),
-}
-
-impl From<reqwest::Error> for Error {
-    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
-    /// credential (`appid` here) in its query string.
-    fn from(error: reqwest::Error) -> Self {
-        Self::Request(error.without_url())
-    }
 }
 
 /// Result from the Geocoding API.
@@ -382,7 +374,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn request_errors_never_carry_the_url() {
+    async fn request_errors_redact_the_url_but_keep_the_cause() {
         let address = http::refused_address();
         let error = reqwest::Client::new()
             .get(format!("http://{address}/?appid=secret"))
@@ -390,7 +382,7 @@ mod tests {
             .await
             .expect_err("nothing listens on that address");
 
-        let error = Error::from(error);
+        let error = Error::from(RequestError::from(error));
 
         assert!(!error.to_string().contains("secret"), "{error}");
         assert!(!format!("{error:?}").contains("secret"), "{error:?}");

@@ -7,22 +7,22 @@ use std::time::Duration;
 
 use reqwest::{ClientBuilder, redirect::Policy};
 
-use crate::{DictionaryDocument, Error};
+use crate::{DictionaryDocument, Error, RequestError};
 
-/// Strips the URL from `error` and — with the `log` feature — logs the failed request's URL
-/// without its query, so a logged error never carries a credential from the query string.
-fn request_error(error: reqwest::Error) -> reqwest::Error {
-    #[cfg(feature = "log")]
-    let url = error.url().map(|url| {
-        let mut url = url.clone();
-        url.set_query(None);
-        url
-    });
-    let error = error.without_url();
+/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and, with the `log` feature,
+/// logs the failed request's URL without its query, so a logged error never carries a
+/// credential from the query string.
+fn request_error(error: reqwest::Error) -> RequestError {
+    let error = RequestError::from(error);
 
     #[cfg(feature = "log")]
-    if let Some(url) = url {
-        tracing::error!(url.full = %url, %error, "request failed");
+    if let Some(url) = error.url() {
+        tracing::error!(
+            url.full = %url,
+            error.type = error.error_type(),
+            error = %error.full(),
+            "request failed"
+        );
     }
 
     error
@@ -78,7 +78,7 @@ impl Client {
             .redirect(Policy::none())
             .timeout(Duration::from_secs(30))
             .build()
-            .map_err(Error::BuildClient)?;
+            .map_err(|error| Error::BuildClient(error.into()))?;
 
         Ok(Self::with_client(client))
     }

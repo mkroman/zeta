@@ -11,20 +11,20 @@ use tracing::{debug, error, info, instrument, trace};
 use url::Url;
 
 use crate::{BASE_URL, HTTP_TIMEOUT, OAUTH_BASE_URL, TOKEN_URL, USER_AGENT};
-use crate::{Error, Item, Link, Submission, Subreddit};
+use crate::{Error, Item, Link, RequestError, Submission, Subreddit};
 
-/// Strips the URL from `error` and logs the failed request's URL without its query, so a
-/// logged error never carries a credential from the query string.
-fn request_error(error: reqwest::Error) -> reqwest::Error {
-    let url = error.url().map(|url| {
-        let mut url = url.clone();
-        url.set_query(None);
-        url
-    });
-    let error = error.without_url();
+/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
+/// URL without its query, so a logged error never carries a credential from the query string.
+fn request_error(error: reqwest::Error) -> RequestError {
+    let error = RequestError::from(error);
 
-    if let Some(url) = url {
-        error!(url.full = %url, %error, "request failed");
+    if let Some(url) = error.url() {
+        error!(
+            url.full = %url,
+            error.type = error.error_type(),
+            error = %error.full(),
+            "request failed"
+        );
     }
 
     error
@@ -111,7 +111,7 @@ impl Client {
             .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
             .user_agent(user_agent.clone())
             .build()
-            .map_err(Error::BuildClient)?;
+            .map_err(|error| Error::BuildClient(error.into()))?;
 
         debug!("using client id {client_id}");
 
@@ -170,7 +170,7 @@ impl Client {
             .json::<AccessTokenResponse>()
             .await
             .map_err(|error| {
-                let error = error.without_url();
+                let error = RequestError::from(error);
                 error!("auth token response is invalid: {error}");
                 Error::InvalidAuthTokenResponse(error)
             })?;
@@ -212,7 +212,7 @@ impl Client {
                     .map_err(on_parse)
             }
             Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
-                let err = err.without_url();
+                let err = RequestError::from(err);
                 info!(%err, "resource not found");
 
                 Err(not_found())
@@ -317,7 +317,7 @@ impl Client {
         let location = response
             .headers()
             .get(LOCATION)
-            .ok_or_else(|| Error::LocationHeaderMissing)?
+            .ok_or(Error::LocationHeaderMissing)?
             .as_bytes();
         let location = str::from_utf8(location).map_err(Error::LocationHeaderEncoding)?;
         let location = Url::parse(location).map_err(Error::LocationHeaderUrl)?;

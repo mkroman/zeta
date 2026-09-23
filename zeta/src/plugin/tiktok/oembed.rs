@@ -3,7 +3,7 @@
 use serde::Deserialize;
 use tracing::debug;
 
-use crate::http;
+use crate::{error::RequestError, http};
 
 /// The URL to the oEmbed endpoint.
 const TIKTOK_OEMBED_API: &str = "https://www.tiktok.com/oembed";
@@ -52,18 +52,10 @@ impl OEmbed {
 pub enum Error {
     /// Sending the request failed.
     #[error("request error: {0}")]
-    Request(reqwest::Error),
+    Request(#[from] RequestError),
     /// The oEmbed API responded with a non-success status or an invalid body.
     #[error(transparent)]
     Api(#[from] http::ApiError),
-}
-
-impl From<reqwest::Error> for Error {
-    /// Strips the URL from `error` before wrapping it — a logged request URL can carry a
-    /// credential in its query string.
-    fn from(error: reqwest::Error) -> Self {
-        Self::Request(error.without_url())
-    }
 }
 
 /// Fetches the oEmbed details for the given video `url`.

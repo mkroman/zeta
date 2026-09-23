@@ -41,6 +41,10 @@ mod zeta;
 
 pub use config::Config;
 pub use error::Error;
+#[cfg(any(feature = "http", feature = "mirror"))]
+pub use error::RequestError;
+#[cfg(feature = "emulated")]
+pub use error::WreqError;
 pub use plugin::{
     CatalogEntry, ErasedPlugin, Plugin, PluginCatalog, PluginsConfig, RegisteredPlugin, Registry,
 };

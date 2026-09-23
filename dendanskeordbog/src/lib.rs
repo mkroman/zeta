@@ -59,6 +59,9 @@ pub mod types;
 pub use client::Client;
 /// Re-export of the primary `Error` enum for convenient access.
 pub use error::Error;
+/// Re-export of the redacted request error type for convenient access.
+#[cfg(feature = "client")]
+pub use error::RequestError;
 use scraper::{ElementRef, Selector};
 /// Re-export of the top-level `DictionaryDocument` struct.
 pub use types::DictionaryDocument;

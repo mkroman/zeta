@@ -129,7 +129,7 @@ aws-smithy-runtime-api = { version = "1.16.1", features = ["client"], optional =
 base64 = { version = "0.23.0", optional = true }
 chrono = { version = "0.4.45", optional = true }
 const-hex = { version = "1.19", optional = true }
-dendanskeordbog = { path = "../dendanskeordbog", features = ["client"], optional = true }
+dendanskeordbog = { path = "../dendanskeordbog", features = ["client", "log"], optional = true }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
 hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
