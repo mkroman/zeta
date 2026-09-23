@@ -13,7 +13,7 @@ use std::fmt::Display;
 use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use url::Host;
 
 use crate::{http, plugin::prelude::*};
@@ -203,11 +203,22 @@ impl GeoIp {
                 // asks for: https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
                 debug!(dns.question.name = %domain, "resolving domain");
 
-                resolver
-                    .lookup_ip(domain)
-                    .await
-                    .map_err(Error::Resolve)
-                    .map(|lookup| lookup.iter().next().ok_or_else(|| Error::NoDomainRecords))?
+                let lookup = resolver.lookup_ip(domain).await.map_err(Error::Resolve)?;
+
+                // `dns.answers` is the OpenTelemetry convention for the addresses a lookup
+                // resolved to:
+                // https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
+                let addresses: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
+                if !addresses.is_empty() {
+                    // The answers are a string array per convention; tracing macros have no
+                    // array value type, so they go through Debug as a single string.
+                    debug!(dns.answers = ?addresses, "resolved domain");
+                }
+
+                lookup
+                    .iter()
+                    .next()
+                    .ok_or_else(|| Error::NoDomainRecords)
                     .map(|ip| ip.to_string())
             }
             Err(_) => Err(Error::InvalidInput),
@@ -232,14 +243,12 @@ impl GeoIp {
         ];
         let request = self.client.get(BASE_URL).query(&params);
         let response = http::send(request).await.map_err(http::ApiError::from)?;
-        let info: IpInfo = http::parse_response(response)
-            .await
-            .inspect_err(|error| error!(%name, %error, "error when querying for geoip"))?;
-        // `dns.answers` is the OpenTelemetry convention for the addresses a DNS lookup resolved
-        // to, which is what `info.ip` is — the address the queried name resolved to (the input
-        // itself when it already was an IP address):
-        // https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
-        info!(dns.answers = %info.ip, "resolved");
+        let info: IpInfo = http::parse_response(response).await
+            // `parse_response` already logs the status of a failed response; keeping the
+            // looked-up name at debug avoids logging one failure three times over.
+            .inspect_err(|error| debug!(%name, %error, "error when querying for geoip"))?;
+
+        info!(ip = %info.ip, "resolved");
 
         Ok(LookupResult(info))
     }

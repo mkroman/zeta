@@ -210,11 +210,7 @@ impl Dig {
     ) -> Result<LookupResult, Error> {
         // `dns.question.name` is the OpenTelemetry convention for the name a DNS query asks
         // for: https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
-        debug!(
-            dns.question.name = %name,
-            dns.question.type = %record_type,
-            "resolving dns records",
-        );
+        debug!(dns.question.name = %name, "resolving dns records");
 
         let lookup = self
             .resolver
