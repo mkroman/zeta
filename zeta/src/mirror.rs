@@ -220,7 +220,7 @@ impl Mirror {
             )?;
 
             Some(DownloadManager::start(
-                self.ytdlp.clone(),
+                Arc::new(self.ytdlp.clone()),
                 self.s3.clone(),
                 download_dir,
                 base_dir,
@@ -555,21 +555,6 @@ pub(super) fn is_temp_download_dir(entry: &std::fs::DirEntry) -> bool {
         .to_string_lossy()
         .starts_with(TEMP_DIR_PREFIX)
         && entry.file_type().is_ok_and(|file_type| file_type.is_dir())
-}
-
-/// Writes `body` as an executable, uniquely named test script, returning its path.
-#[cfg(test)]
-pub(crate) fn write_test_script(name: &str, body: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
-    let script = std::env::temp_dir().join(format!("zeta-test-{name}-{}.sh", std::process::id()));
-    std::fs::write(&script, body).unwrap();
-
-    let mut permissions = std::fs::metadata(&script).unwrap().permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&script, permissions).unwrap();
-
-    script
 }
 
 /// Returns whether the entry was last modified longer than `age` ago.
