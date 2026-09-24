@@ -73,16 +73,7 @@ impl Plugin<Context> for Reddit {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(&[
-            "i.redd.it",
-            "oauth.reddit.com",
-            "old.reddit.com",
-            "preview.redd.it",
-            "redd.it",
-            "reddit.com",
-            "v.redd.it",
-            "www.reddit.com",
-        ]));
+        subscriptions.urls(UrlScope::Hosts(reddit::LINK_HOSTS));
 
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =

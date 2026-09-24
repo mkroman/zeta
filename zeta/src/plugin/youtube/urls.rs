@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::url::{path_segments, query_param};
+use crate::url::{is_identifier, path_segments, query_param};
 
 /// The hostname of shortened YouTube URLs.
 const YOUTU_BE_HOST: &str = "youtu.be";
@@ -58,7 +58,7 @@ fn parse_youtube_com_url(url: &Url) -> Option<UrlKind> {
             Some(UrlKind::Short((*video_id).to_string()))
         }
         // `/<handle>`
-        [path] if path.len() > 1 && path.starts_with('@') => {
+        [path] if path.starts_with('@') && is_identifier(&path[1..], "._-") => {
             Some(UrlKind::ChannelHandle(path[1..].to_string()))
         }
         _ => None,
@@ -134,6 +134,8 @@ mod tests {
             ("https://youtu.be/dQw4w9WgXcQ/subpage", None),
             // An empty handle is not a channel.
             ("https://youtube.com/@", None),
+            // A handle with junk outside the identifier alphabet is not a channel.
+            ("https://youtube.com/@a%2Fb", None),
         ]);
     }
 

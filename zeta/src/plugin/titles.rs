@@ -28,7 +28,7 @@ use crate::{
     error::WreqError,
     http,
     plugin::prelude::*,
-    url::redact_url,
+    url::{path_segments, redact_url},
     utils::Truncatable,
     utils::collapse_whitespace,
 };
@@ -531,14 +531,14 @@ fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
 /// Whether the path of `url` looks like binary content.
 #[must_use]
 fn is_binary_url(url: &Url) -> bool {
-    url.path_segments()
-        .and_then(|mut segments| segments.next_back())
-        .is_some_and(|segment| {
+    path_segments(url).is_some_and(|segments| {
+        segments.last().is_some_and(|segment| {
             let segment = segment.to_ascii_lowercase();
             BINARY_EXTENSIONS
                 .iter()
                 .any(|extension| segment.ends_with(extension))
         })
+    })
 }
 
 /// Formats the metadata of a page as an IRC message.
@@ -871,6 +871,10 @@ mod tests {
         ));
         assert!(is_binary_url(
             &Url::parse("https://maero.dk/video.mp4?start=30").unwrap()
+        ));
+        // A trailing slash does not hide the extension.
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/video.mp4/").unwrap()
         ));
 
         assert!(!is_binary_url(

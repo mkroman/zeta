@@ -113,7 +113,7 @@ impl DbError {
 impl std::fmt::Display for DbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.stage {
-            Stage::Load => write!(f, "could not load {} from database", self.entity),
+            Stage::Load => write!(f, "could not load {}: {}", self.entity, self.source),
             Stage::Insert => write!(f, "could not insert {}: {}", self.entity, self.source),
             Stage::Delete => write!(f, "could not delete {}: {}", self.entity, self.source),
         }
