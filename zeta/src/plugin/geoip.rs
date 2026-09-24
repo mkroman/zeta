@@ -154,23 +154,23 @@ impl Display for IpInfo {
         let mut parts = Vec::new();
 
         if !self.asn_name.is_empty() {
-            parts.push(format!("AS:{RESET} {}", self.asn_name));
+            parts.push(field("AS", &self.asn_name));
         }
 
         if !self.asn.is_empty() {
-            parts.push(format!("ASN:{RESET} {}", self.asn));
+            parts.push(field("ASN", &self.asn));
         }
 
         if !self.country_name.is_empty() {
-            parts.push(format!("Country:{RESET} {}", self.country_name));
+            parts.push(field("Country", &self.country_name));
         }
 
         if !self.region_name.is_empty() {
-            parts.push(format!("Region:{RESET} {}", self.region_name));
+            parts.push(field("Region", &self.region_name));
         }
 
         if !self.city_name.is_empty() {
-            parts.push(format!("City:{RESET} {}", self.city_name));
+            parts.push(field("City", &self.city_name));
         }
 
         if parts.is_empty() {
@@ -188,7 +188,7 @@ impl Display for LookupResult {
         let info = &self.0;
         let ip = &info.ip;
 
-        write!(fmt, "{}({RESET}{ip}{COLOR}): {info}", reply_prefix("GeoIP"))
+        write!(fmt, "{}({}): {info}", reply_prefix("GeoIP"), em(ip))
     }
 }
 

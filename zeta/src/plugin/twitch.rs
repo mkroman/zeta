@@ -190,7 +190,10 @@ impl Twitch {
             let viewers = stream.viewer_count.to_formatted_string(&Locale::en);
 
             client.send_privmsg(channel, reply("Twitch", format!(
-                "{user_login}:\x0f {title}\x0310 - Game:\x0f {game_name}\x0310 Viewers:\x0f {viewers}\x0310"
+                "{} - Game: {} Viewers: {}",
+                field(user_login, title),
+                field("Game", game_name),
+                field("Viewers", viewers)
             )))?;
         } else {
             // Fallback behavior: just print the channel name if not live.
@@ -216,7 +219,11 @@ impl Twitch {
             let views = clip.view_count.to_formatted_string(&Locale::en);
 
             client.send_privmsg(channel, reply("Twitch", format!(
-                "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 views"
+                "{} is a clip of {} clipped by {} with {} views",
+                quoted(title),
+                em(broadcaster),
+                em(creator),
+                em(views)
             )))?;
         } else {
             client.send_privmsg(channel, reply("Twitch", "No results"))?;
@@ -240,7 +247,10 @@ impl Twitch {
             let views = video.view_count.to_formatted_string(&Locale::en);
 
             client.send_privmsg(channel, reply("Twitch", format!(
-                "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 views"
+                "{} is a video by {} with {} views",
+                quoted(title),
+                em(user),
+                em(views)
             )))?;
         } else {
             client.send_privmsg(channel, reply("Twitch", "No results"))?;

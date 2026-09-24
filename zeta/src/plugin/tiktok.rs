@@ -205,10 +205,12 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
 
     match (title, embed.author_name.as_deref()) {
         (Some(title), Some(author)) => Some(format!(
-            "“{RESET}{title}{COLOR}” is a TikTok video by{RESET} {author}"
+            "{} is a TikTok video by {}",
+            quoted(title),
+            em(author)
         )),
-        (Some(title), None) => Some(format!("“{RESET}{title}{COLOR}”")),
-        (None, Some(author)) => Some(format!("TikTok video by{RESET} {author}")),
+        (Some(title), None) => Some(quoted(title)),
+        (None, Some(author)) => Some(format!("TikTok video by {}", em(author))),
         (None, None) => None,
     }
 }

@@ -390,7 +390,11 @@ impl Ofn {
                 let num_yt_ids_today = stats.num_yt_ids_today.to_formatted_string(&Locale::en);
 
                 let output = format!(
-                    "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"
+                    "{} ({} today) {} ({} today)",
+                    field("URLs", &num_urls),
+                    em(&num_urls_today),
+                    field("YouTube Videos", &num_yt_ids),
+                    em(&num_yt_ids_today),
                 );
 
                 client.send_privmsg(channel, reply("OFN", &output))?;
@@ -602,5 +606,5 @@ impl Resource {
 }
 
 fn formatted_err(s: &str) -> String {
-    reply("OFN", format!("Error:\x0f {s}"))
+    reply("OFN", field("Error", s))
 }

@@ -177,7 +177,11 @@ fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
     reply(
         "Trustpilot",
         format!(
-            "(\x0f{name}\x0310): Score:\x0f {score:.1}\x0310/\x0f5.0\x0310 Reviews:\x0f {reviews}\x0310 - {url}"
+            "({}): {}/{} {} - {url}",
+            em(name),
+            field("Score", format!("{score:.1}")),
+            em("5.0"),
+            field("Reviews", reviews),
         ),
     )
 }

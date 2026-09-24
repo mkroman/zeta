@@ -58,13 +58,19 @@ pub fn notice(message: impl fmt::Display) -> String {
 /// fields prefix the space themselves, e.g. `write!(fmt, " {}", field("Plot", plot))`.
 #[must_use]
 pub fn field(label: &str, value: impl fmt::Display) -> String {
-    format!("{label}:{RESET} {value}{COLOR}")
+    format!("{label}:{} {value}{COLOR}", RESET)
+}
+
+/// Emphasizes `value` by switching from the surrounding color to the reply color.
+#[must_use]
+pub fn em(value: impl fmt::Display) -> String {
+    format!("{RESET}{value}{COLOR}")
 }
 
 /// Formats `value` as `` “value” `` — curly quotes around the reply color.
 #[must_use]
 pub fn quoted(value: impl fmt::Display) -> String {
-    format!("“{RESET}{value}{COLOR}”")
+    format!("“{}”", em(value))
 }
 
 /// Runs a lookup command that yields a single result, replying to `channel`.
@@ -243,5 +249,10 @@ mod tests {
     #[test]
     fn quoted_wraps_the_value_in_curly_quotes() {
         assert_eq!(quoted("Pilot"), "“\x0fPilot\x0310”");
+    }
+
+    #[test]
+    fn em_switches_to_the_reply_color_around_the_value() {
+        assert_eq!(em("2008"), "\x0f2008\x0310");
     }
 }

@@ -352,8 +352,11 @@ fn format_game(game: &Game) -> String {
     reply(
         "HLTB",
         format!(
-            "(\x0f{}\x0310): Main Story: \x0f{}\x0310 | Main + Extra: \x0f{}\x0310 | Completionist: \x0f{}",
-            game.game_name, main, main_extra, completionist
+            "({}): {} | {} | {}",
+            em(&game.game_name),
+            field("Main Story", main),
+            field("Main + Extra", main_extra),
+            field("Completionist", completionist)
         ),
     )
 }

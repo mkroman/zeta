@@ -526,7 +526,7 @@ fn format_summary(details: &MediaDetails, kind: &str, title_length: usize) -> Op
         .filter(|caption| !caption.is_empty())
     {
         let truncated = caption.truncate_with_suffix(title_length, "…");
-        let _ = write!(buf, "“\x0f{}\x0310” ", truncated.trim());
+        let _ = write!(buf, "{} ", quoted(truncated.trim()));
     }
 
     if let Some(author) = details
@@ -536,9 +536,9 @@ fn format_summary(details: &MediaDetails, kind: &str, title_length: usize) -> Op
         .filter(|author| !author.is_empty())
     {
         if buf.is_empty() {
-            let _ = write!(buf, "Instagram {kind} by\x0f {author}");
+            let _ = write!(buf, "Instagram {kind} by {}", em(author));
         } else {
-            let _ = write!(buf, "is an Instagram {kind} by\x0f {author}");
+            let _ = write!(buf, "is an Instagram {kind} by {}", em(author));
         }
     } else if !buf.is_empty() {
         let _ = write!(buf, "is an Instagram {kind}");
@@ -598,7 +598,7 @@ mod tests {
         // Caption and author.
         assert_eq!(
             format_summary(&full_details(), "reel", 150).as_deref(),
-            Some("“\x0fSome caption & more\x0310” is an Instagram reel by\x0f user.name")
+            Some("“\x0fSome caption & more\x0310” is an Instagram reel by \x0fuser.name\x0310")
         );
 
         // Long captions are truncated.
@@ -608,7 +608,7 @@ mod tests {
             ..full_details()
         };
         let expected = format!(
-            "“\x0f{}\x0310” is an Instagram post by\x0f user.name",
+            "“\x0f{}\x0310” is an Instagram post by \x0fuser.name\x0310",
             "a".repeat(150) + "…"
         );
         assert_eq!(format_summary(&details, "post", 150).as_deref(), Some(expected.as_str()));
@@ -630,7 +630,7 @@ mod tests {
         };
         assert_eq!(
             format_summary(&details, "story", 150).as_deref(),
-            Some("Instagram story by\x0f user.name")
+            Some("Instagram story by \x0fuser.name\x0310")
         );
 
         // Neither an author nor a caption.
@@ -651,7 +651,7 @@ mod tests {
         };
         assert_eq!(
             format_summary(&details, "post", 150).as_deref(),
-            Some("“\x0fFirst line second line third\x0310” is an Instagram post by\x0f user.name")
+            Some("“\x0fFirst line second line third\x0310” is an Instagram post by \x0fuser.name\x0310")
         );
     }
 

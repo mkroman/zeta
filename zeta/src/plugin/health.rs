@@ -148,20 +148,24 @@ impl Display for Snapshot {
         let phys_mem = self.phys_mem;
         let virt_mem = self.virt_mem;
 
-        write!(fmt, "Memory usage:\x0f {phys_mem:.2} MiB\x0310 ")?;
-        write!(fmt, "(\x0f{virt_mem:.2} MiB\x0310 virtual) ")?;
+        write!(
+            fmt,
+            "{} ",
+            field("Memory usage", format!("{phys_mem:.2} MiB"))
+        )?;
+        write!(fmt, "({} virtual) ", em(format!("{virt_mem:.2} MiB")))?;
 
-        write!(fmt, "Workers:\x0f {}\x0310 ", self.num_workers)?;
-        write!(fmt, "Tasks:\x0f {}\x0310 ", self.num_alive_tasks)?;
-        write!(fmt, "(\x0f{}\x0310 scheduled)", self.global_queue_depth)?;
+        write!(fmt, "{} ", field("Workers", self.num_workers))?;
+        write!(fmt, "{} ", field("Tasks", self.num_alive_tasks))?;
+        write!(fmt, "({} scheduled)", em(self.global_queue_depth))?;
 
         #[cfg(feature = "database")]
         if let Some(db) = &self.db {
             if db.closed {
-                write!(fmt, " DB:\x0f closed\x0310")?;
+                write!(fmt, " {}", field("DB", "closed"))?;
             } else {
-                write!(fmt, " DB:\x0f {}\x0310/\x0f{}\x0310 ", db.size, db.max)?;
-                write!(fmt, "(\x0f{}\x0310 idle)", db.idle)?;
+                write!(fmt, " {}/{} ", field("DB", db.size), em(db.max))?;
+                write!(fmt, "({} idle)", em(db.idle))?;
             }
         }
 
