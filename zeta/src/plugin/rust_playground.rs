@@ -106,16 +106,15 @@ impl Plugin<Context> for RustPlayground {
         let channel = command.channel();
         let expr = command.args();
 
-        let message = if expr.trim().is_empty() {
-            reply("Rust Playground", "Usage: .rs\x0f <expr>")
-        } else {
-            match self.evaluate(expr).await {
-                Ok(output) => reply("Rust Playground", &output),
-                Err(e) => reply("Rust Playground", e),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+        reply_lookup(
+            client,
+            channel,
+            expr,
+            &RUST_PLAYGROUND.usage_line("<expr>"),
+            |expr| async move { self.evaluate(&expr).await },
+            |output| reply("Rust Playground", output),
+        )
+        .await?;
 
         Ok(())
     }

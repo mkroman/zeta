@@ -29,9 +29,9 @@ mod prelude {
     pub use zeta_plugin::prelude::{
         ArgsError, BOLD, BoxError, COLOR, CommandEvent, CommandSpec, CtcpEvent, CtcpKind, Event,
         JoinEvent, KickEvent, MessageEvent, NickEvent, NoSettings, PartEvent, QuitEvent,
-        REPLY_PREFIX, RESET, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope, notice,
-        parse_args_or_usage, parse_words_or_usage, plugin_err, reply, reply_prefix,
-        reply_usage_lines, resolve_secret,
+        REPLY_PREFIX, RESET, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope, field, notice,
+        parse_args_or_usage, parse_words_or_usage, plugin_err, quoted, reply, reply_first_lookup,
+        reply_lookup, reply_prefix, reply_usage_lines, resolve_secret,
     };
 
     pub use super::{CatalogEntry, Context, Plugin, PluginCatalog, SharedState};

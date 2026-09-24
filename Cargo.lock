@@ -5339,6 +5339,7 @@ dependencies = [
  "serde",
  "shlex 2.0.1",
  "thiserror 2.0.21",
+ "tracing",
  "url",
 ]
 

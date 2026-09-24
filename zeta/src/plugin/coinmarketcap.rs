@@ -142,9 +142,6 @@ struct QuoteOpts {
     currency: Option<String>,
 }
 
-/// The usage hint for the `.cc` command.
-const CC_USAGE: &str = "Usage: .cc \x0f<symbol> [currency]";
-
 /// Convert a cryptocurrency price into fiat currency.
 #[derive(FromArgs, ArgsInfo, Debug)]
 struct CoinOpts {
@@ -277,7 +274,7 @@ impl CoinMarketCap {
         let opts = match CC.parse_args::<CoinOpts>(args) {
             Ok(opts) if !opts.coin.trim().is_empty() => opts,
             _ => {
-                client.send_privmsg(channel, notice(CC_USAGE))?;
+                client.send_privmsg(channel, notice(CC.usage_line("<symbol> [currency]")))?;
                 return Ok(());
             }
         };

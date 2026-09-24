@@ -47,9 +47,6 @@ const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
     "Schedule an alert to be posted later, or list pending alerts",
 );
 
-/// The usage hint for the `.alert` command.
-const USAGE: &str = "Usage: .alert\x0f [-l] <message> <in|at> <datetime>";
-
 /// Schedule an alert to be posted later, or list pending alerts.
 #[derive(FromArgs, ArgsInfo, Debug)]
 #[argh(help_triggers("--help"))]
@@ -206,7 +203,10 @@ impl Plugin<Context> for AlertPlugin {
 
         if opts.list {
             if !opts.args.is_empty() {
-                client.send_privmsg(channel, reply("Alert", USAGE))?;
+                client.send_privmsg(
+                    channel,
+                    reply("Alert", ALERT.usage_line("[-l] <message> <in|at> <datetime>")),
+                )?;
 
                 return Ok(());
             }
@@ -233,7 +233,10 @@ impl Plugin<Context> for AlertPlugin {
         let input = opts.input();
 
         let Some((message, time_spec)) = split_args(&input) else {
-            client.send_privmsg(channel, reply("Alert", USAGE))?;
+            client.send_privmsg(
+                channel,
+                reply("Alert", ALERT.usage_line("[-l] <message> <in|at> <datetime>")),
+            )?;
 
             return Ok(());
         };

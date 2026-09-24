@@ -211,7 +211,7 @@ impl Plugin<Context> for OpenWeatherMap {
 
         let location = if args.trim().is_empty() {
             let Some(location) = self.default_location.as_deref() else {
-                client.send_privmsg(channel, notice("Usage: .w\x0f <location>"))?;
+                client.send_privmsg(channel, notice(WEATHER.usage_line("<location>")))?;
 
                 return Ok(());
             };

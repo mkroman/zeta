@@ -111,6 +111,23 @@ impl CommandSpec {
         self.trigger
     }
 
+    /// Formats the usage line for a command whose arguments are parsed manually.
+    ///
+    /// The line reads `Usage: <trigger>\x0f <args>`, e.g. `Usage: .ud\x0f <query>` — the same
+    /// convention the typed-argument commands' generated usage output follows.
+    ///
+    /// ```
+    /// use zeta_plugin::CommandSpec;
+    ///
+    /// const UD: CommandSpec = CommandSpec::new(".ud", "Look up an urban dictionary term");
+    ///
+    /// assert_eq!(UD.usage_line("<query>"), "Usage: .ud\x0f <query>");
+    /// ```
+    #[must_use]
+    pub fn usage_line(&self, args: &str) -> String {
+        format!("Usage: {}\x0f {args}", self.trigger)
+    }
+
     /// Returns the short, user-facing description of the command.
     #[must_use]
     pub const fn description(&self) -> &'static str {
@@ -275,6 +292,16 @@ mod tests {
         const CMD: CommandSpec = CommandSpec::new(".yt", "yt");
 
         assert_eq!(CMD.trigger(), ".yt");
+    }
+
+    #[test]
+    fn usage_line_formats_the_trigger_and_arguments() {
+        const CMD: CommandSpec = CommandSpec::new(".alert", "Add an alert");
+
+        assert_eq!(
+            CMD.usage_line("[-l] <message> <in|at> <datetime>"),
+            "Usage: .alert\x0f [-l] <message> <in|at> <datetime>"
+        );
     }
 
     #[test]

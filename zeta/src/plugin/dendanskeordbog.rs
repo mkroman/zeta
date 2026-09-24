@@ -112,20 +112,21 @@ impl Plugin<Context> for DenDanskeOrdbog {
         let channel = command.channel();
         let args = command.args();
 
-        let message = if args.is_empty() {
-            notice("Usage: .ddo\x0f <query>")
-        } else {
-            match self.client.query(args).await {
-                Ok(document) => MessageFormatter {
-                    document: &document,
+        reply_lookup(
+            client,
+            channel,
+            args,
+            &DDO.usage_line("<query>"),
+            |query| async move { self.client.query(&query).await },
+            |document| {
+                MessageFormatter {
+                    document,
                     settings: &self.settings,
                 }
-                .to_string(),
-                Err(err) => notice(err),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+                .to_string()
+            },
+        )
+        .await?;
 
         Ok(())
     }

@@ -10,11 +10,9 @@
 //! the `language` setting). A missing token fails plugin initialization and the plugin is
 //! skipped at startup; the HTTP timeout and user agent come from the shared `[http]` settings.
 
-use std::future::Future;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 use crate::plugin::prelude::*;
 
@@ -91,15 +89,17 @@ impl Plugin<Context> for KagiPlugin {
                     })
                 };
 
-                return self
-                    .handle_lookup(
+                return Ok(
+                    reply_first_lookup(
                         client,
                         command.channel(),
                         command.args(),
-                        "Usage: .g\x0f <query>",
+                        &KAGI.usage_line("<query>"),
                         search,
+                        |(title, url)| reply("Kagi", format!("{title} - {url}")),
                     )
-                    .await;
+                    .await?,
+                );
             }
             IMAGES => {
                 let search = |query: String| async move {
@@ -111,56 +111,20 @@ impl Plugin<Context> for KagiPlugin {
                     })
                 };
 
-                return self
-                    .handle_lookup(
+                return Ok(
+                    reply_first_lookup(
                         client,
                         command.channel(),
                         command.args(),
-                        "Usage: .gis\x0f <query>",
+                        &IMAGES.usage_line("<query>"),
                         search,
+                        |(title, url)| reply("Kagi", format!("{title} - {url}")),
                     )
-                    .await;
+                    .await?,
+                );
             }
             _ => {}
         }
-
-        Ok(())
-    }
-}
-
-impl KagiPlugin {
-    /// Handles the `.g` and `.gis` commands by linking the top result for the query.
-    ///
-    /// `search` runs the query and yields the results as `(title, url)` pairs; only the top
-    /// result is linked.
-    async fn handle_lookup<F, Fut>(
-        &self,
-        client: &Client,
-        channel: &str,
-        query: &str,
-        usage: &str,
-        search: F,
-    ) -> Result<(), ZetaError>
-    where
-        F: FnOnce(String) -> Fut,
-        Fut: Future<Output = Result<Vec<(String, String)>, kagi::Error>>,
-    {
-        let message = if query.trim().is_empty() {
-            notice(usage)
-        } else {
-            match search(query.to_string()).await {
-                Ok(results) => results.first().map_or_else(
-                    || notice("No results"),
-                    |(title, url)| reply("Kagi", format!("{title} - {url}")),
-                ),
-                Err(err) => {
-                    warn!(?err, "kagi search failed");
-                    notice(err)
-                }
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
 
         Ok(())
     }

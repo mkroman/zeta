@@ -239,18 +239,15 @@ impl Plugin<Context> for HowLongToBeat {
         let channel = command.channel();
         let query = command.args();
 
-        let message = if query.trim().is_empty() {
-            notice("Usage: .hltb\x0f <game>")
-        } else {
-            match self.search(query).await {
-                Ok(games) => games
-                    .first()
-                    .map_or_else(|| notice("No results found"), format_game),
-                Err(err) => notice(err),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+        reply_first_lookup(
+            client,
+            channel,
+            query,
+            &HLTB.usage_line("<game>"),
+            |query| async move { self.search(&query).await },
+            format_game,
+        )
+        .await?;
 
         Ok(())
     }
