@@ -201,6 +201,7 @@ impl Imdb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
     use crate::config::HttpConfig;
 
     settings_tests! {

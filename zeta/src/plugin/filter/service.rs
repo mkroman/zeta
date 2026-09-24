@@ -253,16 +253,9 @@ mod tests {
         assert!(criteria.matches(&filter(Some("dr.dk"), None)));
     }
 
-    /// Skips the test if a test database has not been configured. The `filters` table must
-    /// exist — start the bot once against the test database to apply the migrations.
-    async fn test_service() -> Option<(FilterService, Database)> {
-        let db = crate::database::connect_for_tests().await?;
-
-        Some((FilterService::new(db.clone()), db))
-    }
-
-    /// A filter fixture, so reruns can clean it up by its `created_by` marker.
-    fn new_filter(created_by: &str, channel: Option<&str>, host: &str, username: Option<&str>) -> NewFilter {
+    /// A filter fixture. The `created_by` column is part of the model; with per-test databases
+    /// the value no longer doubles as a cleanup marker.
+    fn new_filter(channel: Option<&str>, host: &str, username: Option<&str>) -> NewFilter {
         NewFilter {
             channel: channel.map(String::from),
             host: Some(host.into()),
@@ -270,31 +263,16 @@ mod tests {
             nickname: None,
             username: username.map(String::from),
             hostname: None,
-            created_by: created_by.into(),
+            created_by: "test".into(),
         }
     }
 
-    /// Removes the rows a test creates, so reruns start clean: a stale wildcard filter would
-    /// flip the `matches` assertions. Each test uses its own marker, since they run in
-    /// parallel against one database.
-    async fn delete_filters_created_by(db: &Database, created_by: &str) {
-        sqlx::query("DELETE FROM filters WHERE created_by = $1")
-            .bind(created_by)
-            .execute(db)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn added_filters_are_listed_with_their_fields() {
-        let Some((service, db)) = test_service().await else {
-            return;
-        };
-        delete_filters_created_by(&db, "smoke-add").await;
+    #[sqlx::test]
+    async fn added_filters_are_listed_with_their_fields(db: sqlx::PgPool) {
+        let service = FilterService::new(db);
 
         let added = service
             .add(new_filter(
-                "smoke-add",
                 Some("#smoke"),
                 "example.com",
                 Some("*other"),
@@ -306,20 +284,14 @@ mod tests {
         assert_eq!(added.host.as_deref(), Some("example.com"));
         assert_eq!(added.username.as_deref(), Some("*other"));
         assert!(service.list().iter().any(|f| f.id == added.id));
-
-        delete_filters_created_by(&db, "smoke-add").await;
     }
 
-    #[tokio::test]
-    async fn deleted_filters_leave_the_database_and_the_index() {
-        let Some((service, db)) = test_service().await else {
-            return;
-        };
-        delete_filters_created_by(&db, "smoke-delete").await;
+    #[sqlx::test]
+    async fn deleted_filters_leave_the_database_and_the_index(db: sqlx::PgPool) {
+        let service = FilterService::new(db);
 
         let added = service
             .add(new_filter(
-                "smoke-delete",
                 Some("#smoke"),
                 "example.com",
                 Some("*other"),
@@ -331,8 +303,6 @@ mod tests {
 
         assert_eq!(removed, 1);
 
-        // The index no longer matches: it only ever contained this test's own filter, so the
-        // assertion cannot be affected by the filters the parallel tests add.
         assert!(!service.matches(
             "#smoke",
             Some(Sender::new("someone", "~cliother", "host.example")),
@@ -340,22 +310,18 @@ mod tests {
         ));
 
         // The database is the source of truth: a fresh load restores the index without the
-        // deleted filter. The database tests run in parallel against one database, so the
-        // loaded index is only asserted on this test's own row.
+        // deleted filter.
         service.load().await.unwrap();
 
         assert!(!service.list().iter().any(|f| f.id == added.id));
     }
 
-    #[tokio::test]
-    async fn wildcard_filters_match_any_channel() {
-        let Some((service, db)) = test_service().await else {
-            return;
-        };
-        delete_filters_created_by(&db, "smoke-wildcard").await;
+    #[sqlx::test]
+    async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
+        let service = FilterService::new(db);
 
         service
-            .add(new_filter("smoke-wildcard", None, "*.com", None))
+            .add(new_filter(None, "*.com", None))
             .await
             .unwrap();
 
@@ -364,7 +330,5 @@ mod tests {
             Some(Sender::new("nick", "user", "host.example")),
             &"https://reuters.com/article".parse().unwrap()
         ));
-
-        delete_filters_created_by(&db, "smoke-wildcard").await;
     }
 }

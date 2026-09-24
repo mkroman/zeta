@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["dendanskeordbog", "kagi", "reddit", "zeta", "zeta-plugin"]
+members = ["dendanskeordbog", "kagi", "reddit", "zeta", "zeta-plugin", "zeta-test-support"]
 
 [workspace.dependencies]
 argh = { version = "0.1.19" }

@@ -13,3 +13,6 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+zeta-test-support = { path = "../zeta-test-support" }

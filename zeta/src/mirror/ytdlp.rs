@@ -190,17 +190,6 @@ impl YtDlp {
         }
     }
 
-    /// Creates a runner that invokes the given command.
-    #[cfg(test)]
-    #[must_use]
-    pub fn with_command(command: &str) -> Self {
-        Self {
-            command: command.to_string(),
-            max_filesize: "500M".to_string(),
-            download_timeout: Duration::from_mins(10),
-        }
-    }
-
     /// Downloads the video at `url` into `output_dir`, naming the downloaded files after `id`,
     /// and streaming progress updates to `on_progress` as they are reported by `yt-dlp`.
     ///
@@ -439,6 +428,18 @@ fn truncate_tail(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl YtDlp {
+        /// Creates a runner that invokes the given command.
+        #[must_use]
+        pub(crate) fn with_command(command: &str) -> Self {
+            Self {
+                command: command.to_string(),
+                max_filesize: "500M".to_string(),
+                download_timeout: Duration::from_mins(10),
+            }
+        }
+    }
 
     const SAMPLE_OUTPUT: &str = r#"{
         "id": "7541501431543532814",

@@ -83,7 +83,7 @@ fn is_valid_username(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::url::assert_parses;
+    use zeta_test_support::assert_parses;
 
     #[test]
     fn test_parse_stream_urls() {

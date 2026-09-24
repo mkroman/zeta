@@ -201,7 +201,9 @@ impl Display for Thing {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
     use super::*;
+    use zeta_test_support::settings_tests;
 
     settings_tests! {
         Settings,

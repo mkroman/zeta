@@ -1,8 +1,4 @@
 //! Helpers for formatting and parsing points in time and durations.
-//
-// Every helper here is reached only from feature-gated plugins and their tests, so a build
-// without those plugins has no in-crate callers for any of them.
-#![allow(dead_code)]
 
 use std::fmt::Write;
 use std::time::Duration;
@@ -34,10 +30,10 @@ const MINUTES: (i64, &str) = (SECONDS_PER_MINUTE, "minute");
 const SECONDS: (i64, &str) = (SECONDS_PER_SECOND, "second");
 
 /// Duration units in descending order, down to and including seconds.
-const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
+pub const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
 
 /// Duration units in descending order, down to and including minutes.
-const UNITS_TO_MINUTES: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES];
+pub const UNITS_TO_MINUTES: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES];
 
 /// Duration units from hours down to minutes.
 pub const HOURS_AND_MINUTES: &[(i64, &str)] = &[HOURS, MINUTES];
@@ -64,6 +60,7 @@ fn split_into_units(total_seconds: i64, units: &[(i64, &'static str)]) -> Vec<(i
 /// `"1 year, 2 weeks, and 3 days"`.
 ///
 /// Non-positive durations are formatted as `"0 minutes"`.
+#[must_use]
 pub fn words(total_seconds: i64, units: &[(i64, &'static str)]) -> String {
     // Sub-year remainders cap each non-leading count (weeks < 52, days < 7, ...) and large counts
     // only occur for years, so 24 bytes per part never needs a reallocation.
@@ -130,6 +127,7 @@ impl TimeInWords for TimeDuration {
 /// Any component may be fractional, e.g. `PT1.5H`, and components of zero may be omitted.
 /// Months and years are not supported, as YouTube video durations never use them. Returns
 /// [`None`] for invalid input.
+#[must_use]
 pub fn parse_iso8601_duration(input: &str) -> Option<Duration> {
     let mut rest = input.strip_prefix('P')?;
     if rest.is_empty() {
@@ -176,6 +174,7 @@ pub fn parse_iso8601_duration(input: &str) -> Option<Duration> {
 }
 
 /// Formats a [`Duration`] compactly, e.g. `1h 2m 20s`, skipping components of zero.
+#[must_use]
 pub fn format_duration(duration: Duration) -> String {
     // Seconds per day, hour, minute, and second, in descending order.
     const UNITS: &[(i64, &str)] = &[(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")];

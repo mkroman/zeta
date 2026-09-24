@@ -47,19 +47,6 @@ impl<T> TtlCache<T> {
         }
     }
 
-    /// Creates a cache pre-populated with `value`, expiring after `ttl`.
-    #[cfg(test)]
-    pub(crate) fn with_value(value: T, ttl: Duration) -> Self {
-        Self {
-            entry: RwLock::new(Some(Entry {
-                value,
-                expires_at: Instant::now() + ttl,
-            })),
-            ttl,
-            refreshing: tokio::sync::Mutex::const_new(()),
-        }
-    }
-
     /// Runs `read` with the cached value if one exists, fresh or stale.
     ///
     /// Stale values are served so callers that pair this with a preceding refresh attempt keep
@@ -641,6 +628,20 @@ mod ttl_map_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl<T> TtlCache<T> {
+        /// Creates a cache pre-populated with `value`, expiring after `ttl`.
+        pub(crate) fn with_value(value: T, ttl: Duration) -> Self {
+            Self {
+                entry: RwLock::new(Some(Entry {
+                    value,
+                    expires_at: Instant::now() + ttl,
+                })),
+                ttl,
+                refreshing: tokio::sync::Mutex::const_new(()),
+            }
+        }
+    }
 
     #[allow(clippy::redundant_closure_for_method_calls)] // a bare `Option::copied` is ambiguous
     fn cached_value(cache: &TtlCache<u8>) -> Option<u8> {

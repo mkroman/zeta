@@ -228,20 +228,6 @@ impl Iterator for ExtractUrls<'_> {
     }
 }
 
-/// Asserts that `parse` classifies every `input` of `cases` as its expected result, naming the
-/// input when an assertion fails.
-#[cfg(test)]
-pub(crate) fn assert_parses<T: std::fmt::Debug + PartialEq>(
-    parse: impl Fn(&Url) -> T,
-    cases: &[(&str, T)],
-) {
-    for (input, expected) in cases {
-        let url = Url::parse(input).unwrap();
-
-        assert_eq!(&parse(&url), expected, "for {input}");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,9 +14,6 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(test)]
-use std::path::Path;
-
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, warn};
 use url::Url;
@@ -28,9 +25,6 @@ use super::{
     ytdlp::{self, DownloadedFile, Downloader, Progress},
 };
 use crate::url::is_identifier;
-
-#[cfg(test)]
-use super::TEMP_DIR_PREFIX;
 
 /// Errors that can occur while mirroring a download request.
 #[derive(thiserror::Error, Debug)]
@@ -500,26 +494,27 @@ impl Drop for DownloadTask {
     }
 }
 
-/// Returns the temporary download directories that currently exist under `base`.
-#[cfg(test)]
-fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(base)
-        .unwrap()
-        .flatten()
-        .filter(super::is_temp_download_dir)
-        .map(|entry| entry.path())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::path::Path;
     use std::sync::Mutex;
 
     use futures::future::BoxFuture;
     use tokio::sync::oneshot;
 
     use super::*;
+    use crate::mirror::TEMP_DIR_PREFIX;
+
+    /// Returns the temporary download directories that currently exist under `base`.
+    fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(base)
+            .unwrap()
+            .flatten()
+            .filter(crate::mirror::is_temp_download_dir)
+            .map(|entry| entry.path())
+            .collect()
+    }
 
     /// Returns a request that reports its result on the given channel.
     fn request(
@@ -702,39 +697,10 @@ mod tests {
         );
     }
 
-    /// Runs a minimal S3 server that answers every request on its connection with a 404: the
-    /// manager's upload first checks whether the object exists (answered as absent), and the
-    /// upload attempt then fails with the non-retryable status immediately.
-    fn missing_objects_endpoint() -> std::net::SocketAddr {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-
-        std::thread::spawn(move || {
-            use std::io::{Read, Write};
-
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-
-            let mut buffer = [0; 1024];
-
-            for _ in 0..2 {
-                if stream.read(&mut buffer).unwrap_or_default() == 0
-                    || stream
-                        .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
-                        .is_err()
-                {
-                    break;
-                }
-            }
-        });
-
-        address
-    }
-
     #[tokio::test]
     async fn test_completed_download_is_uploaded_and_reported() {
-        let s3 = S3::with_endpoint(&format!("http://{}", missing_objects_endpoint()));
+        let server = zeta_test_support::not_found_server().await;
+        let s3 = S3::with_endpoint(&format!("http://{}", server.address()));
         let (download_dir, manager) = start_manager(Arc::new(CompletingDownloader), s3, 2);
 
         let (results, mut rx) = mpsc::unbounded_channel();
@@ -747,11 +713,21 @@ mod tests {
             ))
             .expect("manager is running");
 
-        // The download succeeds, but the upload fails against the one-shot server.
+        // The download succeeds, but the upload fails against the always-404 server.
         let (_, result) = rx.recv().await.expect("the download did not finish");
         let error = result.expect_err("the upload should have failed");
 
         assert!(matches!(error, Error::Upload(_)));
+
+        // The upload checked the object (HEAD, answered as absent) and attempted the upload
+        // (PUT) — the only two requests the flow makes.
+        let requests = server
+            .received_requests()
+            .await
+            .expect("the server tracks requests");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method.as_str(), "HEAD");
+        assert_eq!(requests[1].method.as_str(), "PUT");
 
         // The temporary download directory was removed.
         assert_eq!(

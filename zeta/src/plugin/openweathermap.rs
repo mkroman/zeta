@@ -342,6 +342,7 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
 
     /// Builds a weather response for formatting tests.
     fn test_response() -> WeatherResponse {

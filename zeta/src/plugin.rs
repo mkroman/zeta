@@ -39,34 +39,6 @@ mod prelude {
     pub use super::filtering::Filters;
 }
 
-/// Generates the two settings tests shared by every plugin with a configuration section.
-///
-/// Expands to a `default_settings` test asserting the values produced by [`Default`] and a
-/// `settings_deserialize` test deserializing the given JSON object before asserting on it.
-#[cfg(test)]
-macro_rules! settings_tests {
-    (
-        $ty:ty, $settings:ident,
-        default: { $($default:tt)* }
-        deserialize: { $($json:tt)* } assert: { $($assert:tt)* }
-    ) => {
-        #[test]
-        fn default_settings() {
-            let $settings = <$ty>::default();
-
-            $($default)*
-        }
-
-        #[test]
-        fn settings_deserialize() {
-            let $settings: $ty = serde_json::from_value(serde_json::json!({ $($json)* }))
-                .expect("could not deserialize settings");
-
-            $($assert)*
-        }
-    };
-}
-
 /// Declares plugin modules and generates a registry helper to avoid boilerplate.
 ///
 /// For each entry, it generates:

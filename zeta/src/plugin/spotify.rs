@@ -400,7 +400,9 @@ fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
     use super::*;
+    use zeta_test_support::settings_tests;
 
     settings_tests! {
         Settings,

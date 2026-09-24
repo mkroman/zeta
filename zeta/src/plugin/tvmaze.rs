@@ -262,6 +262,7 @@ impl Tvmaze {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
     use super::*;
 
     /// Decodes a recorded search response for a running show with a scheduled next episode.

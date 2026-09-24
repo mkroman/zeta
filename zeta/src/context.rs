@@ -84,15 +84,18 @@ impl Context {
 }
 
 #[cfg(test)]
-impl Context {
-    /// Constructs a context for unit tests: a default configuration and an unreachable
-    /// (lazily connected) database pool.
-    pub(crate) fn for_tests() -> Self {
-        use figment::providers::{Format, Toml};
+mod tests {
+    use super::*;
 
-        let mut config: Config = figment::Figment::new()
-            .merge(Toml::string(
-                r#"
+    impl Context {
+        /// Constructs a context for unit tests: a default configuration and an unreachable
+        /// (lazily connected) database pool.
+        pub(crate) fn for_tests() -> Self {
+            use figment::providers::{Format, Toml};
+
+            let mut config: Config = figment::Figment::new()
+                .merge(Toml::string(
+                    r#"
 [database]
 url = "postgresql://invalid/zeta_test"
 
@@ -105,25 +108,21 @@ hostname = "mock"
 alt_nicks = []
 channels = []
 "#,
-            ))
-            .extract()
-            .expect("test configuration should parse");
-        let _ = config.take_plugins();
+                ))
+                .extract()
+                .expect("test configuration should parse");
+            let _ = config.take_plugins();
 
-        Context::new(
-            #[cfg(feature = "database")]
-            sqlx::postgres::PgPoolOptions::new()
-                .connect_lazy("postgresql://invalid/zeta_test")
-                .expect("lazy database pool"),
-            crate::dns::new(),
-            config,
-        )
+            Context::new(
+                #[cfg(feature = "database")]
+                sqlx::postgres::PgPoolOptions::new()
+                    .connect_lazy("postgresql://invalid/zeta_test")
+                    .expect("lazy database pool"),
+                crate::dns::new(),
+                config,
+            )
+        }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     #[test]
     fn published_state_can_be_retrieved() {

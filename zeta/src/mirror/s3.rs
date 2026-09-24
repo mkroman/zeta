@@ -180,33 +180,6 @@ impl S3 {
         })
     }
 
-    /// Creates a client that points at an unreachable local endpoint, for tests that never talk
-    /// to S3.
-    #[cfg(test)]
-    #[must_use]
-    pub fn for_test() -> Self {
-        Self::with_endpoint("http://127.0.0.1:9")
-    }
-
-    /// Creates a client that points at the given local endpoint, for tests that never talk to a
-    /// real S3.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `endpoint` is not a valid URL.
-    #[cfg(test)]
-    #[must_use]
-    pub fn with_endpoint(endpoint: &str) -> Self {
-        Self {
-            client: Client::new(),
-            access_key_id: "test-access-key".to_string(),
-            secret_access_key: "test-secret-key".to_string(),
-            bucket: "test".to_string(),
-            region: "auto".to_string(),
-            endpoint: Some(Url::parse(endpoint).expect("valid endpoint")),
-        }
-    }
-
     /// Returns whether an object with the given key exists.
     ///
     /// # Errors
@@ -431,6 +404,33 @@ fn content_type_for(path: &Path) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl S3 {
+        /// Creates a client that points at an unreachable local endpoint, for tests that never
+        /// talk to S3.
+        #[must_use]
+        pub(crate) fn for_test() -> Self {
+            Self::with_endpoint("http://127.0.0.1:9")
+        }
+
+        /// Creates a client that points at the given local endpoint, for tests that never talk
+        /// to a real S3.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `endpoint` is not a valid URL.
+        #[must_use]
+        pub(crate) fn with_endpoint(endpoint: &str) -> Self {
+            Self {
+                client: Client::new(),
+                access_key_id: "test-access-key".to_string(),
+                secret_access_key: "test-secret-key".to_string(),
+                bucket: "test".to_string(),
+                region: "auto".to_string(),
+                endpoint: Some(Url::parse(endpoint).expect("valid endpoint")),
+            }
+        }
+    }
 
     #[test]
     fn test_object_url_path_style() {

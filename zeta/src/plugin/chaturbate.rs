@@ -170,7 +170,7 @@ fn extract_username(url: &Url) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::url::assert_parses;
+    use zeta_test_support::assert_parses;
 
     fn fixture_html(name: &str) -> String {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

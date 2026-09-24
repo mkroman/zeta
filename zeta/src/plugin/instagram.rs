@@ -549,7 +549,9 @@ fn format_summary(details: &MediaDetails, kind: &str, title_length: usize) -> Op
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
     use super::*;
+    use zeta_test_support::settings_tests;
 
     settings_tests! {
         Settings,

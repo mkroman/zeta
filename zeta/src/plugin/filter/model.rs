@@ -29,22 +29,6 @@ pub struct Filter {
     pub hostname: Option<String>,
 }
 
-#[cfg(test)]
-impl Filter {
-    /// Builds a filter from the fields of `new`, for tests that need one without a database.
-    pub(crate) fn from_new_filter(id: i32, new: NewFilter) -> Self {
-        Self {
-            id,
-            channel: new.channel,
-            host: new.host,
-            path: new.path,
-            nickname: new.nickname,
-            username: new.username,
-            hostname: new.hostname,
-        }
-    }
-}
-
 /// A filter to be inserted into the database.
 #[derive(Debug, Clone)]
 pub struct NewFilter {
@@ -62,4 +46,24 @@ pub struct NewFilter {
     pub hostname: Option<String>,
     /// The nickname of the user creating the filter.
     pub created_by: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl Filter {
+        /// Builds a filter from the fields of `new`, for tests that need one without a database.
+        pub(crate) fn from_new_filter(id: i32, new: NewFilter) -> Self {
+            Self {
+                id,
+                channel: new.channel,
+                host: new.host,
+                path: new.path,
+                nickname: new.nickname,
+                username: new.username,
+                hostname: new.hostname,
+            }
+        }
+    }
 }

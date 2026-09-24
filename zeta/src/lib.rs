@@ -16,14 +16,14 @@ pub mod database;
 /// DNS resolution
 pub mod dns;
 /// Duration formatting and parsing utilities
-mod duration;
+pub mod duration;
 mod error;
 /// HTTP client integration.
 ///
 /// Enabled by the `http` feature (plain reqwest) or the `emulated` feature (browser-emulated
 /// wreq for anti-bot-protected sites).
 #[cfg(any(feature = "http", feature = "emulated"))]
-mod http;
+pub mod http;
 /// Shared media mirroring
 #[cfg(feature = "mirror")]
 pub mod mirror;

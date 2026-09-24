@@ -357,16 +357,6 @@ mod tests {
 
     use super::*;
 
-    /// Skips the test if a test database has not been configured.
-    async fn test_service() -> Option<(AlertService, mpsc::UnboundedReceiver<Alert>, Database)> {
-        let db = crate::database::connect_for_tests().await?;
-
-        let mut service = AlertService::new(db.clone(), &Settings::default());
-        let receiver = service.take_receiver();
-
-        Some((service, receiver.unwrap(), db))
-    }
-
     /// A new alert fixture.
     fn new_alert(nickname: &str, channel: &str, message: &str, time: DateTime<Utc>) -> NewAlert {
         NewAlert {
@@ -379,17 +369,10 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn scheduler_delivers_created_alerts() {
-        let Some((service, mut receiver, db)) = test_service().await else {
-            return;
-        };
-
-        // Removes alerts left behind by earlier runs, so the cache starts clean.
-        sqlx::query("DELETE FROM alerts WHERE nickname = 'smoke'")
-            .execute(&db)
-            .await
-            .unwrap();
+    #[sqlx::test]
+    async fn scheduler_delivers_created_alerts(db: sqlx::PgPool) {
+        let mut service = AlertService::new(db.clone(), &Settings::default());
+        let mut receiver = service.take_receiver().unwrap();
 
         service.load().await.unwrap();
         service.start_scheduler();
@@ -453,18 +436,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn pending_for_filters_by_channel_and_nickname() {
-        let Some((service, _, db)) = test_service().await else {
-            return;
-        };
-
-        // Removes alerts left behind by earlier runs, so the assertions are deterministic. The
-        // nicknames are unique to this test, as the database tests run in parallel.
-        sqlx::query("DELETE FROM alerts WHERE nickname IN ('lister', 'other')")
-            .execute(&db)
-            .await
-            .unwrap();
+    #[sqlx::test]
+    async fn pending_for_filters_by_channel_and_nickname(db: sqlx::PgPool) {
+        let service = AlertService::new(db, &Settings::default());
 
         let now = Utc::now();
 
@@ -508,25 +482,11 @@ mod tests {
         let pending = service.pending_for("#smoke", "lister").await.unwrap();
 
         assert_eq!(pending, vec![sooner, later]);
-
-        sqlx::query("DELETE FROM alerts WHERE nickname IN ('lister', 'other')")
-            .execute(&db)
-            .await
-            .unwrap();
     }
 
-    #[tokio::test]
-    async fn sync_only_caches_alerts_within_the_window() {
-        let Some((service, _, db)) = test_service().await else {
-            return;
-        };
-
-        // Removes alerts left behind by earlier runs, so the assertions are deterministic. The
-        // nickname is unique to this test, as the database tests run in parallel.
-        sqlx::query("DELETE FROM alerts WHERE nickname = 'window'")
-            .execute(&db)
-            .await
-            .unwrap();
+    #[sqlx::test]
+    async fn sync_only_caches_alerts_within_the_window(db: sqlx::PgPool) {
+        let service = AlertService::new(db, &Settings::default());
 
         let now = Utc::now();
 
@@ -564,10 +524,5 @@ mod tests {
         );
 
         drop(cached);
-
-        sqlx::query("DELETE FROM alerts WHERE nickname = 'window'")
-            .execute(&db)
-            .await
-            .unwrap();
     }
 }
