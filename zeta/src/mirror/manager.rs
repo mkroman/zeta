@@ -467,13 +467,17 @@ impl DownloadTask {
 
     /// Reports the download as completed, disarming the guard.
     fn completed(mut self, files: Vec<DownloadedFile>) {
-        self.send(DownloadStatus::Completed { id: self.id, files });
-        self.status_tx = None;
+        self.finish(DownloadStatus::Completed { id: self.id, files });
     }
 
     /// Reports the download as failed, disarming the guard.
     fn failed(mut self, error: ytdlp::Error) {
-        self.send(DownloadStatus::Failed { id: self.id, error });
+        self.finish(DownloadStatus::Failed { id: self.id, error });
+    }
+
+    /// Reports the terminal status of the download, disarming the guard.
+    fn finish(&mut self, status: DownloadStatus) {
+        self.send(status);
         self.status_tx = None;
     }
 

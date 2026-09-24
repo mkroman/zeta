@@ -571,6 +571,27 @@ pub struct PluginTask {
     handle: JoinHandle<()>,
 }
 
+/// Runs one of a plugin's lifecycle hooks inside a task-lifetime span, logging a failure at
+/// `$level`'s level. Expands to a bool telling whether the hook failed.
+///
+/// The span exists because the OpenTelemetry layer drops events outside any span — without
+/// one, a hook's failure would only ever reach stdout.
+macro_rules! run_hook {
+    ($name:literal, $plugin:expr, $future:expr, $level:ident, $message:literal) => {
+        async {
+            if let Err(error) = $future.await {
+                $level!(plugin = %$plugin, %error, $message);
+
+                true
+            } else {
+                false
+            }
+        }
+        .instrument(tracing::info_span!($name, plugin = %$plugin))
+        .await
+    };
+}
+
 impl PluginTask {
     /// Spawns `plugin` into a task that loads it and processes events until the channel closes.
     ///
@@ -591,19 +612,13 @@ impl PluginTask {
             // The load and shutdown hooks run inside spans for the same reason the handler
             // does: without a span, their warnings only ever reach stdout — the `loaded` span
             // above closed before this one fires.
-            let failed_to_load = async {
-                if let Err(error) = plugin.loaded(&ctx, &client).await {
-                    warn!(plugin = %task_name, %error, "plugin failed to load");
-
-                    true
-                } else {
-                    false
-                }
-            }
-            .instrument(tracing::info_span!("loaded", plugin = %task_name))
-            .await;
-
-            if failed_to_load {
+            if run_hook!(
+                "loaded",
+                task_name,
+                plugin.loaded(&ctx, &client),
+                warn,
+                "plugin failed to load"
+            ) {
                 return;
             }
 
@@ -611,24 +626,24 @@ impl PluginTask {
                 // The handler runs inside a span: the OpenTelemetry layer drops events that
                 // are not in the context of a span, so without it the plugin's logs would
                 // only ever reach stdout.
-                async {
-                    if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
-                        error!(plugin = %task_name, %error, "plugin error during event handling");
-                    }
-                }
-                .instrument(tracing::info_span!("handle_event", plugin = %task_name))
-                .await;
+                run_hook!(
+                    "handle_event",
+                    task_name,
+                    plugin.handle_event(&ctx, &client, &event),
+                    error,
+                    "plugin error during event handling"
+                );
             }
 
             // The mailbox is closed: the bot is shutting down. The warning goes inside the
             // span, for the same reason as the load one above.
-            async {
-                if let Err(error) = plugin.shutdown(&ctx, &client).await {
-                    warn!(plugin = %task_name, %error, "plugin error during shutdown");
-                }
-            }
-            .instrument(tracing::info_span!("shutdown", plugin = %task_name))
-            .await;
+            run_hook!(
+                "shutdown",
+                task_name,
+                plugin.shutdown(&ctx, &client),
+                warn,
+                "plugin error during shutdown"
+            );
 
             debug!(plugin = %task_name, "plugin task stopped");
         });

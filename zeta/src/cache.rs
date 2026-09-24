@@ -108,21 +108,7 @@ impl<T> TtlCache<T> {
             return Ok(value);
         }
 
-        let _flight = self.refreshing.lock().await;
-
-        if let Some(value) = self.get() {
-            return Ok(value);
-        }
-
-        let value = refresh().await?;
-        let expires_at = Instant::now() + self.ttl;
-
-        self.replace(Entry {
-            value: value.clone(),
-            expires_at,
-        });
-
-        Ok(value)
+        self.refresh_cloned(refresh, false).await
     }
 
     /// Populates the cache through `refresh` when its value is missing or expired.
@@ -177,12 +163,33 @@ impl<T> TtlCache<T> {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<T, E>> + Send,
     {
+        self.refresh_cloned(refresh, true).await
+    }
+
+    /// The shared single-flight refresh of the two value-returning paths: takes the flight
+    /// lock, skips the refresh when the cache already holds a fresh value (unless `force`),
+    /// then stores and returns the refreshed value.
+    ///
+    /// A task that finds a fresh value under the lock — populated by the refresh it was
+    /// waiting for — returns it through the double-check instead of refreshing again.
+    async fn refresh_cloned<E, F, Fut>(&self, refresh: F, force: bool) -> Result<T, E>
+    where
+        T: Clone + Send + Sync,
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<T, E>> + Send,
+    {
         let _flight = self.refreshing.lock().await;
 
+        if !force && let Some(value) = self.get() {
+            return Ok(value);
+        }
+
         let value = refresh().await?;
+        let expires_at = Instant::now() + self.ttl;
+
         self.replace(Entry {
             value: value.clone(),
-            expires_at: Instant::now() + self.ttl,
+            expires_at,
         });
 
         Ok(value)

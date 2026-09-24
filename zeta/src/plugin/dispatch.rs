@@ -132,39 +132,46 @@ impl EventIndex {
             Command::PRIVMSG(..) => self.dispatch_privmsg(filters, &message, &mut stopped),
             // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
             // ordinary notices are not an event kind.
-            Command::NOTICE(..) => self.deliver_kind(
+            Command::NOTICE(..) => self.deliver_built(
                 EventKind::Ctcp,
-                CtcpEvent::new(Arc::clone(&message)).map(Event::Ctcp),
+                |message| CtcpEvent::new(message).map(Event::Ctcp),
+                &message,
                 &mut stopped,
             ),
-            Command::JOIN(..) => self.deliver_kind(
+            Command::JOIN(..) => self.deliver_built(
                 EventKind::Join,
-                Some(Event::Join(JoinEvent::new(Arc::clone(&message)))),
+                |message| Some(Event::Join(JoinEvent::new(message))),
+                &message,
                 &mut stopped,
             ),
-            Command::PART(..) => self.deliver_kind(
+            Command::PART(..) => self.deliver_built(
                 EventKind::Part,
-                Some(Event::Part(PartEvent::new(Arc::clone(&message)))),
+                |message| Some(Event::Part(PartEvent::new(message))),
+                &message,
                 &mut stopped,
             ),
-            Command::QUIT(..) => self.deliver_kind(
+            Command::QUIT(..) => self.deliver_built(
                 EventKind::Quit,
-                Some(Event::Quit(QuitEvent::new(Arc::clone(&message)))),
+                |message| Some(Event::Quit(QuitEvent::new(message))),
+                &message,
                 &mut stopped,
             ),
-            Command::NICK(..) => self.deliver_kind(
+            Command::NICK(..) => self.deliver_built(
                 EventKind::Nick,
-                Some(Event::Nick(NickEvent::new(Arc::clone(&message)))),
+                |message| Some(Event::Nick(NickEvent::new(message))),
+                &message,
                 &mut stopped,
             ),
-            Command::KICK(..) => self.deliver_kind(
+            Command::KICK(..) => self.deliver_built(
                 EventKind::Kick,
-                Some(Event::Kick(KickEvent::new(Arc::clone(&message)))),
+                |message| Some(Event::Kick(KickEvent::new(message))),
+                &message,
                 &mut stopped,
             ),
-            Command::Raw(..) => self.deliver_kind(
+            Command::Raw(..) => self.deliver_built(
                 EventKind::Raw,
-                Some(Event::Raw(RawEvent::new(Arc::clone(&message)))),
+                |message| Some(Event::Raw(RawEvent::new(message))),
+                &message,
                 &mut stopped,
             ),
             // Everything else is connection protocol the plugins have no events for.
@@ -174,27 +181,29 @@ impl EventIndex {
         stopped
     }
 
+    /// Retains in a keyed subscriber list only the entries `keep` accepts, dropping the keys
+    /// whose lists became empty.
+    fn retain_entries<K, V>(map: &mut HashMap<K, Vec<V>>, keep: &impl Fn(&V) -> bool)
+    where
+        K: Eq + std::hash::Hash,
+    {
+        map.retain(|_, values| {
+            values.retain(|value| keep(value));
+            !values.is_empty()
+        });
+    }
+
     /// Removes every trace of the named plugin from the index.
     ///
     /// Called when one of its deliveries failed because the plugin's task stopped.
     pub fn evict(&mut self, name: &str) {
         let other = |subscriber: &Subscriber| subscriber.name.as_ref() != name;
 
-        self.commands.retain(|_, targets| {
-            targets.retain(|target| other(&target.subscriber));
-            !targets.is_empty()
-        });
+        Self::retain_entries(&mut self.commands, &|target| other(&target.subscriber));
+        Self::retain_entries(&mut self.url_hosts, &|subscriber| other(subscriber));
+        Self::retain_entries(&mut self.kinds, &|subscriber| other(subscriber));
 
-        self.url_hosts.retain(|_, subscribers| {
-            subscribers.retain(|subscriber| other(subscriber));
-            !subscribers.is_empty()
-        });
         self.url_any.retain(|subscriber| other(subscriber));
-
-        self.kinds.retain(|_, subscribers| {
-            subscribers.retain(|subscriber| other(subscriber));
-            !subscribers.is_empty()
-        });
     }
 
     /// Returns the subscriber list of a plain-interest event kind, if any are registered.
@@ -211,6 +220,20 @@ impl EventIndex {
         {
             Self::deliver(&event, subscribers, stopped);
         }
+    }
+
+    /// Delivers the event `build` constructs from `message` to the subscribers of `kind`.
+    ///
+    /// `build` yields [`None`] when the message does not carry the event after all — e.g. a
+    /// `NOTICE` that is not a CTCP query or reply.
+    fn deliver_built(
+        &self,
+        kind: EventKind,
+        build: impl FnOnce(Arc<Message>) -> Option<Event>,
+        message: &Arc<Message>,
+        stopped: &mut Vec<String>,
+    ) {
+        self.deliver_kind(kind, build(Arc::clone(message)), stopped);
     }
 
     /// Delivers one event to every subscriber of a list.
@@ -233,9 +256,10 @@ impl EventIndex {
 
         // CTCP messages are their own event kind and are routed to nothing else.
         if text.starts_with('\x01') {
-            self.deliver_kind(
+            self.deliver_built(
                 EventKind::Ctcp,
-                CtcpEvent::new(Arc::clone(message)).map(Event::Ctcp),
+                |message| CtcpEvent::new(message).map(Event::Ctcp),
+                message,
                 stopped,
             );
 

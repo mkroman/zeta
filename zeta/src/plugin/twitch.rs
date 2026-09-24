@@ -157,21 +157,15 @@ impl Twitch {
         endpoint: &str,
         query: &[(&str, &str)],
     ) -> Result<Response<T>, Error> {
-        let token = self
-            .credentials
-            .access_token(Twitch::token_grant)
-            .await
-            .map_err(Error::from)?;
         let url = format!("{BASE_URL}/{endpoint}");
+        let client_id = self.credentials.client_id();
 
-        let request = self
-            .credentials
-            .client()
-            .get(&url)
-            .header("Client-ID", self.credentials.client_id())
-            .header("Authorization", format!("Bearer {token}"))
-            .query(query);
-        http::get_json(request).await.map_err(Error::from)
+        self.credentials
+            .get_json(&url, Twitch::token_grant, |request| {
+                request.header("Client-ID", client_id).query(query)
+            })
+            .await
+            .map_err(Error::from)
     }
 
     /// Fetches stream information and sends a message to the channel.

@@ -177,7 +177,12 @@ pub fn parse_iso8601_duration(input: &str) -> Option<Duration> {
 #[must_use]
 pub fn format_duration(duration: Duration) -> String {
     // Seconds per day, hour, minute, and second, in descending order.
-    const UNITS: &[(i64, &str)] = &[(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")];
+    const UNITS: &[(i64, &str)] = &[
+        (SECONDS_PER_DAY, "d"),
+        (SECONDS_PER_HOUR, "h"),
+        (SECONDS_PER_MINUTE, "m"),
+        (SECONDS_PER_SECOND, "s"),
+    ];
 
     // A duration of more than `i64::MAX` seconds would outlive the universe several times over;
     // saturate rather than wrap.
