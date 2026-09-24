@@ -261,6 +261,31 @@ mod tests {
         // Login walls carry no details.
         assert_eq!(MediaDetails::from_og(&extract(LOGIN_PAGE)), None);
 
+        // A login wall that does serve the generic og:title is recognized as one.
+        for title in ["Instagram", "Login • Instagram"] {
+            let metadata = PageMetadata {
+                og_title: Some(title.to_string()),
+                og_description: Some("1,234 likes".to_string()),
+            };
+
+            assert_eq!(
+                MediaDetails::from_og(&metadata),
+                None,
+                "the generic title {title:?} should be rejected"
+            );
+        }
+
+        // The recognition is case-insensitive, and a real author named like the site is not
+        // rejected wholesale: only exact titles are generic.
+        let metadata = PageMetadata {
+            og_title: Some("instagram on Instagram: \"caption\"".to_string()),
+            og_description: None,
+        };
+        assert_eq!(
+            MediaDetails::from_og(&metadata).unwrap().author.as_deref(),
+            Some("instagram")
+        );
+
         // An empty caption falls back to the description.
         let metadata = PageMetadata {
             og_title: Some("user.name on Instagram: \"\"".to_string()),

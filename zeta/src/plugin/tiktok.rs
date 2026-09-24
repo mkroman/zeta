@@ -216,6 +216,7 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
 
     settings_tests! {
         Settings,

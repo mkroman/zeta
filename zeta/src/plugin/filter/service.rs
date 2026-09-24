@@ -253,63 +253,75 @@ mod tests {
         assert!(criteria.matches(&filter(Some("dr.dk"), None)));
     }
 
-    /// Skips the test if a test database has not been configured. The `filters` table must
-    /// exist — start the bot once against the test database to apply the migrations.
-    async fn test_service() -> Option<FilterService> {
-        let db = crate::database::connect_for_tests().await?;
-
-        Some(FilterService::new(db))
+    /// A filter fixture. The `created_by` column is part of the model; with per-test databases
+    /// the value no longer doubles as a cleanup marker.
+    fn new_filter(channel: Option<&str>, host: &str, username: Option<&str>) -> NewFilter {
+        NewFilter {
+            channel: channel.map(String::from),
+            host: Some(host.into()),
+            path: None,
+            nickname: None,
+            username: username.map(String::from),
+            hostname: None,
+            created_by: "test".into(),
+        }
     }
 
-    #[tokio::test]
-    async fn add_delete_and_load_roundtrip() {
-        let Some(service) = test_service().await else {
-            return;
-        };
+    #[sqlx::test]
+    async fn added_filters_are_listed_with_their_fields(db: sqlx::PgPool) {
+        let service = FilterService::new(db);
 
         let added = service
-            .add(NewFilter {
-                channel: Some("#smoke".into()),
-                host: Some("example.com".into()),
-                path: None,
-                nickname: None,
-                username: Some("*other".into()),
-                hostname: None,
-                created_by: "smoke".into(),
-            })
+            .add(new_filter(
+                Some("#smoke"),
+                "example.com",
+                Some("*other"),
+            ))
             .await
             .unwrap();
 
         assert_eq!(added.channel.as_deref(), Some("#smoke"));
+        assert_eq!(added.host.as_deref(), Some("example.com"));
         assert_eq!(added.username.as_deref(), Some("*other"));
         assert!(service.list().iter().any(|f| f.id == added.id));
+    }
+
+    #[sqlx::test]
+    async fn deleted_filters_leave_the_database_and_the_index(db: sqlx::PgPool) {
+        let service = FilterService::new(db);
+
+        let added = service
+            .add(new_filter(
+                Some("#smoke"),
+                "example.com",
+                Some("*other"),
+            ))
+            .await
+            .unwrap();
 
         let removed = service.delete_ids(&[added.id]).await.unwrap();
 
         assert_eq!(removed, 1);
-        assert!(!service.list().iter().any(|f| f.id == added.id));
 
-        // The database is the source of truth: a fresh load restores the index without the
-        // deleted filter.
-        service.load().await.unwrap();
-
-        assert!(!service.list().iter().any(|f| f.id == added.id));
         assert!(!service.matches(
             "#smoke",
             Some(Sender::new("someone", "~cliother", "host.example")),
             &"https://example.com/page".parse().unwrap()
         ));
 
-        let re_added = service
-            .add(NewFilter {
-                channel: None,
-                host: Some("*.com".into()),
-                path: None,
-                nickname: None,
-                username: None,
-                hostname: None,
-                created_by: "smoke".into(),
-            })
+        // The database is the source of truth: a fresh load restores the index without the
+        // deleted filter.
+        service.load().await.unwrap();
+
+        assert!(!service.list().iter().any(|f| f.id == added.id));
+    }
+
+    #[sqlx::test]
+    async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
+        let service = FilterService::new(db);
+
+        service
+            .add(new_filter(None, "*.com", None))
             .await
             .unwrap();
 
@@ -318,7 +330,5 @@ mod tests {
             Some(Sender::new("nick", "user", "host.example")),
             &"https://reuters.com/article".parse().unwrap()
         ));
-
-        service.delete_ids(&[re_added.id]).await.unwrap();
     }
 }

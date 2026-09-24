@@ -106,6 +106,7 @@ fn extract_options<'a>(s: &'a str, settings: &Settings) -> Option<Vec<&'a str>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
 
     #[test]
     fn it_should_strip_nick_prefix() {

@@ -203,6 +203,7 @@ fn normalized_score(trust_score: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
 
     settings_tests! {
         Settings,

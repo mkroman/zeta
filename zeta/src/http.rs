@@ -345,33 +345,6 @@ pub mod emulated {
     }
 }
 
-/// Returns the address of a just-dropped local listener, so connections to it are refused
-/// deterministically while URLs built against them still carry credential-looking queries.
-#[cfg(all(test, any(feature = "http", feature = "emulated")))]
-pub fn refused_address() -> std::net::SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let address = listener.local_addr().expect("address");
-    drop(listener);
-    address
-}
-
-/// Asserts the redaction guarantees every transport wrapper makes: the short rendering (what a
-/// channel reply gets) is classified, host-only and bounded; the full rendering (what a log line
-/// gets) carries the redacted URL and the cause; `Debug` leaks no query either.
-#[cfg(all(test, any(feature = "http", feature = "emulated")))]
-pub fn assert_redactions(message: &str, full: &str, debug: &str, address: &std::net::SocketAddr) {
-    assert!(!message.contains("secret"), "{message}");
-    assert!(message.starts_with("could not connect"), "{message}");
-    assert!(message.contains(&address.ip().to_string()), "{message}");
-    assert!(message.len() < 64, "{message}");
-
-    assert!(!full.contains("secret"), "{full}");
-    assert!(full.contains(&format!("http://{address}/")), "{full}");
-    assert!(full.contains("refused"), "{full}");
-
-    assert!(!debug.contains("secret"), "{debug}");
-}
-
 #[cfg(all(test, feature = "http"))]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -379,6 +352,7 @@ mod tests {
     use tracing_subscriber::prelude::*;
 
     use super::*;
+    use zeta_test_support::{assert_redactions, assert_timeout_redactions, refused_address};
 
     /// A writer that collects everything logged through it, for assertions.
     #[derive(Clone, Default)]
@@ -420,15 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn request_errors_redact_the_url_but_keep_the_cause() {
-        let address = refused_address();
-        let error = reqwest::Client::new()
-            .get(format!("http://{address}/?key=secret"))
-            .send()
-            .await
-            .expect_err("nothing listens on that address");
-
-        // Sanity: reqwest attaches the request URL to the error — redacting it is on us.
-        assert!(error.url().is_some(), "reqwest attaches the request url");
+        let (error, address) = zeta_test_support::refused_get("key=secret").await;
 
         let error = RequestError::from(error);
 
@@ -446,6 +412,22 @@ mod tests {
 
         assert!(!error.to_string().contains("secret"), "{error}");
         assert!(!format!("{error:?}").contains("secret"), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn request_timeout_errors_classify_and_redact() {
+        let (error, address) = zeta_test_support::timeout_error().await;
+
+        let error = RequestError::from(error);
+
+        assert_timeout_redactions(
+            &error.to_string(),
+            error.full(),
+            &format!("{error:?}"),
+            &address,
+        );
+
+        assert_eq!(error.error_type(), "timeout");
     }
 
     #[tokio::test]
@@ -543,7 +525,7 @@ mod tests {
 /// (`plugin-titles`) reach it without the `http` feature that gates the module above.
 #[cfg(all(test, feature = "emulated"))]
 mod emulated_tests {
-    use super::{assert_redactions, refused_address};
+    use zeta_test_support::{assert_redactions, refused_address};
 
     #[tokio::test]
     async fn emulated_request_errors_redact_the_uri_but_keep_the_cause() {

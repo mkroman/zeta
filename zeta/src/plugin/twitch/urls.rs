@@ -83,7 +83,7 @@ fn is_valid_username(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::url::assert_parses;
+    use zeta_test_support::assert_parses;
 
     #[test]
     fn test_parse_stream_urls() {
@@ -136,15 +136,37 @@ mod tests {
     }
 
     #[test]
+    fn test_username_length_window() {
+        // Twitch usernames are 4-25 characters; both edges parse.
+        assert_parses(parse_twitch_url, &[
+            (
+                "https://twitch.tv/abcd",
+                Some(UrlKind::Stream("abcd".to_string())),
+            ),
+            (
+                "https://twitch.tv/abcdefghijklmnopqrstuvwxy",
+                Some(UrlKind::Stream("abcdefghijklmnopqrstuvwxy".to_string())),
+            ),
+        ]);
+    }
+
+    #[test]
     fn test_invalid_urls() {
         assert_parses(parse_twitch_url, &[
             ("https://example.com/lirik", None),
             ("https://twitch.tv/", None),
             ("https://twitch.tv/li;rik", None),
+            // Usernames below the 4-character minimum and above the 25-character maximum.
+            ("https://twitch.tv/abc", None),
+            ("https://twitch.tv/abcdefghijklmnopqrstuvwxyz", None),
+            // Reserved segments do not name a stream.
+            ("https://twitch.tv/clip", None),
+            ("https://twitch.tv/videos", None),
             ("https://twitch.tv/videos/", None),
             ("https://twitch.tv/lirik/videos/2119948564", None),
+            // Clip ids are validated on the channel path too.
+            ("https://twitch.tv/lirik/clip/ab;cd", None),
             ("https://clips.twitch.tv/", None),
-            ("https://youtu.be/dQw4w9WgXcQ", None),
         ]);
     }
 }

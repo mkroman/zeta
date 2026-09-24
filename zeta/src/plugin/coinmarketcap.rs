@@ -626,6 +626,7 @@ fn format_price(price: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
     use crate::config::HttpConfig;
     use model::FiatQuote;
 

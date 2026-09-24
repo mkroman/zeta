@@ -38,6 +38,8 @@ COPY --parents \
     dendanskeordbog/src/lib.rs \
     reddit/Cargo.toml \
     reddit/src/lib.rs \
+    zeta-test-support/Cargo.toml \
+    zeta-test-support/src/lib.rs \
     kagi/Cargo.toml \
     kagi/src/lib.rs \
     ./
@@ -70,6 +72,8 @@ COPY --parents \
     reddit/src \
     kagi/Cargo.toml \
     kagi/src \
+    zeta-test-support/Cargo.toml \
+    zeta-test-support/src \
     ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \

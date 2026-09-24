@@ -154,21 +154,3 @@ macro_rules! database_error {
 }
 
 pub(crate) use database_error;
-
-/// Connects to the test database, if one is configured.
-///
-/// Returns `None` when `ZETA_TEST_DATABASE_URL` is unset, so database-backed tests skip instead
-/// of failing on machines without the database running.
-#[cfg(test)]
-pub(crate) async fn connect_for_tests() -> Option<Database> {
-    use sqlx::postgres::PgPoolOptions;
-
-    let url = std::env::var("ZETA_TEST_DATABASE_URL").ok()?;
-    let db = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&url)
-        .await
-        .expect("could not connect to the test database");
-
-    Some(db)
-}

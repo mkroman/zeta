@@ -1,33 +1,18 @@
 [package]
-name = "dendanskeordbog"
+name = "zeta-test-support"
 version = "0.1.0"
 edition = "2024"
-description = "A client and parser for the Danish Dictionary (Den Danske Ordbog)."
+description = "Shared test utilities for the zeta workspace crates."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mkroman/zeta"
-keywords = ["dictionary", "danish", "scraper", "ordnet", "ddo"]
-categories = ["api-bindings", "parser", "text-processing"]
-
-[package.metadata.docs.rs]
-all-features = true
-
-[features]
-client = ["dep:reqwest", "reqwest/gzip"]
-default = ["serde", "client"]
-# Logging events using `tracing`
-log = ["dep:tracing"]
-serde = ["dep:serde"]
 
 [dependencies]
-reqwest = { workspace = true, optional = true }
-scraper = { workspace = true }
-serde = { workspace = true, features = ["derive"], optional = true }
-thiserror = "2.0.16"
-tracing = { workspace = true, optional = true }
+reqwest.workspace = true
+url.workspace = true
+wiremock = "0.6"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["net"] }
-zeta-test-support = { path = "../zeta-test-support" }
+tokio.workspace = true
 
 [lints.clippy]
 # Enable all basic clippy lints
@@ -38,6 +23,8 @@ pedantic = "warn"
 nursery = "warn"
 # Disable cargo-related lints (often too noisy for dependencies)
 cargo = "allow"
+# Allow for higher complexity since it's not a reliable estimate
+cognitive_complexity = "allow"
 
 [lints.rust]
 # Completely disallow unsafe code - no unsafe blocks, functions, or traits
@@ -48,9 +35,9 @@ missing_docs = "warn"
 rust_2018_idioms = "warn"
 # Catch unnecessary casts between identical types
 trivial_casts = "warn"
-# Catch unnecessary numeric type casts (e.g., u32 as u32)
+# Catch unnecessary numeric type casts
 trivial_numeric_casts = "warn"
 # Warn when import braces are used unnecessarily (use foo::{bar} vs use foo::bar)
 unused_import_braces = "warn"
-# Catch redundant path qualifications (self::foo when foo would suffice)
+# Catch redundant path qualifications (self::foo vs foo)
 unused_qualifications = "warn"

@@ -636,15 +636,35 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn parses_add_with_repeated_hosts() {
+    /// Parses `input` with the filter command spec and unpacks the `add` subcommand.
+    fn parse_add(input: &str) -> Add {
         let opts: Opts = FILTER
-            .parse_words("add --host imdb.com --host www.imdb.com --user other")
-            .unwrap();
+            .parse_words(input)
+            .unwrap_or_else(|error| panic!("`{input}` should parse: {error}"));
 
         let Subcommand::Add(add) = opts.command else {
-            panic!("expected the add subcommand");
+            panic!("`{input}` should be the add subcommand");
         };
+
+        add
+    }
+
+    /// Parses `input` with the filter command spec and unpacks the `delete` subcommand.
+    fn parse_delete(input: &str) -> Delete {
+        let opts: Opts = FILTER
+            .parse_words(input)
+            .unwrap_or_else(|error| panic!("`{input}` should parse: {error}"));
+
+        let Subcommand::Delete(delete) = opts.command else {
+            panic!("`{input}` should be the delete subcommand");
+        };
+
+        delete
+    }
+
+    #[test]
+    fn parses_add_with_repeated_hosts() {
+        let add = parse_add("add --host imdb.com --host www.imdb.com --user other");
 
         assert_eq!(add.host, ["imdb.com", "www.imdb.com"]);
         assert_eq!(add.user.as_deref(), Some("other"));
@@ -652,13 +672,7 @@ mod tests {
 
     #[test]
     fn builds_one_filter_per_host_and_path() {
-        let opts: Opts = FILTER
-            .parse_words("add --host a.com --host b.com --path /x/*")
-            .unwrap();
-
-        let Subcommand::Add(add) = opts.command else {
-            panic!("expected the add subcommand");
-        };
+        let add = parse_add("add --host a.com --host b.com --path /x/*");
 
         let filters = add.new_filters(Some("#chan"), "smoke");
 
@@ -679,11 +693,7 @@ mod tests {
 
     #[test]
     fn builds_a_hostless_filter_when_only_sender_criteria_are_given() {
-        let opts: Opts = FILTER.parse_words("add --user *other").unwrap();
-
-        let Subcommand::Add(add) = opts.command else {
-            panic!("expected the add subcommand");
-        };
+        let add = parse_add("add --user *other");
 
         let filters = add.new_filters(None, "smoke");
 
@@ -695,60 +705,35 @@ mod tests {
 
     #[test]
     fn add_requires_a_criterion() {
-        let opts: Opts = FILTER.parse_words("add").unwrap();
-
-        let Subcommand::Add(add) = opts.command else {
-            panic!("expected the add subcommand");
-        };
+        let add = parse_add("add");
 
         assert!(add.validate("#chan").is_err());
     }
 
     #[test]
     fn add_rejects_channel_and_all_channels_together() {
-        let opts: Opts = FILTER
-            .parse_words("add --channel #foo --all-channels --host example.com")
-            .unwrap();
-
-        let Subcommand::Add(add) = opts.command else {
-            panic!("expected the add subcommand");
-        };
+        let add = parse_add("add --channel #foo --all-channels --host example.com");
 
         assert!(add.validate("#chan").is_err());
     }
 
     #[test]
     fn add_rejects_wildcard_channels() {
-        let opts: Opts = FILTER
-            .parse_words("add --channel #foo* --host example.com")
-            .unwrap();
-
-        let Subcommand::Add(add) = opts.command else {
-            panic!("expected the add subcommand");
-        };
+        let add = parse_add("add --channel #foo* --host example.com");
 
         assert!(add.validate("#chan").is_err());
     }
 
     #[test]
     fn add_defaults_to_the_current_channel() {
-        let opts: Opts = FILTER.parse_words("add --host example.com").unwrap();
-
-        let Subcommand::Add(add) = opts.command else {
-            panic!("expected the add subcommand");
-        };
+        let add = parse_add("add --host example.com");
 
         assert_eq!(add.validate("#chan").unwrap().as_deref(), Some("#chan"));
-        assert!(add.validate("#chan").is_ok());
     }
 
     #[test]
     fn delete_parses_id_and_force() {
-        let opts: Opts = FILTER.parse_words("delete 12 --force").unwrap();
-
-        let Subcommand::Delete(delete) = opts.command else {
-            panic!("expected the delete subcommand");
-        };
+        let delete = parse_delete("delete 12 --force");
 
         assert_eq!(delete.id, Some(12));
         assert!(delete.force);
@@ -757,11 +742,7 @@ mod tests {
 
     #[test]
     fn delete_collects_criteria() {
-        let opts: Opts = FILTER.parse_words("delete --host *.com").unwrap();
-
-        let Subcommand::Delete(delete) = opts.command else {
-            panic!("expected the delete subcommand");
-        };
+        let delete = parse_delete("delete --host *.com");
 
         assert_eq!(delete.id, None);
         assert_eq!(delete.criteria().unwrap().host.as_deref(), Some("*.com"));
@@ -769,7 +750,9 @@ mod tests {
 
     #[test]
     fn list_criteria_convert() {
-        let opts: Opts = FILTER.parse_words("list --host *.com").unwrap();
+        let opts: Opts = FILTER
+            .parse_words("list --host *.com")
+            .expect("`list --host *.com` should parse");
 
         let Subcommand::List(list) = opts.command else {
             panic!("expected the list subcommand");

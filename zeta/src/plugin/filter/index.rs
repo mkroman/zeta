@@ -284,11 +284,24 @@ mod tests {
         )
     }
 
-    #[test]
-    fn indexes_by_exact_host() {
+    /// Returns an index pre-populated with the given filters, numbered from 1.
+    fn index_with(criteria: &[NewFilter]) -> FilterIndex {
         let mut index = FilterIndex::default();
 
-        index.insert(filter(1, new_filter(None, Some("imdb.com"))));
+        for (position, criteria) in criteria.iter().enumerate() {
+            let id = i32::try_from(position)
+                .expect("fewer filters than `i32` allows")
+                + 1;
+
+            index.insert(filter(id, criteria.clone()));
+        }
+
+        index
+    }
+
+    #[test]
+    fn indexes_by_exact_host() {
+        let index = index_with(&[new_filter(None, Some("imdb.com"))]);
 
         assert!(matches(&index, "#chan", "https://imdb.com/title/tt1"));
         assert!(!matches(&index, "#chan", "https://www.imdb.com/title/tt1"));
@@ -297,9 +310,7 @@ mod tests {
 
     #[test]
     fn indexes_wildcard_hosts() {
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(1, new_filter(None, Some("*.com"))));
+        let index = index_with(&[new_filter(None, Some("*.com"))]);
 
         assert!(matches(&index, "#chan", "https://reuters.com/some-article"));
         assert!(!matches(&index, "#chan", "https://dr.dk/some-article"));
@@ -307,24 +318,18 @@ mod tests {
 
     #[test]
     fn host_patterns_are_case_insensitive() {
-        let mut index = FilterIndex::default();
+        let upper = index_with(&[new_filter(None, Some("IMDB.COM"))]);
 
-        index.insert(filter(1, new_filter(None, Some("IMDB.COM"))));
+        assert!(matches(&upper, "#chan", "https://imdb.com/title/tt1"));
 
-        assert!(matches(&index, "#chan", "https://imdb.com/title/tt1"));
+        let lower = index_with(&[new_filter(None, Some("imdb.com"))]);
 
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(1, new_filter(None, Some("imdb.com"))));
-
-        assert!(matches(&index, "#chan", "https://IMDB.com/title/tt1"));
+        assert!(matches(&lower, "#chan", "https://IMDB.com/title/tt1"));
     }
 
     #[test]
     fn scopes_filters_to_channels() {
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(1, new_filter(Some("#foo"), Some("dr.dk"))));
+        let index = index_with(&[new_filter(Some("#foo"), Some("dr.dk"))]);
 
         assert!(matches(&index, "#FOO", "https://dr.dk"));
         assert!(!matches(&index, "#bar", "https://dr.dk"));
@@ -332,9 +337,7 @@ mod tests {
 
     #[test]
     fn matches_all_channel_filters_in_any_channel() {
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(1, new_filter(None, Some("dr.dk"))));
+        let index = index_with(&[new_filter(None, Some("dr.dk"))]);
 
         assert!(matches(&index, "#foo", "https://dr.dk"));
         assert!(matches(&index, "#bar", "https://dr.dk"));
@@ -342,15 +345,10 @@ mod tests {
 
     #[test]
     fn sender_criteria_require_a_sender() {
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(
-            1,
-            NewFilter {
-                username: Some("*other".into()),
-                ..new_filter(None, Some("imdb.com"))
-            },
-        ));
+        let index = index_with(&[NewFilter {
+            username: Some("*other".into()),
+            ..new_filter(None, Some("imdb.com"))
+        }]);
 
         assert!(index.matches(
             "#chan",
@@ -366,15 +364,10 @@ mod tests {
 
     #[test]
     fn combines_criteria_with_and() {
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(
-            1,
-            NewFilter {
-                nickname: Some("mk".into()),
-                ..new_filter(None, Some("dr.dk"))
-            },
-        ));
+        let index = index_with(&[NewFilter {
+            nickname: Some("mk".into()),
+            ..new_filter(None, Some("dr.dk"))
+        }]);
 
         assert!(index.matches(
             "#chan",
@@ -395,43 +388,31 @@ mod tests {
 
     #[test]
     fn paths_are_matched_with_wildcards_and_case_sensitively() {
-        let mut index = FilterIndex::default();
+        let wildcards = index_with(&[NewFilter {
+            path: Some("/title/*".into()),
+            ..new_filter(None, Some("imdb.com"))
+        }]);
 
-        index.insert(filter(
-            1,
-            NewFilter {
-                path: Some("/title/*".into()),
-                ..new_filter(None, Some("imdb.com"))
-            },
-        ));
-
-        assert!(matches(&index, "#chan", "https://imdb.com/title/tt1375666"));
+        assert!(matches(&wildcards, "#chan", "https://imdb.com/title/tt1375666"));
         assert!(matches(
-            &index,
+            &wildcards,
             "#chan",
             "https://imdb.com/title/tt1375666/mediaviewer/rm1"
         ));
-        assert!(!matches(&index, "#chan", "https://imdb.com/name/nm0186505"));
+        assert!(!matches(&wildcards, "#chan", "https://imdb.com/name/nm0186505"));
 
-        let mut index = FilterIndex::default();
+        let upper = index_with(&[NewFilter {
+            path: Some("/Title/*".into()),
+            ..new_filter(None, None)
+        }]);
 
-        index.insert(filter(
-            1,
-            NewFilter {
-                path: Some("/Title/*".into()),
-                ..new_filter(None, None)
-            },
-        ));
-
-        assert!(!matches(&index, "#chan", "https://maero.dk/title/x"));
-        assert!(matches(&index, "#chan", "https://maero.dk/Title/x"));
+        assert!(!matches(&upper, "#chan", "https://maero.dk/title/x"));
+        assert!(matches(&upper, "#chan", "https://maero.dk/Title/x"));
     }
 
     #[test]
     fn matches_urls_without_a_host_against_hostless_filters() {
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(1, new_filter(None, None)));
+        let index = index_with(&[new_filter(None, None)]);
 
         assert!(index.matches(
             "#chan",
@@ -439,21 +420,17 @@ mod tests {
             &Url::parse("mailto:someone@example.com").unwrap()
         ));
 
-        let mut index = FilterIndex::default();
+        let wildcard = index_with(&[new_filter(None, Some("*"))]);
 
-        index.insert(filter(1, new_filter(None, Some("*"))));
-
-        assert!(index.matches(
+        assert!(wildcard.matches(
             "#chan",
             None,
             &Url::parse("mailto:someone@example.com").unwrap()
         ));
 
-        let mut index = FilterIndex::default();
+        let host = index_with(&[new_filter(None, Some("example.com"))]);
 
-        index.insert(filter(1, new_filter(None, Some("example.com"))));
-
-        assert!(!index.matches(
+        assert!(!host.matches(
             "#chan",
             None,
             &Url::parse("mailto:someone@example.com").unwrap()
@@ -462,10 +439,10 @@ mod tests {
 
     #[test]
     fn removes_filters_by_id() {
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(1, new_filter(None, Some("imdb.com"))));
-        index.insert(filter(2, new_filter(None, Some("dr.dk"))));
+        let mut index = index_with(&[
+            new_filter(None, Some("imdb.com")),
+            new_filter(None, Some("dr.dk")),
+        ]);
 
         index.remove_ids(&[1]);
 
@@ -475,10 +452,10 @@ mod tests {
 
     #[test]
     fn lists_all_filters() {
-        let mut index = FilterIndex::default();
-
-        index.insert(filter(1, new_filter(Some("#foo"), Some("imdb.com"))));
-        index.insert(filter(2, new_filter(None, Some("dr.dk"))));
+        let index = index_with(&[
+            new_filter(Some("#foo"), Some("imdb.com")),
+            new_filter(None, Some("dr.dk")),
+        ]);
 
         let ids: Vec<_> = index.filters().iter().map(|filter| filter.id).collect();
 

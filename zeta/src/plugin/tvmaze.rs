@@ -259,3 +259,106 @@ impl Tvmaze {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+    use super::*;
+
+    /// Decodes a recorded search response for a running show with a scheduled next episode.
+    fn show_with_next_episode() -> Show {
+        serde_json::from_str(
+            r#"{
+                "id": 123,
+                "url": "https://www.tvmaze.com/shows/123/a-show",
+                "name": "A Show",
+                "type": "Scripted",
+                "language": "English",
+                "genres": ["Drama"],
+                "status": "Running",
+                "runtime": 60,
+                "averageRuntime": 55,
+                "premiered": "2020-01-01",
+                "ended": null,
+                "officialSite": null,
+                "externals": {"tvrage": null, "thetvdb": 123, "imdb": "tt123"},
+                "_embedded": {
+                    "nextepisode": {
+                        "id": 456,
+                        "name": "The Next One",
+                        "season": 2,
+                        "number": 7,
+                        "airstamp": "2020-06-01T20:00:00.000Z"
+                    }
+                }
+            }"#,
+        )
+        .expect("the api response should decode")
+    }
+
+    #[test]
+    fn builds_the_search_url() {
+        let url = Tvmaze::build_search_url("a show");
+
+        // `query_pairs_mut` percent-encodes the space as `+`.
+        assert_eq!(
+            url.as_str(),
+            "https://api.tvmaze.com/singlesearch/shows?q=a+show&embed=nextepisode"
+        );
+    }
+
+    #[test]
+    fn decodes_camel_case_fields_and_embedded_episodes() {
+        let show = show_with_next_episode();
+
+        assert_eq!(show.name, "A Show");
+        assert_eq!(show.status, "Running");
+        // The camelCase fields decode.
+        assert_eq!(show.average_runtime, Some(55));
+        assert_eq!(show.official_site, None);
+
+        let episode = show
+            .embedded
+            .expect("the embedded payload should be present")
+            .next_episode
+            .expect("the next episode should be present");
+
+        assert_eq!(episode.name, "The Next One");
+        assert_eq!(episode.season, 2);
+        assert_eq!(episode.number, 7);
+        // The RFC 3339 airstamp decodes.
+        assert!(episode.airstamp.is_some());
+    }
+
+    #[test]
+    fn formats_the_next_episode_message() {
+        let show = show_with_next_episode();
+
+        // The fixture's airstamp is in the past, so the time-until-air clamps to zero minutes.
+        let message = Tvmaze::format_show_message(&show);
+
+        assert!(
+            message.contains(
+                "Next episode “\x0fThe Next One\x0310” (\x0f2x07\x0310) airs in\x0f 0 minutes"
+            ),
+            "{message}"
+        );
+        // The show name prefixes the message.
+        assert!(message.contains("(\x0fA Show\x0310): "), "{message}");
+    }
+
+    #[test]
+    fn formats_the_status_message_without_a_next_episode() {
+        let mut show = show_with_next_episode();
+        show.embedded = None;
+
+        let message = Tvmaze::format_show_message(&show);
+
+        assert!(
+            message.contains(
+                "\x0fA Show\x0310 is currently marked as\x0f Running\x0310 and there is no next episode"
+            ),
+            "{message}"
+        );
+    }
+}

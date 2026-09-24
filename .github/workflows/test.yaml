@@ -43,10 +43,27 @@ permissions:
   contents: read
 
 jobs:
-  # Run unit tests only, i.e. no integration tests.
+  # Runs the crate's tests — inline unit tests and the tests/ integration tests — against a
+  # postgres instance, which the database-backed tests need for #[sqlx::test].
   test:
-    name: Unit Tests
+    name: Tests
     runs-on: ${{ inputs.runner }}
+    services:
+      # Parity with compose.yaml: the local development database.
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: zeta
+        ports:
+          - 5432:5432
+        # Gate the tests on postgres actually accepting connections.
+        options: >-
+          --health-cmd "pg_isready -U user"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
@@ -70,6 +87,7 @@ jobs:
         env:
           TEST_ARGS: ${{ inputs.test-args }}
           FAIL_FAST: ${{ !inputs.fail-fast && '--no-fail-fast' || '' }}
+          DATABASE_URL: postgresql://user:changeme@localhost:5432/zeta
         run: cargo test ${TEST_ARGS} ${FAIL_FAST}
 
   # Clippy runs as its own job because it doesn't play nice and reuse the

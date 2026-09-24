@@ -40,7 +40,7 @@ pub fn classify_imdb_url(url: &Url) -> Option<Link> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::url::assert_parses;
+    use zeta_test_support::assert_parses;
 
     #[test]
     fn classify_title_urls() {

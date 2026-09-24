@@ -215,3 +215,47 @@ pub enum Error {
     #[error("the video link redirects to something other than a submission")]
     VideoRedirectsToNonSubmission,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zeta_test_support::{
+        assert_redactions, assert_timeout_redactions, refused_get, timeout_error,
+    };
+
+    /// The wrapper's guarantees hold for a real connection failure: no rendering leaks the query
+    /// string, the short form is classified and host-only, the full form carries the redacted
+    /// URL and the cause, and the chain ends at the wrapper.
+    #[tokio::test]
+    async fn request_errors_redact_the_url_but_keep_the_cause() {
+        let (error, address) = refused_get("token=secret").await;
+
+        let error = RequestError::from(error);
+        let message = error.to_string();
+        let full = error.full();
+        let debug = format!("{error:?}");
+
+        assert_redactions(&message, full, &debug, &address);
+
+        assert_eq!(error.error_type(), "connection_error");
+
+        // The chain ends at the wrapper, so nothing walking `source()` reaches a raw error.
+        assert!(std::error::Error::source(&error).is_none(), "{debug}");
+    }
+
+    /// The timeout classification: the short form names the timeout, and the query string stays
+    /// out of every rendering.
+    #[tokio::test]
+    async fn timeout_errors_classify_and_redact() {
+        let (error, address) = timeout_error().await;
+
+        let error = RequestError::from(error);
+        let message = error.to_string();
+        let full = error.full();
+        let debug = format!("{error:?}");
+
+        assert_timeout_redactions(&message, full, &debug, &address);
+
+        assert_eq!(error.error_type(), "timeout");
+    }
+}

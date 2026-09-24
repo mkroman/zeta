@@ -614,6 +614,7 @@ fn tag_attr<'a>(tag: &'a Tag, name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
     use crate::plugin::CatalogEntry;
 
     /// Tokenizes `html` in a single chunk and returns the captured metadata.

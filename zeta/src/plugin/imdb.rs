@@ -201,6 +201,7 @@ impl Imdb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
     use crate::config::HttpConfig;
 
     settings_tests! {
@@ -246,7 +247,7 @@ mod tests {
     /// Live smoke test against IMDb's GraphQL API, to catch contract drift that the recorded
     /// fixtures cannot. Run with `cargo test -p zeta --all-features -- --ignored imdb::`.
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "requires network access"]
+    #[ignore = "needs network access"]
     async fn live_api_contract_smoke() {
         let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
 

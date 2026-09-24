@@ -214,7 +214,7 @@ fn is_valid_shortcode(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::url::assert_parses;
+    use zeta_test_support::assert_parses;
 
     #[test]
     fn test_parse_valid_urls() {
@@ -327,6 +327,8 @@ mod tests {
             // Usernames are limited to username characters.
             ("https://www.instagram.com/user;rm", None),
             ("https://www.instagram.com/user-name", None),
+            // Usernames are limited to 30 characters.
+            ("https://www.instagram.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/", None),
             // Site resources are not profiles.
             ("https://www.instagram.com/explore/tags/style/", None),
             ("https://www.instagram.com/accounts/login/", None),
@@ -379,13 +381,14 @@ mod tests {
     }
 
     #[test]
-    fn test_media_kind_labels() {
+    fn test_media_kind_labels_and_segments() {
         assert_eq!(MediaKind::Post.label(), "post");
         assert_eq!(MediaKind::Reel.label(), "reel");
         assert_eq!(MediaKind::Tv.label(), "video");
 
         assert_eq!(MediaKind::from_segment("p"), Some(MediaKind::Post));
         assert_eq!(MediaKind::from_segment("reels"), Some(MediaKind::Reel));
+        assert_eq!(MediaKind::from_segment("reel"), Some(MediaKind::Reel));
         assert_eq!(MediaKind::from_segment("tv"), Some(MediaKind::Tv));
         assert_eq!(MediaKind::from_segment("stories"), None);
     }

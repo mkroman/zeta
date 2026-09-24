@@ -11,10 +11,8 @@
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
+    sync::Arc,
 };
-
-#[cfg(test)]
-use std::path::Path;
 
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, warn};
@@ -24,12 +22,9 @@ use super::{
     object_key, public_url_for,
     s3::S3,
     tempdir_builder,
-    ytdlp::{self, DownloadedFile, Progress, YtDlp},
+    ytdlp::{self, DownloadedFile, Downloader, Progress},
 };
 use crate::url::is_identifier;
-
-#[cfg(test)]
-use super::TEMP_DIR_PREFIX;
 
 /// Errors that can occur while mirroring a download request.
 #[derive(thiserror::Error, Debug)]
@@ -109,7 +104,7 @@ impl DownloadManager {
     /// Panics if called outside of a tokio runtime.
     #[must_use]
     pub fn start(
-        ytdlp: YtDlp,
+        downloader: Arc<dyn Downloader>,
         s3: S3,
         download_dir: PathBuf,
         base_dir: Option<tempfile::TempDir>,
@@ -124,7 +119,7 @@ impl DownloadManager {
         let (status_tx, status_rx) = mpsc::unbounded_channel();
 
         let manager = Manager {
-            ytdlp,
+            downloader,
             s3,
             download_dir,
             _base_dir: base_dir,
@@ -162,8 +157,8 @@ impl DownloadManager {
 
 /// The state of the download manager task.
 struct Manager {
-    /// The `yt-dlp` runner used for downloading media.
-    ytdlp: YtDlp,
+    /// The downloader used for downloading media.
+    downloader: Arc<dyn Downloader>,
     /// The S3 client used for uploading media.
     s3: S3,
     /// The directory that downloads are buffered in.
@@ -269,22 +264,25 @@ impl Manager {
             "starting download"
         );
 
-        let ytdlp = self.ytdlp.clone();
+        let downloader = Arc::clone(&self.downloader);
         let task = DownloadTask::new(id, self.status_tx.clone());
         let url = request.url.clone();
         let media_id = request.id.clone();
         let path = tempdir.path().to_path_buf();
 
         // The span carries the media id: the download runs in its own task, so without it the
-        // yt-dlp and upload diagnostics below only ever reach stdout.
+        // download and upload diagnostics below only ever reach stdout.
         let span = tracing::info_span!("download_media", media_id = %media_id);
 
         tokio::spawn(
             async move {
-                let result = ytdlp
-                    .download_with_progress(&url, &media_id, &path, |progress| {
-                        task.progress(progress);
-                    })
+                let result = downloader
+                    .download(
+                        &url,
+                        &media_id,
+                        &path,
+                        Box::new(|progress| task.progress(progress)),
+                    )
                     .await;
 
                 match result {
@@ -496,46 +494,26 @@ impl Drop for DownloadTask {
     }
 }
 
-/// Returns the temporary download directories that currently exist under `base`.
-#[cfg(test)]
-fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(base)
-        .unwrap()
-        .flatten()
-        .filter(super::is_temp_download_dir)
-        .map(|entry| entry.path())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    use futures::future::BoxFuture;
+    use tokio::sync::oneshot;
+
     use super::*;
+    use crate::mirror::TEMP_DIR_PREFIX;
 
-    /// A `yt-dlp` stand-in that fails after sleeping for the download URL.
-    const SLEEPING_SCRIPT_BODY: &str = "#!/bin/sh\nfor last; do :; done\nsleep \"$last\"\nexit 1\n";
-
-    /// A `yt-dlp` stand-in that writes a file into `--paths` and dumps its json.
-    const SUCCESSFUL_SCRIPT_BODY: &str = r#"#!/bin/sh
-while [ $# -gt 0 ]; do
-  if [ "$1" = "--paths" ] && [ -n "$2" ]; then
-    dir="$2"
-  fi
-  shift
-done
-printf junk > "$dir/123.mp4"
-printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "123", "ext": "mp4", "vcodec": "avc1.640029", "acodec": "mp4a.40.2"}]}' "$dir"
-"#;
-
-    /// Writes an executable script that sleeps for the number of seconds given as its last
-    /// argument (the download URL), and then exits with a failure.
-    fn write_sleeping_script(name: &str) -> PathBuf {
-        crate::mirror::write_test_script(name, SLEEPING_SCRIPT_BODY)
-    }
-
-    /// Writes an executable script that acts like a successful `yt-dlp` run: it writes a file
-    /// into the directory passed via `--paths` and dumps its json.
-    fn write_successful_script(name: &str) -> PathBuf {
-        crate::mirror::write_test_script(name, SUCCESSFUL_SCRIPT_BODY)
+    /// Returns the temporary download directories that currently exist under `base`.
+    fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(base)
+            .unwrap()
+            .flatten()
+            .filter(crate::mirror::is_temp_download_dir)
+            .map(|entry| entry.path())
+            .collect()
     }
 
     /// Returns a request that reports its result on the given channel.
@@ -558,11 +536,15 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
 
     /// Starts a manager with its own isolated download directory, so tests cannot interfere with
     /// each other.
-    fn start_manager(script: &Path, max_concurrent: usize) -> (tempfile::TempDir, DownloadManager) {
+    fn start_manager(
+        downloader: Arc<dyn Downloader>,
+        s3: S3,
+        max_concurrent: usize,
+    ) -> (tempfile::TempDir, DownloadManager) {
         let download_dir = tempfile::tempdir().unwrap();
         let manager = DownloadManager::start(
-            YtDlp::with_command(script.to_str().unwrap()),
-            S3::for_test(),
+            downloader,
+            s3,
             download_dir.path().to_path_buf(),
             None,
             max_concurrent,
@@ -571,10 +553,99 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
         (download_dir, manager)
     }
 
+    /// A downloader fake that fails every download, recording the media ids it was asked to
+    /// download, so a test can prove a download never started.
+    #[derive(Default)]
+    struct RecordingDownloader {
+        started: Mutex<Vec<String>>,
+    }
+
+    impl Downloader for RecordingDownloader {
+        fn download<'a>(
+            &'a self,
+            _url: &'a str,
+            id: &'a str,
+            _output_dir: &'a Path,
+            _on_progress: Box<dyn FnMut(Progress) + Send + 'a>,
+        ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, ytdlp::Error>> {
+            self.started.lock().unwrap().push(id.to_string());
+
+            Box::pin(async { Err(ytdlp::Error::NoDownloads) })
+        }
+    }
+
+    /// A downloader fake that writes a media file into the output directory and reports it, as a
+    /// completed `yt-dlp` run would.
+    struct CompletingDownloader;
+
+    impl Downloader for CompletingDownloader {
+        fn download<'a>(
+            &'a self,
+            _url: &'a str,
+            id: &'a str,
+            output_dir: &'a Path,
+            mut on_progress: Box<dyn FnMut(Progress) + Send + 'a>,
+        ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, ytdlp::Error>> {
+            let filepath = output_dir.join(format!("{id}.mp4"));
+            std::fs::write(&filepath, b"junk").expect("write the fake download");
+
+            // A progress update flows through the manager before the download completes.
+            on_progress(Progress {
+                downloaded: Some(1),
+                total: Some(4),
+                speed: Some(2),
+                eta: Some(1),
+            });
+
+            let files = vec![DownloadedFile {
+                filepath,
+                vcodec: Some("avc1.640029".to_string()),
+            }];
+
+            Box::pin(async { Ok(files) })
+        }
+    }
+
+    /// A downloader fake whose downloads block until the test releases them one by one, so
+    /// ordering is proven exactly rather than by timing.
+    struct GatedDownloader {
+        /// The media ids of the downloads as they start, in order.
+        started: mpsc::UnboundedSender<String>,
+        /// The gate each download waits on, handed out in start order.
+        gates: Mutex<VecDeque<oneshot::Receiver<()>>>,
+    }
+
+    impl Downloader for GatedDownloader {
+        fn download<'a>(
+            &'a self,
+            _url: &'a str,
+            id: &'a str,
+            _output_dir: &'a Path,
+            _on_progress: Box<dyn FnMut(Progress) + Send + 'a>,
+        ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, ytdlp::Error>> {
+            let gate = self
+                .gates
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("no download is started without a gate");
+
+            self.started
+                .send(id.to_string())
+                .expect("the test listens for starts");
+
+            Box::pin(async move {
+                gate.await.expect("the gate should not be dropped");
+
+                Err(ytdlp::Error::NoDownloads)
+            })
+        }
+    }
+
     #[tokio::test]
     async fn test_invalid_id_is_rejected() {
-        let script = write_sleeping_script("manager-invalid-id");
-        let (_download_dir, manager) = start_manager(&script, 2);
+        let downloader = Arc::new(RecordingDownloader::default());
+        let (_download_dir, manager) = start_manager(downloader.clone(), S3::for_test(), 2);
 
         let (results, mut rx) = mpsc::unbounded_channel();
         manager
@@ -586,24 +657,37 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
 
         assert!(matches!(error, Error::InvalidId(_)));
 
-        std::fs::remove_file(&script).unwrap();
+        // The request was rejected before it reached the downloader.
+        assert!(downloader.started.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_failed_download_reports_and_cleans_up() {
-        let script = write_sleeping_script("manager-sleep-a");
-        let (download_dir, manager) = start_manager(&script, 2);
+        let (_download_dir, manager) =
+            start_manager(Arc::new(RecordingDownloader::default()), S3::for_test(), 2);
 
         let (results, mut rx) = mpsc::unbounded_channel();
         manager
             .submit(request("0", "123", results, 0))
             .expect("manager is running");
 
-        // The script sleeps for zero seconds, emits no output and exits with a failure.
         let (_, result) = rx.recv().await.expect("the download did not finish");
         let error = result.expect_err("the download should have failed");
 
         assert!(matches!(error, Error::Download(_)));
+    }
+
+    #[tokio::test]
+    async fn test_failed_download_cleans_up_its_directory() {
+        let downloader = Arc::new(RecordingDownloader::default());
+        let (download_dir, manager) = start_manager(downloader, S3::for_test(), 2);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        manager
+            .submit(request("0", "123", results, 0))
+            .expect("manager is running");
+
+        let (_, _) = rx.recv().await.expect("the download did not finish");
 
         // The temporary download directory was removed.
         assert!(
@@ -611,14 +695,13 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
             "temporary download directories were not removed: {:?}",
             stale_download_dirs(download_dir.path())
         );
-
-        std::fs::remove_file(&script).unwrap();
     }
 
     #[tokio::test]
     async fn test_completed_download_is_uploaded_and_reported() {
-        let script = write_successful_script("manager-success");
-        let (download_dir, manager) = start_manager(&script, 2);
+        let server = zeta_test_support::not_found_server().await;
+        let s3 = S3::with_endpoint(&format!("http://{}", server.address()));
+        let (download_dir, manager) = start_manager(Arc::new(CompletingDownloader), s3, 2);
 
         let (results, mut rx) = mpsc::unbounded_channel();
         manager
@@ -630,48 +713,79 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
             ))
             .expect("manager is running");
 
-        // The download succeeds, but the upload fails against the unreachable test endpoint.
+        // The download succeeds, but the upload fails against the always-404 server.
         let (_, result) = rx.recv().await.expect("the download did not finish");
         let error = result.expect_err("the upload should have failed");
 
         assert!(matches!(error, Error::Upload(_)));
+
+        // The upload checked the object (HEAD, answered as absent) and attempted the upload
+        // (PUT) — the only two requests the flow makes.
+        let requests = server
+            .received_requests()
+            .await
+            .expect("the server tracks requests");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method.as_str(), "HEAD");
+        assert_eq!(requests[1].method.as_str(), "PUT");
 
         // The temporary download directory was removed.
         assert_eq!(
             stale_download_dirs(download_dir.path()),
             Vec::<PathBuf>::new()
         );
-
-        std::fs::remove_file(&script).unwrap();
     }
 
     #[tokio::test]
     async fn test_requests_run_serially_when_capped() {
-        let script = write_sleeping_script("manager-sleep-b");
-        let (_download_dir, manager) = start_manager(&script, 1);
+        let (started, mut started_rx) = mpsc::unbounded_channel();
+        let (gate_0, gate_rx_0) = oneshot::channel();
+        let (gate_1, gate_rx_1) = oneshot::channel();
+        let (gate_2, gate_rx_2) = oneshot::channel();
+
+        let downloader = Arc::new(GatedDownloader {
+            started,
+            gates: Mutex::new(VecDeque::from([gate_rx_0, gate_rx_1, gate_rx_2])),
+        });
+        let (_download_dir, manager) = start_manager(downloader, S3::for_test(), 1);
 
         let (results, mut rx) = mpsc::unbounded_channel();
 
-        // The first request sleeps for two seconds; the queued ones finish without sleeping. With
-        // a single download slot they must still finish in submission order.
-        for (index, url) in ["2", "0", "0"].iter().enumerate() {
+        for index in 0..3 {
             manager
-                .submit(request(url, &format!("123{index}"), results.clone(), index))
+                .submit(request("0", &format!("123{index}"), results.clone(), index))
                 .expect("manager is running");
         }
 
         drop(results);
 
+        // With a single download slot only the first download starts.
+        assert_eq!(started_rx.recv().await.as_deref(), Some("1230"));
+        assert!(
+            started_rx.try_recv().is_err(),
+            "a second download started while the first was still running"
+        );
+
+        // Releasing the first gate starts the second download, and so on.
+        drop(gate_0);
+        assert_eq!(started_rx.recv().await.as_deref(), Some("1231"));
+        assert!(started_rx.try_recv().is_err());
+
+        drop(gate_1);
+        assert_eq!(started_rx.recv().await.as_deref(), Some("1232"));
+
+        drop(gate_2);
+
+        // The requests finish in submission order.
         let mut order = Vec::new();
 
         for _ in 0..3 {
-            let (index, _) = rx.recv().await.expect("the downloads did not finish");
+            let (index, result) = rx.recv().await.expect("the downloads did not finish");
+            assert!(matches!(result, Err(Error::Download(_))), "{result:?}");
             order.push(index);
         }
 
         assert_eq!(order, vec![0, 1, 2]);
-
-        std::fs::remove_file(&script).unwrap();
     }
 
     #[test]

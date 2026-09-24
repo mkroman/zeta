@@ -564,6 +564,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::settings_tests;
 
     settings_tests! {
         Settings,

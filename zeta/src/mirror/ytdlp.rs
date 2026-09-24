@@ -13,10 +13,12 @@ use std::{
 
 use serde::Deserialize;
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    process::{Child, ChildStdout, Command},
+    io::{AsyncBufReadExt, AsyncRead, BufReader},
+    process::Command,
 };
 use tracing::{debug, warn};
+
+use futures::future::BoxFuture;
 
 /// The default command used to run `yt-dlp`.
 const DEFAULT_COMMAND: &str = "yt-dlp";
@@ -188,17 +190,6 @@ impl YtDlp {
         }
     }
 
-    /// Creates a runner that invokes the given command.
-    #[cfg(test)]
-    #[must_use]
-    pub fn with_command(command: &str) -> Self {
-        Self {
-            command: command.to_string(),
-            max_filesize: "500M".to_string(),
-            download_timeout: Duration::from_mins(10),
-        }
-    }
-
     /// Downloads the video at `url` into `output_dir`, naming the downloaded files after `id`,
     /// and streaming progress updates to `on_progress` as they are reported by `yt-dlp`.
     ///
@@ -242,10 +233,12 @@ impl YtDlp {
         // Drain stderr in a separate task so it can never fill up its pipe and block the child.
         let stderr_task = tokio::spawn(drain_stderr(stderr));
 
-        let output = tokio::time::timeout(
-            self.download_timeout,
-            read_output(&mut child, stdout, &mut on_progress),
-        )
+        let output = tokio::time::timeout(self.download_timeout, async {
+            let json = read_output(stdout, &mut on_progress).await?;
+            let status = child.wait().await?;
+
+            Ok::<RawOutput, Error>(RawOutput { status, json })
+        })
         .await
         .map_err(|_| {
             stderr_task.abort();
@@ -275,6 +268,43 @@ impl YtDlp {
     }
 }
 
+/// Runs downloads on behalf of the download manager, in the shape of the [`YtDlp`] runner.
+///
+/// This is the seam the download manager's tests substitute a fake into, so they can drive the
+/// failure, success and ordering paths without shelling out to a `yt-dlp` stand-in.
+pub trait Downloader: Send + Sync + 'static {
+    /// Downloads the media at `url` into `output_dir`, naming the files after `id` and streaming
+    /// progress updates to `on_progress`.
+    ///
+    /// The returned future borrows the arguments and the progress callback, so the caller keeps
+    /// them alive until the download finishes.
+    fn download<'a>(
+        &'a self,
+        url: &'a str,
+        id: &'a str,
+        output_dir: &'a Path,
+        on_progress: Box<dyn FnMut(Progress) + Send + 'a>,
+    ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, Error>>;
+}
+
+impl Downloader for YtDlp {
+    fn download<'a>(
+        &'a self,
+        url: &'a str,
+        id: &'a str,
+        output_dir: &'a Path,
+        on_progress: Box<dyn FnMut(Progress) + Send + 'a>,
+    ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, Error>> {
+        Box::pin(YtDlp::download_with_progress(
+            self,
+            url,
+            id,
+            output_dir,
+            on_progress,
+        ))
+    }
+}
+
 /// The raw output of a completed `yt-dlp` run.
 struct RawOutput {
     /// The exit status of the `yt-dlp` process.
@@ -283,13 +313,12 @@ struct RawOutput {
     json: Option<JsonDump>,
 }
 
-/// Reads the piped stdout of the given `yt-dlp` child until EOF, forwarding progress lines to
-/// `on_progress` and capturing the json dump, then waits for the child to exit.
+/// Reads the piped stdout of a `yt-dlp` child until EOF, forwarding progress lines to
+/// `on_progress` and capturing the json dump.
 async fn read_output(
-    child: &mut Child,
-    stdout: ChildStdout,
+    stdout: impl AsyncRead + Unpin,
     on_progress: &mut impl FnMut(Progress),
-) -> Result<RawOutput, Error> {
+) -> Result<Option<JsonDump>, Error> {
     let mut lines = BufReader::new(stdout).lines();
     let mut json = None;
 
@@ -301,14 +330,11 @@ async fn read_output(
         }
     }
 
-    Ok(RawOutput {
-        status: child.wait().await?,
-        json,
-    })
+    Ok(json)
 }
 
 /// Drains the given stderr stream into a string, line by line.
-async fn drain_stderr(stderr: impl tokio::io::AsyncRead + Unpin) -> String {
+async fn drain_stderr(stderr: impl AsyncRead + Unpin) -> String {
     let mut stderr_text = String::new();
     let mut lines = BufReader::new(stderr).lines();
 
@@ -402,6 +428,18 @@ fn truncate_tail(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl YtDlp {
+        /// Creates a runner that invokes the given command.
+        #[must_use]
+        pub(crate) fn with_command(command: &str) -> Self {
+            Self {
+                command: command.to_string(),
+                max_filesize: "500M".to_string(),
+                download_timeout: Duration::from_mins(10),
+            }
+        }
+    }
 
     const SAMPLE_OUTPUT: &str = r#"{
         "id": "7541501431543532814",
@@ -528,48 +566,21 @@ mod tests {
         assert_eq!(parse_progress_line(""), None);
     }
 
-    /// Writes an executable script that acts like a successful `yt-dlp` run: it emits progress
-    /// lines, writes a file into the directory passed via `--paths`, and dumps its json.
-    fn write_successful_script() -> PathBuf {
-        crate::mirror::write_test_script(
-            "ytdlp",
-            r#"#!/bin/sh
-while [ $# -gt 0 ]; do
-  if [ "$1" = "--paths" ] && [ -n "$2" ]; then
-    dir="$2"
-  fi
-  shift
-done
-echo "zeta-dl 512 1024 NA 256 2"
-echo "zeta-dl 1024 1024 NA 256 0"
-printf junk > "$dir/123.mp4"
-printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "123", "ext": "mp4", "vcodec": "avc1.640029", "acodec": "mp4a.40.2"}]}' "$dir"
-"#,
-        )
-    }
-
     #[tokio::test]
-    async fn test_download_with_progress() {
-        let output_dir = tempfile::tempdir().unwrap();
-        let script = write_successful_script();
-        let ytdlp = YtDlp::with_command(script.to_str().unwrap());
+    async fn read_output_streams_progress_and_captures_the_json_dump() {
+        let stdout = &b"zeta-dl 512 1024 NA 256 2\n\
+                        a line that is neither progress nor json\n\
+                        zeta-dl 1024 1024 NA 256 0\n\
+                        {\"id\": \"123\", \"requested_downloads\": [{\"filepath\": \"/downloads/123.mp4\", \"id\": \"123\", \"ext\": \"mp4\", \"vcodec\": \"avc1.640029\", \"acodec\": \"mp4a.40.2\"}]}\n"[..];
 
         let mut progress_updates = Vec::new();
-        let downloads = ytdlp
-            .download_with_progress(
-                "https://www.tiktok.com/@user/video/123",
-                "123",
-                output_dir.path(),
-                |progress| progress_updates.push(progress),
-            )
+
+        let json = read_output(stdout, &mut |progress| progress_updates.push(progress))
             .await
-            .unwrap();
+            .expect("reading stdout should not fail");
 
-        // The file reported by the json dump is verified and returned.
-        assert_eq!(downloads.len(), 1);
-        assert_eq!(downloads[0].filename().as_deref(), Some("123.mp4"));
-
-        // The progress lines were streamed to the callback, in order.
+        // The progress lines were streamed to the callback, in order, and other output was
+        // ignored.
         assert_eq!(
             progress_updates,
             vec![
@@ -588,7 +599,56 @@ printf '{"id": "123", "requested_downloads": [{"filepath": "%s/123.mp4", "id": "
             ]
         );
 
-        std::fs::remove_file(&script).unwrap();
+        // The json dump was captured.
+        let download = json
+            .expect("the json dump should be captured")
+            .requested_downloads
+            .pop()
+            .expect("the json dump should report the download");
+
+        assert_eq!(download.filename().as_deref(), Some("123.mp4"));
+        assert!(!download.is_unsupported_codec());
+    }
+
+    #[tokio::test]
+    async fn verify_paths_keeps_files_inside_the_output_directory() {
+        let output_dir = tempfile::tempdir().unwrap();
+        let inside = output_dir.path().join("123.mp4");
+        std::fs::write(&inside, b"junk").unwrap();
+
+        // A reported absolute path inside the output directory is kept as reported.
+        let absolute = DownloadedFile {
+            filepath: inside.clone(),
+            vcodec: Some("avc1.640029".to_string()),
+        };
+        // A reported relative path resolves against the output directory.
+        let relative = DownloadedFile {
+            filepath: PathBuf::from("123.mp4"),
+            vcodec: None,
+        };
+        // A reported path pointing outside of the output directory is dropped.
+        let outside = DownloadedFile {
+            filepath: PathBuf::from("/etc/passwd"),
+            vcodec: None,
+        };
+
+        let verified = verify_paths(vec![absolute, relative, outside], output_dir.path())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            verified,
+            vec![
+                DownloadedFile {
+                    filepath: inside,
+                    vcodec: Some("avc1.640029".to_string()),
+                },
+                DownloadedFile {
+                    filepath: PathBuf::from("123.mp4"),
+                    vcodec: None,
+                },
+            ]
+        );
     }
 
     #[test]
