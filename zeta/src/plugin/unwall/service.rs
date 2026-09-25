@@ -163,7 +163,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the cache could not be consulted or written, and the
-    /// errors of [`UnwallClient::submit`] otherwise.
+    /// errors of `UnwallClient::submit` otherwise.
     ///
     /// # Panics
     ///
@@ -209,9 +209,9 @@ impl UnwallService {
     /// Adds `hosts` as covered sites.
     ///
     /// A wildcard add overrides the removals it matches; an exact add keeps them, winning over
-    /// them for its own host only (see [`SiteIndex::covers`]).
+    /// them for its own host only (see `SiteIndex::covers`).
     ///
-    /// The hosts are expected normalized (see [`sites::normalize_site`]).
+    /// The hosts are expected normalized (see `sites::normalize_site`).
     ///
     /// # Errors
     ///
@@ -315,7 +315,7 @@ impl UnwallService {
     ///
     /// # Errors
     ///
-    /// Returns the errors of [`UnwallClient::tested_domains`].
+    /// Returns the errors of `UnwallClient::tested_domains`.
     #[instrument(skip_all, err)]
     pub async fn refresh_tested_domains(&self) -> Result<usize, Error> {
         let tested = self.client.tested_domains().await?;

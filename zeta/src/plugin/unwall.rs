@@ -19,9 +19,9 @@
 //! hostmasks configured, nobody is an admin. `.unwall list`, `.unwall stats`, and
 //! `.unwall info <host>` are open to everyone.
 //!
-//! The covered set starts at the tested domains of unwall.app — a snapshot in [`sites`],
-//! refreshed from the API once a day and retried with a capped exponential backoff while it
-//! is unreachable. Admins add sites per deployment with `.unwall add`, and remove coverage
+//! The covered set starts at the tested domains of unwall.app — a snapshot in the `sites`
+//! module, refreshed from the API once a day and retried with a capped exponential backoff
+//! while it is unreachable. Admins add sites per deployment with `.unwall add`, and remove coverage
 //! with `.unwall rm`, whose patterns also silence tested domains (a tombstone in the
 //! database). URL events arrive already filtered by the host dispatcher, so database filters
 //! apply to this plugin without it consulting them. Because the covered set is dynamic, the
