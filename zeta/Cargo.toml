@@ -198,7 +198,7 @@ wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "
 wreq-util = { version = "0.2.0", optional = true }
 
 [dev-dependencies]
-similar-asserts = "2.0"
+similar-asserts = "=2.0.0"
 wildmatch = "=2.6.1"
 zeta-test-support = { path = "../zeta-test-support" }
 
