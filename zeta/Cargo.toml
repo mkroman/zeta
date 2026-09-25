@@ -1,6 +1,6 @@
 [package]
 name = "zeta"
-version = "0.10.0"
+version = "0.11.0"
 authors = ["Mikkel Kroman <mk@maero.dk>"]
 edition = "2024"
 
