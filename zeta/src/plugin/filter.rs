@@ -303,7 +303,9 @@ fn trimmed(value: Option<&str>) -> Option<String> {
 }
 
 /// Compiles admin hostmasks into case-insensitive wildcard matchers, skipping blank entries.
-fn compile_hostmasks(hostmasks: &[String]) -> Vec<WildMatch> {
+///
+/// Shared with the other plugins that gate commands on `[irc] admin_hostmasks`.
+pub(crate) fn compile_hostmasks(hostmasks: &[String]) -> Vec<WildMatch> {
     hostmasks
         .iter()
         .map(|hostmask| hostmask.trim())
@@ -313,7 +315,7 @@ fn compile_hostmasks(hostmasks: &[String]) -> Vec<WildMatch> {
 }
 
 /// Whether `sender`'s `nick!user@host` matches any of the compiled admin hostmasks.
-fn hostmask_matches(admins: &[WildMatch], sender: Sender<'_>) -> bool {
+pub(crate) fn hostmask_matches(admins: &[WildMatch], sender: Sender<'_>) -> bool {
     let hostmask = format!("{}!{}@{}", sender.nick, sender.username, sender.hostname);
 
     admins.iter().any(|pattern| pattern.matches(&hostmask))

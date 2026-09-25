@@ -321,6 +321,10 @@ declare_plugins! {
   #[cfg(feature = "plugin-urban-dictionary")]
   urban_dictionary::UrbanDictionary => urban_dictionary::Settings,
 
+  /// Paywalled news links mirrored through unwall.app
+  #[cfg(feature = "plugin-unwall")]
+  unwall::Unwall => unwall::Settings,
+
   /// YouTube integration
   #[cfg(feature = "plugin-youtube")]
   youtube::YouTube => youtube::Settings,
@@ -656,7 +660,7 @@ mod tests {
 
     #[test]
     fn bundled_plugin_names_include_all_plugins() {
-        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 34);
+        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 35);
     }
 
     /// The lifecycle log shared between a test and its plugin through the context.

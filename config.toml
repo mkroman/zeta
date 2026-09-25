@@ -414,6 +414,20 @@ name = "#zeta.dev"
   # The maximum length of the definition and example text, in characters.
   # max_definition_length = 400
 
+  # Unwall integration: paywalled news links mirrored through unwall.app.
+  [plugins.unwall]
+  # Enable the plugin.
+  enabled = true
+  # The base URL of the unwall API.
+  # api_base = "https://api.unwall.app/"
+  # The base URL of the unwall reader, linked in the replies.
+  # reader_base = "https://unwall.app/"
+  # How long an article submission may take: the first submission of an article is mirrored
+  # server-side and can take tens of seconds.
+  # submit_timeout = "5m"
+  # How often the tested domains are refreshed from the API.
+  # refresh_interval = "1d"
+
   # YouTube integration.
   [plugins.youtube]
   # Enable the plugin.
