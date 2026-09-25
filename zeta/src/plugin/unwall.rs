@@ -473,7 +473,10 @@ impl Unwall {
             async move {
                 match service.resolve(&article, fetch).await {
                     Ok(cached) => {
-                        if let Err(error) = irc.send_privmsg(&channel, cached.unwall_url) {
+                        // The link rides on the plain `>` notice prefix, which colors the
+                        // whole line cyan.
+                        if let Err(error) = irc.send_privmsg(&channel, notice(&cached.unwall_url))
+                        {
                             warn!(%error, "could not send the unwall link");
                         }
                     }
