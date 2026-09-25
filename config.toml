@@ -422,6 +422,9 @@ name = "#zeta.dev"
   # api_base = "https://api.unwall.app/"
   # The base URL of the unwall reader, linked in the replies.
   # reader_base = "https://unwall.app/"
+  # How long an article submission may take: the first submission of an article is mirrored
+  # server-side and can take tens of seconds.
+  # submit_timeout = "5m"
   # How often the tested domains are refreshed from the API.
   # refresh_interval = "1d"
 

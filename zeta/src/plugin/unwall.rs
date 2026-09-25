@@ -88,6 +88,13 @@ pub struct Settings {
     pub api_base: String,
     /// The base URL of the unwall reader, linked in the replies.
     pub reader_base: String,
+    /// How long an article submission may take.
+    ///
+    /// Only the first submission of an article hits the API — the mirror is built
+    /// server-side, which can take tens of seconds — while every later post is answered from
+    /// the cache without a request.
+    #[serde(with = "humantime_serde")]
+    pub submit_timeout: Duration,
     /// How often the tested domains are refreshed from the API.
     #[serde(with = "humantime_serde")]
     pub refresh_interval: Duration,
@@ -98,6 +105,7 @@ impl Default for Settings {
         Self {
             api_base: client::DEFAULT_API_BASE.to_string(),
             reader_base: "https://unwall.app/".to_string(),
+            submit_timeout: Duration::from_mins(5),
             refresh_interval: Duration::from_hours(24),
         }
     }
@@ -238,7 +246,10 @@ impl Unwall {
                 None => {
                     client.send_privmsg(
                         channel,
-                        reply(NAME, format!("{input} does not look like a hostname.")),
+                        reply(
+                            NAME,
+                            format!("{RESET}{input}{COLOR} does not look like a hostname."),
+                        ),
                     )?;
 
                     return Ok(());
@@ -258,7 +269,7 @@ impl Unwall {
         if let Err(error) = self.service.add_sites(&hosts, nickname).await {
             client.send_privmsg(
                 channel,
-                reply(NAME, format!("could not add the sites: {error}")),
+                reply(NAME, format!("could not add the sites:{RESET} {error}")),
             )?;
 
             return Ok(());
@@ -268,7 +279,7 @@ impl Unwall {
 
         client.send_privmsg(
             channel,
-            reply(NAME, format!("Now unwalling {}.", join_and(&hosts))),
+            reply(NAME, format!("Now unwalling {}{COLOR}.", join_and(&hosts))),
         )?;
 
         Ok(())
@@ -287,7 +298,9 @@ impl Unwall {
                 channel,
                 reply(
                     NAME,
-                    format!("{pattern} does not look like a hostname or wildcard."),
+                    format!(
+                        "{RESET}{pattern}{COLOR} does not look like a hostname or wildcard."
+                    ),
                 ),
             )?;
 
@@ -299,7 +312,10 @@ impl Unwall {
             Err(error) => {
                 client.send_privmsg(
                     channel,
-                    reply(NAME, format!("could not remove the sites: {error}")),
+                    reply(
+                        NAME,
+                        format!("could not remove the sites:{RESET} {error}"),
+                    ),
                 )?;
 
                 return Ok(());
@@ -307,9 +323,12 @@ impl Unwall {
         };
 
         let response = if removed.is_empty() {
-            format!("No unwalled sites match {pattern}.")
+            format!("No unwalled sites match{RESET} {pattern}{COLOR}.")
         } else {
-            format!("Removed {} from unwalled sites.", join_and(&removed))
+            format!(
+                "Removed {}{COLOR} from unwalled sites.",
+                join_and(&removed)
+            )
         };
 
         client.send_privmsg(channel, reply(NAME, response))?;
@@ -325,25 +344,32 @@ impl Unwall {
         let response = if sites.is_empty() {
             reply(
                 NAME,
-                format!("{tested} tested sites by default (unwall.app), {removed} removed, none added."),
+                format!(
+                    "{RESET}{tested}{COLOR} tested sites by default (unwall.app),\
+                     {RESET} {removed}{COLOR} removed, none added{COLOR}."
+                ),
             )
         } else {
             let mut message = reply(
                 NAME,
-                format!("{tested} tested sites by default (unwall.app), {removed} removed, {} added: ", sites.len()),
+                format!(
+                    "{RESET}{tested}{COLOR} tested sites by default (unwall.app),\
+                     {RESET} {removed}{COLOR} removed,{RESET} {}{COLOR} added:{RESET} ",
+                    sites.len()
+                ),
             );
 
             let reserved = " (999 more)".len();
             let appended = append_entries_within_budget(
                 &mut message,
                 sites.iter().map(|site| site.host.clone()),
-                ", ",
+                &format!("{COLOR}, {RESET}"),
                 MAX_LISTING_LENGTH,
                 reserved,
             );
 
             if appended < sites.len() {
-                let _ = write!(message, " ({} more)", sites.len() - appended);
+                let _ = write!(message, "{COLOR} ({} more)", sites.len() - appended);
             }
 
             message
@@ -360,11 +386,12 @@ impl Unwall {
             Ok(stats) => reply(
                 NAME,
                 format!(
-                    "{} links unwalled across {} sites by {} users ({} today).",
+                    "{RESET}{}{COLOR} links unwalled across{RESET} {}{COLOR} sites \
+                     by{RESET} {}{COLOR} users ({RESET}{}{COLOR} today).",
                     stats.urls, stats.hosts, stats.users, stats.urls_today
                 ),
             ),
-            Err(error) => reply(NAME, format!("could not load the statistics: {error}")),
+            Err(error) => reply(NAME, format!("could not load the statistics:{RESET} {error}")),
         };
 
         client.send_privmsg(channel, response)?;
@@ -380,15 +407,17 @@ impl Unwall {
             Ok(Some(stats)) => reply(
                 NAME,
                 format!(
-                    "{} links unwalled for {host} by {} users ({} today, most recent {}).",
+                    "{RESET}{}{COLOR} links unwalled for{RESET} {host}{COLOR} \
+                     by{RESET} {}{COLOR} users ({RESET}{}{COLOR} today, most recent\
+                     {RESET} {}{COLOR}).",
                     stats.urls,
                     stats.users,
                     stats.urls_today,
                     stats.latest.map(|latest| latest.time_ago()).unwrap_or_default(),
                 ),
             ),
-            Ok(None) => reply(NAME, format!("No unwalled links for {host}.")),
-            Err(error) => reply(NAME, format!("could not load the statistics: {error}")),
+            Ok(None) => reply(NAME, format!("No unwalled links for{RESET} {host}{COLOR}.")),
+            Err(error) => reply(NAME, format!("could not load the statistics:{RESET} {error}")),
         };
 
         client.send_privmsg(channel, response)?;
@@ -457,7 +486,7 @@ impl Unwall {
 
                         if let Err(error) = irc.send_privmsg(
                             &channel,
-                            notice(format!("could not unwall the article: {error}")),
+                            notice(format!("could not unwall the article:{RESET} {error}")),
                         ) {
                             warn!(%error, "could not send the unwall failure");
                         }
@@ -502,14 +531,22 @@ impl Unwall {
     }
 }
 
-/// Joins `items` with commas and a final `and`.
+/// Joins `items` with cyan commas and a final cyan `and`, each item emphasized in the default
+/// color: `\x0fa\x0310, \x0fb\x0310 and\x0f c`.
 fn join_and(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.clone(),
-        [first, second] => format!("{first} and {second}"),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    let mut joined = String::new();
+
+    for (index, item) in items.iter().enumerate() {
+        if index == 0 {
+            let _ = write!(joined, "{RESET}{item}");
+        } else if index + 1 == items.len() {
+            let _ = write!(joined, "{COLOR} and{RESET} {item}");
+        } else {
+            let _ = write!(joined, "{COLOR},{RESET} {item}");
+        }
     }
+
+    joined
 }
 
 #[async_trait]
@@ -525,7 +562,11 @@ impl Plugin<Context> for Unwall {
 
         let api_base = client::base_url(&settings.api_base).map_err(plugin_err)?;
         let reader_base = client::base_url(&settings.reader_base).map_err(plugin_err)?;
-        let client = UnwallClient::new(http::build_client(&ctx.config.http), api_base);
+        let client = UnwallClient::new(
+            http::build_client(&ctx.config.http),
+            settings.submit_timeout,
+            api_base,
+        );
 
         let admins = compile_hostmasks(&ctx.config.irc.admin_hostmasks);
 
@@ -614,15 +655,18 @@ mod tests {
         default: {
             assert_eq!(settings.api_base, "https://api.unwall.app/");
             assert_eq!(settings.reader_base, "https://unwall.app/");
+            assert_eq!(settings.submit_timeout, Duration::from_mins(5));
             assert_eq!(settings.refresh_interval, Duration::from_hours(24));
         }
         deserialize: {
             "api_base": "https://unwall.example/api",
             "reader_base": "https://unwall.example/",
+            "submit_timeout": "90s",
             "refresh_interval": "1h",
         } assert: {
             assert_eq!(settings.api_base, "https://unwall.example/api");
             assert_eq!(settings.reader_base, "https://unwall.example/");
+            assert_eq!(settings.submit_timeout, Duration::from_secs(90));
             assert_eq!(settings.refresh_interval, Duration::from_mins(60));
         }
     }
@@ -630,11 +674,14 @@ mod tests {
     #[test]
     fn joins_with_a_final_and() {
         assert_eq!(join_and(&[]), "");
-        assert_eq!(join_and(&["a".into()]), "a");
-        assert_eq!(join_and(&["a".into(), "b".into()]), "a and b");
+        assert_eq!(join_and(&["a".into()]), format!("{RESET}a"));
+        assert_eq!(
+            join_and(&["a".into(), "b".into()]),
+            format!("{RESET}a{COLOR} and{RESET} b")
+        );
         assert_eq!(
             join_and(&["a".into(), "b".into(), "c".into()]),
-            "a, b and c"
+            format!("{RESET}a{COLOR},{RESET} b{COLOR} and{RESET} c")
         );
     }
 }

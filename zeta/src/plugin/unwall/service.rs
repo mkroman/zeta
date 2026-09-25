@@ -390,6 +390,7 @@ mod tests {
     fn db_service(db: Database) -> UnwallService {
         let client = UnwallClient::new(
             http::build_client(&HttpConfig::default()),
+            Duration::from_secs(60),
             "http://127.0.0.1:9".parse().unwrap(),
         );
 
@@ -517,6 +518,7 @@ mod tests {
 
         let client = UnwallClient::new(
             http::build_client(&HttpConfig::default()),
+            Duration::from_secs(60),
             crate::plugin::unwall::client::base_url(&server.uri()).unwrap(),
         );
         let service = UnwallService::new(db, client, "https://unwall.app/".parse().unwrap());

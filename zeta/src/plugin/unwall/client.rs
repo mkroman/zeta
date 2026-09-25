@@ -1,5 +1,7 @@
 //! Client for the unwall.app API.
 
+use std::time::Duration;
+
 use serde::Deserialize;
 use url::Url;
 
@@ -40,6 +42,9 @@ pub fn base_url(input: &str) -> Result<Url, Error> {
 pub struct UnwallClient {
     /// The HTTP client.
     http: reqwest::Client,
+    /// How long an article submission may take, overriding the client timeout: a first mirror
+    /// of the article runs server-side and can take tens of seconds.
+    submit_timeout: Duration,
     /// The API base URL, ending in a slash.
     api_base: Url,
 }
@@ -47,8 +52,12 @@ pub struct UnwallClient {
 impl UnwallClient {
     /// Creates a client for the unwall API at `api_base`.
     #[must_use]
-    pub const fn new(http: reqwest::Client, api_base: Url) -> Self {
-        Self { http, api_base }
+    pub const fn new(http: reqwest::Client, submit_timeout: Duration, api_base: Url) -> Self {
+        Self {
+            http,
+            submit_timeout,
+            api_base,
+        }
     }
 
     /// Returns the URL of the API endpoint `name`.
@@ -58,9 +67,14 @@ impl UnwallClient {
 
     /// Submits `article` to unwall.app, triggering the server-side mirror of the article.
     ///
-    /// The response body — the mirrored HTML, often hundreds of kilobytes — is deliberately
-    /// not read: a success status is all the bot needs, and the reader link is deterministic
-    /// (`https://unwall.app/<host>/<path>`), so nothing else has to be parsed out of it.
+    /// The request carries the submit timeout instead of the client's: a first mirror of the
+    /// article runs server-side and can take tens of seconds, while the shared HTTP timeout is
+    /// tuned for the regular API calls. The response body — the mirrored HTML, often hundreds
+    /// of kilobytes — is deliberately not read: a success status is all the bot needs, and the
+    /// reader link is deterministic (`https://unwall.app/<host>/<path>`), so nothing else has
+    /// to be parsed out of it.
+    ///
+    /// Only ever called for articles not in the cache.
     ///
     /// # Errors
     ///
@@ -70,6 +84,7 @@ impl UnwallClient {
         let request = self
             .http
             .get(self.endpoint("fetch")?)
+            .timeout(self.submit_timeout)
             .query(&[("url", article.as_str())]);
 
         let response = http::send(request).await?;
@@ -103,6 +118,9 @@ impl UnwallClient {
 mod tests {
     use super::*;
     use crate::config::HttpConfig;
+
+    /// The submit timeout handed to the client under test.
+    const SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
     use zeta_test_support::wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path, query_param},
@@ -124,6 +142,7 @@ mod tests {
 
         let client = UnwallClient::new(
             http::build_client(&HttpConfig::default()),
+            SUBMIT_TIMEOUT,
             base_url(&server.uri()).unwrap(),
         );
 
@@ -148,6 +167,7 @@ mod tests {
 
         let client = UnwallClient::new(
             http::build_client(&HttpConfig::default()),
+            SUBMIT_TIMEOUT,
             base_url(&server.uri()).unwrap(),
         );
 
@@ -177,6 +197,7 @@ mod tests {
 
         let client = UnwallClient::new(
             http::build_client(&HttpConfig::default()),
+            SUBMIT_TIMEOUT,
             base_url(&server.uri()).unwrap(),
         );
 
@@ -203,6 +224,7 @@ mod tests {
 
         let client = UnwallClient::new(
             http::build_client(&HttpConfig::default()),
+            SUBMIT_TIMEOUT,
             base_url(&server.uri()).unwrap(),
         );
 
@@ -213,6 +235,7 @@ mod tests {
     fn a_base_url_without_a_trailing_slash_still_resolves_endpoints() {
         let client = UnwallClient::new(
             http::build_client(&HttpConfig::default()),
+            SUBMIT_TIMEOUT,
             base_url("https://api.unwall.app").unwrap(),
         );
 
@@ -229,6 +252,7 @@ mod tests {
     async fn live_api_contract_smoke() {
         let client = UnwallClient::new(
             http::build_client(&HttpConfig::default()),
+            SUBMIT_TIMEOUT,
             base_url(DEFAULT_API_BASE).unwrap(),
         );
 
