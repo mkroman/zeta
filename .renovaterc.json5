@@ -26,6 +26,7 @@
         "opentelemetry-otlp",
         "opentelemetry_sdk",
         "opentelemetry-resource-detectors",
+        "opentelemetry-semantic-conventions",
         "tracing-opentelemetry",
       ],
       "groupName": "opentelemetry"
