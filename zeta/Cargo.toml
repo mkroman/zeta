@@ -82,6 +82,7 @@ plugin-trustpilot = ["http", "dep:num-format"]
 plugin-tvmaze = ["http", "time"]
 plugin-twitch = ["http", "dep:num-format"]
 plugin-urban-dictionary = ["http", "time"]
+plugin-unwall = ["database", "http", "plugin-filter"]
 plugin-youtube = ["http", "dep:htmlize", "dep:indefinite", "dep:num-format", "time"]
 plugins-all = [
     "plugin-alert",
@@ -117,6 +118,7 @@ plugins-all = [
     "plugin-tvmaze",
     "plugin-twitch",
     "plugin-urban-dictionary",
+    "plugin-unwall",
     "plugin-youtube",
 ]
 
