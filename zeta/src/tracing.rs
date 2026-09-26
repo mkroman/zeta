@@ -76,7 +76,7 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "zeta=debug,reddit=debug,dendanskeordbog=debug,kagi=debug".into()
+                "zeta=debug,zeta_plugin=debug,reddit=debug,dendanskeordbog=debug,kagi=debug".into()
             }),
         )
         .with(telemetry_layer)

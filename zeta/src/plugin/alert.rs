@@ -47,9 +47,6 @@ const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
     "Schedule an alert to be posted later, or list pending alerts",
 );
 
-/// The usage hint for the `.alert` command.
-const USAGE: &str = "Usage: .alert\x0f [-l] <message> <in|at> <datetime>";
-
 /// Schedule an alert to be posted later, or list pending alerts.
 #[derive(FromArgs, ArgsInfo, Debug)]
 #[argh(help_triggers("--help"))]
@@ -206,7 +203,10 @@ impl Plugin<Context> for AlertPlugin {
 
         if opts.list {
             if !opts.args.is_empty() {
-                client.send_privmsg(channel, reply("Alert", USAGE))?;
+                client.send_privmsg(
+                    channel,
+                    reply("Alert", ALERT.usage_line("[-l] <message> <in|at> <datetime>")),
+                )?;
 
                 return Ok(());
             }
@@ -233,7 +233,10 @@ impl Plugin<Context> for AlertPlugin {
         let input = opts.input();
 
         let Some((message, time_spec)) = split_args(&input) else {
-            client.send_privmsg(channel, reply("Alert", USAGE))?;
+            client.send_privmsg(
+                channel,
+                reply("Alert", ALERT.usage_line("[-l] <message> <in|at> <datetime>")),
+            )?;
 
             return Ok(());
         };
@@ -264,7 +267,7 @@ impl Plugin<Context> for AlertPlugin {
                     channel,
                     reply(
                         "Alert",
-                        format!("{} Alert stored for\x0f {local}.", success_message()),
+                        format!("{} Alert stored for {}.", success_message(), em(local)),
                     ),
                 )?;
             }
@@ -436,7 +439,7 @@ fn format_pending(pending: &[Alert]) -> String {
         return reply("Alert", "You have no pending alerts");
     }
 
-    let mut listing = reply("Alert", format!("Pending alerts:\x0f {}", pending.len()));
+    let mut listing = reply("Alert", field("Pending alerts", pending.len()));
 
     let entries = pending
         .iter()
@@ -466,7 +469,7 @@ fn format_entry(alert: &Alert) -> String {
         .truncate_with_suffix(MAX_LISTED_MESSAGE_CHARS, "…");
     let due = format_due(alert.time.with_timezone(&Local));
 
-    format!("“{RESET}{message}{COLOR}”{RESET} {due}{COLOR}")
+    format!("{}{RESET} {due}{COLOR}", quoted(message))
 }
 
 /// Formats the due time of an alert as `Sep 16th 11:21`.
@@ -782,7 +785,7 @@ mod tests {
         assert_eq!(
             format_pending(&pending),
             concat!(
-                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1",
+                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1\x0310",
                 "\x0310 Next up: “\x0fhello world\x0310”\x0f Sep 16th 11:21\x0310",
             )
         );
@@ -800,7 +803,7 @@ mod tests {
         assert_eq!(
             format_pending(&pending),
             concat!(
-                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 4",
+                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 4\x0310",
                 "\x0310 Next up: “\x0ffirst\x0310”\x0f Sep 16th 11:21\x0310",
                 "\x0310, then: “\x0fsecond\x0310”\x0f Sep 16th 11:22\x0310",
                 "\x0310, then: “\x0fthird\x0310”\x0f Sep 16th 11:23\x0310",
@@ -815,7 +818,7 @@ mod tests {
         let truncated = format!("{}…", "a".repeat(50));
         let expected = format!(
             concat!(
-                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1",
+                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1\x0310",
                 "\x0310 Next up: “\x0f{}\x0310”\x0f Sep 16th 11:21\x0310",
             ),
             truncated

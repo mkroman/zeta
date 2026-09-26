@@ -182,7 +182,11 @@ impl Display for Thing {
 
         write!(
             f,
-            "“\x0f{name}\x0310” is a{type_desc} created by\x0f {creator}\x0310 with\x0f {likes}\x0310 {like_noun}, \x0f{downloads}\x0310 {dl_noun}"
+            "{} is a{type_desc} created by {} with {} {like_noun}, {} {dl_noun}",
+            quoted(name),
+            em(creator),
+            em(likes),
+            em(downloads)
         )?;
 
         if self.collect_count > 0 {
@@ -192,7 +196,7 @@ impl Display for Thing {
             } else {
                 "collections"
             };
-            write!(f, " and is part of\x0f {collects}\x0310 {coll_noun}")?;
+            write!(f, " and is part of {} {coll_noun}", em(collects))?;
         }
 
         Ok(())
@@ -245,7 +249,7 @@ mod tests {
 
         assert_eq!(
             thing.to_string(),
-            "“\x0fBracket\x0310” is a thing created by\x0f mk\x0310 with\x0f 1,204\x0310 likes, \
+            "“\x0fBracket\x0310” is a thing created by \x0fmk\x0310 with \x0f1,204\x0310 likes, \
              \x0f1\x0310 download"
         );
     }
@@ -277,7 +281,7 @@ mod tests {
         assert!(
             thing
                 .to_string()
-                .ends_with(" and is part of\x0f 1\x0310 collection"),
+                .ends_with(" and is part of \x0f1\x0310 collection"),
             "{thing}"
         );
     }

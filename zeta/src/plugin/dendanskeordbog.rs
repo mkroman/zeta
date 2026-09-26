@@ -62,28 +62,28 @@ impl Display for MessageFormatter<'_> {
             }
 
             let pos = &entry.pos;
-            write!(fmt, " (\x0f{pos}\x0310)")?;
+            write!(fmt, " ({})", em(pos))?;
 
             if self.settings.show_morphology
                 && let Some(inflection) = &entry.morphology
             {
-                write!(fmt, " Bøjning:\x0f {inflection}\x0310")?;
+                write!(fmt, " {}", field("Bøjning", inflection))?;
             }
 
             if self.settings.show_etymology
                 && let Some(etymology) = &entry.etymology
             {
-                write!(fmt, " Oprindelse:\x0f {etymology}\x0310")?;
+                write!(fmt, " {}", field("Oprindelse", etymology))?;
             }
 
             if let Some(definition) = &entry.definitions.first() {
                 let description = &definition.description;
-                write!(fmt, " Definition:\x0f {description}\x0310")?;
+                write!(fmt, " {}", field("Definition", description))?;
 
                 if self.settings.show_examples
                     && let Some(example) = &definition.examples.first()
                 {
-                    write!(fmt, " Eksempel:\x0f {example}\x0310")?;
+                    write!(fmt, " {}", field("Eksempel", example))?;
                 }
             }
         } else {
@@ -112,20 +112,21 @@ impl Plugin<Context> for DenDanskeOrdbog {
         let channel = command.channel();
         let args = command.args();
 
-        let message = if args.is_empty() {
-            notice("Usage: .ddo\x0f <query>")
-        } else {
-            match self.client.query(args).await {
-                Ok(document) => MessageFormatter {
-                    document: &document,
+        reply_lookup(
+            client,
+            channel,
+            args,
+            &DDO.usage_line("<query>"),
+            |query| async move { self.client.query(&query).await },
+            |document| {
+                MessageFormatter {
+                    document,
                     settings: &self.settings,
                 }
-                .to_string(),
-                Err(err) => notice(err),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+                .to_string()
+            },
+        )
+        .await?;
 
         Ok(())
     }

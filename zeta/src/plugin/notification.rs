@@ -88,10 +88,7 @@ impl Plugin<Context> for NotificationPlugin {
         let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
 
         let Some((target, message)) = parse_args(command.args()) else {
-            client.send_privmsg(
-                channel,
-                reply("Notification", "Usage: .notify\x0f <nick> <message>"),
-            )?;
+            client.send_privmsg(channel, reply("Notification", NOTIFY.usage_line("<nick> <message>")))?;
 
             return Ok(());
         };

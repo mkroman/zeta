@@ -6,9 +6,11 @@
 //! exact escape codes are written down in one place.
 
 use std::fmt;
+use std::future::Future;
 
 use argh::FromArgs;
 use irc::client::Client;
+use tracing::warn;
 
 use crate::command::ArgsError;
 use crate::event::CommandEvent;
@@ -47,6 +49,104 @@ pub fn reply_prefix(name: &str) -> String {
 #[must_use]
 pub fn notice(message: impl fmt::Display) -> String {
     format!("{REPLY_PREFIX} {message}")
+}
+
+/// Formats one `` Label:\x0f value\x0310 `` field: the label in the default color, `value` in
+/// the reply color.
+///
+/// No leading space is included, so a message's first field is written as-is while continuation
+/// fields prefix the space themselves, e.g. `write!(fmt, " {}", field("Plot", plot))`.
+#[must_use]
+pub fn field(label: &str, value: impl fmt::Display) -> String {
+    format!("{label}:{} {value}{COLOR}", RESET)
+}
+
+/// Emphasizes `value` by switching from the surrounding color to the reply color.
+#[must_use]
+pub fn em(value: impl fmt::Display) -> String {
+    format!("{RESET}{value}{COLOR}")
+}
+
+/// Formats `value` as `` “value” `` — curly quotes around the reply color.
+#[must_use]
+pub fn quoted(value: impl fmt::Display) -> String {
+    format!("“{}”", em(value))
+}
+
+/// Runs a lookup command that yields a single result, replying to `channel`.
+///
+/// Empty `args` are answered with `usage`; otherwise `lookup` runs with the trimmed arguments and
+/// a successful result is formatted by `format` (which produces the complete reply, banner
+/// included). An error is answered with a plain notice and logged.
+///
+/// # Errors
+///
+/// Returns any error produced while sending the reply.
+pub async fn reply_lookup<T, E, F, Fut>(
+    client: &Client,
+    channel: &str,
+    args: &str,
+    usage: &str,
+    lookup: F,
+    format: impl FnOnce(&T) -> String,
+) -> Result<(), irc::error::Error>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: fmt::Display,
+{
+    let message = if args.trim().is_empty() {
+        notice(usage)
+    } else {
+        match lookup(args.trim().to_string()).await {
+            Ok(result) => format(&result),
+            Err(error) => {
+                warn!(%error, "lookup failed");
+                notice(error)
+            }
+        }
+    };
+
+    client.send_privmsg(channel, message)
+}
+
+/// Runs a lookup command that yields a list of results, replying to `channel` with its first
+/// entry.
+///
+/// Empty `args` are answered with `usage`; otherwise `lookup` runs with the trimmed arguments and
+/// its first result is formatted by `format` (which produces the complete reply, banner
+/// included). An empty list is answered with a no-results notice, an error with a plain notice
+/// and a log line.
+///
+/// # Errors
+///
+/// Returns any error produced while sending the reply.
+pub async fn reply_first_lookup<T, E, F, Fut>(
+    client: &Client,
+    channel: &str,
+    args: &str,
+    usage: &str,
+    lookup: F,
+    format: impl FnOnce(&T) -> String,
+) -> Result<(), irc::error::Error>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<Vec<T>, E>>,
+    E: fmt::Display,
+{
+    let message = if args.trim().is_empty() {
+        notice(usage)
+    } else {
+        match lookup(args.trim().to_string()).await {
+            Ok(results) => results.first().map_or_else(|| notice("No results"), format),
+            Err(error) => {
+                warn!(%error, "lookup failed");
+                notice(error)
+            }
+        }
+    };
+
+    client.send_privmsg(channel, message)
 }
 
 /// Sends the output of a failed argument parse to `channel`, one message per non-empty line.
@@ -139,5 +239,20 @@ mod tests {
     #[test]
     fn notice_prefixes_the_message_with_the_marker() {
         assert_eq!(notice("No results found"), "\x0310> No results found");
+    }
+
+    #[test]
+    fn field_emphasizes_the_value_in_the_reply_color() {
+        assert_eq!(field("Plot", "steep"), "Plot:\x0f steep\x0310");
+    }
+
+    #[test]
+    fn quoted_wraps_the_value_in_curly_quotes() {
+        assert_eq!(quoted("Pilot"), "“\x0fPilot\x0310”");
+    }
+
+    #[test]
+    fn em_switches_to_the_reply_color_around_the_value() {
+        assert_eq!(em("2008"), "\x0f2008\x0310");
     }
 }

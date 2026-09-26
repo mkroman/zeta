@@ -93,23 +93,19 @@ impl Plugin<Context> for GitHubPlugin {
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
-        let query = command.args().trim();
+        let query = command.args();
 
-        let response = if query.is_empty() {
-            reply("GitHub", ".gh <query>")
-        } else {
-            info!(query, %channel, "searching github");
+        info!(query, %channel, "searching github");
 
-            match self.search_repos(query).await {
-                Ok(response) => response.items.first().map_or_else(
-                    || reply("GitHub", "No results"),
-                    Self::format_repo_details,
-                ),
-                Err(err) => reply("GitHub", err),
-            }
-        };
-
-        client.send_privmsg(channel, response)?;
+        reply_first_lookup(
+            client,
+            channel,
+            query,
+            &GITHUB.usage_line("<query>"),
+            |query| async move { self.search_repos(&query).await.map(|response| response.items) },
+            Self::format_repo_details,
+        )
+        .await?;
 
         Ok(())
     }

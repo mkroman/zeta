@@ -13,9 +13,6 @@ use tracing::debug;
 
 use crate::{config::HttpConfig, http, plugin::prelude::*, utils::Truncatable, utils::collapse_whitespace};
 
-/// The usage line sent for empty `.ud` queries.
-pub const USAGE: &str = "Usage: .ud\x0f <query>";
-
 /// The Urban Dictionary API base URL.
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
 
@@ -103,26 +100,22 @@ impl Plugin<Context> for UrbanDictionary {
         let channel = command.channel();
         let query = command.args();
 
-        let message = if query.is_empty() {
-            reply("Urban Dictionary", USAGE)
-        } else {
-            match self.definitions(query).await {
-                Ok(definitions) => definitions.list.first().map_or_else(
-                    || reply("Urban Dictionary", "No results"),
-                    |definition| {
-                        let formatter = DefinitionFormatter {
-                            definition,
-                            max_length: self.settings.max_definition_length,
-                        };
+        reply_first_lookup(
+            client,
+            channel,
+            query,
+            &URBAN_DICTIONARY.usage_line("<query>"),
+            |query| async move { self.definitions(&query).await.map(|definitions| definitions.list) },
+            |definition| {
+                let formatter = DefinitionFormatter {
+                    definition,
+                    max_length: self.settings.max_definition_length,
+                };
 
-                        reply("Urban Dictionary", formatter.to_string())
-                    },
-                ),
-                Err(err) => reply("Urban Dictionary", err),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+                reply("Urban Dictionary", formatter.to_string())
+            },
+        )
+        .await?;
 
         Ok(())
     }
@@ -142,9 +135,9 @@ impl Display for DefinitionFormatter<'_> {
         let definition = definition.truncate_with_suffix(self.max_length, "…");
         let example = example.truncate_with_suffix(self.max_length, "…");
 
-        write!(fmt, "Term:\x0f {word}\x0310")?;
-        write!(fmt, " Definition:\x0f {definition}\x0310")?;
-        write!(fmt, " Example:\x0f {example}")
+        write!(fmt, "{}", field("Term", word))?;
+        write!(fmt, " {}", field("Definition", definition))?;
+        write!(fmt, " {}", field("Example", example))
     }
 }
 
@@ -223,7 +216,7 @@ mod tests {
 
         assert_eq!(
             formatter.to_string(),
-            "Term:\x0f word\x0310 Definition:\x0f definition\x0310 Example:\x0f example"
+            "Term:\x0f word\x0310 Definition:\x0f definition\x0310 Example:\x0f example\x0310"
         );
     }
 

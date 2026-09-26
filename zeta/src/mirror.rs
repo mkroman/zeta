@@ -129,6 +129,19 @@ pub struct Mirror {
     manager: OnceLock<Option<DownloadManager>>,
 }
 
+impl MirrorConfig {
+    /// Returns an S3 configuration built from the `s3_*` settings of the mirror configuration.
+    fn s3_config(&self) -> s3::S3Config {
+        s3::S3Config {
+            access_key_id: self.s3_access_key_id.clone(),
+            secret_access_key: self.s3_secret_access_key.clone(),
+            bucket: self.s3_bucket_name.clone(),
+            region: self.s3_region.clone(),
+            endpoint: self.s3_endpoint.clone(),
+        }
+    }
+}
+
 impl Mirror {
     /// Creates a mirror from the shared `[mirror]` configuration.
     ///
@@ -141,13 +154,7 @@ impl Mirror {
             max_filesize: config.max_filesize.clone(),
             download_timeout: config.download_timeout,
         });
-        let s3 = S3::new(s3::S3Config {
-            access_key_id: config.s3_access_key_id.clone(),
-            secret_access_key: config.s3_secret_access_key.clone(),
-            bucket: config.s3_bucket_name.clone(),
-            region: config.s3_region.clone(),
-            endpoint: config.s3_endpoint.clone(),
-        })?;
+        let s3 = S3::new(config.s3_config())?;
 
         Ok(Self::new(
             s3,
@@ -711,16 +718,21 @@ mod tests {
         assert!(!fresh.exists());
     }
 
-    /// Returns a mirror that never talks to S3 and has no manager running.
-    fn mirror_for_test() -> Mirror {
+    /// Returns a mirror around the given S3 client that never starts its manager.
+    fn mirror_with(s3: S3) -> Mirror {
         Mirror {
-            s3: S3::for_test(),
+            s3,
             ytdlp: YtDlp::with_command("yt-dlp"),
             download_dir: None,
             max_concurrent: 2,
             in_flight: Arc::default(),
             manager: OnceLock::new(),
         }
+    }
+
+    /// Returns a mirror that never talks to S3 and has no manager running.
+    fn mirror_for_test() -> Mirror {
+        mirror_with(S3::for_test())
     }
 
     #[test]
@@ -758,14 +770,7 @@ mod tests {
                 .unwrap();
         });
 
-        let mirror = Mirror {
-            s3: S3::with_endpoint(&format!("http://{address}")),
-            ytdlp: YtDlp::with_command("yt-dlp"),
-            download_dir: None,
-            max_concurrent: 2,
-            in_flight: Arc::default(),
-            manager: OnceLock::new(),
-        };
+        let mirror = mirror_with(S3::with_endpoint(&format!("http://{address}")));
 
         (mirror, server)
     }

@@ -197,7 +197,9 @@ impl PornHub {
         let views = video.views.to_formatted_string(&Locale::en);
 
         notice(format!(
-            "“\x0f{title}\x0310” is a PornHub video with\x0f {views}\x0310 views"
+            "{} is a PornHub video with {} views",
+            quoted(title),
+            em(views)
         ))
     }
 }

@@ -213,7 +213,10 @@ impl Tvmaze {
                 .map_or_else(|| "???".to_string(), |airstamp| (airstamp - now).in_words())
         };
         let content = format!(
-            "Next episode “\x0f{title}\x0310” (\x0f{season}x{number:02}\x0310) airs in\x0f {time_until_air}"
+            "Next episode {} ({}) airs in {}",
+            quoted(title),
+            em(format!("{season}x{number:02}")),
+            em(time_until_air)
         );
 
         Self::build_formatted_message(Some(&show.name), &content)
@@ -224,7 +227,9 @@ impl Tvmaze {
         let name = &show.name;
         let status = &show.status;
         let content = format!(
-            "\x0f{name}\x0310 is currently marked as\x0f {status}\x0310 and there is no next episode"
+            "{} is currently marked as {} and there is no next episode",
+            em(name),
+            em(status)
         );
 
         Self::build_formatted_message(None, &content)
@@ -339,7 +344,7 @@ mod tests {
 
         assert!(
             message.contains(
-                "Next episode “\x0fThe Next One\x0310” (\x0f2x07\x0310) airs in\x0f 0 minutes"
+                "Next episode “\x0fThe Next One\x0310” (\x0f2x07\x0310) airs in \x0f0 minutes\x0310"
             ),
             "{message}"
         );
@@ -356,7 +361,7 @@ mod tests {
 
         assert!(
             message.contains(
-                "\x0fA Show\x0310 is currently marked as\x0f Running\x0310 and there is no next episode"
+                "\x0fA Show\x0310 is currently marked as \x0fRunning\x0310 and there is no next episode"
             ),
             "{message}"
         );

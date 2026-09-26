@@ -142,9 +142,6 @@ struct QuoteOpts {
     currency: Option<String>,
 }
 
-/// The usage hint for the `.cc` command.
-const CC_USAGE: &str = "Usage: .cc \x0f<symbol> [currency]";
-
 /// Convert a cryptocurrency price into fiat currency.
 #[derive(FromArgs, ArgsInfo, Debug)]
 struct CoinOpts {
@@ -277,7 +274,7 @@ impl CoinMarketCap {
         let opts = match CC.parse_args::<CoinOpts>(args) {
             Ok(opts) if !opts.coin.trim().is_empty() => opts,
             _ => {
-                client.send_privmsg(channel, notice(CC_USAGE))?;
+                client.send_privmsg(channel, notice(CC.usage_line("<symbol> [currency]")))?;
                 return Ok(());
             }
         };
@@ -308,7 +305,7 @@ impl CoinMarketCap {
         let Ok(opts) = command.parse_args::<QuoteOpts>(args) else {
             client.send_privmsg(
                 channel,
-                notice(format!("Usage: {} \x0f[currency]", command.trigger())),
+                notice(format!("Usage: {}\x0f [currency]", command.trigger())),
             )?;
             return Ok(());
         };
@@ -563,9 +560,7 @@ fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String
     let symbol = &quote.symbol;
 
     let Some(fiat) = quote.quote.get(currency) else {
-        return notice(format!(
-            "{name} ({RESET}{symbol}{COLOR}) has no quote in {currency}"
-        ));
+        return notice(format!("{name} ({}) has no quote in {currency}", em(symbol)));
     };
 
     let price = fiat.price.map_or_else(
@@ -578,9 +573,12 @@ fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String
     let change_week = format_change(fiat.percent_change_7d);
 
     notice(format!(
-        "{name} ({RESET}{symbol}{COLOR}) is currently trading at{RESET} {price}{COLOR} \
-         (1 Hour Change:{RESET} {change_hour}{COLOR} 24 Hour Change:{RESET} {change_day}{COLOR} \
-         7 Day Change:{RESET} {change_week}{COLOR})"
+        "{name} ({}) is currently trading at {} ({} {} {})",
+        em(symbol),
+        em(&price),
+        field("1 Hour Change", change_hour),
+        field("24 Hour Change", change_day),
+        field("7 Day Change", change_week),
     ))
 }
 
@@ -903,7 +901,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x0f $97231.50\x0310 \
+            "\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at \x0f$97231.50\x0310 \
              (1 Hour Change:\x0f \x033+0.50%\x0f\x0310 24 Hour Change:\x0f \
              \x034-1.20%\x0f\x0310 7 Day Change:\x0f \x033+10.25%\x0f\x0310)"
         );

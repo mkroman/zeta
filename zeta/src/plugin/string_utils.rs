@@ -83,13 +83,13 @@ impl StringUtils {
     /// Replies with usage information for the invoked command.
     fn usage(client: &Client, channel: &str, command: CommandSpec) -> Result<(), ZetaError> {
         let usage = if command == BYTES {
-            "Usage: .b\x0f <byte..>"
+            BYTES.usage_line("<byte..>")
         } else if command == LENGTH {
-            "Usage: .len\x0f <string>"
+            LENGTH.usage_line("<string>")
         } else if command == ORD {
-            "Usage: .ord\x0f <chars..>"
+            ORD.usage_line("<chars..>")
         } else if command == REVERSE {
-            "Usage: .rev\x0f <string>"
+            REVERSE.usage_line("<string>")
         } else {
             return Ok(());
         };

@@ -11,7 +11,7 @@
 
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::{http, plugin::prelude::*};
 
@@ -124,21 +124,15 @@ impl Plugin<Context> for Trustpilot {
         let channel = command.channel();
         let query = command.args();
 
-        let message = if query.trim().is_empty() {
-            notice("Usage: .tp\x0f <domain name>")
-        } else {
-            match self.search(query).await {
-                Ok(business) => format_business(&business, &self.review_domain),
-                Err(Error::NotFound) => notice("No results found"),
-                Err(e) => {
-                    warn!(error = ?e, "trustpilot error");
-                    // The error is already safe for display
-                    notice(e)
-                }
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+        reply_lookup(
+            client,
+            channel,
+            query,
+            &TRUSTPILOT.usage_line("<domain name>"),
+            |query| async move { self.search(&query).await },
+            |business| format_business(business, &self.review_domain),
+        )
+        .await?;
 
         Ok(())
     }
@@ -183,7 +177,11 @@ fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
     reply(
         "Trustpilot",
         format!(
-            "(\x0f{name}\x0310): Score:\x0f {score:.1}\x0310/\x0f5.0\x0310 Reviews:\x0f {reviews}\x0310 - {url}"
+            "({}): {}/{} {} - {url}",
+            em(name),
+            field("Score", format!("{score:.1}")),
+            em("5.0"),
+            field("Reviews", reviews),
         ),
     )
 }

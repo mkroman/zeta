@@ -41,6 +41,11 @@ struct CachedToken {
     expires_at: Instant,
 }
 
+/// Returns the cached token when it is still fresh, i.e. outside [`EXPIRY_BUFFER`].
+fn fresh(token: Option<&CachedToken>) -> Option<&CachedToken> {
+    token.filter(|token| token.expires_at > Instant::now() + EXPIRY_BUFFER)
+}
+
 impl TokenCache {
     /// Creates an empty cache.
     #[must_use]
@@ -69,9 +74,7 @@ impl TokenCache {
         R: FnOnce() -> F,
         F: Future<Output = Result<TokenResponse, E>>,
     {
-        if let Some(token) = self.token.read().await.as_ref()
-            && token.expires_at > Instant::now() + EXPIRY_BUFFER
-        {
+        if let Some(token) = fresh(self.token.read().await.as_ref()) {
             return Ok(token.access_token.clone());
         }
 
@@ -79,9 +82,7 @@ impl TokenCache {
 
         // Double-check and return the current token if another task refreshed it while this
         // one waited for the write guard.
-        if let Some(token) = guard.as_ref()
-            && token.expires_at > Instant::now() + EXPIRY_BUFFER
-        {
+        if let Some(token) = fresh(guard.as_ref()) {
             return Ok(token.access_token.clone());
         }
 
@@ -181,6 +182,32 @@ impl Credentials {
                 Ok(token)
             })
             .await
+    }
+
+    /// Sends an authenticated GET request to the API and parses its JSON response.
+    ///
+    /// A valid access token is resolved through [`access_token`](Self::access_token) with
+    /// `grant` building the token request, applied as a `Bearer` authorization header, and
+    /// `decorate` adds the API's remaining decoration — headers such as Twitch's `Client-ID`,
+    /// query parameters, or nothing at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `http::ApiError` when the token request or the API request fails, or a
+    /// response cannot be parsed.
+    pub async fn get_json<T>(
+        &self,
+        url: impl AsRef<str>,
+        grant: impl FnOnce(&reqwest::Client, &Credentials) -> reqwest::RequestBuilder,
+        decorate: impl FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    ) -> Result<T, crate::http::ApiError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let token = self.access_token(grant).await?;
+
+        let request = decorate(self.client.get(url.as_ref())).bearer_auth(token);
+        crate::http::get_json(request).await
     }
 }
 

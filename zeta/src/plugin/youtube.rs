@@ -536,15 +536,20 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
             .and_then(|viewers| viewers.parse::<u64>().ok())
         {
             return notice(format!(
-                "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
-                 {channel_name}\x0310 with\x0f {}\x0310 viewers",
-                viewers.to_formatted_string(&Locale::en),
+                "{} is {article} {} live stream by {} with {} viewers",
+                quoted(title),
+                em(category),
+                em(channel_name),
+                em(viewers.to_formatted_string(&Locale::en)),
             ));
         }
 
         return notice(format!(
-            "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
-             {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
+            "{} is {article} {} live stream by {} with {} views",
+            quoted(title),
+            em(category),
+            em(channel_name),
+            em(view_count_formatted),
         ));
     }
 
@@ -556,8 +561,11 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
     let article = indefinite_article_only(&duration);
 
     notice(format!(
-        "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
-         {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
+        "{} is {article} {} video by {} with {} views",
+        quoted(title),
+        em(duration),
+        em(channel_name),
+        em(view_count_formatted),
     ))
 }
 
@@ -614,7 +622,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Music", 123_456),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f 1h 2m 20s\x0310 video by\x0f Test Channel\x0310 with\x0f 123,456\x0310 views",
+            "\x0310> “\x0fTest Video\x0310” is a \x0f1h 2m 20s\x0310 video by \x0fTest Channel\x0310 with \x0f123,456\x0310 views",
         );
     }
 
@@ -624,7 +632,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Music", 1),
-            "\x0310> “\x0fTest Video\x0310” is an\x0f unknown duration\x0310 video by\x0f Test Channel\x0310 with\x0f 1\x0310 views",
+            "\x0310> “\x0fTest Video\x0310” is an \x0funknown duration\x0310 video by \x0fTest Channel\x0310 with \x0f1\x0310 views",
         );
     }
 
@@ -634,7 +642,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Music", 42),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
+            "\x0310> “\x0fTest Video\x0310” is a \x0fMusic\x0310 live stream by \x0fTest Channel\x0310 with \x0f1,234\x0310 viewers",
         );
     }
 
@@ -644,7 +652,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Education", 42),
-            "\x0310> “\x0fTest Video\x0310” is an\x0f Education\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
+            "\x0310> “\x0fTest Video\x0310” is an \x0fEducation\x0310 live stream by \x0fTest Channel\x0310 with \x0f1,234\x0310 viewers",
         );
     }
 
@@ -654,7 +662,7 @@ mod tests {
 
         assert_eq!(
             format_video_message(&video, "Music", 42),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 42\x0310 views",
+            "\x0310> “\x0fTest Video\x0310” is a \x0fMusic\x0310 live stream by \x0fTest Channel\x0310 with \x0f42\x0310 views",
         );
     }
 }

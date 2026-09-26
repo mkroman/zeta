@@ -224,15 +224,11 @@ impl Spotify {
     }
 
     async fn fetch<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, Error> {
-        let token = self.credentials.access_token(Spotify::token_grant).await?;
         let url = format!("{API_BASE_URL}/{path}");
 
-        let request = self
-            .credentials
-            .client()
-            .get(&url)
-            .header(AUTHORIZATION, format!("Bearer {token}"));
-        http::get_json(request).await
+        self.credentials
+            .get_json(&url, Spotify::token_grant, |request| request)
+            .await
     }
 
     async fn send_track_details(

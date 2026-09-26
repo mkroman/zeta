@@ -19,10 +19,9 @@ use tokio::io::AsyncReadExt;
 use tracing::debug;
 use url::Url;
 
+use crate::error::RequestError;
 use zeta_plugin::Error as ZetaError;
 use zeta_plugin::prelude::resolve_secret;
-
-use crate::error::RequestError;
 
 /// The name used to identify our credentials provider.
 const CREDENTIALS_PROVIDER_NAME: &str = "zeta-mirror";
@@ -64,6 +63,12 @@ pub struct S3Config {
     ///
     /// Falls back to the `S3_ENDPOINT` environment variable when unset.
     pub endpoint: Option<String>,
+}
+
+/// Resolves a required S3 configuration value, failing with [`Error::MissingConfig`] when the
+/// setting and its `S3_*` environment fallback are both unset.
+fn required(value: Option<&str>, env: &str) -> Result<String, Error> {
+    resolve_secret(value, env).map_err(Error::MissingConfig)
 }
 
 /// Errors that can occur while talking to S3.
@@ -154,13 +159,10 @@ impl S3 {
     ///
     /// Returns an error if a required value is missing or a configured value is invalid.
     pub fn new(config: S3Config) -> Result<Self, Error> {
-        let access_key_id = resolve_secret(config.access_key_id.as_deref(), "S3_ACCESS_KEY_ID")
-            .map_err(Error::MissingConfig)?;
+        let access_key_id = required(config.access_key_id.as_deref(), "S3_ACCESS_KEY_ID")?;
         let secret_access_key =
-            resolve_secret(config.secret_access_key.as_deref(), "S3_SECRET_ACCESS_KEY")
-                .map_err(Error::MissingConfig)?;
-        let bucket = resolve_secret(config.bucket.as_deref(), "S3_BUCKET_NAME")
-            .map_err(Error::MissingConfig)?;
+            required(config.secret_access_key.as_deref(), "S3_SECRET_ACCESS_KEY")?;
+        let bucket = required(config.bucket.as_deref(), "S3_BUCKET_NAME")?;
         let region = crate::utils::resolve_setting(config.region.as_deref(), "S3_REGION", "auto");
 
         let endpoint = config
