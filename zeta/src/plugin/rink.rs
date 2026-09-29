@@ -781,7 +781,14 @@ mod tests {
     /// Builds a plugin whose CoinMarketCap client issues requests against the given listings
     /// server.
     #[cfg(feature = "plugin-coinmarketcap")]
-    async fn plugin_with_listings(status: u16) -> Rink {
+    /// Builds a plugin whose fiat and listings endpoints are served by the returned mock
+    /// servers.
+    ///
+    /// The servers travel with the plugin because dropping a `MockServer` returns it to
+    /// wiremock's pool, where another test can acquire it: the pooled server is reset,
+    /// unmounting these mocks, and this plugin's requests would then be recorded against
+    /// whichever test happened to borrow it.
+    async fn plugin_with_listings(status: u16) -> (Rink, MockServer, MockServer) {
         let fiat_server = currency_server(200).await;
         let listings_server = listings_server(status).await;
 
@@ -792,7 +799,7 @@ mod tests {
             &listings_server.uri(),
         )));
 
-        rink
+        (rink, fiat_server, listings_server)
     }
 
     #[tokio::test]
@@ -891,7 +898,7 @@ mod tests {
     #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn crypto_units_load_and_convert() {
-        let rink = plugin_with_listings(200).await;
+        let (rink, _fiat, _listings) = plugin_with_listings(200).await;
 
         rink.ensure_currency_cached().await;
 
@@ -910,7 +917,7 @@ mod tests {
     #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn synthesis_skips_colliding_and_invalid_symbols() {
-        let rink = plugin_with_listings(200).await;
+        let (rink, _fiat, _listings) = plugin_with_listings(200).await;
 
         rink.ensure_currency_cached().await;
 
@@ -958,7 +965,7 @@ mod tests {
     #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn crypto_subunits_resolve_against_the_live_coins() {
-        let rink = plugin_with_listings(200).await;
+        let (rink, _fiat, _listings) = plugin_with_listings(200).await;
 
         rink.ensure_currency_cached().await;
 
@@ -996,7 +1003,7 @@ mod tests {
     async fn a_failed_listings_fetch_keeps_the_fiat_path() {
         // The fiat dataset is fine; the listings endpoint is not. The refresh fails as a
         // whole, so the last known context — without crypto — stays in place.
-        let rink = plugin_with_listings(500).await;
+        let (rink, _fiat, _listings) = plugin_with_listings(500).await;
 
         rink.ensure_currency_cached().await;
 
