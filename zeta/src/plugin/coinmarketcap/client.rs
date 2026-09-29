@@ -9,7 +9,7 @@ use serde_json::Value;
 use tracing::debug;
 
 use super::error::Error;
-use super::model::{Coin, CoinQuery, Envelope, Fiat, QuoteData};
+use super::model::{Coin, CoinQuery, Envelope, Fiat, Listing, QuoteData};
 use crate::config::HttpConfig;
 use crate::error::RequestError;
 use crate::http;
@@ -30,10 +30,11 @@ const COIN_MAP_LIMIT: u32 = 1000;
 /// size, so all supported currencies are fetched in a single request.
 const FIAT_MAP_LIMIT: u32 = 5000;
 
-/// Client for the CoinMarketCap API.
 pub struct Client {
     /// HTTP client for CoinMarketCap API requests, with the API key set as a default header.
     inner: reqwest::Client,
+    /// The base URL the client issues requests against; `API_BASE_URL` outside of tests.
+    base: String,
 }
 
 impl Client {
@@ -45,6 +46,11 @@ impl Client {
     /// Returns [`ZetaError`] if the API key is not a valid HTTP header value, or the client
     /// could not be built.
     pub fn new(api_key: &str, config: &HttpConfig) -> Result<Self, ZetaError> {
+        Self::with_base(api_key, config, API_BASE_URL)
+    }
+
+    /// Builds a client against `base`, shared by [`Client::new`] and the test constructor.
+    fn with_base(api_key: &str, config: &HttpConfig, base: &str) -> Result<Self, ZetaError> {
         let headers = HeaderMap::from_iter([
             (ACCEPT, HeaderValue::from_static("application/json")),
             (
@@ -58,7 +64,10 @@ impl Client {
             .build()
             .map_err(|error| plugin_err(RequestError::from(error)))?;
 
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            base: base.to_owned(),
+        })
     }
 
     /// Fetches the map of the top cryptocurrencies (by market cap rank) from the CoinMarketCap
@@ -77,6 +86,34 @@ impl Client {
                 &[
                     ("limit", COIN_MAP_LIMIT.to_string()),
                     ("sort", "cmc_rank".to_string()),
+                ],
+            )
+            .await?;
+
+        Ok(parsed.data.unwrap_or_default())
+    }
+
+    /// Fetches the ranked list of the top cryptocurrencies with their latest market quotes from
+    /// the CoinMarketCap API, so a single credited call yields the whole price table.
+    ///
+    /// Returns the coins in market cap rank order, quoted in USD. The endpoint is charged one
+    /// call credit per 250 coins returned (rounded up), so a limit of 100 costs a single
+    /// credit per refresh.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] if the request fails, the API responds with an error status, or
+    /// the response cannot be parsed.
+    pub async fn listings(&self, limit: u32) -> Result<Vec<Listing>, Error> {
+        debug!(limit, "fetching the top cryptocurrency listings");
+
+        let parsed: Envelope<Vec<Listing>> = self
+            .get_json(
+                "/v3/cryptocurrency/listings/latest",
+                &[
+                    ("start", "1".to_string()),
+                    ("limit", limit.to_string()),
+                    ("convert", "USD".to_string()),
                 ],
             )
             .await?;
@@ -144,7 +181,7 @@ impl Client {
     ) -> Result<T, Error> {
         let request = self
             .inner
-            .get(format!("{API_BASE_URL}{path}"))
+            .get(format!("{}{path}", self.base))
             .query(query);
         http::get_json(request)
             .await
@@ -178,9 +215,16 @@ fn api_error(status: StatusCode, body: &str) -> Error {
 }
 
 #[cfg(test)]
+impl Client {
+    /// Builds a client issuing requests against `base`, for the wiremock tests.
+    pub(crate) fn for_base(api_key: &str, config: &HttpConfig, base: &str) -> Self {
+        Self::with_base(api_key, config, base).unwrap()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn decodes_quote_response() {
         let text = r#"{"data":{"BTC":{"id":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","quote":{"USD":{"price":97231.504,"volume_24h":48000000000,"percent_change_1h":0.5,"percent_change_24h":-1.2,"percent_change_7d":10.25,"last_updated":"2026-09-09T00:00:00.000Z"}}}},"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
@@ -192,6 +236,20 @@ mod tests {
         assert_eq!(quote.symbol, "BTC");
         assert_eq!(quote.quote["USD"].price, Some(97231.504));
         assert_eq!(quote.quote["USD"].percent_change_24h, Some(-1.2));
+    }
+
+    #[test]
+    fn decodes_listings_response() {
+        let text = r#"{"data":[{"id":1027,"name":"Ethereum","symbol":"ETH","slug":"ethereum","cmc_rank":2,"num_market_pairs":9001,"circulating_supply":120000000,"total_supply":120000000,"max_supply":null,"infinite_supply":false,"date_added":"2015-08-07T00:00:00.000Z","last_updated":"2026-09-29T11:13:00.000Z","quote":{"USD":{"price":2650.32,"volume_24h":1000000000,"percent_change_1h":0.4,"percent_change_24h":1.2,"percent_change_7d":3.4,"last_updated":"2026-09-29T11:13:00.000Z"}}}],"status":{"timestamp":"2026-09-29T11:13:55.525Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
+
+        let parsed: Envelope<Vec<Listing>> = http::json::from_str(text).unwrap();
+        let listings = parsed.data.unwrap();
+
+        assert_eq!(listings.len(), 1);
+        assert_eq!(listings[0].symbol, "ETH");
+        assert_eq!(listings[0].name, "Ethereum");
+        assert_eq!(listings[0].cmc_rank, Some(2));
+        assert_eq!(listings[0].quote["USD"].price, Some(2650.32));
     }
 
     #[test]

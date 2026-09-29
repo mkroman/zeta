@@ -316,6 +316,8 @@ name = "#zeta.dev"
   # currency_ttl = "1h"
   # The URL the live currency dataset is fetched from.
   # currency_url = "https://rinkcalc.app/data/currency.json"
+  # Whether to load live cryptocurrency units through the coinmarketcap plugin.
+  # crypto = true
 
   # Rust Playground integration.
   [plugins.rust_playground]

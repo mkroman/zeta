@@ -1,11 +1,11 @@
-//! Evaluates calculations with unit and currency conversions through rink.
+//! Evaluates calculations with unit, currency, and cryptocurrency conversions through rink.
 //!
 //! The `.r <expression>` command evaluates the whole argument as a rink expression and replies
 //! with the one-line result as a notice — arithmetic, physical unit conversions, and, with live
-//! currency data loaded, fiat currency and Bitcoin lookups. The `.c <expression>` command does
-//! the same but case-corrects unit tokens rink cannot resolve, so lowercase abbreviations like
-//! `10 usd to dkk` evaluate like `10 USD to DKK`. Evaluation errors are reported inline as
-//! `> Error: <message>`.
+//! currency data loaded, fiat currency, Bitcoin, and cryptocurrency lookups. The
+//! `.c <expression>` command does the same but case-corrects unit tokens rink cannot resolve,
+//! so lowercase abbreviations like `10 usd to dkk` evaluate like `10 USD to DKK`. Evaluation
+//! errors are reported inline as `> Error: <message>`.
 //!
 //! Replies are styled like the other plugins: the cyan `> ` marker and scaffolding, with the
 //! values — numbers, datetimes, property names, echoed input in errors, category labels, and
@@ -15,16 +15,19 @@
 //! actually changes — never duplicated, never dangling at the end of the message.
 //!
 //! A rink context is built once at plugin initialization: the bundled unit definitions, the
-//! static currency units, and a small set of extra definitions (CSS lengths, resolutions, and
-//! angles) loaded on top. Evaluation calls are serialized through it, and a failed context
-//! build aborts plugin initialization.
+//! static currency units, and a small set of extra definitions (CSS lengths, resolutions,
+//! angles, and the cryptocurrency subunits) loaded on top. Evaluation calls are serialized
+//! through it, and a failed context build aborts plugin initialization.
 //!
 //! When the `currency` setting is enabled (the default), live currency data is fetched from
 //! rink's dataset — fiat rates from the European Central Bank and Bitcoin from blockchain.info
-//! — by a background task started when the plugin loads, and rebuilt into the context once per
-//! `currency_ttl`. A query that runs into missing currency data triggers one inline fetch
-//! attempt and a re-evaluation, mirroring upstream rink's REPL; failed fetches are logged and
-//! leave the last known rates in place.
+//! — and, when the `crypto` setting is enabled and the coinmarketcap plugin is loaded, the
+//! ranked cryptocurrency table from the CoinMarketCap API through the client the coinmarketcap
+//! plugin shares. Both datasets are rebuilt into the context by a background task started when
+//! the plugin loads, once per `currency_ttl`. A query that runs into missing currency data
+//! triggers one inline fetch attempt and a re-evaluation, mirroring upstream rink's REPL;
+//! failed fetches are logged and leave the last known rates in place. The dataset plumbing
+//! lives in [`currency`].
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -33,75 +36,22 @@ use rink_core::ast::{Conversion, Expr, Query};
 use rink_core::output::fmt::{FmtToken, Span, TokenFmt};
 use rink_core::output::{QueryError, QueryReply};
 use rink_core::parsing::text_query::{parse_query, TokenIterator};
-use rink_core::{Context as RinkContext, Value};
+use rink_core::Context as RinkContext;
 use serde::{Deserialize, Serialize};
 use tokio::time::MissedTickBehavior;
 use tracing::{Instrument, debug, warn};
 
+mod currency;
+use currency::{CurrencyData, build_context, refresh_data};
+
+use crate::cache::TtlCache;
 use crate::{
-    cache::TtlCache,
     error::RequestError,
-    http,
+    plugin::coinmarketcap::client,
     plugin::prelude::*,
     utils::collapse_whitespace,
 };
 
-/// The URL of rink's live currency dataset.
-///
-/// It updates about once an hour: fiat rates sourced from the European Central Bank, and
-/// Bitcoin network and price properties sourced from blockchain.info.
-const CURRENCY_URL: &str = "https://rinkcalc.app/data/currency.json";
-
-/// The time-to-live of the fetched currency data, matching the dataset's update cadence.
-const CURRENCY_TTL: Duration = Duration::from_hours(1);
-
-/// How often the currency task rechecks the cache for staleness.
-///
-/// A tick only fetches when the cached entry is missing or past its TTL, so the actual fetches
-/// happen at most once per [`CURRENCY_TTL`]; the shorter check interval makes a failed fetch
-/// retry within minutes instead of after a full TTL.
-const CURRENCY_CHECK_INTERVAL: Duration = Duration::from_mins(10);
-
-/// Extra unit definitions loaded on top of rink's bundled dataset.
-///
-/// The CSS lengths, resolutions, and angles. The CSS pixel is a length, while the densities are
-/// built on the dimensionless `dot` — the "dot" of CSS's `<resolution>` units — so that density
-/// conversions (`dpi` to `dpcm`) and screen sizing (`1920 dot / (300 dpi) -> inch`) both come
-/// out right. The CSS names that collide with rink's existing names (`Q`, the quetta prefix
-/// symbol; `pt`, the pint; `pc`, the parsec; and the font-relative `em` family, which cannot be
-/// a static unit at all) are spelled out or left out.
-const EXTRA_UNITS: &str = r#"
-!category css                                "CSS Units"
-
-?? The CSS reference pixel, defined by CSS Values and Units Level 3 as
-?? 1/96 of a CSS inch, and related to a visual angle of about 0.0213
-?? degrees at nominal viewing distance.
-pixel                    1|96 inch
-px                       pixel
-
-?? The device or print pixel: a dimensionless count, the "dot" of CSS's
-?? <resolution> units. Kept distinct from the CSS pixel (a length) so
-?? density conversions stay conformal.
-dot                      1
-
-?? CSS <resolution> units. CSS defines 1dppx = 96dpi exactly.
-dpi                      dot / inch
-dpcm                     dot / centimeter
-dppx                     dot / pixel
-
-?? The CSS quarter-millimeter, the default font-size unit of Japanese
-?? professional typesetting. The CSS name `Q` is the quetta prefix
-?? symbol, so the unit is spelled out.
-quartermm                0.25 mm
-
-?? The CSS angle unit. Rink spells it `grade`/`gon`; naming `grad` also
-?? stops it from parsing as gram*radian.
-grad                     grade
-
-!endcategory
-"#;
-
-/// The `.r` command.
 const RINK: CommandSpec = CommandSpec::new(
     ".r",
     "Evaluate a calculation with unit and currency conversions",
@@ -119,12 +69,18 @@ pub struct Rink {
     /// context after fetching new data.
     ctx: Arc<Mutex<RinkContext>>,
     /// The fetched live currency data, refreshed at the TTL and used to rebuild the context.
-    currency: Arc<TtlCache<String>>,
+    currency: Arc<TtlCache<CurrencyData>>,
     /// The HTTP client used to fetch currency data; `None` when the `currency` setting is
     /// disabled, leaving currency queries to answer with rink's missing-dependencies error.
     client: Option<reqwest::Client>,
+    /// The keyed CoinMarketCap client shared by the coinmarketcap plugin, used to fetch the
+    /// cryptocurrency listings; `None` when the coinmarketcap plugin is not loaded.
+    cmc: Option<Arc<client::Client>>,
     /// The URL the live currency dataset is fetched from.
     currency_url: String,
+    /// Whether to load live cryptocurrency units; effective only when the coinmarketcap plugin
+    /// has shared its client.
+    crypto_enabled: bool,
 }
 
 /// Settings for the rink plugin, from its `[plugins.rink]` configuration section.
@@ -138,14 +94,17 @@ pub struct Settings {
     pub currency_ttl: Duration,
     /// The URL the live currency dataset is fetched from.
     pub currency_url: String,
+    /// Whether to load live cryptocurrency units through the coinmarketcap plugin.
+    pub crypto: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             currency: true,
-            currency_ttl: CURRENCY_TTL,
-            currency_url: CURRENCY_URL.to_string(),
+            currency_ttl: currency::CURRENCY_TTL,
+            currency_url: currency::CURRENCY_URL.to_string(),
+            crypto: true,
         }
     }
 }
@@ -159,7 +118,7 @@ impl Plugin<Context> for Rink {
 
         let client = if settings.currency {
             Some(
-                http::builder(&ctx.config.http)
+                crate::http::builder(&ctx.config.http)
                     .build()
                     .map_err(|error| plugin_err(RequestError::from(error)))?,
             )
@@ -171,11 +130,15 @@ impl Plugin<Context> for Rink {
             ctx: Arc::new(Mutex::new(build_context(None, None)?)),
             currency: Arc::new(TtlCache::new(settings.currency_ttl)),
             client,
+            cmc: None,
             currency_url: settings.currency_url.clone(),
+            crypto_enabled: settings.crypto,
         })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn loaded(&mut self, ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+        // The coinmarketcap plugin publishes its keyed client for other plugins to reuse.
+        self.cmc = ctx.shared.get::<client::Client>();
         self.start_currency_refresh();
 
         Ok(())
@@ -207,24 +170,28 @@ impl Rink {
             return;
         };
 
-        let (ctx, currency, url) = (
+        let (ctx, currency, url, cmc, crypto_enabled) = (
             Arc::clone(&self.ctx),
             Arc::clone(&self.currency),
             self.currency_url.clone(),
+            self.cmc.clone(),
+            self.crypto_enabled,
         );
 
         tokio::spawn(
             async move {
                 debug!("starting currency refresh task");
 
-                let mut interval = tokio::time::interval(CURRENCY_CHECK_INTERVAL);
+                let mut interval = tokio::time::interval(currency::CURRENCY_CHECK_INTERVAL);
                 interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
                 loop {
                     interval.tick().await;
 
                     let refreshed = currency
-                        .refresh(|| refresh_currency(&client, &url, &ctx))
+                        .refresh(|| {
+                            refresh_data(&client, &currency, cmc.as_ref(), &url, crypto_enabled, &ctx)
+                        })
                         .await;
 
                     if let Err(error) = refreshed {
@@ -310,74 +277,22 @@ impl Rink {
 
         let refreshed = self
             .currency
-            .force_refresh(|| refresh_currency(client, &self.currency_url, &self.ctx))
+            .force_refresh(|| {
+                refresh_data(
+                    client,
+                    &self.currency,
+                    self.cmc.as_ref(),
+                    &self.currency_url,
+                    self.crypto_enabled,
+                    &self.ctx,
+                )
+            })
             .await;
 
         if let Err(error) = refreshed {
             warn!(%error, "could not refresh currency data");
         }
     }
-}
-
-/// Fetches the live currency dataset and swaps a rebuilt context into `ctx`.
-///
-/// The previous result (`ans`) is carried into the new context, since a query may reference it
-/// across a refresh. Returns the fetched body so the caller's cache tracks the data the context
-/// was built with; a failed load leaves the context untouched.
-///
-/// # Errors
-///
-/// Returns a [`ZetaError`] when the fetch fails, the response carries an error status, or the
-/// fetched data cannot be loaded.
-async fn refresh_currency(
-    client: &reqwest::Client,
-    url: &str,
-    ctx: &Mutex<RinkContext>,
-) -> Result<String, ZetaError> {
-    let response = http::send(client.get(url)).await.map_err(plugin_err)?;
-    let status = response.status();
-
-    let body = http::text(response).await.map_err(plugin_err)?;
-
-    if !status.is_success() {
-        return Err(plugin_err(std::io::Error::other(format!(
-            "the currency dataset returned status {status}"
-        ))));
-    }
-
-    let previous = crate::sync::lock(ctx).previous_result.clone();
-    let next = build_context(Some(&body), previous)?;
-
-    *crate::sync::lock(ctx) = next;
-    debug!("loaded live currency data into the rink context");
-
-    Ok(body)
-}
-
-/// Builds a rink context from the bundled dataset, optional live currency data, and the extra
-/// unit definitions.
-///
-/// Evaluation keeps saving results so `ans` resolves, and `previous` carries the result across
-/// context rebuilds.
-///
-/// # Errors
-///
-/// Returns a [`ZetaError`] when the bundled dataset, the currency data, or the extra
-/// definitions cannot be loaded.
-fn build_context(currency: Option<&str>, previous: Option<Value>) -> Result<RinkContext, ZetaError> {
-    let mut ctx =
-        rink_core::simple_context().map_err(|error| plugin_err(std::io::Error::other(error)))?;
-    ctx.save_previous_result = true;
-    ctx.previous_result = previous;
-
-    let currency_units = rink_core::CURRENCY_FILE.expect("bundle-files feature to be enabled");
-    ctx.load_currency(currency, currency_units)
-        .map_err(|error| plugin_err(std::io::Error::other(error)))?;
-
-    ctx.load_definitions(EXTRA_UNITS)
-        .map_err(|error| plugin_err(std::io::Error::other(error)))?;
-
-    Ok(ctx)
 }
 
 /// Rewrites every `Expr::Unit` name in `query` that rink cannot resolve into its
@@ -564,7 +479,8 @@ mod tests {
         },
     };
 
-    /// A minimal live currency dataset: USD, DKK and JPY against the bundled euro.
+    /// A minimal live currency dataset: USD, DKK and JPY against the bundled euro, plus a
+    /// Bitcoin substance so the subunit expressions resolve.
     const TEST_CURRENCY_DATA: &str = r#"[
         {
             "name": "USD",
@@ -586,8 +502,82 @@ mod tests {
             "category": "currencies",
             "type": "unit",
             "expr": "(1 / 170.52) EUR"
+        },
+        {
+            "name": "BTC",
+            "doc": null,
+            "category": "currencies",
+            "type": "unit",
+            "expr": "price of bitcoin"
+        },
+        {
+            "name": "bitcoin",
+            "doc": "Properties of the global Bitcoin network.",
+            "category": "currencies",
+            "type": "substance",
+            "symbol": null,
+            "properties": [
+                {
+                    "name": "price",
+                    "doc": "Current market price of 1 BTC.",
+                    "category": "currencies",
+                    "inputName": "bitcoin",
+                    "input": "1",
+                    "outputName": "bitcoin",
+                    "output": "65000 USD"
+                }
+            ]
         }
     ]"#;
+
+    /// A ranked cryptocurrency listing fixture: Ethereum and a faked euro coin, plus a symbol
+    /// rink's loader would reject.
+    const TEST_LISTINGS_DATA: &str = r#"{
+        "data": [
+            {
+                "id": 1027,
+                "name": "Ethereum",
+                "symbol": "ETH",
+                "slug": "ethereum",
+                "cmc_rank": 2,
+                "quote": {
+                    "USD": {
+                        "price": 2650.32,
+                        "last_updated": "2026-09-29T11:13:00.000Z"
+                    }
+                }
+            },
+            {
+                "id": 8017,
+                "name": "1inch",
+                "symbol": "1INCH",
+                "slug": "1inch",
+                "quote": {
+                    "USD": {
+                        "price": 0.31
+                    }
+                }
+            },
+            {
+                "id": 1,
+                "name": "Fake Euro",
+                "symbol": "EUR",
+                "slug": "fake-euro",
+                "quote": {
+                    "USD": {
+                        "price": 1.2
+                    }
+                }
+            }
+        ],
+        "status": {
+            "timestamp": "2026-09-29T11:13:55.525Z",
+            "error_code": 0,
+            "error_message": null,
+            "elapsed": 12,
+            "credit_count": 1
+        }
+    }"#;
 
     /// Builds a plugin with a bundled-only context, with currency fetching enabled and pointed
     /// at `url` when given.
@@ -595,8 +585,10 @@ mod tests {
         Rink {
             ctx: Arc::new(Mutex::new(build_context(None, None).unwrap())),
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
-            client: Some(http::build_client(&HttpConfig::default())),
-            currency_url: url.unwrap_or_else(|| CURRENCY_URL.to_string()),
+            client: Some(crate::http::build_client(&HttpConfig::default())),
+            cmc: None,
+            currency_url: url.unwrap_or_else(|| currency::CURRENCY_URL.to_string()),
+            crypto_enabled: true,
         }
     }
 
@@ -606,7 +598,9 @@ mod tests {
             ctx: Arc::new(Mutex::new(build_context(None, None).unwrap())),
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
             client: None,
-            currency_url: CURRENCY_URL.to_string(),
+            cmc: None,
+            currency_url: currency::CURRENCY_URL.to_string(),
+            crypto_enabled: true,
         }
     }
 
@@ -621,6 +615,36 @@ mod tests {
             .await;
 
         server
+    }
+
+    /// Starts a wiremock server serving `TEST_LISTINGS_DATA` at the CoinMarketCap listings
+    /// path.
+    async fn listings_server(status: u16) -> MockServer {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v3/cryptocurrency/listings/latest"))
+            .respond_with(ResponseTemplate::new(status).set_body_string(TEST_LISTINGS_DATA))
+            .mount(&server)
+            .await;
+
+        server
+    }
+
+    /// Builds a plugin whose CoinMarketCap client issues requests against the given listings
+    /// server.
+    async fn plugin_with_listings(status: u16) -> Rink {
+        let fiat_server = currency_server(200).await;
+        let listings_server = listings_server(status).await;
+
+        let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat_server.uri())));
+        rink.cmc = Some(Arc::new(client::Client::for_base(
+            "test-api-key",
+            &HttpConfig::default(),
+            &listings_server.uri(),
+        )));
+
+        rink
     }
 
     #[tokio::test]
@@ -717,21 +741,84 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn currency_data_is_loaded_and_used_for_conversions() {
-        let server = currency_server(200).await;
-        let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
+    async fn crypto_units_load_and_convert() {
+        let rink = plugin_with_listings(200).await;
 
         rink.refresh_currency_now().await;
 
         assert_eq!(
-            rink.eval_and_format("1 USD", false).await,
-            "\x0310> \x0f2 euro \x0310(\x0fmoney\x0310)"
+            rink.eval_and_format("1 ETH to USD", false).await,
+            "\x0310> \x0f2650.32 USD \x0310(\x0fmoney\x0310)"
         );
 
-        // Lowercase codes do not resolve, and the error's suggestion renders as a value.
+        // The classifier case-corrects lowercase coin abbreviations too.
         assert_eq!(
-            rink.eval_and_format("100 usd to eur", false).await,
-            "\x0310> Error: No such unit \x0fusd\x0310, did you mean \x0fUSD\x0310?"
+            rink.eval_and_format("1 eth to usd", true).await,
+            "\x0310> \x0f2650.32 USD \x0310(\x0fmoney\x0310)"
+        );
+    }
+
+    #[tokio::test]
+    async fn synthesis_skips_colliding_and_invalid_symbols() {
+        let rink = plugin_with_listings(200).await;
+
+        rink.refresh_currency_now().await;
+
+        // The fake EUR coin (priced 1.2) must not shadow the bundled euro: 1 EUR is 0.5 USD
+        // under the fiat fixture, and the rejected `1INCH` symbol must not break the load.
+        assert_eq!(
+            rink.eval_and_format("1 EUR to USD", false).await,
+            "\x0310> \x0f0.5 USD \x0310(\x0fmoney\x0310)"
+        );
+    }
+
+    #[tokio::test]
+    async fn crypto_subunits_resolve_against_the_live_coins() {
+        let rink = plugin_with_listings(200).await;
+
+        rink.refresh_currency_now().await;
+
+        // 50_000 satoshis are 0.0005 bitcoin at the fixture's 65 000 USD price.
+        assert_eq!(
+            rink.eval_and_format("50000 sats to usd", true).await,
+            "\x0310> \x0f32.5 USD \x0310(\x0fmoney\x0310)"
+        );
+        // A gwei stays convertible without being resolvable as fiat.
+        let reply = rink.eval_and_format("1 gwei to usd", true).await;
+        assert!(reply.contains("USD"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn crypto_disabled_without_the_coinmarketcap_plugin() {
+        let mut rink = offline_plugin();
+        // No coinmarketcap client was published: the crypto units stay unloaded even though
+        // the crypto setting is on.
+        rink.crypto_enabled = true;
+        rink.cmc = None;
+
+        rink.refresh_currency_now().await;
+
+        // The ETH unit is not loaded, but the subunits' pending dependency declaration
+        // surfaces it in the missing-dependencies error.
+        assert_eq!(
+            rink.eval_and_format("1 eth to usd", true).await,
+            "\x0310> Error: Missing dependencies: \x0fETH"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_listings_fetch_keeps_the_fiat_path() {
+        // The fiat dataset is fine; the listings endpoint is not. The refresh fails as a
+        // whole, so the last known context — without crypto — stays in place.
+        let rink = plugin_with_listings(500).await;
+
+        rink.refresh_currency_now().await;
+
+        // The failed listings fetch keeps the crypto units out, but the subunits' pending
+        // dependency still surfaces ETH in the error.
+        assert_eq!(
+            rink.eval_and_format("1 eth to usd", true).await,
+            "\x0310> Error: Missing dependencies: \x0fETH"
         );
     }
 
@@ -924,7 +1011,7 @@ mod tests {
         default: {
             assert!(settings.currency);
             assert_eq!(settings.currency_ttl, Duration::from_hours(1));
-            assert_eq!(settings.currency_url, CURRENCY_URL);
+            assert_eq!(settings.currency_url, currency::CURRENCY_URL);
         }
         deserialize: {
             "currency": false,

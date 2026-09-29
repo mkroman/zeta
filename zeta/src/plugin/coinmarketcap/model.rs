@@ -53,8 +53,43 @@ pub struct QuoteData {
     pub quote: HashMap<String, FiatQuote>,
 }
 
+/// A coin from the `listings/latest` endpoint.
+///
+/// The endpoint response carries further auxiliary fields (`tags`, `platform`, supply
+/// breakdowns), which the plugin does not use.
+#[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct Listing {
+    /// The CoinMarketCap id of the coin.
+    pub id: u64,
+    /// The display name of the coin (e.g. `Ethereum`).
+    pub name: String,
+    /// The ticker symbol of the coin (e.g. `ETH`).
+    pub symbol: String,
+    /// The web-friendly shorthand of the coin name.
+    pub slug: String,
+    /// The coin's market cap rank.
+    pub cmc_rank: Option<u64>,
+    /// The number of active market pairs trading the coin.
+    pub num_market_pairs: Option<u64>,
+    /// The approximate number of coins circulating.
+    pub circulating_supply: Option<f64>,
+    /// The approximate total amount of coins in existence.
+    pub total_supply: Option<f64>,
+    /// The maximum amount of coins that will ever exist.
+    pub max_supply: Option<f64>,
+    /// Whether the coin's supply is known to be infinite.
+    pub infinite_supply: Option<bool>,
+    /// When the coin was added to CoinMarketCap.
+    pub date_added: Option<String>,
+    /// When the coin's market data was last updated.
+    pub last_updated: Option<String>,
+    /// Market quotes keyed by conversion currency.
+    pub quote: HashMap<String, FiatQuote>,
+}
+
 /// A quote in a single conversion currency.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct FiatQuote {
     /// The current price.
     pub price: Option<f64>,
