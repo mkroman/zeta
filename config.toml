@@ -310,6 +310,12 @@ name = "#zeta.dev"
   [plugins.rink]
   # Enable the plugin.
   enabled = true
+  # Whether to fetch live currency (fiat and Bitcoin) data.
+  # currency = true
+  # How long the fetched currency data stays valid before being refreshed.
+  # currency_ttl = "1h"
+  # The URL the live currency dataset is fetched from.
+  # currency_url = "https://rinkcalc.app/data/currency.json"
 
   # Rust Playground integration.
   [plugins.rust_playground]

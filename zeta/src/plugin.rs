@@ -279,7 +279,7 @@ declare_plugins! {
 
   /// Calculator plugin based on rink
   #[cfg(feature = "plugin-rink")]
-  rink::Rink => NoSettings,
+  rink::Rink => rink::Settings,
 
   /// Rust Playground integration
   #[cfg(feature = "plugin-rust-playground")]
