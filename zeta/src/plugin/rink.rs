@@ -26,9 +26,11 @@
 //! the cryptocurrency units stay pending. The `crypto` setting turns the cryptocurrency
 //! loading off. Both datasets are rebuilt into the context by a background task started when
 //! the plugin loads, once per `currency_ttl`. A query that runs into missing currency data
-//! triggers one inline fetch attempt and a re-evaluation, mirroring upstream rink's REPL;
-//! failed fetches are logged and leave the last known rates in place. The dataset plumbing
-//! lives in the `currency` submodule.
+//! re-evaluates after an inline refresh — mirroring upstream rink's REPL, which fetches on
+//! demand in the same situation — but that refresh only runs when the cached dataset is
+//! missing, stale, or still lacks a requested cryptocurrency table, so an unresolvable
+//! dependency does not fetch once per query; failed fetches are logged and leave the last
+//! known rates in place. The dataset plumbing lives in the `currency` submodule.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -236,10 +238,12 @@ impl Rink {
     /// When `classify` is set, unit tokens rink cannot resolve are case-corrected against the
     /// registry first, so `.c 10 usd to dkk` evaluates like `10 USD to DKK`.
     ///
-    /// A query that runs into missing currency data triggers one inline fetch attempt and a
+    /// A query that runs into missing currency data triggers an inline refresh and a
     /// re-evaluation, mirroring upstream rink's REPL, which fetches on demand in the same
-    /// situation. A failed refresh is logged and the missing-dependencies error is answered
-    /// instead.
+    /// situation. The refresh is only attempted when it can actually change the outcome —
+    /// the cached dataset is missing, stale, or lacks a requested cryptocurrency table — so
+    /// a dependency that stays unresolvable does not fetch on every query. A failed refresh
+    /// is logged and the missing-dependencies error is answered instead.
     async fn eval_and_format(&self, line: &str, classify: bool) -> String {
         let line = if classify {
             self.classify(line)
@@ -257,9 +261,10 @@ impl Rink {
             Err(error) => return notice(error_message(&error)),
         }
 
-        // Currency data is missing: one fetch attempt, then a re-evaluation, mirroring
-        // upstream rink's REPL, which fetches on demand in the same situation.
-        self.refresh_currency_now().await;
+        // Currency data is missing: refresh what can still change the outcome, then
+        // re-evaluate, mirroring upstream rink's REPL, which fetches on demand in the same
+        // situation.
+        self.ensure_currency_cached().await;
 
         match self.eval(&line) {
             Ok(reply) => notice(render_reply(&reply)),
@@ -294,19 +299,24 @@ impl Rink {
         rink_core::eval(&mut ctx, line)
     }
 
-    /// Fetches and loads currency data regardless of the cache's freshness.
+    /// Fetches and loads currency data when a refetch can still change the outcome.
     ///
-    /// Used when a query hit missing dependencies: the cached entry, if any, carries data the
-    /// current context evidently lacks. Failures are logged and the next query retries.
-    async fn refresh_currency_now(&self) {
+    /// Used when a query hit missing dependencies. Like the coinmarketcap plugin's
+    /// `ensure_coins_cached`, the refresh only runs when the cache is missing or stale, so a
+    /// dependency that stays unresolvable does not fetch once per query. The exception is a
+    /// requested-but-absent cryptocurrency table: a listings outage is retried immediately
+    /// instead of waiting out a whole [`currency_ttl`], since that state is exactly what a
+    /// refetch can fill. Failures are logged and the next qualifying query retries.
+    ///
+    /// [`currency_ttl`]: Settings::currency_ttl
+    async fn ensure_currency_cached(&self) {
         let Some(client) = &self.client else {
             return;
         };
 
         #[cfg(feature = "plugin-coinmarketcap")]
-        let refreshed = self
-            .currency
-            .force_refresh(|| {
+        let refreshed = {
+            let fetch = || {
                 refresh_data(
                     client,
                     &self.currency,
@@ -315,18 +325,41 @@ impl Rink {
                     &self.currency_url,
                     &self.ctx,
                 )
-            })
-            .await;
+            };
+
+            // A missing or stale cache is fetched through `refresh`; only a requested table
+            // that is still absent forces the fetch past a fresh entry.
+            if self.crypto_table_pending() {
+                self.currency.force_refresh(fetch).await.map(|_| ())
+            } else {
+                self.currency.refresh(fetch).await
+            }
+        };
 
         #[cfg(not(feature = "plugin-coinmarketcap"))]
         let refreshed = self
             .currency
-            .force_refresh(|| refresh_data(client, &self.currency_url, &self.ctx))
+            .refresh(|| refresh_data(client, &self.currency_url, &self.ctx))
             .await;
 
         if let Err(error) = refreshed {
             warn!(%error, "could not refresh currency data");
         }
+    }
+
+    /// Returns whether a requested cryptocurrency table is absent from the cached dataset.
+    ///
+    /// `true` when the `crypto` setting is on and the coinmarketcap plugin shared its client,
+    /// but nothing is cached yet or the cached entry carries no listings. Only in that state
+    /// does an unconditional fetch pay off: the fiat data may be fresh while the table a query
+    /// needs is still missing. In every other case the cache already holds what the context
+    /// was built from, and re-fetching cannot resolve a pending dependency.
+    #[cfg(feature = "plugin-coinmarketcap")]
+    fn crypto_table_pending(&self) -> bool {
+        self.crypto_enabled
+            && self.cmc.is_some()
+            && self.currency
+                .read(|data| data.is_none_or(|entry| entry.crypto.is_none()))
     }
 }
 
@@ -793,7 +826,7 @@ mod tests {
     async fn crypto_units_load_and_convert() {
         let rink = plugin_with_listings(200).await;
 
-        rink.refresh_currency_now().await;
+        rink.ensure_currency_cached().await;
 
         assert_eq!(
             rink.eval_and_format("1 ETH to USD", false).await,
@@ -812,7 +845,7 @@ mod tests {
     async fn synthesis_skips_colliding_and_invalid_symbols() {
         let rink = plugin_with_listings(200).await;
 
-        rink.refresh_currency_now().await;
+        rink.ensure_currency_cached().await;
 
         // The fake EUR coin (priced 1.2) must not shadow the bundled euro: 1 EUR is 0.5 USD
         // under the fiat fixture, and the rejected `1INCH` symbol must not break the load.
@@ -860,7 +893,7 @@ mod tests {
     async fn crypto_subunits_resolve_against_the_live_coins() {
         let rink = plugin_with_listings(200).await;
 
-        rink.refresh_currency_now().await;
+        rink.ensure_currency_cached().await;
 
         // 50_000 satoshis are 0.0005 bitcoin at the fixture's 65 000 USD price.
         assert_eq!(
@@ -881,7 +914,7 @@ mod tests {
         rink.crypto_enabled = true;
         rink.cmc = None;
 
-        rink.refresh_currency_now().await;
+        rink.ensure_currency_cached().await;
 
         // The ETH unit is not loaded, but the subunits' pending dependency declaration
         // surfaces it in the missing-dependencies error.
@@ -898,7 +931,7 @@ mod tests {
         // whole, so the last known context — without crypto — stays in place.
         let rink = plugin_with_listings(500).await;
 
-        rink.refresh_currency_now().await;
+        rink.ensure_currency_cached().await;
 
         // The failed listings fetch keeps the crypto units out, but the subunits' pending
         // dependency still surfaces ETH in the error.
@@ -906,6 +939,31 @@ mod tests {
             rink.eval_and_format("1 eth to usd", true).await,
             "\x0310> Error: Missing dependencies: \x0fETH"
         );
+    }
+
+    #[cfg(feature = "plugin-coinmarketcap")]
+    #[tokio::test]
+    async fn a_pending_crypto_table_is_retried_inline() {
+        let fiat = currency_server(200).await;
+        let listings = listings_server(500).await;
+
+        let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat.uri())));
+        rink.cmc = Some(Arc::new(client::Client::for_base(
+            "test-api-key",
+            &HttpConfig::default(),
+            &listings.uri(),
+        )));
+
+        rink.ensure_currency_cached().await;
+        assert_eq!(listings.received_requests().await.unwrap().len(), 1);
+
+        // The listings fetch failed, so the requested table is absent even though the fiat
+        // entry is fresh: unlike an unresolvable dependency, this state a refetch can fix,
+        // so the query retries the listings inline instead of waiting out the whole TTL.
+        let reply = rink.eval_and_format("1 gwei to usd", true).await;
+        assert!(reply.contains("Missing dependencies"), "{reply}");
+
+        assert_eq!(listings.received_requests().await.unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -917,6 +975,28 @@ mod tests {
             rink.eval_and_format("1 USD", false).await,
             "\x0310> Error: Missing dependencies: \x0fUSD"
         );
+    }
+
+    #[tokio::test]
+    async fn a_fresh_cache_does_not_refetch_for_an_unresolvable_dependency() {
+        let server = currency_server(200).await;
+        let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
+
+        // The cold cache fetches once, as it always has.
+        rink.ensure_currency_cached().await;
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+        // `gwei` rests on the ETH dependency, which no coinmarketcap client can resolve
+        // here, so it stays pending — but the cached dataset is fresh and re-fetching it
+        // cannot add the missing table. The queries must not reach the network again.
+        for _ in 0..3 {
+            // `.c` case-corrects `usd`, so the pending `gwei` dependency is what surfaces.
+            let reply = rink.eval_and_format("1 gwei to usd", true).await;
+
+            assert!(reply.contains("Missing dependencies"), "{reply}");
+        }
+
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -934,7 +1014,7 @@ mod tests {
         let server = currency_server(200).await;
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
 
-        rink.refresh_currency_now().await;
+        rink.ensure_currency_cached().await;
 
         assert_eq!(
             rink.eval_and_format("10 usd to dkk", true).await,
@@ -1073,7 +1153,7 @@ mod tests {
     async fn the_live_dataset_serves_fiat_and_bitcoin_queries() {
         let rink = test_plugin(None);
 
-        rink.refresh_currency_now().await;
+        rink.ensure_currency_cached().await;
 
         let fiat = rink.eval_and_format("100 usd to eur", true).await;
         assert!(fiat.contains("euro") && fiat.contains("money"), "{fiat}");
