@@ -129,7 +129,27 @@ pub struct Envelope<T> {
 #[derive(Debug, Deserialize)]
 pub struct Status {
     /// The error code; `"0"` indicates success.
+    ///
+    /// The API returns it as a JSON string on the v3 endpoints (`"error_code":"0"`) and as an
+    /// integer on the v1 ones (`"error_code":0`), so both shapes are accepted and normalized
+    /// to a string.
+    #[serde(deserialize_with = "deserialize_error_code")]
     pub error_code: String,
     /// A human-readable description of the error, if any.
     pub error_message: Option<String>,
+}
+
+/// Deserializes the response's error code, which the API returns as a JSON string on the v3
+/// endpoints and as an integer on the v1 ones.
+fn deserialize_error_code<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(code) => Ok(code),
+        serde_json::Value::Number(code) => Ok(code.to_string()),
+        _ => Err(serde::de::Error::custom(
+            "expected a string or integer error code",
+        )),
+    }
 }
