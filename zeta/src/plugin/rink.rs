@@ -832,6 +832,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn classification_leaves_every_other_expression_form_unchanged() {
+        let rink = offline_plugin();
+
+        // Expression forms from rink's manual; classification must not change the outcome of
+        // any of them. Clock-dependent forms are excluded: their output legitimately differs
+        // between the two evaluations.
+        for line in [
+            "10.1e2",
+            "0x10",
+            "0o10",
+            "0b10",
+            "1_000",
+            "1e100",
+            "3 4 m 5 s",
+            "10 km / 5 m",
+            "1|2 m",
+            "12 meters + 5 feet",
+            "12 ft^2",
+            "meter mod foot",
+            "1 << 24",
+            "0b1010 and 0b1100 to base 2",
+            "12 degC -> °F",
+            "2000 kcal -> potato = 164 kcal",
+            "12 'core' hour / 3 'core' -> minutes",
+            "5 millimeters",
+            "3 kibibytes",
+            "2 quarters",
+            "meter -> feet",
+            "1000 -> hex",
+            "10000 -> base 36",
+            "2^128 -> digits",
+            "mass of electron -> eng",
+            "3 foot -> frac",
+            "2^17 seconds -> hour;min;sec",
+            "units for power",
+            "units power",
+            "factorize velocity",
+            "search milk",
+            "#jan 01, 1970#",
+            "#2016-08-24# + 500 weeks",
+            "#today#",
+            "#apr 1, 2016 12:00:00 +01:00#",
+            "milk",
+            "gallon milk",
+            "egg",
+            "egg_shelled of kg egg",
+            "gallon gasoline -> btu",
+            "sqrt(2)",
+            "fac(5)",
+            // failures must stay identical too
+            "banana",
+            "2 hours from now",
+            "20:00 in tokyo",
+            "1 << meter",
+        ] {
+            let strict = rink.eval_and_format(line, false).await;
+            let smart = rink.eval_and_format(line, true).await;
+            assert_eq!(strict, smart, "classification changed {line:?}");
+        }
+    }
+
+    #[tokio::test]
     #[ignore = "needs network access"]
     async fn the_live_dataset_serves_fiat_and_bitcoin_queries() {
         let rink = test_plugin(None);
