@@ -778,16 +778,14 @@ mod tests {
         server
     }
 
-    /// Builds a plugin whose CoinMarketCap client issues requests against the given listings
-    /// server.
-    #[cfg(feature = "plugin-coinmarketcap")]
-    /// Builds a plugin whose fiat and listings endpoints are served by the returned mock
-    /// servers.
+    /// Builds a plugin whose CoinMarketCap client issues requests against the returned
+    /// listings server, with the fiat dataset served by the returned fiat server.
     ///
     /// The servers travel with the plugin because dropping a `MockServer` returns it to
     /// wiremock's pool, where another test can acquire it: the pooled server is reset,
     /// unmounting these mocks, and this plugin's requests would then be recorded against
     /// whichever test happened to borrow it.
+    #[cfg(feature = "plugin-coinmarketcap")]
     async fn plugin_with_listings(status: u16) -> (Rink, MockServer, MockServer) {
         let fiat_server = currency_server(200).await;
         let listings_server = listings_server(status).await;
