@@ -19,6 +19,7 @@
 //! `max_name_typos` (2) settings tune quoting and fuzzy name lookups.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use argh::{ArgsInfo, FromArgs};
@@ -32,9 +33,9 @@ use crate::{
     utils::strip_control_chars,
 };
 
-mod client;
+pub(crate) mod client;
 mod error;
-mod model;
+pub(crate) mod model;
 
 use error::Error;
 use model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat, QuoteData};
@@ -207,7 +208,8 @@ impl From<Vec<Fiat>> for FiatCache {
 /// Crypto currency quotes plugin, backed by the CoinMarketCap API.
 pub struct CoinMarketCap {
     /// Client for CoinMarketCap API requests, with the API key set as a default header.
-    client: client::Client,
+    /// Shared with other plugins through [`Context::shared`].
+    client: Arc<client::Client>,
     /// The top cryptocurrencies by market cap, cached for the cache TTL.
     coins: TtlCache<CoinCache>,
     /// The fiat currencies supported for price conversion, cached for the cache TTL.
@@ -224,7 +226,11 @@ impl Plugin<Context> for CoinMarketCap {
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
-        let client = client::Client::new(&api_key, &ctx.config.http)?;
+        let client = Arc::new(client::Client::new(&api_key, &ctx.config.http)?);
+
+        // The keyed CoinMarketCap client is published for other plugins to reuse, e.g. the
+        // rink plugin's live cryptocurrency units.
+        ctx.shared.publish(Arc::clone(&client));
 
         for command in COMMANDS {
             subscriptions.command(*command);
@@ -659,12 +665,28 @@ mod tests {
     /// Builds a plugin instance for lookup tests, without touching the API.
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
-            client: client::Client::new("test-api-key", &HttpConfig::default()).unwrap(),
+            client: Arc::new(client::Client::new("test-api-key", &HttpConfig::default()).unwrap()),
             coins: TtlCache::with_value(CoinCache::from(test_coins()), CACHE_TTL),
             fiat: TtlCache::new(CACHE_TTL),
             default_currency: DEFAULT_CURRENCY.to_string(),
             max_name_typos: 2,
         }
+    }
+
+    #[tokio::test]
+    async fn publishes_its_client_for_other_plugins() {
+        // The keyed CoinMarketCap client must be discoverable through the shared state, e.g.
+        // by the rink plugin's live cryptocurrency units.
+        let ctx = Context::for_tests();
+        let mut subscriptions = Subscriptions::new();
+        let settings = Settings {
+            api_key: Some("test-api-key".to_string()),
+            ..Settings::default()
+        };
+
+        <CoinMarketCap as Plugin<Context>>::new(&ctx, &settings, &mut subscriptions).unwrap();
+
+        assert!(ctx.shared.get::<client::Client>().is_some());
     }
 
     /// The default cache lifetime, as configured in [`Settings::default`].
