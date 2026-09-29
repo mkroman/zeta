@@ -2,8 +2,10 @@
 //!
 //! The `.r <expression>` command evaluates the whole argument as a rink expression and replies
 //! with the one-line result as a notice — arithmetic, physical unit conversions, and, with live
-//! currency data loaded, fiat currency and Bitcoin lookups. Evaluation errors are reported
-//! inline as `> Error: <message>`.
+//! currency data loaded, fiat currency and Bitcoin lookups. The `.c <expression>` command does
+//! the same but case-corrects unit tokens rink cannot resolve, so lowercase abbreviations like
+//! `10 usd to dkk` evaluate like `10 USD to DKK`. Evaluation errors are reported inline as
+//! `> Error: <message>`.
 //!
 //! Replies are styled like the other plugins: the cyan `> ` marker and scaffolding, with the
 //! values — numbers, datetimes, property names, echoed input in errors, category labels, and
@@ -27,8 +29,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rink_core::ast::{Conversion, Expr, Query};
 use rink_core::output::fmt::{FmtToken, Span, TokenFmt};
 use rink_core::output::{QueryError, QueryReply};
+use rink_core::parsing::text_query::{parse_query, TokenIterator};
 use rink_core::{Context as RinkContext, Value};
 use serde::{Deserialize, Serialize};
 use tokio::time::MissedTickBehavior;
@@ -103,6 +107,12 @@ const RINK: CommandSpec = CommandSpec::new(
     "Evaluate a calculation with unit and currency conversions",
 );
 
+/// The `.c` command.
+const CLASSIFY: CommandSpec = CommandSpec::new(
+    ".c",
+    "Evaluate a calculation, correcting unit casing",
+);
+
 /// Calculator plugin using rink-rs.
 pub struct Rink {
     /// The rink context, shared with the currency refresh task, which swaps in a rebuilt
@@ -145,7 +155,7 @@ impl Plugin<Context> for Rink {
     type Settings = Settings;
 
     fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) -> Result<Rink, ZetaError> {
-        subscriptions.command(RINK);
+        subscriptions.command(RINK).command(CLASSIFY);
 
         let client = if settings.currency {
             Some(
@@ -177,7 +187,8 @@ impl Plugin<Context> for Rink {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let message = self.eval_and_format(command.args()).await;
+        let classify = command.spec == CLASSIFY;
+        let message = self.eval_and_format(command.args(), classify).await;
 
         client.send_privmsg(command.channel(), message)?;
 
@@ -227,16 +238,25 @@ impl Rink {
 
     /// Evaluates `line` and renders the result or error as a one-line IRC reply.
     ///
+    /// When `classify` is set, unit tokens rink cannot resolve are case-corrected against the
+    /// registry first, so `.c 10 usd to dkk` evaluates like `10 USD to DKK`.
+    ///
     /// A query that runs into missing currency data triggers one inline fetch attempt and a
     /// re-evaluation, mirroring upstream rink's REPL, which fetches on demand in the same
     /// situation. A failed refresh is logged and the missing-dependencies error is answered
     /// instead.
-    async fn eval_and_format(&self, line: &str) -> String {
+    async fn eval_and_format(&self, line: &str, classify: bool) -> String {
+        let line = if classify {
+            self.classify(line)
+        } else {
+            line.to_owned()
+        };
+
         // Rink's results hold `Rc`s and are not `Send`, so each one is rendered before any
         // await: everything but the missing-dependencies retry returns from this match, and
         // the retry re-evaluates the same line below instead of keeping the first result
         // alive across the fetch.
-        match self.eval(line) {
+        match self.eval(&line) {
             Ok(reply) => return notice(render_reply(&reply)),
             Err(QueryError::MissingDeps(_)) if self.client.is_some() => {}
             Err(error) => return notice(error_message(&error)),
@@ -246,9 +266,29 @@ impl Rink {
         // upstream rink's REPL, which fetches on demand in the same situation.
         self.refresh_currency_now().await;
 
-        match self.eval(line) {
+        match self.eval(&line) {
             Ok(reply) => notice(render_reply(&reply)),
             Err(error) => notice(error_message(&error)),
+        }
+    }
+
+    /// Case-corrects the unit tokens in `line` that rink cannot resolve.
+    ///
+    /// The correction runs on rink's parsed query rather than the input string, so number-and-
+    /// unit words like `10usd` are handled by rink's own tokenizer. Each `Expr::Unit` name that
+    /// does not resolve is matched case-insensitively against the registry's names — defined
+    /// units, substances, base units and pending dependencies — and replaced when exactly one
+    /// candidate exists. Queries that end up untouched, including ones the parser cannot make
+    /// sense of, are returned unchanged.
+    fn classify(&self, line: &str) -> String {
+        let ctx = crate::sync::lock(&self.ctx);
+        let mut iter = TokenIterator::new(line.trim()).peekable();
+        let mut query = parse_query(&mut iter);
+
+        if fix_unit_casing(&ctx, &mut query) {
+            query.spans_to_string()
+        } else {
+            line.to_owned()
         }
     }
 
@@ -338,6 +378,81 @@ fn build_context(currency: Option<&str>, previous: Option<Value>) -> Result<Rink
         .map_err(|error| plugin_err(std::io::Error::other(error)))?;
 
     Ok(ctx)
+}
+
+/// Rewrites every `Expr::Unit` name in `query` that rink cannot resolve into its
+/// case-corrected spelling, when exactly one registry name matches case-insensitively.
+///
+/// Names are drawn from the registry's defined units, substances, base units, their long forms
+/// and pending dependencies — so lowercase ISO codes like `usd` correct to `USD` both while the
+/// currency data is missing and once it is loaded. Returns whether anything was rewritten; an
+/// untouched query must be evaluated verbatim, since re-rendering it could shift a parse that
+/// only rink's own error handling can report correctly.
+fn fix_unit_casing(ctx: &RinkContext, query: &mut Query) -> bool {
+    fn fix_expr(ctx: &RinkContext, expr: &mut Expr, fixed: &mut bool) {
+        match expr {
+            Expr::Unit { name } => {
+                if ctx.lookup(name).is_none() {
+                    let mut candidates: Vec<String> = ctx
+                        .registry
+                        .units
+                        .keys()
+                        .cloned()
+                        .chain(ctx.registry.missing_deps.keys().cloned())
+                        .chain(ctx.registry.substances.keys().cloned())
+                        .chain(ctx.registry.base_unit_long_names.keys().cloned())
+                        .chain(
+                            ctx.registry
+                                .base_units
+                                .iter()
+                                .map(|unit| unit.id.to_string()),
+                        )
+                        .filter(|candidate| candidate.eq_ignore_ascii_case(name))
+                        .collect();
+                    candidates.sort();
+                    candidates.dedup();
+
+                    if let [fixed_name] = &candidates[..] {
+                        name.clone_from(fixed_name);
+                        *fixed = true;
+                    }
+                }
+            }
+            Expr::BinOp(binop) => {
+                fix_expr(ctx, &mut binop.left, fixed);
+                fix_expr(ctx, &mut binop.right, fixed);
+            }
+            Expr::UnaryOp(unaryop) => fix_expr(ctx, &mut unaryop.expr, fixed),
+            Expr::Mul { exprs } => {
+                for expr in exprs {
+                    fix_expr(ctx, expr, fixed);
+                }
+            }
+            Expr::Of { expr, .. } => fix_expr(ctx, expr, fixed),
+            Expr::Call { args, .. } => {
+                for arg in args {
+                    fix_expr(ctx, arg, fixed);
+                }
+            }
+            Expr::Quote { .. } | Expr::Const { .. } | Expr::Date { .. } | Expr::Error { .. } => {}
+        }
+    }
+
+    let mut fixed = false;
+
+    let (top, conversion) = match query {
+        Query::Expr(expr) | Query::Factorize(expr) | Query::UnitsFor(expr) => (expr, None),
+        Query::Convert(top, conversion, ..) => (top, Some(conversion)),
+        Query::Search(_) | Query::Error(_) => return fixed,
+    };
+
+    fix_expr(ctx, top, &mut fixed);
+
+    if let Some(Conversion::Expr(bottom)) = conversion {
+        fix_expr(ctx, bottom, &mut fixed);
+    }
+
+    fixed
 }
 
 /// The styles rink's output renders in.
@@ -449,7 +564,7 @@ mod tests {
         },
     };
 
-    /// A minimal live currency dataset: one unit referencing the bundled euro.
+    /// A minimal live currency dataset: USD, DKK and JPY against the bundled euro.
     const TEST_CURRENCY_DATA: &str = r#"[
         {
             "name": "USD",
@@ -457,6 +572,20 @@ mod tests {
             "category": "currencies",
             "type": "unit",
             "expr": "2 EUR"
+        },
+        {
+            "name": "DKK",
+            "doc": null,
+            "category": "currencies",
+            "type": "unit",
+            "expr": "(1 / 7.4752) EUR"
+        },
+        {
+            "name": "JPY",
+            "doc": null,
+            "category": "currencies",
+            "type": "unit",
+            "expr": "(1 / 170.52) EUR"
         }
     ]"#;
 
@@ -499,7 +628,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("4 m").await,
+            rink.eval_and_format("4 m", false).await,
             "\x0310> \x0f4 meter \x0310(\x0flength\x0310)"
         );
     }
@@ -510,7 +639,7 @@ mod tests {
 
         // A query without a close match carries no suggestion.
         assert_eq!(
-            rink.eval_and_format("wronginput").await,
+            rink.eval_and_format("wronginput", false).await,
             "\x0310> Error: No such unit \x0fwronginput"
         );
     }
@@ -519,10 +648,10 @@ mod tests {
     async fn ans_references_the_previous_result() {
         let rink = offline_plugin();
 
-        rink.eval_and_format("4 m").await;
+        rink.eval_and_format("4 m", false).await;
 
         assert_eq!(
-            rink.eval_and_format("ans * 2").await,
+            rink.eval_and_format("ans * 2", false).await,
             "\x0310> \x0f8 meter \x0310(\x0flength\x0310)"
         );
     }
@@ -532,7 +661,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("egg").await,
+            rink.eval_and_format("egg", false).await,
             concat!(
                 "\x0310> egg: USA large egg. ",
                 "\x0fmass_shelled\x0310 = \x0f50 gram \x0310(\x0fmass\x0310); ",
@@ -550,7 +679,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("helium").await,
+            rink.eval_and_format("helium", false).await,
             concat!(
                 "\x0310> helium: ",
                 "\x0fatomic_number\x0310 = \x0f2 \x0310(\x0fdimensionless\x0310); ",
@@ -564,11 +693,11 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("300 px -> mm").await,
+            rink.eval_and_format("300 px -> mm", false).await,
             "\x0310> \x0f79.375 millimeter \x0310(\x0flength\x0310)"
         );
         assert_eq!(
-            rink.eval_and_format("90 grad -> degree").await,
+            rink.eval_and_format("90 grad -> degree", false).await,
             "\x0310> \x0f81 degree \x0310(\x0fangle\x0310)"
         );
     }
@@ -578,11 +707,11 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("300 dpi -> dpcm").await,
+            rink.eval_and_format("300 dpi -> dpcm", false).await,
             "\x0310> \x0f15000/127\x0310, approx. \x0f118.1102 dpcm \x0310(\x0fm^-1\x0310)"
         );
         assert_eq!(
-            rink.eval_and_format("1 dppx -> dpi").await,
+            rink.eval_and_format("1 dppx -> dpi", false).await,
             "\x0310> \x0f96 dpi \x0310(\x0fm^-1\x0310)"
         );
     }
@@ -595,13 +724,13 @@ mod tests {
         rink.refresh_currency_now().await;
 
         assert_eq!(
-            rink.eval_and_format("1 USD").await,
+            rink.eval_and_format("1 USD", false).await,
             "\x0310> \x0f2 euro \x0310(\x0fmoney\x0310)"
         );
 
         // Lowercase codes do not resolve, and the error's suggestion renders as a value.
         assert_eq!(
-            rink.eval_and_format("100 usd to eur").await,
+            rink.eval_and_format("100 usd to eur", false).await,
             "\x0310> Error: No such unit \x0fusd\x0310, did you mean \x0fUSD\x0310?"
         );
     }
@@ -612,7 +741,7 @@ mod tests {
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
 
         assert_eq!(
-            rink.eval_and_format("1 USD").await,
+            rink.eval_and_format("1 USD", false).await,
             "\x0310> Error: Missing dependencies: \x0fUSD"
         );
     }
@@ -622,9 +751,84 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("1 USD").await,
+            rink.eval_and_format("1 USD", false).await,
             "\x0310> Error: Missing dependencies: \x0fUSD"
         );
+    }
+
+    #[tokio::test]
+    async fn classify_case_corrects_unresolvable_units() {
+        let server = currency_server(200).await;
+        let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
+
+        rink.refresh_currency_now().await;
+
+        assert_eq!(
+            rink.eval_and_format("10 usd to dkk", true).await,
+            "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
+        );
+        assert_eq!(
+            rink.eval_and_format("10usd to dkk", true).await,
+            "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
+        );
+        assert_eq!(
+            rink.eval_and_format("10 USD to DKK", true).await,
+            "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
+        );
+        assert_eq!(
+            rink.eval_and_format("30 eur to jpy", true).await,
+            "\x0310> \x0f5115.6 JPY \x0310(\x0fmoney\x0310)"
+        );
+    }
+
+    #[tokio::test]
+    async fn classify_corrects_units_while_the_currency_data_is_missing() {
+        let rink = offline_plugin();
+
+        // The corrections land before any evaluation: the reply names the *tracked*
+        // dependencies (USD), which only the rewritten `10 USD to DKK` can trigger.
+        assert_eq!(
+            rink.eval_and_format("10 usd to dkk", true).await,
+            "\x0310> Error: Missing dependencies: \x0fUSD"
+        );
+    }
+
+    #[tokio::test]
+    async fn classify_leaves_unclassifiable_tokens_alone() {
+        let rink = offline_plugin();
+
+        assert_eq!(
+            rink.eval_and_format("50 gram", true).await,
+            "\x0310> \x0f50 gram \x0310(\x0fmass\x0310)"
+        );
+        assert_eq!(
+            rink.eval_and_format("banana", true).await,
+            "\x0310> Error: No such unit \x0fbanana"
+        );
+        assert_eq!(
+            rink.eval_and_format("2 hours from now", true).await,
+            "\x0310> Error: No such unit \x0ffrom\x0310, did you mean \x0ffreon\x0310?"
+        );
+    }
+
+    #[tokio::test]
+    async fn classify_returns_unparseable_queries_unchanged() {
+        let rink = offline_plugin();
+
+        assert_eq!(
+            rink.eval_and_format("20:00 in tokyo", true).await,
+            "\x0310> Error: Expected term, got `:`"
+        );
+    }
+
+    #[tokio::test]
+    async fn classify_evaluates_dates() {
+        let rink = offline_plugin();
+
+        let reply = rink.eval_and_format("now", true).await;
+        // The datetime renders as a value, inside the run opened right after the marker.
+        assert!(reply.contains("\x0f2026-"), "{reply}");
+        assert!(reply.contains("[Europe/Copenhagen]"), "{reply}");
     }
 
     #[tokio::test]
@@ -634,21 +838,22 @@ mod tests {
 
         rink.refresh_currency_now().await;
 
-        let fiat = rink.eval_and_format("100 USD to EUR").await;
-        assert!(fiat.contains("euro (money)"), "{fiat}");
+        let fiat = rink.eval_and_format("100 usd to eur", true).await;
+        assert!(fiat.contains("euro") && fiat.contains("money"), "{fiat}");
 
-        let bitcoin = rink.eval_and_format("1 BTC to USD").await;
-        assert!(bitcoin.contains("USD (money)"), "{bitcoin}");
+        let bitcoin = rink.eval_and_format("1 btc to usd", true).await;
+        assert!(bitcoin.contains("USD") && bitcoin.contains("money"), "{bitcoin}");
     }
 
     #[tokio::test]
-    async fn the_plugin_registers_its_command() {
+    async fn the_plugin_registers_its_commands() {
         let mut subscriptions = Subscriptions::new();
 
         <Rink as Plugin<Context>>::new(&Context::for_tests(), &Settings::default(), &mut subscriptions)
             .unwrap();
 
         assert!(subscriptions.commands().contains(&RINK));
+        assert!(subscriptions.commands().contains(&CLASSIFY));
     }
 
     settings_tests! {
