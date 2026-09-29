@@ -263,7 +263,12 @@ fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
     let mut text = String::new();
 
     for listing in listings {
-        let Some(quote) = listing.quote.get("USD").and_then(|quote| quote.price) else {
+        let Some(quote) = listing
+            .quote
+            .iter()
+            .find(|quote| quote.symbol == "USD")
+            .and_then(|quote| quote.price)
+        else {
             continue;
         };
 

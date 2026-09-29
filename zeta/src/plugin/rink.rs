@@ -540,34 +540,40 @@ mod tests {
                 "symbol": "ETH",
                 "slug": "ethereum",
                 "cmc_rank": 2,
-                "quote": {
-                    "USD": {
+                "quote": [
+                    {
+                        "id": 2781,
+                        "symbol": "USD",
                         "price": 2650.32,
                         "last_updated": "2026-09-29T11:13:00.000Z"
                     }
-                }
+                ]
             },
             {
                 "id": 8017,
                 "name": "1inch",
                 "symbol": "1INCH",
                 "slug": "1inch",
-                "quote": {
-                    "USD": {
+                "quote": [
+                    {
+                        "id": 2781,
+                        "symbol": "USD",
                         "price": 0.31
                     }
-                }
+                ]
             },
             {
                 "id": 1,
                 "name": "Fake Euro",
                 "symbol": "EUR",
                 "slug": "fake-euro",
-                "quote": {
-                    "USD": {
+                "quote": [
+                    {
+                        "id": 2781,
+                        "symbol": "USD",
                         "price": 1.2
                     }
-                }
+                ]
             }
         ],
         "status": {

@@ -84,8 +84,23 @@ pub struct Listing {
     pub date_added: Option<String>,
     /// When the coin's market data was last updated.
     pub last_updated: Option<String>,
-    /// Market quotes keyed by conversion currency.
-    pub quote: HashMap<String, FiatQuote>,
+    /// Market quotes, one per conversion currency requested.
+    pub quote: Vec<ListingQuote>,
+}
+
+/// A quote in a single conversion currency, as returned by the listings endpoint.
+///
+/// The endpoint response carries further volume and change fields, which the plugin does not
+/// use.
+#[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct ListingQuote {
+    /// The CoinMarketCap id of the conversion currency.
+    pub id: u64,
+    /// The ISO symbol of the conversion currency (e.g. `USD`).
+    pub symbol: String,
+    /// The current price in the conversion currency.
+    pub price: Option<f64>,
 }
 
 /// A quote in a single conversion currency.
