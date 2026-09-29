@@ -578,7 +578,7 @@ mod tests {
         ],
         "status": {
             "timestamp": "2026-09-29T11:13:55.525Z",
-            "error_code": 0,
+            "error_code": "0",
             "error_message": null,
             "elapsed": 12,
             "credit_count": 1

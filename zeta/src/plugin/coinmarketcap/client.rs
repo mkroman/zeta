@@ -199,7 +199,7 @@ impl Client {
 fn api_error(status: StatusCode, body: &str) -> Error {
     let message = serde_json::from_str::<Envelope<Value>>(body)
         .ok()
-        .filter(|envelope| envelope.status.error_code != 0)
+        .filter(|envelope| envelope.status.error_code != "0")
         .and_then(|envelope| envelope.status.error_message);
 
     if status == StatusCode::BAD_REQUEST {
@@ -227,7 +227,7 @@ mod tests {
     use super::*;
     #[test]
     fn decodes_quote_response() {
-        let text = r#"{"data":{"BTC":{"id":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","quote":{"USD":{"price":97231.504,"volume_24h":48000000000,"percent_change_1h":0.5,"percent_change_24h":-1.2,"percent_change_7d":10.25,"last_updated":"2026-09-09T00:00:00.000Z"}}}},"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
+        let text = r#"{"data":{"BTC":{"id":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","quote":{"USD":{"price":97231.504,"volume_24h":48000000000,"percent_change_1h":0.5,"percent_change_24h":-1.2,"percent_change_7d":10.25,"last_updated":"2026-09-09T00:00:00.000Z"}}}},"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":"0","error_message":null,"elapsed":12,"credit_count":1}}"#;
 
         let parsed: Envelope<HashMap<String, QuoteData>> = http::json::from_str(text).unwrap();
         let quote = parsed.data.unwrap().remove("BTC").unwrap();
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn decodes_listings_response() {
-        let text = r#"{"data":[{"id":1027,"name":"Ethereum","symbol":"ETH","slug":"ethereum","cmc_rank":2,"num_market_pairs":9001,"circulating_supply":120000000,"total_supply":120000000,"max_supply":null,"infinite_supply":false,"date_added":"2015-08-07T00:00:00.000Z","last_updated":"2026-09-29T11:13:00.000Z","quote":{"USD":{"price":2650.32,"volume_24h":1000000000,"percent_change_1h":0.4,"percent_change_24h":1.2,"percent_change_7d":3.4,"last_updated":"2026-09-29T11:13:00.000Z"}}}],"status":{"timestamp":"2026-09-29T11:13:55.525Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
+        let text = r#"{"data":[{"id":1027,"name":"Ethereum","symbol":"ETH","slug":"ethereum","cmc_rank":2,"num_market_pairs":9001,"circulating_supply":120000000,"total_supply":120000000,"max_supply":null,"infinite_supply":false,"date_added":"2015-08-07T00:00:00.000Z","last_updated":"2026-09-29T11:13:00.000Z","quote":[{"id":2781,"symbol":"USD","price":2650.32,"volume_24h":1000000000,"percent_change_1h":0.4,"percent_change_24h":1.2,"percent_change_7d":3.4,"last_updated":"2026-09-29T11:13:00.000Z"}]}],"status":{"timestamp":"2026-09-29T11:13:55.525Z","error_code":"0","error_message":null,"elapsed":12,"credit_count":1}}"#;
 
         let parsed: Envelope<Vec<Listing>> = http::json::from_str(text).unwrap();
         let listings = parsed.data.unwrap();
@@ -249,12 +249,13 @@ mod tests {
         assert_eq!(listings[0].symbol, "ETH");
         assert_eq!(listings[0].name, "Ethereum");
         assert_eq!(listings[0].cmc_rank, Some(2));
-        assert_eq!(listings[0].quote["USD"].price, Some(2650.32));
+        assert_eq!(listings[0].quote[0].symbol, "USD");
+        assert_eq!(listings[0].quote[0].price, Some(2650.32));
     }
 
     #[test]
     fn decodes_coin_map_response() {
-        let text = r#"{"data":[{"id":1,"rank":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","is_active":1,"first_historical_data":"2013-04-28T18:47:21.000Z","last_historical_data":"2020-05-05T20:44:01.000Z","platform":null},{"id":1027,"rank":2,"name":"Ethereum","symbol":"ETH","slug":"ethereum","is_active":1,"first_historical_data":"2015-08-07T14:49:30.000Z","last_historical_data":"2020-05-05T20:44:02.000Z","platform":null}],"status":{"timestamp":"2026-09-13T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
+        let text = r#"{"data":[{"id":1,"rank":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","is_active":1,"first_historical_data":"2013-04-28T18:47:21.000Z","last_historical_data":"2020-05-05T20:44:01.000Z","platform":null},{"id":1027,"rank":2,"name":"Ethereum","symbol":"ETH","slug":"ethereum","is_active":1,"first_historical_data":"2015-08-07T14:49:30.000Z","last_historical_data":"2020-05-05T20:44:02.000Z","platform":null}],"status":{"timestamp":"2026-09-13T00:00:00.000Z","error_code":"0","error_message":null,"elapsed":12,"credit_count":1}}"#;
 
         let parsed: Envelope<Vec<Coin>> = http::json::from_str(text).unwrap();
         let coins = parsed.data.unwrap();
@@ -266,7 +267,7 @@ mod tests {
 
     #[test]
     fn decodes_fiat_map_response() {
-        let text = r#"{"data":[{"id":2781,"name":"United States Dollar","sign":"$","symbol":"USD"},{"id":2787,"name":"Chinese Yuan","sign":"¥","symbol":"CNY"}],"status":{"timestamp":"2026-09-13T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
+        let text = r#"{"data":[{"id":2781,"name":"United States Dollar","sign":"$","symbol":"USD"},{"id":2787,"name":"Chinese Yuan","sign":"¥","symbol":"CNY"}],"status":{"timestamp":"2026-09-13T00:00:00.000Z","error_code":"0","error_message":null,"elapsed":12,"credit_count":1}}"#;
 
         let parsed: Envelope<Vec<Fiat>> = http::json::from_str(text).unwrap();
         let fiats = parsed.data.unwrap();
@@ -280,7 +281,7 @@ mod tests {
 
     #[test]
     fn maps_bad_request_to_not_found() {
-        let text = r#"{"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":400,"error_message":"Invalid value for \"symbol\"","elapsed":5,"credit_count":1}}"#;
+        let text = r#"{"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":"400","error_message":"Invalid value for \"symbol\"","elapsed":5,"credit_count":1}}"#;
 
         let err = api_error(StatusCode::BAD_REQUEST, text);
 
@@ -296,7 +297,7 @@ mod tests {
 
     #[test]
     fn builds_api_error_from_error_payload() {
-        let text = r#"{"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":1001,"error_message":"This API Key is invalid.","elapsed":5,"credit_count":1}}"#;
+        let text = r#"{"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":"1001","error_message":"This API Key is invalid.","elapsed":5,"credit_count":1}}"#;
 
         let err = api_error(StatusCode::UNAUTHORIZED, text);
 

@@ -128,8 +128,8 @@ pub struct Envelope<T> {
 /// The status of a CoinMarketCap API response.
 #[derive(Debug, Deserialize)]
 pub struct Status {
-    /// The error code; `0` indicates success.
-    pub error_code: i32,
+    /// The error code; `"0"` indicates success.
+    pub error_code: String,
     /// A human-readable description of the error, if any.
     pub error_message: Option<String>,
 }
