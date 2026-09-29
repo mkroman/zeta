@@ -368,37 +368,49 @@ impl Rink {
 ///
 /// Names are drawn from the registry's defined units, substances, base units, their long forms
 /// and pending dependencies — so lowercase ISO codes like `usd` correct to `USD` both while the
-/// currency data is missing and once it is loaded. Returns whether anything was rewritten; an
+/// currency data is missing and once it is loaded. A candidate that equals the name itself is
+/// not a rewrite: such a query is untouched. Returns whether anything was rewritten; an
 /// untouched query must be evaluated verbatim, since re-rendering it could shift a parse that
-/// only rink's own error handling can report correctly.
+/// only rink's own error handling can report correctly. A query that already failed to parse
+/// is always left verbatim too — re-rendering it would flatten rink's structured error into
+/// literal `<error: …>` text, which then reads as a missing unit.
 fn fix_unit_casing(ctx: &RinkContext, query: &mut Query) -> bool {
+    /// Returns the single registry name matching `name` case-insensitively.
+    ///
+    /// Candidates are the documented set: defined units, pending dependencies, substances and
+    /// base units with their long forms. `None` means the name already matches (nothing to
+    /// rewrite), nothing matched, or the match is ambiguous.
+    fn resolve_case<'ctx>(ctx: &'ctx RinkContext, name: &str) -> Option<&'ctx str> {
+        let mut candidates: Vec<&str> = ctx
+            .registry
+            .units
+            .keys()
+            .map(String::as_str)
+            .chain(ctx.registry.missing_deps.keys().map(String::as_str))
+            .chain(ctx.registry.substances.keys().map(String::as_str))
+            .chain(ctx.registry.base_unit_long_names.keys().map(String::as_str))
+            .chain(ctx.registry.base_units.iter().map(|unit| unit.id.as_str()))
+            .filter(|candidate| candidate.eq_ignore_ascii_case(name))
+            .collect();
+
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        match candidates.as_slice() {
+            [only] if *only != name => Some(*only),
+            _ => None,
+        }
+    }
+
     fn fix_expr(ctx: &RinkContext, expr: &mut Expr, fixed: &mut bool) {
         match expr {
             Expr::Unit { name } => {
-                if ctx.lookup(name).is_none() {
-                    let mut candidates: Vec<String> = ctx
-                        .registry
-                        .units
-                        .keys()
-                        .cloned()
-                        .chain(ctx.registry.missing_deps.keys().cloned())
-                        .chain(ctx.registry.substances.keys().cloned())
-                        .chain(ctx.registry.base_unit_long_names.keys().cloned())
-                        .chain(
-                            ctx.registry
-                                .base_units
-                                .iter()
-                                .map(|unit| unit.id.to_string()),
-                        )
-                        .filter(|candidate| candidate.eq_ignore_ascii_case(name))
-                        .collect();
-                    candidates.sort();
-                    candidates.dedup();
-
-                    if let [fixed_name] = &candidates[..] {
-                        name.clone_from(fixed_name);
-                        *fixed = true;
-                    }
+                if ctx.lookup(name).is_none()
+                    && let Some(resolved) = resolve_case(ctx, name)
+                {
+                    name.clear();
+                    name.push_str(resolved);
+                    *fixed = true;
                 }
             }
             Expr::BinOp(binop) => {
@@ -421,6 +433,13 @@ fn fix_unit_casing(ctx: &RinkContext, query: &mut Query) -> bool {
         }
     }
 
+    // A parse error makes the evaluation fail whatever the casing, and re-rendering would
+    // turn rink's structured error into literal `<error: …>` text — leave the line alone so
+    // rink reports the real parse error.
+    if contains_parse_error(query) {
+        return false;
+    }
+
     let mut fixed = false;
 
     let (top, conversion) = match query {
@@ -431,11 +450,59 @@ fn fix_unit_casing(ctx: &RinkContext, query: &mut Query) -> bool {
 
     fix_expr(ctx, top, &mut fixed);
 
-    if let Some(Conversion::Expr(bottom)) = conversion {
-        fix_expr(ctx, bottom, &mut fixed);
+    match conversion {
+        Some(Conversion::Expr(bottom)) => fix_expr(ctx, bottom, &mut fixed),
+        // A unit list (`1000 -> ft, in`) carries bare names instead of expressions, so it
+        // needs its own pass: skipping it would correct the left-hand side only and report the
+        // uncorrected list item as a missing unit.
+        Some(Conversion::List(units)) => {
+            for unit in units {
+                if ctx.lookup(unit).is_none()
+                    && let Some(resolved) = resolve_case(ctx, unit)
+                {
+                    unit.clear();
+                    unit.push_str(resolved);
+                    fixed = true;
+                }
+            }
+        }
+        _ => {}
     }
 
     fixed
+}
+
+/// Returns whether `query` carries a parse error: a top-level [`Query::Error`] or an
+/// `Expr::Error` nested in an otherwise valid query.
+///
+/// Such a query fails evaluation however its units are cased, and re-rendering it would turn
+/// rink's structured error message into literal text.
+fn contains_parse_error(query: &Query) -> bool {
+    fn expr_contains_error(expr: &Expr) -> bool {
+        match expr {
+            Expr::Error { .. } => true,
+            Expr::BinOp(binop) => {
+                expr_contains_error(&binop.left) || expr_contains_error(&binop.right)
+            }
+            Expr::UnaryOp(unaryop) => expr_contains_error(&unaryop.expr),
+            Expr::Mul { exprs } => exprs.iter().any(expr_contains_error),
+            Expr::Of { expr, .. } => expr_contains_error(expr),
+            Expr::Call { args, .. } => args.iter().any(expr_contains_error),
+            Expr::Quote { .. } | Expr::Const { .. } | Expr::Date { .. } | Expr::Unit { .. } => false,
+        }
+    }
+
+    match query {
+        Query::Expr(expr) | Query::Factorize(expr) | Query::UnitsFor(expr) => {
+            expr_contains_error(expr)
+        }
+        Query::Convert(top, conversion, ..) => {
+            expr_contains_error(top)
+                || matches!(conversion, Conversion::Expr(bottom) if expr_contains_error(bottom))
+        }
+        Query::Search(_) => false,
+        Query::Error(_) => true,
+    }
 }
 
 /// The styles rink's output renders in.
@@ -1071,6 +1138,56 @@ mod tests {
         assert_eq!(
             rink.eval_and_format("20:00 in tokyo", true).await,
             "\x0310> Error: Expected term, got `:`"
+        );
+    }
+
+    #[tokio::test]
+    async fn classify_reports_the_parser_error_of_a_malformed_query() {
+        let rink = offline_plugin();
+
+        // Re-rendering the parsed query would flatten the parser's error into a literal
+        // `<error: …>` unit, so the line stays verbatim and rink reports the real problem.
+        for line in ["egg $%^", "10 usd +", "5 usd -> dkk + "] {
+            assert_eq!(
+                rink.eval_and_format(line, true).await,
+                rink.eval_and_format(line, false).await,
+                "classification changed the outcome of {line:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn classify_only_reports_rewrites_that_change_the_name() {
+        let server = currency_server(200).await;
+        let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
+        rink.ensure_currency_cached().await;
+
+        let rewritten = |line: &str| {
+            let ctx = crate::sync::lock(&rink.ctx);
+            let mut iter = TokenIterator::new(line.trim()).peekable();
+            let mut query = parse_query(&mut iter);
+
+            fix_unit_casing(&ctx, &mut query)
+        };
+
+        // A context lookup that misses a substance is not a rewrite: `egg` resolves through
+        // the substance table during evaluation, so nothing about the name changes.
+        assert!(!rewritten("egg"), "a no-op must not count as a rewrite");
+        assert!(!rewritten("banana"), "no candidate means no rewrite");
+        assert!(!rewritten("10 USD"), "an already correct name is not a rewrite");
+        assert!(rewritten("10usd"), "a genuine case mismatch is a rewrite");
+    }
+
+    #[tokio::test]
+    async fn classify_corrects_the_units_of_a_unit_list() {
+        let server = currency_server(200).await;
+        let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
+        rink.ensure_currency_cached().await;
+
+        // Both list items are corrected, not just the left-hand side.
+        assert_eq!(
+            rink.eval_and_format("5 usd -> dkk, eur", true).await,
+            rink.eval_and_format("5 USD -> DKK, EUR", false).await,
         );
     }
 
