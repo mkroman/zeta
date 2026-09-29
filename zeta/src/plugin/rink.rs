@@ -3,12 +3,14 @@
 //! The `.r <expression>` command evaluates the whole argument as a rink expression and replies
 //! with the one-line result as a notice — arithmetic, physical unit conversions, and, with live
 //! currency data loaded, fiat currency and Bitcoin lookups. Evaluation errors are reported
-//! inline, with rink's error text rendered in red.
+//! inline as `> Error: <message>`.
 //!
-//! Replies are styled like the other plugins: the cyan `> ` marker and message text, with the
-//! values — numbers, datetimes, and the user's echoed input in errors — reset to the default
-//! color to stand out. Rink's output is rendered from its markup spans rather than its plain
-//! text form, so the styling can follow the structure of the answer.
+//! Replies are styled like the other plugins: the cyan `> ` marker and scaffolding, with the
+//! values — numbers, datetimes, property names, echoed input in errors, category labels, and
+//! the unit expressions that follow numbers — reset to the default color to stand out. Rink's
+//! output is rendered from its markup spans rather than its plain text form, so the styling can
+//! follow the structure of the answer, and control codes are emitted only where the style
+//! actually changes — never duplicated, never dangling at the end of the message.
 //!
 //! A rink context is built once at plugin initialization: the bundled unit definitions, the
 //! static currency units, and a small set of extra definitions (CSS lengths, resolutions, and
@@ -22,7 +24,6 @@
 //! attempt and a re-evaluation, mirroring upstream rink's REPL; failed fetches are logged and
 //! leave the last known rates in place.
 
-use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -56,9 +57,6 @@ const CURRENCY_TTL: Duration = Duration::from_hours(1);
 /// happen at most once per [`CURRENCY_TTL`]; the shorter check interval makes a failed fetch
 /// retry within minutes instead of after a full TTL.
 const CURRENCY_CHECK_INTERVAL: Duration = Duration::from_mins(10);
-
-/// The red (mIRC color 4) that rink's error text renders in, as in the coinmarketcap plugin.
-const ERROR_COLOR: &str = "\x034";
 
 /// Extra unit definitions loaded on top of rink's bundled dataset.
 ///
@@ -239,9 +237,9 @@ impl Rink {
         // the retry re-evaluates the same line below instead of keeping the first result
         // alive across the fetch.
         match self.eval(line) {
-            Ok(reply) => return notice(render(&reply)),
+            Ok(reply) => return notice(render_reply(&reply)),
             Err(QueryError::MissingDeps(_)) if self.client.is_some() => {}
-            Err(error) => return notice(render(&error)),
+            Err(error) => return notice(error_message(&error)),
         }
 
         // Currency data is missing: one fetch attempt, then a re-evaluation, mirroring
@@ -249,8 +247,8 @@ impl Rink {
         self.refresh_currency_now().await;
 
         match self.eval(line) {
-            Ok(reply) => notice(render(&reply)),
-            Err(error) => notice(render(&error)),
+            Ok(reply) => notice(render_reply(&reply)),
+            Err(error) => notice(error_message(&error)),
         }
     }
 
@@ -342,35 +340,99 @@ fn build_context(currency: Option<&str>, previous: Option<Value>) -> Result<Rink
     Ok(ctx)
 }
 
+/// The styles rink's output renders in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Style {
+    /// The scaffolding, in the reply cyan.
+    Text,
+    /// A value, in the default color.
+    Value,
+}
+
+impl Style {
+    /// Returns the control code that enters this style.
+    const fn code(self) -> &'static str {
+        match self {
+            Style::Text => COLOR,
+            Style::Value => RESET,
+        }
+    }
+}
+
+/// Renders a successful evaluation's markup spans as a one-line IRC reply.
+fn render_reply(reply: &QueryReply) -> String {
+    render(reply, false)
+}
+
+/// Renders a failed evaluation's markup spans as a one-line IRC reply.
+///
+/// In error replies every unit renders as a value: the units there are the answer itself — a
+/// not-found suggestion or a missing dependency — rather than scaffolding.
+fn render_error(error: &QueryError) -> String {
+    render(error, true)
+}
+
+/// Formats a failed evaluation as the labeled `Error: <message>` reply body.
+fn error_message(error: &QueryError) -> String {
+    format!("Error: {}", render_error(error))
+}
+
 /// Renders `obj`'s markup spans as a one-line IRC reply.
 ///
 /// The scaffolding stays cyan (inherited from the reply prefix), while the values — numbers,
-/// datetimes, and the user's echoed input in errors — have their color reset to the default to
-/// stand out, and error text renders in red. This mirrors the token-to-color mapping of rink's
-/// own IRC frontend, inverted into the house scheme: rink colors unit names and leaves numbers
-/// plain, while the house colors the text and resets the values.
-fn render<'a, T: TokenFmt<'a>>(obj: &'a T) -> String {
+/// datetimes, property names, the user's echoed input in errors, category labels, and the unit
+/// expressions that follow numbers — have their color reset to the default to stand out. This
+/// mirrors the token-to-color mapping of rink's own IRC frontend, inverted into the house
+/// scheme: rink colors unit names and leaves numbers plain, while the house colors the text and
+/// resets the values.
+fn render<'a, T: TokenFmt<'a>>(obj: &'a T, error: bool) -> String {
     let mut out = String::new();
+    let mut style = Style::Text;
 
-    render_spans(&mut out, &obj.to_spans());
+    render_spans(&mut out, &mut style, error, &obj.to_spans());
 
     collapse_whitespace(&out)
 }
 
 /// Writes `spans` into `out`, styled per their markup hints.
-fn render_spans(out: &mut String, spans: &[Span<'_>]) {
+///
+/// A style transition emits exactly one control code, and only when text follows it: never
+/// duplicated, never dangling at the end of the message. Whitespace is transparent — it keeps
+/// whatever run it lands in and never triggers a transition of its own, so a value group like
+/// `224.256 DKK` stays one reset run.
+fn render_spans(out: &mut String, style: &mut Style, error: bool, spans: &[Span<'_>]) {
     for span in spans {
         match span {
-            Span::Content { text, token } => match token {
-                FmtToken::Number | FmtToken::DateTime | FmtToken::UserInput => {
-                    let _ = write!(out, "{RESET}{text}{COLOR}");
+            Span::Content { text, token } => {
+                if text.is_empty() {
+                    continue;
                 }
-                FmtToken::Error => {
-                    let _ = write!(out, "{ERROR_COLOR}{text}{COLOR}");
+
+                if text.chars().all(char::is_whitespace) {
+                    out.push_str(text);
+                    continue;
                 }
-                _ => out.push_str(text),
-            },
-            Span::Child(child) => render_spans(out, &child.to_spans()),
+
+                let target = match token {
+                    FmtToken::Number
+                    | FmtToken::DateTime
+                    | FmtToken::UserInput
+                    | FmtToken::PropName
+                    | FmtToken::Quantity => Style::Value,
+                    FmtToken::Unit | FmtToken::Pow if *style == Style::Value || error => {
+                        Style::Value
+                    }
+                    _ => Style::Text,
+                };
+
+                if *style != target {
+                    out.push_str(target.code());
+                    *style = target;
+                }
+
+                out.push_str(text);
+            }
+            Span::Child(child) => render_spans(out, style, error, &child.to_spans()),
         }
     }
 }
@@ -438,17 +500,18 @@ mod tests {
 
         assert_eq!(
             rink.eval_and_format("4 m").await,
-            "\x0310> \x0f4\x0310 meter (length)"
+            "\x0310> \x0f4 meter \x0310(\x0flength\x0310)"
         );
     }
 
     #[tokio::test]
-    async fn errors_render_in_red_with_the_user_input_reset() {
+    async fn errors_render_behind_an_error_label_with_the_input_reset() {
         let rink = offline_plugin();
 
+        // A query without a close match carries no suggestion.
         assert_eq!(
             rink.eval_and_format("wronginput").await,
-            "\x0310> \x034No such unit \x0310\x0fwronginput\x0310"
+            "\x0310> Error: No such unit \x0fwronginput"
         );
     }
 
@@ -460,7 +523,39 @@ mod tests {
 
         assert_eq!(
             rink.eval_and_format("ans * 2").await,
-            "\x0310> \x0f8\x0310 meter (length)"
+            "\x0310> \x0f8 meter \x0310(\x0flength\x0310)"
+        );
+    }
+
+    #[tokio::test]
+    async fn substances_render_every_property_and_label_as_a_value() {
+        let rink = offline_plugin();
+
+        assert_eq!(
+            rink.eval_and_format("egg").await,
+            concat!(
+                "\x0310> egg: USA large egg. ",
+                "\x0fmass_shelled\x0310 = \x0f50 gram \x0310(\x0fmass\x0310); ",
+                "\x0fmass_white\x0310 = \x0f30 gram \x0310(\x0fmass\x0310); ",
+                "\x0fmass_yolk\x0310 = \x0f18.6 gram \x0310(\x0fmass\x0310); ",
+                "\x0fvolume\x0310 = approx. \x0f46824.75 millimeter^3 \x0310(\x0fvolume\x0310); ",
+                "\x0fvolume_white\x0310 = approx. \x0f29573.52 millimeter^3 \x0310(\x0fvolume\x0310); ",
+                "\x0fvolume_yolk\x0310 = approx. \x0f17251.22 millimeter^3 \x0310(\x0fvolume\x0310)",
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn a_unit_span_following_a_number_stays_inside_the_value_run() {
+        let rink = offline_plugin();
+
+        assert_eq!(
+            rink.eval_and_format("helium").await,
+            concat!(
+                "\x0310> helium: ",
+                "\x0fatomic_number\x0310 = \x0f2 \x0310(\x0fdimensionless\x0310); ",
+                "\x0fmolar_mass\x0310 = \x0f4.002602 gram / mole \x0310(\x0fmolar_mass\x0310)",
+            )
         );
     }
 
@@ -470,11 +565,11 @@ mod tests {
 
         assert_eq!(
             rink.eval_and_format("300 px -> mm").await,
-            "\x0310> \x0f79.375\x0310 millimeter (length)"
+            "\x0310> \x0f79.375 millimeter \x0310(\x0flength\x0310)"
         );
         assert_eq!(
             rink.eval_and_format("90 grad -> degree").await,
-            "\x0310> \x0f81\x0310 degree (angle)"
+            "\x0310> \x0f81 degree \x0310(\x0fangle\x0310)"
         );
     }
 
@@ -484,11 +579,11 @@ mod tests {
 
         assert_eq!(
             rink.eval_and_format("300 dpi -> dpcm").await,
-            "\x0310> \x0f15000/127\x0310, approx. \x0f118.1102\x0310 dpcm (m^-1)"
+            "\x0310> \x0f15000/127\x0310, approx. \x0f118.1102 dpcm \x0310(\x0fm^-1\x0310)"
         );
         assert_eq!(
             rink.eval_and_format("1 dppx -> dpi").await,
-            "\x0310> \x0f96\x0310 dpi (m^-1)"
+            "\x0310> \x0f96 dpi \x0310(\x0fm^-1\x0310)"
         );
     }
 
@@ -501,7 +596,13 @@ mod tests {
 
         assert_eq!(
             rink.eval_and_format("1 USD").await,
-            "\x0310> \x0f2\x0310 euro (money)"
+            "\x0310> \x0f2 euro \x0310(\x0fmoney\x0310)"
+        );
+
+        // Lowercase codes do not resolve, and the error's suggestion renders as a value.
+        assert_eq!(
+            rink.eval_and_format("100 usd to eur").await,
+            "\x0310> Error: No such unit \x0fusd\x0310, did you mean \x0fUSD\x0310?"
         );
     }
 
@@ -512,7 +613,7 @@ mod tests {
 
         assert_eq!(
             rink.eval_and_format("1 USD").await,
-            "\x0310> Missing dependencies: USD"
+            "\x0310> Error: Missing dependencies: \x0fUSD"
         );
     }
 
@@ -522,7 +623,7 @@ mod tests {
 
         assert_eq!(
             rink.eval_and_format("1 USD").await,
-            "\x0310> Missing dependencies: USD"
+            "\x0310> Error: Missing dependencies: \x0fUSD"
         );
     }
 
