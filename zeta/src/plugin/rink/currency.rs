@@ -3,7 +3,8 @@
 //! Rink's own dataset (fiat reference rates from the European Central Bank, plus Bitcoin
 //! properties from blockchain.info) feeds the context and is required. When the coinmarketcap
 //! plugin feature is compiled in, the CoinMarketCap top listings additionally feed the
-//! cryptocurrency table; that refresh warns and keeps the previous table when it fails.
+//! cryptocurrency table; that refresh warns and keeps the previous table when it fails, and a
+//! table rink rejects at load time is logged so the fiat data still lands.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -13,6 +14,8 @@ use tracing::debug;
 
 use crate::plugin::prelude::*;
 
+#[cfg(feature = "plugin-coinmarketcap")]
+use std::collections::HashSet;
 #[cfg(feature = "plugin-coinmarketcap")]
 use std::fmt::Write;
 #[cfg(feature = "plugin-coinmarketcap")]
@@ -149,7 +152,9 @@ litoshi                  1e-8 LTC
 ///
 /// The fiat dataset is required — a failed fetch fails the whole refresh, leaving the previous
 /// context in place. A failed listings fetch is logged and the previous cryptocurrency table is
-/// kept instead, so a temporary CoinMarketCap outage does not drop the crypto units.
+/// kept instead, so a temporary CoinMarketCap outage does not drop the crypto units. A table
+/// rink rejects at *load* time is logged rather than propagated, for the same reason: the fiat
+/// data still lands and the cryptocurrency units stay pending.
 ///
 /// The previous result (`ans`) is carried into the new context, since a query may reference it
 /// across a refresh. Returns the fetched data so the caller's cache tracks the dataset the
@@ -158,7 +163,7 @@ litoshi                  1e-8 LTC
 /// # Errors
 ///
 /// Returns a [`ZetaError`] when the fiat fetch fails, the response carries an error status, or
-/// the datasets cannot be loaded into a context.
+/// the bundled or extra definitions cannot be loaded into a context.
 #[cfg(feature = "plugin-coinmarketcap")]
 pub async fn refresh_data(
     client: &reqwest::Client,
@@ -263,7 +268,10 @@ async fn fetch_fiat(client: &reqwest::Client, url: &str) -> Result<String, ZetaE
 ///
 /// Evaluation keeps saving results so `ans` resolves, and `previous` carries the result across
 /// context rebuilds. The cryptocurrency listings are synthesized after the fiat load, so coins
-/// whose symbol would shadow an already-known unit are skipped.
+/// whose symbol would shadow an already-known unit are skipped. Those synthesized definitions
+/// come from a third-party payload rink may reject (rink treats even a duplicate-name warning
+/// as a fatal load error), so a rejection is logged and the build carries on instead —
+/// otherwise one odd listing would block the fiat updates too.
 ///
 /// # Errors
 ///
@@ -287,9 +295,13 @@ pub fn build_context(
     if let Some(listings) = data.and_then(|data| data.crypto.as_ref()) {
         let text = synthesize_crypto_units(&ctx, listings);
 
-        if !text.is_empty() {
-            ctx.load_definitions(&text)
-                .map_err(|error| plugin_err(std::io::Error::other(error)))?;
+        if !text.is_empty()
+            && let Err(error) = ctx.load_definitions(&text)
+        {
+            warn!(
+                %error,
+                "could not load the synthesized cryptocurrency units; keeping the fiat data"
+            );
         }
     }
 
@@ -303,12 +315,14 @@ pub fn build_context(
 /// quoted in USD.
 ///
 /// Coins whose symbol would fail rink's loader (e.g. `1INCH`), shadow an already-known unit
-/// (the euro, the liquid drop), or carry no USD price are skipped. The returned text is empty
-/// when nothing qualifies.
+/// (the euro, the liquid drop), or carry no USD price are skipped; so is every later listing
+/// that repeats a ticker already emitted here, because rink rejects a batch with a duplicate
+/// name. The returned text is empty when nothing qualifies.
 #[cfg(feature = "plugin-coinmarketcap")]
 fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
     let date = DateTime::now();
     let mut text = String::new();
+    let mut emitted = HashSet::new();
 
     for listing in listings {
         let Some(quote) = listing
@@ -324,6 +338,12 @@ fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
             || ctx.lookup(&listing.symbol).is_some()
             || CRYPTO_SUBUNIT_NAMES.contains(&listing.symbol.to_ascii_lowercase().as_str())
         {
+            continue;
+        }
+
+        // Listings are rank-ordered, so on a duplicate ticker the higher-ranked coin wins and
+        // the batch stays loadable.
+        if !emitted.insert(listing.symbol.to_ascii_lowercase()) {
             continue;
         }
 

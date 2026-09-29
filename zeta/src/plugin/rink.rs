@@ -823,6 +823,39 @@ mod tests {
     }
 
     #[cfg(feature = "plugin-coinmarketcap")]
+    #[test]
+    fn a_duplicate_ticker_keeps_the_whole_context_build_loadable() {
+        use crate::plugin::coinmarketcap::model::{Envelope, Listing};
+
+        // Two listings sharing a ticker: rink rejects a definitions batch that defines the
+        // same name twice, and a rejected crypto batch used to fail the whole build — taking
+        // the fiat data fetched alongside it down too.
+        let text = r#"{
+            "data": [
+                {"id":1,"name":"Foo","symbol":"FOO","slug":"foo","cmc_rank":1,
+                 "quote":[{"id":2781,"symbol":"USD","price":1.0}]},
+                {"id":2,"name":"Bar","symbol":"FOO","slug":"bar","cmc_rank":2,
+                 "quote":[{"id":2781,"symbol":"USD","price":2.0}]}
+            ],
+            "status":{"timestamp":"2026-09-29T00:00:00Z","error_code":"0",
+                      "error_message":null,"elapsed":1,"credit_count":1}
+        }"#;
+        let parsed: Envelope<Vec<Listing>> =
+            crate::http::json::from_str(text).expect("the fixture should decode");
+        let data = CurrencyData {
+            fiat: TEST_CURRENCY_DATA.to_string(),
+            crypto: parsed.data,
+        };
+
+        let ctx = build_context(Some(&data), None)
+            .expect("a duplicate ticker must not fail the whole context build");
+
+        // The fiat dataset landed, and the higher-ranked coin of the pair survived.
+        assert!(ctx.lookup("USD").is_some(), "the fiat data must still load");
+        assert!(ctx.lookup("FOO").is_some(), "the first-ranked coin must load");
+    }
+
+    #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn crypto_subunits_resolve_against_the_live_coins() {
         let rink = plugin_with_listings(200).await;
