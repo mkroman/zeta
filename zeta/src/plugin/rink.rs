@@ -21,9 +21,10 @@
 //!
 //! When the `currency` setting is enabled (the default), live currency data is fetched from
 //! rink's dataset — fiat rates from the European Central Bank and Bitcoin from blockchain.info
-//! — and, when the `crypto` setting is enabled and the coinmarketcap plugin is loaded, the
-//! ranked cryptocurrency table from the CoinMarketCap API through the client the coinmarketcap
-//! plugin shares. Both datasets are rebuilt into the context by a background task started when
+//! — and, when the coinmarketcap plugin feature is compiled in and the plugin shares its
+//! client, the ranked cryptocurrency table from the CoinMarketCap API; without that feature
+//! the cryptocurrency units stay pending. The `crypto` setting turns the cryptocurrency
+//! loading off. Both datasets are rebuilt into the context by a background task started when
 //! the plugin loads, once per `currency_ttl`. A query that runs into missing currency data
 //! triggers one inline fetch attempt and a re-evaluation, mirroring upstream rink's REPL;
 //! failed fetches are logged and leave the last known rates in place. The dataset plumbing
@@ -45,9 +46,10 @@ mod currency;
 use currency::{CurrencyData, build_context, refresh_data};
 
 use crate::cache::TtlCache;
+#[cfg(feature = "plugin-coinmarketcap")]
+use crate::plugin::coinmarketcap::client;
 use crate::{
     error::RequestError,
-    plugin::coinmarketcap::client,
     plugin::prelude::*,
     utils::collapse_whitespace,
 };
@@ -75,11 +77,13 @@ pub struct Rink {
     client: Option<reqwest::Client>,
     /// The keyed CoinMarketCap client shared by the coinmarketcap plugin, used to fetch the
     /// cryptocurrency listings; `None` when the coinmarketcap plugin is not loaded.
+    #[cfg(feature = "plugin-coinmarketcap")]
     cmc: Option<Arc<client::Client>>,
     /// The URL the live currency dataset is fetched from.
     currency_url: String,
     /// Whether to load live cryptocurrency units; effective only when the coinmarketcap plugin
     /// has shared its client.
+    #[cfg(feature = "plugin-coinmarketcap")]
     crypto_enabled: bool,
 }
 
@@ -95,6 +99,10 @@ pub struct Settings {
     /// The URL the live currency dataset is fetched from.
     pub currency_url: String,
     /// Whether to load live cryptocurrency units through the coinmarketcap plugin.
+    ///
+    /// Effective only with the coinmarketcap plugin feature compiled in; without it the
+    /// cryptocurrency units stay pending.
+    #[cfg(feature = "plugin-coinmarketcap")]
     pub crypto: bool,
 }
 
@@ -104,6 +112,7 @@ impl Default for Settings {
             currency: true,
             currency_ttl: currency::CURRENCY_TTL,
             currency_url: currency::CURRENCY_URL.to_string(),
+            #[cfg(feature = "plugin-coinmarketcap")]
             crypto: true,
         }
     }
@@ -130,15 +139,21 @@ impl Plugin<Context> for Rink {
             ctx: Arc::new(Mutex::new(build_context(None, None)?)),
             currency: Arc::new(TtlCache::new(settings.currency_ttl)),
             client,
+            #[cfg(feature = "plugin-coinmarketcap")]
             cmc: None,
             currency_url: settings.currency_url.clone(),
+            #[cfg(feature = "plugin-coinmarketcap")]
             crypto_enabled: settings.crypto,
         })
     }
 
-    async fn loaded(&mut self, ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn loaded(&mut self, #[allow(unused)] ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         // The coinmarketcap plugin publishes its keyed client for other plugins to reuse.
-        self.cmc = ctx.shared.get::<client::Client>();
+        #[cfg(feature = "plugin-coinmarketcap")]
+        {
+            self.cmc = ctx.shared.get::<client::Client>();
+        }
+
         self.start_currency_refresh();
 
         Ok(())
@@ -170,13 +185,14 @@ impl Rink {
             return;
         };
 
-        let (ctx, currency, url, cmc, crypto_enabled) = (
+        let (ctx, currency, url) = (
             Arc::clone(&self.ctx),
             Arc::clone(&self.currency),
             self.currency_url.clone(),
-            self.cmc.clone(),
-            self.crypto_enabled,
         );
+
+        #[cfg(feature = "plugin-coinmarketcap")]
+        let (cmc, crypto_enabled) = (self.cmc.clone(), self.crypto_enabled);
 
         tokio::spawn(
             async move {
@@ -188,11 +204,23 @@ impl Rink {
                 loop {
                     interval.tick().await;
 
+                    #[cfg(feature = "plugin-coinmarketcap")]
                     let refreshed = currency
                         .refresh(|| {
-                            refresh_data(&client, &currency, cmc.as_ref(), &url, crypto_enabled, &ctx)
+                            refresh_data(
+                                &client,
+                                &currency,
+                                cmc.as_ref(),
+                                crypto_enabled,
+                                &url,
+                                &ctx,
+                            )
                         })
                         .await;
+
+                    #[cfg(not(feature = "plugin-coinmarketcap"))]
+                    let refreshed =
+                        currency.refresh(|| refresh_data(&client, &url, &ctx)).await;
 
                     if let Err(error) = refreshed {
                         warn!(%error, "could not refresh currency data");
@@ -275,6 +303,7 @@ impl Rink {
             return;
         };
 
+        #[cfg(feature = "plugin-coinmarketcap")]
         let refreshed = self
             .currency
             .force_refresh(|| {
@@ -282,11 +311,17 @@ impl Rink {
                     client,
                     &self.currency,
                     self.cmc.as_ref(),
-                    &self.currency_url,
                     self.crypto_enabled,
+                    &self.currency_url,
                     &self.ctx,
                 )
             })
+            .await;
+
+        #[cfg(not(feature = "plugin-coinmarketcap"))]
+        let refreshed = self
+            .currency
+            .force_refresh(|| refresh_data(client, &self.currency_url, &self.ctx))
             .await;
 
         if let Err(error) = refreshed {
@@ -532,6 +567,7 @@ mod tests {
 
     /// A ranked cryptocurrency listing fixture: Ethereum and a faked euro coin, plus a symbol
     /// rink's loader would reject.
+    #[cfg(feature = "plugin-coinmarketcap")]
     const TEST_LISTINGS_DATA: &str = r#"{
         "data": [
             {
@@ -592,8 +628,10 @@ mod tests {
             ctx: Arc::new(Mutex::new(build_context(None, None).unwrap())),
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
             client: Some(crate::http::build_client(&HttpConfig::default())),
+            #[cfg(feature = "plugin-coinmarketcap")]
             cmc: None,
             currency_url: url.unwrap_or_else(|| currency::CURRENCY_URL.to_string()),
+            #[cfg(feature = "plugin-coinmarketcap")]
             crypto_enabled: true,
         }
     }
@@ -604,8 +642,10 @@ mod tests {
             ctx: Arc::new(Mutex::new(build_context(None, None).unwrap())),
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
             client: None,
+            #[cfg(feature = "plugin-coinmarketcap")]
             cmc: None,
             currency_url: currency::CURRENCY_URL.to_string(),
+            #[cfg(feature = "plugin-coinmarketcap")]
             crypto_enabled: true,
         }
     }
@@ -625,6 +665,7 @@ mod tests {
 
     /// Starts a wiremock server serving `TEST_LISTINGS_DATA` at the CoinMarketCap listings
     /// path.
+    #[cfg(feature = "plugin-coinmarketcap")]
     async fn listings_server(status: u16) -> MockServer {
         let server = MockServer::start().await;
 
@@ -639,6 +680,7 @@ mod tests {
 
     /// Builds a plugin whose CoinMarketCap client issues requests against the given listings
     /// server.
+    #[cfg(feature = "plugin-coinmarketcap")]
     async fn plugin_with_listings(status: u16) -> Rink {
         let fiat_server = currency_server(200).await;
         let listings_server = listings_server(status).await;
@@ -746,6 +788,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn crypto_units_load_and_convert() {
         let rink = plugin_with_listings(200).await;
@@ -764,6 +807,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn synthesis_skips_colliding_and_invalid_symbols() {
         let rink = plugin_with_listings(200).await;
@@ -778,6 +822,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn crypto_subunits_resolve_against_the_live_coins() {
         let rink = plugin_with_listings(200).await;
@@ -794,6 +839,7 @@ mod tests {
         assert!(reply.contains("USD"), "{reply}");
     }
 
+    #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn crypto_disabled_without_the_coinmarketcap_plugin() {
         let mut rink = offline_plugin();
@@ -812,6 +858,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "plugin-coinmarketcap")]
     #[tokio::test]
     async fn a_failed_listings_fetch_keeps_the_fiat_path() {
         // The fiat dataset is fine; the listings endpoint is not. The refresh fails as a

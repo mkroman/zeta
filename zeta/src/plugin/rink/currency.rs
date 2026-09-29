@@ -1,21 +1,29 @@
 //! The live currency dataset powering the rink plugin's money units.
 //!
-//! Two sources feed the context: rink's own dataset (fiat reference rates from the European
-//! Central Bank, plus Bitcoin properties from blockchain.info) and the CoinMarketCap top
-//! listings (the cryptocurrency table). The rink dataset is required; the listings refresh
-//! warns and keeps the previous table when it fails.
+//! Rink's own dataset (fiat reference rates from the European Central Bank, plus Bitcoin
+//! properties from blockchain.info) feeds the context and is required. When the coinmarketcap
+//! plugin feature is compiled in, the CoinMarketCap top listings additionally feed the
+//! cryptocurrency table; that refresh warns and keeps the previous table when it fails.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 
-use std::fmt::Write;
-
-use rink_core::types::DateTime;
 use rink_core::{Context as RinkContext, Value};
-use tracing::{debug, warn};
+use tracing::debug;
 
-use crate::plugin::coinmarketcap::{client, model::Listing};
 use crate::plugin::prelude::*;
+
+#[cfg(feature = "plugin-coinmarketcap")]
+use std::fmt::Write;
+#[cfg(feature = "plugin-coinmarketcap")]
+use std::sync::Arc;
+#[cfg(feature = "plugin-coinmarketcap")]
+use rink_core::types::DateTime;
+#[cfg(feature = "plugin-coinmarketcap")]
+use tracing::warn;
+#[cfg(feature = "plugin-coinmarketcap")]
+use crate::plugin::coinmarketcap::{client, model::Listing};
+#[cfg(feature = "plugin-coinmarketcap")]
 use crate::utils::strip_control_chars;
 
 /// The URL of rink's live currency dataset.
@@ -38,22 +46,25 @@ pub const CURRENCY_CHECK_INTERVAL: Duration = Duration::from_mins(10);
 ///
 /// The CoinMarketCap endpoint is charged one call credit per 250 coins returned (rounded up),
 /// so a limit of 100 costs a single credit per refresh.
+#[cfg(feature = "plugin-coinmarketcap")]
 const CRYPTO_LISTINGS_LIMIT: u32 = 100;
 
 /// The static cryptocurrency subunit names defined in [`EXTRA_UNITS`]; a coin symbol that
 /// would shadow one of them is skipped by the synthesizer.
+#[cfg(feature = "plugin-coinmarketcap")]
 const CRYPTO_SUBUNIT_NAMES: &[&str] = &[
     "satoshi", "sats", "wei", "gwei", "lamport", "lovelace", "stroop", "piconero", "koinu",
     "litoshi",
 ];
 
 /// The dataset the current rink context was built from: rink's fiat dataset and, when the
-/// coinmarketcap plugin is configured, the cryptocurrency listing table.
+/// coinmarketcap plugin feature is compiled in, the cryptocurrency listing table.
 #[derive(Clone)]
 pub struct CurrencyData {
     /// The body of rink's live currency dataset.
     pub fiat: String,
     /// The ranked cryptocurrency listings, when the coinmarketcap plugin is available.
+    #[cfg(feature = "plugin-coinmarketcap")]
     pub crypto: Option<Vec<Listing>>,
 }
 
@@ -148,48 +159,83 @@ litoshi                  1e-8 LTC
 ///
 /// Returns a [`ZetaError`] when the fiat fetch fails, the response carries an error status, or
 /// the datasets cannot be loaded into a context.
+#[cfg(feature = "plugin-coinmarketcap")]
 pub async fn refresh_data(
     client: &reqwest::Client,
     currency: &crate::cache::TtlCache<CurrencyData>,
     cmc: Option<&Arc<client::Client>>,
-    url: &str,
     crypto_enabled: bool,
+    url: &str,
     ctx: &Mutex<RinkContext>,
 ) -> Result<CurrencyData, ZetaError> {
     let fiat = fetch_fiat(client, url).await?;
+    let crypto = fetch_crypto(currency, cmc, crypto_enabled).await;
+    let data = CurrencyData { fiat, crypto };
 
-    let crypto = if crypto_enabled {
-        match cmc {
-            Some(cmc) => match cmc.listings(CRYPTO_LISTINGS_LIMIT).await {
-                Ok(listings) => Some(listings),
-                Err(error) => {
-                    warn!(
-                        %error,
-                        "could not refresh cryptocurrency listings; keeping the previous table"
-                    );
+    swap_in(ctx, &data)?;
 
-                    currency.read(|data| data.and_then(|data| data.crypto.clone()))
-                }
-            },
-            None => None,
-        }
-    } else {
-        None
-    };
+    Ok(data)
+}
 
+/// The fiat-only refresh, used without the coinmarketcap plugin feature: the cryptocurrency
+/// table never loads and its subunits stay pending.
+///
+/// See the coinmarketcap-gated variant for the shared semantics.
+///
+/// # Errors
+///
+/// Returns a [`ZetaError`] when the fiat fetch fails, the response carries an error status, or
+/// the datasets cannot be loaded into a context.
+#[cfg(not(feature = "plugin-coinmarketcap"))]
+pub async fn refresh_data(
+    client: &reqwest::Client,
+    url: &str,
+    ctx: &Mutex<RinkContext>,
+) -> Result<CurrencyData, ZetaError> {
+    let fiat = fetch_fiat(client, url).await?;
+    let data = CurrencyData { fiat };
+
+    swap_in(ctx, &data)?;
+
+    Ok(data)
+}
+
+/// Rebuilds a rink context from `data` and swaps it into `ctx`, carrying the previous result
+/// across so `ans` keeps resolving.
+fn swap_in(ctx: &Mutex<RinkContext>, data: &CurrencyData) -> Result<(), ZetaError> {
     let previous = crate::sync::lock(ctx).previous_result.clone();
-    let next = build_context(
-        Some(&CurrencyData {
-            fiat: fiat.clone(),
-            crypto: crypto.clone(),
-        }),
-        previous,
-    )?;
+    let next = build_context(Some(data), previous)?;
 
     *crate::sync::lock(ctx) = next;
     debug!("loaded live currency data into the rink context");
 
-    Ok(CurrencyData { fiat, crypto })
+    Ok(())
+}
+
+/// Fetches the ranked cryptocurrency listings, keeping the previous table when the fetch
+/// fails.
+///
+/// Returns `None` when the `crypto` setting is disabled or the coinmarketcap plugin has not
+/// shared its client.
+#[cfg(feature = "plugin-coinmarketcap")]
+async fn fetch_crypto(
+    currency: &crate::cache::TtlCache<CurrencyData>,
+    cmc: Option<&Arc<client::Client>>,
+    enabled: bool,
+) -> Option<Vec<Listing>> {
+    let cmc = cmc.filter(|_| enabled)?;
+
+    match cmc.listings(CRYPTO_LISTINGS_LIMIT).await {
+        Ok(listings) => Some(listings),
+        Err(error) => {
+            warn!(
+                %error,
+                "could not refresh cryptocurrency listings; keeping the previous table"
+            );
+
+            currency.read(|data| data.and_then(|data| data.crypto.clone()))
+        }
+    }
 }
 
 /// Fetches the fiat dataset body from `url`.
@@ -237,6 +283,7 @@ pub fn build_context(
     ctx.load_currency(fiat, currency_units)
         .map_err(|error| plugin_err(std::io::Error::other(error)))?;
 
+    #[cfg(feature = "plugin-coinmarketcap")]
     if let Some(listings) = data.and_then(|data| data.crypto.as_ref()) {
         let text = synthesize_crypto_units(&ctx, listings);
 
@@ -258,6 +305,7 @@ pub fn build_context(
 /// Coins whose symbol would fail rink's loader (e.g. `1INCH`), shadow an already-known unit
 /// (the euro, the liquid drop), or carry no USD price are skipped. The returned text is empty
 /// when nothing qualifies.
+#[cfg(feature = "plugin-coinmarketcap")]
 fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
     let date = DateTime::now();
     let mut text = String::new();
@@ -293,6 +341,7 @@ fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
 
 /// Returns whether `symbol` can be a unit definition name: at least two ASCII alphanumerics
 /// led by a letter (e.g. `ETH`, but not `1INCH`).
+#[cfg(feature = "plugin-coinmarketcap")]
 fn valid_unit_symbol(symbol: &str) -> bool {
     let mut chars = symbol.chars();
 
