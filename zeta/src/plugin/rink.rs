@@ -27,7 +27,7 @@
 //! the plugin loads, once per `currency_ttl`. A query that runs into missing currency data
 //! triggers one inline fetch attempt and a re-evaluation, mirroring upstream rink's REPL;
 //! failed fetches are logged and leave the last known rates in place. The dataset plumbing
-//! lives in [`currency`].
+//! lives in the `currency` submodule.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -918,10 +918,12 @@ mod tests {
     async fn classify_evaluates_dates() {
         let rink = offline_plugin();
 
-        let reply = rink.eval_and_format("now", true).await;
+        // A fixed date keeps the assertions free of the clock and the host timezone.
+        let reply = rink.eval_and_format("#2016-08-24#", true).await;
         // The datetime renders as a value, inside the run opened right after the marker.
-        assert!(reply.contains("\x0f2026-"), "{reply}");
-        assert!(reply.contains("[Europe/Copenhagen]"), "{reply}");
+        assert!(reply.contains("\x0f2016-08-24"), "{reply}");
+        // The value run closes right after the datetime's trailing timezone label.
+        assert!(reply.contains("]\x0310"), "{reply}");
     }
 
     #[tokio::test]
