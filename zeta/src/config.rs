@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::consts::{
     DEFAULT_DB_IDLE_TIMEOUT, DEFAULT_IRC_PORT, DEFAULT_IRC_TLS_PORT, DEFAULT_MAX_DB_CONNECTIONS,
-    DEFAULT_SHUTDOWN_QUIT_MESSAGE, HTTP_TIMEOUT, HTTP_USER_AGENT,
+    DEFAULT_MIN_DB_CONNECTIONS, DEFAULT_SHUTDOWN_QUIT_MESSAGE, HTTP_TIMEOUT, HTTP_USER_AGENT,
 };
 use crate::plugin::PluginsConfig;
 
@@ -123,6 +123,9 @@ impl<S: Default> Default for PluginConfig<S> {
 pub struct DbConfig {
     /// Connection URL
     pub url: String,
+    /// Minimum number of connections to keep active in the connection pool
+    #[serde(default = "default_min_db_connections")]
+    pub min_connections: u32,
     /// Maximum number of connections to keep in the connection pool
     #[serde(default = "default_max_db_connections")]
     pub max_connections: u32,
@@ -282,6 +285,11 @@ impl From<IrcConfig> for irc::client::data::Config {
             ..Default::default()
         }
     }
+}
+
+/// Returns the default value for number of minimum database connections.
+const fn default_min_db_connections() -> u32 {
+    DEFAULT_MIN_DB_CONNECTIONS
 }
 
 /// Returns the default value for number of maximum database connections.

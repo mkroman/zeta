@@ -4,10 +4,13 @@
 url = "postgresql://user:changeme@localhost/zeta_development"
 
 # The maximum idle duration for individual connections.
-idle_timeout = "30s"
+# idle_timeout = "5m"
 
 # The maximum number of connections that the database pool should maintain.
 max_connections = 5
+
+# The minimum number of connections to maintain at all times in the database pool.
+min_connections = 1
 
 # IRC Configuration.
 [irc]
