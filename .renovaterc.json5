@@ -18,6 +18,9 @@
       "versioningTemplate": "semver",
     },
   ],
+  "lockFileMaintenance": {
+    enabled: false
+  },
   "packageRules": [
     // Bundle opentelemetry dependencies in a single update
     {
