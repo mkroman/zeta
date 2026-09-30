@@ -18,6 +18,9 @@ pub const DEFAULT_MAX_DB_CONNECTIONS: u32 = 5;
 /// The default value for the duration the connection pool will keep an idle connection open.
 pub const DEFAULT_DB_IDLE_TIMEOUT: Duration = Duration::from_mins(5);
 
+/// The default value for the maximum lifetime of database pool connections before they are reaped.
+pub const DEFAULT_DB_MAX_LIFETIME: Duration = Duration::from_hours(24);
+
 /// The port number to use for plain, unencrypted IRC connections when not otherwise specified.
 pub const DEFAULT_IRC_PORT: u16 = 6667;
 
