@@ -355,8 +355,8 @@ channels = []
             .extract()
             .expect("could not parse http configuration");
 
-        assert_eq!(config.timeout, HTTP_TIMEOUT);
-        assert_eq!(config.user_agent, HTTP_USER_AGENT);
+        assert_eq!(config.timeout, consts::HTTP_TIMEOUT);
+        assert_eq!(config.user_agent, consts::HTTP_USER_AGENT);
     }
 
     #[test]
@@ -512,7 +512,7 @@ enabled = false
             .extract()
             .expect("could not parse irc configuration");
 
-        assert_eq!(config.quit_message, DEFAULT_SHUTDOWN_QUIT_MESSAGE);
+        assert_eq!(config.quit_message, consts::DEFAULT_SHUTDOWN_QUIT_MESSAGE);
     }
 
     #[test]
