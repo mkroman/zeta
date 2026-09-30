@@ -7,12 +7,19 @@ pub const HTTP_USER_AGENT: &str =
 /// The duration before a HTTP request times out.
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The default value for the minimum number of connections the database connection pool should
+/// maintain at all times.
+pub const DEFAULT_MIN_DB_CONNECTIONS: u32 = 1;
+
 /// The default value for the maximum number of connections the database connection pool will keep
 /// open at once.
 pub const DEFAULT_MAX_DB_CONNECTIONS: u32 = 5;
 
 /// The default value for the duration the connection pool will keep an idle connection open.
-pub const DEFAULT_DB_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DEFAULT_DB_IDLE_TIMEOUT: Duration = Duration::from_mins(5);
+
+/// The default value for the maximum lifetime of database pool connections before they are reaped.
+pub const DEFAULT_DB_MAX_LIFETIME: Duration = Duration::from_hours(24);
 
 /// The port number to use for plain, unencrypted IRC connections when not otherwise specified.
 pub const DEFAULT_IRC_PORT: u16 = 6667;

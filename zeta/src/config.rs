@@ -3,10 +3,7 @@ use std::time::Duration;
 use figment::value::{Dict, Value};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::consts::{
-    DEFAULT_DB_IDLE_TIMEOUT, DEFAULT_IRC_PORT, DEFAULT_IRC_TLS_PORT, DEFAULT_MAX_DB_CONNECTIONS,
-    DEFAULT_SHUTDOWN_QUIT_MESSAGE, HTTP_TIMEOUT, HTTP_USER_AGENT,
-};
+use crate::consts;
 use crate::plugin::PluginsConfig;
 
 /// Main application configuration structure.
@@ -123,12 +120,20 @@ impl<S: Default> Default for PluginConfig<S> {
 pub struct DbConfig {
     /// Connection URL
     pub url: String,
+    /// Minimum number of connections to keep active in the connection pool
+    #[serde(default = "default_min_db_connections")]
+    pub min_connections: u32,
     /// Maximum number of connections to keep in the connection pool
     #[serde(default = "default_max_db_connections")]
     pub max_connections: u32,
     /// Maximum idle duration for individual connections, in seconds
     #[serde(default = "default_db_idle_timeout", with = "humantime_serde")]
     pub idle_timeout: Duration,
+    /// Set the maximum lifetime of individual connections.
+    ///
+    /// Any connection with a lifetime greater than this will be closed.
+    #[serde(default = "default_db_max_lifetime", with = "humantime_serde")]
+    pub max_lifetime: Duration,
 }
 
 /// HTTP client configuration.
@@ -145,8 +150,8 @@ pub struct HttpConfig {
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
-            timeout: HTTP_TIMEOUT,
-            user_agent: HTTP_USER_AGENT.to_string(),
+            timeout: consts::HTTP_TIMEOUT,
+            user_agent: consts::HTTP_USER_AGENT.to_string(),
         }
     }
 }
@@ -252,9 +257,9 @@ impl IrcConfig {
     /// Return the port number to use based on whether the connection requires TLS or not.
     fn fallback_port(&self) -> u16 {
         if self.is_tls_enabled() {
-            DEFAULT_IRC_TLS_PORT
+            consts::DEFAULT_IRC_TLS_PORT
         } else {
-            DEFAULT_IRC_PORT
+            consts::DEFAULT_IRC_PORT
         }
     }
 }
@@ -284,19 +289,29 @@ impl From<IrcConfig> for irc::client::data::Config {
     }
 }
 
+/// Returns the default value for number of minimum database connections.
+const fn default_min_db_connections() -> u32 {
+    consts::DEFAULT_MIN_DB_CONNECTIONS
+}
+
 /// Returns the default value for number of maximum database connections.
 const fn default_max_db_connections() -> u32 {
-    DEFAULT_MAX_DB_CONNECTIONS
+    consts::DEFAULT_MAX_DB_CONNECTIONS
+}
+
+/// Returns the default maximum lifetime of database pool connections.
+const fn default_db_idle_timeout() -> Duration {
+    consts::DEFAULT_DB_IDLE_TIMEOUT
 }
 
 /// Returns the default duration a connection can be idle before it is dropped.
-const fn default_db_idle_timeout() -> Duration {
-    DEFAULT_DB_IDLE_TIMEOUT
+const fn default_db_max_lifetime() -> Duration {
+    consts::DEFAULT_DB_MAX_LIFETIME
 }
 
 /// Returns the default message sent in the `QUIT` when the bot shuts down.
 fn default_shutdown_quit_message() -> String {
-    DEFAULT_SHUTDOWN_QUIT_MESSAGE.to_string()
+    consts::DEFAULT_SHUTDOWN_QUIT_MESSAGE.to_string()
 }
 
 #[cfg(all(test, feature = "plugin-dig", feature = "plugin-health"))]
@@ -340,8 +355,8 @@ channels = []
             .extract()
             .expect("could not parse http configuration");
 
-        assert_eq!(config.timeout, HTTP_TIMEOUT);
-        assert_eq!(config.user_agent, HTTP_USER_AGENT);
+        assert_eq!(config.timeout, consts::HTTP_TIMEOUT);
+        assert_eq!(config.user_agent, consts::HTTP_USER_AGENT);
     }
 
     #[test]
@@ -497,7 +512,7 @@ enabled = false
             .extract()
             .expect("could not parse irc configuration");
 
-        assert_eq!(config.quit_message, DEFAULT_SHUTDOWN_QUIT_MESSAGE);
+        assert_eq!(config.quit_message, consts::DEFAULT_SHUTDOWN_QUIT_MESSAGE);
     }
 
     #[test]
