@@ -20,8 +20,8 @@ case "${tool}" in
     ;;
   cargo-auditable)
     package_name="rust-secure-code/cargo-auditable"
-    version="v0.7.6"
-    manifest_sha256="4e19c1e94e59e2add3fc2076fd3a17a8c471b15ac414cb9bfe3ae024f851531f"
+    version="v0.7.7"
+    manifest_sha256="3070e7c55943fa0c3befb31ccb35d45961fdf6176578f5f1f843bf266ce9a592"
     ;;
   *)
     echo "unknown tool: ${tool}" >&2
