@@ -1,12 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
-    "dendanskeordbog",
-    "kagi",
-    "reddit",
-    "zeta",
-    "zeta-plugin",
-    "zeta-test-support",
+    "crates/dendanskeordbog",
+    "crates/kagi",
+    "crates/reddit",
+    "crates/zeta",
+    "crates/zeta-plugin",
+    "crates/zeta-test-support",
 ]
 
 [workspace.dependencies]

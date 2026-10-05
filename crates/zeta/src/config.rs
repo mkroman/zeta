@@ -529,7 +529,7 @@ enabled = false
 
     #[test]
     fn repository_config_parses() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config.toml");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config.toml");
 
         let config = Figment::new()
             .merge(Toml::file(path))
