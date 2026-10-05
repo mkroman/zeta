@@ -2,7 +2,7 @@
 .git/
 .github/
 hack/*
-!hack/install-cargo-tool.sh
+!hack/*.sh
 target/
 Dockerfile
 renovate.json5

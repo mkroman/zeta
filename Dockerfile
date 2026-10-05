@@ -19,8 +19,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install cargo-chef and cargo-auditable from their checksummed release binaries.
-COPY hack/install-cargo-tool.sh /usr/local/bin/install-cargo-tool
-COPY hack/strip-release.sh /usr/local/bin/strip-release
+COPY ./hack/install-cargo-tool.sh /usr/local/bin/install-cargo-tool
+COPY ./hack/strip-release.sh /usr/local/bin/strip-release
 RUN sh /usr/local/bin/install-cargo-tool cargo-chef /usr/local/bin && \
     sh /usr/local/bin/install-cargo-tool cargo-auditable /usr/local/bin
 
@@ -30,18 +30,18 @@ FROM chef AS planner
 COPY --parents \
     Cargo.toml \
     Cargo.lock \
-    zeta/Cargo.toml \
-    zeta/src/lib.rs \
-    zeta-plugin/Cargo.toml \
-    zeta-plugin/src/lib.rs \
-    dendanskeordbog/Cargo.toml \
-    dendanskeordbog/src/lib.rs \
-    reddit/Cargo.toml \
-    reddit/src/lib.rs \
-    zeta-test-support/Cargo.toml \
-    zeta-test-support/src/lib.rs \
-    kagi/Cargo.toml \
-    kagi/src/lib.rs \
+    crates/zeta/Cargo.toml \
+    crates/zeta/src/lib.rs \
+    crates/zeta-plugin/Cargo.toml \
+    crates/zeta-plugin/src/lib.rs \
+    crates/dendanskeordbog/Cargo.toml \
+    crates/dendanskeordbog/src/lib.rs \
+    crates/reddit/Cargo.toml \
+    crates/reddit/src/lib.rs \
+    crates/zeta-test-support/Cargo.toml \
+    crates/zeta-test-support/src/lib.rs \
+    crates/kagi/Cargo.toml \
+    crates/kagi/src/lib.rs \
     ./
 
 RUN cargo chef prepare --recipe-path recipe.json
@@ -61,19 +61,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 COPY --parents \
     Cargo.toml \
     Cargo.lock \
-    zeta/Cargo.toml \
-    zeta/src \
-    zeta/migrations \
-    zeta-plugin/Cargo.toml \
-    zeta-plugin/src \
-    dendanskeordbog/Cargo.toml \
-    dendanskeordbog/src \
-    reddit/Cargo.toml \
-    reddit/src \
-    kagi/Cargo.toml \
-    kagi/src \
-    zeta-test-support/Cargo.toml \
-    zeta-test-support/src \
+    crates/zeta/Cargo.toml \
+    crates/zeta/src \
+    crates/zeta/migrations \
+    crates/zeta-plugin/Cargo.toml \
+    crates/zeta-plugin/src \
+    crates/dendanskeordbog/Cargo.toml \
+    crates/dendanskeordbog/src \
+    crates/reddit/Cargo.toml \
+    crates/reddit/src \
+    crates/kagi/Cargo.toml \
+    crates/kagi/src \
+    crates/zeta-test-support/Cargo.toml \
+    crates/zeta-test-support/src \
     ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
