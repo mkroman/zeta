@@ -23,7 +23,7 @@ pub struct CachedUrl {
     pub created_at: DateTime<Utc>,
 }
 
-/// A site unwalled in addition to the tested domains, as stored in the database.
+/// A covered site, as added by an admin with `.unwall add` and stored in the database.
 #[derive(Debug, FromRow, Clone, PartialEq, Eq)]
 pub struct Site {
     /// The database id of the site.
@@ -33,22 +33,6 @@ pub struct Site {
     /// The nickname of the admin who added the site.
     pub nickname: String,
     /// When the site was added.
-    pub created_at: DateTime<Utc>,
-}
-
-/// The removal of a tested domain, as stored in the database.
-///
-/// A tombstone, so the tested domains can stay a static-and-refreshed list while admins
-/// exclude individual domains from coverage; adding the domain back deletes the tombstone.
-#[derive(Debug, FromRow, Clone, PartialEq, Eq)]
-pub struct SiteRemoval {
-    /// The database id of the removal.
-    pub id: i32,
-    /// The removed host, or a `*.domain` wildcard.
-    pub host: String,
-    /// The nickname of the admin who removed the site.
-    pub nickname: String,
-    /// When the site was removed.
     pub created_at: DateTime<Utc>,
 }
 
