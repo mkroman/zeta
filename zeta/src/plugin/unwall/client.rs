@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
 use url::Url;
 
 use super::error::Error;
@@ -10,13 +9,6 @@ use crate::http;
 
 /// The default base URL of the unwall API.
 pub const DEFAULT_API_BASE: &str = "https://api.unwall.app/";
-
-/// The tested domains and counters, as reported by `GET /bootstrap`.
-#[derive(Debug, Deserialize)]
-struct Bootstrap {
-    #[serde(rename = "testedDomains", default)]
-    tested_domains: Vec<String>,
-}
 
 /// Parses `input` as a base URL, ensuring it ends in a slash so its endpoints can be
 /// [`Url::join`]ed onto it.
@@ -96,22 +88,6 @@ impl UnwallClient {
             Err(Error::Status(status.as_u16()))
         }
     }
-
-    /// Returns the sites unwall.app has tested, trying `GET /bootstrap` and falling back to
-    /// `GET /tested-domains` — the same pair the unwall frontend tries.
-    ///
-    /// # Errors
-    ///
-    /// Returns the error of the failed fallback request when both endpoints fail.
-    pub async fn tested_domains(&self) -> Result<Vec<String>, Error> {
-        match http::get_json::<Bootstrap>(self.http.get(self.endpoint("bootstrap")?)).await {
-            Ok(bootstrap) if !bootstrap.tested_domains.is_empty() => Ok(bootstrap.tested_domains),
-            _ => Ok(http::get_json::<Vec<String>>(
-                self.http.get(self.endpoint("tested-domains")?),
-            )
-            .await?),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -179,58 +155,6 @@ mod tests {
         assert!(matches!(error, Error::Status(400)));
     }
 
-    #[tokio::test]
-    async fn tested_domains_decode_the_bootstrap_response() {
-        let server = MockServer::start().await;
-
-        Mock::given(method("GET"))
-            .and(path("/bootstrap"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "wallsCleared": 2_613_209,
-                    "wallsPerSecond": 0.214,
-                    "testedDomains": ["ft.com", "www.bloomberg.com"],
-                })),
-            )
-            .mount(&server)
-            .await;
-
-        let client = UnwallClient::new(
-            http::build_client(&HttpConfig::default()),
-            SUBMIT_TIMEOUT,
-            base_url(&server.uri()).unwrap(),
-        );
-
-        assert_eq!(
-            client.tested_domains().await.unwrap(),
-            ["ft.com", "www.bloomberg.com"]
-        );
-    }
-
-    #[tokio::test]
-    async fn tested_domains_fall_back_to_the_tested_domains_endpoint() {
-        let server = MockServer::start().await;
-
-        Mock::given(method("GET"))
-            .and(path("/bootstrap"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/tested-domains"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!(["ft.com"])))
-            .mount(&server)
-            .await;
-
-        let client = UnwallClient::new(
-            http::build_client(&HttpConfig::default()),
-            SUBMIT_TIMEOUT,
-            base_url(&server.uri()).unwrap(),
-        );
-
-        assert_eq!(client.tested_domains().await.unwrap(), ["ft.com"]);
-    }
-
     #[test]
     fn a_base_url_without_a_trailing_slash_still_resolves_endpoints() {
         let client = UnwallClient::new(
@@ -265,9 +189,5 @@ mod tests {
             )
             .await
             .unwrap();
-
-        let domains = client.tested_domains().await.unwrap();
-
-        assert!(domains.contains(&"ft.com".to_string()));
     }
 }

@@ -1,7 +1,7 @@
 //! Filtering facade for the URL events the host dispatches.
 //!
-//! The filter service itself lives in the feature-gated [`filter`](crate::plugin::filter)
-//! plugin. This module is always compiled and exposes the
+//! The filter service itself lives in the feature-gated [`filter`] plugin. This module is
+//! always compiled and exposes the
 //! [`Filters`](crate::plugin::filtering::Filters) facade the host's dispatcher consults before
 //! delivering a [`UrlEvent`](zeta_plugin::UrlEvent), so URL events are filtered centrally: with
 //! the feature disabled, it simply never matches.

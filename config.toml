@@ -436,8 +436,6 @@ name = "#zeta.dev"
   # How long an article submission may take: the first submission of an article is mirrored
   # server-side and can take tens of seconds.
   # submit_timeout = "5m"
-  # How often the tested domains are refreshed from the API.
-  # refresh_interval = "1d"
 
   # YouTube integration.
   [plugins.youtube]

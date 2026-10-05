@@ -5,7 +5,7 @@ use tracing::{instrument, trace};
 
 use super::{
     error::Error,
-    model::{CachedUrl, HostStatistics, NewFetch, Site, SiteRemoval, Statistics},
+    model::{CachedUrl, HostStatistics, NewFetch, Site, Statistics},
 };
 use crate::database::Database;
 
@@ -216,99 +216,6 @@ impl UnwallRepository {
         trace!(count = hosts.len(), "removing the unwalled sites from database");
 
         sqlx::query("DELETE FROM unwall_sites WHERE host = ANY($1)")
-            .bind(hosts)
-            .execute(&self.db)
-            .await
-            .map(|result| result.rows_affected())
-            .map_err(Error::delete)
-    }
-
-    /// Returns the removal tombstones, ordered by host.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Load`] if the removals could not be fetched.
-    #[instrument(
-        name = "SELECT unwall_site_removals",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
-            db.operation.name = "SELECT",
-            db.collection.name = "unwall_site_removals",
-            db.query.summary = "SELECT unwall_site_removals",
-        )
-    )]
-    pub async fn removals(&self) -> Result<Vec<SiteRemoval>, Error> {
-        trace!("loading the unwalled site removals from database");
-
-        sqlx::query_as(
-            r"SELECT id, host, nickname, created_at
-              FROM unwall_site_removals
-              ORDER BY host",
-        )
-        .fetch_all(&self.db)
-        .await
-        .map_err(Error::load)
-    }
-
-    /// Tombstones `host`, so a tested domain it matches is no longer covered. An existing
-    /// tombstone for the host is left alone.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Insert`] if the removal could not be inserted.
-    #[instrument(
-        name = "INSERT unwall_site_removals",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
-            db.operation.name = "INSERT",
-            db.collection.name = "unwall_site_removals",
-            db.query.summary = "INSERT unwall_site_removals",
-        )
-    )]
-    pub async fn insert_removal(&self, host: &str, nickname: &str) -> Result<(), Error> {
-        trace!(host, "adding the unwalled site removal to database");
-
-        sqlx::query(
-            r"INSERT INTO unwall_site_removals (host, nickname)
-              VALUES ($1, $2)
-              ON CONFLICT (host) DO NOTHING",
-        )
-        .bind(host)
-        .bind(nickname)
-        .execute(&self.db)
-        .await
-        .map_err(Error::insert)?;
-
-        Ok(())
-    }
-
-    /// Deletes the given removal tombstones, returning the number deleted.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Delete`] if the removals could not be deleted.
-    #[instrument(
-        name = "DELETE unwall_site_removals",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
-            db.operation.name = "DELETE",
-            db.collection.name = "unwall_site_removals",
-            db.query.summary = "DELETE unwall_site_removals",
-        )
-    )]
-    pub async fn delete_removals(&self, hosts: &[String]) -> Result<u64, Error> {
-        trace!(count = hosts.len(), "removing the unwalled site removals from database");
-
-        sqlx::query("DELETE FROM unwall_site_removals WHERE host = ANY($1)")
             .bind(hosts)
             .execute(&self.db)
             .await

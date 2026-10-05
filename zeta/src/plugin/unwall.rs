@@ -1,7 +1,7 @@
 //! Unwalls paywalled news links through unwall.app and replies with the reader link.
 //!
-//! Links whose host is covered — the sites unwall.app has tested, plus admin additions — are
-//! mirrored through unwall.app and answered with the unwall.app reader link, e.g.
+//! Links whose host is covered — the sites an admin added with `.unwall add` — are mirrored
+//! through unwall.app and answered with the unwall.app reader link, e.g.
 //! `https://unwall.app/www.bloomberg.com/news/articles/...` for a Bloomberg article. The
 //! reader links are deterministic: the unwall reader derives the article from its own URL
 //! path, so the plugin only has to submit the article once to warm the mirror.
@@ -19,14 +19,13 @@
 //! hostmasks configured, nobody is an admin. `.unwall list`, `.unwall stats`, and
 //! `.unwall info <host>` are open to everyone.
 //!
-//! The covered set starts at the tested domains of unwall.app — a snapshot in the `sites`
-//! module, refreshed from the API once a day and retried with a capped exponential backoff
-//! while it is unreachable. Admins add sites per deployment with `.unwall add`, and remove coverage
-//! with `.unwall rm`, whose patterns also silence tested domains (a tombstone in the
-//! database). URL events arrive already filtered by the host dispatcher, so database filters
-//! apply to this plugin without it consulting them. Because the covered set is dynamic, the
-//! plugin subscribes to every URL and the `titles` plugin still announces page titles for
-//! covered links — deliberately, as a title next to a reader link.
+//! Coverage is exactly what the admins allowed with `.unwall add`, whatever unwall.app itself
+//! has tested: nothing is covered until it is added, and `.unwall rm` takes a site out of the
+//! set again. The set lives in the `unwall_sites` table, so it survives restarts. URL events
+//! arrive already filtered by the host dispatcher, so database filters apply to this plugin
+//! without it consulting them. Because the covered set is dynamic, the plugin subscribes to
+//! every URL and the `titles` plugin still announces page titles for covered links —
+//! deliberately, as a title next to a reader link.
 
 mod client;
 mod error;
@@ -39,7 +38,7 @@ mod sites;
 // itself only handles them by value.
 #[allow(unused_imports)]
 pub use error::Error;
-pub use model::{CachedUrl, HostStatistics, Site, SiteRemoval, Statistics};
+pub use model::{CachedUrl, HostStatistics, Site, Statistics};
 pub use service::UnwallService;
 
 use std::fmt::Write as _;
@@ -95,9 +94,6 @@ pub struct Settings {
     /// the cache without a request.
     #[serde(with = "humantime_serde")]
     pub submit_timeout: Duration,
-    /// How often the tested domains are refreshed from the API.
-    #[serde(with = "humantime_serde")]
-    pub refresh_interval: Duration,
 }
 
 impl Default for Settings {
@@ -106,7 +102,6 @@ impl Default for Settings {
             api_base: client::DEFAULT_API_BASE.to_string(),
             reader_base: "https://unwall.app/".to_string(),
             submit_timeout: Duration::from_mins(5),
-            refresh_interval: Duration::from_hours(24),
         }
     }
 }
@@ -203,8 +198,6 @@ pub struct Unwall {
     /// The compiled admin hostmasks; senders whose `nick!user@host` matches one of them are
     /// authorized to manage unwall sites.
     admins: Vec<WildMatch>,
-    /// How often the tested domains are refreshed from the API.
-    refresh_interval: Duration,
 }
 
 impl Unwall {
@@ -290,7 +283,6 @@ impl Unwall {
         &self,
         client: &Client,
         channel: &str,
-        nickname: &str,
         pattern: &str,
     ) -> Result<(), ZetaError> {
         let Some(pattern) = sites::normalize_site(pattern) else {
@@ -307,7 +299,7 @@ impl Unwall {
             return Ok(());
         };
 
-        let removed = match self.service.remove_matching(&pattern, nickname).await {
+        let removed = match self.service.remove_matching(&pattern).await {
             Ok(removed) => removed,
             Err(error) => {
                 client.send_privmsg(
@@ -338,25 +330,20 @@ impl Unwall {
 
     /// Summarizes the covered sites in a single line.
     fn list(&self, client: &Client, channel: &str) -> Result<(), ZetaError> {
-        let (tested, removed, _) = self.service.coverage();
-        let sites = self.service.added_sites();
+        let sites = self.service.sites();
 
         let response = if sites.is_empty() {
             reply(
                 NAME,
                 format!(
-                    "{RESET}{tested}{COLOR} tested sites by default (unwall.app),\
-                     {RESET} {removed}{COLOR} removed, none added{COLOR}."
+                    "{RESET}No unwalled sites yet{COLOR}: add one with\
+                     {RESET} .unwall add <host>{COLOR}, e.g.{RESET} .unwall add bloomberg.com{COLOR}."
                 ),
             )
         } else {
             let mut message = reply(
                 NAME,
-                format!(
-                    "{RESET}{tested}{COLOR} tested sites by default (unwall.app),\
-                     {RESET} {removed}{COLOR} removed,{RESET} {}{COLOR} added:{RESET} ",
-                    sites.len()
-                ),
+                format!("{RESET}{}{COLOR} unwalled sites:{RESET} ", sites.len()),
             );
 
             let reserved = " (999 more)".len();
@@ -499,39 +486,6 @@ impl Unwall {
             .instrument(span),
         );
     }
-
-    /// Runs the background refresh of the tested domains: on success, at
-    /// `refresh_interval`; on failure, with a capped exponential backoff while the API is
-    /// unreachable, keeping the previous set served.
-    fn spawn_refresh(&self) {
-        let service = Arc::clone(&self.service);
-        let interval = self.refresh_interval;
-
-        tokio::spawn(
-            async move {
-                let mut failures = 0u32;
-
-                loop {
-                    match service.refresh_tested_domains().await {
-                        Ok(_) => failures = 0,
-                        Err(error) => {
-                            failures += 1;
-                            warn!(failures, %error, "could not refresh the tested domains");
-                        }
-                    }
-
-                    let delay = if failures == 0 {
-                        interval
-                    } else {
-                        sites::refresh_backoff(failures)
-                    };
-
-                    tokio::time::sleep(delay).await;
-                }
-            }
-            .instrument(tracing::info_span!("unwall_tested_domains_refresh")),
-        );
-    }
 }
 
 /// Joins `items` with cyan commas and a final cyan `and`, each item emphasized in the default
@@ -585,13 +539,11 @@ impl Plugin<Context> for Unwall {
         Ok(Self {
             service: Arc::new(UnwallService::new(ctx.db.clone(), client, reader_base)),
             admins,
-            refresh_interval: settings.refresh_interval,
         })
     }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
-        self.spawn_refresh();
 
         Ok(())
     }
@@ -627,7 +579,7 @@ impl Plugin<Context> for Unwall {
                     return Ok(());
                 }
 
-                self.remove(client, channel, sender.nick, &pattern).await
+                self.remove(client, channel, &pattern).await
             }
             Subcommand::List(List {}) => self.list(client, channel),
             Subcommand::Stats(Stats {}) => self.stats(client, channel).await,
@@ -659,18 +611,15 @@ mod tests {
             assert_eq!(settings.api_base, "https://api.unwall.app/");
             assert_eq!(settings.reader_base, "https://unwall.app/");
             assert_eq!(settings.submit_timeout, Duration::from_mins(5));
-            assert_eq!(settings.refresh_interval, Duration::from_hours(24));
         }
         deserialize: {
             "api_base": "https://unwall.example/api",
             "reader_base": "https://unwall.example/",
             "submit_timeout": "90s",
-            "refresh_interval": "1h",
         } assert: {
             assert_eq!(settings.api_base, "https://unwall.example/api");
             assert_eq!(settings.reader_base, "https://unwall.example/");
             assert_eq!(settings.submit_timeout, Duration::from_secs(90));
-            assert_eq!(settings.refresh_interval, Duration::from_mins(60));
         }
     }
 

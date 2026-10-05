@@ -1,0 +1,1 @@
+DROP TABLE unwall_site_removals;
