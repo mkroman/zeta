@@ -448,6 +448,8 @@ name = "#zeta.dev"
   # region_code = "US"
   # The safe search filter applied to search requests: "none", "moderate" or "strict".
   # safe_search = "none"
+  # Enable the `.yt` command.
+  # enable_command = true
 
 # Tracing Configuration.
 [tracing]

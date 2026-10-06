@@ -24,11 +24,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use indefinite::indefinite_article_only;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tokio::time::MissedTickBehavior;
 use tracing::{Instrument, debug, warn};
-use indefinite::indefinite_article_only;
 use url::Url;
 
 use crate::{
@@ -96,6 +96,8 @@ pub struct Settings {
     pub region_code: String,
     /// The safe search filter applied to search requests.
     pub safe_search: SafeSearch,
+    /// Enable the `.yt` command.
+    pub enable_command: bool,
 }
 
 impl Default for Settings {
@@ -104,6 +106,7 @@ impl Default for Settings {
             api_key: None,
             region_code: "US".to_string(),
             safe_search: SafeSearch::default(),
+            enable_command: true,
         }
     }
 }
@@ -268,9 +271,13 @@ impl Plugin<Context> for YouTube {
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<YouTube, ZetaError> {
-        subscriptions
-            .command(YOUTUBE)
-            .urls(UrlScope::Hosts(urls::URL_HOSTS));
+        // Handle YouTube URLs.
+        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
+
+        // Enable the `.yt` command.
+        if settings.enable_command {
+            subscriptions.command(YOUTUBE);
+        }
 
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
 
@@ -394,7 +401,12 @@ impl YouTube {
     }
 
     /// Processes a URL found in a message.
-    async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), ZetaError> {
+    async fn process_url(
+        &self,
+        url: &Url,
+        channel: &str,
+        client: &Client,
+    ) -> Result<(), ZetaError> {
         if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
             match self.get_video(&video_id).await {
                 Ok(video) => {
