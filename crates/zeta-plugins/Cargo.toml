@@ -1,0 +1,178 @@
+[package]
+name = "zeta-plugins"
+version = "0.0.0"
+edition = "2024"
+description = "The bundled plugins for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]
+
+[features]
+default = ["all"]
+# Shared infrastructure, forwarded from the plugins that use it.
+database = ["dep:sqlx", "dep:chrono", "zeta-plugin/database", "zeta-utils/chrono"]
+http = ["dep:reqwest", "zeta-http/http"]
+emulated = ["zeta-http/emulated", "dep:wreq", "dep:wreq-util"]
+mirror = ["dep:zeta-mirror"]
+time = ["zeta-utils/time", "dep:time"]
+native-tls = ["zeta-plugin/native-tls", "zeta-http/native-tls", "kagi?/native-tls"]
+native-tls-vendored = [
+    "zeta-plugin/native-tls-vendored",
+    "zeta-http/native-tls-vendored",
+    "kagi?/native-tls-vendored",
+]
+rustls = [
+    "zeta-plugin/rustls",
+    "zeta-http/rustls",
+    "coinmarketcap?/rustls",
+    "kagi?/rustls",
+]
+
+alert = ["database", "dep:chrono", "dep:humantime-serde", "dep:interim", "dep:rand"]
+chaturbate = ["http", "dep:regex"]
+choices = ["dep:rand"]
+coinmarketcap = ["http", "dep:coinmarketcap", "dep:strsim", "dep:humantime-serde"]
+dendanskeordbog = ["http", "dep:dendanskeordbog"]
+dig = ["dep:hickory-resolver"]
+filter = ["database", "dep:wildmatch"]
+gay = ["irc/channel-lists", "dep:chrono", "dep:rand_mt", "dep:sha2"]
+geoip = ["http", "dep:hickory-resolver"]
+github = ["http"]
+health = ["database", "dep:memory-stats"]
+help = []
+howlongtobeat = ["http"]
+imdb = ["http", "dep:num-format"]
+instagram = ["mirror", "emulated", "dep:scraper"]
+isitopen = ["http", "dep:regex", "time"]
+kagi = ["dep:kagi", "dep:humantime-serde"]
+notification = ["database", "dep:chrono"]
+ofn = ["database", "http", "youtube", "dep:num-format"]
+openweathermap = ["http"]
+pornhub = ["http", "dep:num-format"]
+reddit = ["mirror", "dep:reddit", "dep:secrecy"]
+rink = ["dep:coinmarketcap", "dep:rink-core", "http", "dep:humantime-serde"]
+rust-playground = ["http", "dep:regex"]
+spotify = [
+    "http",
+    "zeta-http/oauth",
+    "dep:base64",
+    "dep:indefinite",
+    "dep:num-format",
+    "dep:regex",
+]
+string-utils = []
+thingiverse = ["http", "dep:num-format", "dep:regex"]
+tiktok = ["mirror", "http"]
+titles = ["emulated", "dep:futures", "dep:html5ever"]
+trustpilot = ["http", "dep:num-format"]
+tvmaze = ["http", "time"]
+twitch = ["http", "zeta-http/oauth", "dep:num-format"]
+urban-dictionary = ["http", "time"]
+unwall = ["database", "http", "filter", "dep:humantime-serde"]
+youtube = ["http", "dep:htmlize", "dep:indefinite", "dep:num-format"]
+all = [
+    "alert",
+    "chaturbate",
+    "choices",
+    "coinmarketcap",
+    "dendanskeordbog",
+    "dig",
+    "filter",
+    "gay",
+    "geoip",
+    "github",
+    "health",
+    "help",
+    "howlongtobeat",
+    "imdb",
+    "instagram",
+    "isitopen",
+    "kagi",
+    "notification",
+    "ofn",
+    "openweathermap",
+    "pornhub",
+    "reddit",
+    "rink",
+    "rust-playground",
+    "spotify",
+    "string-utils",
+    "thingiverse",
+    "tiktok",
+    "titles",
+    "trustpilot",
+    "tvmaze",
+    "twitch",
+    "urban-dictionary",
+    "unwall",
+    "youtube",
+]
+
+[dependencies]
+argh.workspace = true
+async-trait.workspace = true
+base64 = { version = "0.23.0", optional = true }
+chrono = { workspace = true, optional = true }
+coinmarketcap = { path = "../coinmarketcap", default-features = false, optional = true }
+dendanskeordbog = { path = "../dendanskeordbog", features = ["client", "log"], optional = true }
+figment.workspace = true
+futures = { version = "0.3.31", optional = true }
+hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"], optional = true }
+html5ever = { version = "0.40.0", optional = true }
+htmlize = { version = "1.1.0", features = ["unescape"], optional = true }
+humantime-serde = { workspace = true, optional = true }
+indefinite = { version = "0.1.11", optional = true }
+interim = { version = "0.2.1", features = ["chrono_0_4"], optional = true }
+irc.workspace = true
+kagi = { path = "../kagi", default-features = false, optional = true }
+memory-stats = { version = "1.2.0", optional = true }
+miette.workspace = true
+num-format = { version = "0.4.4", optional = true }
+rand = { version = "0.10.1", optional = true }
+rand_mt = { version = "6", optional = true }
+reddit = { path = "../reddit", optional = true }
+regex = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"], optional = true }
+rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "61be392a0d605ea6c4192934134683d63fbe7f7d", features = ["bundle-files", "serde_json"], optional = true }
+scraper = { version = "0.27.0", optional = true }
+secrecy = { optional = true, workspace = true }
+serde.workspace = true
+serde_ignored = "0.1.2"
+serde_json.workspace = true
+sha2 = { workspace = true, optional = true }
+sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"], optional = true }
+strsim = { version = "0.11", optional = true }
+thiserror.workspace = true
+time = { workspace = true, optional = true }
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+wildmatch = { version = "=2.6.1", optional = true }
+zeta-cache = { path = "../zeta-cache" }
+zeta-http = { path = "../zeta-http", default-features = false }
+zeta-mirror = { path = "../zeta-mirror", optional = true }
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
+
+# The `prefix-symbols` feature is only supported on non-Apple targets: btls-sys
+# skips prefixing the BoringSSL libraries on macOS but still applies the prefix
+# to the generated bindgen bindings, so enabling it there fails the final link
+# with undefined `build_script_main_*` symbols.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "webpki-roots", "prefix-symbols", "stream", "gzip", "brotli", "deflate", "zstd"], optional = true }
+wreq-util = { version = "0.2.0", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "webpki-roots", "stream", "gzip", "brotli", "deflate", "zstd"], optional = true }
+wreq-util = { version = "0.2.0", optional = true }
+
+[dev-dependencies]
+similar-asserts = "=2.0.0"
+wildmatch = "=2.6.1"
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

@@ -4,7 +4,8 @@
 #![cfg(feature = "http")]
 
 use serde_json::json;
-use zeta_http::http::{self, ApiError};
+use zeta_http as http;
+use zeta_http::ApiError;
 use zeta_plugin::config::HttpConfig;
 use zeta_test_support::wiremock::{
     Mock, MockServer, ResponseTemplate,

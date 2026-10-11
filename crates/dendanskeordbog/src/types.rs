@@ -96,11 +96,11 @@ pub struct DictionaryDocument {
 
 impl Audio {
     /// Parses an `Audio` struct from an `<audio>` HTML element.
-    fn from_html(elem: &ElementRef<'_>) -> Result<Audio, Error> {
+    fn from_html(elem: &ElementRef<'_>) -> Result<Self, Error> {
         let id = extract_required_attribute(elem, "id", "audio id")?;
         let src = extract_required_attribute(elem, "src", "audio src")?;
 
-        Ok(Audio { id, src })
+        Ok(Self { id, src })
     }
 }
 
@@ -117,7 +117,7 @@ impl FromHtml for Definition {
             .map(extract_element_text)
             .collect();
 
-        Ok(Definition {
+        Ok(Self {
             level,
             description,
             examples,
@@ -209,7 +209,7 @@ impl FromHtml for DictionaryEntry {
             .filter_map(|ref elem| Idiom::from_html_with_selectors(elem, selectors).ok())
             .collect();
 
-        Ok(DictionaryEntry {
+        Ok(Self {
             id,
             head,
             pos,
@@ -227,14 +227,14 @@ impl Head {
     fn from_html_with_selectors(
         elem: &ElementRef<'_>,
         selectors: &Selectors,
-    ) -> Result<Head, Error> {
+    ) -> Result<Self, Error> {
         let keyword = extract_required_text(elem, &selectors.keyword, "keyword")?;
         let audio = elem
             .select(&selectors.audio)
             .next()
             .and_then(|elem| Audio::from_html(&elem).ok());
 
-        Ok(Head { keyword, audio })
+        Ok(Self { keyword, audio })
     }
 }
 
@@ -247,7 +247,7 @@ impl FromHtml for Idiom {
         let id = extract_required_attribute(element, "id", "idiom id")?;
         let phrase = extract_required_text(element, &selectors.phrase, "phrase")?;
 
-        Ok(Idiom { id, phrase })
+        Ok(Self { id, phrase })
     }
 }
 

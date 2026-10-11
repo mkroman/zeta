@@ -4,8 +4,6 @@
 //! share with this host live in `zeta-plugin`. This crate carries the IRC bot itself: the
 //! client loop, event dispatching, configuration, and the plugin task machinery.
 
-#![allow(clippy::use_self)]
-
 /// Configuration loading and validation
 pub mod config;
 /// Commonly used constants

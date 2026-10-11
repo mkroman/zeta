@@ -144,8 +144,8 @@ pub struct Registry {
 impl Registry {
     /// Constructs and returns a new, empty plugin registry.
     #[must_use]
-    pub fn new() -> Registry {
-        Registry {
+    pub fn new() -> Self {
+        Self {
             plugins: vec![],
             catalog: PluginCatalog::default(),
             failed: vec![],
@@ -365,7 +365,7 @@ mod tests {
                 .get::<std::sync::Mutex<Vec<&'static str>>>()
                 .expect("recording log should be published");
 
-            Ok(RecordingPlugin { recording })
+            Ok(Self { recording })
         }
 
         async fn handle_message(

@@ -295,7 +295,7 @@ impl Downloader for YtDlp {
         output_dir: &'a Path,
         on_progress: Box<dyn FnMut(Progress) + Send + 'a>,
     ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, Error>> {
-        Box::pin(YtDlp::download_with_progress(
+        Box::pin(Self::download_with_progress(
             self,
             url,
             id,

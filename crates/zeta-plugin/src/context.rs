@@ -5,8 +5,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::config::HostConfig;
-#[cfg(feature = "database")]
-use crate::database::Database;
 
 /// A registry of state published by plugins for other plugins to access.
 ///
@@ -51,7 +49,7 @@ impl SharedState {
 pub struct Context {
     /// The database connection pool.
     #[cfg(feature = "database")]
-    pub db: Database,
+    pub db: sqlx::PgPool,
     /// The plugin-visible subset of the bot configuration.
     ///
     /// Per-plugin settings are not part of the context; each plugin receives its own settings
@@ -64,7 +62,7 @@ pub struct Context {
 impl Context {
     /// Creates a new context.
     #[must_use]
-    pub fn new(#[cfg(feature = "database")] db: Database, config: HostConfig) -> Self {
+    pub fn new(#[cfg(feature = "database")] db: sqlx::PgPool, config: HostConfig) -> Self {
         Self {
             #[cfg(feature = "database")]
             db,

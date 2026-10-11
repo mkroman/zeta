@@ -32,7 +32,7 @@ zstd = ["reqwest/zstd"]
 
 [dependencies]
 htmlize = { version = "1.1.0", features = ["unescape"] }
-regex = "1.12.2"
+regex.workspace = true
 reqwest = { workspace = true, features = ["cookies"] }
 scraper.workspace = true
 secrecy.workspace = true

@@ -16,8 +16,6 @@
 //! which carries the key prefix and the public URL base used for their links, and is resolved
 //! from their own configuration.
 
-#![allow(clippy::use_self)]
-
 use std::{
     collections::HashSet,
     path::PathBuf,

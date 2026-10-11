@@ -2,9 +2,9 @@
 //!
 //! Plugins that talk to an OAuth2-secured API (Twitch, Spotify, ..) all need the same
 //! machinery: request an access token with the client-credentials grant, cache it, and refresh
-//! it shortly before it expires. [`TokenCache`](crate::oauth::TokenCache) implements that,
+//! it shortly before it expires. [`TokenCache`] implements that,
 //! parameterized over the plugin-specific token request itself, and
-//! [`Credentials`](crate::oauth::Credentials) pairs it with the application's credentials and
+//! [`Credentials`] pairs it with the application's credentials and
 //! the shared HTTP client.
 
 use std::future::Future;
@@ -171,12 +171,12 @@ impl Credentials {
     /// parsed.
     pub async fn access_token(
         &self,
-        grant: impl FnOnce(&reqwest::Client, &Credentials) -> reqwest::RequestBuilder,
-    ) -> Result<String, crate::http::ApiError> {
+        grant: impl FnOnce(&reqwest::Client, &Self) -> reqwest::RequestBuilder,
+    ) -> Result<String, crate::ApiError> {
         self.token
             .get(|| async {
                 debug!(auth_url = %self.auth_url, "refreshing oauth2 access token");
-                let token = crate::http::get_json(grant(&self.client, self)).await?;
+                let token = crate::get_json(grant(&self.client, self)).await?;
 
                 Ok(token)
             })

@@ -14,8 +14,6 @@ default = []
 # Database-backed plugins: the context carries a connection pool and plugins persist their
 # state through repositories.
 database = ["dep:sqlx"]
-# DNS resolution (used by the dig plugin).
-dns = ["dep:hickory-resolver"]
 native-tls = ["sqlx?/tls-native-tls"]
 native-tls-vendored = ["sqlx?/tls-native-tls"]
 rustls = ["sqlx?/tls-rustls-aws-lc-rs"]
@@ -23,12 +21,11 @@ rustls = ["sqlx?/tls-rustls-aws-lc-rs"]
 [dependencies]
 argh.workspace = true
 async-trait.workspace = true
-hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"], optional = true }
-humantime-serde = "1.1.1"
+humantime-serde.workspace = true
 irc.workspace = true
 serde.workspace = true
 shlex.workspace = true
-sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"], optional = true }
+sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio"], optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

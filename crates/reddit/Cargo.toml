@@ -3,6 +3,17 @@ name = "reddit"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["default-tls"]
+# The default TLS backend selection (rustls), convenient for `default-features = false`.
+default-tls = ["rustls"]
+# TLS backend using rustls with the bundled aws-lc-rs provider and platform verifier roots.
+rustls = ["reqwest/rustls"]
+# TLS backend provided by the operating system through native-tls.
+native-tls = ["reqwest/native-tls"]
+# Same as `native-tls`, but with a statically vendored OpenSSL.
+native-tls-vendored = ["reqwest/native-tls-vendored"]
+
 [dependencies]
 reqwest = { workspace = true, features = ["json", "query"] }
 secrecy.workspace = true

@@ -4,13 +4,13 @@ members = [
     "crates/coinmarketcap",
     "crates/dendanskeordbog",
     "crates/kagi",
-    "crates/plugins",
     "crates/reddit",
     "crates/zeta",
     "crates/zeta-cache",
     "crates/zeta-http",
     "crates/zeta-mirror",
     "crates/zeta-plugin",
+    "crates/zeta-plugins",
     "crates/zeta-test-support",
     "crates/zeta-url",
     "crates/zeta-utils",
@@ -19,16 +19,24 @@ members = [
 [workspace.dependencies]
 argh = { version = "0.1.19" }
 async-trait = "0.1.89"
+chrono = { version = "0.4.45" }
+figment = { version = "0.10.19", features = ["toml", "env"] }
+hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
+humantime-serde = "1.1.1"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
+miette = { version = "7.2.0", default-features = false, features = ["derive", "fancy-no-backtrace"] }
+regex = "1.12.2"
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
 scraper = "0.27.0"
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.149"
 serde_path_to_error = "0.1.17"
+sha2 = "0.11"
 shlex = "2.0.0"
 tempfile = "3.23.0"
 thiserror = "2.0"
+time = { version = "0.3.43", features = ["formatting", "parsing", "serde"] }
 tokio = { version = "1.52.3", features = [
     "rt-multi-thread",
     "macros",
@@ -41,6 +49,7 @@ tokio = { version = "1.52.3", features = [
     "signal",
 ] }
 tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
 
 [workspace.lints.clippy]

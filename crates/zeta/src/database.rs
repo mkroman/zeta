@@ -1,17 +1,17 @@
 //! Database integration.
 //!
-//! Connects the pool (through [`zeta_plugin::database`]) and applies the plugins' migrations at
-//! startup; the pool itself is shared with plugins through their context, and the repository
-//! helpers live in [`zeta_plugin::database`].
+//! The host owns the database story end to end: it connects the pool, applies the plugins'
+//! migrations at startup, and hands the pool to the plugins through their context.
 
-use sqlx::migrate::Migrator;
+use sqlx::{migrate::Migrator, postgres::PgPoolOptions};
 
 use crate::Error;
 
-pub use zeta_plugin::database::Database;
+/// Database connection pool.
+pub type Database = sqlx::PgPool;
 
 /// The plugins' database migrations, applied at startup.
-static MIGRATOR: Migrator = sqlx::migrate!("../plugins/migrations");
+static MIGRATOR: Migrator = sqlx::migrate!("../zeta-plugins/migrations");
 
 /// Connects to the database using the provided url and configuration.
 ///
@@ -19,16 +19,12 @@ static MIGRATOR: Migrator = sqlx::migrate!("../plugins/migrations");
 ///
 /// If unable to establish connection to the database, `Err(Error::OpenDatabase)` is returned.
 pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Database, Error> {
-    let pool = zeta_plugin::database::connect(
-        url,
-        &zeta_plugin::database::PoolConfig {
-            max_connections: config.max_connections,
-            idle_timeout: config.idle_timeout,
-            max_lifetime: config.max_lifetime,
-        },
-    )
-    .await
-    .map_err(Error::OpenDatabase)?;
+    let pool = PgPoolOptions::new()
+        .max_connections(config.max_connections)
+        .idle_timeout(config.idle_timeout)
+        .connect(url)
+        .await
+        .map_err(Error::OpenDatabase)?;
 
     Ok(pool)
 }

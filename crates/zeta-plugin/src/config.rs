@@ -8,7 +8,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::consts;
+/// The `User-Agent` header to send when issuing HTTP requests.
+const HTTP_USER_AGENT: &str =
+    "Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0";
+
+/// The duration before a HTTP request times out.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// HTTP client configuration.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -24,8 +29,8 @@ pub struct HttpConfig {
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
-            timeout: consts::HTTP_TIMEOUT,
-            user_agent: consts::HTTP_USER_AGENT.to_string(),
+            timeout: HTTP_TIMEOUT,
+            user_agent: HTTP_USER_AGENT.to_string(),
         }
     }
 }

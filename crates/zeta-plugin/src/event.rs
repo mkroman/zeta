@@ -70,7 +70,7 @@ impl<'a> Sender<'a> {
 
     /// Returns the sender of `message`, or [`None`] for messages without a nickname prefix.
     #[must_use]
-    pub fn from_message(message: &'a Message) -> Option<Sender<'a>> {
+    pub fn from_message(message: &'a Message) -> Option<Self> {
         let Some(irc::proto::Prefix::Nickname(nick, username, hostname)) = &message.prefix else {
             return None;
         };

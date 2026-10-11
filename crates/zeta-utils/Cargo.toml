@@ -11,8 +11,8 @@ chrono = ["dep:chrono"]
 time = ["dep:time"]
 
 [dependencies]
-chrono = { version = "0.4.45", optional = true }
-time = { version = "0.3.43", features = ["formatting", "parsing", "serde"], optional = true }
+chrono = { workspace = true, optional = true }
+time = { workspace = true, optional = true }
 
 [lints]
 workspace = true

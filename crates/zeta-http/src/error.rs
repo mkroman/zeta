@@ -393,7 +393,7 @@ mod tests {
     /// The workspace members whose sources are scanned alongside this crate's.
     const WORKSPACE_MEMBERS: &[&str] = &[
         "zeta",
-        "plugins",
+        "zeta-plugins",
         "zeta-plugin",
         "zeta-url",
         "coinmarketcap",

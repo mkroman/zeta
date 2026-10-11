@@ -37,7 +37,7 @@ jobs:
       - name: Build each plugin feature in isolation
         run: |
           mapfile -t PLUGINS < <(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "plugins") | .features | keys[]' \
+            | jq -r '.packages[] | select(.name == "zeta-plugins") | .features | keys[]' \
             | grep -v -E '^(default|all|database|http|emulated|mirror|time|native-tls|native-tls-vendored|rustls)$')
 
           echo "checking ${#PLUGINS[@]} plugins"

@@ -10,8 +10,6 @@
 //! Further shared infrastructure lives in dedicated crates: `zeta-cache`, `zeta-http`,
 //! `zeta-mirror` and `zeta-utils`.
 
-#![allow(clippy::use_self)]
-
 pub mod command;
 pub mod event;
 pub mod irc;
@@ -21,13 +19,7 @@ mod plugin;
 mod types;
 
 pub mod config;
-mod consts;
 pub mod context;
-#[cfg(feature = "database")]
-pub mod database;
-/// DNS resolution through hickory-resolver.
-#[cfg(feature = "dns")]
-pub mod dns;
 pub mod filtering;
 pub mod registry;
 

@@ -8,8 +8,6 @@
 
 // Allow repetition of structure name instead of replacing with self as the output from
 // rust-analyzer becomes more readable
-#![allow(clippy::use_self)]
-
 use url::Url;
 
 /// Map of accepted URL scheme prefixes.
@@ -77,14 +75,14 @@ impl<'a> ExtractUrls<'a> {
     /// Creates a new `ExtractUrls` for the given string, accepting `DEFAULT_SCHEMES`.
     #[inline]
     #[must_use]
-    pub fn new(s: &'a str) -> ExtractUrls<'a> {
+    pub fn new(s: &'a str) -> Self {
         ExtractUrls::with_schemes(s, DEFAULT_SCHEMES)
     }
 
     /// Creates a new `ExtractUrls` for the given string, accepting the given scheme prefixes.
     #[inline]
     #[must_use]
-    pub fn with_schemes(s: &'a str, schemes: SchemeMap) -> ExtractUrls<'a> {
+    pub fn with_schemes(s: &'a str, schemes: SchemeMap) -> Self {
         let min_scheme_len = schemes
             .iter()
             .map(|(scheme, _)| scheme.len())

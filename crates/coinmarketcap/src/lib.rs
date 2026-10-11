@@ -37,8 +37,6 @@
 
 // Allow repetition of structure name instead of replacing with self as the output from
 // rust-analyzer becomes more readable
-#![allow(clippy::use_self)]
-
 mod client;
 mod error;
 pub mod model;

@@ -59,8 +59,8 @@ impl Client {
     /// misconfigured network or TLS dependencies. For a non-panicking version, see
     /// [`Client::try_new`].
     #[must_use]
-    pub fn new() -> Client {
-        Client::try_new().expect("could not construct http client")
+    pub fn new() -> Self {
+        Self::try_new().expect("could not construct http client")
     }
 
     /// Attempts to construct a new `Client` with default settings.
@@ -72,7 +72,7 @@ impl Client {
     ///
     /// Returns an [`Error::BuildClient`] if the underlying `reqwest` client fails to build. See
     /// [`ClientBuilder::build`] for more details on potential failures.
-    pub fn try_new() -> Result<Client, Error> {
+    pub fn try_new() -> Result<Self, Error> {
         let client = ClientBuilder::new()
             .gzip(true)
             .redirect(Policy::none())
@@ -92,10 +92,10 @@ impl Client {
     ///
     /// * `client` - An existing `reqwest::Client` instance.
     #[must_use]
-    pub fn with_client(client: reqwest::Client) -> Client {
+    pub fn with_client(client: reqwest::Client) -> Self {
         let base_url = String::from(BASE_URL);
 
-        Client { base_url, client }
+        Self { base_url, client }
     }
 
     /// Queries the dictionary for a specific word and returns the parsed result.

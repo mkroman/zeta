@@ -116,7 +116,7 @@ impl Client {
     /// # Panics
     ///
     /// Panics if the HTTP client fails to build.
-    pub fn with_token(token: impl Into<SecretString>) -> Client {
+    pub fn with_token(token: impl Into<SecretString>) -> Self {
         Self::with_token_and_options(token, ClientOptions::default())
             .expect("could not build http client")
     }
@@ -136,7 +136,7 @@ impl Client {
     pub fn with_token_and_options(
         token: impl Into<SecretString>,
         options: ClientOptions,
-    ) -> Result<Client, Error> {
+    ) -> Result<Self, Error> {
         let client = reqwest::ClientBuilder::new()
             .cookie_store(true)
             .redirect(Policy::none())
@@ -145,7 +145,7 @@ impl Client {
             .build()
             .map_err(|error| Error::BuildClient(error.into()))?;
 
-        Ok(Client {
+        Ok(Self {
             http: client,
             token: token.into(),
             session: RwLock::new(None),

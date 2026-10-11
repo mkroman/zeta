@@ -217,7 +217,7 @@ impl Zeta {
         plugins::register_bundled_plugins(&mut registry, &context, &plugins);
         registry.publish_catalog(&context);
 
-        Zeta {
+        Self {
             config,
             registry,
             context,
