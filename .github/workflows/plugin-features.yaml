@@ -1,0 +1,55 @@
+name: Plugin Features
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
+permissions:
+  contents: read
+
+jobs:
+  # Builds zeta once per bundled plugin with that plugin's feature as the only plugin enabled:
+  # `--all-features` cannot catch a plugin whose feature table is missing a dependency, since
+  # unification always turns everything on. The plugin list is derived from the plugins crate's
+  # manifest, so a new plugin is covered without touching this workflow; only the shared
+  # infrastructure features are filtered out.
+  plugin-features:
+    name: Plugin feature builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d0692 # master
+        with:
+          toolchain: stable
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-plugin-features
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build each plugin feature in isolation
+        run: |
+          mapfile -t PLUGINS < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "plugins") | .features | keys[]' \
+            | grep -v -E '^(default|all|database|http|emulated|mirror|time|native-tls|native-tls-vendored|rustls)$')
+
+          echo "checking ${#PLUGINS[@]} plugins"
+
+          status=0
+          for plugin in "${PLUGINS[@]}"; do
+            echo "::group::plugins/$plugin"
+            if ! cargo check -p zeta --no-default-features --features "plugins/$plugin,rustls,database"; then
+              echo "::error::plugins/$plugin does not build in isolation"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+
+          exit "$status"

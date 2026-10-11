@@ -1,9 +1,9 @@
 //! Test utilities shared by the zeta workspace crates.
 //!
-//! A leaf crate on purpose: the standalone client crates cannot depend on `zeta` — the
+//! A leaf crate with purpose: the standalone client crates cannot depend on `zeta` — the
 //! dependency direction runs the other way — so the helpers here stick to the workspace's
-//! external dependencies. Everything that constructs a `zeta` type stays in the consuming
-//! crate's own test module instead.
+//! external dependencies and to `zeta-plugin` (never the host crate itself). Everything that
+//! constructs a `zeta` host type stays in the consuming crate's own test module instead.
 //!
 //! The connection-refused helpers use a raw socket rather than wiremock on purpose: a mock
 //! server cannot refuse a connection while it is running, and dropping one before connecting
@@ -16,6 +16,27 @@ use std::time::Duration;
 use url::Url;
 
 pub use wiremock;
+
+/// Constructs a plugin [`Context`](zeta_plugin::Context) for tests: a default configuration
+/// and an unreachable (lazily connected) database pool.
+///
+/// # Panics
+///
+/// Panics if the lazy database pool cannot be constructed, which only happens with a
+/// misconfigured sqlx build.
+#[must_use]
+pub fn test_context() -> zeta_plugin::Context {
+    zeta_plugin::Context::new(
+        {
+            use sqlx::postgres::PgPoolOptions;
+
+            PgPoolOptions::new()
+                .connect_lazy("postgresql://invalid/zeta_test")
+                .expect("lazy database pool")
+        },
+        zeta_plugin::config::HostConfig::default(),
+    )
+}
 
 /// How long the wiremock server behind [`timeout_error`] waits before answering: long enough
 /// that a client with [`TIMEOUT_CLIENT`] cannot possibly get a response.

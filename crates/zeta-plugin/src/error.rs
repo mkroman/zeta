@@ -11,8 +11,10 @@ pub type BoxError = Box<dyn StdError + Send + Sync>;
 /// An error that occurred during plugin activity.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// An IRC protocol or communication error.
     #[error("IRC error: {0}")]
     Irc(#[from] irc::error::Error),
+    /// A plugin-specific error, boxed from the plugin's own error type.
     #[error("Plugin error: {0}")]
     Plugin(#[from] BoxError),
 }

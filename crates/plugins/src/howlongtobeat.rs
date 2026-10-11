@@ -1,0 +1,393 @@
+//! Looks up how long games take to complete on HowLongToBeat.
+//!
+//! The `.hltb <game>` command searches HowLongToBeat and replies with the top match's
+//! completion times in words: Main Story, Main + Extra, and Completionist — each rendered as
+//! `--` when the game has no recorded time. No matches and fetch errors are sent as a notice.
+//!
+//! The site's unauthenticated API requires per-installation credentials: the plugin bootstraps
+//! a token and homepage key/value pair from the init endpoint, caches them in memory, sends
+//! them as request headers, and on a `403 Forbidden` refreshes the credentials and retries the
+//! search once.
+
+use std::collections::HashMap;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use reqwest::{
+    StatusCode,
+    header::{CONTENT_TYPE, REFERER},
+};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
+
+use crate::prelude::*;
+use zeta_cache::TtlCache;
+use zeta_http::http;
+use zeta_utils::duration::{HOURS_AND_MINUTES, words};
+
+const BASE_URL: &str = "https://howlongtobeat.com";
+const REFERER_URL: &str = "https://howlongtobeat.com/";
+
+/// How long the cached API credentials stay in use before a new set is requested.
+///
+/// The credentials are valid until the API starts rejecting them with a `403 Forbidden`, which
+/// triggers an unconditional refresh, so the TTL only bounds how long outdated credentials can
+/// survive without triggering the rejection path.
+const AUTH_TTL: Duration = Duration::from_hours(1);
+
+/// The `.hltb` command.
+const HLTB: CommandSpec = CommandSpec::new(".hltb", "Look up a game's completion times");
+
+/// The HowLongToBeat IRC plugin.
+///
+/// This plugin allows users to query the HowLongToBeat database
+/// to retrieve average completion times for video games.
+pub struct HowLongToBeat {
+    /// The HTTP client used for requests.
+    client: reqwest::Client,
+    /// Cached authentication data (token and homepage key/value).
+    auth: TtlCache<AuthData>,
+}
+
+/// Errors that can occur during API interactions.
+pub type Error = http::ApiError;
+
+/// Cached authentication credentials required by the API.
+#[derive(Debug, Clone)]
+struct AuthData {
+    /// The standard authorization token.
+    token: String,
+    /// The dynamically generated homepage key.
+    hp_key: String,
+    /// The dynamically generated homepage value.
+    hp_val: String,
+}
+
+/// The response payload received from the initialization endpoint.
+#[derive(Debug, Deserialize)]
+struct InitResponse {
+    token: String,
+    #[serde(rename = "hpKey")]
+    hp_key: String,
+    #[serde(rename = "hpVal")]
+    hp_val: String,
+}
+
+/// The request body sent to the `/api/find` endpoint to search for games.
+#[derive(Debug, Serialize)]
+struct SearchRequest<'a> {
+    #[serde(rename = "searchType")]
+    search_type: &'static str,
+    #[serde(rename = "searchTerms")]
+    search_terms: Vec<&'a str>,
+    #[serde(rename = "searchPage")]
+    search_page: u32,
+    size: u32,
+    #[serde(rename = "searchOptions")]
+    search_options: SearchOptions,
+    #[serde(rename = "useCache")]
+    use_cache: bool,
+    /// Dynamically injects the homepage key/value into the root of the JSON payload.
+    #[serde(flatten)]
+    homepage_data: HashMap<String, String>,
+}
+
+/// Comprehensive configuration options for the search query.
+#[derive(Debug, Serialize)]
+struct SearchOptions {
+    games: GamesOptions,
+    users: UsersOptions,
+    lists: ListsOptions,
+    filter: String,
+    sort: u32,
+    randomizer: u32,
+}
+
+/// Filtering and sorting options specific to game searches.
+#[derive(Debug, Serialize)]
+struct GamesOptions {
+    #[serde(rename = "userId")]
+    user_id: u32,
+    platform: String,
+    #[serde(rename = "sortCategory")]
+    sort_category: String,
+    #[serde(rename = "rangeCategory")]
+    range_category: String,
+    #[serde(rename = "rangeTime")]
+    range_time: RangeTime,
+    gameplay: GameplayOptions,
+    #[serde(rename = "rangeYear")]
+    range_year: RangeYear,
+    modifier: String,
+}
+
+/// Time range filters for completion data.
+#[derive(Debug, Serialize)]
+struct RangeTime {
+    min: Option<u32>,
+    max: Option<u32>,
+}
+
+/// Release year filters for games.
+#[derive(Debug, Serialize)]
+struct RangeYear {
+    min: String,
+    max: String,
+}
+
+/// Options filtering by gameplay styles and genres.
+#[derive(Debug, Serialize)]
+struct GameplayOptions {
+    perspective: String,
+    flow: String,
+    genre: String,
+    difficulty: String,
+}
+
+/// Options filtering by user data.
+#[derive(Debug, Serialize)]
+struct UsersOptions {
+    #[serde(rename = "sortCategory")]
+    sort_category: String,
+}
+
+/// Options filtering by user lists.
+#[derive(Debug, Serialize)]
+struct ListsOptions {
+    #[serde(rename = "sortCategory")]
+    sort_category: String,
+}
+
+/// The response payload containing search results.
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    data: Vec<Game>,
+}
+
+/// Represents a single game result and its completion statistics.
+#[allow(clippy::struct_field_names)]
+#[derive(Debug, Deserialize)]
+struct Game {
+    /// The name of the game.
+    game_name: String,
+    /// Main Story time in seconds.
+    comp_main: u32,
+    /// Main + Extra time in seconds.
+    comp_plus: u32,
+    /// Completionist (100%) time in seconds.
+    comp_100: u32,
+}
+
+impl Default for SearchOptions {
+    fn default() -> Self {
+        Self {
+            games: GamesOptions {
+                user_id: 0,
+                platform: String::new(),
+                sort_category: "popular".to_string(),
+                range_category: "main".to_string(),
+                range_time: RangeTime {
+                    min: None,
+                    max: None,
+                },
+                gameplay: GameplayOptions {
+                    perspective: String::new(),
+                    flow: String::new(),
+                    genre: String::new(),
+                    difficulty: String::new(),
+                },
+                range_year: RangeYear {
+                    min: String::new(),
+                    max: String::new(),
+                },
+                modifier: String::new(),
+            },
+            users: UsersOptions {
+                sort_category: "postcount".to_string(),
+            },
+            lists: ListsOptions {
+                sort_category: "follows".to_string(),
+            },
+            filter: String::new(),
+            sort: 0,
+            randomizer: 0,
+        }
+    }
+}
+
+#[async_trait]
+impl Plugin<Context> for HowLongToBeat {
+    type Settings = NoSettings;
+
+    fn new(
+        ctx: &Context,
+        _settings: &NoSettings,
+        subscriptions: &mut Subscriptions,
+    ) -> Result<Self, ZetaError> {
+        subscriptions.command(HLTB);
+        let client = http::build_client(&ctx.config.http);
+
+        Ok(Self {
+            client,
+            auth: TtlCache::new(AUTH_TTL),
+        })
+    }
+
+    async fn handle_command(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        command: &CommandEvent,
+    ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let query = command.args();
+
+        let message = if query.trim().is_empty() {
+            notice("Usage: .hltb\x0f <game>")
+        } else {
+            match self.search(query).await {
+                Ok(games) => games
+                    .first()
+                    .map_or_else(|| notice("No results found"), format_game),
+                Err(err) => notice(err),
+            }
+        };
+
+        client.send_privmsg(channel, message)?;
+
+        Ok(())
+    }
+}
+
+impl HowLongToBeat {
+    /// Acquires valid API authentication credentials.
+    ///
+    /// Returns the cached data if it exists, otherwise requests new data from the initialization endpoint.
+    async fn get_auth(&self) -> Result<AuthData, Error> {
+        self.auth.get_or_refresh(|| self.fetch_auth()).await
+    }
+
+    /// Fetches a fresh authorization token and homepage key/value pair from the API.
+    async fn fetch_auth(&self) -> Result<AuthData, Error> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        let url = format!("{BASE_URL}/api/bleed/init?t={timestamp}");
+        debug!("refreshing hltb token and homepage data");
+
+        let request = self.client.get(&url).header(REFERER, REFERER_URL);
+        let init: InitResponse = http::get_json(request).await?;
+
+        Ok(AuthData {
+            token: init.token,
+            hp_key: init.hp_key,
+            hp_val: init.hp_val,
+        })
+    }
+
+    /// Performs a search for a specific game query.
+    ///
+    /// If the request returns a `403 Forbidden`, it assumes the token has expired,
+    /// refreshes the credentials, and automatically retries the request once.
+    async fn search(&self, query: &str) -> Result<Vec<Game>, Error> {
+        let auth = self.get_auth().await?;
+
+        match self.perform_search_request(&auth, query).await {
+            Ok(results) => Ok(results),
+            Err(http::ApiError::Status {
+                status: StatusCode::FORBIDDEN,
+                ..
+            }) => {
+                warn!("hltb token expired, refreshing...");
+                let new_auth = self.auth.force_refresh(|| self.fetch_auth()).await?;
+                self.perform_search_request(&new_auth, query).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Executes the HTTP POST request to the API with the necessary headers and payload.
+    async fn perform_search_request(
+        &self,
+        auth: &AuthData,
+        query: &str,
+    ) -> Result<Vec<Game>, Error> {
+        let url = format!("{BASE_URL}/api/bleed");
+        let search_terms: Vec<&str> = query.split_whitespace().collect();
+
+        // Inject the homepage key/value dynamically into the JSON root.
+        let mut homepage_data = HashMap::new();
+        homepage_data.insert(auth.hp_key.clone(), auth.hp_val.clone());
+
+        let body = SearchRequest {
+            search_type: "games",
+            search_terms,
+            search_page: 1,
+            size: 20,
+            search_options: SearchOptions::default(),
+            use_cache: true,
+            homepage_data,
+        };
+
+        let request = self
+            .client
+            .post(&url)
+            .header(REFERER, REFERER_URL)
+            .header("x-auth-token", &auth.token)
+            .header("x-hp-key", &auth.hp_key)
+            .header("x-hp-val", &auth.hp_val)
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body);
+        let response_data: SearchResponse = http::get_json(request).await?;
+
+        Ok(response_data.data)
+    }
+}
+
+/// Formats a parsed `Game` struct into an IRC-friendly text string.
+fn format_game(game: &Game) -> String {
+    let main = format_seconds(game.comp_main);
+    let main_extra = format_seconds(game.comp_plus);
+    let completionist = format_seconds(game.comp_100);
+
+    reply(
+        "HLTB",
+        format!(
+            "(\x0f{}\x0310): Main Story: \x0f{}\x0310 | Main + Extra: \x0f{}\x0310 | Completionist: \x0f{}",
+            game.game_name, main, main_extra, completionist
+        ),
+    )
+}
+
+/// Converts a duration in seconds into words, e.g. `"2 hours and 3 minutes"`.
+fn format_seconds(seconds: u32) -> String {
+    if seconds == 0 {
+        return "--".to_string();
+    }
+
+    words(i64::from(seconds), HOURS_AND_MINUTES)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_missing_completion_times_as_placeholder() {
+        assert_eq!(format_seconds(0), "--");
+    }
+
+    #[test]
+    fn formats_minutes() {
+        assert_eq!(format_seconds(30), "0 minutes");
+        assert_eq!(format_seconds(45 * 60), "45 minutes");
+    }
+
+    #[test]
+    fn formats_hours_and_minutes() {
+        assert_eq!(format_seconds(3600), "1 hour");
+        assert_eq!(format_seconds(2 * 3600 + 3 * 60), "2 hours and 3 minutes");
+        assert_eq!(format_seconds(100 * 3600), "100 hours");
+    }
+}

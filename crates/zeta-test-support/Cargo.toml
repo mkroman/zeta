@@ -8,36 +8,15 @@ repository = "https://github.com/mkroman/zeta"
 
 [dependencies]
 reqwest.workspace = true
+# The test context carries an unreachable (lazily connected) database pool; the plugin
+# interface is needed to construct the context at all.
+sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio"] }
 url.workspace = true
 wiremock = "0.6"
+zeta-plugin = { path = "../zeta-plugin", features = ["database"] }
 
 [dev-dependencies]
 tokio.workspace = true
 
-[lints.clippy]
-# Enable all basic clippy lints
-all = "warn"
-# Enable pedantic lints for stricter code quality
-pedantic = "warn"
-# Enable experimental/unstable lints that may have false positives
-nursery = "warn"
-# Disable cargo-related lints (often too noisy for dependencies)
-cargo = "allow"
-# Allow for higher complexity since it's not a reliable estimate
-cognitive_complexity = "allow"
-
-[lints.rust]
-# Completely disallow unsafe code - no unsafe blocks, functions, or traits
-unsafe_code = "forbid"
-# Require documentation for public items
-missing_docs = "warn"
-# Enforce modern Rust 2018+ idioms and patterns
-rust_2018_idioms = "warn"
-# Catch unnecessary casts between identical types
-trivial_casts = "warn"
-# Catch unnecessary numeric type casts
-trivial_numeric_casts = "warn"
-# Warn when import braces are used unnecessarily (use foo::{bar} vs use foo::bar)
-unused_import_braces = "warn"
-# Catch redundant path qualifications (self::foo vs foo)
-unused_qualifications = "warn"
+[lints]
+workspace = true

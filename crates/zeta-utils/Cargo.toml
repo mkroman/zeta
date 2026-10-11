@@ -1,0 +1,18 @@
+[package]
+name = "zeta-utils"
+version = "0.0.0"
+edition = "2024"
+description = "Shared utility helpers for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+chrono = ["dep:chrono"]
+time = ["dep:time"]
+
+[dependencies]
+chrono = { version = "0.4.45", optional = true }
+time = { version = "0.3.43", features = ["formatting", "parsing", "serde"], optional = true }
+
+[lints]
+workspace = true

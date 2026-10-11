@@ -1,0 +1,37 @@
+[package]
+name = "zeta-mirror"
+version = "0.0.0"
+edition = "2024"
+description = "Media mirroring for the zeta IRC bot: yt-dlp downloads uploaded to S3."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]
+
+[dependencies]
+aws-credential-types = "1.3.0"
+aws-sigv4 = "1.5.2"
+aws-smithy-runtime-api = { version = "1.16.1", features = ["client"] }
+const-hex = "1.19"
+futures = "0.3.31"
+humantime-serde = "1.1.1"
+reqwest = { workspace = true, features = ["stream", "json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+zeta-http = { path = "../zeta-http", default-features = false, features = ["request"] }
+zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+tokio.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

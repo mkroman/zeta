@@ -19,8 +19,8 @@ use zeta_plugin::event::{
 };
 use zeta_plugin::{CommandSpec, Event, EventKind, UrlScope};
 
-use crate::plugin::filtering::Filters;
-use crate::url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES};
+use zeta_plugin::Filters;
+use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES};
 
 /// A delivery endpoint for events: the mailbox of one plugin's task.
 #[derive(Clone, Debug)]

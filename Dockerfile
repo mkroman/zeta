@@ -34,6 +34,20 @@ COPY --parents \
     crates/zeta/src/lib.rs \
     crates/zeta-plugin/Cargo.toml \
     crates/zeta-plugin/src/lib.rs \
+    crates/zeta-cache/Cargo.toml \
+    crates/zeta-cache/src/lib.rs \
+    crates/zeta-http/Cargo.toml \
+    crates/zeta-http/src/lib.rs \
+    crates/zeta-mirror/Cargo.toml \
+    crates/zeta-mirror/src/lib.rs \
+    crates/zeta-url/Cargo.toml \
+    crates/zeta-url/src/lib.rs \
+    crates/zeta-utils/Cargo.toml \
+    crates/zeta-utils/src/lib.rs \
+    crates/plugins/Cargo.toml \
+    crates/plugins/src/lib.rs \
+    crates/coinmarketcap/Cargo.toml \
+    crates/coinmarketcap/src/lib.rs \
     crates/dendanskeordbog/Cargo.toml \
     crates/dendanskeordbog/src/lib.rs \
     crates/reddit/Cargo.toml \
@@ -63,9 +77,23 @@ COPY --parents \
     Cargo.lock \
     crates/zeta/Cargo.toml \
     crates/zeta/src \
-    crates/zeta/migrations \
     crates/zeta-plugin/Cargo.toml \
     crates/zeta-plugin/src \
+    crates/zeta-cache/Cargo.toml \
+    crates/zeta-cache/src \
+    crates/zeta-http/Cargo.toml \
+    crates/zeta-http/src \
+    crates/zeta-mirror/Cargo.toml \
+    crates/zeta-mirror/src \
+    crates/zeta-url/Cargo.toml \
+    crates/zeta-url/src \
+    crates/zeta-utils/Cargo.toml \
+    crates/zeta-utils/src \
+    crates/plugins/Cargo.toml \
+    crates/plugins/src \
+    crates/plugins/migrations \
+    crates/coinmarketcap/Cargo.toml \
+    crates/coinmarketcap/src \
     crates/dendanskeordbog/Cargo.toml \
     crates/dendanskeordbog/src \
     crates/reddit/Cargo.toml \

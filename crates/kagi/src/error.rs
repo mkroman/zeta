@@ -97,6 +97,8 @@ impl fmt::Display for RequestError {
 
 impl StdError for RequestError {}
 
+use zeta_url::redact_url;
+
 /// Renders the message a log line gets: `kind`, its source chain and its redacted URL.
 ///
 /// A link whose own [`Display`](std::fmt::Display) already ends the message with its source is
@@ -134,20 +136,6 @@ const fn classify(timeout: bool, connect: bool) -> &'static str {
     } else {
         "other"
     }
-}
-
-/// Returns `url` as it may be logged: without its query string or userinfo, which is where
-/// Kagi's login token travels.
-fn redact_url(url: &reqwest::Url) -> String {
-    let mut redacted = url.clone();
-
-    redacted.set_query(None);
-
-    // Only a URL that cannot be a base fails here, and such a URL has no userinfo to strip.
-    let _ = redacted.set_username("");
-    let _ = redacted.set_password(None);
-
-    redacted.to_string()
 }
 
 /// Errors that can occur while searching with Kagi.
