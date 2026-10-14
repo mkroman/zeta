@@ -13,7 +13,7 @@ leaf crates below both.
 | Crate | Purpose |
 | --- | --- |
 | `zeta` | The IRC bot: client loop, event dispatching, configuration, migrations. |
-| `zeta-plugins` | The bundled plugins, one feature per plugin, plus their shared repository helpers. |
+| `plugins` | The bundled plugins, one feature per plugin, plus their shared repository helpers. |
 | `zeta-plugin` | The plugin contract: trait, events, commands, context, reply conventions. |
 | `zeta-http` | HTTP wrappers, browser emulation, OAuth2, transport-error redaction. |
 | `zeta-mirror` | Media mirroring: `yt-dlp` downloads uploaded to S3. |

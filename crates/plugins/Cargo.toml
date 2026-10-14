@@ -1,5 +1,5 @@
 [package]
-name = "zeta-plugins"
+name = "plugins"
 version = "0.0.0"
 edition = "2024"
 description = "The bundled plugins for the zeta IRC bot."
@@ -8,6 +8,9 @@ repository = "https://github.com/mkroman/zeta"
 
 [package.metadata.cargo-machete]
 ignored = ["humantime-serde"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = ["all"]

@@ -68,7 +68,7 @@ opentelemetry_sdk = { version = "0.33.0", default-features = false, features = [
     "rt-tokio",
     "trace",
 ] }
-plugins = { package = "zeta-plugins", path = "../zeta-plugins", default-features = false }
+plugins = { path = "../plugins", default-features = false }
 rustls = { version = "0.23.44", optional = true }
 serde.workspace = true
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"], optional = true }

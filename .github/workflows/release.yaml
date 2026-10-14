@@ -53,7 +53,7 @@ jobs:
     name: Rustdoc
     needs:
       - check
-    uses: ./.github/workflows/doc.yaml
+    uses: $/.github/workflows/doc.yaml
 
   container_image:
     name: Container Image

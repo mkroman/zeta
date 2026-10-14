@@ -37,13 +37,13 @@ jobs:
   # the test workflow, not for the docs build.
   doc:
     name: Rustdoc
-    uses: ./.github/workflows/doc.yaml
+    uses: $/.github/workflows/doc.yaml
 
   # Builds every bundled plugin feature in isolation — `--all-features` unification
   # cannot catch a plugin whose feature table is missing a dependency.
   plugin_features:
     name: Plugin Features
-    uses: ./.github/workflows/plugin-features.yaml
+    uses: $/.github/workflows/plugin-features.yaml
 
   container_image:
     name: Container Image

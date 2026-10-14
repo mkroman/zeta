@@ -12,11 +12,11 @@ permissions:
   contents: read
 
 jobs:
-  # Builds zeta once per bundled plugin with that plugin's feature as the only plugin enabled:
-  # `--all-features` cannot catch a plugin whose feature table is missing a dependency, since
-  # unification always turns everything on. The plugin list is derived from the plugins crate's
-  # manifest, so a new plugin is covered without touching this workflow; only the shared
-  # infrastructure features are filtered out.
+  # Builds zeta once per feature of the plugins crate with that feature as the only one
+  # enabled: `--all-features` cannot catch a plugin or infrastructure feature whose feature
+  # table is missing a dependency, since unification always turns everything on. The list is
+  # read from the plugins crate's manifest, so a new feature is covered without touching this
+  # workflow.
   plugin-features:
     name: Plugin feature builds
     runs-on: ubuntu-latest
@@ -26,7 +26,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d0692 # master
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
       - name: Cache
@@ -34,19 +34,24 @@ jobs:
         with:
           shared-key: ci-plugin-features
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build each plugin feature in isolation
+      - name: Build each plugins feature in isolation
         run: |
-          mapfile -t PLUGINS < <(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "zeta-plugins") | .features | keys[]' \
-            | grep -v -E '^(default|all|database|http|emulated|mirror|time|native-tls|native-tls-vendored|rustls)$')
+          mapfile -t FEATURES < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "plugins") | .features | keys[]' \
+            | grep -v -E '^(default|all)$')
 
-          echo "checking ${#PLUGINS[@]} plugins"
+          if [ "${#FEATURES[@]}" -eq 0 ]; then
+            echo "::error::no features found in the plugins crate"
+            exit 1
+          fi
+
+          echo "checking ${#FEATURES[@]} features"
 
           status=0
-          for plugin in "${PLUGINS[@]}"; do
-            echo "::group::plugins/$plugin"
-            if ! cargo check -p zeta --no-default-features --features "plugins/$plugin,rustls,database"; then
-              echo "::error::plugins/$plugin does not build in isolation"
+          for feature in "${FEATURES[@]}"; do
+            echo "::group::plugins/$feature"
+            if ! cargo check -p zeta --no-default-features --features "plugins/$feature,rustls,database"; then
+              echo "::error::plugins/$feature does not build in isolation"
               status=1
             fi
             echo "::endgroup::"

@@ -197,6 +197,7 @@ macro_rules! declare_plugins {
             )*
         ];
 
+
         /// Registers every compiled-in bundled plugin that its configuration enables.
         ///
         /// The host calls this once at startup, before the catalog is published; plugins that

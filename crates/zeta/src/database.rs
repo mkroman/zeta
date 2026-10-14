@@ -11,7 +11,7 @@ use crate::Error;
 pub type Database = sqlx::PgPool;
 
 /// The plugins' database migrations, applied at startup.
-static MIGRATOR: Migrator = sqlx::migrate!("../zeta-plugins/migrations");
+static MIGRATOR: Migrator = sqlx::migrate!("../plugins/migrations");
 
 /// Connects to the database using the provided url and configuration.
 ///

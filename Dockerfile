@@ -44,8 +44,8 @@ COPY --parents \
     crates/zeta-url/src/lib.rs \
     crates/zeta-utils/Cargo.toml \
     crates/zeta-utils/src/lib.rs \
-    crates/zeta-plugins/Cargo.toml \
-    crates/zeta-plugins/src/lib.rs \
+    crates/plugins/Cargo.toml \
+    crates/plugins/src/lib.rs \
     crates/coinmarketcap/Cargo.toml \
     crates/coinmarketcap/src/lib.rs \
     crates/dendanskeordbog/Cargo.toml \
@@ -89,9 +89,9 @@ COPY --parents \
     crates/zeta-url/src \
     crates/zeta-utils/Cargo.toml \
     crates/zeta-utils/src \
-    crates/zeta-plugins/Cargo.toml \
-    crates/zeta-plugins/src \
-    crates/zeta-plugins/migrations \
+    crates/plugins/Cargo.toml \
+    crates/plugins/src \
+    crates/plugins/migrations \
     crates/coinmarketcap/Cargo.toml \
     crates/coinmarketcap/src \
     crates/dendanskeordbog/Cargo.toml \
