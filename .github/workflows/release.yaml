@@ -15,6 +15,11 @@ env:
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: short
 
+# Re-pushing a tag cancels the release run already in flight for it
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: Check
@@ -41,7 +46,7 @@ jobs:
         run: |-
           echo "Current git tag: ${GITHUB_REF_NAME}"
           echo "Current crate version: ${ZETA_VERSION}"
-          [[ "${ZETA_VERSION}" == "${GITHUB_REF_NAME}" ]] || (echo "Crate and git version mismatch: '" && exit 1)
+          [[ "${ZETA_VERSION}" == "${GITHUB_REF_NAME}" ]] || (echo "::error::crate version ${ZETA_VERSION} does not match git tag ${GITHUB_REF_NAME}" && exit 1)
 
   test:
     name: Test
@@ -112,7 +117,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: zeta-${{ matrix.platform }}-${{ matrix.arch }}
-          path: target/release/zeta${{ matrix.platform == 'windows' && '.exe' || '' }}
+          path: target/release/zeta
       - name: Upload debug symbols
         uses: actions/upload-artifact@v7
         with:

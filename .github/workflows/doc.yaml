@@ -23,6 +23,7 @@ on:
         type: boolean
 
 env:
+  CARGO_TERM_COLOR: always
   RUSTDOCFLAGS: "-D warnings"
 
 permissions:
