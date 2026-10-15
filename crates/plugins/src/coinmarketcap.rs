@@ -243,11 +243,13 @@ impl Plugin<Context> for CoinMarketCap {
     ) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
         let client = Arc::new(
-            CmcClient::new(&Config {
+            CmcClient::with_config(
                 api_key,
-                timeout: ctx.config.http.timeout,
-                user_agent: ctx.config.http.user_agent.clone(),
-            })
+                &Config {
+                    timeout: ctx.config.http.timeout,
+                    user_agent: ctx.config.http.user_agent.clone(),
+                },
+            )
             .map_err(plugin_err)?,
         );
 
@@ -656,7 +658,6 @@ fn format_price(price: f64) -> String {
 mod tests {
     use super::*;
     use coinmarketcap::model::FiatQuote;
-    use zeta_plugin::config::HttpConfig;
     use zeta_test_support::settings_tests;
 
     /// Builds a coin list for cache tests.
@@ -688,14 +689,7 @@ mod tests {
     /// Builds a plugin instance for lookup tests, without touching the API.
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
-            client: Arc::new(
-                CmcClient::new(&Config {
-                    api_key: "test-api-key".to_string(),
-                    timeout: HttpConfig::default().timeout,
-                    user_agent: HttpConfig::default().user_agent,
-                })
-                .unwrap(),
-            ),
+            client: Arc::new(CmcClient::with_config("test-api-key", &Config::default()).unwrap()),
             coins: TtlCache::with_value(CoinCache::from(test_coins()), CACHE_TTL),
             fiat: TtlCache::new(CACHE_TTL),
             default_currency: DEFAULT_CURRENCY.to_string(),

@@ -30,12 +30,21 @@ const FIAT_MAP_LIMIT: u32 = 5000;
 /// Configuration for the CoinMarketCap client.
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// The CoinMarketCap Pro API key, sent as the `x-cmc_pro_api_key` header.
-    pub api_key: String,
     /// The duration before a request times out.
     pub timeout: Duration,
     /// The `User-Agent` header sent with requests.
     pub user_agent: String,
+}
+
+impl Default for Config {
+    /// The default configuration: a 30-second timeout, and the crate's name and version as the
+    /// user agent.
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(30),
+            user_agent: concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")).to_owned(),
+        }
+    }
 }
 
 /// A client for the CoinMarketCap API.
@@ -48,15 +57,26 @@ pub struct Client {
 }
 
 impl Client {
-    /// Builds a client for the CoinMarketCap API, with the API key and the expected response
-    /// type set as default headers.
+    /// Builds a client for the CoinMarketCap API with the default configuration. Use
+    /// [`Client::with_config`] to customize the timeout and user agent.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidApiKey`] if the API key is not a valid HTTP header value, and
     /// [`Error::Build`] if the client could not be built.
-    pub fn new(config: &Config) -> Result<Self, Error> {
-        Self::with_base(config, API_BASE_URL)
+    pub fn new(api_key: impl Into<String>) -> Result<Self, Error> {
+        Self::with_config(api_key, &Config::default())
+    }
+
+    /// Builds a client for the CoinMarketCap API, with the API key and the expected response
+    /// type set as default headers, and the timeout and user agent taken from `config`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidApiKey`] if the API key is not a valid HTTP header value, and
+    /// [`Error::Build`] if the client could not be built.
+    pub fn with_config(api_key: impl Into<String>, config: &Config) -> Result<Self, Error> {
+        Self::with_base(api_key, config, API_BASE_URL)
     }
 
     /// Builds a client against `base` instead of the public API endpoint — for tests, and for
@@ -66,12 +86,16 @@ impl Client {
     ///
     /// Returns [`Error::InvalidApiKey`] if the API key is not a valid HTTP header value, and
     /// [`Error::Build`] if the client could not be built.
-    pub fn with_base(config: &Config, base: &str) -> Result<Self, Error> {
+    pub fn with_base(
+        api_key: impl Into<String>,
+        config: &Config,
+        base: &str,
+    ) -> Result<Self, Error> {
         let headers = HeaderMap::from_iter([
             (ACCEPT, HeaderValue::from_static("application/json")),
             (
                 API_KEY_HEADER,
-                HeaderValue::from_str(&config.api_key).map_err(Error::InvalidApiKey)?,
+                HeaderValue::from_str(&api_key.into()).map_err(Error::InvalidApiKey)?,
             ),
         ]);
 

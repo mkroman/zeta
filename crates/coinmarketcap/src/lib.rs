@@ -17,14 +17,10 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use coinmarketcap::{Client, Config};
+//! use coinmarketcap::Client;
 //!
 //! # async fn example() -> Result<(), coinmarketcap::Error> {
-//! let client = Client::new(&Config {
-//!     api_key: "coinmarketcap api key".to_string(),
-//!     timeout: std::time::Duration::from_secs(30),
-//!     user_agent: "zeta/0.12".to_string(),
-//! })?;
+//! let client = Client::new("coinmarketcap api key")?;
 //!
 //! let listings = client.listings(100).await?;
 //!

@@ -650,11 +650,7 @@ mod tests {
 
     /// Builds a CoinMarketCap client configuration for the tests.
     fn test_client_config() -> coinmarketcap::Config {
-        coinmarketcap::Config {
-            api_key: "test-api-key".to_string(),
-            timeout: HttpConfig::default().timeout,
-            user_agent: HttpConfig::default().user_agent,
-        }
+        coinmarketcap::Config::default()
     }
 
     /// A ranked cryptocurrency listing fixture: Ethereum and a faked euro coin, plus a symbol
@@ -777,7 +773,12 @@ mod tests {
 
         let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat_server.uri())));
         rink.cmc = Some(Arc::new(
-            CmcClient::with_base(&test_client_config(), &listings_server.uri()).unwrap(),
+            CmcClient::with_base(
+                "test-api-key",
+                &test_client_config(),
+                &listings_server.uri(),
+            )
+            .unwrap(),
         ));
 
         (rink, fiat_server, listings_server)
@@ -1000,7 +1001,7 @@ mod tests {
 
         let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat.uri())));
         rink.cmc = Some(Arc::new(
-            CmcClient::with_base(&test_client_config(), &listings.uri()).unwrap(),
+            CmcClient::with_base("test-api-key", &test_client_config(), &listings.uri()).unwrap(),
         ));
 
         rink.ensure_currency_cached().await;
