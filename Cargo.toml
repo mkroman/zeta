@@ -1,27 +1,42 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/coinmarketcap",
     "crates/dendanskeordbog",
     "crates/kagi",
+    "crates/plugins",
     "crates/reddit",
     "crates/zeta",
+    "crates/zeta-cache",
+    "crates/zeta-http",
+    "crates/zeta-mirror",
     "crates/zeta-plugin",
     "crates/zeta-test-support",
+    "crates/zeta-url",
+    "crates/zeta-utils",
 ]
 
 [workspace.dependencies]
 argh = { version = "0.1.19" }
 async-trait = "0.1.89"
+chrono = { version = "0.4.45" }
+figment = { version = "0.10.19", features = ["toml", "env"] }
+hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
+humantime-serde = "1.1.1"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
+miette = { version = "7.2.0", default-features = false, features = ["derive", "fancy-no-backtrace"] }
+regex = "1.12.2"
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
 scraper = "0.27.0"
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.149"
 serde_path_to_error = "0.1.17"
+sha2 = "0.11"
 shlex = "2.0.0"
 tempfile = "3.23.0"
 thiserror = "2.0"
+time = { version = "0.3.43", features = ["formatting", "parsing", "serde"] }
 tokio = { version = "1.52.3", features = [
     "rt-multi-thread",
     "macros",
@@ -34,7 +49,37 @@ tokio = { version = "1.52.3", features = [
     "signal",
 ] }
 tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
+
+[workspace.lints.clippy]
+# Enable all basic clippy lints. The groups run at a higher priority than the individually
+# named lints below, per clippy's lint_groups_priority.
+all = { level = "warn", priority = 1 }
+# Enable pedantic lints for stricter code quality
+pedantic = { level = "warn", priority = 1 }
+# Enable experimental/unstable lints that may have false positives
+nursery = { level = "warn", priority = 1 }
+# Disable cargo-related lints (often too noisy for dependencies)
+cargo = "allow"
+# Allow for higher complexity since it's not a reliable estimate
+cognitive_complexity = "allow"
+
+[workspace.lints.rust]
+# Completely disallow unsafe code - no unsafe blocks, functions, or traits
+unsafe_code = "forbid"
+# Require documentation for public items
+missing_docs = "warn"
+# Enforce modern Rust 2018+ idioms and patterns
+rust_2018_idioms = { level = "warn", priority = 1 }
+# Catch unnecessary casts between identical types
+trivial_casts = "warn"
+# Catch unnecessary numeric type casts (e.g. u32 as u32)
+trivial_numeric_casts = "warn"
+# Warn when import braces are used unnecessarily (use foo::{bar} vs use foo::bar)
+unused_import_braces = "warn"
+# Catch redundant path qualifications (self::foo when foo would suffice)
+unused_qualifications = "warn"
 
 [profile.release]
 lto = true

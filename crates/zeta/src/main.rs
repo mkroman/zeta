@@ -47,13 +47,10 @@ async fn main() -> miette::Result<()> {
         db
     };
 
-    let dns = zeta::dns::new();
-
     let mut z = Zeta::new(
         config,
         #[cfg(feature = "database")]
         db,
-        dns,
     );
     z.run().await?;
 

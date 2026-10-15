@@ -12,8 +12,8 @@ use crate::Registry;
 use crate::config::Config;
 use crate::consts::SHUTDOWN_GRACE;
 use crate::plugin::dispatch::EventIndex;
-use crate::plugin::filtering::Filters;
 use crate::plugin::{Context, PluginTask};
+use zeta_plugin::Filters;
 
 /// Returns the name of the first shutdown signal received by the process.
 ///
@@ -185,20 +185,39 @@ impl Zeta {
     pub fn new(
         mut config: Config,
         #[cfg(feature = "database")] db: crate::database::Database,
-        dns: hickory_resolver::TokioResolver,
     ) -> Self {
+        // The shared media mirror is published before any plugin is constructed, so plugins can
+        // pick it up through their constructors.
+        #[cfg(feature = "mirror")]
+        let mirror_config = config.mirror.clone();
+
         // The per-plugin sections are handed to the plugins through their constructors; the
         // context's config only carries global configuration.
         let plugins = config.take_plugins();
         let context = Arc::new(Context::new(
             #[cfg(feature = "database")]
             db,
-            dns,
-            config.clone(),
+            zeta_plugin::config::HostConfig::from(&config),
         ));
-        let registry = Registry::preloaded(&context, &plugins);
 
-        Zeta {
+        // The shared mirror is published before any plugin is registered, so the plugins that
+        // mirror media can pick it up through their constructors. Mirroring stays disabled when
+        // the configuration is incomplete or invalid.
+        #[cfg(feature = "mirror")]
+        match zeta_mirror::Mirror::from_config(&mirror_config) {
+            Ok(mirror) => {
+                context.shared.publish(Arc::new(mirror));
+            }
+            Err(error) => {
+                warn!(%error, "mirroring is disabled");
+            }
+        }
+
+        let mut registry = Registry::new();
+        plugins::register_bundled_plugins(&mut registry, &context, &plugins);
+        registry.publish_catalog(&context);
+
+        Self {
             config,
             registry,
             context,

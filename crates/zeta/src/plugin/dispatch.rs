@@ -19,8 +19,8 @@ use zeta_plugin::event::{
 };
 use zeta_plugin::{CommandSpec, Event, EventKind, UrlScope};
 
-use crate::plugin::filtering::Filters;
-use crate::url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES};
+use zeta_plugin::Filters;
+use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES};
 
 /// A delivery endpoint for events: the mailbox of one plugin's task.
 #[derive(Clone, Debug)]
@@ -300,6 +300,7 @@ impl EventIndex {
 #[cfg(test)]
 mod tests {
     use zeta_plugin::CtcpKind;
+    use zeta_test_support::assert_empty;
 
     use super::*;
 
@@ -348,7 +349,7 @@ mod tests {
 
         let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
 
-        assert_eq!(stopped, Vec::<String>::new());
+        assert_empty!(stopped);
         assert!(matches!(
             drain(&mut mailbox)[..],
             [Event::Command(ref command)] if command.args() == "example.com"
@@ -366,7 +367,7 @@ mod tests {
         for text in [".digg example.com", "  .dig example.com", "look at .dig"] {
             let _ = index.dispatch(&Filters::default(), privmsg(text));
 
-            assert!(drain(&mut mailbox).is_empty(), "`{text}` must not dispatch");
+            assert_empty!(drain(&mut mailbox), "`{text}` must not dispatch");
         }
     }
 
@@ -415,7 +416,7 @@ mod tests {
         // An unclaimed host only reaches generic handlers.
         let _ = index.dispatch(&Filters::default(), privmsg("https://example.com/x"));
 
-        assert!(drain(&mut youtube).is_empty());
+        assert_empty!(drain(&mut youtube));
         assert_eq!(drain(&mut titles).len(), 1);
     }
 
@@ -457,8 +458,8 @@ mod tests {
             drain(&mut ctcp)[..],
             [Event::Ctcp(ref event)] if event.kind == CtcpKind::Action
         ));
-        assert!(drain(&mut messages).is_empty());
-        assert!(drain(&mut dig).is_empty());
+        assert_empty!(drain(&mut messages));
+        assert_empty!(drain(&mut dig));
     }
 
     #[test]
@@ -484,7 +485,7 @@ mod tests {
             drain(&mut ctcp)[..],
             [Event::Ctcp(ref event)] if event.kind == CtcpKind::Version
         ));
-        assert!(drain(&mut watcher).is_empty());
+        assert_empty!(drain(&mut watcher));
     }
 
     #[test]
@@ -499,7 +500,7 @@ mod tests {
             message("server.example", "NOTICE", &["zeta", "server maintenance"]),
         );
 
-        assert!(drain(&mut ctcp).is_empty());
+        assert_empty!(drain(&mut ctcp));
     }
 
     #[test]
@@ -519,7 +520,7 @@ mod tests {
 
         let _ = index.dispatch(&Filters::default(), privmsg("no events at all?"));
 
-        assert!(drain(&mut dig).is_empty());
+        assert_empty!(drain(&mut dig));
         assert_eq!(drain(&mut watcher).len(), 1);
     }
 
@@ -547,7 +548,7 @@ mod tests {
             drain(&mut quits)[..],
             [Event::Quit(ref quit)] if quit.reason() == Some("gone")
         ));
-        assert!(drain(&mut parts).is_empty());
+        assert_empty!(drain(&mut parts));
     }
 
     #[test]
@@ -587,6 +588,6 @@ mod tests {
         // The evicted plugin receives nothing further.
         let stopped = index.dispatch(&Filters::default(), message("n!u@h", "JOIN", &["#test"]));
 
-        assert_eq!(stopped, Vec::<String>::new());
+        assert_empty!(stopped);
     }
 }

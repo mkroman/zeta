@@ -24,8 +24,7 @@ on:
         default: "stable"
         type: string
 
-      # The following inputs are ordered after the ones above because their
-      # default values depends on them already being declared.
+      # Ordered after the inputs their defaults depend on.
       cache-key:
         description: "Shared cache key"
         default: "ci-${{ inputs.toolchain }}"
@@ -39,12 +38,17 @@ on:
         default: "${{ inputs.args }}"
         type: string
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: short
+
 permissions:
   contents: read
 
 jobs:
-  # Runs the crate's tests — inline unit tests and the tests/ integration tests — against a
-  # postgres instance, which the database-backed tests need for #[sqlx::test].
+  # Postgres backs the #[sqlx::test] database tests.
   test:
     name: Tests
     runs-on: ${{ inputs.runner }}
@@ -90,8 +94,7 @@ jobs:
           DATABASE_URL: postgresql://user:changeme@localhost:5432/zeta
         run: cargo test ${TEST_ARGS} ${FAIL_FAST}
 
-  # Clippy runs as its own job because it doesn't play nice and reuse the
-  # intermediate artifacts built by `cargo test` anyway.
+  # Clippy as its own job: it doesn't reuse cargo test's artifacts anyway.
   clippy:
     name: Clippy Lints
     runs-on: ${{ inputs.runner }}

@@ -70,7 +70,7 @@ impl<'a> Sender<'a> {
 
     /// Returns the sender of `message`, or [`None`] for messages without a nickname prefix.
     #[must_use]
-    pub fn from_message(message: &'a Message) -> Option<Sender<'a>> {
+    pub fn from_message(message: &'a Message) -> Option<Self> {
         let Some(irc::proto::Prefix::Nickname(nick, username, hostname)) = &message.prefix else {
             return None;
         };
@@ -117,7 +117,7 @@ macro_rules! event_kind {
         impl $event {
             #[must_use]
             #[doc = concat!("Creates a ", $ctor, ".")]
-            pub fn new(message: Arc<Message>) -> Self {
+            pub const fn new(message: Arc<Message>) -> Self {
                 Self { message }
             }
 
@@ -245,7 +245,11 @@ pub struct UrlEvent {
 impl UrlEvent {
     /// Creates a URL event.
     #[must_use]
-    pub fn new(message: Arc<Message>, url: Arc<Url>, repaired_from: Option<&'static str>) -> Self {
+    pub const fn new(
+        message: Arc<Message>,
+        url: Arc<Url>,
+        repaired_from: Option<&'static str>,
+    ) -> Self {
         Self {
             message,
             url,
@@ -431,6 +435,11 @@ impl CtcpEvent {
 
     /// Returns the target the CTCP message was sent to: the channel, or the recipient's
     /// nickname for direct queries.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying message is not a `PRIVMSG` or `NOTICE`; the event is only ever
+    /// delivered for those.
     #[must_use]
     pub fn target(&self) -> &str {
         message_text(&self.message)
@@ -439,6 +448,11 @@ impl CtcpEvent {
     }
 
     /// Returns the full, `\x01`-wrapped text of the CTCP message.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying message is not a `PRIVMSG` or `NOTICE`; the event is only ever
+    /// delivered for those.
     #[must_use]
     pub fn text(&self) -> &str {
         message_text(&self.message)
@@ -664,8 +678,12 @@ pub struct Subscriptions {
 impl Subscriptions {
     /// Constructs an empty subscription set.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            commands: Vec::new(),
+            urls: UrlScope::None,
+            events: BTreeSet::new(),
+        }
     }
 
     /// Registers interest in a command.
@@ -680,7 +698,7 @@ impl Subscriptions {
     /// Registers the scope of URLs the plugin receives.
     ///
     /// Calling it again replaces the previous scope.
-    pub fn urls(&mut self, scope: UrlScope) -> &mut Self {
+    pub const fn urls(&mut self, scope: UrlScope) -> &mut Self {
         self.urls = scope;
         self
     }
@@ -707,7 +725,7 @@ impl Subscriptions {
 
     /// Returns the event kinds the plugin registered interest in.
     #[must_use]
-    pub fn events(&self) -> &BTreeSet<EventKind> {
+    pub const fn events(&self) -> &BTreeSet<EventKind> {
         &self.events
     }
 }
@@ -715,6 +733,8 @@ impl Subscriptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use zeta_test_support::assert_empty;
 
     fn message(prefix: &str, command: &str, args: &[&str]) -> Arc<Message> {
         let prefix = (!prefix.is_empty()).then_some(prefix);
@@ -948,8 +968,8 @@ mod tests {
     fn default_subscriptions_are_empty() {
         let subscriptions = Subscriptions::new();
 
-        assert!(subscriptions.commands().is_empty());
+        assert_empty!(subscriptions.commands());
         assert_eq!(subscriptions.url_scope(), UrlScope::None);
-        assert!(subscriptions.events().is_empty());
+        assert_empty!(subscriptions.events());
     }
 }

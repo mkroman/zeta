@@ -1,4 +1,4 @@
-name: Doc
+name: Rustdoc
 
 on:
   workflow_call:
@@ -12,8 +12,7 @@ on:
         default: "stable"
         type: string
 
-      # The following inputs are ordered after the ones above because their
-      # default values depends on them already being declared.
+      # Ordered after the inputs their defaults depend on.
       cache-key:
         description: "Shared cache key"
         default: "ci-${{ inputs.toolchain }}"
@@ -24,6 +23,7 @@ on:
         type: boolean
 
 env:
+  CARGO_TERM_COLOR: always
   RUSTDOCFLAGS: "-D warnings"
 
 permissions:
@@ -31,11 +31,13 @@ permissions:
 
 jobs:
   doc:
-    name: Rustdoc
+    name: Build
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install Rust ${{ inputs.toolchain }}
         uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:

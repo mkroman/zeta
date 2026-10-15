@@ -42,8 +42,6 @@
 
 // Allow repetition of structure name instead of replacing with self as the output from
 // rust-analyzer becomes more readable
-#![allow(clippy::use_self)]
-
 use std::time::Duration;
 
 mod client;

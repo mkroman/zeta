@@ -92,14 +92,15 @@ impl fmt::Display for RequestError {
             f.write_str(&self.kind)?;
         }
 
-        match self.host.as_deref() {
-            Some(host) => write!(f, " ({host})"),
-            None => Ok(()),
-        }
+        self.host
+            .as_deref()
+            .map_or(Ok(()), |host| write!(f, " ({host})"))
     }
 }
 
 impl StdError for RequestError {}
+
+use zeta_url::redact_url;
 
 /// Renders the message a log line gets: `kind`, its source chain and its redacted URL.
 ///
@@ -138,20 +139,6 @@ const fn classify(timeout: bool, connect: bool) -> &'static str {
     } else {
         "other"
     }
-}
-
-/// Returns `url` as it may be logged: without its query string or userinfo, which is where
-/// Reddit carries its tokens.
-fn redact_url(url: &url::Url) -> String {
-    let mut redacted = url.clone();
-
-    redacted.set_query(None);
-
-    // Only a URL that cannot be a base fails here, and such a URL has no userinfo to strip.
-    let _ = redacted.set_username("");
-    let _ = redacted.set_password(None);
-
-    redacted.to_string()
 }
 
 /// Errors that can occur while using the Reddit API.

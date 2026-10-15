@@ -580,6 +580,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
+name = "coinmarketcap"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "zeta-test-support",
+ "zeta-url",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -897,6 +912,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zeta-test-support",
+ "zeta-url",
 ]
 
 [[package]]
@@ -2156,6 +2172,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zeta-test-support",
+ "zeta-url",
 ]
 
 [[package]]
@@ -2888,6 +2905,61 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "plugins"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "async-trait",
+ "base64 0.23.1",
+ "chrono",
+ "coinmarketcap",
+ "dendanskeordbog",
+ "figment",
+ "futures",
+ "hickory-resolver",
+ "html5ever 0.40.1",
+ "htmlize",
+ "humantime-serde",
+ "indefinite",
+ "interim",
+ "irc",
+ "kagi",
+ "memory-stats",
+ "miette",
+ "num-format",
+ "rand 0.10.3",
+ "rand_mt",
+ "reddit",
+ "regex",
+ "reqwest",
+ "rink-core",
+ "scraper",
+ "secrecy",
+ "serde",
+ "serde_ignored",
+ "serde_json",
+ "sha2 0.11.1",
+ "similar-asserts",
+ "sqlx",
+ "strsim 0.11.1",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+ "wildmatch",
+ "wreq",
+ "wreq-util",
+ "zeta-cache",
+ "zeta-http",
+ "zeta-mirror",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3186,6 +3258,7 @@ dependencies = [
  "tracing",
  "url",
  "zeta-test-support",
+ "zeta-url",
 ]
 
 [[package]]
@@ -5287,62 +5360,86 @@ name = "zeta"
 version = "0.12.0"
 dependencies = [
  "argh",
- "async-trait",
- "aws-credential-types",
- "aws-sigv4",
- "aws-smithy-runtime-api",
- "base64 0.23.1",
- "chrono",
- "const-hex",
- "dendanskeordbog",
  "figment",
  "futures",
- "hickory-resolver",
- "html5ever 0.40.1",
- "htmlize",
  "humantime-serde",
- "indefinite",
- "interim",
  "irc",
- "kagi",
- "memory-stats",
  "miette",
- "num-format",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-resource-detectors",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
- "rand 0.10.3",
- "rand_mt",
- "reddit",
- "regex",
- "reqwest",
- "rink-core",
+ "plugins",
  "rustls",
- "scraper",
- "secrecy",
  "serde",
- "serde_ignored",
- "serde_json",
- "serde_path_to_error",
- "sha2 0.11.1",
- "similar-asserts",
  "sqlx",
- "strsim 0.11.1",
- "tempfile",
  "thiserror 2.0.21",
- "time",
  "tokio",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "url",
- "wildmatch",
+ "zeta-cache",
+ "zeta-http",
+ "zeta-mirror",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "zeta-cache"
+version = "0.0.0"
+dependencies = [
+ "tokio",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "zeta-http"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
  "wreq",
  "wreq-util",
  "zeta-plugin",
  "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "zeta-mirror"
+version = "0.0.0"
+dependencies = [
+ "aws-credential-types",
+ "aws-sigv4",
+ "aws-smithy-runtime-api",
+ "const-hex",
+ "futures",
+ "humantime-serde",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
 ]
 
 [[package]]
@@ -5351,11 +5448,17 @@ version = "0.0.0"
 dependencies = [
  "argh",
  "async-trait",
+ "humantime-serde",
  "irc",
  "serde",
  "shlex 2.0.1",
+ "sqlx",
  "thiserror 2.0.21",
+ "tokio",
+ "tracing",
  "url",
+ "zeta-test-support",
+ "zeta-utils",
 ]
 
 [[package]]
@@ -5363,9 +5466,26 @@ name = "zeta-test-support"
 version = "0.0.0"
 dependencies = [
  "reqwest",
+ "sqlx",
  "tokio",
  "url",
  "wiremock",
+ "zeta-plugin",
+]
+
+[[package]]
+name = "zeta-url"
+version = "0.0.0"
+dependencies = [
+ "url",
+]
+
+[[package]]
+name = "zeta-utils"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "time",
 ]
 
 [[package]]

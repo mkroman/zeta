@@ -1,9 +1,9 @@
 //! Test utilities shared by the zeta workspace crates.
 //!
-//! A leaf crate on purpose: the standalone client crates cannot depend on `zeta` — the
+//! A leaf crate with purpose: the standalone client crates cannot depend on `zeta` — the
 //! dependency direction runs the other way — so the helpers here stick to the workspace's
-//! external dependencies. Everything that constructs a `zeta` type stays in the consuming
-//! crate's own test module instead.
+//! external dependencies and to `zeta-plugin` (never the host crate itself). Everything that
+//! constructs a `zeta` host type stays in the consuming crate's own test module instead.
 //!
 //! The connection-refused helpers use a raw socket rather than wiremock on purpose: a mock
 //! server cannot refuse a connection while it is running, and dropping one before connecting
@@ -16,6 +16,27 @@ use std::time::Duration;
 use url::Url;
 
 pub use wiremock;
+
+/// Constructs a plugin [`Context`](zeta_plugin::Context) for tests: a default configuration
+/// and an unreachable (lazily connected) database pool.
+///
+/// # Panics
+///
+/// Panics if the lazy database pool cannot be constructed, which only happens with a
+/// misconfigured sqlx build.
+#[must_use]
+pub fn test_context() -> zeta_plugin::Context {
+    zeta_plugin::Context::new(
+        {
+            use sqlx::postgres::PgPoolOptions;
+
+            PgPoolOptions::new()
+                .connect_lazy("postgresql://invalid/zeta_test")
+                .expect("lazy database pool")
+        },
+        zeta_plugin::config::HostConfig::default(),
+    )
+}
 
 /// How long the wiremock server behind [`timeout_error`] waits before answering: long enough
 /// that a client with [`TIMEOUT_CLIENT`] cannot possibly get a response.
@@ -210,9 +231,73 @@ macro_rules! settings_tests {
     };
 }
 
+/// Asserts that the expression is empty, naming the value in the panic.
+///
+/// A plain `assert!(value.is_empty())` only prints the condition on failure — useless for
+/// finding out what the stray entries were, which is the reasoning behind clippy's
+/// `assert_is_empty` lint — while the `assert_eq!` alternative needs brittle explicit types
+/// (`Vec::<String>::new()`, because `[]` does not typecheck for a `Vec<String>`). This macro
+/// prints the value without either problem.
+///
+/// An optional message follows the value, formatted like any `format!` invocation.
+///
+/// # Panics
+///
+/// Panics if the expression is not empty, printing its `Debug` rendering and, when given,
+/// the custom message.
+#[macro_export]
+macro_rules! assert_empty {
+    ($value:expr $(,)?) => {
+        match &$value {
+            value if value.is_empty() => {}
+            value => panic!("assertion failed: value is empty\n  value: {value:?}"),
+        }
+    };
+    ($value:expr, $($message:tt)+) => {
+        match &$value {
+            value if value.is_empty() => {}
+            value => panic!(
+                "assertion failed: value is empty\n  value: {value:?}\n{}",
+                format_args!($($message)+)
+            ),
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assert_empty_passes_on_empty_and_names_the_value_on_failure() {
+        assert_empty!(Vec::<String>::new());
+        let empty: [u8; 0] = [];
+        assert_empty!(empty);
+
+        let panic = std::panic::catch_unwind(|| assert_empty!(vec!["stray entry"]))
+            .expect_err("non-empty values must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(message.contains("value is empty"), "{message}");
+        assert!(message.contains(r#""stray entry""#), "{message}");
+    }
+
+    #[test]
+    fn assert_empty_appends_the_custom_message_to_the_panic() {
+        let panic = std::panic::catch_unwind(|| {
+            let channel = "#zeta";
+
+            assert_empty!(vec!["stray"], "{channel} must have no strays");
+        })
+        .expect_err("non-empty values must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(message.contains("#zeta must have no strays"), "{message}");
+    }
 
     #[tokio::test]
     async fn refused_get_fails_to_connect_with_the_query_attached() {

@@ -4,6 +4,34 @@ Zeta is an opinionated IRC bot with a bunch of plugins.
 
 It is also an excercise in futility.
 
+## Workspace layout
+
+The bot is split into focused crates with a strict dependency direction: the host depends on
+the plugins, the plugins depend on the plugin interface, and the shared infrastructure sits in
+leaf crates below both.
+
+| Crate | Purpose |
+| --- | --- |
+| `zeta` | The IRC bot: client loop, event dispatching, configuration, migrations. |
+| `plugins` | The bundled plugins, one feature per plugin, plus their shared repository helpers. |
+| `zeta-plugin` | The plugin contract: trait, events, commands, context, reply conventions. |
+| `zeta-http` | HTTP wrappers, browser emulation, OAuth2, transport-error redaction. |
+| `zeta-mirror` | Media mirroring: `yt-dlp` downloads uploaded to S3. |
+| `zeta-cache` | TTL cache and keyed cache APIs. |
+| `zeta-url` | URL extraction, path validation and redaction. |
+| `zeta-utils` | Text shaping, duration formatting, lock recovery. |
+| `kagi`, `reddit`, `dendanskeordbog`, `coinmarketcap` | Standalone API client crates. |
+| `zeta-test-support` | Shared test helpers (wiremock, redaction assertions). |
+
+Two rules keep the graph honest:
+
+- **API client crates** exist for domain APIs that stand alone (or are consumed by more than
+  one plugin): they carry their own model, error and transport-redaction wrapper, and never
+  depend on the plugin interface. Plugins with a single consumer keep their client in the
+  plugin (e.g. `imdb`, `unwall`).
+- **`zeta-plugin` is only the contract** between the host and the plugins — anything that is
+  implementation rather than vocabulary belongs in an infrastructure crate.
+
 ## License
 
 Licensed under either of

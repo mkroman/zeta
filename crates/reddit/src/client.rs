@@ -42,6 +42,9 @@ struct AccessTokenResponse {
 }
 
 /// Reddit client.
+// The fields keep Reddit's official OAuth2 `client_id`/`client_secret` terminology, which
+// necessarily repeats the struct's name; `client` is the house name for the HTTP client.
+#[allow(clippy::struct_field_names)]
 pub struct Client {
     /// HTTP client used for requests.
     client: reqwest::Client,
@@ -87,7 +90,7 @@ impl Client {
     /// # Panics
     ///
     /// Panics if the HTTP client fails to build.
-    pub fn new(client_id: impl Into<String>, client_secret: impl Into<SecretString>) -> Client {
+    pub fn new(client_id: impl Into<String>, client_secret: impl Into<SecretString>) -> Self {
         Self::with_options(client_id, client_secret, ClientOptions::default())
             .expect("could not build http client")
     }
@@ -101,7 +104,7 @@ impl Client {
         client_id: impl Into<String>,
         client_secret: impl Into<SecretString>,
         options: ClientOptions,
-    ) -> Result<Client, Error> {
+    ) -> Result<Self, Error> {
         let client_id = client_id.into();
         let client_secret = client_secret.into();
         let token_state = RwLock::new(None);
@@ -109,13 +112,13 @@ impl Client {
         let client = reqwest::ClientBuilder::new()
             .redirect(Policy::none())
             .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
-            .user_agent(user_agent.clone())
+            .user_agent(user_agent)
             .build()
             .map_err(|error| Error::BuildClient(error.into()))?;
 
         debug!("using client id {client_id}");
 
-        Ok(Client {
+        Ok(Self {
             client,
             client_id,
             client_secret,
@@ -123,6 +126,9 @@ impl Client {
         })
     }
 
+    // The write guard is deliberately held across the token request — that is what
+    // serializes concurrent misses into a single token request.
+    #[allow(clippy::significant_drop_tightening)]
     async fn get_valid_token(&self) -> Result<String, Error> {
         {
             let read = self.token_state.read().await;
@@ -222,6 +228,11 @@ impl Client {
     }
 
     /// Fetches and returns details about a given submission.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the access token cannot be obtained, the request fails, the
+    /// submission does not exist, or the response cannot be parsed as a submission.
     #[instrument(skip(self))]
     pub async fn submission(&self, article: &str) -> Result<Submission, Error> {
         let access_token = self.get_valid_token().await?;
@@ -254,6 +265,12 @@ impl Client {
     }
 
     /// Fetches and returns details about a given video submission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::VideoRedirect`] if the video link does not redirect,
+    /// [`Error::VideoRedirectsToNonSubmission`] if it redirects to something other than a
+    /// submission, or any error from fetching the submission itself.
     #[instrument(skip(self))]
     pub async fn video(&self, id: &str) -> Result<Submission, Error> {
         debug!(%id, "requesting video redirect location");
@@ -271,6 +288,11 @@ impl Client {
     }
 
     /// Fetches and returns details about the subreddit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the access token cannot be obtained, the request fails, the
+    /// subreddit does not exist, or the response cannot be parsed as a subreddit.
     #[instrument(skip(self))]
     pub async fn subreddit_about_info(&self, name: &str) -> Result<Subreddit, Error> {
         let access_token = self.get_valid_token().await?;
@@ -295,6 +317,13 @@ impl Client {
         }
     }
 
+    /// Resolves a shortened subreddit link (`/r/<subreddit>/s/<id>`) to the comment or
+    /// submission link it redirects to.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, the link does not redirect, or the redirect
+    /// target is not a comment or submission link.
     pub async fn resolve_shortened_link(&self, subreddit: &str, id: &str) -> Result<Link, Error> {
         debug!(%subreddit, %id, "requesting short link to find redirect location");
         let url = self

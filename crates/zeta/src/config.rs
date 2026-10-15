@@ -1,10 +1,24 @@
+//! Configuration loading and validation.
+
 use std::time::Duration;
 
-use figment::value::{Dict, Value};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::consts;
-use crate::plugin::PluginsConfig;
+
+#[cfg(feature = "mirror")]
+pub use zeta_mirror::MirrorConfig;
+pub use zeta_plugin::config::HttpConfig;
+
+/// The plugin-visible subset of the configuration, as carried on the plugins' context.
+impl From<&Config> for zeta_plugin::config::HostConfig {
+    fn from(config: &Config) -> Self {
+        Self {
+            http: config.http.clone(),
+            admin_hostmasks: config.irc.admin_hostmasks.clone(),
+        }
+    }
+}
 
 /// Main application configuration structure.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -21,13 +35,13 @@ pub struct Config {
     /// Shared media mirroring configuration
     #[cfg(feature = "mirror")]
     #[serde(default)]
-    pub mirror: crate::mirror::MirrorConfig,
+    pub mirror: MirrorConfig,
     /// Per-plugin configuration sections.
     ///
     /// Consumed by [`Config::take_plugins`] during startup, before any plugin is constructed; the
     /// config kept in the context holds defaults for every plugin section afterwards.
     #[serde(default)]
-    plugins: PluginsConfig,
+    plugins: plugins::PluginsConfig,
 }
 
 impl Config {
@@ -36,82 +50,8 @@ impl Config {
     /// The host calls this once while starting up and hands each plugin its own section through
     /// its constructor. Afterwards the config holds defaults for all plugin sections.
     #[must_use]
-    pub(crate) fn take_plugins(&mut self) -> PluginsConfig {
+    pub(crate) fn take_plugins(&mut self) -> plugins::PluginsConfig {
         std::mem::take(&mut self.plugins)
-    }
-}
-
-/// An individual plugin's configuration: its `[plugins.<name>]` section.
-///
-/// One value exists per compiled plugin. Sections are type-checked at startup; malformed values
-/// abort configuration loading with a diagnostic.
-///
-/// The `enabled` key is managed by the host and defaults to `true`; every other key belongs to
-/// the plugin's settings type (e.g. `dig::Settings`), deserialized through
-/// [`PluginConfig::settings`]. Unknown settings keys are ignored, collected in
-/// [`PluginConfig::unknown_keys`] and warned about by the host: a config that names a setting
-/// removed by a newer release must keep working, so rejection is too harsh.
-#[derive(Clone, Debug, Serialize)]
-pub struct PluginConfig<S> {
-    /// Enable the plugin.
-    pub enabled: bool,
-    /// The plugin's typed settings.
-    ///
-    /// Flattened so serialization round-trips with the custom [`Deserialize`] implementation
-    /// below, which reads settings keys at the section level.
-    #[serde(flatten)]
-    pub settings: S,
-    /// Keys in the plugin's configuration section that the settings type did not recognize.
-    ///
-    /// Populated during deserialization — a typo'd key, or a setting that no longer exists.
-    /// The host logs each one as a warning. Skipped by serialization, so round-trips only
-    /// carry `enabled` and the settings themselves.
-    #[serde(skip)]
-    pub unknown_keys: Vec<String>,
-}
-
-impl<'de, S> Deserialize<'de> for PluginConfig<S>
-where
-    S: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error as _;
-
-        // A custom implementation instead of `#[serde(flatten)]`, which would silently swallow
-        // unknown keys: `serde_ignored` reports every key the settings type ignores so the
-        // host can warn about a typo, or a setting removed by this version.
-        let mut section = Dict::deserialize(deserializer)?;
-        let enabled = match section.remove("enabled") {
-            Some(value) => bool::deserialize(&value)
-                .map_err(|error| D::Error::custom(format!("invalid `enabled` key: {error}")))?,
-            None => true,
-        };
-
-        let mut unknown_keys = Vec::new();
-        let value = Value::from(section);
-        let settings = serde_ignored::deserialize(&value, |path| {
-            unknown_keys.push(path.to_string());
-        })
-        .map_err(|error| D::Error::custom(format!("invalid settings: {error}")))?;
-
-        Ok(Self {
-            enabled,
-            settings,
-            unknown_keys,
-        })
-    }
-}
-
-impl<S: Default> Default for PluginConfig<S> {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            settings: S::default(),
-            unknown_keys: Vec::new(),
-        }
     }
 }
 
@@ -123,7 +63,7 @@ pub struct DbConfig {
     /// Minimum number of connections to keep active in the connection pool
     #[serde(default = "default_min_db_connections")]
     pub min_connections: u32,
-    /// Maximum number of connections to keep in the connection pool
+    /// Maximum number of connections to keep active in the connection pool
     #[serde(default = "default_max_db_connections")]
     pub max_connections: u32,
     /// Maximum idle duration for individual connections, in seconds
@@ -134,26 +74,6 @@ pub struct DbConfig {
     /// Any connection with a lifetime greater than this will be closed.
     #[serde(default = "default_db_max_lifetime", with = "humantime_serde")]
     pub max_lifetime: Duration,
-}
-
-/// HTTP client configuration.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default)]
-pub struct HttpConfig {
-    /// Duration before an HTTP request times out.
-    #[serde(with = "humantime_serde")]
-    pub timeout: Duration,
-    /// The `User-Agent` header sent with HTTP requests.
-    pub user_agent: String,
-}
-
-impl Default for HttpConfig {
-    fn default() -> Self {
-        Self {
-            timeout: consts::HTTP_TIMEOUT,
-            user_agent: consts::HTTP_USER_AGENT.to_string(),
-        }
-    }
 }
 
 /// Tracing and logging configuration.
@@ -314,17 +234,17 @@ fn default_shutdown_quit_message() -> String {
     consts::DEFAULT_SHUTDOWN_QUIT_MESSAGE.to_string()
 }
 
-#[cfg(all(test, feature = "plugin-dig", feature = "plugin-health"))]
+#[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
-
     use super::*;
+
     use figment::{
-        Error, Figment,
+        Figment,
         providers::{Format, Toml},
     };
+    use zeta_test_support::assert_empty;
 
-    /// The base configuration the full-config tests start from.
+    /// The base configuration the config tests start from.
     const FULL_BASE: &str = r#"
 [database]
 url = "postgresql://localhost/zeta_test"
@@ -339,15 +259,6 @@ alt_nicks = []
 channels = []
 "#;
 
-    /// Extracts the `[plugins]` subtree from an inline TOML document.
-    fn extract(toml: &str) -> Result<PluginsConfig, Box<Error>> {
-        Figment::new()
-            .merge(Toml::string(toml))
-            .focus("plugins")
-            .extract()
-            .map_err(Box::new)
-    }
-
     #[test]
     fn http_defaults_are_used_when_omitted() {
         let config: HttpConfig = Figment::new()
@@ -355,8 +266,10 @@ channels = []
             .extract()
             .expect("could not parse http configuration");
 
-        assert_eq!(config.timeout, consts::HTTP_TIMEOUT);
-        assert_eq!(config.user_agent, consts::HTTP_USER_AGENT);
+        let defaults = HttpConfig::default();
+
+        assert_eq!(config.timeout, defaults.timeout);
+        assert_eq!(config.user_agent, defaults.user_agent);
     }
 
     #[test]
@@ -370,137 +283,6 @@ channels = []
 
         assert_eq!(config.timeout, Duration::from_secs(10));
         assert_eq!(config.user_agent, "zeta/test");
-    }
-
-    #[test]
-    fn parses_plugin_sections() {
-        let plugins = extract(
-            r#"
-[plugins.dig]
-enabled = true
-nameservers = ["1.1.1.1", "2606:4700:4700::1111"]
-
-[plugins.health]
-enabled = false
-"#,
-        )
-        .expect("could not parse configuration");
-
-        assert!(plugins.dig.enabled);
-        assert_eq!(
-            plugins.dig.settings.nameservers,
-            vec![
-                IpAddr::from([1, 1, 1, 1]),
-                IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111]),
-            ]
-        );
-        assert!(!plugins.health.enabled);
-        assert!(plugins.unknown.is_empty());
-    }
-
-    #[test]
-    fn missing_plugins_section_defaults_to_enabled() {
-        let plugins = extract("").expect("could not parse configuration");
-
-        assert!(plugins.dig.enabled);
-        assert_eq!(
-            plugins.dig.settings.nameservers,
-            crate::plugin::dig::Settings::default().nameservers
-        );
-        assert!(plugins.health.enabled);
-    }
-
-    #[test]
-    fn omitted_enabled_defaults_to_true() {
-        let plugins = extract("[plugins.health]\n").expect("could not parse configuration");
-
-        assert!(plugins.health.enabled);
-    }
-
-    #[test]
-    fn unknown_sections_are_captured() {
-        let plugins =
-            extract("[plugins.digg]\nenabled = false\n").expect("could not parse configuration");
-
-        assert!(plugins.unknown.contains_key("digg"));
-    }
-
-    #[test]
-    fn invalid_enabled_type_is_rejected() {
-        let error = extract("[plugins.health]\nenabled = \"yes\"\n")
-            .expect_err("invalid type should be rejected");
-
-        assert!(error.to_string().contains("enabled"), "{error}");
-    }
-
-    #[test]
-    fn invalid_settings_type_is_rejected() {
-        let error = extract("[plugins.dig]\nnameservers = \"1.1.1.1\"\n")
-            .expect_err("invalid nameservers type should be rejected");
-
-        // `flatten` stops the reported key path at the section; the section is still identified.
-        assert!(error.to_string().contains("dig"), "{error}");
-    }
-
-    #[test]
-    fn invalid_ip_address_is_rejected() {
-        assert!(
-            extract("[plugins.dig]\nnameservers = [\"not-an-ip\"]\n").is_err(),
-            "invalid IP address should be rejected"
-        );
-    }
-
-    #[test]
-    fn empty_nameservers_are_rejected() {
-        assert!(
-            extract("[plugins.dig]\nnameservers = []\n").is_err(),
-            "empty nameservers should be rejected"
-        );
-    }
-
-    #[test]
-    fn plugin_config_round_trips() {
-        let plugins = extract("[plugins.dig]\nnameservers = [\"1.1.1.1\"]\n")
-            .expect("could not parse configuration");
-
-        let json = serde_json::to_value(&plugins.dig).expect("could not serialize");
-        assert_eq!(json["enabled"], serde_json::json!(true));
-        assert_eq!(json["nameservers"], serde_json::json!(["1.1.1.1"]));
-
-        let round_tripped: PluginConfig<crate::plugin::dig::Settings> =
-            serde_json::from_value(json).expect("could not deserialize");
-        assert_eq!(
-            round_tripped.settings.nameservers,
-            plugins.dig.settings.nameservers
-        );
-    }
-
-    #[test]
-    fn unknown_settings_keys_are_ignored() {
-        let plugins = extract("[plugins.dig]\nnameserverss = [\"1.1.1.1\"]\n")
-            .expect("unknown settings keys should be ignored");
-
-        assert_eq!(plugins.dig.unknown_keys, ["nameserverss"]);
-        assert_eq!(
-            plugins.dig.settings.nameservers,
-            crate::plugin::dig::Settings::default().nameservers
-        );
-    }
-
-    #[test]
-    fn unknown_settings_keys_are_ignored_for_plugins_without_settings() {
-        let plugins = extract("[plugins.health]\nenabled = true\nwhatever = 1\n")
-            .expect("unknown settings keys should be ignored");
-
-        assert_eq!(plugins.health.unknown_keys, ["whatever"]);
-    }
-
-    #[test]
-    fn non_table_section_is_rejected() {
-        assert!(
-            extract("[plugins]\ndig = \"x\"\n").is_err(),
-            "scalar plugin section should be rejected"
-        );
     }
 
     #[test]
@@ -527,6 +309,8 @@ enabled = false
         assert_eq!(config.quit_message, "goodbye");
     }
 
+    /// The repository `config.toml` must parse into the full configuration: a broken edit has
+    /// to fail here rather than at someone's deployment.
     #[test]
     fn repository_config_parses() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config.toml");
@@ -536,17 +320,7 @@ enabled = false
             .extract::<Config>()
             .expect("the repository config.toml should parse");
 
-        assert!(config.plugins.health.enabled);
-        assert_eq!(
-            config.plugins.dig.settings.nameservers,
-            vec![
-                IpAddr::from([1, 1, 1, 1]),
-                IpAddr::from([1, 0, 0, 1]),
-                IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111]),
-                IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001]),
-            ]
-        );
-        assert!(config.plugins.unknown.is_empty());
+        assert_empty!(config.plugins.unknown);
     }
 
     #[test]
@@ -556,9 +330,7 @@ enabled = false
             .extract::<Config>()
             .expect("configuration without a [plugins] section should parse");
 
-        assert!(config.plugins.dig.enabled);
-        assert!(config.plugins.health.enabled);
-        assert!(config.plugins.unknown.is_empty());
+        assert_empty!(config.plugins.unknown);
     }
 
     #[test]
@@ -572,13 +344,22 @@ enabled = false
 
         let plugins = config.take_plugins();
 
-        assert_eq!(
-            plugins.dig.settings.nameservers,
-            vec![IpAddr::from([1, 1, 1, 1])]
-        );
-        assert_eq!(
-            config.plugins.dig.settings.nameservers,
-            crate::plugin::dig::Settings::default().nameservers
-        );
+        // The sections were removed from the config and returned to the caller; the plugin
+        // values themselves are asserted in the plugins crate's configuration tests.
+        assert_eq!(plugins.unknown.len(), 0);
+    }
+
+    #[test]
+    fn host_config_mirrors_the_visible_subset() {
+        let config = Figment::new()
+            .merge(Toml::string(FULL_BASE))
+            .merge(Toml::string("[irc]\nadmin_hostmasks = [\"mk!mk@*\"]\n"))
+            .extract::<Config>()
+            .expect("configuration should parse");
+
+        let host = zeta_plugin::config::HostConfig::from(&config);
+
+        assert_eq!(host.http, config.http);
+        assert_eq!(host.admin_hostmasks, ["mk!mk@*"]);
     }
 }

@@ -1,12 +1,5 @@
 use std::time::Duration;
 
-/// The `User-Agent` header to send when issuing HTTP requests.
-pub const HTTP_USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0";
-
-/// The duration before a HTTP request times out.
-pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// The default value for the minimum number of connections the database connection pool should
 /// maintain at all times.
 pub const DEFAULT_MIN_DB_CONNECTIONS: u32 = 1;

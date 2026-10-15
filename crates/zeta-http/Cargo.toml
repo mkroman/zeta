@@ -1,0 +1,56 @@
+[package]
+name = "zeta-http"
+version = "0.0.0"
+edition = "2024"
+description = "HTTP client infrastructure for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]
+
+[features]
+# Plain reqwest HTTP wrappers.
+http = ["dep:reqwest", "dep:serde_json", "dep:serde_path_to_error"]
+# The transport-error wrapper alone (used by the mirror crate without the HTTP stack).
+request = ["dep:reqwest"]
+# Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
+emulated = ["dep:wreq", "dep:wreq-util"]
+# OAuth2 client-credentials token caching.
+oauth = ["http"]
+native-tls = ["reqwest?/native-tls"]
+native-tls-vendored = ["reqwest?/native-tls-vendored"]
+rustls = ["reqwest?/rustls"]
+
+# The `prefix-symbols` feature is only supported on non-Apple targets: btls-sys
+# skips prefixing the BoringSSL libraries on macOS but still applies the prefix
+# to the generated bindgen bindings, so enabling it there fails the final link
+# with undefined `build_script_main_*` symbols.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "webpki-roots", "prefix-symbols", "stream", "gzip", "brotli", "deflate", "zstd"], optional = true }
+wreq-util = { version = "0.2.0", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "webpki-roots", "stream", "gzip", "brotli", "deflate", "zstd"], optional = true }
+wreq-util = { version = "0.2.0", optional = true }
+
+[dependencies]
+reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"], optional = true }
+serde.workspace = true
+serde_json = { workspace = true, optional = true }
+serde_path_to_error = { workspace = true, optional = true }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

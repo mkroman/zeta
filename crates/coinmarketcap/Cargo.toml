@@ -1,0 +1,49 @@
+[package]
+name = "coinmarketcap"
+version = "0.1.0"
+edition = "2024"
+description = "A client for the CoinMarketCap Pro API."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+keywords = ["coinmarketcap", "crypto", "api"]
+categories = ["api-bindings"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["default-tls", "gzip", "brotli", "deflate", "zstd"]
+# The default TLS backend selection (rustls), convenient for `default-features = false`.
+default-tls = ["rustls"]
+# TLS backend using rustls with the bundled aws-lc-rs provider and platform verifier roots.
+rustls = ["reqwest/rustls"]
+# TLS backend provided by the operating system through native-tls.
+native-tls = ["reqwest/native-tls"]
+# Same as `native-tls`, but with a statically vendored OpenSSL.
+native-tls-vendored = ["reqwest/native-tls-vendored"]
+# Decompression of responses compressed with gzip.
+gzip = ["reqwest/gzip"]
+# Decompression of responses compressed with brotli.
+brotli = ["reqwest/brotli"]
+# Decompression of responses compressed with deflate.
+deflate = ["reqwest/deflate"]
+# Decompression of responses compressed with zstd.
+zstd = ["reqwest/zstd"]
+# Log each failed request with its query-free URL.
+log = []
+
+[dependencies]
+reqwest = { workspace = true, features = ["json", "query"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zeta-url = { path = "../zeta-url" }
+
+[dev-dependencies]
+tokio.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

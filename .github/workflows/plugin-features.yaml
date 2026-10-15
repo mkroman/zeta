@@ -1,0 +1,58 @@
+name: Plugin Features
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
+permissions:
+  contents: read
+
+jobs:
+  # Checks every bundled plugin in isolation — `--all-features` unification
+  # cannot catch a plugin whose feature table is missing a dependency. The list
+  # is the plugins crate's `all` table: the shared infrastructure features
+  # (http, database, the TLS backends) are not plugin checks.
+  plugin-features:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-plugin-features
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build each plugins feature in isolation
+        run: |
+          mapfile -t FEATURES < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "plugins") | .features.all[]')
+
+          if [ "${#FEATURES[@]}" -eq 0 ]; then
+            echo "::error::no plugins found in the plugins crate"
+            exit 1
+          fi
+
+          echo "checking ${#FEATURES[@]} plugins"
+
+          status=0
+          for feature in "${FEATURES[@]}"; do
+            echo "::group::plugins/$feature"
+            if ! cargo check -p zeta --no-default-features --features "plugins/$feature,rustls,database"; then
+              echo "::error::plugins/$feature does not build in isolation"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+
+          exit "$status"
