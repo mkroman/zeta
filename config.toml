@@ -362,8 +362,12 @@ name = "#zeta.dev"
   [plugins.tiktok]
   # Enable the plugin.
   enabled = true
+  # Whether to post a summary of the video's oEmbed metadata.
+  # post_summary = true
   # The maximum length of a video title before it gets truncated.
   # title_length = 150
+  # Whether to mirror videos to the S3 bucket configured in the [mirror] section.
+  # mirror = true
   # The key prefix that mirrored videos are uploaded under. Falls back to the `TIKTOK_S3_PREFIX`
   # environment variable, and to "tiktok" when neither is set.
   # prefix = "tiktok"
