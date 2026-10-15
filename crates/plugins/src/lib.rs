@@ -14,79 +14,9 @@ pub(crate) mod database;
 
 mod prelude;
 
-#[cfg(feature = "alert")]
-pub mod alert;
-#[cfg(feature = "chaturbate")]
-pub mod chaturbate;
-#[cfg(feature = "choices")]
-pub mod choices;
-#[cfg(feature = "coinmarketcap")]
-pub mod coinmarketcap;
-#[cfg(feature = "dendanskeordbog")]
-pub mod dendanskeordbog;
-#[cfg(feature = "dig")]
-pub mod dig;
-#[cfg(feature = "filter")]
-pub mod filter;
-#[cfg(feature = "gay")]
-pub mod gay;
-#[cfg(feature = "geoip")]
-pub mod geoip;
-#[cfg(feature = "github")]
-pub mod github;
-#[cfg(feature = "health")]
-pub mod health;
-#[cfg(feature = "help")]
-pub mod help;
-#[cfg(feature = "howlongtobeat")]
-pub mod howlongtobeat;
-#[cfg(feature = "imdb")]
-pub mod imdb;
-#[cfg(feature = "instagram")]
-pub mod instagram;
-#[cfg(feature = "isitopen")]
-pub mod isitopen;
-#[cfg(feature = "kagi")]
-pub mod kagi;
 /// The reply flow shared by the mirroring plugins.
 #[cfg(feature = "mirror")]
 pub(crate) mod mirror_reply;
-#[cfg(feature = "notification")]
-pub mod notification;
-#[cfg(feature = "ofn")]
-pub mod ofn;
-#[cfg(feature = "openweathermap")]
-pub mod openweathermap;
-#[cfg(feature = "pornhub")]
-pub mod pornhub;
-#[cfg(feature = "reddit")]
-pub mod reddit;
-#[cfg(feature = "rink")]
-pub mod rink;
-#[cfg(feature = "rust-playground")]
-pub mod rust_playground;
-#[cfg(feature = "spotify")]
-pub mod spotify;
-#[cfg(feature = "string-utils")]
-pub mod string_utils;
-#[cfg(feature = "thingiverse")]
-pub mod thingiverse;
-#[cfg(feature = "tiktok")]
-pub mod tiktok;
-#[cfg(feature = "titles")]
-pub mod titles;
-#[cfg(feature = "trustpilot")]
-pub mod trustpilot;
-#[cfg(feature = "tvmaze")]
-pub mod tvmaze;
-#[cfg(feature = "twitch")]
-pub mod twitch;
-#[cfg(feature = "unwall")]
-pub mod unwall;
-#[cfg(feature = "urban-dictionary")]
-pub mod urban_dictionary;
-#[cfg(feature = "youtube")]
-pub mod youtube;
 
 pub use config::PluginConfig;
 
@@ -99,14 +29,13 @@ use zeta_plugin::NoSettings;
 /// Declares the bundled plugins and generates the configuration and registration helpers.
 ///
 /// For each entry, it generates:
-/// 1. A [`zeta_plugin::PluginName`] implementation for the plugin's struct.
-/// 2. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
+/// 1. The plugin's module declaration, gated on the plugin's feature.
+/// 2. A [`zeta_plugin::PluginName`] implementation for the plugin's struct.
+/// 3. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
 ///    for plugins with settings, `=> NoSettings` otherwise.
-/// 3. A call to [`zeta_plugin::Registry::register`] inside [`register_bundled_plugins`], gated on
+/// 4. A call to [`zeta_plugin::Registry::register`] inside [`register_bundled_plugins`], gated on
 ///    the plugin's `enabled` configuration and passing the plugin's own settings through to its
 ///    constructor.
-///
-/// The plugin modules themselves are declared in this file, next to the invocation.
 macro_rules! declare_plugins {
     (
         $(
@@ -115,6 +44,11 @@ macro_rules! declare_plugins {
             $mod_name:ident :: $struct_name:ident => $settings:ty
         ),* $(,)?
     ) => {
+        $(
+            #[cfg(feature = $feature)]
+            pub mod $mod_name;
+        )*
+
         // The plugin name is the module name.
         $(
             #[cfg(feature = $feature)]
@@ -455,6 +389,29 @@ mod tests {
                     for name in declared_children(&source) {
                         declared.insert(child_dir.join(format!("{name}.rs")));
                         declared.insert(child_dir.join(name).join("mod.rs"));
+                    }
+
+                    // `declare_plugins!` entries declare their plugin module through the macro,
+                    // so the names are collected from the `mod::Struct => settings` entry
+                    // lines. The scan is loose on purpose: non-identifier heads (the macro's
+                    // matcher line, match arms elsewhere) are skipped, and a collected name
+                    // with no file behind it is harmless since only existing-but-undeclared
+                    // files fail.
+                    for line in source.lines() {
+                        let Some((entry, _)) = line.split_once(" => ") else {
+                            continue;
+                        };
+                        let Some((module, _)) = entry.trim_start().split_once("::") else {
+                            continue;
+                        };
+
+                        if !module.is_empty()
+                            && module
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        {
+                            declared.insert(child_dir.join(format!("{module}.rs")));
+                        }
                     }
                 }
             }
