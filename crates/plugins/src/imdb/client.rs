@@ -187,17 +187,14 @@ impl GraphQlClient {
             )
             .await?;
 
-        let results = data
-            .main_search
-            .map(|search| {
-                search
-                    .edges
-                    .into_iter()
-                    .filter_map(|edge| edge.node.entity)
-                    .map(SearchResult::from)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let results = data.main_search.map_or_default(|search| {
+            search
+                .edges
+                .into_iter()
+                .filter_map(|edge| edge.node.entity)
+                .map(SearchResult::from)
+                .collect()
+        });
 
         Ok(results)
     }
@@ -320,16 +317,13 @@ struct TitleNode {
 
 impl From<TitleNode> for Title {
     fn from(node: TitleNode) -> Self {
-        let genres = node
-            .title_genres
-            .map(|genres| {
-                genres
-                    .genres
-                    .into_iter()
-                    .filter_map(|genre| genre.genre.map(|genre| genre.text))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let genres = node.title_genres.map_or_default(|genres| {
+            genres
+                .genres
+                .into_iter()
+                .filter_map(|genre| genre.genre.map(|genre| genre.text))
+                .collect()
+        });
         let ratings = node.ratings_summary;
         let series = node.series.and_then(SeriesField::into_series_info);
 
@@ -454,17 +448,14 @@ impl From<NameNode> for Person {
                 .map(|text| text.plain_text)
                 .next()
         });
-        let known_for = node
-            .known_for
-            .map(|known| {
-                known
-                    .edges
-                    .into_iter()
-                    .filter_map(|edge| edge.node.title)
-                    .map(Title::from)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let known_for = node.known_for.map_or_default(|known| {
+            known
+                .edges
+                .into_iter()
+                .filter_map(|edge| edge.node.title)
+                .map(Title::from)
+                .collect()
+        });
 
         Self {
             id: node.id,

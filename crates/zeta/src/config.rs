@@ -242,6 +242,7 @@ mod tests {
         Figment,
         providers::{Format, Toml},
     };
+    use zeta_test_support::assert_empty;
 
     /// The base configuration the config tests start from.
     const FULL_BASE: &str = r#"
@@ -319,7 +320,7 @@ channels = []
             .extract::<Config>()
             .expect("the repository config.toml should parse");
 
-        assert!(config.plugins.unknown.is_empty());
+        assert_empty!(config.plugins.unknown);
     }
 
     #[test]
@@ -329,7 +330,7 @@ channels = []
             .extract::<Config>()
             .expect("configuration without a [plugins] section should parse");
 
-        assert!(config.plugins.unknown.is_empty());
+        assert_empty!(config.plugins.unknown);
     }
 
     #[test]

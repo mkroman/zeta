@@ -236,6 +236,7 @@ mod tests {
     use super::*;
     use zeta_http as http;
     use zeta_plugin::config::HttpConfig;
+    use zeta_test_support::assert_empty;
     use zeta_test_support::wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path, query_param},
@@ -275,7 +276,7 @@ mod tests {
         assert!(!service.covers("ft.com"));
         assert!(!service.covers("www.ft.com"));
         assert!(!service.covers("example.com"));
-        assert!(service.sites().is_empty());
+        assert_empty!(service.sites());
     }
 
     #[sqlx::test]
@@ -323,7 +324,7 @@ mod tests {
         assert_eq!(removed, ["*.bloomberg.com", "bloomberg.com"]);
         assert!(!service.covers("www.bloomberg.com"));
         assert!(!service.covers("bloomberg.com"));
-        assert!(service.sites().is_empty());
+        assert_empty!(service.sites());
 
         // The removal survives a fresh load, and re-adding brings the host back.
         service.load().await.unwrap();
@@ -350,7 +351,7 @@ mod tests {
 
         let removed = service.remove_matching("*.ft.com").await.unwrap();
 
-        assert!(removed.is_empty());
+        assert_empty!(removed);
         assert!(service.covers("bloomberg.com"));
     }
 

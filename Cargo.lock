@@ -5383,6 +5383,7 @@ dependencies = [
  "zeta-http",
  "zeta-mirror",
  "zeta-plugin",
+ "zeta-test-support",
  "zeta-url",
  "zeta-utils",
 ]
@@ -5392,6 +5393,7 @@ name = "zeta-cache"
 version = "0.0.0"
 dependencies = [
  "tokio",
+ "zeta-test-support",
  "zeta-utils",
 ]
 
@@ -5455,6 +5457,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "zeta-test-support",
  "zeta-utils",
 ]
 

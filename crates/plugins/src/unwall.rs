@@ -388,10 +388,7 @@ impl Unwall {
                     stats.urls,
                     stats.users,
                     stats.urls_today,
-                    stats
-                        .latest
-                        .map(|latest| latest.time_ago())
-                        .unwrap_or_default(),
+                    stats.latest.map_or_default(|latest| latest.time_ago()),
                 ),
             ),
             Ok(None) => reply(NAME, format!("No unwalled links for{RESET} {host}{COLOR}.")),

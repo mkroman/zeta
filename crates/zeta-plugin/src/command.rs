@@ -237,6 +237,8 @@ pub enum ArgsError {
 mod tests {
     use super::*;
 
+    use zeta_test_support::assert_empty;
+
     #[derive(FromArgs, Debug, PartialEq)]
     /// Test options.
     struct NameOpts {
@@ -351,7 +353,7 @@ mod tests {
 
         let opts: GreedyOpts = CMD.parse_words("").unwrap();
 
-        assert!(opts.args.is_empty());
+        assert_empty!(opts.args);
     }
 
     #[test]

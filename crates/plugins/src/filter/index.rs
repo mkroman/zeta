@@ -181,8 +181,7 @@ impl HostIndex {
     fn matches(&self, host: Option<&str>, sender: Option<Sender<'_>>, url: &Url) -> bool {
         let exact = host
             .and_then(|host| self.exact.get(host))
-            .map(Vec::as_slice)
-            .unwrap_or_default();
+            .map_or_default(Vec::as_slice);
 
         exact
             .iter()

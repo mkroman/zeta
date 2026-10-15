@@ -402,6 +402,8 @@ where
 mod ttl_map_tests {
     use super::*;
 
+    use zeta_test_support::assert_empty;
+
     fn ttl_map(ttl: Duration) -> TtlMap<String, u8> {
         TtlMap::with_negative_ttl(ttl, ttl / 2, 4)
     }
@@ -432,7 +434,7 @@ mod ttl_map_tests {
         assert_eq!(cache.get(&"a".to_string()), Some(7));
 
         // The uncontended flight entry is cleaned up afterwards.
-        assert!(cache.flights.lock().await.is_empty());
+        assert_empty!(cache.flights.lock().await);
     }
 
     #[tokio::test]
@@ -470,7 +472,7 @@ mod ttl_map_tests {
 
         // The last flight holder cleaned up, even though every waiter went through the
         // double-check instead of refreshing.
-        assert!(cache.flights.lock().await.is_empty());
+        assert_empty!(cache.flights.lock().await);
     }
 
     #[tokio::test]
@@ -505,7 +507,7 @@ mod ttl_map_tests {
         // released its flight — and every one of them released its own afterwards.
         assert_eq!(attempts.load(Ordering::SeqCst), 8);
         assert_eq!(cache.get(&"a".to_string()), None);
-        assert!(cache.flights.lock().await.is_empty());
+        assert_empty!(cache.flights.lock().await);
     }
 
     #[tokio::test]
@@ -607,7 +609,7 @@ mod ttl_map_tests {
 
         // A failing refresh must not leave its flight entry behind: unlike `entries`, the
         // flight map is neither bounded nor expired.
-        assert!(cache.flights.lock().await.is_empty());
+        assert_empty!(cache.flights.lock().await);
     }
 
     #[tokio::test]

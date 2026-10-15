@@ -88,6 +88,7 @@ mod tests {
         Error, Figment,
         providers::{Format, Toml},
     };
+    use zeta_test_support::assert_empty;
 
     use super::*;
     use crate::PluginsConfig;
@@ -139,7 +140,7 @@ enabled = false
             ]
         );
         assert!(!plugins.health.enabled);
-        assert!(plugins.unknown.is_empty());
+        assert_empty!(plugins.unknown);
     }
 
     #[test]
@@ -269,7 +270,7 @@ enabled = false
                 IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001]),
             ]
         );
-        assert!(config.unknown.is_empty());
+        assert_empty!(config.unknown);
     }
 
     #[test]
@@ -282,6 +283,6 @@ enabled = false
 
         assert!(config.dig.enabled);
         assert!(config.health.enabled);
-        assert!(config.unknown.is_empty());
+        assert_empty!(config.unknown);
     }
 }

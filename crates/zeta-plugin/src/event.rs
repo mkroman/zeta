@@ -734,6 +734,8 @@ impl Subscriptions {
 mod tests {
     use super::*;
 
+    use zeta_test_support::assert_empty;
+
     fn message(prefix: &str, command: &str, args: &[&str]) -> Arc<Message> {
         let prefix = (!prefix.is_empty()).then_some(prefix);
 
@@ -966,8 +968,8 @@ mod tests {
     fn default_subscriptions_are_empty() {
         let subscriptions = Subscriptions::new();
 
-        assert!(subscriptions.commands().is_empty());
+        assert_empty!(subscriptions.commands());
         assert_eq!(subscriptions.url_scope(), UrlScope::None);
-        assert!(subscriptions.events().is_empty());
+        assert_empty!(subscriptions.events());
     }
 }

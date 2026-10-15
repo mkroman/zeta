@@ -92,10 +92,9 @@ impl fmt::Display for RequestError {
             f.write_str(&self.kind)?;
         }
 
-        match self.host.as_deref() {
-            Some(host) => write!(f, " ({host})"),
-            None => Ok(()),
-        }
+        self.host
+            .as_deref()
+            .map_or(Ok(()), |host| write!(f, " ({host})"))
     }
 }
 

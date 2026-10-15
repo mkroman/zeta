@@ -231,9 +231,73 @@ macro_rules! settings_tests {
     };
 }
 
+/// Asserts that the expression is empty, naming the value in the panic.
+///
+/// A plain `assert!(value.is_empty())` only prints the condition on failure — useless for
+/// finding out what the stray entries were, which is the reasoning behind clippy's
+/// `assert_is_empty` lint — while the `assert_eq!` alternative needs brittle explicit types
+/// (`Vec::<String>::new()`, because `[]` does not typecheck for a `Vec<String>`). This macro
+/// prints the value without either problem.
+///
+/// An optional message follows the value, formatted like any `format!` invocation.
+///
+/// # Panics
+///
+/// Panics if the expression is not empty, printing its `Debug` rendering and, when given,
+/// the custom message.
+#[macro_export]
+macro_rules! assert_empty {
+    ($value:expr $(,)?) => {
+        match &$value {
+            value if value.is_empty() => {}
+            value => panic!("assertion failed: value is empty\n  value: {value:?}"),
+        }
+    };
+    ($value:expr, $($message:tt)+) => {
+        match &$value {
+            value if value.is_empty() => {}
+            value => panic!(
+                "assertion failed: value is empty\n  value: {value:?}\n{}",
+                format_args!($($message)+)
+            ),
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assert_empty_passes_on_empty_and_names_the_value_on_failure() {
+        assert_empty!(Vec::<String>::new());
+        let empty: [u8; 0] = [];
+        assert_empty!(empty);
+
+        let panic = std::panic::catch_unwind(|| assert_empty!(vec!["stray entry"]))
+            .expect_err("non-empty values must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(message.contains("value is empty"), "{message}");
+        assert!(message.contains(r#""stray entry""#), "{message}");
+    }
+
+    #[test]
+    fn assert_empty_appends_the_custom_message_to_the_panic() {
+        let panic = std::panic::catch_unwind(|| {
+            let channel = "#zeta";
+
+            assert_empty!(vec!["stray"], "{channel} must have no strays");
+        })
+        .expect_err("non-empty values must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(message.contains("#zeta must have no strays"), "{message}");
+    }
 
     #[tokio::test]
     async fn refused_get_fails_to_connect_with_the_query_attached() {

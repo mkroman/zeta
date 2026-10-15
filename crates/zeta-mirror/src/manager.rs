@@ -658,7 +658,7 @@ mod tests {
         assert!(matches!(error, Error::InvalidId(_)));
 
         // The request was rejected before it reached the downloader.
-        assert!(downloader.started.lock().unwrap().is_empty());
+        zeta_test_support::assert_empty!(downloader.started.lock().unwrap());
     }
 
     #[tokio::test]

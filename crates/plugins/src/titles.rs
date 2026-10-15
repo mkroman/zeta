@@ -603,8 +603,7 @@ const fn has_open_graph(metadata: &PageMetadata) -> bool {
 #[must_use]
 fn host_name(url: &Url) -> String {
     url.host_str()
-        .map(|host| host.strip_prefix("www.").unwrap_or(host))
-        .unwrap_or_default()
+        .map_or_default(|host| host.strip_prefix("www.").unwrap_or(host))
         .to_string()
 }
 
@@ -621,7 +620,7 @@ fn tag_attr<'a>(tag: &'a Tag, name: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
     use zeta_plugin::CatalogEntry;
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::{assert_empty, settings_tests};
 
     /// Tokenizes `html` in a single chunk and returns the captured metadata.
     fn parse_metadata(html: &str) -> PageMetadata {
@@ -987,7 +986,7 @@ mod tests {
         Settings,
         settings,
         default: {
-            assert!(settings.ignored_hosts.is_empty());
+            assert_empty!(settings.ignored_hosts);
             assert_eq!(settings.max_redirects, 3);
             assert_eq!(settings.max_message_length, 400);
             assert_eq!(settings.max_description_length, 200);

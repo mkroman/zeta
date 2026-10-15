@@ -1,3 +1,15 @@
+//! A client and parser for the Reddit API.
+//!
+//! This crate provides an asynchronous [`Client`] for querying the Reddit API with OAuth2
+//! client-credentials, classifies reddit.com and redd.it URLs into [`Link`]s, and parses
+//! listing responses into [`Submission`], [`Subreddit`] and [`Comment`] models.
+//!
+//! ## Features
+//!
+//! - **`default-tls`** *(enabled by default)*: selects the default TLS backend (**`rustls`**).
+//!   Disable default features and choose a TLS backend explicitly with **`rustls`**,
+//!   **`native-tls`** or **`native-tls-vendored`**.
+
 use std::fmt::Write;
 use std::time::Duration;
 
@@ -12,6 +24,7 @@ pub use error::{Error, RequestError};
 
 /// Reddit API base URL.
 pub const BASE_URL: &str = "https://www.reddit.com";
+/// Reddit OAuth API base URL, for authenticated requests.
 pub const OAUTH_BASE_URL: &str = "https://oauth.reddit.com";
 /// The OAuth2 client-credentials token endpoint.
 pub const TOKEN_URL: &str = "https://www.reddit.com/api/v1/access_token";
@@ -74,30 +87,40 @@ pub enum Link {
     Video(String),
 }
 
+/// An item in a Reddit API listing response, tagged by the API's `kind` discriminator.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum Item {
+    /// A comment (`t1`).
     #[serde(rename = "t1")]
     Comment(Comment),
+    /// A subreddit (`t5`).
     #[serde(rename = "t5")]
     Subreddit(Subreddit),
+    /// A submission (`t3`).
     #[serde(rename = "t3")]
     Submission(Submission),
+    /// A listing of other items.
     #[serde(rename = "Listing")]
     Listing(Listing),
+    /// Any other item kind, kept as raw JSON.
     #[serde(untagged)]
     Other(serde_json::Value),
 }
 
+/// A listing of items, the container every API listing response wraps its children in.
 #[derive(Debug, Deserialize)]
 pub struct Listing {
+    /// The items in the listing.
     pub children: Vec<Item>,
 }
 
 /// Details about a submission.
 #[derive(Debug, Deserialize)]
 pub struct Submission {
+    /// The subreddit the submission is in.
     pub subreddit: String,
+    /// The title of the submission.
     pub title: String,
     /// Number of upvotes.
     pub ups: u32,
@@ -105,6 +128,7 @@ pub struct Submission {
     pub upvote_ratio: f32,
     /// The main selftext.
     pub selftext: String,
+    /// The URL of the submission — the outlink, or the Reddit URL for a self post.
     pub url: String,
     /// The unique base36 id of the submission.
     #[serde(default)]
@@ -119,7 +143,7 @@ pub struct Submission {
     ///
     /// The media of a crosspost lives on its parent.
     #[serde(default)]
-    pub crosspost_parent_list: Option<Vec<Submission>>,
+    pub crosspost_parent_list: Option<Vec<Self>>,
 }
 
 impl Submission {
@@ -155,7 +179,7 @@ impl Submission {
             self.crosspost_parent_list
                 .as_ref()?
                 .first()
-                .and_then(Submission::reddit_video)
+                .and_then(Self::reddit_video)
         })
     }
 }
@@ -200,13 +224,18 @@ pub struct Subreddit {
 /// Details about a comment.
 #[derive(Debug, Deserialize)]
 pub struct Comment {
+    /// The unique base36 id of the comment.
     pub id: String,
+    /// The comment body.
     pub body: String,
+    /// The comment body as HTML.
     pub body_html: String,
+    /// The subreddit the comment is in.
     pub subreddit: String,
 }
 
 /// Attempts to parse the given `url` as a reddit URL.
+#[must_use]
 pub fn classify_reddit_url(url: &Url) -> Option<Link> {
     match url.host_str() {
         Some("v.redd.it" | "i.redd.it" | "preview.redd.it") => classify_redd_it_url(url),
@@ -295,12 +324,12 @@ mod tests {
     use super::*;
 
     /// Asserts that every listed URL form classifies as `expected`.
-    fn assert_classifies(urls: &[&str], expected: Option<Link>) {
+    fn assert_classifies(urls: &[&str], expected: Option<&Link>) {
         for url_str in urls {
             let url = Url::parse(url_str).unwrap();
 
             assert_eq!(
-                classify_reddit_url(&url),
+                classify_reddit_url(&url).as_ref(),
                 expected,
                 "unexpected classification of {url_str}"
             );
@@ -314,7 +343,7 @@ mod tests {
                 "https://www.reddit.com/r/interestingasfuck/",
                 "https://www.reddit.com/r/interestingasfuck",
             ],
-            Some(Link::Subreddit("interestingasfuck".to_string())),
+            Some(&Link::Subreddit("interestingasfuck".to_string())),
         );
 
         assert_classifies(
@@ -322,7 +351,7 @@ mod tests {
                 "https://www.reddit.com/user/cealild/",
                 "https://www.reddit.com/user/cealild",
             ],
-            Some(Link::User("cealild".to_string())),
+            Some(&Link::User("cealild".to_string())),
         );
 
         assert_classifies(
@@ -332,7 +361,7 @@ mod tests {
                 "https://www.reddit.com/r/europe/comments/1nh144u/",
                 "https://www.reddit.com/r/europe/comments/1nh144u",
             ],
-            Some(Link::Submission {
+            Some(&Link::Submission {
                 id: "1nh144u".to_string(),
                 subreddit: "europe".to_string(),
             }),
@@ -343,7 +372,7 @@ mod tests {
                 "https://www.reddit.com/r/europe/comments/1nh144u/germany_are_2025_eurobasket_champions/ne86mgl/",
                 "https://www.reddit.com/r/europe/comments/1nh144u/germany_are_2025_eurobasket_champions/ne86mgl",
             ],
-            Some(Link::Comment {
+            Some(&Link::Comment {
                 id: "ne86mgl".to_string(),
                 submission: "1nh144u".to_string(),
                 subreddit: "europe".to_string(),
@@ -355,19 +384,19 @@ mod tests {
                 "https://www.reddit.com/comments/1nh144u/",
                 "https://www.reddit.com/comments/1nh144u",
             ],
-            Some(Link::Comments {
+            Some(&Link::Comments {
                 id: "1nh144u".to_string(),
             }),
         );
 
         assert_classifies(
             &["https://www.reddit.com/gallery/1nj9601"],
-            Some(Link::Gallery("1nj9601".to_string())),
+            Some(&Link::Gallery("1nj9601".to_string())),
         );
 
         assert_classifies(
             &["https://www.reddit.com/r/linuxmemes/s/dmwUYLKTjd"],
-            Some(Link::Shortened {
+            Some(&Link::Shortened {
                 subreddit: "linuxmemes".to_string(),
                 id: "dmwUYLKTjd".to_string(),
             }),
@@ -378,12 +407,12 @@ mod tests {
     fn parse_media_urls() {
         assert_classifies(
             &["https://i.redd.it/gvjukykex8pf1.jpeg"],
-            Some(Link::Image("/gvjukykex8pf1.jpeg".to_string())),
+            Some(&Link::Image("/gvjukykex8pf1.jpeg".to_string())),
         );
 
         assert_classifies(
             &["https://preview.redd.it/nry00uecp5pf1.png?width=1497&format=png&auto=webp&s=69be11a8f3a211e485c44db89dc0f3023cdbfaf6"],
-            Some(Link::Preview("/nry00uecp5pf1.png?width=1497&format=png&auto=webp&s=69be11a8f3a211e485c44db89dc0f3023cdbfaf6".to_string())),
+            Some(&Link::Preview("/nry00uecp5pf1.png?width=1497&format=png&auto=webp&s=69be11a8f3a211e485c44db89dc0f3023cdbfaf6".to_string())),
         );
 
         assert_classifies(
@@ -392,7 +421,7 @@ mod tests {
                 "https://v.redd.it/b2l87x1pyn7h1",
                 "https://v.redd.it/b2l87x1pyn7h1/",
             ],
-            Some(Link::Video("b2l87x1pyn7h1".to_string())),
+            Some(&Link::Video("b2l87x1pyn7h1".to_string())),
         );
     }
 
