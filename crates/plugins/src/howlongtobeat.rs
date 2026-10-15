@@ -4,12 +4,11 @@
 //! completion times in words: Main Story, Main + Extra, and Completionist — each rendered as
 //! `--` when the game has no recorded time. No matches and fetch errors are sent as a notice.
 //!
-//! The site's unauthenticated API requires per-installation credentials: the plugin bootstraps
-//! a token and homepage key/value pair from the init endpoint, caches them in memory, sends
-//! them as request headers, and on a `403 Forbidden` refreshes the credentials and retries the
-//! search once.
+//! The site's unauthenticated API requires a short-lived search token: the plugin bootstraps it
+//! from the init endpoint, caches it in memory, sends it as the `x-auth-token` header, and on a
+//! `403 Forbidden` refreshes the token and retries the search once. The token binds the caller's
+//! IP address and User-Agent, so the init and search requests must go through one client.
 
-use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::{
@@ -27,11 +26,11 @@ use zeta_utils::duration::{HOURS_AND_MINUTES, words};
 const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
 
-/// How long the cached API credentials stay in use before a new set is requested.
+/// How long the cached search token stays in use before a new one is requested.
 ///
-/// The credentials are valid until the API starts rejecting them with a `403 Forbidden`, which
-/// triggers an unconditional refresh, so the TTL only bounds how long outdated credentials can
-/// survive without triggering the rejection path.
+/// The token is valid until the API starts rejecting it with a `403 Forbidden`, which triggers
+/// an unconditional refresh, so the TTL only bounds how long an outdated token can survive
+/// without triggering the rejection path.
 const AUTH_TTL: Duration = Duration::from_hours(1);
 
 /// The `.hltb` command.
@@ -44,35 +43,20 @@ const HLTB: CommandSpec = CommandSpec::new(".hltb", "Look up a game's completion
 pub struct HowLongToBeat {
     /// The HTTP client used for requests.
     client: reqwest::Client,
-    /// Cached authentication data (token and homepage key/value).
-    auth: TtlCache<AuthData>,
+    /// Cached search token.
+    auth: TtlCache<String>,
 }
 
 /// Errors that can occur during API interactions.
 pub type Error = http::ApiError;
 
-/// Cached authentication credentials required by the API.
-#[derive(Debug, Clone)]
-struct AuthData {
-    /// The standard authorization token.
-    token: String,
-    /// The dynamically generated homepage key.
-    hp_key: String,
-    /// The dynamically generated homepage value.
-    hp_val: String,
-}
-
 /// The response payload received from the initialization endpoint.
 #[derive(Debug, Deserialize)]
 struct InitResponse {
     token: String,
-    #[serde(rename = "hpKey")]
-    hp_key: String,
-    #[serde(rename = "hpVal")]
-    hp_val: String,
 }
 
-/// The request body sent to the `/api/find` endpoint to search for games.
+/// The request body sent to the search endpoint, mirroring the site's own payload.
 #[derive(Debug, Serialize)]
 struct SearchRequest<'a> {
     #[serde(rename = "searchType")]
@@ -86,9 +70,6 @@ struct SearchRequest<'a> {
     search_options: SearchOptions,
     #[serde(rename = "useCache")]
     use_cache: bool,
-    /// Dynamically injects the homepage key/value into the root of the JSON payload.
-    #[serde(flatten)]
-    homepage_data: HashMap<String, String>,
 }
 
 /// Comprehensive configuration options for the search query.
@@ -107,7 +88,7 @@ struct SearchOptions {
 struct GamesOptions {
     #[serde(rename = "userId")]
     user_id: u32,
-    platform: String,
+    platform: FacetFilter,
     #[serde(rename = "sortCategory")]
     sort_category: String,
     #[serde(rename = "rangeCategory")]
@@ -115,32 +96,44 @@ struct GamesOptions {
     #[serde(rename = "rangeTime")]
     range_time: RangeTime,
     gameplay: GameplayOptions,
-    #[serde(rename = "rangeYear")]
-    range_year: RangeYear,
+    year: FacetFilter,
     modifier: String,
 }
 
 /// Time range filters for completion data.
+///
+/// The site sends `null` bounds, which the endpoint requires — omitting the keys entirely
+/// rejects the request — so `None` must keep serializing as `null`.
 #[derive(Debug, Serialize)]
 struct RangeTime {
     min: Option<u32>,
     max: Option<u32>,
 }
 
-/// Release year filters for games.
+/// An unset search facet, matching the site's `{"mode":"include","values":[]}` payload.
+///
+/// `values` is a `Vec<()>` so it stays permanently empty while still serializing as `[]`.
 #[derive(Debug, Serialize)]
-struct RangeYear {
-    min: String,
-    max: String,
+struct FacetFilter {
+    mode: &'static str,
+    values: Vec<()>,
+}
+
+impl Default for FacetFilter {
+    fn default() -> Self {
+        Self {
+            mode: "include",
+            values: Vec::new(),
+        }
+    }
 }
 
 /// Options filtering by gameplay styles and genres.
 #[derive(Debug, Serialize)]
 struct GameplayOptions {
-    perspective: String,
-    flow: String,
-    genre: String,
-    difficulty: String,
+    perspective: FacetFilter,
+    flow: FacetFilter,
+    genre: FacetFilter,
 }
 
 /// Options filtering by user data.
@@ -182,7 +175,7 @@ impl Default for SearchOptions {
         Self {
             games: GamesOptions {
                 user_id: 0,
-                platform: String::new(),
+                platform: FacetFilter::default(),
                 sort_category: "popular".to_string(),
                 range_category: "main".to_string(),
                 range_time: RangeTime {
@@ -190,15 +183,11 @@ impl Default for SearchOptions {
                     max: None,
                 },
                 gameplay: GameplayOptions {
-                    perspective: String::new(),
-                    flow: String::new(),
-                    genre: String::new(),
-                    difficulty: String::new(),
+                    perspective: FacetFilter::default(),
+                    flow: FacetFilter::default(),
+                    genre: FacetFilter::default(),
                 },
-                range_year: RangeYear {
-                    min: String::new(),
-                    max: String::new(),
-                },
+                year: FacetFilter::default(),
                 modifier: String::new(),
             },
             users: UsersOptions {
@@ -259,31 +248,31 @@ impl Plugin<Context> for HowLongToBeat {
 }
 
 impl HowLongToBeat {
-    /// Acquires valid API authentication credentials.
+    /// Acquires a valid API search token.
     ///
-    /// Returns the cached data if it exists, otherwise requests new data from the initialization endpoint.
-    async fn get_auth(&self) -> Result<AuthData, Error> {
+    /// Returns the cached token if it exists, otherwise requests a new one from the
+    /// initialization endpoint.
+    async fn get_auth(&self) -> Result<String, Error> {
         self.auth.get_or_refresh(|| self.fetch_auth()).await
     }
 
-    /// Fetches a fresh authorization token and homepage key/value pair from the API.
-    async fn fetch_auth(&self) -> Result<AuthData, Error> {
+    /// Fetches a fresh search token from the initialization endpoint.
+    ///
+    /// The token binds the caller's IP address and User-Agent, so it is only valid for
+    /// requests made through the same client.
+    async fn fetch_auth(&self) -> Result<String, Error> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
 
-        let url = format!("{BASE_URL}/api/bleed/init?t={timestamp}");
-        debug!("refreshing hltb token and homepage data");
+        let url = format!("{BASE_URL}/api/search/site/init?t={timestamp}");
+        debug!("refreshing hltb search token");
 
         let request = self.client.get(&url).header(REFERER, REFERER_URL);
         let init: InitResponse = http::get_json(request).await?;
 
-        Ok(AuthData {
-            token: init.token,
-            hp_key: init.hp_key,
-            hp_val: init.hp_val,
-        })
+        Ok(init.token)
     }
 
     /// Performs a search for a specific game query.
@@ -291,17 +280,17 @@ impl HowLongToBeat {
     /// If the request returns a `403 Forbidden`, it assumes the token has expired,
     /// refreshes the credentials, and automatically retries the request once.
     async fn search(&self, query: &str) -> Result<Vec<Game>, Error> {
-        let auth = self.get_auth().await?;
+        let token = self.get_auth().await?;
 
-        match self.perform_search_request(&auth, query).await {
+        match self.perform_search_request(&token, query).await {
             Ok(results) => Ok(results),
             Err(http::ApiError::Status {
                 status: StatusCode::FORBIDDEN,
                 ..
             }) => {
                 warn!("hltb token expired, refreshing...");
-                let new_auth = self.auth.force_refresh(|| self.fetch_auth()).await?;
-                self.perform_search_request(&new_auth, query).await
+                let new_token = self.auth.force_refresh(|| self.fetch_auth()).await?;
+                self.perform_search_request(&new_token, query).await
             }
             Err(e) => Err(e),
         }
@@ -310,15 +299,11 @@ impl HowLongToBeat {
     /// Executes the HTTP POST request to the API with the necessary headers and payload.
     async fn perform_search_request(
         &self,
-        auth: &AuthData,
+        token: &str,
         query: &str,
     ) -> Result<Vec<Game>, Error> {
-        let url = format!("{BASE_URL}/api/bleed");
+        let url = format!("{BASE_URL}/api/search/site");
         let search_terms: Vec<&str> = query.split_whitespace().collect();
-
-        // Inject the homepage key/value dynamically into the JSON root.
-        let mut homepage_data = HashMap::new();
-        homepage_data.insert(auth.hp_key.clone(), auth.hp_val.clone());
 
         let body = SearchRequest {
             search_type: "games",
@@ -327,16 +312,13 @@ impl HowLongToBeat {
             size: 20,
             search_options: SearchOptions::default(),
             use_cache: true,
-            homepage_data,
         };
 
         let request = self
             .client
             .post(&url)
             .header(REFERER, REFERER_URL)
-            .header("x-auth-token", &auth.token)
-            .header("x-hp-key", &auth.hp_key)
-            .header("x-hp-val", &auth.hp_val)
+            .header("x-auth-token", token)
             .header(CONTENT_TYPE, "application/json")
             .json(&body);
         let response_data: SearchResponse = http::get_json(request).await?;
@@ -374,8 +356,78 @@ mod tests {
     use super::*;
 
     #[test]
+    fn search_request_serializes_to_the_site_payload() {
+        let body = SearchRequest {
+            search_type: "games",
+            search_terms: vec!["outer", "wilds"],
+            search_page: 1,
+            size: 20,
+            search_options: SearchOptions::default(),
+            use_cache: true,
+        };
+
+        // The endpoint rejects requests that omit any of these keys, e.g. `rangeTime`'s bounds
+        // must be present as `null` — so the exact shape is pinned, not just the happy fields.
+        assert_eq!(
+            serde_json::to_value(&body).unwrap(),
+            serde_json::json!({
+                "searchType": "games",
+                "searchTerms": ["outer", "wilds"],
+                "searchPage": 1,
+                "size": 20,
+                "searchOptions": {
+                    "games": {
+                        "userId": 0,
+                        "platform": {"mode": "include", "values": []},
+                        "sortCategory": "popular",
+                        "rangeCategory": "main",
+                        "rangeTime": {"min": null, "max": null},
+                        "gameplay": {
+                            "perspective": {"mode": "include", "values": []},
+                            "flow": {"mode": "include", "values": []},
+                            "genre": {"mode": "include", "values": []}
+                        },
+                        "year": {"mode": "include", "values": []},
+                        "modifier": ""
+                    },
+                    "users": {"sortCategory": "postcount"},
+                    "lists": {"sortCategory": "follows"},
+                    "filter": "",
+                    "sort": 0,
+                    "randomizer": 0
+                },
+                "useCache": true
+            })
+        );
+    }
+
+    #[test]
     fn formats_missing_completion_times_as_placeholder() {
         assert_eq!(format_seconds(0), "--");
+    }
+
+    /// Live smoke test against HowLongToBeat's search API, to catch contract drift the payload
+    /// test cannot. Run with `cargo test -p plugins --all-features -- --ignored howlongtobeat::`.
+    #[tokio::test]
+    #[ignore = "needs network access"]
+    async fn live_api_contract_smoke() {
+        use zeta_plugin::config::HttpConfig;
+
+        let plugin = HowLongToBeat {
+            client: http::build_client(&HttpConfig::default()),
+            auth: TtlCache::new(AUTH_TTL),
+        };
+
+        let games = plugin.search("breath of the wild").await.unwrap();
+        assert!(!games.is_empty());
+        assert!(
+            games[0].game_name.contains("Breath of the Wild"),
+            "{:?}",
+            games[0].game_name
+        );
+        assert!(games[0].comp_main > 0);
+
+        println!("{}", format_game(&games[0]));
     }
 
     #[test]
