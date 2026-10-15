@@ -1,4 +1,4 @@
-name: Doc
+name: Rustdoc
 
 on:
   workflow_call:
@@ -12,8 +12,7 @@ on:
         default: "stable"
         type: string
 
-      # The following inputs are ordered after the ones above because their
-      # default values depends on them already being declared.
+      # Ordered after the inputs their defaults depend on.
       cache-key:
         description: "Shared cache key"
         default: "ci-${{ inputs.toolchain }}"
@@ -31,7 +30,7 @@ permissions:
 
 jobs:
   doc:
-    name: Rustdoc
+    name: Build
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout source

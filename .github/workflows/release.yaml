@@ -55,6 +55,12 @@ jobs:
       - check
     uses: $/.github/workflows/doc.yaml
 
+  plugin_features:
+    name: Plugin Features
+    needs:
+      - check
+    uses: $/.github/workflows/plugin-features.yaml
+
   container_image:
     name: Container Image
     needs:
@@ -67,9 +73,7 @@ jobs:
         type=ref,event=tag
       cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/buildcache
       cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/buildcache,mode=max
-    # Pushing the image and registry buildcache to ghcr needs packages: write.
-    # Job-level permissions replace the workflow-level ones entirely, and the
-    # called workflow requests contents: read for its checkout.
+    # Job-level permissions replace the workflow-level ones entirely.
     permissions:
       contents: read
       packages: write
@@ -105,8 +109,7 @@ jobs:
           VERSION="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "zeta") | .version')"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
       - name: Install cargo-auditable
-        # Note that we're deliberately avoiding reusing the build cache. The
-        # tool itself is installed from its checksummed release binary.
+        # Deliberately not reusing the build cache: installed from a checksummed binary.
         run: bash hack/install-cargo-tool.sh cargo-auditable "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: Build
         run: cargo auditable build --release
@@ -140,11 +143,11 @@ jobs:
   draft-release:
     name: Create Draft Release
     runs-on: ubuntu-latest
-    # Runs once the tests, container images and release builds have all passed,
-    # producing a draft release for the maintainer to review and publish.
+    # Produces a draft release for the maintainer to review and publish.
     needs:
       - check
       - test
+      - plugin_features
       - container_image
       - build
     permissions:
@@ -161,9 +164,7 @@ jobs:
           path: artifacts
           merge-multiple: false
       - name: Stage release assets
-        # Each artifact holds a single file, but the file names are shared
-        # across platforms (`zeta`, `zeta.debug`), so rename them to the
-        # artifact names for unique release assets.
+        # Artifact file names are shared across platforms, so rename to the artifact names.
         run: |-
           mkdir assets
           for dir in artifacts/zeta-*/; do
@@ -172,9 +173,7 @@ jobs:
             mv "${file}" "assets/${name}"
           done
       - name: Create draft release
-        # `--generate-notes` builds the body from the commits since the last
-        # release tag; the title defaults to the tag name. Guarded so that
-        # re-runs skip creation and go straight to uploading the assets.
+        # Guarded so re-runs skip creation and go straight to uploading the assets.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |-

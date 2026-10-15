@@ -12,13 +12,11 @@ permissions:
   contents: read
 
 jobs:
-  # Builds zeta once per feature of the plugins crate with that feature as the only one
-  # enabled: `--all-features` cannot catch a plugin or infrastructure feature whose feature
-  # table is missing a dependency, since unification always turns everything on. The list is
-  # read from the plugins crate's manifest, so a new feature is covered without touching this
-  # workflow.
+  # Checks every plugins feature in isolation — `--all-features` unification
+  # cannot catch a feature whose table is missing a dependency. The list comes
+  # from the manifest, so new features are covered without touching this file.
   plugin-features:
-    name: Plugin feature builds
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
