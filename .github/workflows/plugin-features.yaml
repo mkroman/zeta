@@ -12,9 +12,10 @@ permissions:
   contents: read
 
 jobs:
-  # Checks every plugins feature in isolation — `--all-features` unification
-  # cannot catch a feature whose table is missing a dependency. The list comes
-  # from the manifest, so new features are covered without touching this file.
+  # Checks every bundled plugin in isolation — `--all-features` unification
+  # cannot catch a plugin whose feature table is missing a dependency. The list
+  # is the plugins crate's `all` table: the shared infrastructure features
+  # (http, database, the TLS backends) are not plugin checks.
   plugin-features:
     name: Build
     runs-on: ubuntu-latest
@@ -35,15 +36,14 @@ jobs:
       - name: Build each plugins feature in isolation
         run: |
           mapfile -t FEATURES < <(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "plugins") | .features | keys[]' \
-            | grep -v -E '^(default|all)$')
+            | jq -r '.packages[] | select(.name == "plugins") | .features.all[]')
 
           if [ "${#FEATURES[@]}" -eq 0 ]; then
-            echo "::error::no features found in the plugins crate"
+            echo "::error::no plugins found in the plugins crate"
             exit 1
           fi
 
-          echo "checking ${#FEATURES[@]} features"
+          echo "checking ${#FEATURES[@]} plugins"
 
           status=0
           for feature in "${FEATURES[@]}"; do
