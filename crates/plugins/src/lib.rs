@@ -14,6 +14,10 @@ pub(crate) mod database;
 
 mod prelude;
 
+/// Admin hostmask matching shared by the plugins that gate commands on `[irc] admin_hostmasks`.
+#[cfg(feature = "filter")]
+pub(crate) mod hostmask;
+
 /// The reply flow shared by the mirroring plugins.
 #[cfg(feature = "mirror")]
 pub(crate) mod mirror_reply;
