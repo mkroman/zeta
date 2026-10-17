@@ -61,16 +61,25 @@ macro_rules! declare_plugins {
         ///
         /// Each plugin has its own section keyed by its module name, e.g. `[plugins.dig]`.
         /// Sections are type-checked at startup and always present; a section that is omitted
-        /// entirely defaults to `enabled = true` with default settings. The `enabled` key is
-        /// managed by the host; every other key belongs to the plugin's settings type.
+        /// entirely takes the global [`PluginsConfig::enabled_by_default`] with default
+        /// settings. The `enabled` key is managed by the host; every other key belongs to the
+        /// plugin's settings type.
         ///
-        /// Keys under `[plugins]` that do not match a bundled plugin name are collected in
-        /// [`PluginsConfig::unknown`] so the host can warn about likely typos. Unknown keys
-        /// inside a section are ignored and reported through
+        /// Keys under `[plugins]` that match neither the `enabled_by_default` toggle nor a
+        /// bundled plugin name are collected in [`PluginsConfig::unknown`] so the host can warn
+        /// about likely typos. Unknown keys inside a section are ignored and reported through
         /// [`PluginConfig::unknown_keys`](config::PluginConfig::unknown_keys), which the
         /// host also warns about.
-        #[derive(Clone, Debug, Default, Serialize)]
+        #[derive(Clone, Debug, Serialize)]
         pub struct PluginsConfig {
+            /// Whether a plugin that does not set `enabled` explicitly — or has no section at
+            /// all — is enabled.
+            ///
+            /// `true` (the default) makes plugins opt-out: every bundled plugin is enabled
+            /// unless its section says `enabled = false`. `false` makes them opt-in: a plugin
+            /// only runs when its section says `enabled = true`.
+            pub enabled_by_default: bool,
+
             $(
                 $(#[doc = $doc])*
                 #[cfg(feature = $feature)]
@@ -80,6 +89,19 @@ macro_rules! declare_plugins {
             /// Sections that match no bundled plugin, whether compiled in or not.
             #[serde(flatten)]
             pub unknown: HashMap<String, figment::value::Dict>,
+        }
+
+        impl Default for PluginsConfig {
+            fn default() -> Self {
+                Self {
+                    enabled_by_default: true,
+                    $(
+                        #[cfg(feature = $feature)]
+                        $mod_name: $crate::config::PluginConfig::default(),
+                    )*
+                    unknown: HashMap::new(),
+                }
+            }
         }
 
         // Deserialize the `[plugins]` section one plugin at a time instead of deriving
@@ -96,19 +118,40 @@ macro_rules! declare_plugins {
                 #[allow(unused_mut)]
                 let mut sections =
                     HashMap::<String, figment::value::Value>::deserialize(deserializer)?;
-                let mut config = Self::default();
+
+                // The global opt-in/opt-out toggle is pulled out first so it is not reported
+                // as an unknown section.
+                let enabled_by_default = match sections.remove("enabled_by_default") {
+                    Some(value) => bool::deserialize(&value).map_err(|error| {
+                        D::Error::custom(format!(
+                            "invalid `enabled_by_default` key: {error}"
+                        ))
+                    })?,
+                    None => true,
+                };
+                #[allow(unused_mut)]
+                let mut config = Self {
+                    enabled_by_default,
+                    ..Self::default()
+                };
 
                 $(
                     #[cfg(feature = $feature)]
                     if let Some(section) = sections.remove(stringify!($mod_name)) {
-                        config.$mod_name =
-                            $crate::config::PluginConfig::<$settings>::deserialize(&section)
-                                .map_err(|error| {
-                                    D::Error::custom(format!(
-                                        "invalid `{}` plugin section: {error}",
-                                        stringify!($mod_name)
-                                    ))
-                                })?;
+                        config.$mod_name = $crate::config::PluginConfig::<$settings>::deserialize_with_default(
+                            &section,
+                            enabled_by_default,
+                        )
+                        .map_err(|error| {
+                            D::Error::custom(format!(
+                                "invalid `{}` plugin section: {error}",
+                                stringify!($mod_name)
+                            ))
+                        })?;
+                    } else {
+                        // A section that is omitted entirely follows the global default too,
+                        // so an opt-in configuration really leaves every unlisted plugin out.
+                        config.$mod_name.enabled = enabled_by_default;
                     }
                 )*
 

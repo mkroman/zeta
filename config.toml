@@ -103,11 +103,16 @@ name = "#zeta.dev"
 
 # Plugin Configuration.
 #
-# Every plugin has a section keyed by its name, with an `enabled` toggle that defaults to true.
-# Plugin-specific settings are type-checked at startup; malformed values abort startup with a
-# diagnostic pointing at the key. Sections for plugins that are not compiled in are reported as
-# possible typos.
+# Every plugin has a section keyed by its name, with an `enabled` toggle. Plugins that do not set
+# one, or that have no section at all, follow the `enabled_by_default` toggle below: with the
+# default `true` they are opt-out, with `false` they are opt-in. Plugin-specific settings are
+# type-checked at startup; malformed values abort startup with a diagnostic pointing at the key.
+# Sections for plugins that are not compiled in are reported as possible typos.
 [plugins]
+  # Whether plugins without an explicit `enabled` toggle are enabled (true, opt-out) or disabled
+  # (false, opt-in). Defaults to true.
+  enabled_by_default = true
+
   # Time-based user alerts.
   [plugins.alert]
   # Enable the plugin.
