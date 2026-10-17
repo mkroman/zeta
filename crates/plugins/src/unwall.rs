@@ -15,9 +15,9 @@
 //!
 //! Coverage is managed with the `.unwall add` and `.unwall rm`/`del`/`delete` commands,
 //! restricted to admins: a sender is an admin when their `nick!user@host` matches one of the
-//! hostmasks configured in `[irc] admin_hostmasks` (shared with the `.filter` plugin). With no
-//! hostmasks configured, nobody is an admin. `.unwall list`, `.unwall stats`, and
-//! `.unwall info <host>` are open to everyone.
+//! hostmasks configured in `[irc] admin_hostmasks` (the same crate-private `hostmask` module
+//! the `.filter` plugin uses). With no hostmasks configured, nobody is an admin.
+//! `.unwall list`, `.unwall stats`, and `.unwall info <host>` are open to everyone.
 //!
 //! Coverage is exactly what the admins allowed with `.unwall add`, whatever unwall.app itself
 //! has tested: nothing is covered until it is added, and `.unwall rm` takes a site out of the
@@ -47,9 +47,8 @@ use std::time::Duration;
 
 use argh::{ArgsInfo, FromArgs};
 use tracing::{Instrument, debug, warn};
-use wildmatch::WildMatch;
 
-use crate::filter::{compile_hostmasks, hostmask_matches};
+use crate::hostmask::Hostmasks;
 use crate::prelude::*;
 use zeta_http as http;
 use zeta_url::redact_url;
@@ -195,13 +194,13 @@ pub struct Unwall {
     service: Arc<UnwallService>,
     /// The compiled admin hostmasks; senders whose `nick!user@host` matches one of them are
     /// authorized to manage unwall sites.
-    admins: Vec<WildMatch>,
+    admins: Hostmasks,
 }
 
 impl Unwall {
     /// Whether `sender` is authorized to manage unwall sites.
     fn is_admin(&self, sender: Sender<'_>) -> bool {
-        hostmask_matches(&self.admins, sender)
+        self.admins.matches(sender)
     }
 
     /// Replies with the unauthorized message and yields `false` when `sender` is not an admin.
@@ -515,16 +514,7 @@ impl Plugin<Context> for Unwall {
             api_base,
         );
 
-        let admins = compile_hostmasks(&ctx.config.admin_hostmasks);
-
-        if admins.is_empty() {
-            tracing::warn!(
-                "no admin hostmasks configured; nobody is authorized to manage unwall sites \
-                 (set [irc] admin_hostmasks)"
-            );
-        } else {
-            debug!(count = admins.len(), "loaded admin hostmasks");
-        }
+        let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage unwall sites");
 
         Ok(Self {
             service: Arc::new(UnwallService::new(ctx.db.clone(), client, reader_base)),

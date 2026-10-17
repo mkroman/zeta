@@ -1,17 +1,23 @@
-//! Silences matched messages in channels with URL and sender filters.
+//! Silences matched senders and URLs in channels.
 //!
 //! Filters are managed with the `.filter add|list|delete` command and stored in the database,
 //! from which they are loaded into memory at launch. Every filter carries optional criteria —
 //! the channel, the host and path of a URL, and the nickname, username (ident), and hostname of
-//! the sender — where all of the set criteria must match for a message to be ignored. Patterns
-//! support `*` and `?` wildcards.
+//! the sender — where all of the set criteria must match. Patterns support `*` and `?`
+//! wildcards.
 //!
-//! The command is restricted to admins: a sender is an admin when their `nick!user@host`
-//! matches one of the hostmasks configured in `[irc] admin_hostmasks`, where each component
-//! supports wildcards. With no hostmasks configured, nobody is an admin.
+//! What a match means depends on the criteria: a filter with URL criteria (host or path)
+//! ignores the matching URLs, which the host's dispatcher drops before any URL plugin sees
+//! them. A filter with sender criteria only ignores the matching senders entirely: their
+//! commands do not trigger, their messages are not delivered to the message subscribers, and
+//! their URLs are ignored.
 //!
-//! The filter service is published to [`Context::shared`] when the plugin is constructed, so the
-//! URL-handling plugins can consult it through the [`Filters`] facade.
+//! The command is restricted to admins through `[irc] admin_hostmasks`: the hostmask matching
+//! lives in the crate-private `hostmask` module, shared with `.unwall`.
+//!
+//! The filter service is published to [`Context::shared`] as a type-erased [`UrlFilters`] handle
+//! when the plugin is constructed; the host's dispatcher consults it through the [`Filters`]
+//! facade before delivering URL events, so filtered URLs never reach the URL plugins.
 
 mod error;
 mod index;
@@ -23,15 +29,16 @@ mod service;
 // itself only handles them by value.
 #[allow(unused_imports)]
 pub use error::Error;
-pub use model::{Filter, NewFilter};
-pub use service::{Criteria, FilterService};
+pub use model::{Criteria, Filter, NewFilter};
+pub use service::FilterService;
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use argh::{ArgsInfo, FromArgs};
-use tracing::{debug, warn};
-use wildmatch::WildMatch;
+use tracing::debug;
 
+use crate::hostmask::Hostmasks;
 use crate::prelude::*;
 use zeta_utils::utils::{MAX_LISTING_LENGTH, append_entries_within_budget};
 
@@ -158,6 +165,13 @@ impl Add {
                 );
             }
 
+            if !channel.starts_with(['#', '&']) {
+                return Err(format!(
+                    "--channel should be a channel name starting with # or & — did you mean \
+                     #{channel}?"
+                ));
+            }
+
             Some(channel.to_owned())
         } else {
             Some(current_channel.to_owned())
@@ -202,25 +216,15 @@ impl Add {
 
     /// Returns one filter per host × path combination of the arguments.
     fn new_filters(&self, channel: Option<&str>, created_by: &str) -> Vec<NewFilter> {
-        let hosts: Vec<Option<String>> = if self.host.is_empty() {
-            vec![None]
-        } else {
-            self.host
-                .iter()
-                .map(|host| Some(host.trim().to_owned()))
-                .collect()
-        };
+        let hosts = expand(&self.host);
+        let paths = expand(&self.path);
+        let (nickname, username, hostname) = (
+            self.nick.as_deref().map(str::trim).map(str::to_owned),
+            self.user.as_deref().map(str::trim).map(str::to_owned),
+            self.hostname.as_deref().map(str::trim).map(str::to_owned),
+        );
 
-        let paths: Vec<Option<String>> = if self.path.is_empty() {
-            vec![None]
-        } else {
-            self.path
-                .iter()
-                .map(|path| Some(path.trim().to_owned()))
-                .collect()
-        };
-
-        let mut filters = Vec::new();
+        let mut filters = Vec::with_capacity(hosts.len() * paths.len());
 
         for host in &hosts {
             for path in &paths {
@@ -228,9 +232,9 @@ impl Add {
                     channel: channel.map(str::to_owned),
                     host: host.clone(),
                     path: path.clone(),
-                    nickname: trimmed(self.nick.as_deref()),
-                    username: trimmed(self.user.as_deref()),
-                    hostname: trimmed(self.hostname.as_deref()),
+                    nickname: nickname.clone(),
+                    username: username.clone(),
+                    hostname: hostname.clone(),
                     created_by: created_by.to_owned(),
                 });
             }
@@ -240,48 +244,51 @@ impl Add {
     }
 }
 
-/// Builds selection criteria from the pattern options the list and delete subcommands share.
-fn criteria_from(
-    channel: Option<&str>,
-    host: Option<&str>,
-    path: Option<&str>,
-    nick: Option<&str>,
-    user: Option<&str>,
-    hostname: Option<&str>,
-) -> Criteria {
-    Criteria {
-        channel: channel.map(str::to_owned),
-        host: host.map(str::to_owned),
-        path: path.map(str::to_owned),
-        nickname: nick.map(str::to_owned),
-        username: user.map(str::to_owned),
-        hostname: hostname.map(str::to_owned),
+/// Expands the repeated `--host` or `--path` values into filter fields: no values yield the
+/// single unset field, so a filter without either matches every URL. Repeated identical values
+/// are deduplicated — they would only create identical filters.
+fn expand(values: &[String]) -> Vec<Option<String>> {
+    let mut unique: Vec<String> = Vec::new();
+
+    for value in values {
+        let value = value.trim().to_owned();
+
+        if !unique.contains(&value) {
+            unique.push(value);
+        }
+    }
+
+    if unique.is_empty() {
+        vec![None]
+    } else {
+        unique.into_iter().map(Some).collect()
     }
 }
 
+/// Builds `Criteria` from the pattern options `list` and `delete` share.
 impl From<&List> for Criteria {
     fn from(list: &List) -> Self {
-        criteria_from(
-            list.channel.as_deref(),
-            list.host.as_deref(),
-            list.path.as_deref(),
-            list.nick.as_deref(),
-            list.user.as_deref(),
-            list.hostname.as_deref(),
-        )
+        Self {
+            channel: list.channel.clone(),
+            host: list.host.clone(),
+            path: list.path.clone(),
+            nickname: list.nick.clone(),
+            username: list.user.clone(),
+            hostname: list.hostname.clone(),
+        }
     }
 }
 
 impl From<&Delete> for Criteria {
     fn from(delete: &Delete) -> Self {
-        criteria_from(
-            delete.channel.as_deref(),
-            delete.host.as_deref(),
-            delete.path.as_deref(),
-            delete.nick.as_deref(),
-            delete.user.as_deref(),
-            delete.hostname.as_deref(),
-        )
+        Self {
+            channel: delete.channel.clone(),
+            host: delete.host.clone(),
+            path: delete.path.clone(),
+            nickname: delete.nick.clone(),
+            username: delete.user.clone(),
+            hostname: delete.hostname.clone(),
+        }
     }
 }
 
@@ -294,28 +301,26 @@ impl Delete {
     }
 }
 
-/// Returns `value` with surrounding whitespace trimmed, if set.
-fn trimmed(value: Option<&str>) -> Option<String> {
-    value.map(str::trim).map(str::to_owned)
+/// Formats `count` with the pluralized `noun`, e.g. `1 filter` or `3 filters`.
+fn plural(count: usize, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
-/// Compiles admin hostmasks into case-insensitive wildcard matchers, skipping blank entries.
-///
-/// Shared with the other plugins that gate commands on `[irc] admin_hostmasks`.
-pub(crate) fn compile_hostmasks(hostmasks: &[String]) -> Vec<WildMatch> {
-    hostmasks
-        .iter()
-        .map(|hostmask| hostmask.trim())
-        .filter(|hostmask| !hostmask.is_empty())
-        .map(WildMatch::new_case_insensitive)
-        .collect()
-}
+/// Room for a ` (+N more)` truncation suffix on a listing, covering counts up to five digits.
+const MORE_SUFFIX_RESERVE: usize = " (+99999 more)".len();
 
-/// Whether `sender`'s `nick!user@host` matches any of the compiled admin hostmasks.
-pub(crate) fn hostmask_matches(admins: &[WildMatch], sender: Sender<'_>) -> bool {
-    let hostmask = format!("{}!{}@{}", sender.nick, sender.username, sender.hostname);
-
-    admins.iter().any(|pattern| pattern.matches(&hostmask))
+/// The confirmation for the added or removed `filters`, describing each one so the sender can
+/// act on the ids without a follow-up `.filter list`.
+fn changed_response(name: &str, verb: &str, filters: &[Filter]) -> String {
+    match filters {
+        [filter] => reply(name, format!("{verb} {}.", describe(filter))),
+        // More than one filter, so the plural is always right.
+        filters => listing(
+            reply(name, format!("{verb} {} filters: ", filters.len())),
+            filters,
+            0,
+        ),
+    }
 }
 
 /// Filter plugin.
@@ -327,7 +332,7 @@ pub struct FilterPlugin {
     service: Arc<FilterService>,
     /// The compiled admin hostmasks; senders whose `nick!user@host` matches one of them are
     /// authorized to manage filters.
-    admins: Vec<WildMatch>,
+    admins: Hostmasks,
 }
 
 /// The reply sent to senders that are not authorized to manage filters.
@@ -336,7 +341,7 @@ const UNAUTHORIZED: &str = "You are not authorized to manage filters.";
 impl FilterPlugin {
     /// Whether `sender` is authorized to manage filters.
     fn is_admin(&self, sender: Sender<'_>) -> bool {
-        hostmask_matches(&self.admins, sender)
+        self.admins.matches(sender)
     }
 
     /// Adds one or more filters from the `add` subcommand.
@@ -357,35 +362,32 @@ impl FilterPlugin {
         };
 
         let new_filters = opts.new_filters(scope.as_deref(), nickname);
-        let count = new_filters.len();
-
-        // A single plain host filter gets a tailored confirmation.
-        let response = if let [new_filter] = new_filters.as_slice()
-            && new_filter.path.is_none()
-            && new_filter.nickname.is_none()
-            && new_filter.username.is_none()
-            && new_filter.hostname.is_none()
-            && let Some(host) = &new_filter.host
-        {
-            format!("The filter for {host} has been added.")
-        } else {
-            "The filter has been added.".to_string()
-        };
+        let total = new_filters.len();
+        let mut added = Vec::with_capacity(total);
 
         for new_filter in new_filters {
-            if let Err(error) = self.service.add(new_filter).await {
-                client.send_privmsg(
-                    channel,
-                    reply("Filter", format!("could not add the filter: {error}")),
-                )?;
+            match self.service.add(new_filter).await {
+                Ok(filter) => added.push(filter),
+                Err(error) => {
+                    let response = if added.is_empty() {
+                        format!("could not add the filter: {error}")
+                    } else {
+                        format!(
+                            "added {} of {total} filters, then could not add the rest: {error}",
+                            added.len()
+                        )
+                    };
 
-                return Ok(());
+                    client.send_privmsg(channel, reply("Filter", response))?;
+
+                    return Ok(());
+                }
             }
         }
 
-        debug!(count, "added filters");
+        debug!(count = total, "added filters");
 
-        client.send_privmsg(channel, reply("Filter", &response))?;
+        client.send_privmsg(channel, changed_response("Filter", "Added", &added))?;
 
         Ok(())
     }
@@ -395,22 +397,20 @@ impl FilterPlugin {
         let filters = self.service.select(&Criteria::from(opts));
 
         let response = if filters.is_empty() {
-            reply("Filter", "No filters match your criteria.")
+            if self.service.list().is_empty() {
+                reply("Filter", "No filters are configured.")
+            } else {
+                reply("Filter", "No filters match your criteria.")
+            }
         } else {
-            let mut listing = reply(
-                "Filter",
-                format!("{} filters matching your criteria: ", filters.len()),
-            );
-
-            append_entries_within_budget(
-                &mut listing,
-                filters.iter().map(describe),
-                ", ",
-                MAX_LISTING_LENGTH,
+            listing(
+                reply(
+                    "Filter",
+                    format!("{} matching your criteria: ", plural(filters.len(), "filter")),
+                ),
+                &filters,
                 0,
-            );
-
-            listing
+            )
         };
 
         client.send_privmsg(channel, response)?;
@@ -430,10 +430,18 @@ impl FilterPlugin {
                 return Ok(());
             }
 
+            // The removed filter is named in the reply, and an unknown id is answered without
+            // touching the database.
+            let Some(filter) = self.service.list().into_iter().find(|filter| filter.id == id)
+            else {
+                client.send_privmsg(channel, reply("Filter", format!("No filter with id {id}.")))?;
+
+                return Ok(());
+            };
+
             let response = match self.service.delete_ids(&[id]).await {
-                Ok(1) => "The filter has been removed.".to_string(),
-                Ok(0) => format!("No filter with id {id}."),
-                Ok(removed) => format!("{removed} filters have been removed."),
+                Ok(1) => format!("Removed {}.", describe(&filter)),
+                Ok(_) => format!("No filter with id {id}."),
                 Err(error) => format!("could not delete the filter: {error}"),
             };
 
@@ -447,7 +455,8 @@ impl FilterPlugin {
                 channel,
                 reply(
                     "Filter",
-                    "specify a filter id, or at least one criterion to match filters by",
+                    "specify a filter id, or at least one criterion to match filters by (e.g. \
+                     `.filter delete --host example.com`)",
                 ),
             )?;
 
@@ -465,31 +474,35 @@ impl FilterPlugin {
         let ids: Vec<i32> = filters.iter().map(|filter| filter.id).collect();
 
         if !opts.force {
-            let mut listing = reply(
-                "Filter",
-                format!(
-                    "{} filters matching the criteria will be deleted: ",
-                    filters.len()
+            const FORCE_SUFFIX: &str = " - use --force to proceed.";
+
+            let mut confirmation = listing(
+                reply(
+                    "Filter",
+                    format!(
+                        "{} matching the criteria will be deleted: ",
+                        plural(filters.len(), "filter")
+                    ),
                 ),
+                &filters,
+                FORCE_SUFFIX.len(),
             );
 
-            append_entries_within_budget(
-                &mut listing,
-                filters.iter().map(describe),
-                ", ",
-                MAX_LISTING_LENGTH,
-                " - use --force to proceed.".len(),
-            );
+            confirmation.push_str(FORCE_SUFFIX);
 
-            listing.push_str(" - use --force to proceed.");
-
-            client.send_privmsg(channel, listing)?;
+            client.send_privmsg(channel, confirmation)?;
 
             return Ok(());
         }
 
         let response = match self.service.delete_ids(&ids).await {
-            Ok(removed) => format!("{removed} filters have been removed."),
+            Ok(removed) if removed == filters.len() as u64 => {
+                changed_response("Filter", "Removed", &filters)
+            }
+            Ok(removed) => format!(
+                "Removed {removed} of {} matching filters.",
+                filters.len()
+            ),
             Err(error) => format!("could not delete the filters: {error}"),
         };
 
@@ -511,26 +524,15 @@ impl Plugin<Context> for FilterPlugin {
         subscriptions.command(FILTER);
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 
-        ctx.shared.publish(Arc::clone(&service));
+        ctx.shared.publish(Arc::new(UrlFilters::new(service.clone())));
 
-        let admins = compile_hostmasks(&ctx.config.admin_hostmasks);
-
-        if admins.is_empty() {
-            warn!(
-                "no admin hostmasks configured; nobody is authorized to manage filters \
-                 (set [irc] admin_hostmasks)"
-            );
-        } else {
-            debug!(count = admins.len(), "loaded admin hostmasks");
-        }
+        let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");
 
         Ok(Self { service, admins })
     }
 
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
-
-        debug!(count = self.service.list().len(), "loaded filters");
 
         Ok(())
     }
@@ -566,83 +568,62 @@ impl Plugin<Context> for FilterPlugin {
     }
 }
 
+/// Appends the described `filters` to `header`, within the line budget and leaving room for a
+/// suffix of `reserved` bytes. A listing that does not fit entirely gains a ` (+N more)`
+/// suffix naming how many filters were left out.
+fn listing(header: String, filters: &[Filter], reserved: usize) -> String {
+    let mut listing = header;
+
+    let appended = append_entries_within_budget(
+        &mut listing,
+        filters.iter().map(describe),
+        ", ",
+        MAX_LISTING_LENGTH,
+        reserved + MORE_SUFFIX_RESERVE,
+    );
+
+    let dropped = filters.len() - appended;
+
+    if dropped > 0 {
+        let _ = write!(listing, " (+{dropped} more)");
+    }
+
+    listing
+}
+
 /// Formats a filter for listings.
 fn describe(filter: &Filter) -> String {
-    let mut parts = Vec::new();
-
-    if let Some(host) = filter.host.as_deref() {
-        parts.push(format!("host={host}"));
-    }
-
-    if let Some(path) = filter.path.as_deref() {
-        parts.push(format!("path={path}"));
-    }
-
-    if let Some(nick) = filter.nickname.as_deref() {
-        parts.push(format!("nick={nick}"));
-    }
-
-    if let Some(user) = filter.username.as_deref() {
-        parts.push(format!("user={user}"));
-    }
-
-    if let Some(hostname) = filter.hostname.as_deref() {
-        parts.push(format!("hostname={hostname}"));
-    }
+    let criteria = [
+        ("host", filter.host.as_deref()),
+        ("path", filter.path.as_deref()),
+        ("nick", filter.nickname.as_deref()),
+        ("user", filter.username.as_deref()),
+        ("hostname", filter.hostname.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| value.map(|value| format!("{name}={value}")))
+    .collect::<Vec<_>>()
+    .join(" ");
 
     let scope = filter.channel.as_deref().unwrap_or("all channels");
 
-    format!("#{}: {} ({})", filter.id, parts.join(" "), scope)
+    format!("#{}: {criteria} ({scope})", filter.id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn admin_hostmasks_match_wildcards_and_case_insensitively() {
-        let admins = compile_hostmasks(&["mk!mk@*".to_string(), "*!*@example.org".to_string()]);
+    #[tokio::test]
+    async fn publishes_a_url_filters_handle_for_the_host() {
+        // The host's dispatcher consults the `Filters` facade, which only sees the service
+        // through the type-erased handle published here — without it, no URL is ever filtered.
+        let ctx = zeta_test_support::test_context();
+        let mut subscriptions = Subscriptions::new();
 
-        assert!(hostmask_matches(
-            &admins,
-            Sender::new("mk", "mk", "user.example")
-        ));
-        assert!(hostmask_matches(
-            &admins,
-            Sender::new("MK", "MK", "anything.tld")
-        ));
-        assert!(hostmask_matches(
-            &admins,
-            Sender::new("someone", "x", "EXAMPLE.ORG")
-        ));
-        assert!(!hostmask_matches(
-            &admins,
-            Sender::new("someone", "x", "example.com")
-        ));
-        assert!(!hostmask_matches(
-            &admins,
-            Sender::new("mk", "other", "user.example")
-        ));
-    }
+        <FilterPlugin as Plugin<Context>>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
 
-    #[test]
-    fn an_empty_admin_list_denies_everyone() {
-        let admins = compile_hostmasks(&[]);
-
-        assert!(!hostmask_matches(
-            &admins,
-            Sender::new("mk", "mk", "example.com")
-        ));
-    }
-
-    #[test]
-    fn blank_admin_hostmasks_are_skipped() {
-        let admins = compile_hostmasks(&["  ".to_string(), String::new()]);
-
-        assert!(!hostmask_matches(
-            &admins,
-            Sender::new("mk", "mk", "example.com")
-        ));
+        assert!(ctx.shared.get::<UrlFilters>().is_some());
     }
 
     /// Parses `input` with the filter command spec and unpacks the `add` subcommand.
@@ -710,6 +691,105 @@ mod tests {
         assert_eq!(filters[0].host, None);
         assert_eq!(filters[0].channel, None);
         assert_eq!(filters[0].username.as_deref(), Some("*other"));
+    }
+
+    #[test]
+    fn a_single_added_filter_is_described_with_its_id() {
+        let filter = Filter {
+            id: 12,
+            channel: Some("#foo".into()),
+            host: Some("example.com".into()),
+            path: None,
+            nickname: None,
+            username: None,
+            hostname: None,
+        };
+
+        assert_eq!(
+            changed_response("Filter", "Added", &[filter]),
+            reply("Filter", "Added #12: host=example.com (#foo).")
+        );
+    }
+
+    #[test]
+    fn multiple_added_filters_are_listed_with_a_count() {
+        let first = Filter {
+            id: 12,
+            channel: None,
+            host: Some("a.com".into()),
+            path: Some("/x/*".into()),
+            nickname: None,
+            username: None,
+            hostname: None,
+        };
+        let second = Filter {
+            id: 13,
+            channel: None,
+            host: Some("b.com".into()),
+            path: Some("/x/*".into()),
+            nickname: None,
+            username: None,
+            hostname: None,
+        };
+
+        assert_eq!(
+            changed_response("Filter", "Added", &[first, second]),
+            reply(
+                "Filter",
+                "Added 2 filters: #12: host=a.com path=/x/* (all channels), \
+                 #13: host=b.com path=/x/* (all channels)"
+            )
+        );
+    }
+
+    #[test]
+    fn counts_are_pluralized() {
+        assert_eq!(plural(1, "filter"), "1 filter");
+        assert_eq!(plural(2, "filter"), "2 filters");
+        assert_eq!(plural(0, "filter"), "0 filters");
+    }
+
+    #[test]
+    fn add_rejects_channels_without_a_channel_prefix() {
+        let add = parse_add("add --channel foo --host example.com");
+
+        let error = add.validate("#chan").unwrap_err();
+
+        assert!(error.contains("did you mean #foo?"), "{error}");
+    }
+
+    #[test]
+    fn repeated_identical_patterns_are_deduplicated() {
+        let add = parse_add("add --host a.com --host a.com --host b.com");
+
+        let filters = add.new_filters(None, "smoke");
+
+        assert_eq!(filters.len(), 2);
+        assert_eq!(filters[0].host.as_deref(), Some("a.com"));
+        assert_eq!(filters[1].host.as_deref(), Some("b.com"));
+    }
+
+    #[test]
+    fn a_truncated_listing_names_the_dropped_filters() {
+        let long = Filter {
+            id: 1,
+            channel: None,
+            host: Some(format!("long.example/{}", "x".repeat(180))),
+            path: None,
+            nickname: None,
+            username: None,
+            hostname: None,
+        };
+        let second = Filter {
+            id: 2,
+            ..long.clone()
+        };
+
+        let message = listing(reply("Filter", "2 filters: "), &[long, second], 0);
+
+        assert!(message.len() <= MAX_LISTING_LENGTH);
+        assert!(message.contains("#1: "), "{message}");
+        assert!(message.ends_with(" (+1 more)"), "{message}");
     }
 
     #[test]

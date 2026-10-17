@@ -5379,6 +5379,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "url",
  "zeta-cache",
  "zeta-http",
  "zeta-mirror",

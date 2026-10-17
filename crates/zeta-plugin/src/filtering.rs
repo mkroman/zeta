@@ -1,9 +1,9 @@
-//! Filtering facade for the URL events the host dispatches.
+//! Filtering facade for the events the host dispatches.
 //!
 //! The filter service itself lives in the `filter` plugin (in the `plugins` crate). This module
 //! is always compiled and exposes the [`Filters`] facade the host's dispatcher consults before
-//! delivering a [`UrlEvent`](crate::UrlEvent), so URL events are filtered centrally: with the
-//! filter plugin not loaded, it simply never matches.
+//! delivering events, so filtered URL events are dropped centrally and messages from ignored
+//! senders never reach the plugins: with the filter plugin not loaded, nothing ever matches.
 //!
 //! The bridge between the two crates is the [`UrlFilter`] trait: the filter plugin publishes a
 //! type-erased [`UrlFilters`] handle of its service to the shared state, and this facade picks
@@ -24,6 +24,13 @@ use crate::event::Sender;
 pub trait UrlFilter: Send + Sync {
     /// Whether `url`, posted by `sender` in `channel`, matches any filter and should be ignored.
     fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool;
+
+    /// Whether messages from `sender` in `channel` are ignored entirely.
+    ///
+    /// Backed by filters without URL criteria (host and path unset): a matching sender's
+    /// messages are not delivered to the message subscribers, their commands do not trigger,
+    /// and — through [`UrlFilter::matches`] — their URLs are filtered too.
+    fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool;
 }
 
 /// The shared URL filter handle a filter plugin publishes to the shared state.
@@ -47,12 +54,19 @@ impl UrlFilters {
     pub fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
         self.inner.matches(channel, sender, url)
     }
+
+    /// Whether messages from `sender` in `channel` are ignored entirely.
+    #[must_use]
+    pub fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
+        self.inner.ignores(channel, sender)
+    }
 }
 
 /// A view of the shared filter service.
 ///
-/// Obtained once per message with [`Filters::from_context`]; every URL of the message is then
-/// checked with [`Filters::is_filtered`] before its event is delivered.
+/// Obtained once per message with [`Filters::from_context`]; the sender is checked with
+/// [`Filters::ignores`] before any event is delivered, and every URL of the message with
+/// [`Filters::is_filtered`] before its event is delivered.
 #[derive(Default)]
 pub struct Filters {
     inner: Option<Arc<UrlFilters>>,
@@ -73,5 +87,13 @@ impl Filters {
         self.inner
             .as_ref()
             .is_some_and(|filters| filters.is_filtered(channel, sender, url))
+    }
+
+    /// Whether messages from `sender` in `channel` are ignored entirely.
+    #[must_use]
+    pub fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
+        self.inner
+            .as_ref()
+            .is_some_and(|filters| filters.ignores(channel, sender))
     }
 }

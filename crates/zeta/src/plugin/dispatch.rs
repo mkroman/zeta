@@ -242,6 +242,17 @@ impl EventIndex {
             return;
         }
 
+        let sender = Sender::from_message(message);
+
+        // Senders matching a filter without URL criteria are ignored entirely: their commands
+        // do not trigger, their messages are not delivered to message subscribers, and their
+        // URLs are not dispatched.
+        if filters.ignores(target, sender) {
+            debug!(channel = %target, "ignoring filtered sender");
+
+            return;
+        }
+
         // Commands — matched by the first word of the message, verified with the exact
         // trigger semantics.
         if let Some(word) = text.split_whitespace().next()
@@ -254,7 +265,7 @@ impl EventIndex {
             }
         }
 
-        // Message subscribers observe every non-CTCP channel message.
+        // Message subscribers observe every remaining non-CTCP message.
         self.deliver_kind(
             EventKind::Message,
             Some(Event::Message(MessageEvent::new(Arc::clone(message)))),
@@ -266,7 +277,6 @@ impl EventIndex {
             return;
         }
 
-        let sender = Sender::from_message(message);
         let mut seen = HashSet::new();
 
         for ExtractedUrl { url, repaired_from } in ExtractUrls::with_schemes(text, HTTP_SCHEMES) {
@@ -299,7 +309,9 @@ impl EventIndex {
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
     use zeta_plugin::CtcpKind;
+    use zeta_plugin::{UrlFilter, UrlFilters};
     use zeta_test_support::assert_empty;
 
     use super::*;
@@ -322,7 +334,15 @@ mod tests {
     }
 
     fn privmsg(text: &str) -> Message {
-        message("nick!user@host.example", "PRIVMSG", &["#test", text])
+        privmsg_from("nick", text)
+    }
+
+    fn privmsg_from(nick: &str, text: &str) -> Message {
+        message(
+            &format!("{nick}!user@host.example"),
+            "PRIVMSG",
+            &["#test", text],
+        )
     }
 
     /// Registers a test subscriber and returns the mailbox its events arrive on.
@@ -437,6 +457,86 @@ mod tests {
             2,
             "duplicate URLs are deduplicated"
         );
+    }
+
+    /// A filter that ignores the `ignored` nick entirely and matches every URL on the
+    /// `filtered.example` host.
+    struct TestFilter;
+
+    impl UrlFilter for TestFilter {
+        fn matches(&self, _channel: &str, _sender: Option<Sender<'_>>, url: &Url) -> bool {
+            url.host_str() == Some("filtered.example")
+        }
+
+        fn ignores(&self, _channel: &str, sender: Option<Sender<'_>>) -> bool {
+            sender.is_some_and(|sender| sender.nick == "ignored")
+        }
+    }
+    #[tokio::test]
+    async fn filtered_urls_are_not_dispatched() {
+        // The facade only sees the filter through the type-erased handle published to the
+        // shared state — the same route the filter plugin takes at construction.
+        let ctx = zeta_test_support::test_context();
+        ctx.shared
+            .publish(Arc::new(UrlFilters::new(Arc::new(TestFilter))));
+
+        let mut index = EventIndex::default();
+        let mut filtered = subscribe(&mut index, "filtered", |subscriptions| {
+            subscriptions.urls(UrlScope::Hosts(&["filtered.example"]));
+        });
+        let mut titles = subscribe(&mut index, "titles", |s| {
+            s.urls(UrlScope::Any);
+        });
+
+        let filters = Filters::from_context(&ctx);
+        let _ = index.dispatch(
+            &filters,
+            privmsg("https://filtered.example/x https://open.example/y"),
+        );
+
+        assert_empty!(drain(&mut filtered));
+        assert!(matches!(drain(&mut titles)[..], [Event::Url(..)]));
+    }
+
+    #[tokio::test]
+    async fn ignored_senders_trigger_nothing() {
+        let ctx = zeta_test_support::test_context();
+        ctx.shared
+            .publish(Arc::new(UrlFilters::new(Arc::new(TestFilter))));
+
+        let mut index = EventIndex::default();
+        let mut dig = subscribe(&mut index, "dig", |subscriptions| {
+            subscriptions.command(CommandSpec::new(".dig", "dig"));
+        });
+        let mut messages = subscribe(&mut index, "messages", |s| {
+            s.receive_message();
+        });
+        let mut titles = subscribe(&mut index, "titles", |s| {
+            s.urls(UrlScope::Any);
+        });
+
+        let filters = Filters::from_context(&ctx);
+
+        // The ignored sender's commands do not trigger, their messages are not delivered and
+        // their URLs are not dispatched.
+        let _ = index.dispatch(&filters, privmsg_from("ignored", ".dig example.com"));
+        let _ = index.dispatch(
+            &filters,
+            privmsg_from("ignored", "hello https://open.example/y"),
+        );
+
+        assert_empty!(drain(&mut dig));
+        assert_empty!(drain(&mut messages));
+        assert_empty!(drain(&mut titles));
+
+        // Everyone else is dispatched normally.
+        let _ = index.dispatch(&filters, privmsg_from("someone", ".dig example.com"));
+
+        assert!(matches!(
+            drain(&mut dig)[..],
+            [Event::Command(ref command)] if command.args() == "example.com"
+        ));
+        assert!(matches!(drain(&mut messages)[..], [Event::Message(_)]));
     }
 
     #[test]
