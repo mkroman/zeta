@@ -350,6 +350,22 @@ channels = []
     }
 
     #[test]
+    fn plugins_enabled_by_default_is_configurable() {
+        let mut config = Figment::new()
+            .merge(Toml::string(FULL_BASE))
+            .merge(Toml::string("[plugins]\nenabled_by_default = false\n"))
+            .extract::<Config>()
+            .expect("configuration should parse");
+
+        let plugins = config.take_plugins();
+
+        // The toggle is host-managed; how it resolves each plugin's `enabled` is asserted in
+        // the plugins crate's configuration tests.
+        assert!(!plugins.enabled_by_default);
+        assert_empty!(plugins.unknown);
+    }
+
+    #[test]
     fn host_config_mirrors_the_visible_subset() {
         let config = Figment::new()
             .merge(Toml::string(FULL_BASE))

@@ -11,8 +11,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// One value exists per compiled plugin. Sections are type-checked at startup; malformed values
 /// abort configuration loading with a diagnostic.
 ///
-/// The `enabled` key is managed by the host and defaults to `true`; every other key belongs to
-/// the plugin's settings type (e.g. `dig::Settings`), deserialized through
+/// The `enabled` key is managed by the host; a section that omits it inherits the global
+/// `enabled_by_default` under `[plugins]` (`true` when that is omitted too). Every other key
+/// belongs to the plugin's settings type (e.g. `dig::Settings`), deserialized through
 /// [`PluginConfig::settings`]. Unknown settings keys are ignored, collected in
 /// [`PluginConfig::unknown_keys`] and warned about by the host: a config that names a setting
 /// removed by a newer release must keep working, so rejection is too harsh.
@@ -35,11 +36,19 @@ pub struct PluginConfig<S> {
     pub unknown_keys: Vec<String>,
 }
 
-impl<'de, S> Deserialize<'de> for PluginConfig<S>
+impl<'de, S> PluginConfig<S>
 where
     S: Deserialize<'de>,
 {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    /// Deserializes a plugin section, resolving an omitted `enabled` key to `default_enabled`.
+    ///
+    /// The [`Deserialize`] implementation calls this with `true`, the standalone default;
+    /// the `PluginsConfig` deserialization passes the global `[plugins] enabled_by_default`
+    /// value instead, so an omitted key resolves to that.
+    pub(crate) fn deserialize_with_default<D>(
+        deserializer: D,
+        default_enabled: bool,
+    ) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -52,7 +61,7 @@ where
         let enabled = match section.remove("enabled") {
             Some(value) => bool::deserialize(&value)
                 .map_err(|error| D::Error::custom(format!("invalid `enabled` key: {error}")))?,
-            None => true,
+            None => default_enabled,
         };
 
         let mut unknown_keys = Vec::new();
@@ -70,6 +79,21 @@ where
     }
 }
 
+impl<'de, S> Deserialize<'de> for PluginConfig<S>
+where
+    S: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::deserialize_with_default(deserializer, true)
+    }
+}
+
+/// The standalone default: the plugin is enabled, as a section omitted under the global
+/// default (`enabled_by_default = true`) would be. An opt-in (`enabled_by_default = false`)
+/// configuration resolves absent sections afterwards, during `PluginsConfig` deserialization.
 impl<S: Default> Default for PluginConfig<S> {
     fn default() -> Self {
         Self {
@@ -147,6 +171,7 @@ enabled = false
     fn missing_plugins_section_defaults_to_enabled() {
         let plugins = extract("").expect("could not parse configuration");
 
+        assert!(plugins.enabled_by_default);
         assert!(plugins.dig.enabled);
         assert_eq!(
             plugins.dig.settings.nameservers,
@@ -159,7 +184,55 @@ enabled = false
     fn omitted_enabled_defaults_to_true() {
         let plugins = extract("[plugins.health]\n").expect("could not parse configuration");
 
+        assert!(plugins.enabled_by_default);
         assert!(plugins.health.enabled);
+    }
+
+    #[test]
+    fn enabled_by_default_false_opts_plugins_in() {
+        let plugins = extract(
+            r"
+[plugins]
+enabled_by_default = false
+
+[plugins.dig]
+enabled = true
+",
+        )
+        .expect("could not parse configuration");
+
+        assert!(!plugins.enabled_by_default);
+        // `dig` opted itself in with an explicit toggle; `health` has no section at all and
+        // follows the global default.
+        assert!(plugins.dig.enabled);
+        assert!(!plugins.health.enabled);
+        // The global toggle itself is not reported as an unknown section.
+        assert_empty!(plugins.unknown);
+    }
+
+    #[test]
+    fn explicit_enabled_overrides_the_global_default() {
+        let plugins = extract(
+            r"
+[plugins]
+enabled_by_default = true
+
+[plugins.health]
+enabled = false
+",
+        )
+        .expect("could not parse configuration");
+
+        assert!(plugins.enabled_by_default);
+        assert!(!plugins.health.enabled);
+    }
+
+    #[test]
+    fn invalid_enabled_by_default_type_is_rejected() {
+        let error = extract("[plugins]\nenabled_by_default = \"yes\"\n")
+            .expect_err("invalid type should be rejected");
+
+        assert!(error.to_string().contains("enabled_by_default"), "{error}");
     }
 
     #[test]
@@ -261,6 +334,7 @@ enabled = false
             .expect("the repository config.toml should parse");
 
         assert!(config.health.enabled);
+        assert!(config.enabled_by_default);
         assert_eq!(
             config.dig.settings.nameservers,
             vec![
@@ -281,6 +355,7 @@ enabled = false
             .extract::<PluginsConfig>()
             .expect("configuration without a [plugins] section should parse");
 
+        assert!(config.enabled_by_default);
         assert!(config.dig.enabled);
         assert!(config.health.enabled);
         assert_empty!(config.unknown);
