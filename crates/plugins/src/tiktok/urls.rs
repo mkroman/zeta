@@ -21,7 +21,8 @@ pub(super) const URL_HOSTS: &[&str] = &[TIKTOK_STANDARD_HOST, TIKTOK_SHORT_HOST,
 pub enum TiktokLink {
     /// A video link, identified by its channel slug and video id.
     Video {
-        /// The channel slug, e.g. `@dailymail`.
+        /// The channel slug, e.g. `@dailymail`, or the anonymous bare `@` that short links
+        /// redirect to when they do not carry the author.
         channel: String,
         /// The video id.
         id: String,
@@ -70,9 +71,10 @@ fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
         [channel] if is_valid_channel_slug(channel) => {
             Some(TiktokLink::Channel((*channel).to_string()))
         }
-        // `/@somechannel/video/7551110927479754006`
+        // `/@somechannel/video/7551110927479754006`, or `/@/video/7551110927479754006` — the
+        // anonymous form short links redirect to when they do not carry the author.
         [channel, "video", video_id]
-            if is_valid_channel_slug(channel) && is_numeric_segment(video_id) =>
+            if is_valid_video_channel_slug(channel) && is_numeric_segment(video_id) =>
         {
             Some(TiktokLink::Video {
                 channel: (*channel).to_string(),
@@ -87,6 +89,13 @@ fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
 #[must_use]
 fn is_valid_channel_slug(segment: &str) -> bool {
     segment.starts_with('@') && is_identifier(&segment[1..], "._-")
+}
+
+/// Returns whether the segment is a valid channel slug in a video URL: a channel slug, or the
+/// anonymous bare `@`, which the short links redirect to when they do not carry the author.
+#[must_use]
+fn is_valid_video_channel_slug(segment: &str) -> bool {
+    segment == "@" || is_valid_channel_slug(segment)
 }
 
 /// Returns whether the segment is a valid shortened-link id.
@@ -134,6 +143,16 @@ mod tests {
                     "https://www.tiktok.com/@user.name_1-x/video/7541501431543532814",
                     video("@user.name_1-x", "7541501431543532814"),
                 ),
+                // The anonymous video form that short links redirect to when they do not carry
+                // the author.
+                (
+                    "https://www.tiktok.com/@/video/7551042261212056854",
+                    video("@", "7551042261212056854"),
+                ),
+                (
+                    "https://www.tiktok.com/@/video/7551042261212056854/",
+                    video("@", "7551042261212056854"),
+                ),
                 // Shortened links.
                 (
                     "https://vm.tiktok.com/ZNdgoKow7/",
@@ -174,6 +193,16 @@ mod tests {
             Some(TiktokLink::Video {
                 channel: "@dailymail".to_string(),
                 id: "7541501431543532814".to_string(),
+            })
+        );
+
+        // The anonymous slug round-trips too.
+        let url = Url::parse(&video_url("@", "7551042261212056854")).unwrap();
+        assert_eq!(
+            parse_tiktok_url(&url),
+            Some(TiktokLink::Video {
+                channel: "@".to_string(),
+                id: "7551042261212056854".to_string(),
             })
         );
     }
