@@ -32,6 +32,7 @@ pub use error::Error;
 pub use model::{Criteria, Filter, NewFilter};
 pub use service::FilterService;
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use argh::{ArgsInfo, FromArgs};
@@ -164,6 +165,13 @@ impl Add {
                 );
             }
 
+            if !channel.starts_with(['#', '&']) {
+                return Err(format!(
+                    "--channel should be a channel name starting with # or & — did you mean \
+                     #{channel}?"
+                ));
+            }
+
             Some(channel.to_owned())
         } else {
             Some(current_channel.to_owned())
@@ -237,15 +245,23 @@ impl Add {
 }
 
 /// Expands the repeated `--host` or `--path` values into filter fields: no values yield the
-/// single unset field, so a filter without either matches every URL.
+/// single unset field, so a filter without either matches every URL. Repeated identical values
+/// are deduplicated — they would only create identical filters.
 fn expand(values: &[String]) -> Vec<Option<String>> {
-    if values.is_empty() {
+    let mut unique: Vec<String> = Vec::new();
+
+    for value in values {
+        let value = value.trim().to_owned();
+
+        if !unique.contains(&value) {
+            unique.push(value);
+        }
+    }
+
+    if unique.is_empty() {
         vec![None]
     } else {
-        values
-            .iter()
-            .map(|value| Some(value.trim().to_owned()))
-            .collect()
+        unique.into_iter().map(Some).collect()
     }
 }
 
@@ -285,16 +301,25 @@ impl Delete {
     }
 }
 
-/// The confirmation reply for the added filters: a single plain host filter gets a message
-/// naming the host.
-fn added_response(new_filters: &[NewFilter]) -> String {
-    if let [new_filter] = new_filters
-        && new_filter.is_host_only()
-        && let Some(host) = &new_filter.host
-    {
-        format!("The filter for {host} has been added.")
-    } else {
-        "The filter has been added.".to_string()
+/// Formats `count` with the pluralized `noun`, e.g. `1 filter` or `3 filters`.
+fn plural(count: usize, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+}
+
+/// Room for a ` (+N more)` truncation suffix on a listing, covering counts up to five digits.
+const MORE_SUFFIX_RESERVE: usize = " (+99999 more)".len();
+
+/// The confirmation for the added or removed `filters`, describing each one so the sender can
+/// act on the ids without a follow-up `.filter list`.
+fn changed_response(name: &str, verb: &str, filters: &[Filter]) -> String {
+    match filters {
+        [filter] => reply(name, format!("{verb} {}.", describe(filter))),
+        // More than one filter, so the plural is always right.
+        filters => listing(
+            reply(name, format!("{verb} {} filters: ", filters.len())),
+            filters,
+            0,
+        ),
     }
 }
 
@@ -337,23 +362,32 @@ impl FilterPlugin {
         };
 
         let new_filters = opts.new_filters(scope.as_deref(), nickname);
-        let count = new_filters.len();
-        let response = added_response(&new_filters);
+        let total = new_filters.len();
+        let mut added = Vec::with_capacity(total);
 
         for new_filter in new_filters {
-            if let Err(error) = self.service.add(new_filter).await {
-                client.send_privmsg(
-                    channel,
-                    reply("Filter", format!("could not add the filter: {error}")),
-                )?;
+            match self.service.add(new_filter).await {
+                Ok(filter) => added.push(filter),
+                Err(error) => {
+                    let response = if added.is_empty() {
+                        format!("could not add the filter: {error}")
+                    } else {
+                        format!(
+                            "added {} of {total} filters, then could not add the rest: {error}",
+                            added.len()
+                        )
+                    };
 
-                return Ok(());
+                    client.send_privmsg(channel, reply("Filter", response))?;
+
+                    return Ok(());
+                }
             }
         }
 
-        debug!(count, "added filters");
+        debug!(count = total, "added filters");
 
-        client.send_privmsg(channel, reply("Filter", &response))?;
+        client.send_privmsg(channel, changed_response("Filter", "Added", &added))?;
 
         Ok(())
     }
@@ -363,12 +397,16 @@ impl FilterPlugin {
         let filters = self.service.select(&Criteria::from(opts));
 
         let response = if filters.is_empty() {
-            reply("Filter", "No filters match your criteria.")
+            if self.service.list().is_empty() {
+                reply("Filter", "No filters are configured.")
+            } else {
+                reply("Filter", "No filters match your criteria.")
+            }
         } else {
             listing(
                 reply(
                     "Filter",
-                    format!("{} filters matching your criteria: ", filters.len()),
+                    format!("{} matching your criteria: ", plural(filters.len(), "filter")),
                 ),
                 &filters,
                 0,
@@ -392,10 +430,18 @@ impl FilterPlugin {
                 return Ok(());
             }
 
+            // The removed filter is named in the reply, and an unknown id is answered without
+            // touching the database.
+            let Some(filter) = self.service.list().into_iter().find(|filter| filter.id == id)
+            else {
+                client.send_privmsg(channel, reply("Filter", format!("No filter with id {id}.")))?;
+
+                return Ok(());
+            };
+
             let response = match self.service.delete_ids(&[id]).await {
-                Ok(1) => "The filter has been removed.".to_string(),
-                Ok(0) => format!("No filter with id {id}."),
-                Ok(removed) => format!("{removed} filters have been removed."),
+                Ok(1) => format!("Removed {}.", describe(&filter)),
+                Ok(_) => format!("No filter with id {id}."),
                 Err(error) => format!("could not delete the filter: {error}"),
             };
 
@@ -409,7 +455,8 @@ impl FilterPlugin {
                 channel,
                 reply(
                     "Filter",
-                    "specify a filter id, or at least one criterion to match filters by",
+                    "specify a filter id, or at least one criterion to match filters by (e.g. \
+                     `.filter delete --host example.com`)",
                 ),
             )?;
 
@@ -433,8 +480,8 @@ impl FilterPlugin {
                 reply(
                     "Filter",
                     format!(
-                        "{} filters matching the criteria will be deleted: ",
-                        filters.len()
+                        "{} matching the criteria will be deleted: ",
+                        plural(filters.len(), "filter")
                     ),
                 ),
                 &filters,
@@ -449,7 +496,13 @@ impl FilterPlugin {
         }
 
         let response = match self.service.delete_ids(&ids).await {
-            Ok(removed) => format!("{removed} filters have been removed."),
+            Ok(removed) if removed == filters.len() as u64 => {
+                changed_response("Filter", "Removed", &filters)
+            }
+            Ok(removed) => format!(
+                "Removed {removed} of {} matching filters.",
+                filters.len()
+            ),
             Err(error) => format!("could not delete the filters: {error}"),
         };
 
@@ -516,17 +569,24 @@ impl Plugin<Context> for FilterPlugin {
 }
 
 /// Appends the described `filters` to `header`, within the line budget and leaving room for a
-/// suffix of `reserved` bytes.
+/// suffix of `reserved` bytes. A listing that does not fit entirely gains a ` (+N more)`
+/// suffix naming how many filters were left out.
 fn listing(header: String, filters: &[Filter], reserved: usize) -> String {
     let mut listing = header;
 
-    append_entries_within_budget(
+    let appended = append_entries_within_budget(
         &mut listing,
         filters.iter().map(describe),
         ", ",
         MAX_LISTING_LENGTH,
-        reserved,
+        reserved + MORE_SUFFIX_RESERVE,
     );
+
+    let dropped = filters.len() - appended;
+
+    if dropped > 0 {
+        let _ = write!(listing, " (+{dropped} more)");
+    }
 
     listing
 }
@@ -634,30 +694,102 @@ mod tests {
     }
 
     #[test]
-    fn a_single_plain_host_filter_is_confirmed_by_host() {
-        let add = parse_add("add --host example.com");
+    fn a_single_added_filter_is_described_with_its_id() {
+        let filter = Filter {
+            id: 12,
+            channel: Some("#foo".into()),
+            host: Some("example.com".into()),
+            path: None,
+            nickname: None,
+            username: None,
+            hostname: None,
+        };
 
         assert_eq!(
-            added_response(&add.new_filters(Some("#chan"), "smoke")),
-            "The filter for example.com has been added."
+            changed_response("Filter", "Added", &[filter]),
+            reply("Filter", "Added #12: host=example.com (#foo).")
         );
     }
 
     #[test]
-    fn combined_criteria_get_a_plain_confirmation() {
-        let add = parse_add("add --host example.com --path /title/*");
+    fn multiple_added_filters_are_listed_with_a_count() {
+        let first = Filter {
+            id: 12,
+            channel: None,
+            host: Some("a.com".into()),
+            path: Some("/x/*".into()),
+            nickname: None,
+            username: None,
+            hostname: None,
+        };
+        let second = Filter {
+            id: 13,
+            channel: None,
+            host: Some("b.com".into()),
+            path: Some("/x/*".into()),
+            nickname: None,
+            username: None,
+            hostname: None,
+        };
 
         assert_eq!(
-            added_response(&add.new_filters(None, "smoke")),
-            "The filter has been added."
+            changed_response("Filter", "Added", &[first, second]),
+            reply(
+                "Filter",
+                "Added 2 filters: #12: host=a.com path=/x/* (all channels), \
+                 #13: host=b.com path=/x/* (all channels)"
+            )
         );
+    }
 
-        let repeated = parse_add("add --host a.com --host b.com");
+    #[test]
+    fn counts_are_pluralized() {
+        assert_eq!(plural(1, "filter"), "1 filter");
+        assert_eq!(plural(2, "filter"), "2 filters");
+        assert_eq!(plural(0, "filter"), "0 filters");
+    }
 
-        assert_eq!(
-            added_response(&repeated.new_filters(None, "smoke")),
-            "The filter has been added."
-        );
+    #[test]
+    fn add_rejects_channels_without_a_channel_prefix() {
+        let add = parse_add("add --channel foo --host example.com");
+
+        let error = add.validate("#chan").unwrap_err();
+
+        assert!(error.contains("did you mean #foo?"), "{error}");
+    }
+
+    #[test]
+    fn repeated_identical_patterns_are_deduplicated() {
+        let add = parse_add("add --host a.com --host a.com --host b.com");
+
+        let filters = add.new_filters(None, "smoke");
+
+        assert_eq!(filters.len(), 2);
+        assert_eq!(filters[0].host.as_deref(), Some("a.com"));
+        assert_eq!(filters[1].host.as_deref(), Some("b.com"));
+    }
+
+    #[test]
+    fn a_truncated_listing_names_the_dropped_filters() {
+        let long = Filter {
+            id: 1,
+            channel: None,
+            host: Some(format!("long.example/{}", "x".repeat(180))),
+            path: None,
+            nickname: None,
+            username: None,
+            hostname: None,
+        };
+        let second = Filter {
+            id: 2,
+            ..long.clone()
+        };
+
+        let message = listing(reply("Filter", "2 filters: "), &[long, second], 0);
+
+        assert!(message.len() <= MAX_LISTING_LENGTH);
+        assert!(message.contains("#1: "), "{message}");
+        assert!(message.ends_with(" (+1 more)"), "{message}");
     }
 
     #[test]

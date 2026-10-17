@@ -48,18 +48,6 @@ pub struct NewFilter {
     pub created_by: String,
 }
 
-impl NewFilter {
-    /// Whether the filter only names a URL host: the tailored confirmation `.filter add`
-    /// replies with is phrased around it.
-    pub(crate) const fn is_host_only(&self) -> bool {
-        self.host.is_some()
-            && self.path.is_none()
-            && self.nickname.is_none()
-            && self.username.is_none()
-            && self.hostname.is_none()
-    }
-}
-
 /// The case sensitivity of a wildcard pattern comparison.
 #[derive(Debug, Clone, Copy)]
 enum Case {
