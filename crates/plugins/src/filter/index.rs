@@ -118,11 +118,32 @@ impl Entry {
             return false;
         }
 
+        self.sender_matches(sender)
+    }
+
+    /// Whether the entry's sender criteria match `sender`, or are all unset.
+    fn sender_matches(&self, sender: Option<Sender<'_>>) -> bool {
         let sender = sender.map(|sender| (sender.nick, sender.username, sender.hostname));
 
         Self::field_matches(self.nickname.as_ref(), sender.map(|s| s.0))
             && Self::field_matches(self.username.as_ref(), sender.map(|s| s.1))
             && Self::field_matches(self.hostname.as_ref(), sender.map(|s| s.2))
+    }
+
+    /// Whether the entry ignores `sender` entirely: it has no URL criteria (host and path
+    /// unset) and at least one sender criterion, which matches. The sender-criteria
+    /// requirement keeps a criteria-less filter — which the command cannot create — from
+    /// ignoring everyone.
+    fn ignores(&self, sender: Option<Sender<'_>>) -> bool {
+        if self.host.is_some() || self.path.is_some() {
+            return false;
+        }
+
+        if self.nickname.is_none() && self.username.is_none() && self.hostname.is_none() {
+            return false;
+        }
+
+        self.sender_matches(sender)
     }
 }
 
@@ -189,6 +210,12 @@ impl HostIndex {
             .chain(&self.any_host)
             .any(|entry| entry.matches(host, sender, url))
     }
+
+    /// Whether any sender-only filter in the bucket ignores `sender` entirely. Only the
+    /// host-agnostic bucket can hold such filters.
+    fn ignores(&self, sender: Option<Sender<'_>>) -> bool {
+        self.any_host.iter().any(|entry| entry.ignores(sender))
+    }
 }
 
 /// All filters, indexed by channel.
@@ -245,6 +272,25 @@ impl FilterIndex {
 
             if bucket.matches(host.as_deref(), sender, url) {
                 trace!(%channel, %url, "message matches a filter");
+
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Whether any filter applies to `channel` that ignores `sender` entirely.
+    pub(super) fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
+        let key = channel.to_lowercase();
+
+        for bucket in [self.channels.get(&Some(key)), self.channels.get(&None)] {
+            let Some(bucket) = bucket else {
+                continue;
+            };
+
+            if bucket.ignores(sender) {
+                trace!(%channel, "sender matches an ignore filter");
 
                 return true;
             }
@@ -357,6 +403,66 @@ mod tests {
             None,
             &"https://imdb.com/title/tt1".parse().unwrap()
         ));
+    }
+
+    #[test]
+    fn sender_only_filters_ignore_matching_senders() {
+        let index = index_with(&[NewFilter {
+            nickname: Some("*bot".into()),
+            ..new_filter(None, None)
+        }]);
+
+        assert!(index.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
+        assert!(!index.ignores("#chan", Some(Sender::new("someone", "user", "host.example"))));
+        assert!(!index.ignores("#chan", None));
+
+        let user = index_with(&[NewFilter {
+            username: Some("*other".into()),
+            ..new_filter(None, None)
+        }]);
+
+        assert!(user.ignores("#chan", Some(Sender::new("someone", "~cliother", "host.example"))));
+
+        let hostname = index_with(&[NewFilter {
+            hostname: Some("*.isp.example".into()),
+            ..new_filter(None, None)
+        }]);
+
+        assert!(hostname.ignores("#chan", Some(Sender::new("mk", "user", "dsl.isp.example"))));
+    }
+
+    #[test]
+    fn filters_with_url_criteria_do_not_ignore_senders() {
+        let host = index_with(&[NewFilter {
+            nickname: Some("*bot".into()),
+            ..new_filter(None, Some("imdb.com"))
+        }]);
+        let path = index_with(&[NewFilter {
+            nickname: Some("*bot".into()),
+            path: Some("/title/*".into()),
+            ..new_filter(None, None)
+        }]);
+
+        assert!(!host.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
+        assert!(!path.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
+    }
+
+    #[test]
+    fn sender_ignore_filters_are_scoped_to_channels() {
+        let index = index_with(&[NewFilter {
+            nickname: Some("mk".into()),
+            ..new_filter(Some("#foo"), None)
+        }]);
+
+        assert!(index.ignores("#FOO", Some(Sender::new("mk", "user", "host.example"))));
+        assert!(!index.ignores("#bar", Some(Sender::new("mk", "user", "host.example"))));
+    }
+
+    #[test]
+    fn a_filter_without_criteria_ignores_nobody() {
+        let index = index_with(&[new_filter(None, None)]);
+
+        assert!(!index.ignores("#chan", Some(Sender::new("mk", "user", "host.example"))));
     }
 
     #[test]

@@ -1,10 +1,16 @@
-//! Silences matched messages in channels with URL and sender filters.
+//! Silences matched senders and URLs in channels.
 //!
 //! Filters are managed with the `.filter add|list|delete` command and stored in the database,
 //! from which they are loaded into memory at launch. Every filter carries optional criteria —
 //! the channel, the host and path of a URL, and the nickname, username (ident), and hostname of
-//! the sender — where all of the set criteria must match for a message to be ignored. Patterns
-//! support `*` and `?` wildcards.
+//! the sender — where all of the set criteria must match. Patterns support `*` and `?`
+//! wildcards.
+//!
+//! What a match means depends on the criteria: a filter with URL criteria (host or path)
+//! ignores the matching URLs, which the host's dispatcher drops before any URL plugin sees
+//! them. A filter with sender criteria only ignores the matching senders entirely: their
+//! commands do not trigger, their messages are not delivered to the message subscribers, and
+//! their URLs are ignored.
 //!
 //! The command is restricted to admins: a sender is an admin when their `nick!user@host`
 //! matches one of the hostmasks configured in `[irc] admin_hostmasks`, where each component

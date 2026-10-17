@@ -109,6 +109,13 @@ impl FilterService {
         self.lock_index().matches(channel, sender, url)
     }
 
+    /// Whether messages from `sender` in `channel` are ignored entirely: the index holds a
+    /// filter without URL criteria whose sender criteria match.
+    #[must_use]
+    pub fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
+        self.lock_index().ignores(channel, sender)
+    }
+
     /// Locks the index for reading, continuing on poisoning.
     fn lock_index(&self) -> RwLockReadGuard<'_, FilterIndex> {
         zeta_utils::sync::read(&self.index)
@@ -122,10 +129,15 @@ impl FilterService {
 
 /// Exposes the service as the shared URL filter: the plugin publishes it wrapped in
 /// [`UrlFilters`](zeta_plugin::UrlFilters) at construction, and the host consults it through
-/// the [`Filters`](zeta_plugin::Filters) facade before delivering URL events.
+/// the [`Filters`](zeta_plugin::Filters) facade before delivering URL events and messages
+/// from ignored senders.
 impl UrlFilter for FilterService {
     fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
         self.matches(channel, sender, url)
+    }
+
+    fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
+        self.ignores(channel, sender)
     }
 }
 
@@ -264,10 +276,10 @@ mod tests {
 
     /// A filter fixture. The `created_by` column is part of the model; with per-test databases
     /// the value no longer doubles as a cleanup marker.
-    fn new_filter(channel: Option<&str>, host: &str, username: Option<&str>) -> NewFilter {
+    fn new_filter(channel: Option<&str>, host: Option<&str>, username: Option<&str>) -> NewFilter {
         NewFilter {
             channel: channel.map(String::from),
-            host: Some(host.into()),
+            host: host.map(String::from),
             path: None,
             nickname: None,
             username: username.map(String::from),
@@ -281,7 +293,7 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(Some("#smoke"), "example.com", Some("*other")))
+            .add(new_filter(Some("#smoke"), Some("example.com"), Some("*other")))
             .await
             .unwrap();
 
@@ -296,7 +308,7 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(Some("#smoke"), "example.com", Some("*other")))
+            .add(new_filter(Some("#smoke"), Some("example.com"), Some("*other")))
             .await
             .unwrap();
 
@@ -321,7 +333,7 @@ mod tests {
     async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
         let service = FilterService::new(db);
 
-        service.add(new_filter(None, "*.com", None)).await.unwrap();
+        service.add(new_filter(None, Some("*.com"), None)).await.unwrap();
 
         assert!(service.matches(
             "#anywhere",
@@ -335,7 +347,7 @@ mod tests {
         let service = FilterService::new(db);
 
         service
-            .add(new_filter(None, "imdb.com", Some("someuser")))
+            .add(new_filter(None, Some("imdb.com"), Some("someuser")))
             .await
             .unwrap();
 
@@ -352,6 +364,41 @@ mod tests {
             "#chan",
             Some(Sender::new("nick", "other", "host.example")),
             &url
+        ));
+    }
+
+    #[sqlx::test]
+    async fn ignores_senders_through_the_url_filter_trait(db: sqlx::PgPool) {
+        let service = FilterService::new(db.clone());
+
+        service
+            .add(new_filter(None, None, Some("someuser")))
+            .await
+            .unwrap();
+
+        assert!(UrlFilter::ignores(
+            &service,
+            "#chan",
+            Some(Sender::new("nick", "someuser", "host.example"))
+        ));
+        assert!(!UrlFilter::ignores(
+            &service,
+            "#chan",
+            Some(Sender::new("nick", "other", "host.example"))
+        ));
+
+        // A filter with URL criteria filters those URLs without ignoring the sender entirely.
+        let url_only = FilterService::new(db.clone());
+
+        url_only
+            .add(new_filter(None, Some("imdb.com"), Some("someuser")))
+            .await
+            .unwrap();
+
+        assert!(!UrlFilter::ignores(
+            &url_only,
+            "#chan",
+            Some(Sender::new("nick", "someuser", "host.example"))
         ));
     }
 }
