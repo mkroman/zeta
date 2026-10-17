@@ -10,8 +10,9 @@
 //! matches one of the hostmasks configured in `[irc] admin_hostmasks`, where each component
 //! supports wildcards. With no hostmasks configured, nobody is an admin.
 //!
-//! The filter service is published to [`Context::shared`] when the plugin is constructed, so the
-//! URL-handling plugins can consult it through the [`Filters`] facade.
+//! The filter service is published to [`Context::shared`] as a type-erased [`UrlFilters`] handle
+//! when the plugin is constructed; the host's dispatcher consults it through the [`Filters`]
+//! facade before delivering URL events, so filtered URLs never reach the URL plugins.
 
 mod error;
 mod index;
@@ -511,7 +512,7 @@ impl Plugin<Context> for FilterPlugin {
         subscriptions.command(FILTER);
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 
-        ctx.shared.publish(Arc::clone(&service));
+        ctx.shared.publish(Arc::new(UrlFilters::new(service.clone())));
 
         let admins = compile_hostmasks(&ctx.config.admin_hostmasks);
 
@@ -643,6 +644,18 @@ mod tests {
             &admins,
             Sender::new("mk", "mk", "example.com")
         ));
+    }
+
+    #[tokio::test]
+    async fn publishes_a_url_filters_handle_for_the_host() {
+        // The host's dispatcher consults the `Filters` facade, which only sees the service
+        // through the type-erased handle published here — without it, no URL is ever filtered.
+        let ctx = zeta_test_support::test_context();
+        let mut subscriptions = Subscriptions::new();
+
+        <FilterPlugin as Plugin<Context>>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
+
+        assert!(ctx.shared.get::<UrlFilters>().is_some());
     }
 
     /// Parses `input` with the filter command spec and unpacks the `add` subcommand.

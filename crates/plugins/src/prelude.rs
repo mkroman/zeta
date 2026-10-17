@@ -16,4 +16,5 @@ pub use zeta_plugin::prelude::{
 #[allow(unused_imports)]
 pub use zeta_plugin::{
     CatalogEntry, Context, Error as ZetaError, Filters, Plugin, PluginCatalog, SharedState,
+    UrlFilter, UrlFilters,
 };

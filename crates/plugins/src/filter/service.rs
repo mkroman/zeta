@@ -12,14 +12,14 @@ use super::{
     repository::FilterRepository,
 };
 use crate::database::Database;
-use zeta_plugin::Sender;
+use zeta_plugin::{Sender, UrlFilter};
 
 /// Stores filters in the database and mirrors them in an in-memory index.
 ///
 /// The database is the source of truth; the index is rebuilt from it on [`load`](Self::load) and
 /// kept in sync by [`add`](Self::add) and [`delete_ids`](Self::delete_ids). The hot lookup path
 /// ([`matches`](Self::matches)) only touches the index and never the database, so filters are
-/// loaded once at launch and shared with the URL-handling plugins through `SharedState`.
+/// loaded once at launch and the service is shared through `SharedState`.
 pub struct FilterService {
     /// The filter repository.
     repo: FilterRepository,
@@ -117,6 +117,15 @@ impl FilterService {
     /// Locks the index for writing, continuing on poisoning.
     fn lock_index_mut(&self) -> RwLockWriteGuard<'_, FilterIndex> {
         zeta_utils::sync::write(&self.index)
+    }
+}
+
+/// Exposes the service as the shared URL filter: the plugin publishes it wrapped in
+/// [`UrlFilters`](zeta_plugin::UrlFilters) at construction, and the host consults it through
+/// the [`Filters`](zeta_plugin::Filters) facade before delivering URL events.
+impl UrlFilter for FilterService {
+    fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
+        self.matches(channel, sender, url)
     }
 }
 
@@ -318,6 +327,31 @@ mod tests {
             "#anywhere",
             Some(Sender::new("nick", "user", "host.example")),
             &"https://reuters.com/article".parse().unwrap()
+        ));
+    }
+
+    #[sqlx::test]
+    async fn matches_urls_through_the_url_filter_trait(db: sqlx::PgPool) {
+        let service = FilterService::new(db);
+
+        service
+            .add(new_filter(None, "imdb.com", Some("someuser")))
+            .await
+            .unwrap();
+
+        let url: Url = "https://imdb.com/title/tt0111161".parse().unwrap();
+
+        assert!(UrlFilter::matches(
+            &service,
+            "#chan",
+            Some(Sender::new("nick", "someuser", "host.example")),
+            &url
+        ));
+        assert!(!UrlFilter::matches(
+            &service,
+            "#chan",
+            Some(Sender::new("nick", "other", "host.example")),
+            &url
         ));
     }
 }
