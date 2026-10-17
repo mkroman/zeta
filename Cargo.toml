@@ -83,11 +83,7 @@ unused_qualifications = "warn"
 
 [profile.release]
 lto = true
-# The release binary is stripped by `hack/strip-release.sh` after building, which archives the
-# symbols (and line tables) in a separate `*.debug` file for offline symbolization. Keep the
-# unstripped binary and line tables available when building.
-strip = "none"
-debug = "line-tables-only"
+strip = "debuginfo"
 panic = "unwind"
 opt-level = "z"
 codegen-units = 1
