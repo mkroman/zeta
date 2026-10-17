@@ -18,7 +18,7 @@ name = "zeta"
 path = "src/main.rs"
 
 [features]
-default = ["plugins/all", "rustls", "database"]
+default = ["plugins/all", "rustls", "database", "mirror"]
 # Database-backed plugins: the context carries a connection pool, and the host connects to the
 # database and applies the plugins' migrations at startup.
 database = ["dep:sqlx", "zeta-plugin/database"]
@@ -26,7 +26,7 @@ database = ["dep:sqlx", "zeta-plugin/database"]
 http = ["zeta-http/http"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
 emulated = ["zeta-http/emulated"]
-# Shared media mirroring (S3 upload + yt-dlp download manager).
+# Shared media mirroring (S3 upload + yt-dlp download manager); a default so deployments don't silently lose it.
 mirror = ["dep:zeta-mirror"]
 native-tls = [
     "irc/tls-native",

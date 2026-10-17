@@ -5,7 +5,8 @@
 //! public link to the mirrored file.
 //!
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
-//! environment variables); without it, the plugin only posts video summaries.
+//! environment variables); without it, the plugin only posts video summaries. Posting the
+//! summaries and mirroring can each be turned off through this plugin's settings.
 
 mod oembed;
 mod urls;
@@ -27,8 +28,15 @@ use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Whether to post a summary of the video's oEmbed metadata.
+    pub post_summary: bool,
     /// The maximum length of a video title before it gets truncated.
     pub title_length: usize,
+    /// Whether videos are mirrored to the S3 bucket.
+    ///
+    /// Mirroring additionally requires the shared `[mirror]` configuration (or the `S3_*`
+    /// environment variables); without it, videos are not mirrored regardless of this setting.
+    pub mirror: bool,
     /// The key prefix that mirrored videos are uploaded under.
     ///
     /// Falls back to the `TIKTOK_S3_PREFIX` environment variable, and to `tiktok` when neither is
@@ -45,7 +53,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            post_summary: true,
             title_length: 150,
+            mirror: true,
             prefix: None,
             public_url_base: None,
         }
@@ -84,12 +94,16 @@ impl Plugin<Context> for Tiktok {
     ) -> Result<Self, ZetaError> {
         subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
 
-        let mirror = MirrorHandle::resolve(
-            ctx.shared.get::<Mirror>(),
-            "tiktok",
-            settings.prefix.as_deref(),
-            settings.public_url_base.as_deref(),
-        );
+        let mirror = if settings.mirror {
+            MirrorHandle::resolve(
+                ctx.shared.get::<Mirror>(),
+                "tiktok",
+                settings.prefix.as_deref(),
+                settings.public_url_base.as_deref(),
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
             client: http::build_client(&ctx.config.http),
@@ -152,16 +166,23 @@ impl Tiktok {
         channel: &str,
         client: &Client,
     ) -> Result<(), Error> {
-        debug!(%video_id, "fetching video details");
-
         let url = video_url(slug, video_id);
+
+        if !self.settings.post_summary && self.mirror.is_none() {
+            debug!(%video_id, "both summarizing and mirroring are disabled");
+            return Ok(());
+        }
+
+        debug!(%video_id, "fetching video details");
         let embed = oembed::fetch(&self.client, &url).await?;
 
         if embed.is_privacy_restricted() {
             return Ok(());
         }
 
-        if let Some(summary) = format_summary(&embed, self.settings.title_length) {
+        if self.settings.post_summary
+            && let Some(summary) = format_summary(&embed, self.settings.title_length)
+        {
             let _ = client.send_privmsg(channel, notice(&summary));
         }
 
@@ -231,16 +252,22 @@ mod tests {
         Settings,
         settings,
         default: {
+            assert!(settings.post_summary);
             assert_eq!(settings.title_length, 150);
+            assert!(settings.mirror);
             assert!(settings.prefix.is_none());
             assert!(settings.public_url_base.is_none());
         }
         deserialize: {
+            "post_summary": false,
             "title_length": 100,
+            "mirror": false,
             "prefix": "~meta/tiktok",
             "public_url_base": "https://pub.example.com/tiktok",
         } assert: {
+            assert!(!settings.post_summary);
             assert_eq!(settings.title_length, 100);
+            assert!(!settings.mirror);
             assert_eq!(settings.prefix.as_deref(), Some("~meta/tiktok"));
             assert_eq!(
                 settings.public_url_base.as_deref(),
