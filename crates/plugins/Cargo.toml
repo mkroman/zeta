@@ -152,7 +152,7 @@ time = { workspace = true, optional = true }
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
-wildmatch = { version = "=2.6.1", optional = true }
+wildmatch = { version = "=2.7.0", optional = true }
 zeta-cache = { path = "../zeta-cache" }
 zeta-http = { path = "../zeta-http", default-features = false }
 zeta-mirror = { path = "../zeta-mirror", optional = true }
@@ -174,7 +174,7 @@ wreq-util = { version = "0.2.0", optional = true }
 
 [dev-dependencies]
 similar-asserts = "=2.0.0"
-wildmatch = "=2.6.1"
+wildmatch = "=2.7.0"
 zeta-test-support = { path = "../zeta-test-support" }
 
 [lints]
