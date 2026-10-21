@@ -8,13 +8,13 @@
 use std::fmt;
 
 use argh::FromArgs;
-use irc::client::Client;
+use irc::client::Client as IrcClient;
 
-use crate::command::ArgsError;
+use crate::command::ArgumentError;
 use crate::event::CommandEvent;
 
 /// The teal color (mIRC color 10) used for plugin replies.
-pub const COLOR: &str = "\x0310";
+pub const REPLY_COLOR: &str = "\x0310";
 
 /// Resets bold, color, and any other text formatting back to the default.
 pub const RESET: &str = "\x0f";
@@ -23,11 +23,11 @@ pub const RESET: &str = "\x0f";
 pub const BOLD: &str = "\x02";
 
 /// The prefix shared by every reply format, bold name or not.
-pub const REPLY_PREFIX: &str = "\x0310>";
+pub const REPLY_MARKER: &str = "\x0310>";
 
 /// Formats `message` as a reply from the plugin named `name`.
 ///
-/// The reply starts with [`REPLY_PREFIX`], followed by the bold plugin name, e.g.
+/// The reply starts with [`REPLY_MARKER`], followed by the bold plugin name, e.g.
 /// `> Twitch: <message>`.
 #[must_use]
 pub fn reply(name: &str, message: impl fmt::Display) -> String {
@@ -40,13 +40,13 @@ pub fn reply(name: &str, message: impl fmt::Display) -> String {
 /// `Display` implementation.
 #[must_use]
 pub fn reply_prefix(name: &str) -> String {
-    format!("{REPLY_PREFIX}{RESET}{BOLD} {name}:{BOLD}{COLOR} ")
+    format!("{REPLY_MARKER}{RESET}{BOLD} {name}:{BOLD}{REPLY_COLOR} ")
 }
 
 /// Formats `message` as a plain reply without a plugin name.
 #[must_use]
-pub fn notice(message: impl fmt::Display) -> String {
-    format!("{REPLY_PREFIX} {message}")
+pub fn plain_reply(message: impl fmt::Display) -> String {
+    format!("{REPLY_MARKER} {message}")
 }
 
 /// Sends the output of a failed argument parse to `channel`, one message per non-empty line.
@@ -59,9 +59,9 @@ pub fn notice(message: impl fmt::Display) -> String {
 ///
 /// Returns any error produced while sending the messages.
 pub fn reply_usage_lines(
-    client: &Client,
+    client: &IrcClient,
     channel: &str,
-    error: &ArgsError,
+    error: &ArgumentError,
     format: impl Fn(&str) -> String,
 ) -> Result<(), irc::error::Error> {
     for line in error.to_string().lines().filter(|line| !line.is_empty()) {
@@ -83,7 +83,7 @@ pub fn reply_usage_lines(
 ///
 /// Returns any error produced while sending the usage lines.
 pub fn parse_args_or_usage<T: FromArgs>(
-    client: &Client,
+    client: &IrcClient,
     command: &CommandEvent,
     format: impl Fn(&str) -> String,
 ) -> Result<Option<T>, irc::error::Error> {
@@ -99,7 +99,7 @@ pub fn parse_args_or_usage<T: FromArgs>(
 ///
 /// Returns any error produced while sending the usage lines.
 pub fn parse_words_or_usage<T: FromArgs>(
-    client: &Client,
+    client: &IrcClient,
     command: &CommandEvent,
     format: impl Fn(&str) -> String,
 ) -> Result<Option<T>, irc::error::Error> {
@@ -109,8 +109,8 @@ pub fn parse_words_or_usage<T: FromArgs>(
 /// Replies `error`'s usage lines through `format` and yields `None` for the caller to abandon
 /// the command with, or passes a successful parse result through.
 fn parse_or_usage<T>(
-    result: Result<T, ArgsError>,
-    client: &Client,
+    result: Result<T, ArgumentError>,
+    client: &IrcClient,
     channel: &str,
     format: impl Fn(&str) -> String,
 ) -> Result<Option<T>, irc::error::Error> {
@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn notice_prefixes_the_message_with_the_marker() {
-        assert_eq!(notice("No results found"), "\x0310> No results found");
+    fn plain_reply_prefixes_the_message_with_the_marker() {
+        assert_eq!(plain_reply("No results found"), "\x0310> No results found");
     }
 }

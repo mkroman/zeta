@@ -1,24 +1,24 @@
 //! Plugin registry.
 //!
-//! The registry constructs plugins, keeps the loaded ones with the subscriptions they declared,
+//! The registry constructs plugins, keeps the registered ones with the subscriptions they declared,
 //! and tracks the ones that failed to initialize. The host drives registration through
-//! [`Registry::register`] (or a bundled-plugin helper such as the `plugins` crate's
+//! [`PluginRegistry::register`] (or a bundled-plugin helper such as the `plugins` crate's
 //! `register_bundled_plugins`), spawns each [`RegisteredPlugin`] into its own [`PluginTask`],
-//! and routes events to them through the dispatch index.
+//! and routes events to them through the event dispatcher.
 
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use irc::client::Client;
+use irc::client::Client as IrcClient;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{Instrument, debug, error, warn};
 
 use crate::context::Context;
 use crate::event::{Event, Subscriptions, UrlScope};
-use crate::{Error, Plugin, command::CommandSpec};
+use crate::{Error, Plugin, PluginName, command::CommandSpec};
 
 /// Object-safe view of [`Plugin`], implemented automatically for every `Plugin<Context>`.
 ///
@@ -39,15 +39,16 @@ pub trait ErasedPlugin: Send + Sync {
     fn handle_event<'a>(
         &'a self,
         ctx: &'a Context,
-        client: &'a Client,
+        client: &'a IrcClient,
         event: &'a Event,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 
-    /// Called when all plugins are loaded and the client has connected to the network.
-    fn loaded<'a>(
+    /// Called after all plugins have been constructed and the client has connected to the
+    /// network.
+    fn start<'a>(
         &'a mut self,
         ctx: &'a Context,
-        client: &'a Client,
+        client: &'a IrcClient,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 
     /// Called once while the bot is shutting down, after the plugin's event queue has been
@@ -55,7 +56,7 @@ pub trait ErasedPlugin: Send + Sync {
     fn shutdown<'a>(
         &'a mut self,
         ctx: &'a Context,
-        client: &'a Client,
+        client: &'a IrcClient,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 }
 
@@ -63,7 +64,7 @@ impl<P: Plugin<Context>> ErasedPlugin for P {
     fn handle_event<'a>(
         &'a self,
         ctx: &'a Context,
-        client: &'a Client,
+        client: &'a IrcClient,
         event: &'a Event,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
@@ -82,18 +83,18 @@ impl<P: Plugin<Context>> ErasedPlugin for P {
         })
     }
 
-    fn loaded<'a>(
+    fn start<'a>(
         &'a mut self,
         ctx: &'a Context,
-        client: &'a Client,
+        client: &'a IrcClient,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
-        Plugin::loaded(self, ctx, client)
+        Plugin::start(self, ctx, client)
     }
 
     fn shutdown<'a>(
         &'a mut self,
         ctx: &'a Context,
-        client: &'a Client,
+        client: &'a IrcClient,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
         Plugin::shutdown(self, ctx, client)
     }
@@ -102,7 +103,7 @@ impl<P: Plugin<Context>> ErasedPlugin for P {
 /// A plugin registered with the bot, together with the subscriptions it declared.
 pub struct RegisteredPlugin {
     /// The name of the plugin.
-    pub name: String,
+    pub name: PluginName,
     /// The plugin itself.
     pub plugin: Box<dyn ErasedPlugin>,
     /// The events the plugin registered interest in during initialization.
@@ -111,9 +112,9 @@ pub struct RegisteredPlugin {
 
 /// Metadata about a registered plugin.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CatalogEntry {
+pub struct PluginEntry {
     /// The name of the plugin.
-    pub name: String,
+    pub name: PluginName,
     /// The commands handled by the plugin.
     pub commands: Vec<CommandSpec>,
     /// The URL hosts whose links the plugin handles itself.
@@ -128,24 +129,44 @@ pub struct CatalogEntry {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PluginCatalog {
     /// The registered plugins, in registration order.
-    pub entries: Vec<CatalogEntry>,
-    /// Every URL host advertised by an entry, for O(1) lookups.
-    url_hosts: HashSet<&'static str>,
+    entries: Vec<PluginEntry>,
+    /// Every URL host advertised by an entry, lowercased, for O(1) lookups.
+    url_hosts: HashSet<String>,
 }
 
 impl PluginCatalog {
     /// Builds a catalog from `entries`.
     #[must_use]
-    pub fn new(entries: Vec<CatalogEntry>) -> Self {
-        let url_hosts = entries
-            .iter()
-            .flat_map(|entry| entry.url_hosts.iter().copied())
-            .collect();
+    pub fn new(entries: Vec<PluginEntry>) -> Self {
+        let mut catalog = Self::default();
 
-        Self { entries, url_hosts }
+        for entry in entries {
+            catalog.push(entry);
+        }
+
+        catalog
+    }
+
+    /// Appends `entry` to the catalog, indexing the URL hosts it advertises.
+    ///
+    /// Advertised hosts are indexed lowercased, matching the dispatcher's URL host index.
+    pub fn push(&mut self, entry: PluginEntry) {
+        self.url_hosts
+            .extend(entry.url_hosts.iter().map(|host| host.to_ascii_lowercase()));
+
+        self.entries.push(entry);
+    }
+
+    /// The registered plugins, in registration order.
+    #[must_use]
+    pub fn entries(&self) -> &[PluginEntry] {
+        &self.entries
     }
 
     /// Whether a registered plugin handles `host` itself.
+    ///
+    /// The advertised hosts are indexed in lowercase, and `host` is expected to be lowercase
+    /// too, as `Url::host_str` returns it.
     #[must_use]
     pub fn handles_url_host(&self, host: &str) -> bool {
         self.url_hosts.contains(host)
@@ -154,16 +175,16 @@ impl PluginCatalog {
 
 /// Plugin registry.
 #[derive(Default)]
-pub struct Registry {
-    /// List of loaded plugins.
+pub struct PluginRegistry {
+    /// The registered plugins, in registration order.
     pub plugins: Vec<RegisteredPlugin>,
     /// Catalog of the registered plugins, published to the context's shared state.
     catalog: PluginCatalog,
     /// List of plugins that failed to initialize.
-    pub failed: Vec<(String, Error)>,
+    pub failed: Vec<(PluginName, Error)>,
 }
 
-impl Registry {
+impl PluginRegistry {
     /// Constructs and returns a new, empty plugin registry.
     #[must_use]
     pub fn new() -> Self {
@@ -196,7 +217,7 @@ impl Registry {
         ctx: &Context,
         settings: &P::Settings,
     ) -> bool {
-        let name = P::NAME.to_string();
+        let name = PluginName::new(P::NAME);
         let mut subscriptions = Subscriptions::new();
 
         match P::new(ctx, settings, &mut subscriptions) {
@@ -208,8 +229,7 @@ impl Registry {
                     _ => Vec::new(),
                 };
 
-                self.catalog.url_hosts.extend(url_hosts.iter().copied());
-                self.catalog.entries.push(CatalogEntry {
+                self.catalog.push(PluginEntry {
                     name: name.clone(),
                     commands: subscriptions.commands().to_vec(),
                     url_hosts,
@@ -231,40 +251,40 @@ impl Registry {
         }
     }
 
-    /// Removes and returns all loaded plugins, leaving the registry empty.
+    /// Removes and returns all registered plugins, leaving the registry empty.
     ///
     /// The caller is expected to move each plugin into its own task.
     #[must_use]
-    pub fn take_plugins(&mut self) -> Vec<RegisteredPlugin> {
+    pub fn drain_plugins(&mut self) -> Vec<RegisteredPlugin> {
         std::mem::take(&mut self.plugins)
     }
 }
 
 /// A plugin running in its own long-lived task.
 ///
-/// The task loads the plugin and then waits for events on an unbounded channel, handling them
+/// The task starts the plugin and then waits for events on an unbounded channel, handling them
 /// one at a time. State that other plugins should be able to access must be published to
-/// [`Context::shared`] when the plugin is constructed or loaded.
+/// [`Context::shared`] when the plugin is constructed or started.
 ///
 /// Closing the mailbox — by dropping its senders, which the dispatcher holds — makes the plugin
 /// drain its queued events, run the shutdown hook and exit.
 pub struct PluginTask {
     /// The name of the plugin, used for logging.
-    pub name: String,
+    pub name: PluginName,
     /// The handle of the spawned plugin task.
     handle: JoinHandle<()>,
 }
 
 impl PluginTask {
-    /// Spawns `plugin` into a task that loads it and processes events until the channel closes.
+    /// Spawns `plugin` into a task that starts it and processes events until the channel closes.
     ///
-    /// If the plugin fails to load, the error is logged and the task exits. When the channel
+    /// If the plugin fails to start, the error is logged and the task exits. When the channel
     /// closes, the plugin's shutdown hook runs before the task exits.
     pub fn spawn(
-        name: String,
+        name: PluginName,
         mut plugin: Box<dyn ErasedPlugin>,
         ctx: Arc<Context>,
-        client: Arc<Client>,
+        client: Arc<IrcClient>,
         mut receiver: mpsc::UnboundedReceiver<Event>,
     ) -> Self {
         let task_name = name.clone();
@@ -272,22 +292,21 @@ impl PluginTask {
         let handle = tokio::spawn(async move {
             debug!(plugin = %task_name, "plugin task started");
 
-            // The load and shutdown hooks run inside spans for the same reason the handler
-            // does: without a span, their warnings only ever reach stdout — the `loaded` span
-            // above closed before this one fires.
-            let failed_to_load = async {
-                if let Err(error) = plugin.loaded(&ctx, &client).await {
-                    warn!(plugin = %task_name, %error, "plugin failed to load");
+            // The start and shutdown hooks run inside spans for the same reason the handler
+            // does: without a span, their warnings only ever reach stdout.
+            let failed_to_start = async {
+                if let Err(error) = plugin.start(&ctx, &client).await {
+                    warn!(plugin = %task_name, %error, "plugin failed to start");
 
                     true
                 } else {
                     false
                 }
             }
-            .instrument(tracing::info_span!("loaded", plugin = %task_name))
+            .instrument(tracing::info_span!("start", plugin = %task_name))
             .await;
 
-            if failed_to_load {
+            if failed_to_start {
                 return;
             }
 
@@ -305,7 +324,7 @@ impl PluginTask {
             }
 
             // The mailbox is closed: the bot is shutting down. The warning goes inside the
-            // span, for the same reason as the load one above.
+            // span, for the same reason as the start one above.
             async {
                 if let Err(error) = plugin.shutdown(&ctx, &client).await {
                     warn!(plugin = %task_name, %error, "plugin error during shutdown");
@@ -326,7 +345,7 @@ impl PluginTask {
     /// returned handle — bounded by a deadline — waits for the plugin to drain its queue and
     /// run its shutdown hook.
     #[must_use]
-    pub fn into_handle(self) -> (String, JoinHandle<()>) {
+    pub fn into_parts(self) -> (PluginName, JoinHandle<()>) {
         (self.name, self.handle)
     }
 }
@@ -335,7 +354,7 @@ impl PluginTask {
 mod tests {
     use super::*;
     use crate::event::MessageEvent;
-    use crate::{PluginName, types::NoSettings};
+    use crate::{NamedPlugin, types::NoSettings};
     use async_trait::async_trait;
 
     /// Constructs a context for the tests: a default configuration and an unreachable (lazily
@@ -374,7 +393,7 @@ mod tests {
         recording: Recording,
     }
 
-    impl PluginName for RecordingPlugin {
+    impl NamedPlugin for RecordingPlugin {
         const NAME: &'static str = "recording";
     }
 
@@ -394,7 +413,7 @@ mod tests {
         async fn handle_message(
             &self,
             _: &Context,
-            _: &Client,
+            _: &IrcClient,
             _: &MessageEvent,
         ) -> Result<(), Error> {
             zeta_utils::sync::lock(&self.recording).push("message");
@@ -402,7 +421,7 @@ mod tests {
             Ok(())
         }
 
-        async fn shutdown(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
+        async fn shutdown(&mut self, _: &Context, _: &IrcClient) -> Result<(), Error> {
             zeta_utils::sync::lock(&self.recording).push("shutdown");
 
             Ok(())
@@ -416,7 +435,7 @@ mod tests {
         let recording = publish_recording(&ctx);
 
         let client = Arc::new(
-            Client::from_config(irc::client::data::Config {
+            IrcClient::from_config(irc::client::data::Config {
                 nickname: Some("zeta-test".to_owned()),
                 server: Some("mock".to_owned()),
                 use_mock_connection: true,
@@ -429,7 +448,7 @@ mod tests {
 
         let (sender, receiver) = mpsc::unbounded_channel();
         let task = PluginTask::spawn(
-            "recording".to_string(),
+            "recording".into(),
             Box::new(RecordingPlugin {
                 recording: Arc::clone(&recording),
             }),
@@ -450,7 +469,7 @@ mod tests {
         // Closing the mailbox makes the task drain its queue, run the shutdown hook and exit.
         drop(sender);
 
-        let (_, handle) = task.into_handle();
+        let (_, handle) = task.into_parts();
         handle.await.expect("task should finish");
 
         let log = zeta_utils::sync::lock(&recording);
@@ -461,18 +480,20 @@ mod tests {
     #[test]
     fn catalog_indexes_the_advertised_url_hosts() {
         let catalog = PluginCatalog::new(vec![
-            CatalogEntry {
+            PluginEntry {
                 name: "imdb".into(),
                 commands: Vec::new(),
-                url_hosts: vec!["imdb.com", "www.imdb.com"],
+                // Advertised hosts are indexed lowercased, like the dispatch index.
+                url_hosts: vec!["IMDB.com", "www.imdb.com"],
             },
-            CatalogEntry {
+            PluginEntry {
                 name: "dig".into(),
                 commands: Vec::new(),
                 url_hosts: Vec::new(),
             },
         ]);
 
+        assert_eq!(catalog.entries().len(), 2);
         assert!(catalog.handles_url_host("imdb.com"));
         assert!(catalog.handles_url_host("www.imdb.com"));
         assert!(!catalog.handles_url_host("dr.dk"));

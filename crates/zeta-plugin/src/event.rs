@@ -22,7 +22,7 @@ use argh::FromArgs;
 use irc::proto::{Command, Message};
 use url::Url;
 
-use crate::command::{ArgsError, CommandSpec};
+use crate::command::{ArgumentError, CommandSpec};
 
 /// Destructures a message into its `PRIVMSG` target and text.
 ///
@@ -176,7 +176,7 @@ impl CommandEvent {
     #[must_use]
     pub fn new(message: Arc<Message>, spec: CommandSpec) -> Option<Self> {
         let text = privmsg(&message).1;
-        let args = spec.parse(text)?;
+        let args = spec.arguments_from(text)?;
         // The parsed arguments are a suffix of the input, so their range is derivable from
         // their length.
         let start = text.len() - args.len();
@@ -208,9 +208,9 @@ impl CommandEvent {
     ///
     /// # Errors
     ///
-    /// Returns [`ArgsError::Quoting`] if the arguments could not be tokenized, or
-    /// [`ArgsError::Usage`] if `argh` rejected the arguments.
-    pub fn parse_args<T: FromArgs>(&self) -> Result<T, ArgsError> {
+    /// Returns [`ArgumentError::Tokenization`] if the arguments could not be tokenized, or
+    /// [`ArgumentError::Usage`] if `argh` rejected the arguments.
+    pub fn parse_args<T: FromArgs>(&self) -> Result<T, ArgumentError> {
         self.spec.parse_args(self.args())
     }
 
@@ -221,8 +221,8 @@ impl CommandEvent {
     ///
     /// # Errors
     ///
-    /// Returns [`ArgsError::Usage`] if `argh` rejected the arguments.
-    pub fn parse_words<T: FromArgs>(&self) -> Result<T, ArgsError> {
+    /// Returns [`ArgumentError::Usage`] if `argh` rejected the arguments.
+    pub fn parse_words<T: FromArgs>(&self) -> Result<T, ArgumentError> {
         self.spec.parse_words(self.args())
     }
 
@@ -281,7 +281,7 @@ impl UrlEvent {
 event_kind! {
     /// A channel message was posted.
     ///
-    /// Delivered to plugins that subscribed with [`Subscriptions::receive_message`]; every channel
+    /// Delivered to plugins that subscribed with [`Subscriptions::subscribe_message`]; every channel
     /// `PRIVMSG` that is not a CTCP message produces one event, whether or not it matches any
     /// registered command.
     MessageEvent, "message event",
@@ -516,7 +516,7 @@ impl CtcpKind {
 event_kind! {
     /// An unmodeled IRC command arrived.
     ///
-    /// Delivered only to plugins that subscribed with [`Subscriptions::receive_raw`]; numeric
+    /// Delivered only to plugins that subscribed with [`Subscriptions::subscribe_raw`]; numeric
     /// replies and
     /// the connection's own protocol traffic are never delivered to plugins.
     RawEvent, "raw event",
@@ -574,10 +574,10 @@ pub enum UrlScope {
 }
 
 /// Generates the [`EventKind`] flag enum, its [`EventKind::ALL`] list, and the matching
-/// [`Subscriptions::receive_*`] registration methods from a single table — the enum, the list
+/// [`Subscriptions::subscribe_*`] registration methods from a single table — the enum, the list
 /// and the registration methods cannot drift apart.
 ///
-/// Each entry pairs the `EventKind` variant with its `Subscriptions::receive_*` method and the
+/// Each entry pairs the `EventKind` variant with its `Subscriptions::subscribe_*` method and the
 /// doc fragments of both (the variant summary and "Registers interest in *…*.").
 ///
 /// The per-kind `Plugin::handle_*` defaults in `zeta-plugin/src/plugin.rs` are deliberately
@@ -586,7 +586,7 @@ pub enum UrlScope {
 /// every `#[async_trait]`-generated impl.
 macro_rules! event_kind_flags {
     ($(
-        $kind:ident($receive:ident, $kind_doc:literal, $receive_doc:literal $(,)?)
+        $kind:ident($subscribe:ident, $kind_doc:literal, $subscribe_doc:literal $(,)?)
     ),* $(,)?) => {
         /// The kind of an event a plugin subscribes to with a plain flag — one per per-kind handler.
         ///
@@ -607,9 +607,9 @@ macro_rules! event_kind_flags {
 
         impl Subscriptions {
             $(
-                #[doc = concat!("Registers interest in ", $receive_doc, ".")]
-                pub fn $receive(&mut self) -> &mut Self {
-                    self.receive(EventKind::$kind)
+                #[doc = concat!("Registers interest in ", $subscribe_doc, ".")]
+                pub fn $subscribe(&mut self) -> &mut Self {
+                    self.subscribe(EventKind::$kind)
                 }
             )*
         }
@@ -617,21 +617,21 @@ macro_rules! event_kind_flags {
 }
 
 event_kind_flags! {
-    Message(receive_message, "Channel messages ([`MessageEvent`]).",
+    Message(subscribe_message, "Channel messages ([`MessageEvent`]).",
         "every channel message, whether or not it matches a registered command"),
-    Join(receive_join, "Users joining channels ([`JoinEvent`]).",
+    Join(subscribe_join, "Users joining channels ([`JoinEvent`]).",
         "users joining channels"),
-    Part(receive_part, "Users leaving channels ([`PartEvent`]).",
+    Part(subscribe_part, "Users leaving channels ([`PartEvent`]).",
         "users leaving channels"),
-    Quit(receive_quit, "Users quitting the network ([`QuitEvent`]).",
+    Quit(subscribe_quit, "Users quitting the network ([`QuitEvent`]).",
         "users quitting the network"),
-    Nick(receive_nick, "Nickname changes ([`NickEvent`]).",
+    Nick(subscribe_nick, "Nickname changes ([`NickEvent`]).",
         "nickname changes"),
-    Kick(receive_kick, "Users kicked from channels ([`KickEvent`]).",
+    Kick(subscribe_kick, "Users kicked from channels ([`KickEvent`]).",
         "users kicked from channels"),
-    Ctcp(receive_ctcp, "CTCP messages ([`CtcpEvent`]).",
+    Ctcp(subscribe_ctcp, "CTCP messages ([`CtcpEvent`]).",
         "CTCP messages"),
-    Raw(receive_raw, "Raw, unmodeled IRC commands ([`RawEvent`]).",
+    Raw(subscribe_raw, "Raw, unmodeled IRC commands ([`RawEvent`]).",
         "raw, unmodeled IRC commands"),
 }
 
@@ -648,9 +648,9 @@ event_kind_flags! {
 ///
 /// fn register(subscriptions: &mut Subscriptions) {
 ///     subscriptions
-///         .command(DIG)
-///         .urls(UrlScope::Hosts(&["example.com"]))
-///         .receive_join();
+///         .subscribe_command(DIG)
+///         .subscribe_urls(UrlScope::Hosts(&["example.com"]))
+///         .subscribe_join();
 /// }
 ///
 /// let mut subscriptions = Subscriptions::new();
@@ -672,7 +672,7 @@ pub struct Subscriptions {
     /// The scope of URLs the plugin receives.
     urls: UrlScope,
     /// The event kinds the plugin receives, as a set.
-    events: BTreeSet<EventKind>,
+    kinds: BTreeSet<EventKind>,
 }
 
 impl Subscriptions {
@@ -682,7 +682,7 @@ impl Subscriptions {
         Self {
             commands: Vec::new(),
             urls: UrlScope::None,
-            events: BTreeSet::new(),
+            kinds: BTreeSet::new(),
         }
     }
 
@@ -690,7 +690,7 @@ impl Subscriptions {
     ///
     /// Every channel message whose first word matches the command's trigger is delivered to
     /// [`Plugin::handle_command`](super::Plugin::handle_command).
-    pub fn command(&mut self, command: CommandSpec) -> &mut Self {
+    pub fn subscribe_command(&mut self, command: CommandSpec) -> &mut Self {
         self.commands.push(command);
         self
     }
@@ -698,16 +698,16 @@ impl Subscriptions {
     /// Registers the scope of URLs the plugin receives.
     ///
     /// Calling it again replaces the previous scope.
-    pub const fn urls(&mut self, scope: UrlScope) -> &mut Self {
+    pub const fn subscribe_urls(&mut self, scope: UrlScope) -> &mut Self {
         self.urls = scope;
         self
     }
 
-    // The public `receive_*` registration methods are generated together with the
+    // The public `subscribe_*` registration methods are generated together with the
     // `EventKind` enum by `event_kind_flags!`.
     /// Adds `kind` to the set of event kinds the plugin receives.
-    fn receive(&mut self, kind: EventKind) -> &mut Self {
-        self.events.insert(kind);
+    fn subscribe(&mut self, kind: EventKind) -> &mut Self {
+        self.kinds.insert(kind);
         self
     }
 
@@ -725,8 +725,8 @@ impl Subscriptions {
 
     /// Returns the event kinds the plugin registered interest in.
     #[must_use]
-    pub const fn events(&self) -> &BTreeSet<EventKind> {
-        &self.events
+    pub const fn kinds(&self) -> &BTreeSet<EventKind> {
+        &self.kinds
     }
 }
 
@@ -932,25 +932,25 @@ mod tests {
         let mut subscriptions = Subscriptions::new();
 
         subscriptions
-            .command(CommandSpec::new(".dig", "dig"))
-            .command(CommandSpec::new(".ddo", "ddo"))
-            .urls(UrlScope::Hosts(&["x.example", "www.x.example"]))
-            .receive_message()
-            .receive_join()
-            .receive_kick()
-            .receive_ctcp();
+            .subscribe_command(CommandSpec::new(".dig", "dig"))
+            .subscribe_command(CommandSpec::new(".ddo", "ddo"))
+            .subscribe_urls(UrlScope::Hosts(&["x.example", "www.x.example"]))
+            .subscribe_message()
+            .subscribe_join()
+            .subscribe_kick()
+            .subscribe_ctcp();
 
         assert_eq!(subscriptions.commands().len(), 2);
         assert_eq!(
             subscriptions.url_scope(),
             UrlScope::Hosts(&["x.example", "www.x.example"])
         );
-        assert!(subscriptions.events().contains(&EventKind::Message));
-        assert!(subscriptions.events().contains(&EventKind::Join));
-        assert!(subscriptions.events().contains(&EventKind::Kick));
-        assert!(!subscriptions.events().contains(&EventKind::Part));
-        assert!(subscriptions.events().contains(&EventKind::Ctcp));
-        assert!(!subscriptions.events().contains(&EventKind::Raw));
+        assert!(subscriptions.kinds().contains(&EventKind::Message));
+        assert!(subscriptions.kinds().contains(&EventKind::Join));
+        assert!(subscriptions.kinds().contains(&EventKind::Kick));
+        assert!(!subscriptions.kinds().contains(&EventKind::Part));
+        assert!(subscriptions.kinds().contains(&EventKind::Ctcp));
+        assert!(!subscriptions.kinds().contains(&EventKind::Raw));
     }
 
     #[test]
@@ -958,8 +958,8 @@ mod tests {
         let mut subscriptions = Subscriptions::new();
 
         subscriptions
-            .urls(UrlScope::Hosts(&["x.example"]))
-            .urls(UrlScope::Any);
+            .subscribe_urls(UrlScope::Hosts(&["x.example"]))
+            .subscribe_urls(UrlScope::Any);
 
         assert_eq!(subscriptions.url_scope(), UrlScope::Any);
     }
@@ -970,6 +970,6 @@ mod tests {
 
         assert_empty!(subscriptions.commands());
         assert_eq!(subscriptions.url_scope(), UrlScope::None);
-        assert_empty!(subscriptions.events());
+        assert_empty!(subscriptions.kinds());
     }
 }

@@ -11,10 +11,10 @@
 //!
 //! const YT: CommandSpec = CommandSpec::new(".yt", "Search YouTube");
 //!
-//! assert_eq!(YT.parse(".yt"), Some(""));
-//! assert_eq!(YT.parse(".yt rust"), Some("rust"));
-//! assert_eq!(YT.parse(".youtube rust"), None);
-//! assert_eq!(YT.parse(".goodbye"), None);
+//! assert_eq!(YT.arguments_from(".yt"), Some(""));
+//! assert_eq!(YT.arguments_from(".yt rust"), Some("rust"));
+//! assert_eq!(YT.arguments_from(".youtube rust"), None);
+//! assert_eq!(YT.arguments_from(".goodbye"), None);
 //! ```
 
 use argh::{ArgsInfo, CommandInfoWithArgs, FromArgs};
@@ -123,7 +123,7 @@ impl CommandSpec {
     /// Returns `None` if the input does not start with the trigger, or if the character
     /// immediately following the trigger is not whitespace (i.e. it is part of a longer word).
     #[must_use]
-    pub fn parse<'a>(&self, input: &'a str) -> Option<&'a str> {
+    pub fn arguments_from<'a>(&self, input: &'a str) -> Option<&'a str> {
         let suffix = input.strip_prefix(self.trigger)?;
         match suffix.chars().next() {
             // Input is exactly the trigger — no arguments.
@@ -143,8 +143,8 @@ impl CommandSpec {
     ///
     /// # Errors
     ///
-    /// Returns [`ArgsError::Quoting`] if the arguments could not be tokenized (e.g. unbalanced
-    /// quotes), or [`ArgsError::Usage`] if `argh` rejected the arguments — the wrapped string is
+    /// Returns [`ArgumentError::Tokenization`] if the arguments could not be tokenized (e.g. unbalanced
+    /// quotes), or [`ArgumentError::Usage`] if `argh` rejected the arguments — the wrapped string is
     /// the human-readable usage or help output, suitable for replying with directly.
     ///
     /// # Examples
@@ -165,8 +165,8 @@ impl CommandSpec {
     /// let opts: Opts = HELLO.parse_args("world").unwrap();
     /// assert_eq!(opts.name, "world");
     /// ```
-    pub fn parse_args<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
-        let tokens = shlex::split(args).ok_or(ArgsError::Quoting)?;
+    pub fn parse_args<T: FromArgs>(&self, args: &str) -> Result<T, ArgumentError> {
+        let tokens = shlex::split(args).ok_or(ArgumentError::Tokenization)?;
         let tokens = tokens.iter().map(String::as_str).collect::<Vec<_>>();
 
         self.parse_tokens(&tokens)
@@ -181,9 +181,9 @@ impl CommandSpec {
     ///
     /// # Errors
     ///
-    /// Returns [`ArgsError::Usage`] if `argh` rejected the arguments — the wrapped string is the
+    /// Returns [`ArgumentError::Usage`] if `argh` rejected the arguments — the wrapped string is the
     /// human-readable usage or help output, suitable for replying with directly. Shell quoting
-    /// errors ([`ArgsError::Quoting`]) cannot occur.
+    /// errors ([`ArgumentError::Tokenization`]) cannot occur.
     ///
     /// # Examples
     ///
@@ -203,16 +203,16 @@ impl CommandSpec {
     /// let opts: Opts = ALERT.parse_words("don't forget at 4:20").unwrap();
     /// assert_eq!(opts.args.join(" "), "don't forget at 4:20");
     /// ```
-    pub fn parse_words<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
+    pub fn parse_words<T: FromArgs>(&self, args: &str) -> Result<T, ArgumentError> {
         let tokens: Vec<&str> = args.split_whitespace().collect();
 
         self.parse_tokens(&tokens)
     }
 
     /// Parses `tokens` into `T`, with the trigger as the command name in the usage output.
-    fn parse_tokens<T: FromArgs>(&self, tokens: &[&str]) -> Result<T, ArgsError> {
+    fn parse_tokens<T: FromArgs>(&self, tokens: &[&str]) -> Result<T, ArgumentError> {
         T::from_args(&[self.trigger], tokens)
-            .map_err(|early_exit| ArgsError::Usage(early_exit.output))
+            .map_err(|early_exit| ArgumentError::Usage(early_exit.output))
     }
 
     /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
@@ -224,10 +224,10 @@ impl CommandSpec {
 
 /// An error returned when command arguments could not be parsed.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
-pub enum ArgsError {
+pub enum ArgumentError {
     /// The arguments could not be tokenized (e.g. unbalanced quotes).
     #[error("could not parse arguments")]
-    Quoting,
+    Tokenization,
     /// The arguments were rejected; the string contains the generated usage or help output.
     #[error("{0}")]
     Usage(String),
@@ -258,18 +258,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_matches_the_trigger_prefix() {
+    fn arguments_from_matches_the_trigger_prefix() {
         const CMD: CommandSpec = CommandSpec::new("!test", "test");
 
-        assert_eq!(CMD.parse("!test --help"), Some("--help"));
-        assert_eq!(CMD.parse("!test"), Some(""));
+        assert_eq!(CMD.arguments_from("!test --help"), Some("--help"));
+        assert_eq!(CMD.arguments_from("!test"), Some(""));
         // Repeated whitespace between the trigger and the arguments collapses.
-        assert_eq!(CMD.parse("!test   --help"), Some("--help"));
-        assert_eq!(CMD.parse("!test  \t  args"), Some("args"));
+        assert_eq!(CMD.arguments_from("!test   --help"), Some("--help"));
+        assert_eq!(CMD.arguments_from("!test  \t  args"), Some("args"));
         // Only the exact trigger prefix matches.
-        assert_eq!(CMD.parse("!testing --help"), None);
+        assert_eq!(CMD.arguments_from("!testing --help"), None);
         // Ideographic space (U+3000) is 3 bytes — must not panic on byte slice.
-        assert_eq!(CMD.parse("!test\u{3000}args"), Some("args"));
+        assert_eq!(CMD.arguments_from("!test\u{3000}args"), Some("args"));
     }
 
     #[test]
@@ -330,16 +330,16 @@ mod tests {
 
         let err = CMD.parse_args::<NameOpts>("").unwrap_err();
 
-        assert!(matches!(err, ArgsError::Usage(ref out) if out.contains("name")));
+        assert!(matches!(err, ArgumentError::Usage(ref out) if out.contains("name")));
     }
 
     #[test]
-    fn parse_args_reports_quoting_error() {
+    fn parse_args_reports_tokenization_error() {
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
         assert_eq!(
             CMD.parse_args::<NameOpts>("\"unbalanced"),
-            Err(ArgsError::Quoting)
+            Err(ArgumentError::Tokenization)
         );
     }
 
@@ -398,7 +398,7 @@ mod tests {
 
         let err = CMD.parse_words::<GreedyOpts>("-x").unwrap_err();
 
-        assert!(matches!(err, ArgsError::Usage(ref out) if out.contains("-x")));
+        assert!(matches!(err, ArgumentError::Usage(ref out) if out.contains("-x")));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use irc::client::Client;
+use irc::client::Client as IrcClient;
 
 use crate::Error;
 use crate::event::{
@@ -11,7 +11,7 @@ use crate::event::{
 ///
 /// The name identifies the plugin in the help system and the plugin catalog, and must match the
 /// plugin's module name.
-pub trait PluginName {
+pub trait NamedPlugin {
     /// The plugin's name, e.g. `alert`.
     const NAME: &'static str;
 }
@@ -37,12 +37,12 @@ pub trait PluginName {
 ///# Examples
 ///
 /// ```
-/// use irc::client::Client;
+/// use irc::client::Client as IrcClient;
 /// use zeta_plugin::{CommandSpec, Error, Subscriptions, prelude::*};
 ///
 /// struct Greet;
 ///
-/// impl PluginName for Greet {
+/// impl NamedPlugin for Greet {
 ///     const NAME: &'static str = "greet";
 /// }
 ///
@@ -53,7 +53,7 @@ pub trait PluginName {
 ///     type Settings = NoSettings;
 ///
 ///     fn new(_: &(), _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Greet, Error> {
-///         subscriptions.command(HELLO);
+///         subscriptions.subscribe_command(HELLO);
 ///
 ///         Ok(Greet)
 ///     }
@@ -61,7 +61,7 @@ pub trait PluginName {
 ///     async fn handle_command(
 ///         &self,
 ///         _ctx: &(),
-///         client: &Client,
+///         client: &IrcClient,
 ///         command: &CommandEvent,
 ///     ) -> Result<(), Error> {
 ///         let nick = command.args().split_whitespace().next().unwrap_or("world");
@@ -75,12 +75,12 @@ pub trait PluginName {
 /// A plugin reacts to more than commands by registering the matching event kinds:
 ///
 /// ```
-/// use irc::client::Client;
+/// use irc::client::Client as IrcClient;
 /// use zeta_plugin::{Error, Subscriptions, prelude::*};
 ///
 /// struct Watcher;
 ///
-/// impl PluginName for Watcher {
+/// impl NamedPlugin for Watcher {
 ///     const NAME: &'static str = "watcher";
 /// }
 ///
@@ -89,29 +89,29 @@ pub trait PluginName {
 ///     type Settings = NoSettings;
 ///
 ///     fn new(_: &(), _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Watcher, Error> {
-///         subscriptions.urls(UrlScope::Any).receive_join().receive_message();
+///         subscriptions.subscribe_urls(UrlScope::Any).subscribe_join().subscribe_message();
 ///
 ///         Ok(Watcher)
 ///     }
 ///
-///     async fn handle_url(&self, _: &(), _: &Client, url: &UrlEvent) -> Result<(), Error> {
+///     async fn handle_url(&self, _: &(), _: &IrcClient, url: &UrlEvent) -> Result<(), Error> {
 ///         // Every URL posted in any channel — already filtered, deduplicated, and repaired.
 ///         Ok(())
 ///     }
 ///
-///     async fn handle_join(&self, _: &(), _: &Client, join: &JoinEvent) -> Result<(), Error> {
+///     async fn handle_join(&self, _: &(), _: &IrcClient, join: &JoinEvent) -> Result<(), Error> {
 ///         // Someone joined `join.channel()`.
 ///         Ok(())
 ///     }
 ///
-///     async fn handle_message(&self, _: &(), _: &Client, message: &MessageEvent) -> Result<(), Error> {
+///     async fn handle_message(&self, _: &(), _: &IrcClient, message: &MessageEvent) -> Result<(), Error> {
 ///         // Every channel message, whether or not it matches a command.
 ///         Ok(())
 ///     }
 /// }
 /// ```
 #[async_trait]
-pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
+pub trait Plugin<C: Sync = ()>: NamedPlugin + Send + Sync {
     /// This plugin's deserialized `[plugins.<name>]` settings.
     ///
     /// The host hands only the plugin's own settings to [`Plugin::new`]; plugins cannot access
@@ -153,25 +153,25 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// by identity), for example:
     ///
     /// ```
-    /// # use irc::client::Client;
+    /// # use irc::client::Client as IrcClient;
     /// # use zeta_plugin::{CommandEvent, CommandSpec, Error, Subscriptions, prelude::*};
     /// # const FOO: CommandSpec = CommandSpec::new(".foo", "Handle `.foo`");
     /// # const BAR: CommandSpec = CommandSpec::new(".bar", "Handle `.bar`");
     /// # struct MyPlugin;
-    /// # impl PluginName for MyPlugin {
+    /// # impl NamedPlugin for MyPlugin {
     /// #     const NAME: &'static str = "my_plugin";
     /// # }
     /// # #[async_trait]
     /// # impl Plugin for MyPlugin {
     /// #     type Settings = NoSettings;
     /// #     fn new(_: &(), _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, Error> {
-    /// #         subscriptions.command(FOO).command(BAR);
+    /// #         subscriptions.subscribe_command(FOO).subscribe_command(BAR);
     /// #         Ok(MyPlugin)
     /// #     }
     /// async fn handle_command(
     ///     &self,
     ///     _ctx: &(),
-    ///     client: &Client,
+    ///     client: &IrcClient,
     ///     command: &CommandEvent,
     /// ) -> Result<(), Error> {
     ///     match command.spec {
@@ -192,7 +192,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     async fn handle_command(
         &self,
         _ctx: &C,
-        _client: &Client,
+        _client: &IrcClient,
         _command: &CommandEvent,
     ) -> Result<(), Error> {
         Ok(())
@@ -201,13 +201,18 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// Handles a URL posted in a channel.
     ///
     /// Called once per extracted URL whose host the plugin registered (or for every URL, for
-    /// plugins that registered with [`Subscriptions::urls`]). The URL has already been
+    /// plugins that registered with [`Subscriptions::subscribe_urls`]). The URL has already been
     /// deduplicated and checked against the shared URL filters.
     ///
     /// # Errors
     ///
     /// Returns an error if handling the URL failed; the error is logged and never propagated.
-    async fn handle_url(&self, _ctx: &C, _client: &Client, _url: &UrlEvent) -> Result<(), Error> {
+    async fn handle_url(
+        &self,
+        _ctx: &C,
+        _client: &IrcClient,
+        _url: &UrlEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -228,7 +233,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     async fn handle_message(
         &self,
         _ctx: &C,
-        _client: &Client,
+        _client: &IrcClient,
         _message: &MessageEvent,
     ) -> Result<(), Error> {
         Ok(())
@@ -242,7 +247,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     async fn handle_join(
         &self,
         _ctx: &C,
-        _client: &Client,
+        _client: &IrcClient,
         _join: &JoinEvent,
     ) -> Result<(), Error> {
         Ok(())
@@ -256,7 +261,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     async fn handle_part(
         &self,
         _ctx: &C,
-        _client: &Client,
+        _client: &IrcClient,
         _part: &PartEvent,
     ) -> Result<(), Error> {
         Ok(())
@@ -270,7 +275,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     async fn handle_quit(
         &self,
         _ctx: &C,
-        _client: &Client,
+        _client: &IrcClient,
         _quit: &QuitEvent,
     ) -> Result<(), Error> {
         Ok(())
@@ -284,7 +289,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     async fn handle_nick(
         &self,
         _ctx: &C,
-        _client: &Client,
+        _client: &IrcClient,
         _nick: &NickEvent,
     ) -> Result<(), Error> {
         Ok(())
@@ -298,7 +303,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     async fn handle_kick(
         &self,
         _ctx: &C,
-        _client: &Client,
+        _client: &IrcClient,
         _kick: &KickEvent,
     ) -> Result<(), Error> {
         Ok(())
@@ -312,7 +317,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     async fn handle_ctcp(
         &self,
         _ctx: &C,
-        _client: &Client,
+        _client: &IrcClient,
         _ctcp: &CtcpEvent,
     ) -> Result<(), Error> {
         Ok(())
@@ -320,24 +325,30 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
 
     /// Handles a raw, unmodeled IRC command.
     ///
-    /// Only delivered to plugins that registered with [`Subscriptions::receive_raw`].
+    /// Only delivered to plugins that registered with [`Subscriptions::subscribe_raw`].
     ///
     /// # Errors
     ///
     /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_raw(&self, _ctx: &C, _client: &Client, _raw: &RawEvent) -> Result<(), Error> {
+    async fn handle_raw(
+        &self,
+        _ctx: &C,
+        _client: &IrcClient,
+        _raw: &RawEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
-    /// Called when all plugins are loaded and the client has connected to the network.
+    /// Called after all plugins have been constructed and the client has connected to the
+    /// network.
     ///
     /// This is useful for setting up plugins with async state.
     ///
     /// # Errors
     ///
-    /// Returns an error if the plugin failed to load; the error is logged and the plugin task
+    /// Returns an error if the plugin failed to start; the error is logged and the plugin task
     /// exits without processing any events.
-    async fn loaded(&mut self, _ctx: &C, _client: &Client) -> Result<(), Error> {
+    async fn start(&mut self, _ctx: &C, _client: &IrcClient) -> Result<(), Error> {
         Ok(())
     }
 
@@ -354,12 +365,12 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     ///# Examples
     ///
     /// ```
-    /// use irc::client::Client;
+    /// use irc::client::Client as IrcClient;
     /// use zeta_plugin::{Error, Subscriptions, prelude::*};
     ///
     /// struct FlushPlugin;
     ///
-    /// impl PluginName for FlushPlugin {
+    /// impl NamedPlugin for FlushPlugin {
     ///     const NAME: &'static str = "flush";
     /// }
     ///
@@ -371,7 +382,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     ///         Ok(FlushPlugin)
     ///     }
     ///
-    ///     async fn shutdown(&mut self, _: &(), _client: &Client) -> Result<(), Error> {
+    ///     async fn shutdown(&mut self, _: &(), _client: &IrcClient) -> Result<(), Error> {
     ///         // Flush any pending state to durable storage here.
     ///         Ok(())
     ///     }
@@ -381,7 +392,7 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// # Errors
     ///
     /// Returns an error if flushing failed; the error is logged and the shutdown continues.
-    async fn shutdown(&mut self, _ctx: &C, _client: &Client) -> Result<(), Error> {
+    async fn shutdown(&mut self, _ctx: &C, _client: &IrcClient) -> Result<(), Error> {
         Ok(())
     }
 }
