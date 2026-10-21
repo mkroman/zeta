@@ -28,8 +28,10 @@
 //! deliberately, as a title next to a reader link.
 
 mod client;
+mod command;
 mod error;
 mod model;
+mod reply;
 mod repository;
 mod service;
 mod sites;
@@ -41,33 +43,23 @@ pub use error::Error;
 pub use model::{CachedUrl, HostStatistics, Site, Statistics};
 pub use service::UnwallService;
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-use argh::{ArgsInfo, FromArgs};
 use tracing::{Instrument, debug, warn};
 
+use self::command::{Add, Del, Delete, Info, List, Opts, Rm, Stats, Subcommand, UNWALL};
+use self::reply::{info_reply, join_and, list_reply, stats_reply};
 use crate::hostmask::Hostmasks;
 use crate::prelude::*;
 use zeta_http as http;
 use zeta_url::redact_url;
-use zeta_utils::{
-    duration::TimeInWords,
-    utils::{MAX_LISTING_LENGTH, append_entries_within_budget},
-};
 
 use client::UnwallClient;
 use model::NewFetch;
 
 /// The name this plugin replies under.
 const NAME: &str = "UnWall";
-
-/// The `.unwall` command.
-const UNWALL: CommandSpec = CommandSpec::with_args::<Opts>(
-    ".unwall",
-    "Manage the paywalled sites unwalled through unwall.app (add/rm/list/stats/info)",
-);
 
 /// The reply sent to senders that are not authorized to manage unwall sites.
 const UNAUTHORIZED: &str = "You are not authorized to manage unwall sites.";
@@ -101,89 +93,6 @@ impl Default for Settings {
             submit_timeout: Duration::from_mins(5),
         }
     }
-}
-
-/// Manage the paywalled sites unwalled through unwall.app.
-#[derive(FromArgs, ArgsInfo, Debug)]
-struct Opts {
-    /// the unwall operation
-    #[argh(subcommand)]
-    command: Subcommand,
-}
-
-/// The `.unwall` subcommands.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand)]
-enum Subcommand {
-    /// add sites to unwall
-    Add(Add),
-    /// remove sites matching a pattern
-    Rm(Rm),
-    /// remove sites matching a pattern (alias of `rm`)
-    Del(Del),
-    /// remove sites matching a pattern (alias of `rm`)
-    Delete(Delete),
-    /// summarize the covered sites
-    List(List),
-    /// show overall statistics about the unwalled links
-    Stats(Stats),
-    /// show statistics for one host
-    Info(Info),
-}
-
-/// Add sites to unwall.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "add")]
-struct Add {
-    /// the hostnames to unwall, e.g. `bloomberg.com` or `*.bloomberg.com`
-    #[argh(positional, greedy)]
-    hosts: Vec<String>,
-}
-
-/// Remove sites matching a pattern.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "rm")]
-struct Rm {
-    /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
-    #[argh(positional)]
-    pattern: String,
-}
-
-/// Remove sites matching a pattern.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "del")]
-struct Del {
-    /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
-    #[argh(positional)]
-    pattern: String,
-}
-
-/// Remove sites matching a pattern.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "delete")]
-struct Delete {
-    /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
-    #[argh(positional)]
-    pattern: String,
-}
-
-/// Summarize the covered sites.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "list")]
-struct List {}
-
-/// Show overall statistics about the unwalled links.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "stats")]
-struct Stats {}
-
-/// Show statistics for one host.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "info")]
-struct Info {
-    /// the host to show statistics for
-    #[argh(positional)]
-    host: String,
 }
 
 /// Unwall plugin.
@@ -314,39 +223,7 @@ impl Unwall {
 
     /// Summarizes the covered sites in a single line.
     fn list(&self, client: &Client, channel: &str) -> Result<(), ZetaError> {
-        let sites = self.service.sites();
-
-        let response = if sites.is_empty() {
-            reply(
-                NAME,
-                format!(
-                    "{RESET}No unwalled sites yet{COLOR}: add one with\
-                     {RESET} .unwall add <host>{COLOR}, e.g.{RESET} .unwall add bloomberg.com{COLOR}."
-                ),
-            )
-        } else {
-            let mut message = reply(
-                NAME,
-                format!("{RESET}{}{COLOR} unwalled sites:{RESET} ", sites.len()),
-            );
-
-            let reserved = " (999 more)".len();
-            let appended = append_entries_within_budget(
-                &mut message,
-                sites.iter().map(|site| site.host.as_str()),
-                &format!("{COLOR}, {RESET}"),
-                MAX_LISTING_LENGTH,
-                reserved,
-            );
-
-            if appended < sites.len() {
-                let _ = write!(message, "{COLOR} ({} more)", sites.len() - appended);
-            }
-
-            message
-        };
-
-        client.send_privmsg(channel, response)?;
+        client.send_privmsg(channel, list_reply(&self.service.sites()))?;
 
         Ok(())
     }
@@ -354,14 +231,7 @@ impl Unwall {
     /// Replies with the overall statistics of the unwalled links.
     async fn stats(&self, client: &Client, channel: &str) -> Result<(), ZetaError> {
         let response = match self.service.statistics().await {
-            Ok(stats) => reply(
-                NAME,
-                format!(
-                    "{RESET}{}{COLOR} links unwalled across{RESET} {}{COLOR} sites \
-                     by{RESET} {}{COLOR} users ({RESET}{}{COLOR} today).",
-                    stats.urls, stats.hosts, stats.users, stats.urls_today
-                ),
-            ),
+            Ok(stats) => stats_reply(&stats),
             Err(error) => reply(
                 NAME,
                 format!("could not load the statistics:{RESET} {error}"),
@@ -378,19 +248,7 @@ impl Unwall {
         let host = host.trim().to_lowercase();
 
         let response = match self.service.host_statistics(&host).await {
-            Ok(Some(stats)) => reply(
-                NAME,
-                format!(
-                    "{RESET}{}{COLOR} links unwalled for{RESET} {host}{COLOR} \
-                     by{RESET} {}{COLOR} users ({RESET}{}{COLOR} today, most recent\
-                     {RESET} {}{COLOR}).",
-                    stats.urls,
-                    stats.users,
-                    stats.urls_today,
-                    stats.latest.map_or_default(|latest| latest.time_ago()),
-                ),
-            ),
-            Ok(None) => reply(NAME, format!("No unwalled links for{RESET} {host}{COLOR}.")),
+            Ok(stats) => info_reply(&host, stats.as_ref()),
             Err(error) => reply(
                 NAME,
                 format!("could not load the statistics:{RESET} {error}"),
@@ -475,24 +333,6 @@ impl Unwall {
             .instrument(span),
         );
     }
-}
-
-/// Joins `items` with cyan commas and a final cyan `and`, each item emphasized in the default
-/// color: `\x0fa\x0310, \x0fb\x0310 and\x0f c`.
-fn join_and(items: &[String]) -> String {
-    let mut joined = String::new();
-
-    for (index, item) in items.iter().enumerate() {
-        if index == 0 {
-            let _ = write!(joined, "{RESET}{item}");
-        } else if index + 1 == items.len() {
-            let _ = write!(joined, "{COLOR} and{RESET} {item}");
-        } else {
-            let _ = write!(joined, "{COLOR},{RESET} {item}");
-        }
-    }
-
-    joined
 }
 
 #[async_trait]
@@ -601,19 +441,5 @@ mod tests {
             assert_eq!(settings.reader_base, "https://unwall.example/");
             assert_eq!(settings.submit_timeout, Duration::from_secs(90));
         }
-    }
-
-    #[test]
-    fn joins_with_a_final_and() {
-        assert_eq!(join_and(&[]), "");
-        assert_eq!(join_and(&["a".into()]), format!("{RESET}a"));
-        assert_eq!(
-            join_and(&["a".into(), "b".into()]),
-            format!("{RESET}a{COLOR} and{RESET} b")
-        );
-        assert_eq!(
-            join_and(&["a".into(), "b".into(), "c".into()]),
-            format!("{RESET}a{COLOR},{RESET} b{COLOR} and{RESET} c")
-        );
     }
 }

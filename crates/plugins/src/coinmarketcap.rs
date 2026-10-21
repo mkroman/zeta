@@ -18,18 +18,21 @@
 //! the plugin is skipped at startup. The `default_currency` (USD), `cache_ttl` (24 hours), and
 //! `max_name_typos` (2) settings tune quoting and fuzzy name lookups.
 
+mod command;
+mod name;
+mod reply;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use argh::{ArgsInfo, FromArgs};
 use serde::{Deserialize, Serialize};
-use strsim::jaro_winkler;
 use tracing::{debug, warn};
 
+use self::command::{CC, CC_USAGE, COIN_COMMANDS, COMMANDS, CoinOpts, QuoteOpts, parse_currency};
+use self::reply::format_quote;
 use crate::prelude::*;
 use zeta_cache::TtlCache;
-use zeta_utils::utils::strip_control_chars;
 
 use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat, QuoteData};
 use coinmarketcap::{Client as CmcClient, Config, Error};
@@ -64,111 +67,6 @@ impl Default for Settings {
     }
 }
 
-/// The `.cc` command.
-const CC: CommandSpec =
-    CommandSpec::with_args::<CoinOpts>(".cc", "Quote any coin by symbol or fuzzy name");
-
-/// The `.btc` command.
-const BTC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".btc", "Quote Bitcoin (BTC) in a fiat currency");
-/// The `.eth` command.
-const ETH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".eth", "Quote Ethereum (ETH) in a fiat currency");
-/// The `.zcash` command.
-const ZCASH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".zcash", "Quote Zcash (ZEC) in a fiat currency");
-/// The `.zec` command.
-const ZEC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".zec", "Quote Zcash (ZEC) in a fiat currency");
-/// The `.ans` command (Antshares, the former name of Neo).
-const ANS: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".ans", "Quote Neo (NEO), formerly Antshares");
-/// The `.neo` command.
-const NEO: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".neo", "Quote Neo (NEO) in a fiat currency");
-/// The `.stellar` command.
-const STELLAR: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".stellar", "Quote Stellar (XLM) in a fiat currency");
-/// The `.xmr` command.
-const XMR: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".xmr", "Quote Monero (XMR) in a fiat currency");
-/// The `.xrp` command.
-const XRP: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".xrp", "Quote XRP in a fiat currency");
-/// The `.ltc` command.
-const LTC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".ltc", "Quote Litecoin (LTC) in a fiat currency");
-/// The `.etc` command.
-const ETC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".etc", "Quote Ethereum Classic (ETC) in a fiat currency");
-/// The `.golem` command.
-const GOLEM: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".golem", "Quote Golem (GNT) in a fiat currency");
-/// The `.sia` command.
-const SIA: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".sia", "Quote Siacoin (SC) in a fiat currency");
-/// The `.doge` command.
-const DOGE: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".doge", "Quote Dogecoin (DOGE) in a fiat currency");
-/// The `.maid` command.
-const MAID: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".maid", "Quote MaidSafeCoin (MAID) in a fiat currency");
-/// The `.bcash` command.
-const BCASH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".bcash", "Quote Bitcoin Cash (BCH) in a fiat currency");
-/// The `.trump` command.
-const TRUMP: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".trump", "Quote Trump (TRUMP) in a fiat currency");
-
-/// Fixed coin commands, mapped to the symbol they quote.
-const COIN_COMMANDS: &[(CommandSpec, &str)] = &[
-    (BTC, "BTC"),
-    (ETH, "ETH"),
-    (ZCASH, "ZEC"),
-    (ZEC, "ZEC"),
-    (ANS, "NEO"),
-    (NEO, "NEO"),
-    (STELLAR, "XLM"),
-    (XMR, "XMR"),
-    (XRP, "XRP"),
-    (LTC, "LTC"),
-    (ETC, "ETC"),
-    (GOLEM, "GNT"),
-    (SIA, "SC"),
-    (DOGE, "DOGE"),
-    (MAID, "MAID"),
-    (BCASH, "BCH"),
-    (TRUMP, "TRUMP"),
-];
-
-/// The commands handled by this plugin.
-const COMMANDS: &[CommandSpec] = &[
-    CC, BTC, ETH, ZCASH, ZEC, ANS, NEO, STELLAR, XMR, XRP, LTC, ETC, GOLEM, SIA, DOGE, MAID, BCASH,
-    TRUMP,
-];
-
-/// Convert a coin price into another fiat currency.
-#[derive(FromArgs, ArgsInfo, Debug)]
-struct QuoteOpts {
-    /// fiat currency to convert the price into (defaults to USD)
-    #[argh(positional)]
-    currency: Option<String>,
-}
-
-/// The usage hint for the `.cc` command.
-const CC_USAGE: &str = "Usage: .cc \x0f<symbol> [currency]";
-
-/// Convert a cryptocurrency price into fiat currency.
-#[derive(FromArgs, ArgsInfo, Debug)]
-struct CoinOpts {
-    /// the coin to quote, by symbol or name
-    #[argh(positional)]
-    coin: String,
-    /// fiat currency to convert the price into (defaults to USD)
-    #[argh(positional)]
-    currency: Option<String>,
-}
-
 /// The top cryptocurrencies by market cap, keyed by ticker symbol.
 ///
 /// Populated from the cryptocurrency map endpoint at startup and refreshed lazily after the
@@ -177,6 +75,8 @@ struct CoinOpts {
 struct CoinCache {
     /// The cached coins, keyed by ticker symbol.
     by_symbol: HashMap<String, Coin>,
+    /// The lowercased coin names, with the symbol each belongs to, for fuzzy name lookups.
+    by_name: Vec<(String, String)>,
 }
 
 impl From<Vec<Coin>> for CoinCache {
@@ -184,12 +84,18 @@ impl From<Vec<Coin>> for CoinCache {
         // The map endpoint returns coins in ascending rank order; keep the first (highest
         // ranked) occurrence when multiple coins share a symbol.
         let mut by_symbol = HashMap::with_capacity(coins.len());
+        let mut by_name = Vec::with_capacity(coins.len());
 
         for coin in coins {
-            by_symbol.entry(coin.symbol.clone()).or_insert(coin);
+            if by_symbol.contains_key(&coin.symbol) {
+                continue;
+            }
+
+            by_name.push((coin.name.to_lowercase(), coin.symbol.clone()));
+            by_symbol.insert(coin.symbol.clone(), coin);
         }
 
-        Self { by_symbol }
+        Self { by_symbol, by_name }
     }
 }
 
@@ -321,10 +227,10 @@ impl CoinMarketCap {
         // Prefer a cached coin (by symbol, then by fuzzy name); fall back to letting the API
         // resolve the query as a symbol (e.g. when the cache has not been populated yet, or the
         // coin is outside the cached top 1000).
-        let query = match self.resolve_coin(&opts.coin) {
-            Some(coin) => CoinQuery::Id(coin.id),
-            None => CoinQuery::Symbol(opts.coin.to_ascii_uppercase()),
-        };
+        let query = self.resolve_coin(&opts.coin).map_or_else(
+            || CoinQuery::Symbol(opts.coin.to_ascii_uppercase()),
+            CoinQuery::Id,
+        );
 
         self.quote_and_reply(client, channel, query, opts.currency.as_deref())
             .await
@@ -414,16 +320,17 @@ impl CoinMarketCap {
         Ok(())
     }
 
-    /// Resolves a user query to a coin, by exact symbol match first and by fuzzy name match
+    /// Resolves a user query to a coin id, by exact symbol match first and by fuzzy name match
     /// second.
-    fn resolve_coin(&self, query: &str) -> Option<Coin> {
+    fn resolve_coin(&self, query: &str) -> Option<u64> {
         self.coins.read(|cache| {
-            let coins = cache.map(|cache| &cache.by_symbol)?;
+            let cache = cache?;
 
-            coins
+            cache
+                .by_symbol
                 .get(&query.to_ascii_uppercase())
-                .cloned()
-                .or_else(|| find_by_name(coins, query, self.max_name_typos))
+                .or_else(|| cache.find_by_name(query, self.max_name_typos))
+                .map(|coin| coin.id)
         })
     }
 
@@ -485,179 +392,9 @@ impl CoinMarketCap {
     }
 }
 
-/// Parses and validates the optional conversion currency of a command invocation.
-///
-/// The input is sanitized before validation, so an unsupported currency can be echoed back to
-/// the channel without leaking IRC formatting control characters. Validation is delegated to
-/// `is_valid`, which accepts everything while the fiat cache has not been populated,
-/// deferring validation to the API.
-fn parse_currency(
-    currency: Option<&str>,
-    default_currency: &str,
-    is_valid: impl Fn(&str) -> bool,
-) -> Result<String, Error> {
-    let currency = strip_control_chars(currency.unwrap_or(default_currency)).to_ascii_uppercase();
-
-    if is_valid(&currency) {
-        Ok(currency)
-    } else {
-        Err(Error::InvalidCurrency(currency))
-    }
-}
-
-/// Finds the best fuzzy name match for `query` among `coins`, if any.
-///
-/// A candidate matches when its name contains the query's characters in order, with at most
-/// `max_name_typos` of them left unmatched. Names containing the query verbatim are preferred
-/// (exact match first, then prefix, then substring); the rest are scored by Jaro-Winkler
-/// similarity, scaled below verbatim matches. The highest score wins, preferring the shorter
-/// name on ties (e.g. `Bitcoin` over `Bitcoin Cash` for the query `bitcoin`).
-fn find_by_name(coins: &HashMap<String, Coin>, query: &str, max_name_typos: u16) -> Option<Coin> {
-    let needle = query.trim().to_lowercase();
-
-    if needle.is_empty() {
-        return None;
-    }
-
-    let max_typos = usize::from(max_name_typos);
-
-    coins
-        .values()
-        .filter_map(|coin| {
-            let name = coin.name.to_lowercase();
-
-            score_name(&needle, &name, max_typos).map(|score| (score, coin))
-        })
-        .max_by(|(a_score, a_coin), (b_score, b_coin)| {
-            a_score
-                .total_cmp(b_score)
-                .then_with(|| b_coin.name.len().cmp(&a_coin.name.len()))
-                .then_with(|| a_coin.symbol.cmp(&b_coin.symbol))
-        })
-        .map(|(_, coin)| coin.clone())
-}
-
-/// Scores how well `name` matches `needle` (both lowercased), or `None` if it does not match.
-///
-/// Verbatim matches rank above fuzzy ones: exact (`1.0`), prefix (`0.95`), then substring
-/// (`0.9`). Remaining candidates must match with at most `max_typos` unmatched characters, and
-/// are scored by Jaro-Winkler similarity scaled below verbatim matches (Jaro's matching window
-/// ignores characters near the end of longer names, so e.g. `gold` must not rely on it to find
-/// `PAX Gold`).
-fn score_name(needle: &str, name: &str, max_typos: usize) -> Option<f64> {
-    if name == needle {
-        return Some(1.0);
-    }
-
-    if name.starts_with(needle) {
-        return Some(0.95);
-    }
-
-    if name.contains(needle) {
-        return Some(0.9);
-    }
-
-    matches_within(needle, name, max_typos).then(|| jaro_winkler(needle, name) * 0.85)
-}
-
-/// Returns whether `needle` can be matched in `haystack`, in order, with at most `max_typos`
-/// of its characters left unmatched.
-fn matches_within(needle: &str, haystack: &str, max_typos: usize) -> bool {
-    let needle: Vec<char> = needle.chars().collect();
-    let haystack: Vec<char> = haystack.chars().collect();
-
-    // The number of unmatched needle characters is the needle length minus the length of the
-    // longest common subsequence, computed with the usual row-by-row dynamic program.
-    let mut previous = vec![0; haystack.len() + 1];
-    let mut current = vec![0; haystack.len() + 1];
-
-    for &needle_char in &needle {
-        for (index, &haystack_char) in haystack.iter().enumerate() {
-            current[index + 1] = if needle_char == haystack_char {
-                previous[index] + 1
-            } else {
-                current[index].max(previous[index + 1])
-            };
-        }
-
-        std::mem::swap(&mut previous, &mut current);
-    }
-
-    needle.len() - previous[haystack.len()] <= max_typos
-}
-
-/// Formats a coin quote as an IRC message, e.g.:
-///
-/// `\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x0f $97231.50\x0310 (...)`
-fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String {
-    let name = &quote.name;
-    let symbol = &quote.symbol;
-
-    let Some(fiat) = quote.quote.get(currency) else {
-        return notice(format!(
-            "{name} ({RESET}{symbol}{COLOR}) has no quote in {currency}"
-        ));
-    };
-
-    let price = fiat.price.map_or_else(
-        || "n/a".to_string(),
-        |price| format_money(price, currency, sign),
-    );
-
-    let change_hour = format_change(fiat.percent_change_1h);
-    let change_day = format_change(fiat.percent_change_24h);
-    let change_week = format_change(fiat.percent_change_7d);
-
-    notice(format!(
-        "{name} ({RESET}{symbol}{COLOR}) is currently trading at{RESET} {price}{COLOR} \
-         (1 Hour Change:{RESET} {change_hour}{COLOR} 24 Hour Change:{RESET} {change_day}{COLOR} \
-         7 Day Change:{RESET} {change_week}{COLOR})"
-    ))
-}
-
-/// Formats a price change percentage in green (positive) or red (negative), followed by a reset.
-fn format_change(change: Option<f64>) -> String {
-    let Some(change) = change else {
-        return "\x0fn/a".to_string();
-    };
-
-    if change.is_sign_negative() {
-        format!("\x034{change:+.2}%\x0f")
-    } else {
-        format!("\x033{change:+.2}%\x0f")
-    }
-}
-
-/// Formats a price with the currency sign when one is known, appending the currency code
-/// otherwise.
-fn format_money(price: f64, currency: &str, sign: Option<&str>) -> String {
-    let price = format_price(price);
-
-    sign.map_or_else(
-        || format!("{price} {currency}"),
-        |sign| format!("{sign}{price}"),
-    )
-}
-
-/// Formats a price with two decimals when it is at least one unit, and with up to ten decimals
-/// (trailing zeroes trimmed) otherwise, to preserve precision for micro-priced coins.
-fn format_price(price: f64) -> String {
-    if price.abs() >= 1.0 {
-        format!("{price:.2}")
-    } else {
-        let formatted = format!("{price:.10}");
-
-        formatted
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use coinmarketcap::model::FiatQuote;
     use zeta_test_support::settings_tests;
 
     /// Builds a coin list for cache tests.
@@ -738,44 +475,6 @@ mod tests {
         }
     }
 
-    /// Builds a quote for `Bitcoin (BTC)` in USD.
-    fn test_quote() -> QuoteData {
-        QuoteData {
-            name: "Bitcoin".to_string(),
-            symbol: "BTC".to_string(),
-            quote: HashMap::from([(
-                "USD".to_string(),
-                FiatQuote {
-                    price: Some(97231.504),
-                    percent_change_1h: Some(0.5),
-                    percent_change_24h: Some(-1.2),
-                    percent_change_7d: Some(10.25),
-                },
-            )]),
-        }
-    }
-
-    #[test]
-    fn commands_are_consistent() {
-        assert!(COMMANDS.contains(&CC));
-
-        for (spec, _) in COIN_COMMANDS {
-            assert!(COMMANDS.contains(spec), "{spec:?} missing from COMMANDS");
-        }
-
-        let mut commands = COMMANDS
-            .iter()
-            .map(CommandSpec::trigger)
-            .collect::<Vec<_>>();
-        commands.sort_unstable();
-        commands.dedup();
-        assert_eq!(
-            commands.len(),
-            COMMANDS.len(),
-            "duplicate command in COMMANDS"
-        );
-    }
-
     #[test]
     fn keeps_highest_ranked_coin_for_duplicate_symbols() {
         // The cache is built from a rank-ordered list, so the first occurrence of a symbol
@@ -800,88 +499,19 @@ mod tests {
     fn resolves_coins_by_symbol_and_name() {
         let plugin = test_plugin();
 
-        let coin = plugin.resolve_coin("btc").expect("symbol lookup");
-        assert_eq!(coin.name, "Bitcoin");
-        assert_eq!(coin.id, 1);
+        assert_eq!(plugin.resolve_coin("btc"), Some(1));
 
         // `bitcoin` matches `Bitcoin` rather than the longer `Bitcoin Cash`.
-        let coin = plugin.resolve_coin("bitcoin").expect("name lookup");
-        assert_eq!(coin.name, "Bitcoin");
+        assert_eq!(plugin.resolve_coin("bitcoin"), Some(1));
 
         // Misspelled names still resolve, including with substituted characters.
-        let coin = plugin.resolve_coin("bitcon").expect("fuzzy lookup");
-        assert_eq!(coin.name, "Bitcoin");
-
-        let coin = plugin.resolve_coin("bitkoin").expect("typo lookup");
-        assert_eq!(coin.name, "Bitcoin");
-
-        let coin = plugin.resolve_coin("doge").expect("fuzzy lookup");
-        assert_eq!(coin.name, "Dogecoin");
+        assert_eq!(plugin.resolve_coin("bitcon"), Some(1));
+        assert_eq!(plugin.resolve_coin("bitkoin"), Some(1));
+        assert_eq!(plugin.resolve_coin("doge"), Some(74));
 
         assert!(plugin.resolve_coin("").is_none());
         assert!(plugin.resolve_coin("   ").is_none());
         assert!(plugin.resolve_coin("zzzz").is_none());
-    }
-
-    #[test]
-    fn fuzzy_matching_allows_missing_and_substituted_characters() {
-        assert!(matches_within("bitcoin", "bitcoin", 0));
-        assert!(matches_within("bitcon", "bitcoin", 0));
-        assert!(matches_within("bitkoin", "bitcoin", 1));
-        assert!(!matches_within("bitkoin", "bitcoin", 0));
-        assert!(!matches_within("dogecoin", "doge", 0));
-    }
-
-    /// Builds a coin map keyed by symbol for name matching tests.
-    fn matching_coins() -> HashMap<String, Coin> {
-        [
-            (1, "Bitcoin", "BTC"),
-            (2, "Bitcoin Cash", "BCH"),
-            (3, "PAX Gold", "PAXG"),
-            (4, "Golem", "GLM"),
-            (5, "Uniswap", "UNI"),
-            (6, "SushiSwap", "SUSHI"),
-            (7, "The Graph", "GRT"),
-            (8, "Shiba Inu", "SHIB"),
-        ]
-        .into_iter()
-        .map(|(id, name, symbol)| {
-            (
-                symbol.to_string(),
-                Coin {
-                    id,
-                    name: name.to_string(),
-                    symbol: symbol.to_string(),
-                },
-            )
-        })
-        .collect()
-    }
-
-    #[test]
-    fn prefers_names_containing_the_query() {
-        let coins = matching_coins();
-        let symbol = |query: &str| find_by_name(&coins, query, 2).map(|coin| coin.symbol);
-
-        assert_eq!(symbol("bitcoin").as_deref(), Some("BTC"));
-        assert_eq!(symbol("bitkoin").as_deref(), Some("BTC"));
-        assert_eq!(symbol("gold").as_deref(), Some("PAXG"));
-        assert_eq!(symbol("swap").as_deref(), Some("UNI"));
-        assert_eq!(symbol("graph").as_deref(), Some("GRT"));
-        assert_eq!(symbol("inu").as_deref(), Some("SHIB"));
-    }
-
-    #[test]
-    fn parses_currencies() {
-        let is_valid = |currency: &str| matches!(currency, "USD" | "EUR" | "JPY");
-
-        assert_eq!(parse_currency(None, "USD", is_valid).unwrap(), "USD");
-        assert_eq!(parse_currency(Some("eur"), "USD", is_valid).unwrap(), "EUR");
-        assert_eq!(parse_currency(Some("JPY"), "USD", is_valid).unwrap(), "JPY");
-        assert!(matches!(
-            parse_currency(Some("xyz"), "USD", is_valid),
-            Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
-        ));
     }
 
     #[test]
@@ -901,104 +531,5 @@ mod tests {
 
         assert!(plugin.is_valid_currency("USD"));
         assert!(!plugin.is_valid_currency("XYZ"));
-    }
-
-    #[test]
-    fn parses_currencies_without_fiat_cache() {
-        // Without a fiat cache, validation is deferred to the API.
-        assert_eq!(parse_currency(Some("xyz"), "USD", |_| true).unwrap(), "XYZ");
-    }
-
-    #[test]
-    fn sanitizes_currencies() {
-        // Control characters (which include all IRC formatting bytes) must not survive into
-        // the currency that is echoed back on error.
-        let is_valid = |currency: &str| currency == "USD";
-
-        assert!(matches!(
-            parse_currency(Some("\u{2}xyz\u{f}"), "USD", is_valid),
-            Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
-        ));
-    }
-
-    #[test]
-    fn parses_command_options() {
-        let opts: QuoteOpts = BTC.parse_args("").unwrap();
-        assert_eq!(opts.currency, None);
-
-        let opts: QuoteOpts = BTC.parse_args("eur").unwrap();
-        assert_eq!(opts.currency.as_deref(), Some("eur"));
-
-        let opts: CoinOpts = CC.parse_args("bitcoin eur").unwrap();
-        assert_eq!(opts.coin, "bitcoin");
-        assert_eq!(opts.currency.as_deref(), Some("eur"));
-
-        // `.cc` requires a coin.
-        assert!(matches!(
-            CC.parse_args::<CoinOpts>(""),
-            Err(ArgsError::Usage(_))
-        ));
-    }
-
-    #[test]
-    fn formats_quote() {
-        let formatted = format_quote(&test_quote(), "USD", Some("$"));
-
-        assert_eq!(
-            formatted,
-            "\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x0f $97231.50\x0310 \
-             (1 Hour Change:\x0f \x033+0.50%\x0f\x0310 24 Hour Change:\x0f \
-             \x034-1.20%\x0f\x0310 7 Day Change:\x0f \x033+10.25%\x0f\x0310)"
-        );
-    }
-
-    #[test]
-    fn formats_quote_with_unknown_currency_code() {
-        let mut quote = test_quote();
-        quote.quote = HashMap::from([(
-            "AUD".to_string(),
-            FiatQuote {
-                price: Some(1234.5),
-                percent_change_1h: None,
-                percent_change_24h: None,
-                percent_change_7d: None,
-            },
-        )]);
-
-        let formatted = format_quote(&quote, "AUD", None);
-
-        assert!(formatted.contains("1234.50 AUD"));
-        assert!(formatted.contains("n/a"));
-    }
-
-    #[test]
-    fn formats_quote_for_missing_currency() {
-        let formatted = format_quote(&test_quote(), "DKK", None);
-
-        assert!(formatted.contains("has no quote in DKK"), "{formatted:?}");
-    }
-
-    #[test]
-    fn formats_prices() {
-        assert_eq!(format_price(97231.504), "97231.50");
-        assert_eq!(format_price(1.0), "1.00");
-        assert_eq!(format_price(0.5), "0.5");
-        assert_eq!(format_price(0.000_012_34), "0.00001234");
-        assert_eq!(format_price(0.0), "0");
-    }
-
-    #[test]
-    fn formats_money() {
-        assert_eq!(format_money(97231.504, "USD", Some("$")), "$97231.50");
-        assert_eq!(format_money(1234.5, "EUR", Some("€")), "€1234.50");
-        assert_eq!(format_money(1234.5, "AUD", None), "1234.50 AUD");
-    }
-
-    #[test]
-    fn formats_changes() {
-        assert_eq!(format_change(Some(0.5)), "\x033+0.50%\x0f");
-        assert_eq!(format_change(Some(-1.2)), "\x034-1.20%\x0f");
-        assert_eq!(format_change(Some(0.0)), "\x033+0.00%\x0f");
-        assert_eq!(format_change(None), "\x0fn/a");
     }
 }
