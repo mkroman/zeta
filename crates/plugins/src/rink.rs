@@ -32,12 +32,13 @@
 //! dependency does not fetch once per query; failed fetches are logged and leave the last
 //! known rates in place. The dataset plumbing lives in the `currency` submodule.
 
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rink_core::Context as RinkContext;
 use rink_core::ast::{Conversion, Expr, Query};
-use rink_core::output::fmt::{FmtToken, Span, TokenFmt};
+use rink_core::output::fmt::TokenFmt;
 use rink_core::output::{QueryError, QueryReply};
 use rink_core::parsing::text_query::{TokenIterator, parse_query};
 use serde::{Deserialize, Serialize};
@@ -45,13 +46,14 @@ use tokio::time::MissedTickBehavior;
 use tracing::{Instrument, debug, warn};
 
 mod currency;
+mod render;
 use currency::{CurrencyData, build_context, refresh_data};
+use render::{error_message, render_reply};
 
 use crate::prelude::*;
 use coinmarketcap::Client as CmcClient;
 use zeta_cache::TtlCache;
 use zeta_http::RequestError;
-use zeta_utils::utils::collapse_whitespace;
 
 const RINK: CommandSpec = CommandSpec::new(
     ".r",
@@ -234,16 +236,16 @@ impl Rink {
     /// is logged and the missing-dependencies error is answered instead.
     async fn eval_and_format(&self, line: &str, classify: bool) -> String {
         let line = if classify {
-            self.classify(line)
+            Cow::Owned(self.classify(line))
         } else {
-            line.to_owned()
+            Cow::Borrowed(line)
         };
 
         // Rink's results hold `Rc`s and are not `Send`, so each one is rendered before any
         // await: everything but the missing-dependencies retry returns from this match, and
         // the retry re-evaluates the same line below instead of keeping the first result
         // alive across the fetch.
-        match self.eval(&line) {
+        match self.eval(line.as_ref()) {
             Ok(reply) => return notice(render_reply(&reply)),
             Err(QueryError::MissingDeps(_)) if self.client.is_some() => {}
             Err(error) => return notice(error_message(&error)),
@@ -254,7 +256,7 @@ impl Rink {
         // situation.
         self.ensure_currency_cached().await;
 
-        match self.eval(&line) {
+        match self.eval(line.as_ref()) {
             Ok(reply) => notice(render_reply(&reply)),
             Err(error) => notice(error_message(&error)),
         }
@@ -485,103 +487,6 @@ fn contains_parse_error(query: &Query) -> bool {
         }
         Query::Search(_) => false,
         Query::Error(_) => true,
-    }
-}
-
-/// The styles rink's output renders in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Style {
-    /// The scaffolding, in the reply cyan.
-    Text,
-    /// A value, in the default color.
-    Value,
-}
-
-impl Style {
-    /// Returns the control code that enters this style.
-    const fn code(self) -> &'static str {
-        match self {
-            Self::Text => COLOR,
-            Self::Value => RESET,
-        }
-    }
-}
-
-/// Renders a successful evaluation's markup spans as a one-line IRC reply.
-fn render_reply(reply: &QueryReply) -> String {
-    render(reply, false)
-}
-
-/// Renders a failed evaluation's markup spans as a one-line IRC reply.
-///
-/// In error replies every unit renders as a value: the units there are the answer itself — a
-/// not-found suggestion or a missing dependency — rather than scaffolding.
-fn render_error(error: &QueryError) -> String {
-    render(error, true)
-}
-
-/// Formats a failed evaluation as the labeled `Error: <message>` reply body.
-fn error_message(error: &QueryError) -> String {
-    format!("Error: {}", render_error(error))
-}
-
-/// Renders `obj`'s markup spans as a one-line IRC reply.
-///
-/// The scaffolding stays cyan (inherited from the reply prefix), while the values — numbers,
-/// datetimes, property names, the user's echoed input in errors, category labels, and the unit
-/// expressions that follow numbers — have their color reset to the default to stand out. This
-/// mirrors the token-to-color mapping of rink's own IRC frontend, inverted into the house
-/// scheme: rink colors unit names and leaves numbers plain, while the house colors the text and
-/// resets the values.
-fn render<'a, T: TokenFmt<'a>>(obj: &'a T, error: bool) -> String {
-    let mut out = String::new();
-    let mut style = Style::Text;
-
-    render_spans(&mut out, &mut style, error, &obj.to_spans());
-
-    collapse_whitespace(&out)
-}
-
-/// Writes `spans` into `out`, styled per their markup hints.
-///
-/// A style transition emits exactly one control code, and only when text follows it: never
-/// duplicated, never dangling at the end of the message. Whitespace is transparent — it keeps
-/// whatever run it lands in and never triggers a transition of its own, so a value group like
-/// `224.256 DKK` stays one reset run.
-fn render_spans(out: &mut String, style: &mut Style, error: bool, spans: &[Span<'_>]) {
-    for span in spans {
-        match span {
-            Span::Content { text, token } => {
-                if text.is_empty() {
-                    continue;
-                }
-
-                if text.chars().all(char::is_whitespace) {
-                    out.push_str(text);
-                    continue;
-                }
-
-                let target = match token {
-                    FmtToken::Number
-                    | FmtToken::DateTime
-                    | FmtToken::UserInput
-                    | FmtToken::PropName
-                    | FmtToken::Quantity => Style::Value,
-                    FmtToken::Unit | FmtToken::Pow if *style == Style::Value || error => {
-                        Style::Value
-                    }
-                    _ => Style::Text,
-                };
-
-                if *style != target {
-                    out.push_str(target.code());
-                    *style = target;
-                }
-
-                out.push_str(text);
-            }
-            Span::Child(child) => render_spans(out, style, error, &child.to_spans()),
-        }
     }
 }
 
