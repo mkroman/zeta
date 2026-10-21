@@ -6,35 +6,16 @@
 //! and host-agnostic entries are considered. All wildcard patterns are compiled once when a
 //! filter is inserted, not on every check.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tracing::trace;
 use url::Url;
-use wildmatch::WildMatch;
 
-use super::model::Filter;
+use super::{
+    model::{CompiledCriteria, Filter},
+    pattern::{Case, Pattern, has_wildcards, non_blank},
+};
 use zeta_plugin::Sender;
-
-/// Whether `pattern` contains wildcards.
-pub(super) fn is_wildcard(pattern: &str) -> bool {
-    pattern.contains('*') || pattern.contains('?')
-}
-
-/// Returns `pattern` trimmed, or `None` when it is missing or blank.
-fn non_blank(pattern: Option<&str>) -> Option<&str> {
-    pattern.map(str::trim).filter(|pattern| !pattern.is_empty())
-}
-
-/// Compiles a case-insensitive wildcard pattern, returning `None` for blank patterns.
-fn compile_insensitive(pattern: Option<&str>) -> Option<WildMatch> {
-    non_blank(pattern).map(|pattern| WildMatch::new(&pattern.to_lowercase()))
-}
-
-/// Compiles a case-sensitive wildcard pattern for URL paths, returning `None` for blank
-/// patterns.
-fn compile_sensitive(pattern: Option<&str>) -> Option<WildMatch> {
-    non_blank(pattern).map(WildMatch::new)
-}
 
 /// The compiled host pattern of a filter.
 #[derive(Debug)]
@@ -42,7 +23,29 @@ enum HostMatcher {
     /// An exact host, matched for equality.
     Exact(String),
     /// A wildcard host pattern.
-    Wild(WildMatch),
+    Wild(Pattern),
+}
+
+impl HostMatcher {
+    /// Compiles an optional host pattern.
+    fn parse(host: Option<&str>) -> Option<Self> {
+        let host = non_blank(host)?;
+
+        Some(if has_wildcards(host) {
+            Self::Wild(Pattern::new(host, Case::Insensitive))
+        } else {
+            Self::Exact(host.to_lowercase())
+        })
+    }
+
+    /// Whether the host pattern matches `host` (already lowercased). Hostless URLs match
+    /// wildcard patterns as if their host were empty, so `*` matches every URL.
+    fn matches(&self, host: Option<&str>) -> bool {
+        match self {
+            Self::Exact(expected) => host == Some(expected.as_str()),
+            Self::Wild(pattern) => pattern.matches(host.unwrap_or("")),
+        }
+    }
 }
 
 /// A filter with its wildcard patterns precompiled for matching.
@@ -53,58 +56,55 @@ struct Entry {
     /// The compiled host pattern, if any.
     host: Option<HostMatcher>,
     /// The compiled URL path pattern, if any.
-    path: Option<WildMatch>,
+    path: Option<Pattern>,
     /// The compiled sender nickname pattern, if any.
-    nickname: Option<WildMatch>,
+    nickname: Option<Pattern>,
     /// The compiled sender username pattern, if any.
-    username: Option<WildMatch>,
+    username: Option<Pattern>,
     /// The compiled sender hostname pattern, if any.
-    hostname: Option<WildMatch>,
+    hostname: Option<Pattern>,
 }
 
 impl Entry {
     /// Compiles `filter` into an entry.
     fn new(filter: Filter) -> Self {
-        let host = non_blank(filter.host.as_deref()).map(|host| {
-            if is_wildcard(host) {
-                HostMatcher::Wild(WildMatch::new(&host.to_lowercase()))
-            } else {
-                HostMatcher::Exact(host.to_lowercase())
-            }
-        });
-
         Self {
-            path: compile_sensitive(filter.path.as_deref()),
-            nickname: compile_insensitive(filter.nickname.as_deref()),
-            username: compile_insensitive(filter.username.as_deref()),
-            hostname: compile_insensitive(filter.hostname.as_deref()),
-            host,
+            host: HostMatcher::parse(filter.host.as_deref()),
+            path: Pattern::parse(filter.path.as_deref(), Case::Sensitive),
+            nickname: Pattern::parse(filter.nickname.as_deref(), Case::Insensitive),
+            username: Pattern::parse(filter.username.as_deref(), Case::Insensitive),
+            hostname: Pattern::parse(filter.hostname.as_deref(), Case::Insensitive),
             filter,
         }
     }
 
-    /// Whether the host pattern of the entry matches `host` (already lowercased). Hostless URLs
-    /// match wildcard patterns as if their host were empty, so `*` matches every URL.
+    /// Whether the entry's host pattern matches `host`, or is unset.
     fn host_matches(&self, host: Option<&str>) -> bool {
-        match &self.host {
-            None => true,
-            Some(HostMatcher::Exact(expected)) => host == Some(expected.as_str()),
-            Some(HostMatcher::Wild(pattern)) => pattern.matches(host.unwrap_or("")),
-        }
+        self.host
+            .as_ref()
+            .is_none_or(|pattern| pattern.matches(host))
     }
 
-    /// Whether a case-insensitive pattern matches `value`, or is unset.
-    fn field_matches(pattern: Option<&WildMatch>, value: &str) -> bool {
-        pattern.is_none_or(|pattern| pattern.matches(&value.to_lowercase()))
+    /// Whether a compiled pattern matches `value`, or is unset.
+    fn field_matches(pattern: Option<&Pattern>, value: &str) -> bool {
+        pattern.is_none_or(|pattern| pattern.matches(value))
     }
 
-    /// Whether the entry's sender criteria match `sender`, or are all unset.
+    /// Whether the entry has a sender criterion.
+    const fn has_sender_criteria(&self) -> bool {
+        self.nickname.is_some() || self.username.is_some() || self.hostname.is_some()
+    }
+
+    /// Whether the entry has URL criteria.
+    const fn has_url_criteria(&self) -> bool {
+        self.host.is_some() || self.path.is_some()
+    }
+
+    /// Whether the entry's sender criteria all match `sender`, or are all unset.
     fn sender_matches(&self, sender: Option<Sender<'_>>) -> bool {
         let Some(sender) = sender else {
             // A set sender criterion needs a sender to match against.
-            return self.nickname.is_none()
-                && self.username.is_none()
-                && self.hostname.is_none();
+            return !self.has_sender_criteria();
         };
 
         Self::field_matches(self.nickname.as_ref(), sender.nick)
@@ -112,42 +112,29 @@ impl Entry {
             && Self::field_matches(self.hostname.as_ref(), sender.hostname)
     }
 
-    /// Whether the entry matches `host`, `sender` and `url`. The host check is repeated for
-    /// wildcard entries only; exact entries are already routed by host.
-    fn matches(&self, host: Option<&str>, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        if !self.host_matches(host) {
-            return false;
-        }
+    /// Whether the entry matches `sender` and `url`. The host already routed the entry here:
+    /// exact entries are matched by bucket and host-agnostic ones have no host pattern, so only
+    /// wildcard entries need the host check.
+    fn matches(&self, sender: Option<Sender<'_>>, url: &Url) -> bool {
+        let path_matches = self
+            .path
+            .as_ref()
+            .is_none_or(|path| path.matches(url.path()));
 
-        if let Some(path) = &self.path
-            && !path.matches(url.path())
-        {
-            return false;
-        }
-
-        self.sender_matches(sender)
+        path_matches && self.sender_matches(sender)
     }
 
-    /// Whether the entry ignores `sender` entirely: it has no URL criteria (host and path
-    /// unset) and at least one sender criterion, which matches. The sender-criteria
-    /// requirement keeps a criteria-less filter — which the command cannot create — from
-    /// ignoring everyone.
+    /// Whether the entry ignores `sender` entirely: it has no URL criteria and at least one
+    /// sender criterion, which matches. The sender-criteria requirement keeps a criteria-less
+    /// filter — which the command cannot create — from ignoring everyone.
     fn ignores(&self, sender: Option<Sender<'_>>) -> bool {
-        if self.host.is_some() || self.path.is_some() {
-            return false;
-        }
-
-        if self.nickname.is_none() && self.username.is_none() && self.hostname.is_none() {
-            return false;
-        }
-
-        self.sender_matches(sender)
+        !self.has_url_criteria() && self.has_sender_criteria() && self.sender_matches(sender)
     }
 }
 
 /// The filters of a single channel (or of all channels), indexed by URL host.
 #[derive(Debug, Default)]
-struct HostIndex {
+struct ChannelBucket {
     /// Filters with an exact host pattern, keyed by the lowercased host.
     exact: HashMap<String, Vec<Entry>>,
     /// Filters with a wildcard host pattern.
@@ -156,7 +143,7 @@ struct HostIndex {
     any_host: Vec<Entry>,
 }
 
-impl HostIndex {
+impl ChannelBucket {
     /// Inserts `entry` into the bucket its host pattern routes to.
     fn insert(&mut self, entry: Entry) {
         match &entry.host {
@@ -169,9 +156,10 @@ impl HostIndex {
     }
 
     /// Removes the entries with the given filter ids, dropping host buckets that become empty.
-    fn remove_ids(&mut self, ids: &[i32]) {
+    fn remove_ids(&mut self, ids: &HashSet<i32>) {
         self.exact.retain(|_, entries| {
             entries.retain(|entry| !ids.contains(&entry.filter.id));
+
             !entries.is_empty()
         });
 
@@ -196,7 +184,14 @@ impl HostIndex {
             .map(|entry| &entry.filter)
     }
 
-    /// Whether any entry in the bucket matches `host`, `sender` and `url`.
+    /// The filter with `id`, if the bucket holds it.
+    fn get(&self, id: i32) -> Option<&Filter> {
+        self.filters().find(|filter| filter.id == id)
+    }
+
+    /// Whether any entry in the bucket matches `host`, `sender` and `url`. Exact and
+    /// host-agnostic entries are already routed by the host they were looked up with; only
+    /// wildcard entries are matched against it.
     fn matches(&self, host: Option<&str>, sender: Option<Sender<'_>>, url: &Url) -> bool {
         let exact = host
             .and_then(|host| self.exact.get(host))
@@ -204,9 +199,12 @@ impl HostIndex {
 
         exact
             .iter()
-            .chain(&self.wildcard)
             .chain(&self.any_host)
-            .any(|entry| entry.matches(host, sender, url))
+            .any(|entry| entry.matches(sender, url))
+            || self
+                .wildcard
+                .iter()
+                .any(|entry| entry.host_matches(host) && entry.matches(sender, url))
     }
 
     /// Whether any sender-only filter in the bucket ignores `sender` entirely. Only the
@@ -223,22 +221,27 @@ impl HostIndex {
 /// bucket, and never touches the filters of other channels.
 #[derive(Debug, Default)]
 pub(super) struct FilterIndex {
-    channels: HashMap<Option<String>, HostIndex>,
+    /// The buckets of the individual channels, and the all-channels bucket under `None`.
+    channels: HashMap<Option<String>, ChannelBucket>,
 }
 
 impl FilterIndex {
     /// Inserts `filter` into the index.
     pub(super) fn insert(&mut self, filter: Filter) {
         let channel = filter.channel.as_deref().map(str::to_lowercase);
-        let entry = Entry::new(filter);
 
-        self.channels.entry(channel).or_default().insert(entry);
+        self.channels
+            .entry(channel)
+            .or_default()
+            .insert(Entry::new(filter));
     }
 
     /// Removes the filters with the given ids, dropping channel buckets that become empty.
     pub(super) fn remove_ids(&mut self, ids: &[i32]) {
+        let ids: HashSet<i32> = ids.iter().copied().collect();
+
         self.channels.retain(|_, bucket| {
-            bucket.remove_ids(ids);
+            bucket.remove_ids(&ids);
 
             !bucket.is_empty()
         });
@@ -246,20 +249,43 @@ impl FilterIndex {
 
     /// The number of filters in the index.
     pub(super) fn len(&self) -> usize {
-        self.channels.values().flat_map(HostIndex::filters).count()
+        self.channels
+            .values()
+            .flat_map(ChannelBucket::filters)
+            .count()
     }
 
     /// Whether the index holds no filters at all.
     pub(super) fn is_empty(&self) -> bool {
-        self.channels.values().all(HostIndex::is_empty)
+        // Empty buckets are dropped on removal, so an empty map means no filters.
+        self.channels.is_empty()
     }
 
     /// All filters in the index, ordered by id.
     pub(super) fn filters(&self) -> Vec<Filter> {
+        self.matching(|_| true)
+    }
+
+    /// The filter with `id`, if any.
+    pub(super) fn get(&self, id: i32) -> Option<Filter> {
+        self.channels
+            .values()
+            .find_map(|bucket| bucket.get(id))
+            .cloned()
+    }
+
+    /// The filters matching `criteria`, ordered by id.
+    pub(super) fn select(&self, criteria: &CompiledCriteria) -> Vec<Filter> {
+        self.matching(|filter| criteria.matches(filter))
+    }
+
+    /// The filters matching `predicate`, ordered by id.
+    fn matching(&self, predicate: impl Fn(&Filter) -> bool) -> Vec<Filter> {
         let mut filters: Vec<Filter> = self
             .channels
             .values()
-            .flat_map(HostIndex::filters)
+            .flat_map(ChannelBucket::filters)
+            .filter(|filter| predicate(filter))
             .cloned()
             .collect();
 
@@ -270,7 +296,7 @@ impl FilterIndex {
 
     /// The buckets a lookup in `channel` consults: the channel's own filters and the filters
     /// applying to all channels.
-    fn buckets(&self, channel: &str) -> impl Iterator<Item = &HostIndex> {
+    fn buckets(&self, channel: &str) -> impl Iterator<Item = &ChannelBucket> {
         let key = channel.to_lowercase();
 
         [self.channels.get(&Some(key)), self.channels.get(&None)]
@@ -285,17 +311,15 @@ impl FilterIndex {
         }
 
         let host = url.host_str().map(str::to_lowercase);
-
-        if self
+        let matched = self
             .buckets(channel)
-            .any(|bucket| bucket.matches(host.as_deref(), sender, url))
-        {
-            trace!(%channel, %url, "message matches a filter");
+            .any(|bucket| bucket.matches(host.as_deref(), sender, url));
 
-            true
-        } else {
-            false
+        if matched {
+            trace!(%channel, %url, "message matches a filter");
         }
+
+        matched
     }
 
     /// Whether any filter applies to `channel` that ignores `sender` entirely.
@@ -304,23 +328,43 @@ impl FilterIndex {
             return false;
         }
 
-        if self.buckets(channel).any(|bucket| bucket.ignores(sender)) {
-            trace!(%channel, "sender matches an ignore filter");
+        let ignored = self.buckets(channel).any(|bucket| bucket.ignores(sender));
 
-            true
-        } else {
-            false
+        if ignored {
+            trace!(%channel, "sender matches an ignore filter");
         }
+
+        ignored
+    }
+}
+
+impl FromIterator<Filter> for FilterIndex {
+    fn from_iter<T: IntoIterator<Item = Filter>>(filters: T) -> Self {
+        let mut index = Self::default();
+
+        for filter in filters {
+            index.insert(filter);
+        }
+
+        index
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::model::NewFilter;
+    use super::super::model::{Criteria, NewFilter};
     use super::*;
 
-    fn filter(id: i32, criteria: NewFilter) -> Filter {
-        Filter::from_new_filter(id, criteria)
+    fn filter(id: i32, new: NewFilter) -> Filter {
+        Filter {
+            id,
+            channel: new.channel,
+            host: new.host,
+            path: new.path,
+            nickname: new.nickname,
+            username: new.username,
+            hostname: new.hostname,
+        }
     }
 
     fn new_filter(channel: Option<&str>, host: Option<&str>) -> NewFilter {
@@ -345,15 +389,15 @@ mod tests {
 
     /// Returns an index pre-populated with the given filters, numbered from 1.
     fn index_with(criteria: &[NewFilter]) -> FilterIndex {
-        let mut index = FilterIndex::default();
+        criteria
+            .iter()
+            .enumerate()
+            .map(|(position, criteria)| {
+                let id = i32::try_from(position).expect("fewer filters than `i32` allows") + 1;
 
-        for (position, criteria) in criteria.iter().enumerate() {
-            let id = i32::try_from(position).expect("fewer filters than `i32` allows") + 1;
-
-            index.insert(filter(id, criteria.clone()));
-        }
-
-        index
+                filter(id, criteria.clone())
+            })
+            .collect()
     }
 
     #[test]
@@ -437,7 +481,10 @@ mod tests {
         }]);
 
         assert!(index.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
-        assert!(!index.ignores("#chan", Some(Sender::new("someone", "user", "host.example"))));
+        assert!(!index.ignores(
+            "#chan",
+            Some(Sender::new("someone", "user", "host.example"))
+        ));
         assert!(!index.ignores("#chan", None));
 
         let user = index_with(&[NewFilter {
@@ -445,7 +492,10 @@ mod tests {
             ..new_filter(None, None)
         }]);
 
-        assert!(user.ignores("#chan", Some(Sender::new("someone", "~cliother", "host.example"))));
+        assert!(user.ignores(
+            "#chan",
+            Some(Sender::new("someone", "~cliother", "host.example"))
+        ));
 
         let hostname = index_with(&[NewFilter {
             hostname: Some("*.isp.example".into()),
@@ -607,5 +657,32 @@ mod tests {
         assert_eq!(ids, [1, 2]);
         assert_eq!(index.len(), 2);
         assert!(!index.is_empty());
+    }
+
+    #[test]
+    fn gets_a_filter_by_id() {
+        let index = index_with(&[new_filter(None, Some("imdb.com"))]);
+
+        assert_eq!(index.get(1).map(|filter| filter.id), Some(1));
+        assert!(index.get(2).is_none());
+    }
+
+    #[test]
+    fn selects_filters_matching_criteria() {
+        let index = index_with(&[
+            new_filter(Some("#foo"), Some("imdb.com")),
+            new_filter(Some("#bar"), Some("dr.dk")),
+        ]);
+        let criteria = Criteria {
+            host: Some("*.com".into()),
+            ..Criteria::default()
+        };
+
+        let selected = index.select(&criteria.compile());
+
+        assert_eq!(
+            selected.iter().map(|filter| filter.id).collect::<Vec<_>>(),
+            [1]
+        );
     }
 }

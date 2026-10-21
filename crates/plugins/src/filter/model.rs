@@ -2,6 +2,8 @@
 
 use sqlx::prelude::FromRow;
 
+use super::pattern::{Case, Pattern};
+
 /// A filter, as stored in the database.
 ///
 /// Every criterion is optional; a filter matches a message when all of its set criteria match —
@@ -48,15 +50,6 @@ pub struct NewFilter {
     pub created_by: String,
 }
 
-/// The case sensitivity of a wildcard pattern comparison.
-#[derive(Debug, Clone, Copy)]
-enum Case {
-    /// URL paths are matched case-sensitively.
-    Sensitive,
-    /// Every other field is matched case-insensitively.
-    Insensitive,
-}
-
 /// A set of filter criteria for selecting filters in listings and deletions.
 ///
 /// Every criterion is optional; a filter is selected when all of the set criteria match its
@@ -90,44 +83,54 @@ impl Criteria {
             && self.hostname.is_none()
     }
 
+    /// Compiles the set criteria into wildcard matchers, so selecting filters compiles every
+    /// pattern once instead of once per filter.
+    pub(super) fn compile(&self) -> CompiledCriteria {
+        CompiledCriteria {
+            channel: Pattern::parse(self.channel.as_deref(), Case::Insensitive),
+            host: Pattern::parse(self.host.as_deref(), Case::Insensitive),
+            path: Pattern::parse(self.path.as_deref(), Case::Sensitive),
+            nickname: Pattern::parse(self.nickname.as_deref(), Case::Insensitive),
+            username: Pattern::parse(self.username.as_deref(), Case::Insensitive),
+            hostname: Pattern::parse(self.hostname.as_deref(), Case::Insensitive),
+        }
+    }
+}
+
+/// Filter criteria compiled into wildcard matchers.
+///
+/// Built with [`Criteria::compile`]; a filter is selected when all of the set patterns match
+/// its corresponding field.
+#[derive(Debug)]
+pub(super) struct CompiledCriteria {
+    /// The compiled channel pattern, if any.
+    channel: Option<Pattern>,
+    /// The compiled URL host pattern, if any.
+    host: Option<Pattern>,
+    /// The compiled URL path pattern, if any.
+    path: Option<Pattern>,
+    /// The compiled sender nickname pattern, if any.
+    nickname: Option<Pattern>,
+    /// The compiled sender username pattern, if any.
+    username: Option<Pattern>,
+    /// The compiled sender hostname pattern, if any.
+    hostname: Option<Pattern>,
+}
+
+impl CompiledCriteria {
     /// Whether the criteria select `filter`.
-    #[must_use]
-    pub fn matches(&self, filter: &Filter) -> bool {
-        Self::matches_field(self.channel.as_deref(), filter.channel.as_deref(), Case::Insensitive)
-            && Self::matches_field(self.host.as_deref(), filter.host.as_deref(), Case::Insensitive)
-            && Self::matches_field(self.path.as_deref(), filter.path.as_deref(), Case::Sensitive)
-            && Self::matches_field(
-                self.nickname.as_deref(),
-                filter.nickname.as_deref(),
-                Case::Insensitive,
-            )
-            && Self::matches_field(
-                self.username.as_deref(),
-                filter.username.as_deref(),
-                Case::Insensitive,
-            )
-            && Self::matches_field(
-                self.hostname.as_deref(),
-                filter.hostname.as_deref(),
-                Case::Insensitive,
-            )
+    pub(super) fn matches(&self, filter: &Filter) -> bool {
+        Self::field_matches(self.channel.as_ref(), filter.channel.as_deref())
+            && Self::field_matches(self.host.as_ref(), filter.host.as_deref())
+            && Self::field_matches(self.path.as_ref(), filter.path.as_deref())
+            && Self::field_matches(self.nickname.as_ref(), filter.nickname.as_deref())
+            && Self::field_matches(self.username.as_ref(), filter.username.as_deref())
+            && Self::field_matches(self.hostname.as_ref(), filter.hostname.as_deref())
     }
 
     /// Whether `pattern` matches `value`, or is unset.
-    fn matches_field(pattern: Option<&str>, value: Option<&str>, case: Case) -> bool {
-        let Some(pattern) = pattern.map(str::trim).filter(|pattern| !pattern.is_empty()) else {
-            return true;
-        };
-
-        let Some(value) = value else {
-            return false;
-        };
-
-        match case {
-            Case::Sensitive => wildmatch::WildMatch::new(pattern).matches(value),
-            Case::Insensitive => wildmatch::WildMatch::new(&pattern.to_lowercase())
-                .matches(&value.to_lowercase()),
-        }
+    fn field_matches(pattern: Option<&Pattern>, value: Option<&str>) -> bool {
+        pattern.is_none_or(|pattern| value.is_some_and(|value| pattern.matches(value)))
     }
 }
 
@@ -147,19 +150,9 @@ mod tests {
         }
     }
 
-    impl Filter {
-        /// Builds a filter from the fields of `new`, for tests that need one without a database.
-        pub(crate) fn from_new_filter(id: i32, new: NewFilter) -> Self {
-            Self {
-                id,
-                channel: new.channel,
-                host: new.host,
-                path: new.path,
-                nickname: new.nickname,
-                username: new.username,
-                hostname: new.hostname,
-            }
-        }
+    /// Whether `criteria` selects `filter`.
+    fn matches(criteria: &Criteria, filter: &Filter) -> bool {
+        criteria.compile().matches(filter)
     }
 
     #[test]
@@ -169,15 +162,25 @@ mod tests {
             ..Criteria::default()
         };
 
-        assert!(criteria.matches(&filter(Some("reuters.com"), None)));
-        assert!(!criteria.matches(&filter(Some("dr.dk"), None)));
+        assert!(matches(&criteria, &filter(Some("reuters.com"), None)));
+        assert!(!matches(&criteria, &filter(Some("dr.dk"), None)));
     }
 
     #[test]
     fn empty_criteria_match_everything() {
         let criteria = Criteria::default();
 
-        assert!(criteria.matches(&filter(None, None)));
+        assert!(matches(&criteria, &filter(None, None)));
+    }
+
+    #[test]
+    fn blank_criteria_match_everything() {
+        let criteria = Criteria {
+            host: Some("  ".into()),
+            ..Criteria::default()
+        };
+
+        assert!(matches(&criteria, &filter(None, None)));
     }
 
     #[test]
@@ -187,7 +190,7 @@ mod tests {
             ..Criteria::default()
         };
 
-        assert!(!criteria.matches(&filter(None, None)));
+        assert!(!matches(&criteria, &filter(None, None)));
     }
 
     #[test]
@@ -197,14 +200,14 @@ mod tests {
             ..Criteria::default()
         };
 
-        assert!(!upper.matches(&filter(None, Some("/title/*"))));
+        assert!(!matches(&upper, &filter(None, Some("/title/*"))));
 
         let lower = Criteria {
             path: Some("/title/*".into()),
             ..Criteria::default()
         };
 
-        assert!(lower.matches(&filter(None, Some("/title/*"))));
+        assert!(matches(&lower, &filter(None, Some("/title/*"))));
     }
 
     #[test]
@@ -214,6 +217,6 @@ mod tests {
             ..Criteria::default()
         };
 
-        assert!(criteria.matches(&filter(Some("dr.dk"), None)));
+        assert!(matches(&criteria, &filter(Some("dr.dk"), None)));
     }
 }

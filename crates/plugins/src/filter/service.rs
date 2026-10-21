@@ -18,7 +18,7 @@ use zeta_plugin::{Sender, UrlFilter};
 ///
 /// The database is the source of truth; the index is rebuilt from it on [`load`](Self::load) and
 /// kept in sync by [`add`](Self::add) and [`delete_ids`](Self::delete_ids). The hot lookup path
-/// ([`matches`](Self::matches)) only touches the index and never the database, so filters are
+/// ([`UrlFilter::matches`]) only touches the index and never the database, so filters are
 /// loaded once at launch and the service is shared through `SharedState`.
 pub struct FilterService {
     /// The filter repository.
@@ -44,11 +44,7 @@ impl FilterService {
     /// Returns [`Error::Database`] if the filters could not be fetched from the database.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
-        let mut index = FilterIndex::default();
-
-        for filter in self.repo.list().await? {
-            index.insert(filter);
-        }
+        let index: FilterIndex = self.repo.list().await?.into_iter().collect();
 
         debug!(count = index.len(), "loaded filters into index");
 
@@ -86,32 +82,28 @@ impl FilterService {
         Ok(removed)
     }
 
+    /// Whether no filters are configured.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.lock_index().is_empty()
+    }
+
     /// Returns a snapshot of all filters, in id order.
     #[must_use]
     pub fn list(&self) -> Vec<Filter> {
         self.lock_index().filters()
     }
 
+    /// Returns the filter with `id`, if any.
+    #[must_use]
+    pub fn get(&self, id: i32) -> Option<Filter> {
+        self.lock_index().get(id)
+    }
+
     /// Returns a snapshot of the filters matching `criteria`, in id order.
     #[must_use]
     pub fn select(&self, criteria: &Criteria) -> Vec<Filter> {
-        self.list()
-            .into_iter()
-            .filter(|filter| criteria.matches(filter))
-            .collect()
-    }
-
-    /// Whether `url`, posted by `sender` in `channel`, matches any filter.
-    #[must_use]
-    pub fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        self.lock_index().matches(channel, sender, url)
-    }
-
-    /// Whether messages from `sender` in `channel` are ignored entirely: the index holds a
-    /// filter without URL criteria whose sender criteria match.
-    #[must_use]
-    pub fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
-        self.lock_index().ignores(channel, sender)
+        self.lock_index().select(&criteria.compile())
     }
 
     /// Locks the index for reading, continuing on poisoning.
@@ -131,11 +123,11 @@ impl FilterService {
 /// from ignored senders.
 impl UrlFilter for FilterService {
     fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        self.matches(channel, sender, url)
+        self.lock_index().matches(channel, sender, url)
     }
 
     fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
-        self.ignores(channel, sender)
+        self.lock_index().ignores(channel, sender)
     }
 }
 
@@ -162,7 +154,11 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(Some("#smoke"), Some("example.com"), Some("*other")))
+            .add(new_filter(
+                Some("#smoke"),
+                Some("example.com"),
+                Some("*other"),
+            ))
             .await
             .unwrap();
 
@@ -170,6 +166,7 @@ mod tests {
         assert_eq!(added.host.as_deref(), Some("example.com"));
         assert_eq!(added.username.as_deref(), Some("*other"));
         assert!(service.list().iter().any(|f| f.id == added.id));
+        assert_eq!(service.get(added.id), Some(added));
     }
 
     #[sqlx::test]
@@ -177,15 +174,21 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(Some("#smoke"), Some("example.com"), Some("*other")))
+            .add(new_filter(
+                Some("#smoke"),
+                Some("example.com"),
+                Some("*other"),
+            ))
             .await
             .unwrap();
 
         let removed = service.delete_ids(&[added.id]).await.unwrap();
 
         assert_eq!(removed, 1);
+        assert!(service.get(added.id).is_none());
 
-        assert!(!service.matches(
+        assert!(!UrlFilter::matches(
+            &service,
             "#smoke",
             Some(Sender::new("someone", "~cliother", "host.example")),
             &"https://example.com/page".parse().unwrap()
@@ -195,6 +198,7 @@ mod tests {
         // deleted filter.
         service.load().await.unwrap();
 
+        assert!(service.is_empty());
         assert!(!service.list().iter().any(|f| f.id == added.id));
     }
 
@@ -202,9 +206,13 @@ mod tests {
     async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
         let service = FilterService::new(db);
 
-        service.add(new_filter(None, Some("*.com"), None)).await.unwrap();
+        service
+            .add(new_filter(None, Some("*.com"), None))
+            .await
+            .unwrap();
 
-        assert!(service.matches(
+        assert!(UrlFilter::matches(
+            &service,
             "#anywhere",
             Some(Sender::new("nick", "user", "host.example")),
             &"https://reuters.com/article".parse().unwrap()
