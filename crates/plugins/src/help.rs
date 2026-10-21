@@ -261,13 +261,8 @@ fn pack(entries: &[String], max_length: usize) -> Vec<String> {
 
     while !remaining.is_empty() {
         let mut message = String::new();
-        let appended = append_entries_within_budget(
-            &mut message,
-            remaining.iter().cloned(),
-            SEPARATOR,
-            max_length,
-            0,
-        );
+        let appended =
+            append_entries_within_budget(&mut message, remaining.iter(), SEPARATOR, max_length, 0);
 
         messages.push(message);
         remaining = &remaining[appended..];

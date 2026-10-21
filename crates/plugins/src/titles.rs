@@ -9,7 +9,7 @@
 //! entire pages served in another encoding, e.g. ISO-8859-1 — are decoded lossily.
 
 use std::cell::RefCell;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use futures::StreamExt;
 use html5ever::tendril::StrTendril;
@@ -79,8 +79,8 @@ impl Default for Settings {
 pub struct Titles {
     /// The HTTP client used for fetching pages.
     client: wreq::Client,
-    /// The plugin settings used when processing URLs.
-    settings: Settings,
+    /// The plugin settings used when processing URLs, shared with the fetch tasks.
+    settings: Arc<Settings>,
 }
 
 /// Page title and OpenGraph metadata extracted from a document head.
@@ -388,7 +388,7 @@ impl Plugin<Context> for Titles {
 
         Ok(Self {
             client,
-            settings: settings.clone(),
+            settings: Arc::new(settings.clone()),
         })
     }
 
@@ -450,7 +450,7 @@ impl Titles {
         let http_client = self.client.clone();
         let sender = client.sender();
         let channel = channel.to_string();
-        let settings = self.settings.clone();
+        let settings = Arc::clone(&self.settings);
 
         // The span carries the redacted URL: without it, this task's logs would only ever
         // reach stdout.

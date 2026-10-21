@@ -230,11 +230,12 @@ impl Reddit {
         channel: &str,
         client: &Client,
     ) -> Result<(), Error> {
-        let title = submission.title.clone();
-        let subreddit = submission.subreddit.clone();
         let id = submission.id.as_deref().unwrap_or(fallback_id).to_string();
 
-        client.send_privmsg(channel, notice(format!("{title} : {subreddit}")))?;
+        client.send_privmsg(
+            channel,
+            notice(format!("{} : {}", submission.title, submission.subreddit)),
+        )?;
 
         self.mirror_video(&submission, &id, channel, client).await;
 

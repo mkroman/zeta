@@ -409,14 +409,14 @@ impl YouTube {
             match self.get_video(&video_id).await {
                 Ok(video) => {
                     let snippet = video.snippet.as_ref();
-                    let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
+                    let category_id = snippet.map(|snippet| snippet.category_id.as_str());
 
                     // The map is refreshed by the task started on load; the read is
                     // stale-tolerant, so an unavailable API keeps serving the last known
                     // categories.
                     let category = self.video_categories.read(|cache| {
                         cache
-                            .and_then(|categories| categories.get(&category_id))
+                            .and_then(|categories| category_id.and_then(|id| categories.get(id)))
                             .map_or_else(
                                 || "unknown category".to_string(),
                                 |category| category.snippet.title.clone(),

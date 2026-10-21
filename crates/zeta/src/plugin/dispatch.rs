@@ -293,7 +293,9 @@ impl EventIndex {
             let event = UrlEvent::new(Arc::clone(message), Arc::new(url), repaired_from);
 
             if let Some(host) = event.url().host_str()
-                && let Some(subscribers) = self.url_hosts.get(&host.to_ascii_lowercase())
+                // `ExtractUrls` only yields http(s) URLs, whose hosts the parser lowercases;
+                // the advertised hosts are lowercased when indexed.
+                && let Some(subscribers) = self.url_hosts.get(host)
             {
                 for subscriber in subscribers {
                     subscriber.send(Event::Url(event.clone()), stopped);

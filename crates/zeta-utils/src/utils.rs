@@ -108,9 +108,9 @@ pub const MAX_LISTING_LENGTH: usize = 400;
 ///
 /// Callers that trail a fixed `suffix` after the listing pass its length as `reserved` and
 /// append it themselves.
-pub fn append_entries_within_budget(
+pub fn append_entries_within_budget<S: AsRef<str>>(
     message: &mut String,
-    entries: impl IntoIterator<Item = String>,
+    entries: impl IntoIterator<Item = S>,
     separator: &str,
     budget: usize,
     reserved: usize,
@@ -119,6 +119,7 @@ pub fn append_entries_within_budget(
     let mut first = true;
 
     for entry in entries {
+        let entry = entry.as_ref();
         let prefix = if first { "" } else { separator };
 
         if !first && message.len() + prefix.len() + entry.len() + reserved > budget {
@@ -126,7 +127,7 @@ pub fn append_entries_within_budget(
         }
 
         message.push_str(prefix);
-        message.push_str(&entry);
+        message.push_str(entry);
         first = false;
         appended += 1;
     }
@@ -162,8 +163,7 @@ mod tests {
     fn appends_entries_within_the_budget() {
         let mut message = String::from("header: ");
 
-        let appended =
-            append_entries_within_budget(&mut message, ["a", "b"].map(String::from), ", ", 30, 0);
+        let appended = append_entries_within_budget(&mut message, ["a", "b"], ", ", 30, 0);
 
         assert_eq!(appended, 2);
         assert_eq!(message, "header: a, b");

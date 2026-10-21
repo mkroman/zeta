@@ -1,5 +1,6 @@
 //! Unwall service: the covered-site set, the URL cache, and the submissions.
 
+use std::collections::HashSet;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use super::{
 };
 use crate::database::Database;
 use zeta_cache::TtlMap;
+use zeta_url::redact_url_str;
 
 /// How long a submitted article stays in the in-flight cache, collapsing a burst of the same
 /// article into a single submission.
@@ -35,7 +37,7 @@ pub struct UnwallService {
     /// The database is the source of truth, loaded on [`load`](UnwallService::load) and
     /// reloaded after every change; the hot lookup path ([`covers`](UnwallService::covers))
     /// only ever touches this set.
-    covered: RwLock<Vec<Site>>,
+    covered: RwLock<Covered>,
     /// Collapses a burst of the same article into a single submission.
     inflight: TtlMap<String, CachedUrl>,
 }
@@ -49,7 +51,7 @@ impl UnwallService {
             repo: UnwallRepository::new(db),
             client,
             reader_base,
-            covered: RwLock::new(Vec::new()),
+            covered: RwLock::new(Covered::default()),
             inflight: TtlMap::new(INFLIGHT_TTL),
         }
     }
@@ -61,9 +63,9 @@ impl UnwallService {
     /// Returns [`Error::Database`] if the sites could not be fetched.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
-        let covered = self.repo.sites().await?;
+        let covered = Covered::new(self.repo.sites().await?);
 
-        debug!(count = covered.len(), "loaded unwall sites");
+        debug!(count = covered.sites.len(), "loaded unwall sites");
 
         *self.lock_covered_mut() = covered;
 
@@ -73,11 +75,7 @@ impl UnwallService {
     /// Whether `host` is covered.
     #[must_use]
     pub fn covers(&self, host: &str) -> bool {
-        let host = host.to_lowercase();
-
-        self.lock_covered()
-            .iter()
-            .any(|site| sites::matches_site(&host, &site.host))
+        self.lock_covered().covers(host)
     }
 
     /// Returns the unwall.app reader link for `article`: the article with the reader base as
@@ -128,7 +126,11 @@ impl UnwallService {
                 // The fetch was triggered either way; a failed attribution is logged, never
                 // fatal to the submission.
                 if let Err(error) = self.repo.record_fetch(&fetch).await {
-                    warn!(url.full = %fetch.url, %error, "could not record the unwall fetch");
+                    warn!(
+                        url.full = %redact_url_str(&fetch.url),
+                        %error,
+                        "could not record the unwall fetch"
+                    );
                 }
 
                 submitted?;
@@ -175,6 +177,7 @@ impl UnwallService {
     pub async fn remove_matching(&self, pattern: &str) -> Result<Vec<String>, Error> {
         let mut affected: Vec<String> = self
             .lock_covered()
+            .sites
             .iter()
             .filter(|site| sites::matches_site(&site.host, pattern))
             .map(|site| site.host.clone())
@@ -195,7 +198,7 @@ impl UnwallService {
     /// Returns a snapshot of the covered sites, ordered by host.
     #[must_use]
     pub fn sites(&self) -> Vec<Site> {
-        self.lock_covered().clone()
+        self.lock_covered().sites.clone()
     }
 
     /// Returns the overall statistics of the unwalled URLs and fetches.
@@ -221,13 +224,64 @@ impl UnwallService {
     }
 
     /// Locks the covered sites for reading, continuing on poisoning.
-    fn lock_covered(&self) -> RwLockReadGuard<'_, Vec<Site>> {
+    fn lock_covered(&self) -> RwLockReadGuard<'_, Covered> {
         zeta_utils::sync::read(&self.covered)
     }
 
     /// Locks the covered sites for writing, continuing on poisoning.
-    fn lock_covered_mut(&self) -> RwLockWriteGuard<'_, Vec<Site>> {
+    fn lock_covered_mut(&self) -> RwLockWriteGuard<'_, Covered> {
         zeta_utils::sync::write(&self.covered)
+    }
+}
+
+/// The covered sites with the host index derived from them.
+///
+/// The index splits the stored sites into exact hosts and `*.domain` wildcards — the two forms
+/// [`normalize_site`](super::sites::normalize_site) accepts — so a lookup never scans the full
+/// set. Exact entries match their host and its `www.` variant; a wildcard matches the bare
+/// domain and every subdomain.
+#[derive(Debug, Default)]
+struct Covered {
+    /// The sites as stored, ordered by host.
+    sites: Vec<Site>,
+    /// The exact hosts, keyed by lowercased host.
+    exact: HashSet<String>,
+    /// The `*.domain` wildcards, as lowercased domains.
+    wildcards: Vec<String>,
+}
+
+impl Covered {
+    /// Builds the host index for `sites`.
+    fn new(sites: Vec<Site>) -> Self {
+        let mut covered = Self {
+            sites,
+            ..Self::default()
+        };
+
+        for site in &covered.sites {
+            let host = site.host.to_lowercase();
+
+            if let Some(domain) = host.strip_prefix("*.") {
+                covered.wildcards.push(domain.to_owned());
+            } else {
+                covered.exact.insert(host);
+            }
+        }
+
+        covered
+    }
+
+    /// Whether `host` is covered, directly or through its `www.` variant.
+    fn covers(&self, host: &str) -> bool {
+        let host = host.to_lowercase();
+        let bare = host.strip_prefix("www.").unwrap_or(&host);
+
+        self.exact.contains(&host)
+            || self.exact.contains(bare)
+            || self
+                .wildcards
+                .iter()
+                .any(|domain| sites::matches_wildcard(&host, domain))
     }
 }
 
@@ -291,6 +345,7 @@ mod tests {
 
         assert!(service.covers("bloomberg.com"));
         assert!(service.covers("www.bloomberg.com"));
+        assert!(service.covers("WWW.Bloomberg.com"));
         assert!(!service.covers("api.bloomberg.com"));
 
         service
@@ -299,6 +354,7 @@ mod tests {
             .unwrap();
 
         assert!(service.covers("api.bloomberg.com"));
+        assert!(!service.covers("notbloomberg.com"));
 
         // The added sites survive a fresh load: the database is the source of truth.
         service.load().await.unwrap();

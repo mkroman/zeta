@@ -2,6 +2,8 @@
 //!
 //! This module provides the data structures and parsers used to extract dictionary entries
 //! from HTML sources. The main entry point is `DictionaryDocument` which contains all parsed data.
+use std::sync::LazyLock;
+
 use scraper::{ElementRef, Html, Selector};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -9,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::{Error, FromHtml, Selectors};
+
+/// The selectors of the parser, compiled once instead of on every parsed document.
+static SELECTORS: LazyLock<Selectors> = LazyLock::new(Selectors::new);
 
 /// Represents a complete dictionary entry from Den Danske Ordbog (The Danish Dictionary).
 ///
@@ -141,9 +146,8 @@ impl DictionaryDocument {
     /// missing entries by returning an empty list.
     pub fn from_html<S: AsRef<str>>(html: S) -> Result<Self, Error> {
         let html = html.as_ref();
-        let selectors = Selectors::default();
         let document = Html::parse_document(html);
-        let entries = Self::parse_entries(&document, &selectors)?;
+        let entries = Self::parse_entries(&document, &SELECTORS)?;
 
         Ok(Self { entries })
     }

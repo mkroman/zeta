@@ -40,6 +40,14 @@ pub(super) fn normalize_site(input: &str) -> Option<String> {
     })
 }
 
+/// Whether `candidate` is `domain` itself or a subdomain of it.
+#[must_use]
+pub(super) fn matches_wildcard(candidate: &str, domain: &str) -> bool {
+    candidate
+        .strip_suffix(domain)
+        .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
+}
+
 /// Whether `candidate` — a URL host or a stored site — matches `site`.
 ///
 /// An exact entry matches the host and its `www.` variant; a `*.domain` wildcard matches the
@@ -53,9 +61,7 @@ pub(super) fn matches_site(candidate: &str, site: &str) -> bool {
                 .is_some_and(|host| host.eq_ignore_ascii_case(site));
     };
 
-    candidate
-        .strip_suffix(domain)
-        .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
+    matches_wildcard(candidate, domain)
 }
 
 #[cfg(test)]

@@ -5,8 +5,8 @@
 //! was previously posted. YouTube videos are additionally tracked by their video id in
 //! a dedicated table, so reposts match across `watch?v=`, `shorts/`, and `youtu.be` links.
 //!
-//! URLs matching the host-wide [`Filters`] are skipped entirely, as are `.ofn` command
-//! invocations themselves.
+//! URLs arrive already filtered by the host dispatcher, and `.ofn` command invocations are
+//! skipped.
 //!
 //! The `.ofn stats` command shows aggregate statistics: the number of recorded URLs and
 //! YouTube videos in total, and how many were added today.
@@ -22,6 +22,7 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::prelude::*;
+use zeta_url::redact_url;
 use zeta_utils::duration::TimeInWords;
 
 use crate::ofn::model::{InsertYouTubeRecord, YouTubeRecord};
@@ -102,7 +103,7 @@ impl Ofn {
 
         match self.insert_url(ctx, origin, url).await {
             Ok(_) => {
-                debug!(?origin, ?url, "inserted url record");
+                debug!(?origin, url.full = %redact_url(url), "inserted url record");
 
                 Ok(Recorded::Inserted)
             }
@@ -121,7 +122,7 @@ impl Ofn {
     #[tracing::instrument(
         skip_all,
         err,
-        fields(url.full = %url)
+        fields(url.full = %redact_url(url))
     )]
     async fn find_url(
         &self,
@@ -187,7 +188,7 @@ impl Ofn {
     #[tracing::instrument(
         skip_all,
         err,
-        fields(url.full = %url)
+        fields(url.full = %redact_url(url))
     )]
     async fn insert_url(
         &self,
@@ -339,9 +340,12 @@ impl Ofn {
         ctx: &Context,
         client: &Client,
         origin: &ChannelMessageOrigin<'_>,
-        url: Url,
+        url: &Url,
     ) -> Result<(), ZetaError> {
-        match self.process_urls(ctx, origin, &[url]).await {
+        match self
+            .process_urls(ctx, origin, std::slice::from_ref(url))
+            .await
+        {
             Ok(report) => {
                 for resource in report.found {
                     let time_ago = resource.created_at().time_ago();
@@ -419,19 +423,10 @@ impl Ofn {
         origin: &ChannelMessageOrigin<'_>,
         urls: &[Url],
     ) -> Result<Report, Error> {
-        let filters = Filters::from_context(ctx);
-        let sender = Sender::new(origin.nickname, origin.username, origin.hostname);
-
         let mut found = vec![];
         let mut num_inserted = 0;
 
         for url in urls {
-            if filters.is_filtered(origin.channel, Some(sender), url) {
-                debug!(%url, "skipping filtered url");
-
-                continue;
-            }
-
             match self.record_url(ctx, origin, url).await? {
                 Recorded::Found(resource) => found.push(resource),
                 Recorded::Inserted => num_inserted += 1,
@@ -502,7 +497,7 @@ impl Plugin<Context> for Ofn {
             hostname: sender.hostname,
         };
 
-        self.process_single_url(ctx, client, &origin, event.url().clone())
+        self.process_single_url(ctx, client, &origin, event.url())
             .await
     }
 }
