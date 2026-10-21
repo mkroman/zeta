@@ -10,7 +10,7 @@ use sqlx::{
 /// The username, hostname and creation time columns are written on insert but not part of the
 /// row model, which only carries what the plugin reads.
 #[derive(Debug, FromRow, Clone, PartialEq, Eq)]
-pub struct Alert {
+pub struct AlertRecord {
     /// The database id of the alert.
     pub id: i32,
     /// The nickname of the user who created the alert.
@@ -25,7 +25,7 @@ pub struct Alert {
 
 /// An alert to be inserted into the database.
 #[derive(Debug, Clone)]
-pub struct NewAlert {
+pub struct NewAlertRecord {
     /// The nickname of the user creating the alert.
     pub nickname: String,
     /// The username of the user creating the alert.

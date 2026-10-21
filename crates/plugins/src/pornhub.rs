@@ -1,4 +1,4 @@
-//! Expands PornHub links with video details.
+//! Expands Pornhub links with video details.
 //!
 //! `view_video.php?viewkey=<id>` links on `www.pornhub.com` are looked up through the legacy
 //! webmasters API and replied to with the video title and view count. A missing video maps to
@@ -16,18 +16,18 @@ use crate::prelude::*;
 use zeta_http as http;
 use zeta_url::query_param;
 
-/// The hostname for PornHub URLs.
+/// The hostname for Pornhub URLs.
 const PORNHUB_HOST: &str = "www.pornhub.com";
 /// The error code returned by the API when a video is not found.
 const ERROR_CODE_NOT_FOUND: &str = "1002";
 
-/// Plugin for handling PornHub video URLs and fetching video metadata.
-pub struct PornHub {
+/// Plugin for handling Pornhub video URLs and fetching video metadata.
+pub struct Pornhub {
     /// The inner HTTP client.
     client: reqwest::Client,
 }
 
-/// Errors that can occur when interacting with the PornHub API.
+/// Errors that can occur when interacting with the Pornhub API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// The request failed, or the response could not be handled.
@@ -41,7 +41,7 @@ pub enum Error {
     InvalidResponse,
 }
 
-/// Response from the PornHub API, either containing video data or an error.
+/// Response from the Pornhub API, either containing video data or an error.
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
 #[allow(dead_code)]
@@ -134,38 +134,38 @@ pub struct Category {
 }
 
 #[async_trait]
-impl Plugin<Context> for PornHub {
+impl Plugin<Context> for Pornhub {
     type Settings = NoSettings;
 
-    /// Creates a new instance of the PornHub plugin.
+    /// Creates a new instance of the Pornhub plugin.
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(&[PORNHUB_HOST]));
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_urls(UrlScope::Hosts(&[PORNHUB_HOST]));
 
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self { client })
     }
 
-    /// Processes incoming PornHub URLs.
+    /// Processes incoming Pornhub URLs.
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let _ = self.process_url(url.url(), url.channel(), client).await;
 
         Ok(())
     }
 }
 
-impl PornHub {
-    // Processes a single URL if it's a valid PornHub video URL.
-    async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
+impl Pornhub {
+    // Processes a single URL if it's a valid Pornhub video URL.
+    async fn process_url(&self, url: &Url, channel: &str, client: &IrcClient) -> Result<(), Error> {
         if is_pornhub_video_url(url)
             && let Some(video_id) = query_param(url, "viewkey")
         {
@@ -179,7 +179,7 @@ impl PornHub {
         Ok(())
     }
 
-    /// Fetches video information by its ID from the PornHub API.
+    /// Fetches video information by its ID from the Pornhub API.
     ///
     async fn video_by_id(&self, video_id: &str) -> Result<Video, Error> {
         let url = Url::parse_with_params(
@@ -207,13 +207,13 @@ impl PornHub {
         let title = &video.title;
         let views = video.views.to_formatted_string(&Locale::en);
 
-        notice(format!(
-            "“\x0f{title}\x0310” is a PornHub video with\x0f {views}\x0310 views"
+        plain_reply(format!(
+            "“\x0f{title}\x0310” is a Pornhub video with\x0f {views}\x0310 views"
         ))
     }
 }
 
-/// Checks if the URL is a valid PornHub video URL.
+/// Checks if the URL is a valid Pornhub video URL.
 ///
 /// The dispatcher only delivers URLs whose host matches the plugin's registered host, so only
 /// the path is checked here.

@@ -2,7 +2,7 @@
 //!
 //! The `.g <query>` command posts the title and URL of the top web result, and `.gis <query>`
 //! posts the first Kagi Images result (with its image URL), both as a reply prefixed with the
-//! Kagi name. No results and search errors are sent as a notice.
+//! Kagi name. No results and search errors are sent as a plain reply.
 //!
 //! Kagi is a cookie-authenticated service: the client holds a session token — set in
 //! `[plugins.kagi]`, falling back to the `KAGI_SESSION_TOKEN` environment variable — and
@@ -51,20 +51,20 @@ impl Default for Settings {
 }
 
 /// Kagi search integration.
-pub struct KagiPlugin {
+pub struct Kagi {
     /// Kagi search client.
     client: kagi::Client,
 }
 
 #[async_trait]
-impl Plugin<Context> for KagiPlugin {
+impl Plugin<Context> for Kagi {
     type Settings = Settings;
 
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    ) -> Result<Self, PluginError> {
         let token = resolve_secret(settings.session_token.as_deref(), "KAGI_SESSION_TOKEN")?;
         let options = kagi::ClientOptions {
             timeout: ctx.config.http.timeout,
@@ -74,7 +74,9 @@ impl Plugin<Context> for KagiPlugin {
         };
         let client = kagi::Client::with_token_and_options(token, options).map_err(plugin_err)?;
 
-        subscriptions.command(KAGI).command(IMAGES);
+        subscriptions
+            .subscribe_command(KAGI)
+            .subscribe_command(IMAGES);
 
         Ok(Self { client })
     }
@@ -82,9 +84,9 @@ impl Plugin<Context> for KagiPlugin {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         match command.spec {
             KAGI => {
                 let search = |query: String| async move {
@@ -133,34 +135,34 @@ impl Plugin<Context> for KagiPlugin {
     }
 }
 
-impl KagiPlugin {
+impl Kagi {
     /// Handles the `.g` and `.gis` commands by linking the top result for the query.
     ///
     /// `search` runs the query and yields the results as `(title, url)` pairs; only the top
     /// result is linked.
     async fn handle_lookup<F, Fut>(
         &self,
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         query: &str,
         usage: &str,
         search: F,
-    ) -> Result<(), ZetaError>
+    ) -> Result<(), PluginError>
     where
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Result<Vec<(String, String)>, kagi::Error>>,
     {
         let message = if query.trim().is_empty() {
-            notice(usage)
+            plain_reply(usage)
         } else {
             match search(query.to_string()).await {
                 Ok(results) => results.first().map_or_else(
-                    || notice("No results"),
+                    || plain_reply("No results"),
                     |(title, url)| reply("Kagi", format!("{title} - {url}")),
                 ),
                 Err(err) => {
                     warn!(?err, "kagi search failed");
-                    notice(err)
+                    plain_reply(err)
                 }
             }
         };

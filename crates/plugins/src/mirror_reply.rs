@@ -4,7 +4,7 @@
 //! IRC-facing glue every mirroring plugin uses: replying with the mirrored file's link, in the
 //! channel, through the client.
 
-use irc::client::Client;
+use irc::client::Client as IrcClient;
 use tracing::error;
 
 use crate::prelude::*;
@@ -21,7 +21,7 @@ pub async fn ensure_mirrored_and_reply(
     url: &str,
     id: &str,
     channel: &str,
-    client: &Client,
+    client: &IrcClient,
 ) {
     let sender = client.sender();
     let channel = channel.to_string();
@@ -29,13 +29,13 @@ pub async fn ensure_mirrored_and_reply(
     let on_mirrored = {
         let channel = channel.clone();
         move |link: String| {
-            let _ = sender.send_privmsg(&channel, notice(link));
+            let _ = sender.send_privmsg(&channel, plain_reply(link));
         }
     };
 
     match mirror.ensure_mirrored(url, id, on_mirrored).await {
         Ok(Some(link)) => {
-            let _ = client.send_privmsg(&channel, notice(&link));
+            let _ = client.send_privmsg(&channel, plain_reply(&link));
         }
         Ok(None) => {}
         Err(error) => {

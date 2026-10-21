@@ -126,17 +126,17 @@ impl Plugin<Context> for Tvmaze {
         ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(NEXT);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(NEXT);
         Ok(Self::new(&ctx.config.http))
     }
 
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         self.handle_show_search(command.args(), command.channel(), client)
             .await
     }
@@ -162,7 +162,7 @@ impl Tvmaze {
     /// Returns [`Error::NotFound`] if no show matches the search query, and an
     /// [`Error::Api`] if the request fails or the response cannot be handled.
     #[instrument(skip(self))]
-    pub async fn single_search(&self, name: &str) -> Result<Show, Error> {
+    pub async fn search_show(&self, name: &str) -> Result<Show, Error> {
         let url = Self::build_search_url(name);
         debug!(
             url.full = %redact_url(&url),
@@ -181,9 +181,9 @@ impl Tvmaze {
         &self,
         name: &str,
         channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        let message = match self.single_search(name).await {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
+        let message = match self.search_show(name).await {
             Ok(show) => Self::format_show_message(&show),
             Err(err) => Self::format_error_message(&err),
         };
@@ -219,7 +219,7 @@ impl Tvmaze {
             "Next episode “\x0f{title}\x0310” (\x0f{season}x{number:02}\x0310) airs in\x0f {time_until_air}"
         );
 
-        Self::build_formatted_message(Some(&show.name), &content)
+        Self::format_message(Some(&show.name), &content)
     }
 
     /// Formats a message about the show's current status.
@@ -230,7 +230,7 @@ impl Tvmaze {
             "\x0f{name}\x0310 is currently marked as\x0f {status}\x0310 and there is no next episode"
         );
 
-        Self::build_formatted_message(None, &content)
+        Self::format_message(None, &content)
     }
 
     /// Formats an error message for display.
@@ -240,7 +240,7 @@ impl Tvmaze {
             Error::Api(_) => "Failed to fetch show information".to_string(),
         };
 
-        Self::build_formatted_message(None, &content)
+        Self::format_message(None, &content)
     }
 
     /// Builds the search URL with query parameters.
@@ -255,7 +255,7 @@ impl Tvmaze {
     }
 
     /// Formats a message for display in IRC with an optional bold subject name.
-    fn build_formatted_message(prefix: Option<&str>, message: &str) -> String {
+    fn format_message(prefix: Option<&str>, message: &str) -> String {
         prefix.map_or_else(
             || reply("TVmaze", message),
             |name| reply("TVmaze", format!("(\x0f{name}\x0310): {message}")),

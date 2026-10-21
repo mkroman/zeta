@@ -1,6 +1,6 @@
 //! Per-plugin configuration plumbing.
 //!
-//! One [`PluginConfig`] value exists per bundled plugin, holding the host-managed `enabled`
+//! One [`PluginSection`] value exists per bundled plugin, holding the host-managed `enabled`
 //! toggle next to the plugin's own typed settings.
 
 use figment::value::{Dict, Value};
@@ -14,11 +14,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// The `enabled` key is managed by the host; a section that omits it inherits the global
 /// `enabled_by_default` under `[plugins]` (`true` when that is omitted too). Every other key
 /// belongs to the plugin's settings type (e.g. `dig::Settings`), deserialized through
-/// [`PluginConfig::settings`]. Unknown settings keys are ignored, collected in
-/// [`PluginConfig::unknown_keys`] and warned about by the host: a config that names a setting
+/// [`PluginSection::settings`]. Unknown settings keys are ignored, collected in
+/// [`PluginSection::unknown_keys`] and warned about by the host: a config that names a setting
 /// removed by a newer release must keep working, so rejection is too harsh.
 #[derive(Clone, Debug, Serialize)]
-pub struct PluginConfig<S> {
+pub struct PluginSection<S> {
     /// Enable the plugin.
     pub enabled: bool,
     /// The plugin's typed settings.
@@ -36,7 +36,7 @@ pub struct PluginConfig<S> {
     pub unknown_keys: Vec<String>,
 }
 
-impl<'de, S> PluginConfig<S>
+impl<'de, S> PluginSection<S>
 where
     S: Deserialize<'de>,
 {
@@ -79,7 +79,7 @@ where
     }
 }
 
-impl<'de, S> Deserialize<'de> for PluginConfig<S>
+impl<'de, S> Deserialize<'de> for PluginSection<S>
 where
     S: Deserialize<'de>,
 {
@@ -94,7 +94,7 @@ where
 /// The standalone default: the plugin is enabled, as a section omitted under the global
 /// default (`enabled_by_default = true`) would be. An opt-in (`enabled_by_default = false`)
 /// configuration resolves absent sections afterwards, during `PluginsConfig` deserialization.
-impl<S: Default> Default for PluginConfig<S> {
+impl<S: Default> Default for PluginSection<S> {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -164,7 +164,7 @@ enabled = false
             ]
         );
         assert!(!plugins.health.enabled);
-        assert_empty!(plugins.unknown);
+        assert_empty!(plugins.unknown_sections);
     }
 
     #[test]
@@ -207,7 +207,7 @@ enabled = true
         assert!(plugins.dig.enabled);
         assert!(!plugins.health.enabled);
         // The global toggle itself is not reported as an unknown section.
-        assert_empty!(plugins.unknown);
+        assert_empty!(plugins.unknown_sections);
     }
 
     #[test]
@@ -240,7 +240,7 @@ enabled = false
         let plugins =
             extract("[plugins.digg]\nenabled = false\n").expect("could not parse configuration");
 
-        assert!(plugins.unknown.contains_key("digg"));
+        assert!(plugins.unknown_sections.contains_key("digg"));
     }
 
     #[test]
@@ -285,7 +285,7 @@ enabled = false
         assert_eq!(json["enabled"], serde_json::json!(true));
         assert_eq!(json["nameservers"], serde_json::json!(["1.1.1.1"]));
 
-        let round_tripped: PluginConfig<crate::dig::Settings> =
+        let round_tripped: PluginSection<crate::dig::Settings> =
             serde_json::from_value(json).expect("could not deserialize");
         assert_eq!(
             round_tripped.settings.nameservers,
@@ -344,7 +344,7 @@ enabled = false
                 IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001]),
             ]
         );
-        assert_empty!(config.unknown);
+        assert_empty!(config.unknown_sections);
     }
 
     #[test]
@@ -358,6 +358,6 @@ enabled = false
         assert!(config.enabled_by_default);
         assert!(config.dig.enabled);
         assert!(config.health.enabled);
-        assert_empty!(config.unknown);
+        assert_empty!(config.unknown_sections);
     }
 }

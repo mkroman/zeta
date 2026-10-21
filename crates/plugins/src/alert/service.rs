@@ -14,16 +14,16 @@ use tracing::{Instrument, debug, error, instrument, trace, warn};
 use super::{
     Settings,
     error::Error,
-    model::{Alert, NewAlert},
+    model::{AlertRecord, NewAlertRecord},
     repository::AlertRepository,
 };
 use crate::database::Database;
 
 /// An alert scheduled for delivery, ordered by the time it is due.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Scheduled(Alert);
+struct ScheduledAlert(AlertRecord);
 
-impl Ord for Scheduled {
+impl Ord for ScheduledAlert {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0
             .time
@@ -32,7 +32,7 @@ impl Ord for Scheduled {
     }
 }
 
-impl PartialOrd for Scheduled {
+impl PartialOrd for ScheduledAlert {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -44,9 +44,9 @@ struct Scheduler {
     /// The alert repository.
     repo: AlertRepository,
     /// The sender half of the channel used to deliver due alerts.
-    tx: mpsc::UnboundedSender<Alert>,
+    tx: mpsc::UnboundedSender<AlertRecord>,
     /// The alerts due within the window, ordered by the time they are due.
-    cache: Arc<Mutex<BinaryHeap<Reverse<Scheduled>>>>,
+    cache: Arc<Mutex<BinaryHeap<Reverse<ScheduledAlert>>>>,
     /// Wakes the scheduler to sync the window when an alert is created.
     notify: Arc<Notify>,
     /// How long the scheduler waits before retrying after a failed tick.
@@ -69,8 +69,8 @@ struct Scheduler {
 pub struct AlertService {
     /// The state shared with the scheduler task.
     scheduler: Scheduler,
-    /// The receiver of due alerts, taken by the delivery task on load.
-    receiver: Option<mpsc::UnboundedReceiver<Alert>>,
+    /// The receiver of due alerts, taken by the delivery task on start.
+    receiver: Option<mpsc::UnboundedReceiver<AlertRecord>>,
 }
 
 impl AlertService {
@@ -97,7 +97,7 @@ impl AlertService {
     ///
     /// Returns `None` if the receiver has already been taken.
     #[must_use]
-    pub const fn take_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<Alert>> {
+    pub const fn take_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<AlertRecord>> {
         self.receiver.take()
     }
 
@@ -118,7 +118,7 @@ impl AlertService {
     ///
     /// Returns [`Error::Database`] if the alert could not be inserted into the database.
     #[instrument(skip_all, err)]
-    pub async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
+    pub async fn create(&self, alert: NewAlertRecord) -> Result<AlertRecord, Error> {
         self.scheduler.create(alert).await
     }
 
@@ -128,7 +128,11 @@ impl AlertService {
     ///
     /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
     #[instrument(skip_all, err)]
-    pub async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
+    pub async fn pending_for(
+        &self,
+        channel: &str,
+        nickname: &str,
+    ) -> Result<Vec<AlertRecord>, Error> {
         self.scheduler.pending_for(channel, nickname).await
     }
 
@@ -168,7 +172,7 @@ impl Scheduler {
 
             *cache = alerts
                 .into_iter()
-                .map(|alert| Reverse(Scheduled(alert)))
+                .map(|alert| Reverse(ScheduledAlert(alert)))
                 .collect();
         }
 
@@ -181,7 +185,7 @@ impl Scheduler {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the alert could not be inserted into the database.
-    async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
+    async fn create(&self, alert: NewAlertRecord) -> Result<AlertRecord, Error> {
         let alert = self.repo.insert(alert).await?;
 
         trace!(?alert, "created alert");
@@ -200,8 +204,8 @@ impl Scheduler {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
-    async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
-        self.repo.list_for(channel, nickname).await
+    async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<AlertRecord>, Error> {
+        self.repo.list_pending_for(channel, nickname).await
     }
 
     /// Runs the scheduler loop, syncing the window of upcoming alerts from the database every
@@ -294,7 +298,7 @@ impl Scheduler {
             return Ok(());
         }
 
-        for Scheduled(alert) in &due {
+        for ScheduledAlert(alert) in &due {
             trace!(?alert, "delivering alert");
 
             if self.tx.send(alert.clone()).is_err() {
@@ -306,9 +310,9 @@ impl Scheduler {
             }
         }
 
-        let sent: Vec<i32> = due.iter().map(|Scheduled(alert)| alert.id).collect();
+        let sent: Vec<i32> = due.iter().map(|ScheduledAlert(alert)| alert.id).collect();
 
-        if let Err(err) = self.repo.delete_all(&sent).await {
+        if let Err(err) = self.repo.delete_by_ids(&sent).await {
             warn!(
                 ?err,
                 count = due.len(),
@@ -324,7 +328,7 @@ impl Scheduler {
     }
 
     /// Pops all alerts that are due at `now` from the cache.
-    async fn pop_due(&self, now: DateTime<Utc>) -> Vec<Scheduled> {
+    async fn pop_due(&self, now: DateTime<Utc>) -> Vec<ScheduledAlert> {
         let mut cache = self.cache.lock().await;
         let mut due = Vec::new();
 
@@ -341,7 +345,7 @@ impl Scheduler {
     }
 
     /// Puts alerts back into the cache after a failed delivery or deletion.
-    async fn requeue(&self, alerts: &[Scheduled]) {
+    async fn requeue(&self, alerts: &[ScheduledAlert]) {
         self.cache
             .lock()
             .await
@@ -358,8 +362,13 @@ mod tests {
     use super::*;
 
     /// A new alert fixture.
-    fn new_alert(nickname: &str, channel: &str, message: &str, time: DateTime<Utc>) -> NewAlert {
-        NewAlert {
+    fn new_alert(
+        nickname: &str,
+        channel: &str,
+        message: &str,
+        time: DateTime<Utc>,
+    ) -> NewAlertRecord {
+        NewAlertRecord {
             nickname: nickname.into(),
             username: nickname.into(),
             hostname: nickname.into(),

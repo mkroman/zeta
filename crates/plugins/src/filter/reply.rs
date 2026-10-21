@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use zeta_utils::utils::{MAX_LISTING_LENGTH, append_entries_within_budget};
 
-use super::{NAME, model::Filter};
+use super::{NAME, model::FilterRule};
 use crate::prelude::*;
 
 /// Formats `count` with the pluralized `noun`, e.g. `1 filter` or `3 filters`.
@@ -17,7 +17,7 @@ const MORE_SUFFIX_RESERVE: usize = " (+99999 more)".len();
 
 /// The confirmation for the added or removed `filters`, describing each one so the sender can
 /// act on the ids without a follow-up `.filter list`.
-pub(super) fn changed_response(verb: &str, filters: &[Filter]) -> String {
+pub(super) fn changed_response(verb: &str, filters: &[FilterRule]) -> String {
     match filters {
         [filter] => reply(NAME, format!("{verb} {}.", describe(filter))),
         // More than one filter, so the plural is always right.
@@ -32,7 +32,7 @@ pub(super) fn changed_response(verb: &str, filters: &[Filter]) -> String {
 /// Appends the described `filters` to `header`, within the line budget and leaving room for a
 /// suffix of `reserved` bytes. A listing that does not fit entirely gains a ` (+N more)`
 /// suffix naming how many filters were left out.
-pub(super) fn listing(header: String, filters: &[Filter], reserved: usize) -> String {
+pub(super) fn listing(header: String, filters: &[FilterRule], reserved: usize) -> String {
     let mut listing = header;
 
     let appended = append_entries_within_budget(
@@ -53,7 +53,7 @@ pub(super) fn listing(header: String, filters: &[Filter], reserved: usize) -> St
 }
 
 /// Formats a filter for listings.
-pub(super) fn describe(filter: &Filter) -> String {
+pub(super) fn describe(filter: &FilterRule) -> String {
     let criteria = [
         ("host", filter.host.as_deref()),
         ("path", filter.path.as_deref()),
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn a_single_added_filter_is_described_with_its_id() {
-        let filter = Filter {
+        let filter = FilterRule {
             id: 12,
             channel: Some("#foo".into()),
             host: Some("example.com".into()),
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn multiple_added_filters_are_listed_with_a_count() {
-        let first = Filter {
+        let first = FilterRule {
             id: 12,
             channel: None,
             host: Some("a.com".into()),
@@ -104,7 +104,7 @@ mod tests {
             username: None,
             hostname: None,
         };
-        let second = Filter {
+        let second = FilterRule {
             id: 13,
             channel: None,
             host: Some("b.com".into()),
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn a_truncated_listing_names_the_dropped_filters() {
-        let long = Filter {
+        let long = FilterRule {
             id: 1,
             channel: None,
             host: Some(format!("long.example/{}", "x".repeat(180))),
@@ -142,7 +142,7 @@ mod tests {
             username: None,
             hostname: None,
         };
-        let second = Filter {
+        let second = FilterRule {
             id: 2,
             ..long.clone()
         };
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn describes_filters() {
-        let filter = Filter {
+        let filter = FilterRule {
             id: 12,
             channel: Some("#foo".into()),
             host: Some("*.com".into()),
@@ -168,7 +168,7 @@ mod tests {
 
         assert_eq!(describe(&filter), "#12: host=*.com user=*other (#foo)");
 
-        let global = Filter {
+        let global = FilterRule {
             id: 3,
             channel: None,
             host: None,

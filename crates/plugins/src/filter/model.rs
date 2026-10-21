@@ -14,7 +14,7 @@ use super::pattern::{Case, Pattern};
 /// The creator nickname and creation time columns are written on insert but not part of the
 /// row model, which only carries what the plugin reads.
 #[derive(Debug, FromRow, Clone, PartialEq, Eq)]
-pub struct Filter {
+pub struct FilterRule {
     /// The database id of the filter.
     pub id: i32,
     /// The channel the filter applies to, or `None` for all channels.
@@ -33,7 +33,7 @@ pub struct Filter {
 
 /// A filter to be inserted into the database.
 #[derive(Debug, Clone)]
-pub struct NewFilter {
+pub struct NewFilterRule {
     /// The channel the filter applies to, or `None` for all channels.
     pub channel: Option<String>,
     /// The URL host pattern, or `None` for any host.
@@ -119,7 +119,7 @@ pub(super) struct CompiledCriteria {
 
 impl CompiledCriteria {
     /// Whether the criteria select `filter`.
-    pub(super) fn matches(&self, filter: &Filter) -> bool {
+    pub(super) fn matches(&self, filter: &FilterRule) -> bool {
         Self::field_matches(self.channel.as_ref(), filter.channel.as_deref())
             && Self::field_matches(self.host.as_ref(), filter.host.as_deref())
             && Self::field_matches(self.path.as_ref(), filter.path.as_deref())
@@ -138,8 +138,8 @@ impl CompiledCriteria {
 mod tests {
     use super::*;
 
-    fn filter(host: Option<&str>, path: Option<&str>) -> Filter {
-        Filter {
+    fn filter(host: Option<&str>, path: Option<&str>) -> FilterRule {
+        FilterRule {
             id: 1,
             channel: Some("#foo".into()),
             host: host.map(String::from),
@@ -151,7 +151,7 @@ mod tests {
     }
 
     /// Whether `criteria` selects `filter`.
-    fn matches(criteria: &Criteria, filter: &Filter) -> bool {
+    fn matches(criteria: &Criteria, filter: &FilterRule) -> bool {
         criteria.compile().matches(filter)
     }
 

@@ -5,14 +5,14 @@ use argh::{ArgsInfo, FromArgs};
 use crate::prelude::*;
 
 /// The `.unwall` command.
-pub(super) const UNWALL: CommandSpec = CommandSpec::with_args::<Opts>(
+pub(super) const UNWALL: CommandSpec = CommandSpec::with_args::<Options>(
     ".unwall",
     "Manage the paywalled sites unwalled through unwall.app (add/rm/list/stats/info)",
 );
 
 /// Manage the paywalled sites unwalled through unwall.app.
 #[derive(FromArgs, ArgsInfo, Debug)]
-pub(super) struct Opts {
+pub(super) struct Options {
     /// the unwall operation
     #[argh(subcommand)]
     pub(super) command: Subcommand,

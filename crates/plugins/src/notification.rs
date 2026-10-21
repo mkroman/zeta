@@ -14,7 +14,7 @@ mod service;
 #[allow(unused_imports)]
 pub use {
     error::Error,
-    model::{NewNotification, Notification},
+    model::{NewNotificationRecord, NotificationRecord},
     service::NotificationService,
 };
 
@@ -49,28 +49,28 @@ impl Default for Settings {
 ///
 /// Lets users queue notifications for other users with the `.notify <nick> <message>` command, and
 /// delivers pending notifications to a user when they are active in a channel.
-pub struct NotificationPlugin {
+pub struct Notification {
     /// The notification service.
     service: NotificationService,
 }
 
 #[async_trait]
-impl Plugin<Context> for NotificationPlugin {
+impl Plugin<Context> for Notification {
     type Settings = Settings;
 
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(NOTIFY).receive_message();
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(NOTIFY).subscribe_message();
 
         Ok(Self {
             service: NotificationService::new(ctx.db.clone(), settings),
         })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, _client: &IrcClient) -> Result<(), PluginError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
@@ -79,9 +79,9 @@ impl Plugin<Context> for NotificationPlugin {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let Some(sender) = command.sender() else {
             return Ok(());
@@ -98,7 +98,7 @@ impl Plugin<Context> for NotificationPlugin {
             return Ok(());
         };
 
-        let notification = NewNotification {
+        let notification = NewNotificationRecord {
             target: target.to_owned(),
             nickname: nickname.to_owned(),
             username: username.to_owned(),
@@ -108,7 +108,7 @@ impl Plugin<Context> for NotificationPlugin {
         };
 
         let message = match self.service.create(notification).await {
-            Ok(_) => notice("The notification has been stored."),
+            Ok(_) => plain_reply("The notification has been stored."),
             Err(Error::TooManyPending(max)) => reply(
                 "Notification",
                 format!("{target} already has {max} pending notifications in this channel"),
@@ -124,9 +124,9 @@ impl Plugin<Context> for NotificationPlugin {
     async fn handle_message(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         event: &MessageEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = event.channel();
         let Some(sender) = event.sender() else {
             return Ok(());
@@ -136,12 +136,12 @@ impl Plugin<Context> for NotificationPlugin {
 
         // Delivering is triggered by an ordinary message; command invocations are handled in
         // `handle_command` and do not deliver the invoker's pending notifications.
-        if NOTIFY.parse(event.text()).is_some() {
+        if NOTIFY.arguments_from(event.text()).is_some() {
             return Ok(());
         }
 
         {
-            let mut pending = self.service.take(channel, nickname).await;
+            let mut pending = self.service.take_pending(channel, nickname).await;
             let mut delivered = 0;
 
             for notification in &pending {
@@ -155,7 +155,7 @@ impl Plugin<Context> for NotificationPlugin {
                 match client.send_privmsg(
                     channel,
                     format!(
-                        "{nickname}:{COLOR} Notification{RESET} {message}{COLOR} from{RESET} {creator}{COLOR} at{RESET} {created_at}"
+                        "{nickname}:{REPLY_COLOR} Notification{RESET} {message}{REPLY_COLOR} from{RESET} {creator}{REPLY_COLOR} at{RESET} {created_at}"
                     ),
                 ) {
                     Ok(()) => delivered += 1,
@@ -176,7 +176,7 @@ impl Plugin<Context> for NotificationPlugin {
                     .map(|notification| notification.id)
                     .collect::<Vec<_>>();
 
-                if let Err(err) = self.service.delete_all(&sent_ids).await {
+                if let Err(err) = self.service.delete_by_ids(&sent_ids).await {
                     error!(
                         ?err,
                         count = sent_ids.len(),
@@ -186,7 +186,9 @@ impl Plugin<Context> for NotificationPlugin {
             }
 
             if delivered < pending.len() {
-                self.service.restore(pending.split_off(delivered)).await;
+                self.service
+                    .restore_pending(pending.split_off(delivered))
+                    .await;
             }
         }
 

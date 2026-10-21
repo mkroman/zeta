@@ -48,15 +48,15 @@ use std::time::Duration;
 
 use tracing::{Instrument, debug, warn};
 
-use self::command::{Add, Del, Delete, Info, List, Opts, Rm, Stats, Subcommand, UNWALL};
+use self::command::{Add, Del, Delete, Info, List, Options, Rm, Stats, Subcommand, UNWALL};
 use self::reply::{info_reply, join_and, list_reply, stats_reply};
-use crate::hostmask::Hostmasks;
+use crate::hostmask::AdminHostmasks;
 use crate::prelude::*;
 use zeta_http as http;
 use zeta_url::redact_url;
 
 use client::UnwallClient;
-use model::NewFetch;
+use model::NewFetchRecord;
 
 /// The name this plugin replies under.
 const NAME: &str = "UnWall";
@@ -103,7 +103,7 @@ pub struct Unwall {
     service: Arc<UnwallService>,
     /// The compiled admin hostmasks; senders whose `nick!user@host` matches one of them are
     /// authorized to manage unwall sites.
-    admins: Hostmasks,
+    admins: AdminHostmasks,
 }
 
 impl Unwall {
@@ -115,10 +115,10 @@ impl Unwall {
     /// Replies with the unauthorized message and yields `false` when `sender` is not an admin.
     fn authorized(
         &self,
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         sender: Sender<'_>,
-    ) -> Result<bool, ZetaError> {
+    ) -> Result<bool, PluginError> {
         if self.is_admin(sender) {
             return Ok(true);
         }
@@ -131,11 +131,11 @@ impl Unwall {
     /// Adds the sites of the `add` subcommand to the covered set.
     async fn add(
         &self,
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         nickname: &str,
         opts: Add,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let mut hosts = Vec::new();
 
         for input in &opts.hosts {
@@ -147,7 +147,7 @@ impl Unwall {
                         channel,
                         reply(
                             NAME,
-                            format!("{RESET}{input}{COLOR} does not look like a hostname."),
+                            format!("{RESET}{input}{REPLY_COLOR} does not look like a hostname."),
                         ),
                     )?;
 
@@ -178,20 +178,30 @@ impl Unwall {
 
         client.send_privmsg(
             channel,
-            reply(NAME, format!("Now unwalling {}{COLOR}.", join_and(&hosts))),
+            reply(
+                NAME,
+                format!("Now unwalling {}{REPLY_COLOR}.", join_and(&hosts)),
+            ),
         )?;
 
         Ok(())
     }
 
     /// Removes the covered sites matching the `rm`/`del`/`delete` subcommand pattern.
-    async fn remove(&self, client: &Client, channel: &str, pattern: &str) -> Result<(), ZetaError> {
+    async fn remove(
+        &self,
+        client: &IrcClient,
+        channel: &str,
+        pattern: &str,
+    ) -> Result<(), PluginError> {
         let Some(pattern) = sites::normalize_site(pattern) else {
             client.send_privmsg(
                 channel,
                 reply(
                     NAME,
-                    format!("{RESET}{pattern}{COLOR} does not look like a hostname or wildcard."),
+                    format!(
+                        "{RESET}{pattern}{REPLY_COLOR} does not look like a hostname or wildcard."
+                    ),
                 ),
             )?;
 
@@ -211,9 +221,12 @@ impl Unwall {
         };
 
         let response = if removed.is_empty() {
-            format!("No unwalled sites match{RESET} {pattern}{COLOR}.")
+            format!("No unwalled sites match{RESET} {pattern}{REPLY_COLOR}.")
         } else {
-            format!("Removed {}{COLOR} from unwalled sites.", join_and(&removed))
+            format!(
+                "Removed {}{REPLY_COLOR} from unwalled sites.",
+                join_and(&removed)
+            )
         };
 
         client.send_privmsg(channel, reply(NAME, response))?;
@@ -222,14 +235,14 @@ impl Unwall {
     }
 
     /// Summarizes the covered sites in a single line.
-    fn list(&self, client: &Client, channel: &str) -> Result<(), ZetaError> {
+    fn list(&self, client: &IrcClient, channel: &str) -> Result<(), PluginError> {
         client.send_privmsg(channel, list_reply(&self.service.sites()))?;
 
         Ok(())
     }
 
     /// Replies with the overall statistics of the unwalled links.
-    async fn stats(&self, client: &Client, channel: &str) -> Result<(), ZetaError> {
+    async fn stats(&self, client: &IrcClient, channel: &str) -> Result<(), PluginError> {
         let response = match self.service.statistics().await {
             Ok(stats) => stats_reply(&stats),
             Err(error) => reply(
@@ -244,7 +257,7 @@ impl Unwall {
     }
 
     /// Replies with the statistics of one host.
-    async fn info(&self, client: &Client, channel: &str, host: &str) -> Result<(), ZetaError> {
+    async fn info(&self, client: &IrcClient, channel: &str, host: &str) -> Result<(), PluginError> {
         let host = host.trim().to_lowercase();
 
         let response = match self.service.host_statistics(&host).await {
@@ -262,7 +275,7 @@ impl Unwall {
 
     /// Submits a covered article to unwall.app in a task of its own, replying with the reader
     /// link once the mirror is warm — or from the cache, when the article is known.
-    fn submit(&self, client: &Client, event: &UrlEvent) {
+    fn submit(&self, client: &IrcClient, event: &UrlEvent) {
         let url = event.url();
 
         if !matches!(url.scheme(), "http" | "https") {
@@ -286,7 +299,7 @@ impl Unwall {
         let mut article = url.clone();
         article.set_fragment(None);
 
-        let fetch = NewFetch {
+        let fetch = NewFetchRecord {
             url: article.as_str().to_owned(),
             host: host.to_owned(),
             nickname: sender.nick.to_owned(),
@@ -308,9 +321,11 @@ impl Unwall {
             async move {
                 match service.resolve(&article, fetch).await {
                     Ok(cached) => {
-                        // The link rides on the plain `>` notice prefix, which colors the
+                        // The link rides on the plain `>` reply marker, which colors the
                         // whole line cyan.
-                        if let Err(error) = irc.send_privmsg(&channel, notice(&cached.unwall_url)) {
+                        if let Err(error) =
+                            irc.send_privmsg(&channel, plain_reply(&cached.unwall_url))
+                        {
                             warn!(%error, "could not send the unwall link");
                         }
                     }
@@ -323,7 +338,7 @@ impl Unwall {
 
                         if let Err(error) = irc.send_privmsg(
                             &channel,
-                            notice(format!("could not unwall the article:{RESET} {error}")),
+                            plain_reply(format!("could not unwall the article:{RESET} {error}")),
                         ) {
                             warn!(%error, "could not send the unwall failure");
                         }
@@ -343,8 +358,10 @@ impl Plugin<Context> for Unwall {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(UNWALL).urls(UrlScope::Any);
+    ) -> Result<Self, PluginError> {
+        subscriptions
+            .subscribe_command(UNWALL)
+            .subscribe_urls(UrlScope::Any);
 
         let api_base = client::base_url(&settings.api_base).map_err(plugin_err)?;
         let reader_base = client::base_url(&settings.reader_base).map_err(plugin_err)?;
@@ -354,7 +371,7 @@ impl Plugin<Context> for Unwall {
             api_base,
         );
 
-        let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage unwall sites");
+        let admins = AdminHostmasks::compile(&ctx.config.admin_hostmasks, "manage unwall sites");
 
         Ok(Self {
             service: Arc::new(UnwallService::new(ctx.db.clone(), client, reader_base)),
@@ -362,7 +379,7 @@ impl Plugin<Context> for Unwall {
         })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, _client: &IrcClient) -> Result<(), PluginError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
@@ -371,15 +388,16 @@ impl Plugin<Context> for Unwall {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let Some(sender) = command.sender() else {
             return Ok(());
         };
 
-        let Some(opts) = parse_words_or_usage::<Opts>(client, command, |line| reply(NAME, line))?
+        let Some(opts) =
+            parse_words_or_usage::<Options>(client, command, |line| reply(NAME, line))?
         else {
             return Ok(());
         };
@@ -410,9 +428,9 @@ impl Plugin<Context> for Unwall {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         event: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         self.submit(client, event);
 
         Ok(())

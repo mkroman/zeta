@@ -11,9 +11,9 @@ use zeta_plugin::Sender;
 
 /// The compiled admin hostmasks of `[irc] admin_hostmasks`.
 #[derive(Debug, Default)]
-pub struct Hostmasks(Vec<WildMatch>);
+pub struct AdminHostmasks(Vec<WildMatch>);
 
-impl Hostmasks {
+impl AdminHostmasks {
     /// Compiles the configured hostmasks into case-insensitive wildcard matchers, skipping
     /// blank entries.
     ///
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn hostmasks_match_wildcards_and_case_insensitively() {
-        let admins = Hostmasks::compile(
+        let admins = AdminHostmasks::compile(
             &["mk!mk@*".to_string(), "*!*@example.org".to_string()],
             "test",
         );
@@ -67,14 +67,14 @@ mod tests {
 
     #[test]
     fn an_empty_list_denies_everyone() {
-        let admins = Hostmasks::compile(&[], "test");
+        let admins = AdminHostmasks::compile(&[], "test");
 
         assert!(!admins.matches(Sender::new("mk", "mk", "example.com")));
     }
 
     #[test]
     fn blank_hostmasks_are_skipped() {
-        let admins = Hostmasks::compile(&["  ".to_string(), String::new()], "test");
+        let admins = AdminHostmasks::compile(&["  ".to_string(), String::new()], "test");
 
         assert!(!admins.matches(Sender::new("mk", "mk", "example.com")));
     }

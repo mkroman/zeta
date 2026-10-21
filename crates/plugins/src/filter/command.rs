@@ -3,18 +3,18 @@
 use argh::{ArgsInfo, FromArgs};
 
 use super::{
-    model::{Criteria, NewFilter},
+    model::{Criteria, NewFilterRule},
     pattern::has_wildcards,
 };
 use crate::prelude::*;
 
 /// The `.filter` command.
 pub(super) const FILTER: CommandSpec =
-    CommandSpec::with_args::<Opts>(".filter", "Manage URL and sender filters (add/list/delete)");
+    CommandSpec::with_args::<Options>(".filter", "Manage URL and sender filters (add/list/delete)");
 
 /// Manage URL and sender filters.
 #[derive(FromArgs, ArgsInfo, Debug)]
-pub(super) struct Opts {
+pub(super) struct Options {
     /// the filter operation
     #[argh(subcommand)]
     pub(super) command: Subcommand,
@@ -121,7 +121,7 @@ impl Add {
         self,
         current_channel: &str,
         created_by: &str,
-    ) -> Result<Vec<NewFilter>, String> {
+    ) -> Result<Vec<NewFilterRule>, String> {
         let channel = self.channel_scope(current_channel)?;
         let hosts = unique_patterns("--host", &self.host)?;
         let paths = unique_patterns("--path", &self.path)?;
@@ -147,7 +147,7 @@ impl Add {
 
         for host in hosts {
             for path in &paths {
-                filters.push(NewFilter {
+                filters.push(NewFilterRule {
                     channel: channel.clone(),
                     host: host.clone(),
                     path: path.clone(),
@@ -279,7 +279,7 @@ mod tests {
 
     /// Parses `input` with the filter command spec and unpacks the `add` subcommand.
     fn parse_add(input: &str) -> Add {
-        let opts: Opts = FILTER
+        let opts: Options = FILTER
             .parse_words(input)
             .unwrap_or_else(|error| panic!("`{input}` should parse: {error}"));
 
@@ -292,7 +292,7 @@ mod tests {
 
     /// Parses `input` with the filter command spec and unpacks the `delete` subcommand.
     fn parse_delete(input: &str) -> Delete {
-        let opts: Opts = FILTER
+        let opts: Options = FILTER
             .parse_words(input)
             .unwrap_or_else(|error| panic!("`{input}` should parse: {error}"));
 
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn list_criteria_convert() {
-        let opts: Opts = FILTER
+        let opts: Options = FILTER
             .parse_words("list --host *.com")
             .expect("`list --host *.com` should parse");
 

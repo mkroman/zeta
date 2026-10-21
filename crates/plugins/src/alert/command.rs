@@ -5,7 +5,7 @@ use argh::{ArgsInfo, FromArgs};
 use crate::prelude::*;
 
 /// The `.alert` command.
-pub(super) const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
+pub(super) const ALERT: CommandSpec = CommandSpec::with_args::<Options>(
     ".alert",
     "Schedule an alert to be posted later, or list pending alerts",
 );
@@ -16,7 +16,7 @@ pub(super) const USAGE: &str = "Usage: .alert\x0f [-l] <message> <in|at> <dateti
 /// Schedule an alert to be posted later, or list pending alerts.
 #[derive(FromArgs, ArgsInfo, Debug)]
 #[argh(help_triggers("--help"))]
-pub(super) struct Opts {
+pub(super) struct Options {
     /// list your pending alerts in this channel
     #[argh(switch, short = 'l')]
     pub(super) list: bool,
@@ -25,7 +25,7 @@ pub(super) struct Opts {
     pub(super) args: Vec<String>,
 }
 
-impl Opts {
+impl Options {
     /// Returns the joined message and datetime expression.
     pub(super) fn input(&self) -> String {
         self.args.join(" ")
@@ -38,19 +38,19 @@ mod tests {
 
     #[test]
     fn parses_the_list_flag() {
-        let opts: Opts = ALERT.parse_words("-l").unwrap();
+        let opts: Options = ALERT.parse_words("-l").unwrap();
 
         assert!(opts.list);
         assert_eq!(opts.input(), "");
 
-        let opts: Opts = ALERT.parse_words("--list").unwrap();
+        let opts: Options = ALERT.parse_words("--list").unwrap();
 
         assert!(opts.list);
     }
 
     #[test]
     fn parses_message_and_datetime() {
-        let opts: Opts = ALERT.parse_words("hello world at 4:20").unwrap();
+        let opts: Options = ALERT.parse_words("hello world at 4:20").unwrap();
 
         assert!(!opts.list);
         assert_eq!(opts.input(), "hello world at 4:20");
@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn parses_empty_arguments() {
-        let opts: Opts = ALERT.parse_words("").unwrap();
+        let opts: Options = ALERT.parse_words("").unwrap();
 
         assert!(!opts.list);
         assert_eq!(opts.input(), "");
@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn keeps_messages_verbatim() {
-        let opts: Opts = ALERT
+        let opts: Options = ALERT
             .parse_words(r#"don't "forget me"  at   4:20"#)
             .unwrap();
 
@@ -76,8 +76,8 @@ mod tests {
     #[test]
     fn rejects_unknown_flags() {
         assert!(matches!(
-            ALERT.parse_words::<Opts>("-x").unwrap_err(),
-            ArgsError::Usage(_)
+            ALERT.parse_words::<Options>("-x").unwrap_err(),
+            ArgumentError::Usage(_)
         ));
     }
 }

@@ -38,7 +38,7 @@ pub struct Site {
 
 /// An initial unwall fetch to attribute, recorded for every submission.
 #[derive(Debug, Clone)]
-pub struct NewFetch {
+pub struct NewFetchRecord {
     /// The article URL, the cache key.
     pub url: String,
     /// The host of the article URL.

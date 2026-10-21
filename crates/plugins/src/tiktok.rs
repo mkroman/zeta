@@ -63,7 +63,7 @@ impl Default for Settings {
 }
 
 /// The TikTok plugin: summarizes and mirrors TikTok video links.
-pub struct Tiktok {
+pub struct TikTok {
     client: reqwest::Client,
     mirror: Option<MirrorHandle>,
     settings: Settings,
@@ -84,15 +84,15 @@ pub enum Error {
 }
 
 #[async_trait]
-impl Plugin<Context> for Tiktok {
+impl Plugin<Context> for TikTok {
     type Settings = Settings;
 
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_urls(UrlScope::Hosts(urls::URL_HOSTS));
 
         let mirror = if settings.mirror {
             MirrorHandle::resolve(
@@ -112,7 +112,7 @@ impl Plugin<Context> for Tiktok {
         })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, _client: &IrcClient) -> Result<(), PluginError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
         }
@@ -123,9 +123,9 @@ impl Plugin<Context> for Tiktok {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         if let Err(err) = self.process_url(url.url(), url.channel(), client).await {
             error!("could not process url: {err}");
         }
@@ -134,8 +134,8 @@ impl Plugin<Context> for Tiktok {
     }
 }
 
-impl Tiktok {
-    async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
+impl TikTok {
+    async fn process_url(&self, url: &Url, channel: &str, client: &IrcClient) -> Result<(), Error> {
         match parse_tiktok_url(url) {
             Some(TiktokLink::Video { channel: slug, id }) => {
                 debug!(video_id = %id, "processing video");
@@ -164,7 +164,7 @@ impl Tiktok {
         slug: &str,
         video_id: &str,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         let url = video_url(slug, video_id);
 
@@ -183,7 +183,7 @@ impl Tiktok {
         if self.settings.post_summary
             && let Some(summary) = format_summary(&embed, self.settings.title_length)
         {
-            let _ = client.send_privmsg(channel, notice(&summary));
+            let _ = client.send_privmsg(channel, plain_reply(&summary));
         }
 
         self.mirror_video(&url, video_id, channel, client).await;
@@ -195,7 +195,7 @@ impl Tiktok {
     ///
     /// If the video has already been mirrored, the existing link is sent immediately; otherwise
     /// the download and upload happens in a background task that replies with the link.
-    async fn mirror_video(&self, url: &str, video_id: &str, channel: &str, client: &Client) {
+    async fn mirror_video(&self, url: &str, video_id: &str, channel: &str, client: &IrcClient) {
         if let Some(mirror) = &self.mirror {
             crate::mirror_reply::ensure_mirrored_and_reply(mirror, url, video_id, channel, client)
                 .await;
@@ -235,9 +235,9 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
 
     match (title, embed.author_name.as_deref()) {
         (Some(title), Some(author)) => Some(format!(
-            "“{RESET}{title}{COLOR}” is a TikTok video by{RESET} {author}"
+            "“{RESET}{title}{REPLY_COLOR}” is a TikTok video by{RESET} {author}"
         )),
-        (Some(title), None) => Some(format!("“{RESET}{title}{COLOR}”")),
+        (Some(title), None) => Some(format!("“{RESET}{title}{REPLY_COLOR}”")),
         (None, Some(author)) => Some(format!("TikTok video by{RESET} {author}")),
         (None, None) => None,
     }

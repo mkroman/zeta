@@ -88,8 +88,8 @@ impl Plugin<Context> for RustPlayground {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(RUST_PLAYGROUND);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(RUST_PLAYGROUND);
         let client = http::build_client(&ctx.config.http);
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
@@ -104,9 +104,9 @@ impl Plugin<Context> for RustPlayground {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let expr = command.args();
 

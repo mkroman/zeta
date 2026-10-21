@@ -5,7 +5,7 @@ use rand::prelude::IteratorRandom;
 use sqlx::types::chrono::{DateTime, Local};
 use zeta_utils::utils::{MAX_LISTING_LENGTH, Truncatable, append_entries_within_budget};
 
-use super::model::Alert;
+use super::model::AlertRecord;
 use crate::prelude::*;
 
 /// Reply messages used when an alert has been stored.
@@ -40,7 +40,7 @@ const MAX_LISTED_MESSAGE_CHARS: usize = 50;
 /// At most [`MAX_LISTED_ALERTS`] alerts are included, and entries are only appended while the
 /// listing stays within [`MAX_LISTING_LENGTH`]; the count in the header always reflects every
 /// pending alert.
-pub(super) fn format_pending(pending: &[Alert]) -> String {
+pub(super) fn format_pending(pending: &[AlertRecord]) -> String {
     if pending.is_empty() {
         return reply("Alert", "You have no pending alerts");
     }
@@ -52,14 +52,14 @@ pub(super) fn format_pending(pending: &[Alert]) -> String {
         .take(MAX_LISTED_ALERTS)
         .enumerate()
         .map(|(index, alert)| match index {
-            0 => format!("{COLOR} Next up: {}", format_entry(alert)),
+            0 => format!("{REPLY_COLOR} Next up: {}", format_entry(alert)),
             _ => format_entry(alert),
         });
 
     append_entries_within_budget(
         &mut listing,
         entries,
-        &format!("{COLOR}, then: "),
+        &format!("{REPLY_COLOR}, then: "),
         MAX_LISTING_LENGTH,
         0,
     );
@@ -68,14 +68,14 @@ pub(super) fn format_pending(pending: &[Alert]) -> String {
 }
 
 /// Formats a pending alert as a `“message” Mon DDth HH:MM` entry.
-fn format_entry(alert: &Alert) -> String {
+fn format_entry(alert: &AlertRecord) -> String {
     let message = alert
         .message
         .as_str()
         .truncate_with_suffix(MAX_LISTED_MESSAGE_CHARS, "…");
     let due = format_due(alert.time.with_timezone(&Local));
 
-    format!("“{RESET}{message}{COLOR}”{RESET} {due}{COLOR}")
+    format!("“{RESET}{message}{REPLY_COLOR}”{RESET} {due}{REPLY_COLOR}")
 }
 
 /// Formats the due time of an alert as `Sep 16th 11:21`.
@@ -111,8 +111,8 @@ mod tests {
     use super::*;
 
     /// Returns a pending alert fixture.
-    fn alert(message: &str, time: DateTime<Utc>) -> Alert {
-        Alert {
+    fn alert(message: &str, time: DateTime<Utc>) -> AlertRecord {
+        AlertRecord {
             id: 1,
             nickname: "smoke".into(),
             channel: "#smoke".into(),

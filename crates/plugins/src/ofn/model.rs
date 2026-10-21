@@ -1,3 +1,5 @@
+//! The data model of the `.ofn` URL history.
+
 use sqlx::{
     prelude::FromRow,
     types::chrono::{DateTime, Utc},
@@ -36,7 +38,7 @@ pub struct YouTubeRecord {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct InsertUrlRecord {
+pub struct NewUrlRecord {
     pub scheme: String,
     pub host: String,
     pub port: Option<i32>,
@@ -52,7 +54,7 @@ pub struct InsertUrlRecord {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct InsertYouTubeRecord {
+pub struct NewYouTubeRecord {
     pub video_id: String,
     pub nickname: String,
     pub username: String,
@@ -66,11 +68,11 @@ pub struct InsertYouTubeRecord {
 #[allow(clippy::struct_field_names)]
 pub struct Statistics {
     /// The number of URLs in total.
-    pub num_urls: i64,
+    pub urls: i64,
     /// The number of URLs that were added today.
-    pub num_urls_today: i64,
+    pub urls_today: i64,
     /// The number of YouTube videos in total.
-    pub num_yt_ids: i64,
+    pub youtube_videos: i64,
     /// The number of YouTube videos that have been added today.
-    pub num_yt_ids_today: i64,
+    pub youtube_videos_today: i64,
 }

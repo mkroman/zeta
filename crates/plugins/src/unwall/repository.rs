@@ -5,7 +5,7 @@ use tracing::{instrument, trace};
 
 use super::{
     error::Error,
-    model::{CachedUrl, HostStatistics, NewFetch, Site, Statistics},
+    model::{CachedUrl, HostStatistics, NewFetchRecord, Site, Statistics},
 };
 use crate::database::Database;
 
@@ -40,7 +40,7 @@ impl UnwallRepository {
             db.query.summary = "SELECT unwall_urls",
         )
     )]
-    pub async fn cached_url(&self, url: &str) -> Result<Option<CachedUrl>, Error> {
+    pub async fn find_cached_url(&self, url: &str) -> Result<Option<CachedUrl>, Error> {
         trace!("loading the cached unwall URL from database");
 
         sqlx::query_as(
@@ -107,7 +107,7 @@ impl UnwallRepository {
             db.query.summary = "INSERT unwall_fetches",
         )
     )]
-    pub async fn record_fetch(&self, fetch: &NewFetch) -> Result<(), Error> {
+    pub async fn record_fetch(&self, fetch: &NewFetchRecord) -> Result<(), Error> {
         trace!(
             host = fetch.host,
             channel = fetch.channel,
@@ -152,7 +152,7 @@ impl UnwallRepository {
             db.query.summary = "SELECT unwall_sites",
         )
     )]
-    pub async fn sites(&self) -> Result<Vec<Site>, Error> {
+    pub async fn list_sites(&self) -> Result<Vec<Site>, Error> {
         trace!("loading the unwalled sites from database");
 
         sqlx::query_as(
@@ -216,7 +216,7 @@ impl UnwallRepository {
             db.query.summary = "DELETE unwall_sites",
         )
     )]
-    pub async fn delete_sites(&self, hosts: &[String]) -> Result<u64, Error> {
+    pub async fn delete_sites_by_host(&self, hosts: &[String]) -> Result<u64, Error> {
         trace!(
             count = hosts.len(),
             "removing the unwalled sites from database"

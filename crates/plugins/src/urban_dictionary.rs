@@ -94,17 +94,17 @@ impl Plugin<Context> for UrbanDictionary {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(URBAN_DICTIONARY);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(URBAN_DICTIONARY);
         Ok(Self::new(&ctx.config.http, settings.clone()))
     }
 
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let query = command.args();
 

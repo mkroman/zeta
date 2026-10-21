@@ -40,7 +40,7 @@ pub struct Settings {
 
 /// The `.geoip` command.
 const GEOIP: CommandSpec =
-    CommandSpec::with_args::<Opts>(".geoip", "Look up the geolocation of a domain or IP");
+    CommandSpec::with_args::<Options>(".geoip", "Look up the geolocation of a domain or IP");
 
 /// The geoip plugin: geolocates addresses on behalf of `.geoip` commands.
 pub struct GeoIp {
@@ -73,7 +73,7 @@ pub enum Error {
 
 /// Look up the geolocation of a domain or IP address.
 #[derive(FromArgs, ArgsInfo, Debug)]
-pub struct Opts {
+pub struct Options {
     /// the domain or IP address to look up
     #[argh(positional)]
     name: String,
@@ -120,8 +120,8 @@ impl Plugin<Context> for GeoIp {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(GEOIP);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(GEOIP);
         let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
         let client = http::builder(&ctx.config.http)
             .build()
@@ -133,11 +133,11 @@ impl Plugin<Context> for GeoIp {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let Some(opts) =
-            parse_args_or_usage::<Opts>(client, command, |line: &str| reply("GeoIP", line))?
+            parse_args_or_usage::<Options>(client, command, |line: &str| reply("GeoIP", line))?
         else {
             return Ok(());
         };
@@ -198,7 +198,11 @@ impl Display for LookupResult {
         let info = &self.0;
         let ip = &info.ip;
 
-        write!(fmt, "{}({RESET}{ip}{COLOR}): {info}", reply_prefix("GeoIP"))
+        write!(
+            fmt,
+            "{}({RESET}{ip}{REPLY_COLOR}): {info}",
+            reply_prefix("GeoIP")
+        )
     }
 }
 

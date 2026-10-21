@@ -41,17 +41,17 @@ impl Plugin<Context> for Help {
         _ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(HELP);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(HELP);
         Ok(Self)
     }
 
     async fn handle_command(
         &self,
         ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let args = command.args();
 
@@ -110,17 +110,17 @@ fn index_messages(catalog: &PluginCatalog) -> Vec<String> {
     );
 
     let entries = catalog
-        .entries
+        .entries()
         .iter()
         .filter(|plugin| !plugin.commands.is_empty())
-        .map(|plugin| plugin.name.clone())
+        .map(|plugin| plugin.name.to_string())
         .collect::<Vec<_>>();
 
     with_list(&header, &entries)
 }
 
 /// Returns the messages listing the commands handled by `plugin`.
-fn plugin_messages(plugin: &CatalogEntry) -> Vec<String> {
+fn plugin_messages(plugin: &PluginEntry) -> Vec<String> {
     let header = format!(
         "{}{}",
         heading(&format!(" ({})", plugin.name)),
@@ -273,7 +273,7 @@ fn pack(entries: &[String], max_length: usize) -> Vec<String> {
 
 /// Formats the header of a help reply, with `subject` appended inside the bold heading.
 fn heading(subject: &str) -> String {
-    format!("{REPLY_PREFIX}{RESET}{BOLD} Help{subject}{BOLD}")
+    format!("{REPLY_MARKER}{RESET}{BOLD} Help{subject}{BOLD}")
 }
 
 /// Builds the usage synopsis of a command from its argument information.
@@ -401,7 +401,7 @@ fn bold(s: &str) -> String {
 
 /// Formats `s` in the muted scaffolding color.
 fn gray(s: &str) -> String {
-    format!("{COLOR}{s}{RESET}")
+    format!("{REPLY_COLOR}{s}{RESET}")
 }
 
 /// Strips the leading command sigil (`.` or `!`) from `name`.
@@ -413,10 +413,10 @@ fn normalize(name: &str) -> &str {
 fn find_command<'a>(
     catalog: &'a PluginCatalog,
     query: &str,
-) -> Option<(&'a CatalogEntry, &'a CommandSpec)> {
+) -> Option<(&'a PluginEntry, &'a CommandSpec)> {
     let query = normalize(query);
 
-    catalog.entries.iter().find_map(|plugin| {
+    catalog.entries().iter().find_map(|plugin| {
         plugin
             .commands
             .iter()
@@ -426,10 +426,13 @@ fn find_command<'a>(
 }
 
 /// Finds the plugin with the given name.
-fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a CatalogEntry> {
+fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a PluginEntry> {
     let query = normalize(query);
 
-    catalog.entries.iter().find(|plugin| plugin.name == query)
+    catalog
+        .entries()
+        .iter()
+        .find(|plugin| plugin.name.as_str() == query)
 }
 
 #[cfg(test)]
@@ -506,27 +509,27 @@ mod tests {
 
     fn catalog() -> PluginCatalog {
         PluginCatalog::new(vec![
-            CatalogEntry {
+            PluginEntry {
                 name: "alert".into(),
                 commands: ALERT_COMMANDS.to_vec(),
                 url_hosts: Vec::new(),
             },
-            CatalogEntry {
+            PluginEntry {
                 name: "dig".into(),
                 commands: DIG_COMMANDS.to_vec(),
                 url_hosts: Vec::new(),
             },
-            CatalogEntry {
+            PluginEntry {
                 name: "imdb".into(),
                 commands: IMDB_COMMANDS.to_vec(),
                 url_hosts: Vec::new(),
             },
-            CatalogEntry {
+            PluginEntry {
                 name: "openweathermap".into(),
                 commands: WEATHER_COMMANDS.to_vec(),
                 url_hosts: Vec::new(),
             },
-            CatalogEntry {
+            PluginEntry {
                 name: "hooks".into(),
                 commands: Vec::new(),
                 url_hosts: Vec::new(),
@@ -734,8 +737,8 @@ mod tests {
     fn splits_long_lists_into_unheaded_continuations() {
         let catalog = PluginCatalog::new(
             (0..100)
-                .map(|index| CatalogEntry {
-                    name: format!("plugin-{index:03}{}", "x".repeat(90)),
+                .map(|index| PluginEntry {
+                    name: format!("plugin-{index:03}{}", "x".repeat(90)).into(),
                     commands: vec![HELP],
                     url_hosts: Vec::new(),
                 })

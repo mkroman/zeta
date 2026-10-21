@@ -9,7 +9,7 @@ use tracing::{instrument, trace};
 use super::{
     Settings,
     error::Error,
-    model::{NewNotification, Notification},
+    model::{NewNotificationRecord, NotificationRecord},
     repository::NotificationRepository,
 };
 use crate::database::Database;
@@ -22,7 +22,7 @@ pub struct NotificationService {
     /// The notification repository.
     repo: NotificationRepository,
     /// Pending notifications, keyed by channel and target nickname.
-    cache: Mutex<HashMap<String, HashMap<String, Vec<Notification>>>>,
+    cache: Mutex<HashMap<String, HashMap<String, Vec<NotificationRecord>>>>,
     /// The maximum number of pending notifications a target may have in a channel.
     max_pending_per_target: usize,
 }
@@ -47,7 +47,7 @@ impl NotificationService {
     pub async fn load(&self) -> Result<(), Error> {
         trace!("loading notifications into memory");
 
-        let mut cache: HashMap<String, HashMap<String, Vec<Notification>>> = HashMap::new();
+        let mut cache: HashMap<String, HashMap<String, Vec<NotificationRecord>>> = HashMap::new();
 
         for notification in self.repo.list().await? {
             trace!(?notification, "storing notification in cache");
@@ -73,7 +73,10 @@ impl NotificationService {
     /// notifications in the channel, or [`Error::Database`] if the notification could not be
     /// inserted into the database.
     #[instrument(skip_all, err)]
-    pub async fn create(&self, notification: NewNotification) -> Result<Notification, Error> {
+    pub async fn create(
+        &self,
+        notification: NewNotificationRecord,
+    ) -> Result<NotificationRecord, Error> {
         if self.max_pending_per_target > 0 {
             let pending = self
                 .cache
@@ -105,7 +108,7 @@ impl NotificationService {
 
     /// Takes all pending notifications for `target` within `channel`, removing them from the
     /// cache.
-    pub async fn take(&self, channel: &str, target: &str) -> Vec<Notification> {
+    pub async fn take_pending(&self, channel: &str, target: &str) -> Vec<NotificationRecord> {
         let mut cache = self.cache.lock().await;
         let Some(targets) = cache.get_mut(channel) else {
             return Vec::new();
@@ -122,9 +125,10 @@ impl NotificationService {
 
     /// Puts notifications back into the cache as pending.
     ///
-    /// Called for notifications that could not be delivered: `take` removed them from the
-    /// cache, so without restoring them they would not be redelivered until the next restart.
-    pub async fn restore(&self, notifications: Vec<Notification>) {
+    /// Called for notifications that could not be delivered: `take_pending` removed them from
+    /// the cache, so without restoring them they would not be redelivered until the next
+    /// restart.
+    pub async fn restore_pending(&self, notifications: Vec<NotificationRecord>) {
         if notifications.is_empty() {
             return;
         }
@@ -146,17 +150,17 @@ impl NotificationService {
     /// Deletes the given notifications from the database.
     ///
     /// The cache is not touched: the notifications being delivered were already removed by
-    /// `take`, and undelivered ones are returned to the cache with `restore`.
+    /// `take_pending`, and undelivered ones are returned to the cache with `restore_pending`.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the notifications could not be deleted from the database.
     #[instrument(skip_all, err)]
-    pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
+    pub async fn delete_by_ids(&self, ids: &[i32]) -> Result<(), Error> {
         if ids.is_empty() {
             return Ok(());
         }
 
-        self.repo.delete_all(ids).await
+        self.repo.delete_by_ids(ids).await
     }
 }

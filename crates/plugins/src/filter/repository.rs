@@ -4,7 +4,7 @@ use tracing::{instrument, trace};
 
 use super::{
     error::Error,
-    model::{Filter, NewFilter},
+    model::{FilterRule, NewFilterRule},
 };
 use crate::database::Database;
 
@@ -39,7 +39,7 @@ impl FilterRepository {
             db.query.summary = "INSERT filters",
         )
     )]
-    pub async fn insert(&self, filter: NewFilter) -> Result<Filter, Error> {
+    pub async fn insert(&self, filter: NewFilterRule) -> Result<FilterRule, Error> {
         trace!("inserting filter into database");
 
         sqlx::query_as(
@@ -78,7 +78,7 @@ impl FilterRepository {
             db.query.summary = "SELECT filters",
         )
     )]
-    pub async fn list(&self) -> Result<Vec<Filter>, Error> {
+    pub async fn list(&self) -> Result<Vec<FilterRule>, Error> {
         trace!("loading filters from database");
 
         sqlx::query_as(
@@ -108,7 +108,7 @@ impl FilterRepository {
             db.query.summary = "DELETE filters",
         )
     )]
-    pub async fn delete_all(&self, ids: &[i32]) -> Result<u64, Error> {
+    pub async fn delete_by_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         trace!(?ids, "deleting filters from database");
 
         crate::database::delete_ids(&self.db, "filters", ids)

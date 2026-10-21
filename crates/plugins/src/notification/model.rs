@@ -10,7 +10,7 @@ use sqlx::{
 /// The username and hostname columns are written on insert but not part of the row model,
 /// which only carries what the plugin reads.
 #[derive(Debug, FromRow, Clone)]
-pub struct Notification {
+pub struct NotificationRecord {
     /// The database id of the notification.
     pub id: i32,
     /// The nickname the notification is aimed at.
@@ -27,7 +27,7 @@ pub struct Notification {
 
 /// A notification to be inserted into the database.
 #[derive(Debug, Clone)]
-pub struct NewNotification {
+pub struct NewNotificationRecord {
     /// The nickname the notification is aimed at.
     pub target: String,
     /// The nickname of the user creating the notification.

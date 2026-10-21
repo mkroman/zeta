@@ -29,13 +29,15 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use self::command::{CC, CC_USAGE, COIN_COMMANDS, COMMANDS, CoinOpts, QuoteOpts, parse_currency};
+use self::command::{
+    CC, CC_USAGE, COIN_COMMANDS, COMMANDS, CoinOptions, QuoteOptions, parse_currency,
+};
 use self::reply::format_quote;
 use crate::prelude::*;
 use zeta_cache::TtlCache;
 
 use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat, QuoteData};
-use coinmarketcap::{Client as CmcClient, Config, Error};
+use coinmarketcap::{Client as CmcClient, ClientOptions, Error};
 
 /// Settings for the coinmarketcap plugin, from its `[plugins.coinmarketcap]` configuration
 /// section.
@@ -146,12 +148,12 @@ impl Plugin<Context> for CoinMarketCap {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    ) -> Result<Self, PluginError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
         let client = Arc::new(
-            CmcClient::with_config(
+            CmcClient::with_options(
                 api_key,
-                &Config {
+                &ClientOptions {
                     timeout: ctx.config.http.timeout,
                     user_agent: ctx.config.http.user_agent.clone(),
                 },
@@ -164,7 +166,7 @@ impl Plugin<Context> for CoinMarketCap {
         ctx.shared.publish(Arc::clone(&client));
 
         for command in COMMANDS {
-            subscriptions.command(*command);
+            subscriptions.subscribe_command(*command);
         }
 
         Ok(Self {
@@ -176,7 +178,7 @@ impl Plugin<Context> for CoinMarketCap {
         })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, _client: &IrcClient) -> Result<(), PluginError> {
         self.ensure_coins_cached().await;
         self.ensure_fiat_cached().await;
 
@@ -186,9 +188,9 @@ impl Plugin<Context> for CoinMarketCap {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         if command.spec == CC {
             return self
                 .handle_cc(client, command.channel(), command.args())
@@ -213,11 +215,16 @@ impl Plugin<Context> for CoinMarketCap {
 
 impl CoinMarketCap {
     /// Handles a `.cc` invocation, resolving `args` to a coin by symbol or fuzzy name.
-    async fn handle_cc(&self, client: &Client, channel: &str, args: &str) -> Result<(), ZetaError> {
-        let opts = match CC.parse_args::<CoinOpts>(args) {
-            Ok(opts) if !opts.coin.trim().is_empty() => opts,
+    async fn handle_cc(
+        &self,
+        client: &IrcClient,
+        channel: &str,
+        args: &str,
+    ) -> Result<(), PluginError> {
+        let options = match CC.parse_args::<CoinOptions>(args) {
+            Ok(options) if !options.coin.trim().is_empty() => options,
             _ => {
-                client.send_privmsg(channel, notice(CC_USAGE))?;
+                client.send_privmsg(channel, plain_reply(CC_USAGE))?;
                 return Ok(());
             }
         };
@@ -227,12 +234,12 @@ impl CoinMarketCap {
         // Prefer a cached coin (by symbol, then by fuzzy name); fall back to letting the API
         // resolve the query as a symbol (e.g. when the cache has not been populated yet, or the
         // coin is outside the cached top 1000).
-        let query = self.resolve_coin(&opts.coin).map_or_else(
-            || CoinQuery::Symbol(opts.coin.to_ascii_uppercase()),
+        let query = self.resolve_coin(&options.coin).map_or_else(
+            || CoinQuery::Symbol(options.coin.to_ascii_uppercase()),
             CoinQuery::Id,
         );
 
-        self.quote_and_reply(client, channel, query, opts.currency.as_deref())
+        self.quote_and_reply(client, channel, query, options.currency.as_deref())
             .await
     }
 
@@ -241,14 +248,14 @@ impl CoinMarketCap {
         &self,
         command: CommandSpec,
         symbol: &str,
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         args: &str,
-    ) -> Result<(), ZetaError> {
-        let Ok(opts) = command.parse_args::<QuoteOpts>(args) else {
+    ) -> Result<(), PluginError> {
+        let Ok(options) = command.parse_args::<QuoteOptions>(args) else {
             client.send_privmsg(
                 channel,
-                notice(format!("Usage: {} \x0f[currency]", command.trigger())),
+                plain_reply(format!("Usage: {} \x0f[currency]", command.trigger())),
             )?;
             return Ok(());
         };
@@ -257,7 +264,7 @@ impl CoinMarketCap {
             client,
             channel,
             CoinQuery::Symbol(symbol.to_string()),
-            opts.currency.as_deref(),
+            options.currency.as_deref(),
         )
         .await
     }
@@ -266,11 +273,11 @@ impl CoinMarketCap {
     /// replies to `channel` with the result.
     async fn quote_and_reply(
         &self,
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         query: CoinQuery,
         currency: Option<&str>,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         self.ensure_fiat_cached().await;
 
         let currency = match parse_currency(currency, &self.default_currency, |symbol| {
@@ -293,12 +300,12 @@ impl CoinMarketCap {
 
     /// Replies with the result of a coin quote lookup.
     fn reply_quote(
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         quote: Result<QuoteData, Error>,
         currency: &str,
         sign: Option<&str>,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         match quote {
             Ok(quote) => client.send_privmsg(channel, format_quote(&quote, currency, sign))?,
             Err(err) => Self::reply_error(client, channel, &err)?,
@@ -308,14 +315,14 @@ impl CoinMarketCap {
     }
 
     /// Replies with the message of a failed coin lookup, logging unexpected failures.
-    fn reply_error(client: &Client, channel: &str, err: &Error) -> Result<(), ZetaError> {
+    fn reply_error(client: &IrcClient, channel: &str, err: &Error) -> Result<(), PluginError> {
         // Unknown coins and unsupported currencies are user errors: they are replied to
         // verbatim, without logging. Anything else is unexpected and worth a warning.
         if !matches!(err, Error::NotFound | Error::InvalidCurrency(_)) {
             warn!(error = %err, "coin lookup failed");
         }
 
-        client.send_privmsg(channel, notice(err.to_string()))?;
+        client.send_privmsg(channel, plain_reply(err.to_string()))?;
 
         Ok(())
     }
@@ -426,7 +433,9 @@ mod tests {
     /// Builds a plugin instance for lookup tests, without touching the API.
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
-            client: Arc::new(CmcClient::with_config("test-api-key", &Config::default()).unwrap()),
+            client: Arc::new(
+                CmcClient::with_options("test-api-key", &ClientOptions::default()).unwrap(),
+            ),
             coins: TtlCache::with_value(CoinCache::from(test_coins()), CACHE_TTL),
             fiat: TtlCache::new(CACHE_TTL),
             default_currency: DEFAULT_CURRENCY.to_string(),

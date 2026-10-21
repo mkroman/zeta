@@ -153,7 +153,7 @@ litoshi                  1e-8 LTC
 ///
 /// # Errors
 ///
-/// Returns a [`ZetaError`] when the fiat fetch fails, the response carries an error status, or
+/// Returns a [`PluginError`] when the fiat fetch fails, the response carries an error status, or
 /// the bundled or extra definitions cannot be loaded into a context.
 pub async fn refresh_data(
     client: &reqwest::Client,
@@ -162,7 +162,7 @@ pub async fn refresh_data(
     crypto_enabled: bool,
     url: &str,
     ctx: &Mutex<RinkContext>,
-) -> Result<CurrencyData, ZetaError> {
+) -> Result<CurrencyData, PluginError> {
     let fiat = fetch_fiat(client, url).await?;
     let crypto = fetch_crypto(currency, cmc, crypto_enabled).await;
     let data = CurrencyData { fiat, crypto };
@@ -174,7 +174,7 @@ pub async fn refresh_data(
 
 /// Rebuilds a rink context from `data` and swaps it into `ctx`, carrying the previous result
 /// across so `ans` keeps resolving.
-fn swap_in(ctx: &Mutex<RinkContext>, data: &CurrencyData) -> Result<(), ZetaError> {
+fn swap_in(ctx: &Mutex<RinkContext>, data: &CurrencyData) -> Result<(), PluginError> {
     let previous = zeta_utils::sync::lock(ctx).previous_result.clone();
     let next = build_context(Some(data), previous)?;
 
@@ -213,8 +213,8 @@ async fn fetch_crypto(
 ///
 /// # Errors
 ///
-/// Returns a [`ZetaError`] when the fetch fails or the response carries an error status.
-async fn fetch_fiat(client: &reqwest::Client, url: &str) -> Result<String, ZetaError> {
+/// Returns a [`PluginError`] when the fetch fails or the response carries an error status.
+async fn fetch_fiat(client: &reqwest::Client, url: &str) -> Result<String, PluginError> {
     let response = zeta_http::send(client.get(url)).await.map_err(plugin_err)?;
     let status = response.status();
 
@@ -241,12 +241,12 @@ async fn fetch_fiat(client: &reqwest::Client, url: &str) -> Result<String, ZetaE
 ///
 /// # Errors
 ///
-/// Returns a [`ZetaError`] when the bundled dataset, the currency data, or the extra
+/// Returns a [`PluginError`] when the bundled dataset, the currency data, or the extra
 /// definitions cannot be loaded.
 pub fn build_context(
     data: Option<&CurrencyData>,
     previous: Option<Value>,
-) -> Result<RinkContext, ZetaError> {
+) -> Result<RinkContext, PluginError> {
     let mut ctx =
         rink_core::simple_context().map_err(|error| plugin_err(std::io::Error::other(error)))?;
     ctx.save_previous_result = true;

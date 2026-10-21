@@ -22,7 +22,7 @@ pub(crate) mod hostmask;
 #[cfg(feature = "mirror")]
 pub(crate) mod mirror_reply;
 
-pub use config::PluginConfig;
+pub use config::PluginSection;
 
 use std::collections::HashMap;
 
@@ -34,12 +34,12 @@ use zeta_plugin::NoSettings;
 ///
 /// For each entry, it generates:
 /// 1. The plugin's module declaration, gated on the plugin's feature.
-/// 2. A [`zeta_plugin::PluginName`] implementation for the plugin's struct.
+/// 2. A [`zeta_plugin::NamedPlugin`] implementation for the plugin's struct.
 /// 3. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
 ///    for plugins with settings, `=> NoSettings` otherwise.
-/// 4. A call to [`zeta_plugin::Registry::register`] inside [`register_bundled_plugins`], gated on
-///    the plugin's `enabled` configuration and passing the plugin's own settings through to its
-///    constructor.
+/// 4. A call to [`zeta_plugin::PluginRegistry::register`] inside [`register_bundled_plugins`],
+///    gated on the plugin's `enabled` configuration and passing the plugin's own settings
+///    through to its constructor.
 macro_rules! declare_plugins {
     (
         $(
@@ -56,7 +56,7 @@ macro_rules! declare_plugins {
         // The plugin name is the module name.
         $(
             #[cfg(feature = $feature)]
-            impl zeta_plugin::PluginName for $mod_name::$struct_name {
+            impl zeta_plugin::NamedPlugin for $mod_name::$struct_name {
                 const NAME: &'static str = stringify!($mod_name);
             }
         )*
@@ -70,10 +70,10 @@ macro_rules! declare_plugins {
         /// plugin's settings type.
         ///
         /// Keys under `[plugins]` that match neither the `enabled_by_default` toggle nor a
-        /// bundled plugin name are collected in [`PluginsConfig::unknown`] so the host can warn
-        /// about likely typos. Unknown keys inside a section are ignored and reported through
-        /// [`PluginConfig::unknown_keys`](config::PluginConfig::unknown_keys), which the
-        /// host also warns about.
+        /// bundled plugin name are collected in [`PluginsConfig::unknown_sections`] so the host
+        /// can warn about likely typos. Unknown keys inside a section are ignored and reported
+        /// through [`PluginSection::unknown_keys`](config::PluginSection::unknown_keys), which
+        /// the host also warns about.
         #[derive(Clone, Debug, Serialize)]
         pub struct PluginsConfig {
             /// Whether a plugin that does not set `enabled` explicitly — or has no section at
@@ -87,12 +87,12 @@ macro_rules! declare_plugins {
             $(
                 $(#[doc = $doc])*
                 #[cfg(feature = $feature)]
-                pub $mod_name: $crate::config::PluginConfig<$settings>,
+                pub $mod_name: $crate::config::PluginSection<$settings>,
             )*
 
             /// Sections that match no bundled plugin, whether compiled in or not.
             #[serde(flatten)]
-            pub unknown: HashMap<String, figment::value::Dict>,
+            pub unknown_sections: HashMap<String, figment::value::Dict>,
         }
 
         impl Default for PluginsConfig {
@@ -101,9 +101,9 @@ macro_rules! declare_plugins {
                     enabled_by_default: true,
                     $(
                         #[cfg(feature = $feature)]
-                        $mod_name: $crate::config::PluginConfig::default(),
+                        $mod_name: $crate::config::PluginSection::default(),
                     )*
-                    unknown: HashMap::new(),
+                    unknown_sections: HashMap::new(),
                 }
             }
         }
@@ -142,7 +142,7 @@ macro_rules! declare_plugins {
                 $(
                     #[cfg(feature = $feature)]
                     if let Some(section) = sections.remove(stringify!($mod_name)) {
-                        config.$mod_name = $crate::config::PluginConfig::<$settings>::deserialize_with_default(
+                        config.$mod_name = $crate::config::PluginSection::<$settings>::deserialize_with_default(
                             &section,
                             enabled_by_default,
                         )
@@ -164,7 +164,7 @@ macro_rules! declare_plugins {
                         D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
                     })?;
 
-                    config.unknown.insert(name, section);
+                    config.unknown_sections.insert(name, section);
                 }
 
                 Ok(config)
@@ -185,11 +185,11 @@ macro_rules! declare_plugins {
         /// fail to initialize are logged and skipped by the registry. Configuration sections
         /// matching no bundled plugin are warned about as likely typos.
         pub fn register_bundled_plugins(
-            #[allow(unused)] registry: &mut zeta_plugin::Registry,
+            #[allow(unused)] registry: &mut zeta_plugin::PluginRegistry,
             #[allow(unused)] ctx: &zeta_plugin::Context,
             plugins: &PluginsConfig,
         ) {
-            for section in &plugins.unknown {
+            for section in &plugins.unknown_sections {
                 if !BUNDLED_PLUGIN_NAMES.contains(&section.0.as_str()) {
                     ::tracing::warn!(
                         section = %section.0,
@@ -228,11 +228,11 @@ macro_rules! declare_plugins {
 declare_plugins! {
   /// Channel-scoped URL and sender filters.
   #[cfg(feature = "filter")]
-  filter::FilterPlugin => NoSettings,
+  filter::Filter => NoSettings,
 
   /// Time-based user alerts.
   #[cfg(feature = "alert")]
-  alert::AlertPlugin => alert::Settings,
+  alert::Alert => alert::Settings,
 
   /// Chaturbate platform integration.
   #[cfg(feature = "chaturbate")]
@@ -264,7 +264,7 @@ declare_plugins! {
 
   /// GitHub integration
   #[cfg(feature = "github")]
-  github::GitHubPlugin => github::Settings,
+  github::GitHub => github::Settings,
 
   /// Process health information
   #[cfg(feature = "health")]
@@ -292,11 +292,11 @@ declare_plugins! {
 
   /// Kagi search integration
   #[cfg(feature = "kagi")]
-  kagi::KagiPlugin => kagi::Settings,
+  kagi::Kagi => kagi::Settings,
 
   /// User notifications
   #[cfg(feature = "notification")]
-  notification::NotificationPlugin => notification::Settings,
+  notification::Notification => notification::Settings,
 
   /// URL history
   #[cfg(feature = "ofn")]
@@ -308,7 +308,7 @@ declare_plugins! {
 
   /// PornHub platform integration
   #[cfg(feature = "pornhub")]
-  pornhub::PornHub => NoSettings,
+  pornhub::Pornhub => NoSettings,
 
   /// Reddit plugin integration
   #[cfg(feature = "reddit")]
@@ -336,7 +336,7 @@ declare_plugins! {
 
   /// TikTok integration
   #[cfg(feature = "tiktok")]
-  tiktok::Tiktok => tiktok::Settings,
+  tiktok::TikTok => tiktok::Settings,
 
   /// URL titles and OpenGraph metadata
   #[cfg(feature = "titles")]

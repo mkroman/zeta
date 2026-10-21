@@ -5,7 +5,7 @@ use tracing::{instrument, trace};
 
 use super::{
     error::Error,
-    model::{Alert, NewAlert},
+    model::{AlertRecord, NewAlertRecord},
 };
 use crate::database::Database;
 
@@ -40,7 +40,7 @@ impl AlertRepository {
             db.query.summary = "INSERT alerts",
         )
     )]
-    pub async fn insert(&self, alert: NewAlert) -> Result<Alert, Error> {
+    pub async fn insert(&self, alert: NewAlertRecord) -> Result<AlertRecord, Error> {
         trace!("inserting alert into database");
 
         sqlx::query_as(
@@ -78,7 +78,7 @@ impl AlertRepository {
             db.query.summary = "SELECT alerts",
         )
     )]
-    pub async fn list_due_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<Alert>, Error> {
+    pub async fn list_due_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<AlertRecord>, Error> {
         trace!(?cutoff, "loading alerts from database");
 
         sqlx::query_as(
@@ -110,7 +110,11 @@ impl AlertRepository {
             db.query.summary = "SELECT alerts",
         )
     )]
-    pub async fn list_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
+    pub async fn list_pending_for(
+        &self,
+        channel: &str,
+        nickname: &str,
+    ) -> Result<Vec<AlertRecord>, Error> {
         trace!(channel, nickname, "loading pending alerts from database");
 
         sqlx::query_as(
@@ -143,7 +147,7 @@ impl AlertRepository {
             db.query.summary = "DELETE alerts",
         )
     )]
-    pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
+    pub async fn delete_by_ids(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting alerts from database");
 
         crate::database::delete_ids(&self.db, "alerts", ids)

@@ -8,59 +8,61 @@ use crate::prelude::*;
 
 /// The `.cc` command.
 pub(super) const CC: CommandSpec =
-    CommandSpec::with_args::<CoinOpts>(".cc", "Quote any coin by symbol or fuzzy name");
+    CommandSpec::with_args::<CoinOptions>(".cc", "Quote any coin by symbol or fuzzy name");
 
 /// The `.btc` command.
 const BTC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".btc", "Quote Bitcoin (BTC) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".btc", "Quote Bitcoin (BTC) in a fiat currency");
 /// The `.eth` command.
 const ETH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".eth", "Quote Ethereum (ETH) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".eth", "Quote Ethereum (ETH) in a fiat currency");
 /// The `.zcash` command.
 const ZCASH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".zcash", "Quote Zcash (ZEC) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".zcash", "Quote Zcash (ZEC) in a fiat currency");
 /// The `.zec` command.
 const ZEC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".zec", "Quote Zcash (ZEC) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".zec", "Quote Zcash (ZEC) in a fiat currency");
 /// The `.ans` command (Antshares, the former name of Neo).
 const ANS: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".ans", "Quote Neo (NEO), formerly Antshares");
+    CommandSpec::with_args::<QuoteOptions>(".ans", "Quote Neo (NEO), formerly Antshares");
 /// The `.neo` command.
 const NEO: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".neo", "Quote Neo (NEO) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".neo", "Quote Neo (NEO) in a fiat currency");
 /// The `.stellar` command.
 const STELLAR: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".stellar", "Quote Stellar (XLM) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".stellar", "Quote Stellar (XLM) in a fiat currency");
 /// The `.xmr` command.
 const XMR: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".xmr", "Quote Monero (XMR) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".xmr", "Quote Monero (XMR) in a fiat currency");
 /// The `.xrp` command.
 const XRP: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".xrp", "Quote XRP in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".xrp", "Quote XRP in a fiat currency");
 /// The `.ltc` command.
 const LTC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".ltc", "Quote Litecoin (LTC) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".ltc", "Quote Litecoin (LTC) in a fiat currency");
 /// The `.etc` command.
-const ETC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".etc", "Quote Ethereum Classic (ETC) in a fiat currency");
+const ETC: CommandSpec = CommandSpec::with_args::<QuoteOptions>(
+    ".etc",
+    "Quote Ethereum Classic (ETC) in a fiat currency",
+);
 /// The `.golem` command.
 const GOLEM: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".golem", "Quote Golem (GNT) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".golem", "Quote Golem (GNT) in a fiat currency");
 /// The `.sia` command.
 const SIA: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".sia", "Quote Siacoin (SC) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".sia", "Quote Siacoin (SC) in a fiat currency");
 /// The `.doge` command.
 const DOGE: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".doge", "Quote Dogecoin (DOGE) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".doge", "Quote Dogecoin (DOGE) in a fiat currency");
 /// The `.maid` command.
 const MAID: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".maid", "Quote MaidSafeCoin (MAID) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".maid", "Quote MaidSafeCoin (MAID) in a fiat currency");
 /// The `.bcash` command.
 const BCASH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".bcash", "Quote Bitcoin Cash (BCH) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".bcash", "Quote Bitcoin Cash (BCH) in a fiat currency");
 /// The `.trump` command.
 const TRUMP: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".trump", "Quote Trump (TRUMP) in a fiat currency");
+    CommandSpec::with_args::<QuoteOptions>(".trump", "Quote Trump (TRUMP) in a fiat currency");
 
 /// Fixed coin commands, mapped to the symbol they quote.
 pub(super) const COIN_COMMANDS: &[(CommandSpec, &str)] = &[
@@ -91,7 +93,7 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
 
 /// Convert a coin price into another fiat currency.
 #[derive(FromArgs, ArgsInfo, Debug)]
-pub(super) struct QuoteOpts {
+pub(super) struct QuoteOptions {
     /// fiat currency to convert the price into (defaults to USD)
     #[argh(positional)]
     pub(super) currency: Option<String>,
@@ -102,7 +104,7 @@ pub(super) const CC_USAGE: &str = "Usage: .cc \x0f<symbol> [currency]";
 
 /// Convert a cryptocurrency price into fiat currency.
 #[derive(FromArgs, ArgsInfo, Debug)]
-pub(super) struct CoinOpts {
+pub(super) struct CoinOptions {
     /// the coin to quote, by symbol or name
     #[argh(positional)]
     pub(super) coin: String,
@@ -158,20 +160,20 @@ mod tests {
 
     #[test]
     fn parses_command_options() {
-        let opts: QuoteOpts = BTC.parse_args("").unwrap();
-        assert_eq!(opts.currency, None);
+        let options: QuoteOptions = BTC.parse_args("").unwrap();
+        assert_eq!(options.currency, None);
 
-        let opts: QuoteOpts = BTC.parse_args("eur").unwrap();
-        assert_eq!(opts.currency.as_deref(), Some("eur"));
+        let options: QuoteOptions = BTC.parse_args("eur").unwrap();
+        assert_eq!(options.currency.as_deref(), Some("eur"));
 
-        let opts: CoinOpts = CC.parse_args("bitcoin eur").unwrap();
-        assert_eq!(opts.coin, "bitcoin");
-        assert_eq!(opts.currency.as_deref(), Some("eur"));
+        let options: CoinOptions = CC.parse_args("bitcoin eur").unwrap();
+        assert_eq!(options.coin, "bitcoin");
+        assert_eq!(options.currency.as_deref(), Some("eur"));
 
         // `.cc` requires a coin.
         assert!(matches!(
-            CC.parse_args::<CoinOpts>(""),
-            Err(ArgsError::Usage(_))
+            CC.parse_args::<CoinOptions>(""),
+            Err(ArgumentError::Usage(_))
         ));
     }
 

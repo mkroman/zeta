@@ -39,8 +39,8 @@ pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
     /// Empty by default: the hosts that loaded plugins advertise through the plugin catalog
-    /// (see [`Subscriptions::urls`]) are left alone without any configuration, including hosts
-    /// of plugins added after this configuration was written.
+    /// (see [`Subscriptions::subscribe_urls`]) are left alone without any configuration,
+    /// including hosts of plugins added after this configuration was written.
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
     pub max_redirects: usize,
@@ -84,14 +84,14 @@ impl Plugin<Context> for Titles {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    ) -> Result<Self, PluginError> {
         let client = http::emulated::builder(Some(&ctx.config.http.user_agent))?
             .redirect(Policy::limited(settings.max_redirects))
             .timeout(ctx.config.http.timeout)
             .build()
             .map_err(|error| plugin_err(WreqError::from(error)))?;
 
-        subscriptions.urls(UrlScope::Any);
+        subscriptions.subscribe_urls(UrlScope::Any);
 
         Ok(Self {
             client,
@@ -102,9 +102,9 @@ impl Plugin<Context> for Titles {
     async fn handle_url(
         &self,
         ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         event: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         if should_ignore(event.text()) {
             return Ok(());
         }
@@ -130,13 +130,13 @@ impl Titles {
         url: Url,
         repaired_from: Option<&'static str>,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
         catalog: Option<&PluginCatalog>,
     ) {
         if let Some(scheme) = repaired_from {
             debug!(%scheme, %url, "posting repaired url");
 
-            if let Err(error) = client.send_privmsg(channel, notice(&url)) {
+            if let Err(error) = client.send_privmsg(channel, plain_reply(&url)) {
                 warn!(%error, "could not send repaired url");
             }
         }
@@ -175,7 +175,7 @@ impl Titles {
                         );
 
                         if let Err(send_error) =
-                            sender.send_privmsg(&channel, format!("{REPLY_PREFIX} {error}"))
+                            sender.send_privmsg(&channel, format!("{REPLY_MARKER} {error}"))
                         {
                             warn!(%send_error, "could not send fetch error");
                         }
@@ -211,7 +211,7 @@ fn should_ignore(text: &str) -> bool {
         return true;
     }
 
-    text.starts_with(REPLY_PREFIX)
+    text.starts_with(REPLY_MARKER)
 }
 
 /// Whether the host of `url` is handled by another plugin.
@@ -254,7 +254,7 @@ fn is_binary_url(url: &Url) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_plugin::CatalogEntry;
+    use zeta_plugin::PluginEntry;
     use zeta_test_support::{assert_empty, settings_tests};
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn ignores_hosts_declared_in_the_catalog() {
-        let catalog = PluginCatalog::new(vec![CatalogEntry {
+        let catalog = PluginCatalog::new(vec![PluginEntry {
             name: "imdb".into(),
             commands: Vec::new(),
             url_hosts: vec!["imdb.com", "www.imdb.com"],

@@ -46,8 +46,8 @@ impl Plugin<Context> for Choices {
         _ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.receive_message();
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_message();
 
         Ok(Self {
             settings: settings.clone(),
@@ -57,9 +57,9 @@ impl Plugin<Context> for Choices {
     async fn handle_message(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         event: &MessageEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let current_nickname = client.current_nickname();
 
         if let Some(msg) = strip_nick_prefix(event.text(), current_nickname)

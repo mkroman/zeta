@@ -2,7 +2,8 @@
 //!
 //! The `.hltb <game>` command searches HowLongToBeat and replies with the top match's
 //! completion times in words: Main Story, Main + Extra, and Completionist — each rendered as
-//! `--` when the game has no recorded time. No matches and fetch errors are sent as a notice.
+//! `--` when the game has no recorded time. No matches and fetch errors are sent as a plain
+//! reply.
 //!
 //! The site's unauthenticated API requires a short-lived search token: the plugin bootstraps it
 //! from the init endpoint, caches it in memory, sends it as the `x-auth-token` header, and on a
@@ -211,8 +212,8 @@ impl Plugin<Context> for HowLongToBeat {
         ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(HLTB);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(HLTB);
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self {
@@ -224,20 +225,20 @@ impl Plugin<Context> for HowLongToBeat {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let query = command.args();
 
         let message = if query.trim().is_empty() {
-            notice("Usage: .hltb\x0f <game>")
+            plain_reply("Usage: .hltb\x0f <game>")
         } else {
             match self.search(query).await {
                 Ok(games) => games
                     .first()
-                    .map_or_else(|| notice("No results found"), format_game),
-                Err(err) => notice(err),
+                    .map_or_else(|| plain_reply("No results found"), format_game),
+                Err(err) => plain_reply(err),
             }
         };
 
@@ -297,11 +298,7 @@ impl HowLongToBeat {
     }
 
     /// Executes the HTTP POST request to the API with the necessary headers and payload.
-    async fn perform_search_request(
-        &self,
-        token: &str,
-        query: &str,
-    ) -> Result<Vec<Game>, Error> {
+    async fn perform_search_request(&self, token: &str, query: &str) -> Result<Vec<Game>, Error> {
         let url = format!("{BASE_URL}/api/search/site");
         let search_terms: Vec<&str> = query.split_whitespace().collect();
 

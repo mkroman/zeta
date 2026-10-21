@@ -132,7 +132,7 @@ pub struct YouTube {
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
     /// Thread-safe cache of video categories mapped by category ID, refreshed by the task
-    /// started in [`Plugin::loaded`] once per [`CATEGORIES_TTL`].
+    /// started in [`Plugin::start`] once per [`CATEGORIES_TTL`].
     video_categories: Arc<TtlCache<HashMap<String, Category>>>,
 }
 
@@ -268,13 +268,13 @@ impl Plugin<Context> for YouTube {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    ) -> Result<Self, PluginError> {
         // Handle YouTube URLs.
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
+        subscriptions.subscribe_urls(UrlScope::Hosts(urls::URL_HOSTS));
 
         // Enable the `.yt` command.
         if settings.enable_command {
-            subscriptions.command(YOUTUBE);
+            subscriptions.subscribe_command(YOUTUBE);
         }
 
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
@@ -282,7 +282,7 @@ impl Plugin<Context> for YouTube {
         Ok(Self::with_config(settings, api_key, &ctx.config.http))
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, _client: &IrcClient) -> Result<(), PluginError> {
         self.start_categories_refresh();
 
         Ok(())
@@ -291,9 +291,9 @@ impl Plugin<Context> for YouTube {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let args = command.args();
 
@@ -320,11 +320,11 @@ impl Plugin<Context> for YouTube {
                         ),
                     )?;
                 } else {
-                    client.send_privmsg(channel, notice("No results"))?;
+                    client.send_privmsg(channel, plain_reply("No results"))?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, notice(err))?;
+                client.send_privmsg(channel, plain_reply(err))?;
             }
         }
 
@@ -334,9 +334,9 @@ impl Plugin<Context> for YouTube {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         self.process_url(url.url(), url.channel(), client).await?;
 
         Ok(())
@@ -403,8 +403,8 @@ impl YouTube {
         &self,
         url: &Url,
         channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
             match self.get_video(&video_id).await {
                 Ok(video) => {
@@ -433,7 +433,7 @@ impl YouTube {
                     client.send_privmsg(channel, message)?;
                 }
                 Err(e) => {
-                    client.send_privmsg(channel, notice(e))?;
+                    client.send_privmsg(channel, plain_reply(e))?;
                 }
             }
         }
@@ -545,14 +545,14 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
             .and_then(|details| details.concurrent_viewers.as_deref())
             .and_then(|viewers| viewers.parse::<u64>().ok())
         {
-            return notice(format!(
+            return plain_reply(format!(
                 "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
                  {channel_name}\x0310 with\x0f {}\x0310 viewers",
                 viewers.to_formatted_string(&Locale::en),
             ));
         }
 
-        return notice(format!(
+        return plain_reply(format!(
             "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
              {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
         ));
@@ -565,7 +565,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         .map_or_else(|| "unknown duration".to_string(), format_duration);
     let article = indefinite_article_only(&duration);
 
-    notice(format!(
+    plain_reply(format!(
         "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
          {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
     ))

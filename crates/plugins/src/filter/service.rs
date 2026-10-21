@@ -8,18 +8,18 @@ use url::Url;
 use super::{
     error::Error,
     index::FilterIndex,
-    model::{Criteria, Filter, NewFilter},
+    model::{Criteria, FilterRule, NewFilterRule},
     repository::FilterRepository,
 };
 use crate::database::Database;
-use zeta_plugin::{Sender, UrlFilter};
+use zeta_plugin::{FilterPolicy, Sender};
 
 /// Stores filters in the database and mirrors them in an in-memory index.
 ///
 /// The database is the source of truth; the index is rebuilt from it on [`load`](Self::load) and
-/// kept in sync by [`add`](Self::add) and [`delete_ids`](Self::delete_ids). The hot lookup path
-/// ([`UrlFilter::matches`]) only touches the index and never the database, so filters are
-/// loaded once at launch and the service is shared through `SharedState`.
+/// kept in sync by [`create`](Self::create) and [`remove_by_ids`](Self::remove_by_ids). The hot
+/// lookup path ([`FilterPolicy::blocks_url`]) only touches the index and never the database, so
+/// filters are loaded once at launch and the service is shared through `SharedState`.
 pub struct FilterService {
     /// The filter repository.
     repo: FilterRepository,
@@ -59,7 +59,7 @@ impl FilterService {
     ///
     /// Returns [`Error::Database`] if the filter could not be inserted into the database.
     #[instrument(skip_all, err)]
-    pub async fn add(&self, filter: NewFilter) -> Result<Filter, Error> {
+    pub async fn create(&self, filter: NewFilterRule) -> Result<FilterRule, Error> {
         let filter = self.repo.insert(filter).await?;
 
         self.lock_index_mut().insert(filter.clone());
@@ -74,8 +74,8 @@ impl FilterService {
     ///
     /// Returns [`Error::Database`] if the filters could not be deleted from the database.
     #[instrument(skip_all, err)]
-    pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
-        let removed = self.repo.delete_all(ids).await?;
+    pub async fn remove_by_ids(&self, ids: &[i32]) -> Result<u64, Error> {
+        let removed = self.repo.delete_by_ids(ids).await?;
 
         self.lock_index_mut().remove_ids(ids);
 
@@ -90,19 +90,19 @@ impl FilterService {
 
     /// Returns a snapshot of all filters, in id order.
     #[must_use]
-    pub fn list(&self) -> Vec<Filter> {
+    pub fn all(&self) -> Vec<FilterRule> {
         self.lock_index().filters()
     }
 
     /// Returns the filter with `id`, if any.
     #[must_use]
-    pub fn get(&self, id: i32) -> Option<Filter> {
+    pub fn get(&self, id: i32) -> Option<FilterRule> {
         self.lock_index().get(id)
     }
 
     /// Returns a snapshot of the filters matching `criteria`, in id order.
     #[must_use]
-    pub fn select(&self, criteria: &Criteria) -> Vec<Filter> {
+    pub fn matching(&self, criteria: &Criteria) -> Vec<FilterRule> {
         self.lock_index().select(&criteria.compile())
     }
 
@@ -118,15 +118,15 @@ impl FilterService {
 }
 
 /// Exposes the service as the shared URL filter: the plugin publishes it wrapped in
-/// [`UrlFilters`](zeta_plugin::UrlFilters) at construction, and the host consults it through
-/// the [`Filters`](zeta_plugin::Filters) facade before delivering URL events and messages
-/// from ignored senders.
-impl UrlFilter for FilterService {
-    fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
+/// [`FilterHandle`](zeta_plugin::FilterHandle) at construction, and the host consults it
+/// through the [`FilterGate`](zeta_plugin::FilterGate) facade before delivering URL events and
+/// messages from ignored senders.
+impl FilterPolicy for FilterService {
+    fn blocks_url(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
         self.lock_index().matches(channel, sender, url)
     }
 
-    fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
+    fn ignores_sender(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
         self.lock_index().ignores(channel, sender)
     }
 }
@@ -137,8 +137,12 @@ mod tests {
 
     /// A filter fixture. The `created_by` column is part of the model; with per-test databases
     /// the value no longer doubles as a cleanup marker.
-    fn new_filter(channel: Option<&str>, host: Option<&str>, username: Option<&str>) -> NewFilter {
-        NewFilter {
+    fn new_filter(
+        channel: Option<&str>,
+        host: Option<&str>,
+        username: Option<&str>,
+    ) -> NewFilterRule {
+        NewFilterRule {
             channel: channel.map(String::from),
             host: host.map(String::from),
             path: None,
@@ -154,7 +158,7 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(
+            .create(new_filter(
                 Some("#smoke"),
                 Some("example.com"),
                 Some("*other"),
@@ -165,7 +169,7 @@ mod tests {
         assert_eq!(added.channel.as_deref(), Some("#smoke"));
         assert_eq!(added.host.as_deref(), Some("example.com"));
         assert_eq!(added.username.as_deref(), Some("*other"));
-        assert!(service.list().iter().any(|f| f.id == added.id));
+        assert!(service.all().iter().any(|f| f.id == added.id));
         assert_eq!(service.get(added.id), Some(added));
     }
 
@@ -174,7 +178,7 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(
+            .create(new_filter(
                 Some("#smoke"),
                 Some("example.com"),
                 Some("*other"),
@@ -182,12 +186,12 @@ mod tests {
             .await
             .unwrap();
 
-        let removed = service.delete_ids(&[added.id]).await.unwrap();
+        let removed = service.remove_by_ids(&[added.id]).await.unwrap();
 
         assert_eq!(removed, 1);
         assert!(service.get(added.id).is_none());
 
-        assert!(!UrlFilter::matches(
+        assert!(!FilterPolicy::blocks_url(
             &service,
             "#smoke",
             Some(Sender::new("someone", "~cliother", "host.example")),
@@ -199,7 +203,7 @@ mod tests {
         service.load().await.unwrap();
 
         assert!(service.is_empty());
-        assert!(!service.list().iter().any(|f| f.id == added.id));
+        assert!(!service.all().iter().any(|f| f.id == added.id));
     }
 
     #[sqlx::test]
@@ -207,11 +211,11 @@ mod tests {
         let service = FilterService::new(db);
 
         service
-            .add(new_filter(None, Some("*.com"), None))
+            .create(new_filter(None, Some("*.com"), None))
             .await
             .unwrap();
 
-        assert!(UrlFilter::matches(
+        assert!(FilterPolicy::blocks_url(
             &service,
             "#anywhere",
             Some(Sender::new("nick", "user", "host.example")),
@@ -220,23 +224,23 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn matches_urls_through_the_url_filter_trait(db: sqlx::PgPool) {
+    async fn matches_urls_through_the_filter_policy(db: sqlx::PgPool) {
         let service = FilterService::new(db);
 
         service
-            .add(new_filter(None, Some("imdb.com"), Some("someuser")))
+            .create(new_filter(None, Some("imdb.com"), Some("someuser")))
             .await
             .unwrap();
 
         let url: Url = "https://imdb.com/title/tt0111161".parse().unwrap();
 
-        assert!(UrlFilter::matches(
+        assert!(FilterPolicy::blocks_url(
             &service,
             "#chan",
             Some(Sender::new("nick", "someuser", "host.example")),
             &url
         ));
-        assert!(!UrlFilter::matches(
+        assert!(!FilterPolicy::blocks_url(
             &service,
             "#chan",
             Some(Sender::new("nick", "other", "host.example")),
@@ -245,20 +249,20 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn ignores_senders_through_the_url_filter_trait(db: sqlx::PgPool) {
+    async fn ignores_senders_through_the_filter_policy(db: sqlx::PgPool) {
         let service = FilterService::new(db.clone());
 
         service
-            .add(new_filter(None, None, Some("someuser")))
+            .create(new_filter(None, None, Some("someuser")))
             .await
             .unwrap();
 
-        assert!(UrlFilter::ignores(
+        assert!(FilterPolicy::ignores_sender(
             &service,
             "#chan",
             Some(Sender::new("nick", "someuser", "host.example"))
         ));
-        assert!(!UrlFilter::ignores(
+        assert!(!FilterPolicy::ignores_sender(
             &service,
             "#chan",
             Some(Sender::new("nick", "other", "host.example"))
@@ -268,11 +272,11 @@ mod tests {
         let url_only = FilterService::new(db.clone());
 
         url_only
-            .add(new_filter(None, Some("imdb.com"), Some("someuser")))
+            .create(new_filter(None, Some("imdb.com"), Some("someuser")))
             .await
             .unwrap();
 
-        assert!(!UrlFilter::ignores(
+        assert!(!FilterPolicy::ignores_sender(
             &url_only,
             "#chan",
             Some(Sender::new("nick", "someuser", "host.example"))

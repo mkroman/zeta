@@ -108,8 +108,8 @@ impl Plugin<Context> for Trustpilot {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(TRUSTPILOT);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(TRUSTPILOT);
         let api_key = resolve_secret(settings.api_key.as_deref(), "TRUSTPILOT_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -123,22 +123,22 @@ impl Plugin<Context> for Trustpilot {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let query = command.args();
 
         let message = if query.trim().is_empty() {
-            notice("Usage: .tp\x0f <domain name>")
+            plain_reply("Usage: .tp\x0f <domain name>")
         } else {
             match self.search(query).await {
                 Ok(business) => format_business(&business, &self.review_domain),
-                Err(Error::NotFound) => notice("No results found"),
+                Err(Error::NotFound) => plain_reply("No results found"),
                 Err(e) => {
                     warn!(error = ?e, "trustpilot error");
                     // The error is already safe for display
-                    notice(e)
+                    plain_reply(e)
                 }
             }
         };

@@ -39,6 +39,7 @@ pub use error::RequestError;
 #[cfg(feature = "emulated")]
 pub use error::WreqError;
 pub use plugin::{
-    CatalogEntry, ErasedPlugin, Plugin, PluginCatalog, PluginsConfig, RegisteredPlugin, Registry,
+    ErasedPlugin, Plugin, PluginCatalog, PluginEntry, PluginRegistry, PluginsConfig,
+    RegisteredPlugin,
 };
 pub use zeta::Zeta;

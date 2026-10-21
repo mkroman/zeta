@@ -64,17 +64,17 @@ impl Default for Settings {
 
 /// The `!imdb` command.
 const COMMAND: CommandSpec =
-    CommandSpec::with_args::<Opts>("!imdb", "Search IMDb and post the top match");
+    CommandSpec::with_args::<Options>("!imdb", "Search IMDb and post the top match");
 
 /// Search IMDb for a title.
 #[derive(FromArgs, ArgsInfo, Debug)]
-struct Opts {
+struct Options {
     /// title to search for
     #[argh(positional, greedy)]
     query: Vec<String>,
 }
 
-impl Opts {
+impl Options {
     /// The joined search query.
     fn query(&self) -> String {
         self.query.join(" ")
@@ -98,10 +98,10 @@ impl Plugin<Context> for Imdb {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    ) -> Result<Self, PluginError> {
         subscriptions
-            .command(COMMAND)
-            .urls(UrlScope::Hosts(URL_HOSTS));
+            .subscribe_command(COMMAND)
+            .subscribe_urls(UrlScope::Hosts(URL_HOSTS));
 
         let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
 
@@ -111,11 +111,11 @@ impl Plugin<Context> for Imdb {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
-        let Some(opts) = parse_args_or_usage::<Opts>(client, command, |line: &str| {
+        let Some(opts) = parse_args_or_usage::<Options>(client, command, |line: &str| {
             format!("{} {line}", prefix())
         })?
         else {
@@ -150,9 +150,9 @@ impl Plugin<Context> for Imdb {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         self.process_url(url.url(), url.channel(), client).await?;
 
         Ok(())
@@ -162,10 +162,10 @@ impl Plugin<Context> for Imdb {
 impl Imdb {
     /// Sends the result of an IMDb lookup to `channel`, formatting errors with the IMDb prefix.
     fn reply(
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         result: Result<String, Error>,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         match result {
             Ok(message) => client.send_privmsg(channel, message)?,
             Err(err) => client.send_privmsg(channel, format!("{} {err}", prefix()))?,
@@ -182,8 +182,8 @@ impl Imdb {
         &self,
         url: &Url,
         channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         match classify_imdb_url(url) {
             Some(Link::Title(id)) => {
                 debug!(%id, "fetching details for posted title link");
@@ -231,21 +231,21 @@ mod tests {
 
     #[test]
     fn parses_multi_word_queries() {
-        let opts: Opts = COMMAND.parse_args("peggle nights").unwrap();
+        let opts: Options = COMMAND.parse_args("peggle nights").unwrap();
 
         assert_eq!(opts.query(), "peggle nights");
     }
 
     #[test]
     fn parses_quoted_queries() {
-        let opts: Opts = COMMAND.parse_args(r#""the matrix""#).unwrap();
+        let opts: Options = COMMAND.parse_args(r#""the matrix""#).unwrap();
 
         assert_eq!(opts.query(), "the matrix");
     }
 
     #[test]
     fn parses_empty_query() {
-        let opts: Opts = COMMAND.parse_args("").unwrap();
+        let opts: Options = COMMAND.parse_args("").unwrap();
 
         assert_eq!(opts.query(), "");
     }

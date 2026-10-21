@@ -113,8 +113,8 @@ impl Plugin<Context> for Twitch {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_urls(UrlScope::Hosts(urls::URL_HOSTS));
 
         let client_id = resolve_secret(settings.client_id.as_deref(), "TWITCH_CLIENT_ID")?;
         let client_secret =
@@ -128,9 +128,9 @@ impl Plugin<Context> for Twitch {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = url.channel();
 
         if let Some(kind) = parse_twitch_url(url.url()) {
@@ -190,7 +190,7 @@ impl Twitch {
         &self,
         channel: &str,
         user_login: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         let response: Response<Stream> = self.get("streams", &[("user_login", user_login)]).await?;
 
@@ -205,7 +205,7 @@ impl Twitch {
             )))?;
         } else {
             // Fallback behavior: just print the channel name if not live.
-            client.send_privmsg(channel, notice(format!("{user_login} - Twitch")))?;
+            client.send_privmsg(channel, plain_reply(format!("{user_login} - Twitch")))?;
         }
 
         Ok(())
@@ -216,7 +216,7 @@ impl Twitch {
         &self,
         channel: &str,
         clip_id: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         let response: Response<Clip> = self.get("clips", &[("id", clip_id)]).await?;
 
@@ -241,7 +241,7 @@ impl Twitch {
         &self,
         channel: &str,
         video_id: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         let response: Response<Video> = self.get("videos", &[("id", video_id)]).await?;
 

@@ -12,8 +12,8 @@ pub(super) fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>
     let symbol = &quote.symbol;
 
     let Some(fiat) = quote.quote.get(currency) else {
-        return notice(format!(
-            "{name} ({RESET}{symbol}{COLOR}) has no quote in {currency}"
+        return plain_reply(format!(
+            "{name} ({RESET}{symbol}{REPLY_COLOR}) has no quote in {currency}"
         ));
     };
 
@@ -26,10 +26,10 @@ pub(super) fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>
     let change_day = format_change(fiat.percent_change_24h);
     let change_week = format_change(fiat.percent_change_7d);
 
-    notice(format!(
-        "{name} ({RESET}{symbol}{COLOR}) is currently trading at{RESET} {price}{COLOR} \
-         (1 Hour Change:{RESET} {change_hour}{COLOR} 24 Hour Change:{RESET} {change_day}{COLOR} \
-         7 Day Change:{RESET} {change_week}{COLOR})"
+    plain_reply(format!(
+        "{name} ({RESET}{symbol}{REPLY_COLOR}) is currently trading at{RESET} {price}{REPLY_COLOR} \
+         (1 Hour Change:{RESET} {change_hour}{REPLY_COLOR} 24 Hour Change:{RESET} {change_day}{REPLY_COLOR} \
+         7 Day Change:{RESET} {change_week}{REPLY_COLOR})"
     ))
 }
 

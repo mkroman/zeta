@@ -51,9 +51,8 @@ pub enum Error {
 const GITHUB: CommandSpec =
     CommandSpec::new(".gh", "Search GitHub and show the most starred match");
 
-/// Structure representing the GitHub Plugin.
-/// Holds the HTTP client to reuse connection pools.
-pub struct GitHubPlugin {
+/// The GitHub plugin, holding the HTTP client to reuse connection pools.
+pub struct GitHub {
     http: reqwest::Client,
 }
 
@@ -75,15 +74,15 @@ struct RepoItem {
 }
 
 #[async_trait]
-impl Plugin<Context> for GitHubPlugin {
+impl Plugin<Context> for GitHub {
     type Settings = Settings;
 
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(GITHUB);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(GITHUB);
         // The token is optional; it only raises the API rate limit.
         let token = resolve_secret(settings.token.as_deref(), "GITHUB_TOKEN").ok();
         let plugin = Self::new(&ctx.config.http, token).map_err(plugin_err)?;
@@ -94,9 +93,9 @@ impl Plugin<Context> for GitHubPlugin {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let query = command.args().trim();
 
@@ -120,7 +119,7 @@ impl Plugin<Context> for GitHubPlugin {
     }
 }
 
-impl GitHubPlugin {
+impl GitHub {
     /// Creates a new instance of the GitHub plugin.
     ///
     /// # Errors
@@ -220,7 +219,7 @@ mod tests {
     #[test]
     fn invalid_tokens_are_rejected() {
         assert!(
-            GitHubPlugin::new(&HttpConfig::default(), Some("bad\ntoken".to_string())).is_err(),
+            GitHub::new(&HttpConfig::default(), Some("bad\ntoken".to_string())).is_err(),
             "invalid token should be rejected"
         );
     }

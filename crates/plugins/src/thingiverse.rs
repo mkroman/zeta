@@ -91,8 +91,8 @@ impl Plugin<Context> for Thingiverse {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_urls(UrlScope::Hosts(URL_HOSTS));
 
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client(&ctx.config.http);
@@ -109,9 +109,9 @@ impl Plugin<Context> for Thingiverse {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         self.process_url(url.url(), url.channel(), client).await?;
 
         Ok(())
@@ -127,8 +127,8 @@ impl Thingiverse {
         &self,
         url: &Url,
         channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         // Extract ID from path
         if let Some(captures) = self.path_regex.captures(url.path())
             && let Some(id_match) = captures.name("id")

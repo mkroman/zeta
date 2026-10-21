@@ -4,7 +4,7 @@ use tracing::{instrument, trace};
 
 use super::{
     error::Error,
-    model::{NewNotification, Notification},
+    model::{NewNotificationRecord, NotificationRecord},
 };
 use crate::database::Database;
 
@@ -39,7 +39,7 @@ impl NotificationRepository {
             db.query.summary = "SELECT notifications",
         )
     )]
-    pub async fn list(&self) -> Result<Vec<Notification>, Error> {
+    pub async fn list(&self) -> Result<Vec<NotificationRecord>, Error> {
         trace!("loading notifications from database");
 
         sqlx::query_as(
@@ -68,7 +68,10 @@ impl NotificationRepository {
             db.query.summary = "INSERT notifications",
         )
     )]
-    pub async fn insert(&self, notification: NewNotification) -> Result<Notification, Error> {
+    pub async fn insert(
+        &self,
+        notification: NewNotificationRecord,
+    ) -> Result<NotificationRecord, Error> {
         trace!("inserting notification into database");
 
         sqlx::query_as(
@@ -106,7 +109,7 @@ impl NotificationRepository {
             db.query.summary = "DELETE notifications",
         )
     )]
-    pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
+    pub async fn delete_by_ids(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting notifications from database");
 
         crate::database::delete_ids(&self.db, "notifications", ids)

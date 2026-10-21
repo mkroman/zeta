@@ -1,8 +1,8 @@
 //! Evaluates calculations with unit, currency, and cryptocurrency conversions through rink.
 //!
 //! The `.r <expression>` command evaluates the whole argument as a rink expression and replies
-//! with the one-line result as a notice — arithmetic, physical unit conversions, and, with live
-//! currency data loaded, fiat currency, Bitcoin, and cryptocurrency lookups. The
+//! with the one-line result as a plain reply — arithmetic, physical unit conversions, and, with
+//! live currency data loaded, fiat currency, Bitcoin, and cryptocurrency lookups. The
 //! `.c <expression>` command does the same but case-corrects unit tokens rink cannot resolve,
 //! so lowercase abbreviations like `10 usd to dkk` evaluate like `10 USD to DKK`. Evaluation
 //! errors are reported inline as `> Error: <message>`.
@@ -121,8 +121,10 @@ impl Plugin<Context> for Rink {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(RINK).command(CLASSIFY);
+    ) -> Result<Self, PluginError> {
+        subscriptions
+            .subscribe_command(RINK)
+            .subscribe_command(CLASSIFY);
 
         let client = if settings.currency {
             Some(
@@ -144,11 +146,11 @@ impl Plugin<Context> for Rink {
         })
     }
 
-    async fn loaded(
+    async fn start(
         &mut self,
         #[allow(unused)] ctx: &Context,
-        _client: &Client,
-    ) -> Result<(), ZetaError> {
+        _client: &IrcClient,
+    ) -> Result<(), PluginError> {
         // The coinmarketcap plugin publishes its keyed client for other plugins to reuse.
         self.cmc = ctx.shared.get::<CmcClient>();
 
@@ -160,9 +162,9 @@ impl Plugin<Context> for Rink {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let classify = command.spec == CLASSIFY;
         let message = self.eval_and_format(command.args(), classify).await;
 
@@ -246,9 +248,9 @@ impl Rink {
         // the retry re-evaluates the same line below instead of keeping the first result
         // alive across the fetch.
         match self.eval(line.as_ref()) {
-            Ok(reply) => return notice(render_reply(&reply)),
+            Ok(reply) => return plain_reply(render_reply(&reply)),
             Err(QueryError::MissingDeps(_)) if self.client.is_some() => {}
-            Err(error) => return notice(error_message(&error)),
+            Err(error) => return plain_reply(error_message(&error)),
         }
 
         // Currency data is missing: refresh what can still change the outcome, then
@@ -257,8 +259,8 @@ impl Rink {
         self.ensure_currency_cached().await;
 
         match self.eval(line.as_ref()) {
-            Ok(reply) => notice(render_reply(&reply)),
-            Err(error) => notice(error_message(&error)),
+            Ok(reply) => plain_reply(render_reply(&reply)),
+            Err(error) => plain_reply(error_message(&error)),
         }
     }
 
@@ -554,8 +556,8 @@ mod tests {
     ]"#;
 
     /// Builds a CoinMarketCap client configuration for the tests.
-    fn test_client_config() -> coinmarketcap::Config {
-        coinmarketcap::Config::default()
+    fn test_client_config() -> coinmarketcap::ClientOptions {
+        coinmarketcap::ClientOptions::default()
     }
 
     /// A ranked cryptocurrency listing fixture: Ethereum and a faked euro coin, plus a symbol

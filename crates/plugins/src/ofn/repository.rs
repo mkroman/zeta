@@ -6,9 +6,9 @@ use url::Url;
 use zeta_url::redact_url;
 
 use super::{
-    ChannelMessageOrigin,
+    MessageOrigin,
     error::Error,
-    model::{InsertUrlRecord, InsertYouTubeRecord, Statistics, UrlRecord, YouTubeRecord},
+    model::{NewUrlRecord, NewYouTubeRecord, Statistics, UrlRecord, YouTubeRecord},
 };
 use crate::database::Database;
 
@@ -46,7 +46,7 @@ impl OfnRepository {
     )]
     pub async fn find_url(
         &self,
-        origin: &ChannelMessageOrigin<'_>,
+        origin: &MessageOrigin<'_>,
         url: &Url,
     ) -> Result<Option<UrlRecord>, Error> {
         let host = url.host_str().ok_or(Error::InsertUrlNoHost)?;
@@ -95,7 +95,7 @@ impl OfnRepository {
     )]
     pub async fn find_youtube_video(
         &self,
-        origin: &ChannelMessageOrigin<'_>,
+        origin: &MessageOrigin<'_>,
         video_id: &str,
     ) -> Result<Option<YouTubeRecord>, Error> {
         let result = sqlx::query_as(
@@ -135,15 +135,15 @@ impl OfnRepository {
     )]
     pub async fn insert_url(
         &self,
-        origin: &ChannelMessageOrigin<'_>,
+        origin: &MessageOrigin<'_>,
         url: &Url,
-    ) -> Result<InsertUrlRecord, Error> {
+    ) -> Result<NewUrlRecord, Error> {
         let host = url
             .host_str()
             .map(String::from)
             .ok_or(Error::InsertUrlNoHost)?;
 
-        let insert = InsertUrlRecord {
+        let insert = NewUrlRecord {
             scheme: url.scheme().to_owned(),
             host,
             port: url.port_or_known_default().map(i32::from),
@@ -209,10 +209,10 @@ impl OfnRepository {
     )]
     pub async fn insert_youtube_video(
         &self,
-        origin: &ChannelMessageOrigin<'_>,
+        origin: &MessageOrigin<'_>,
         video_id: &str,
-    ) -> Result<InsertYouTubeRecord, Error> {
-        let insert = InsertYouTubeRecord {
+    ) -> Result<NewYouTubeRecord, Error> {
+        let insert = NewYouTubeRecord {
             video_id: video_id.to_string(),
             nickname: origin.nickname.to_owned(),
             username: origin.username.to_owned(),
@@ -263,7 +263,7 @@ impl OfnRepository {
     )]
     pub async fn statistics(&self) -> Result<Statistics, Error> {
         let today = Utc::now().date_naive();
-        let (num_urls, num_urls_today, num_yt_ids, num_yt_ids_today): (i64, i64, i64, i64) =
+        let (urls, urls_today, youtube_videos, youtube_videos_today): (i64, i64, i64, i64) =
             sqlx::query_as(
                 r"SELECT
                     u.num_urls,
@@ -289,10 +289,10 @@ impl OfnRepository {
             .map_err(Error::QueryDatabase)?;
 
         Ok(Statistics {
-            num_urls,
-            num_urls_today,
-            num_yt_ids,
-            num_yt_ids_today,
+            urls,
+            urls_today,
+            youtube_videos,
+            youtube_videos_today,
         })
     }
 }

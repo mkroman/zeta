@@ -20,9 +20,9 @@ pub(super) fn join_and(items: &[String]) -> String {
         if index == 0 {
             let _ = write!(joined, "{RESET}{item}");
         } else if index + 1 == items.len() {
-            let _ = write!(joined, "{COLOR} and{RESET} {item}");
+            let _ = write!(joined, "{REPLY_COLOR} and{RESET} {item}");
         } else {
-            let _ = write!(joined, "{COLOR},{RESET} {item}");
+            let _ = write!(joined, "{REPLY_COLOR},{RESET} {item}");
         }
     }
 
@@ -35,28 +35,31 @@ pub(super) fn list_reply(sites: &[Site]) -> String {
         return reply(
             NAME,
             format!(
-                "{RESET}No unwalled sites yet{COLOR}: add one with\
-                 {RESET} .unwall add <host>{COLOR}, e.g.{RESET} .unwall add bloomberg.com{COLOR}."
+                "{RESET}No unwalled sites yet{REPLY_COLOR}: add one with\
+                 {RESET} .unwall add <host>{REPLY_COLOR}, e.g.{RESET} .unwall add bloomberg.com{REPLY_COLOR}."
             ),
         );
     }
 
     let mut message = reply(
         NAME,
-        format!("{RESET}{}{COLOR} unwalled sites:{RESET} ", sites.len()),
+        format!(
+            "{RESET}{}{REPLY_COLOR} unwalled sites:{RESET} ",
+            sites.len()
+        ),
     );
 
     let reserved = " (999 more)".len();
     let appended = append_entries_within_budget(
         &mut message,
         sites.iter().map(|site| site.host.as_str()),
-        &format!("{COLOR}, {RESET}"),
+        &format!("{REPLY_COLOR}, {RESET}"),
         MAX_LISTING_LENGTH,
         reserved,
     );
 
     if appended < sites.len() {
-        let _ = write!(message, "{COLOR} ({} more)", sites.len() - appended);
+        let _ = write!(message, "{REPLY_COLOR} ({} more)", sites.len() - appended);
     }
 
     message
@@ -67,8 +70,8 @@ pub(super) fn stats_reply(stats: &Statistics) -> String {
     reply(
         NAME,
         format!(
-            "{RESET}{}{COLOR} links unwalled across{RESET} {}{COLOR} sites \
-             by{RESET} {}{COLOR} users ({RESET}{}{COLOR} today).",
+            "{RESET}{}{REPLY_COLOR} links unwalled across{RESET} {}{REPLY_COLOR} sites \
+             by{RESET} {}{REPLY_COLOR} users ({RESET}{}{REPLY_COLOR} today).",
             stats.urls, stats.hosts, stats.users, stats.urls_today
         ),
     )
@@ -77,14 +80,19 @@ pub(super) fn stats_reply(stats: &Statistics) -> String {
 /// Summarizes the statistics of one `host`.
 pub(super) fn info_reply(host: &str, stats: Option<&HostStatistics>) -> String {
     stats.map_or_else(
-        || reply(NAME, format!("No unwalled links for{RESET} {host}{COLOR}.")),
+        || {
+            reply(
+                NAME,
+                format!("No unwalled links for{RESET} {host}{REPLY_COLOR}."),
+            )
+        },
         |stats| {
             reply(
                 NAME,
                 format!(
-                    "{RESET}{}{COLOR} links unwalled for{RESET} {host}{COLOR} \
-                     by{RESET} {}{COLOR} users ({RESET}{}{COLOR} today, most recent\
-                     {RESET} {}{COLOR}).",
+                    "{RESET}{}{REPLY_COLOR} links unwalled for{RESET} {host}{REPLY_COLOR} \
+                     by{RESET} {}{REPLY_COLOR} users ({RESET}{}{REPLY_COLOR} today, most recent\
+                     {RESET} {}{REPLY_COLOR}).",
                     stats.urls,
                     stats.users,
                     stats.urls_today,
@@ -105,11 +113,11 @@ mod tests {
         assert_eq!(join_and(&["a".into()]), format!("{RESET}a"));
         assert_eq!(
             join_and(&["a".into(), "b".into()]),
-            format!("{RESET}a{COLOR} and{RESET} b")
+            format!("{RESET}a{REPLY_COLOR} and{RESET} b")
         );
         assert_eq!(
             join_and(&["a".into(), "b".into(), "c".into()]),
-            format!("{RESET}a{COLOR},{RESET} b{COLOR} and{RESET} c")
+            format!("{RESET}a{REPLY_COLOR},{RESET} b{REPLY_COLOR} and{RESET} c")
         );
     }
 }

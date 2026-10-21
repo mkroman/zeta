@@ -15,8 +15,8 @@
 //! The command is restricted to admins through `[irc] admin_hostmasks`: the hostmask matching
 //! lives in the crate-private `hostmask` module, shared with `.unwall`.
 //!
-//! The filter service is published to [`Context::shared`] as a type-erased [`UrlFilters`] handle
-//! when the plugin is constructed; the host's dispatcher consults it through the [`Filters`]
+//! The filter service is published to [`Context::shared`] as a type-erased [`FilterHandle`] handle
+//! when the plugin is constructed; the host's dispatcher consults it through the [`FilterGate`]
 //! facade before delivering URL events, so filtered URLs never reach the URL plugins.
 
 mod command;
@@ -32,16 +32,16 @@ mod service;
 // itself only handles them by value.
 #[allow(unused_imports)]
 pub use error::Error;
-pub use model::{Criteria, Filter, NewFilter};
+pub use model::{Criteria, FilterRule, NewFilterRule};
 pub use service::FilterService;
 
 use std::sync::Arc;
 
 use tracing::debug;
 
-use self::command::{Add, Delete, FILTER, List, Opts, Subcommand};
+use self::command::{Add, Delete, FILTER, List, Options, Subcommand};
 use self::reply::{changed_response, describe, listing, plural};
-use crate::hostmask::Hostmasks;
+use crate::hostmask::AdminHostmasks;
 use crate::prelude::*;
 
 /// The plugin name used in replies.
@@ -54,23 +54,23 @@ const UNAUTHORIZED: &str = "You are not authorized to manage filters.";
 ///
 /// Manages the database-backed URL and sender filters and publishes the filter service for the
 /// URL-handling plugins to consult.
-pub struct FilterPlugin {
+pub struct Filter {
     /// The filter service, also published for other plugins to use.
     service: Arc<FilterService>,
     /// The compiled admin hostmasks; senders whose `nick!user@host` matches one of them are
     /// authorized to manage filters.
-    admins: Hostmasks,
+    admins: AdminHostmasks,
 }
 
-impl FilterPlugin {
+impl Filter {
     /// Adds one or more filters from the `add` subcommand.
     async fn add(
         &self,
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         nickname: &str,
         opts: Add,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let new_filters = match opts.into_filters(channel, nickname) {
             Ok(new_filters) => new_filters,
             Err(error) => {
@@ -84,7 +84,7 @@ impl FilterPlugin {
         let mut added = Vec::with_capacity(total);
 
         for new_filter in new_filters {
-            match self.service.add(new_filter).await {
+            match self.service.create(new_filter).await {
                 Ok(filter) => added.push(filter),
                 Err(error) => {
                     let response = if added.is_empty() {
@@ -111,8 +111,8 @@ impl FilterPlugin {
     }
 
     /// Lists the filters matching the `list` subcommand criteria.
-    fn list(&self, client: &Client, channel: &str, opts: &List) -> Result<(), ZetaError> {
-        let filters = self.service.select(&Criteria::from(opts));
+    fn list(&self, client: &IrcClient, channel: &str, opts: &List) -> Result<(), PluginError> {
+        let filters = self.service.matching(&Criteria::from(opts));
 
         let response = if filters.is_empty() {
             if self.service.is_empty() {
@@ -140,7 +140,12 @@ impl FilterPlugin {
     }
 
     /// Deletes a filter by id, or all filters matching the `delete` subcommand criteria.
-    async fn delete(&self, client: &Client, channel: &str, opts: Delete) -> Result<(), ZetaError> {
+    async fn delete(
+        &self,
+        client: &IrcClient,
+        channel: &str,
+        opts: Delete,
+    ) -> Result<(), PluginError> {
         if let Some(id) = opts.id {
             if opts.criteria().is_some() {
                 client.send_privmsg(
@@ -172,7 +177,12 @@ impl FilterPlugin {
     }
 
     /// Deletes the single filter with `id`, naming it in the reply.
-    async fn delete_by_id(&self, client: &Client, channel: &str, id: i32) -> Result<(), ZetaError> {
+    async fn delete_by_id(
+        &self,
+        client: &IrcClient,
+        channel: &str,
+        id: i32,
+    ) -> Result<(), PluginError> {
         // The removed filter is named in the reply, and an unknown id is answered without
         // touching the database.
         let Some(filter) = self.service.get(id) else {
@@ -181,7 +191,7 @@ impl FilterPlugin {
             return Ok(());
         };
 
-        let response = match self.service.delete_ids(&[id]).await {
+        let response = match self.service.remove_by_ids(&[id]).await {
             Ok(1) => format!("Removed {}.", describe(&filter)),
             Ok(_) => format!("No filter with id {id}."),
             Err(error) => format!("could not delete the filter: {error}"),
@@ -195,12 +205,12 @@ impl FilterPlugin {
     /// Deletes the filters matching `criteria`, after a confirmation unless `force` is set.
     async fn delete_matching(
         &self,
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
         criteria: &Criteria,
         force: bool,
-    ) -> Result<(), ZetaError> {
-        let filters = self.service.select(criteria);
+    ) -> Result<(), PluginError> {
+        let filters = self.service.matching(criteria);
 
         if filters.is_empty() {
             client.send_privmsg(channel, reply(NAME, "No filters match your criteria."))?;
@@ -232,7 +242,7 @@ impl FilterPlugin {
 
         let ids: Vec<i32> = filters.iter().map(|filter| filter.id).collect();
 
-        let response = match self.service.delete_ids(&ids).await {
+        let response = match self.service.remove_by_ids(&ids).await {
             Ok(removed) if removed == filters.len() as u64 => changed_response("Removed", &filters),
             Ok(removed) => format!("Removed {removed} of {} matching filters.", filters.len()),
             Err(error) => format!("could not delete the filters: {error}"),
@@ -245,27 +255,27 @@ impl FilterPlugin {
 }
 
 #[async_trait]
-impl Plugin<Context> for FilterPlugin {
+impl Plugin<Context> for Filter {
     type Settings = NoSettings;
 
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(FILTER);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(FILTER);
 
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 
         ctx.shared
-            .publish(Arc::new(UrlFilters::new(service.clone())));
+            .publish(Arc::new(FilterHandle::new(service.clone())));
 
-        let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");
+        let admins = AdminHostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");
 
         Ok(Self { service, admins })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, _client: &IrcClient) -> Result<(), PluginError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
@@ -274,9 +284,9 @@ impl Plugin<Context> for FilterPlugin {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let Some(sender) = command.sender() else {
             return Ok(());
@@ -288,7 +298,8 @@ impl Plugin<Context> for FilterPlugin {
             return Ok(());
         }
 
-        let Some(opts) = parse_words_or_usage::<Opts>(client, command, |line| reply(NAME, line))?
+        let Some(opts) =
+            parse_words_or_usage::<Options>(client, command, |line| reply(NAME, line))?
         else {
             return Ok(());
         };
@@ -307,13 +318,13 @@ mod tests {
 
     #[tokio::test]
     async fn publishes_a_url_filters_handle_for_the_host() {
-        // The host's dispatcher consults the `Filters` facade, which only sees the service
+        // The host's dispatcher consults the `FilterGate` facade, which only sees the service
         // through the type-erased handle published here — without it, no URL is ever filtered.
         let ctx = zeta_test_support::test_context();
         let mut subscriptions = Subscriptions::new();
 
-        <FilterPlugin as Plugin<Context>>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
+        <Filter as Plugin<Context>>::new(&ctx, &NoSettings, &mut subscriptions).unwrap();
 
-        assert!(ctx.shared.get::<UrlFilters>().is_some());
+        assert!(ctx.shared.get::<FilterHandle>().is_some());
     }
 }

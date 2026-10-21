@@ -64,8 +64,8 @@ impl Plugin<Context> for Chaturbate {
         ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_urls(UrlScope::Hosts(URL_HOSTS));
 
         Ok(Self::new(&ctx.config.http))
     }
@@ -73,9 +73,9 @@ impl Plugin<Context> for Chaturbate {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = url.channel();
 
         if let Some(username) = extract_username(url.url()) {
@@ -114,7 +114,7 @@ impl Chaturbate {
         &self,
         username: &str,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         let url = format!("https://chaturbate.com/{username}/");
         debug!(%url, "fetching chaturbate page");

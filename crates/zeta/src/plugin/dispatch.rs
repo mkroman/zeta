@@ -1,6 +1,6 @@
 //! Event dispatching: routing incoming IRC messages to the plugins that registered interest.
 //!
-//! The [`EventIndex`] maps the subscriptions every plugin declared during initialization to
+//! The [`EventDispatcher`] maps the subscriptions every plugin declared during initialization to
 //! delivery endpoints. It matches incoming IRC messages against the index — commands by their
 //! trigger through a hash lookup on the message's first word, URLs by their host through a
 //! hash lookup, and the remaining event kinds through subscriber lists — and queues the
@@ -17,16 +17,15 @@ use zeta_plugin::event::{
     CommandEvent, CtcpEvent, JoinEvent, KickEvent, MessageEvent, NickEvent, PartEvent, QuitEvent,
     RawEvent, Sender, Subscriptions, UrlEvent,
 };
-use zeta_plugin::{CommandSpec, Event, EventKind, UrlScope};
+use zeta_plugin::{CommandSpec, Event, EventKind, FilterGate, PluginName, UrlScope};
 
-use zeta_plugin::Filters;
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES};
 
 /// A delivery endpoint for events: the mailbox of one plugin's task.
 #[derive(Clone, Debug)]
 struct Subscriber {
     /// The plugin's name, used for logging.
-    name: Arc<str>,
+    name: PluginName,
     /// The mailbox events are queued on.
     mailbox: mpsc::UnboundedSender<Event>,
 }
@@ -34,10 +33,10 @@ struct Subscriber {
 impl Subscriber {
     /// Queues `event` for the plugin, recording the plugin in `stopped` when its mailbox is
     /// closed (i.e. the plugin's task has stopped).
-    fn send(&self, event: Event, stopped: &mut Vec<String>) {
+    fn send(&self, event: Event, stopped: &mut Vec<PluginName>) {
         if let Err(error) = self.mailbox.send(event) {
             warn!(plugin = %self.name, %error, "plugin task has stopped");
-            stopped.push(self.name.to_string());
+            stopped.push(self.name.clone());
         }
     }
 }
@@ -49,9 +48,9 @@ struct CommandTarget {
     spec: CommandSpec,
 }
 
-/// The dispatch index of every registered plugin's subscriptions.
+/// The event dispatcher: every registered plugin's subscriptions, indexed for delivery.
 #[derive(Default)]
-pub struct EventIndex {
+pub struct EventDispatcher {
     /// Registered commands, indexed by their trigger — the first word of a message.
     commands: HashMap<&'static str, Vec<CommandTarget>>,
     /// Plugins subscribed to URLs on specific hosts, indexed by the lowercased host.
@@ -62,26 +61,23 @@ pub struct EventIndex {
     kinds: HashMap<EventKind, Vec<Subscriber>>,
 }
 
-impl EventIndex {
-    /// Adds a plugin to the index with the `subscriptions` it declared and its `mailbox`.
+impl EventDispatcher {
+    /// Registers a plugin with the `subscriptions` it declared and its `mailbox`.
     ///
     /// Command triggers containing whitespace cannot be matched by the first-word index and
     /// are skipped with a warning.
-    pub fn add(
+    pub fn register_plugin(
         &mut self,
-        name: &str,
+        name: PluginName,
         subscriptions: &Subscriptions,
         mailbox: mpsc::UnboundedSender<Event>,
     ) {
-        let subscriber = Subscriber {
-            name: name.into(),
-            mailbox,
-        };
+        let subscriber = Subscriber { name, mailbox };
 
         for command in subscriptions.commands() {
             if command.trigger().contains(char::is_whitespace) {
                 warn!(
-                    plugin = %name,
+                    plugin = %subscriber.name,
                     command = command.trigger(),
                     "command trigger contains whitespace; it cannot be dispatched"
                 );
@@ -111,7 +107,7 @@ impl EventIndex {
             UrlScope::Any => self.url_any.push(subscriber.clone()),
         }
 
-        for kind in subscriptions.events() {
+        for kind in subscriptions.kinds() {
             self.kinds
                 .entry(*kind)
                 .or_default()
@@ -122,9 +118,9 @@ impl EventIndex {
     /// Routes `message` to the plugins that subscribed to events it matches.
     ///
     /// Returns the names of the plugins whose mailboxes are closed — their tasks have stopped,
-    /// so the caller should evict them with [`EventIndex::evict`].
+    /// so the caller should remove them with [`EventDispatcher::remove_plugin`].
     #[must_use]
-    pub fn dispatch(&self, filters: &Filters, message: Message) -> Vec<String> {
+    pub fn dispatch(&self, filters: &FilterGate, message: Message) -> Vec<PluginName> {
         let message = Arc::new(message);
         let mut stopped = Vec::new();
 
@@ -177,8 +173,8 @@ impl EventIndex {
     /// Removes every trace of the named plugin from the index.
     ///
     /// Called when one of its deliveries failed because the plugin's task stopped.
-    pub fn evict(&mut self, name: &str) {
-        let other = |subscriber: &Subscriber| subscriber.name.as_ref() != name;
+    pub fn remove_plugin(&mut self, name: &PluginName) {
+        let other = |subscriber: &Subscriber| &subscriber.name != name;
 
         self.commands.retain(|_, targets| {
             targets.retain(|target| other(&target.subscriber));
@@ -205,7 +201,7 @@ impl EventIndex {
     }
 
     /// Delivers an optional event to the subscribers of `kind`, if any are registered.
-    fn deliver_kind(&self, kind: EventKind, event: Option<Event>, stopped: &mut Vec<String>) {
+    fn deliver_kind(&self, kind: EventKind, event: Option<Event>, stopped: &mut Vec<PluginName>) {
         if let Some(event) = event
             && let Some(subscribers) = self.subscribers(kind)
         {
@@ -214,7 +210,7 @@ impl EventIndex {
     }
 
     /// Delivers one event to every subscriber of a list.
-    fn deliver(event: &Event, subscribers: &[Subscriber], stopped: &mut Vec<String>) {
+    fn deliver(event: &Event, subscribers: &[Subscriber], stopped: &mut Vec<PluginName>) {
         for subscriber in subscribers {
             subscriber.send(event.clone(), stopped);
         }
@@ -223,9 +219,9 @@ impl EventIndex {
     /// Routes a `PRIVMSG` to the plugins whose subscriptions match.
     fn dispatch_privmsg(
         &self,
-        filters: &Filters,
+        filters: &FilterGate,
         message: &Arc<Message>,
-        stopped: &mut Vec<String>,
+        stopped: &mut Vec<PluginName>,
     ) {
         let Command::PRIVMSG(target, text) = &message.command else {
             return;
@@ -247,7 +243,7 @@ impl EventIndex {
         // Senders matching a filter without URL criteria are ignored entirely: their commands
         // do not trigger, their messages are not delivered to message subscribers, and their
         // URLs are not dispatched.
-        if filters.ignores(target, sender) {
+        if filters.ignores_sender(target, sender) {
             debug!(channel = %target, "ignoring filtered sender");
 
             return;
@@ -284,7 +280,7 @@ impl EventIndex {
                 continue;
             }
 
-            if filters.is_filtered(target, sender, &url) {
+            if filters.blocks_url(target, sender, &url) {
                 debug!(%url, "skipping filtered url");
 
                 continue;
@@ -313,7 +309,7 @@ impl EventIndex {
 mod tests {
     use url::Url;
     use zeta_plugin::CtcpKind;
-    use zeta_plugin::{UrlFilter, UrlFilters};
+    use zeta_plugin::{FilterHandle, FilterPolicy};
     use zeta_test_support::assert_empty;
 
     use super::*;
@@ -349,7 +345,7 @@ mod tests {
 
     /// Registers a test subscriber and returns the mailbox its events arrive on.
     fn subscribe(
-        index: &mut EventIndex,
+        index: &mut EventDispatcher,
         name: &str,
         register: impl FnOnce(&mut Subscriptions),
     ) -> mpsc::UnboundedReceiver<Event> {
@@ -357,19 +353,19 @@ mod tests {
         register(&mut subscriptions);
 
         let (mailbox, receiver) = mpsc::unbounded_channel();
-        index.add(name, &subscriptions, mailbox);
+        index.register_plugin(name.into(), &subscriptions, mailbox);
 
         receiver
     }
 
     #[test]
     fn registered_command_is_dispatched() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut mailbox = subscribe(&mut index, "dig", |subscriptions| {
-            subscriptions.command(CommandSpec::new(".dig", "dig"));
+            subscriptions.subscribe_command(CommandSpec::new(".dig", "dig"));
         });
 
-        let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
+        let stopped = index.dispatch(&FilterGate::default(), privmsg(".dig example.com"));
 
         assert_empty!(stopped);
         assert!(matches!(
@@ -380,14 +376,14 @@ mod tests {
 
     #[test]
     fn command_is_matched_by_first_word() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut mailbox = subscribe(&mut index, "dig", |subscriptions| {
-            subscriptions.command(CommandSpec::new(".dig", "dig"));
+            subscriptions.subscribe_command(CommandSpec::new(".dig", "dig"));
         });
 
         // Longer words are not matched, and leading whitespace breaks the first word.
         for text in [".digg example.com", "  .dig example.com", "look at .dig"] {
-            let _ = index.dispatch(&Filters::default(), privmsg(text));
+            let _ = index.dispatch(&FilterGate::default(), privmsg(text));
 
             assert_empty!(drain(&mut mailbox), "`{text}` must not dispatch");
         }
@@ -395,14 +391,14 @@ mod tests {
 
     #[test]
     fn multiple_registered_commands_dispatch_independently() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut kagi = subscribe(&mut index, "kagi", |subscriptions| {
             subscriptions
-                .command(CommandSpec::new(".g", "search"))
-                .command(CommandSpec::new(".gis", "images"));
+                .subscribe_command(CommandSpec::new(".g", "search"))
+                .subscribe_command(CommandSpec::new(".gis", "images"));
         });
 
-        let _ = index.dispatch(&Filters::default(), privmsg(".gis black cats"));
+        let _ = index.dispatch(&FilterGate::default(), privmsg(".gis black cats"));
 
         assert!(matches!(
             drain(&mut kagi)[..],
@@ -412,17 +408,17 @@ mod tests {
 
     #[test]
     fn urls_route_to_registered_hosts_and_generic_handlers() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut youtube = subscribe(&mut index, "youtube", |subscriptions| {
-            subscriptions.urls(UrlScope::Hosts(&["youtube.com", "www.youtube.com"]));
+            subscriptions.subscribe_urls(UrlScope::Hosts(&["youtube.com", "www.youtube.com"]));
         });
         let mut titles = subscribe(&mut index, "titles", |s| {
-            s.urls(UrlScope::Any);
+            s.subscribe_urls(UrlScope::Any);
         });
 
         // A claimed host is delivered to its plugin and to generic handlers.
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterGate::default(),
             privmsg("https://youtube.com/watch?v=1"),
         );
 
@@ -430,13 +426,13 @@ mod tests {
         assert!(matches!(drain(&mut titles)[..], [Event::Url(..)]));
 
         // Host matching is case-insensitive.
-        let _ = index.dispatch(&Filters::default(), privmsg("https://WWW.YOUTUBE.COM/x"));
+        let _ = index.dispatch(&FilterGate::default(), privmsg("https://WWW.YOUTUBE.COM/x"));
 
         assert_eq!(drain(&mut youtube).len(), 1);
         assert_eq!(drain(&mut titles).len(), 1);
 
         // An unclaimed host only reaches generic handlers.
-        let _ = index.dispatch(&Filters::default(), privmsg("https://example.com/x"));
+        let _ = index.dispatch(&FilterGate::default(), privmsg("https://example.com/x"));
 
         assert_empty!(drain(&mut youtube));
         assert_eq!(drain(&mut titles).len(), 1);
@@ -444,13 +440,13 @@ mod tests {
 
     #[test]
     fn multiple_urls_yield_one_event_each() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut titles = subscribe(&mut index, "titles", |s| {
-            s.urls(UrlScope::Any);
+            s.subscribe_urls(UrlScope::Any);
         });
 
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterGate::default(),
             privmsg("https://a.example/x https://a.example/x https://b.example/y"),
         );
 
@@ -465,12 +461,12 @@ mod tests {
     /// `filtered.example` host.
     struct TestFilter;
 
-    impl UrlFilter for TestFilter {
-        fn matches(&self, _channel: &str, _sender: Option<Sender<'_>>, url: &Url) -> bool {
+    impl FilterPolicy for TestFilter {
+        fn blocks_url(&self, _channel: &str, _sender: Option<Sender<'_>>, url: &Url) -> bool {
             url.host_str() == Some("filtered.example")
         }
 
-        fn ignores(&self, _channel: &str, sender: Option<Sender<'_>>) -> bool {
+        fn ignores_sender(&self, _channel: &str, sender: Option<Sender<'_>>) -> bool {
             sender.is_some_and(|sender| sender.nick == "ignored")
         }
     }
@@ -480,17 +476,17 @@ mod tests {
         // shared state — the same route the filter plugin takes at construction.
         let ctx = zeta_test_support::test_context();
         ctx.shared
-            .publish(Arc::new(UrlFilters::new(Arc::new(TestFilter))));
+            .publish(Arc::new(FilterHandle::new(Arc::new(TestFilter))));
 
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut filtered = subscribe(&mut index, "filtered", |subscriptions| {
-            subscriptions.urls(UrlScope::Hosts(&["filtered.example"]));
+            subscriptions.subscribe_urls(UrlScope::Hosts(&["filtered.example"]));
         });
         let mut titles = subscribe(&mut index, "titles", |s| {
-            s.urls(UrlScope::Any);
+            s.subscribe_urls(UrlScope::Any);
         });
 
-        let filters = Filters::from_context(&ctx);
+        let filters = FilterGate::from_context(&ctx);
         let _ = index.dispatch(
             &filters,
             privmsg("https://filtered.example/x https://open.example/y"),
@@ -504,20 +500,20 @@ mod tests {
     async fn ignored_senders_trigger_nothing() {
         let ctx = zeta_test_support::test_context();
         ctx.shared
-            .publish(Arc::new(UrlFilters::new(Arc::new(TestFilter))));
+            .publish(Arc::new(FilterHandle::new(Arc::new(TestFilter))));
 
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
-            subscriptions.command(CommandSpec::new(".dig", "dig"));
+            subscriptions.subscribe_command(CommandSpec::new(".dig", "dig"));
         });
         let mut messages = subscribe(&mut index, "messages", |s| {
-            s.receive_message();
+            s.subscribe_message();
         });
         let mut titles = subscribe(&mut index, "titles", |s| {
-            s.urls(UrlScope::Any);
+            s.subscribe_urls(UrlScope::Any);
         });
 
-        let filters = Filters::from_context(&ctx);
+        let filters = FilterGate::from_context(&ctx);
 
         // The ignored sender's commands do not trigger, their messages are not delivered and
         // their URLs are not dispatched.
@@ -543,18 +539,18 @@ mod tests {
 
     #[test]
     fn ctcp_messages_bypass_everything_else() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut ctcp = subscribe(&mut index, "ctcp", |s| {
-            s.receive_ctcp();
+            s.subscribe_ctcp();
         });
         let mut messages = subscribe(&mut index, "messages", |s| {
-            s.receive_message();
+            s.subscribe_message();
         });
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
-            subscriptions.command(CommandSpec::new(".dig", "dig"));
+            subscriptions.subscribe_command(CommandSpec::new(".dig", "dig"));
         });
 
-        let _ = index.dispatch(&Filters::default(), privmsg("\x01ACTION slaps .dig\x01"));
+        let _ = index.dispatch(&FilterGate::default(), privmsg("\x01ACTION slaps .dig\x01"));
 
         assert!(matches!(
             drain(&mut ctcp)[..],
@@ -566,16 +562,16 @@ mod tests {
 
     #[test]
     fn ctcp_replies_arrive_through_notices() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut ctcp = subscribe(&mut index, "ctcp", |s| {
-            s.receive_ctcp();
+            s.subscribe_ctcp();
         });
         let mut watcher = subscribe(&mut index, "watcher", |s| {
-            s.receive_message();
+            s.subscribe_message();
         });
 
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterGate::default(),
             message(
                 "service.example",
                 "NOTICE",
@@ -592,13 +588,13 @@ mod tests {
 
     #[test]
     fn plain_notices_are_not_delivered() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut ctcp = subscribe(&mut index, "ctcp", |s| {
-            s.receive_ctcp();
+            s.subscribe_ctcp();
         });
 
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterGate::default(),
             message("server.example", "NOTICE", &["zeta", "server maintenance"]),
         );
 
@@ -607,20 +603,20 @@ mod tests {
 
     #[test]
     fn messages_reach_subscribers_regardless_of_matches() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut watcher = subscribe(&mut index, "watcher", |s| {
-            s.receive_message();
+            s.subscribe_message();
         });
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
-            subscriptions.command(CommandSpec::new(".dig", "dig"));
+            subscriptions.subscribe_command(CommandSpec::new(".dig", "dig"));
         });
 
-        let _ = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
+        let _ = index.dispatch(&FilterGate::default(), privmsg(".dig example.com"));
 
         assert!(matches!(drain(&mut dig)[..], [Event::Command(..)]));
         assert!(matches!(drain(&mut watcher)[..], [Event::Message(..)]));
 
-        let _ = index.dispatch(&Filters::default(), privmsg("no events at all?"));
+        let _ = index.dispatch(&FilterGate::default(), privmsg("no events at all?"));
 
         assert_empty!(drain(&mut dig));
         assert_eq!(drain(&mut watcher).len(), 1);
@@ -628,19 +624,25 @@ mod tests {
 
     #[test]
     fn presence_events_route_by_kind() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut joins = subscribe(&mut index, "joins", |s| {
-            s.receive_join();
+            s.subscribe_join();
         });
         let mut quits = subscribe(&mut index, "quits", |s| {
-            s.receive_quit();
+            s.subscribe_quit();
         });
         let mut parts = subscribe(&mut index, "parts", |s| {
-            s.receive_part();
+            s.subscribe_part();
         });
 
-        let _ = index.dispatch(&Filters::default(), message("nick!u@h", "JOIN", &["#test"]));
-        let _ = index.dispatch(&Filters::default(), message("nick!u@h", "QUIT", &["gone"]));
+        let _ = index.dispatch(
+            &FilterGate::default(),
+            message("nick!u@h", "JOIN", &["#test"]),
+        );
+        let _ = index.dispatch(
+            &FilterGate::default(),
+            message("nick!u@h", "QUIT", &["gone"]),
+        );
 
         assert!(matches!(
             drain(&mut joins)[..],
@@ -655,13 +657,13 @@ mod tests {
 
     #[test]
     fn unmodeled_commands_reach_raw_subscribers() {
-        let mut index = EventIndex::default();
+        let mut index = EventDispatcher::default();
         let mut raw = subscribe(&mut index, "raw", |s| {
-            s.receive_raw();
+            s.subscribe_raw();
         });
 
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterGate::default(),
             message("server.example", "SOMECMD", &["#test", "data"]),
         );
 
@@ -672,23 +674,25 @@ mod tests {
     }
 
     #[test]
-    fn stopped_plugins_are_evicted() {
-        let mut index = EventIndex::default();
+    fn stopped_plugins_are_removed() {
+        let mut index = EventDispatcher::default();
         let dig = subscribe(&mut index, "dig", |subscriptions| {
             subscriptions
-                .command(CommandSpec::new(".dig", "dig"))
-                .receive_join();
+                .subscribe_command(CommandSpec::new(".dig", "dig"))
+                .subscribe_join();
         });
 
         drop(dig);
 
-        let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
-        assert_eq!(stopped, ["dig"]);
+        let stopped = index.dispatch(&FilterGate::default(), privmsg(".dig example.com"));
 
-        index.evict("dig");
+        assert_eq!(stopped.len(), 1);
+        assert_eq!(stopped[0].as_str(), "dig");
 
-        // The evicted plugin receives nothing further.
-        let stopped = index.dispatch(&Filters::default(), message("n!u@h", "JOIN", &["#test"]));
+        index.remove_plugin(&PluginName::from("dig"));
+
+        // The removed plugin receives nothing further.
+        let stopped = index.dispatch(&FilterGate::default(), message("n!u@h", "JOIN", &["#test"]));
 
         assert_empty!(stopped);
     }

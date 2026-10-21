@@ -12,7 +12,7 @@ use tracing::trace;
 use url::Url;
 
 use super::{
-    model::{CompiledCriteria, Filter},
+    model::{CompiledCriteria, FilterRule},
     pattern::{Case, Pattern, has_wildcards, non_blank},
 };
 use zeta_plugin::Sender;
@@ -37,22 +37,13 @@ impl HostMatcher {
             Self::Exact(host.to_lowercase())
         })
     }
-
-    /// Whether the host pattern matches `host` (already lowercased). Hostless URLs match
-    /// wildcard patterns as if their host were empty, so `*` matches every URL.
-    fn matches(&self, host: Option<&str>) -> bool {
-        match self {
-            Self::Exact(expected) => host == Some(expected.as_str()),
-            Self::Wild(pattern) => pattern.matches(host.unwrap_or("")),
-        }
-    }
 }
 
 /// A filter with its wildcard patterns precompiled for matching.
 #[derive(Debug)]
 struct Entry {
     /// The raw filter.
-    filter: Filter,
+    filter: FilterRule,
     /// The compiled host pattern, if any.
     host: Option<HostMatcher>,
     /// The compiled URL path pattern, if any.
@@ -67,7 +58,7 @@ struct Entry {
 
 impl Entry {
     /// Compiles `filter` into an entry.
-    fn new(filter: Filter) -> Self {
+    fn new(filter: FilterRule) -> Self {
         Self {
             host: HostMatcher::parse(filter.host.as_deref()),
             path: Pattern::parse(filter.path.as_deref(), Case::Sensitive),
@@ -78,11 +69,18 @@ impl Entry {
         }
     }
 
-    /// Whether the entry's host pattern matches `host`, or is unset.
-    fn host_matches(&self, host: Option<&str>) -> bool {
-        self.host
-            .as_ref()
-            .is_none_or(|pattern| pattern.matches(host))
+    /// Whether the entry's wildcard host pattern matches `host` (already lowercased).
+    ///
+    /// Only wildcard entries need this check: exact entries are routed to their host's bucket,
+    /// and host-agnostic ones have no host pattern, so neither can match a different host.
+    /// Hostless URLs match wildcard patterns as if their host were empty, so `*` matches every
+    /// URL.
+    fn wildcard_matches(&self, host: Option<&str>) -> bool {
+        let Some(HostMatcher::Wild(pattern)) = &self.host else {
+            return false;
+        };
+
+        pattern.matches(host.unwrap_or(""))
     }
 
     /// Whether a compiled pattern matches `value`, or is unset.
@@ -175,7 +173,7 @@ impl ChannelBucket {
     }
 
     /// All filters in the bucket, in insertion order.
-    fn filters(&self) -> impl Iterator<Item = &Filter> {
+    fn filters(&self) -> impl Iterator<Item = &FilterRule> {
         self.exact
             .values()
             .flatten()
@@ -185,7 +183,7 @@ impl ChannelBucket {
     }
 
     /// The filter with `id`, if the bucket holds it.
-    fn get(&self, id: i32) -> Option<&Filter> {
+    fn get(&self, id: i32) -> Option<&FilterRule> {
         self.filters().find(|filter| filter.id == id)
     }
 
@@ -204,7 +202,7 @@ impl ChannelBucket {
             || self
                 .wildcard
                 .iter()
-                .any(|entry| entry.host_matches(host) && entry.matches(sender, url))
+                .any(|entry| entry.wildcard_matches(host) && entry.matches(sender, url))
     }
 
     /// Whether any sender-only filter in the bucket ignores `sender` entirely. Only the
@@ -227,7 +225,7 @@ pub(super) struct FilterIndex {
 
 impl FilterIndex {
     /// Inserts `filter` into the index.
-    pub(super) fn insert(&mut self, filter: Filter) {
+    pub(super) fn insert(&mut self, filter: FilterRule) {
         let channel = filter.channel.as_deref().map(str::to_lowercase);
 
         self.channels
@@ -262,12 +260,12 @@ impl FilterIndex {
     }
 
     /// All filters in the index, ordered by id.
-    pub(super) fn filters(&self) -> Vec<Filter> {
+    pub(super) fn filters(&self) -> Vec<FilterRule> {
         self.matching(|_| true)
     }
 
     /// The filter with `id`, if any.
-    pub(super) fn get(&self, id: i32) -> Option<Filter> {
+    pub(super) fn get(&self, id: i32) -> Option<FilterRule> {
         self.channels
             .values()
             .find_map(|bucket| bucket.get(id))
@@ -275,13 +273,13 @@ impl FilterIndex {
     }
 
     /// The filters matching `criteria`, ordered by id.
-    pub(super) fn select(&self, criteria: &CompiledCriteria) -> Vec<Filter> {
+    pub(super) fn select(&self, criteria: &CompiledCriteria) -> Vec<FilterRule> {
         self.matching(|filter| criteria.matches(filter))
     }
 
     /// The filters matching `predicate`, ordered by id.
-    fn matching(&self, predicate: impl Fn(&Filter) -> bool) -> Vec<Filter> {
-        let mut filters: Vec<Filter> = self
+    fn matching(&self, predicate: impl Fn(&FilterRule) -> bool) -> Vec<FilterRule> {
+        let mut filters: Vec<FilterRule> = self
             .channels
             .values()
             .flat_map(ChannelBucket::filters)
@@ -338,8 +336,8 @@ impl FilterIndex {
     }
 }
 
-impl FromIterator<Filter> for FilterIndex {
-    fn from_iter<T: IntoIterator<Item = Filter>>(filters: T) -> Self {
+impl FromIterator<FilterRule> for FilterIndex {
+    fn from_iter<T: IntoIterator<Item = FilterRule>>(filters: T) -> Self {
         let mut index = Self::default();
 
         for filter in filters {
@@ -352,11 +350,11 @@ impl FromIterator<Filter> for FilterIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::super::model::{Criteria, NewFilter};
+    use super::super::model::{Criteria, NewFilterRule};
     use super::*;
 
-    fn filter(id: i32, new: NewFilter) -> Filter {
-        Filter {
+    fn filter(id: i32, new: NewFilterRule) -> FilterRule {
+        FilterRule {
             id,
             channel: new.channel,
             host: new.host,
@@ -367,8 +365,8 @@ mod tests {
         }
     }
 
-    fn new_filter(channel: Option<&str>, host: Option<&str>) -> NewFilter {
-        NewFilter {
+    fn new_filter(channel: Option<&str>, host: Option<&str>) -> NewFilterRule {
+        NewFilterRule {
             channel: channel.map(String::from),
             host: host.map(String::from),
             path: None,
@@ -388,7 +386,7 @@ mod tests {
     }
 
     /// Returns an index pre-populated with the given filters, numbered from 1.
-    fn index_with(criteria: &[NewFilter]) -> FilterIndex {
+    fn index_with(criteria: &[NewFilterRule]) -> FilterIndex {
         criteria
             .iter()
             .enumerate()
@@ -428,6 +426,20 @@ mod tests {
     }
 
     #[test]
+    fn only_wildcard_entries_check_the_host() {
+        // Exact entries are routed by their host's bucket and host-agnostic ones have no host
+        // pattern, so neither can be matched against the URL host again; only wildcards can.
+        let exact = Entry::new(filter(1, new_filter(None, Some("imdb.com"))));
+        let any = Entry::new(filter(2, new_filter(None, None)));
+        let wildcard = Entry::new(filter(3, new_filter(None, Some("*.com"))));
+
+        assert!(!exact.wildcard_matches(Some("imdb.com")));
+        assert!(!any.wildcard_matches(Some("imdb.com")));
+        assert!(wildcard.wildcard_matches(Some("reuters.com")));
+        assert!(!wildcard.wildcard_matches(Some("reuters.dk")));
+    }
+
+    #[test]
     fn host_patterns_are_case_insensitive() {
         let upper = index_with(&[new_filter(None, Some("IMDB.COM"))]);
 
@@ -456,7 +468,7 @@ mod tests {
 
     #[test]
     fn sender_criteria_require_a_sender() {
-        let index = index_with(&[NewFilter {
+        let index = index_with(&[NewFilterRule {
             username: Some("*other".into()),
             ..new_filter(None, Some("imdb.com"))
         }]);
@@ -475,7 +487,7 @@ mod tests {
 
     #[test]
     fn sender_only_filters_ignore_matching_senders() {
-        let index = index_with(&[NewFilter {
+        let index = index_with(&[NewFilterRule {
             nickname: Some("*bot".into()),
             ..new_filter(None, None)
         }]);
@@ -487,7 +499,7 @@ mod tests {
         ));
         assert!(!index.ignores("#chan", None));
 
-        let user = index_with(&[NewFilter {
+        let user = index_with(&[NewFilterRule {
             username: Some("*other".into()),
             ..new_filter(None, None)
         }]);
@@ -497,7 +509,7 @@ mod tests {
             Some(Sender::new("someone", "~cliother", "host.example"))
         ));
 
-        let hostname = index_with(&[NewFilter {
+        let hostname = index_with(&[NewFilterRule {
             hostname: Some("*.isp.example".into()),
             ..new_filter(None, None)
         }]);
@@ -507,11 +519,11 @@ mod tests {
 
     #[test]
     fn filters_with_url_criteria_do_not_ignore_senders() {
-        let host = index_with(&[NewFilter {
+        let host = index_with(&[NewFilterRule {
             nickname: Some("*bot".into()),
             ..new_filter(None, Some("imdb.com"))
         }]);
-        let path = index_with(&[NewFilter {
+        let path = index_with(&[NewFilterRule {
             nickname: Some("*bot".into()),
             path: Some("/title/*".into()),
             ..new_filter(None, None)
@@ -523,7 +535,7 @@ mod tests {
 
     #[test]
     fn sender_ignore_filters_are_scoped_to_channels() {
-        let index = index_with(&[NewFilter {
+        let index = index_with(&[NewFilterRule {
             nickname: Some("mk".into()),
             ..new_filter(Some("#foo"), None)
         }]);
@@ -541,7 +553,7 @@ mod tests {
 
     #[test]
     fn combines_criteria_with_and() {
-        let index = index_with(&[NewFilter {
+        let index = index_with(&[NewFilterRule {
             nickname: Some("mk".into()),
             ..new_filter(None, Some("dr.dk"))
         }]);
@@ -565,7 +577,7 @@ mod tests {
 
     #[test]
     fn paths_are_matched_with_wildcards_and_case_sensitively() {
-        let wildcards = index_with(&[NewFilter {
+        let wildcards = index_with(&[NewFilterRule {
             path: Some("/title/*".into()),
             ..new_filter(None, Some("imdb.com"))
         }]);
@@ -586,7 +598,7 @@ mod tests {
             "https://imdb.com/name/nm0186505"
         ));
 
-        let upper = index_with(&[NewFilter {
+        let upper = index_with(&[NewFilterRule {
             path: Some("/Title/*".into()),
             ..new_filter(None, None)
         }]);

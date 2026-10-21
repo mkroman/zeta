@@ -320,7 +320,7 @@ channels = []
             .extract::<Config>()
             .expect("the repository config.toml should parse");
 
-        assert_empty!(config.plugins.unknown);
+        assert_empty!(config.plugins.unknown_sections);
     }
 
     #[test]
@@ -330,7 +330,7 @@ channels = []
             .extract::<Config>()
             .expect("configuration without a [plugins] section should parse");
 
-        assert_empty!(config.plugins.unknown);
+        assert_empty!(config.plugins.unknown_sections);
     }
 
     #[test]
@@ -346,7 +346,7 @@ channels = []
 
         // The sections were removed from the config and returned to the caller; the plugin
         // values themselves are asserted in the plugins crate's configuration tests.
-        assert_eq!(plugins.unknown.len(), 0);
+        assert_eq!(plugins.unknown_sections.len(), 0);
     }
 
     #[test]
@@ -362,7 +362,7 @@ channels = []
         // The toggle is host-managed; how it resolves each plugin's `enabled` is asserted in
         // the plugins crate's configuration tests.
         assert!(!plugins.enabled_by_default);
-        assert_empty!(plugins.unknown);
+        assert_empty!(plugins.unknown_sections);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use url::Url;
 use super::{
     client::UnwallClient,
     error::Error,
-    model::{CachedUrl, HostStatistics, NewFetch, Site, Statistics},
+    model::{CachedUrl, HostStatistics, NewFetchRecord, Site, Statistics},
     repository::UnwallRepository,
     sites,
 };
@@ -63,7 +63,7 @@ impl UnwallService {
     /// Returns [`Error::Database`] if the sites could not be fetched.
     #[instrument(skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
-        let covered = Covered::new(self.repo.sites().await?);
+        let covered = Covered::new(self.repo.list_sites().await?);
 
         debug!(count = covered.sites.len(), "loaded unwall sites");
 
@@ -110,10 +110,10 @@ impl UnwallService {
     /// Panics if the database reports a submission cached that a re-read cannot find — a
     /// write that vanished, which would mean the database broke its read-your-writes
     /// guarantee.
-    pub async fn resolve(&self, article: &Url, fetch: NewFetch) -> Result<CachedUrl, Error> {
+    pub async fn resolve(&self, article: &Url, fetch: NewFetchRecord) -> Result<CachedUrl, Error> {
         let key = fetch.url.clone();
 
-        if let Some(cached) = self.repo.cached_url(&key).await? {
+        if let Some(cached) = self.repo.find_cached_url(&key).await? {
             return Ok(cached);
         }
 
@@ -141,7 +141,7 @@ impl UnwallService {
 
                 Ok(Some(
                     self.repo
-                        .cached_url(&fetch.url)
+                        .find_cached_url(&fetch.url)
                         .await?
                         .ok_or(Error::InvalidUrl)?,
                 ))
@@ -189,7 +189,7 @@ impl UnwallService {
 
         affected.sort();
 
-        self.repo.delete_sites(&affected).await?;
+        self.repo.delete_sites_by_host(&affected).await?;
         self.load().await?;
 
         Ok(affected)
@@ -309,8 +309,8 @@ mod tests {
     }
 
     /// The attribution of a fetch posted by `mk`.
-    fn fetch(url: &Url) -> NewFetch {
-        NewFetch {
+    fn fetch(url: &Url) -> NewFetchRecord {
+        NewFetchRecord {
             url: url.as_str().to_owned(),
             host: url.host_str().unwrap_or_default().to_owned(),
             nickname: "mk".into(),

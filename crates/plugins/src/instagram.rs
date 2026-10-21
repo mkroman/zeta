@@ -161,8 +161,8 @@ impl Plugin<Context> for Instagram {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_urls(UrlScope::Hosts(urls::URL_HOSTS));
 
         let client = http::emulated::builder(None)?
             .redirect(Policy::limited(4))
@@ -202,7 +202,7 @@ impl Plugin<Context> for Instagram {
         })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, _client: &IrcClient) -> Result<(), PluginError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
         }
@@ -213,9 +213,9 @@ impl Plugin<Context> for Instagram {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         if let Err(err) = self.process_url(url.url(), url.channel(), client).await {
             error!("could not process url: {err}");
         }
@@ -225,7 +225,7 @@ impl Plugin<Context> for Instagram {
 }
 
 impl Instagram {
-    async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
+    async fn process_url(&self, url: &Url, channel: &str, client: &IrcClient) -> Result<(), Error> {
         match parse_instagram_url(url) {
             Some(InstagramLink::Media { kind, id }) => {
                 debug!(%id, "processing media");
@@ -264,7 +264,7 @@ impl Instagram {
         kind: &MediaKind,
         id: &str,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         let url = media_url(*kind, id);
 
@@ -289,7 +289,7 @@ impl Instagram {
         username: &str,
         id: &str,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         let url = story_url(username, id);
 
@@ -319,7 +319,7 @@ impl Instagram {
         label: &str,
         refresh: F,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error>
     where
         F: FnOnce() -> Fut + Send,
@@ -339,7 +339,7 @@ impl Instagram {
             .as_ref()
             .and_then(|details| format_summary(details, label, self.settings.title_length))
         {
-            let _ = client.send_privmsg(channel, notice(&summary));
+            let _ = client.send_privmsg(channel, plain_reply(&summary));
         }
 
         self.mirror_video(url, id, channel, client).await;
@@ -557,7 +557,7 @@ impl Instagram {
     ///
     /// If the media has already been mirrored, the existing link is sent immediately; otherwise
     /// the download and upload happens in a background task that replies with the link.
-    async fn mirror_video(&self, url: &str, id: &str, channel: &str, client: &Client) {
+    async fn mirror_video(&self, url: &str, id: &str, channel: &str, client: &IrcClient) {
         if let Some(mirror) = &self.mirror {
             crate::mirror_reply::ensure_mirrored_and_reply(mirror, url, id, channel, client).await;
         }

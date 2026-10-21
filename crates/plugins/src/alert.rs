@@ -24,7 +24,7 @@ pub use time::ParseTimeError;
 #[allow(unused_imports)]
 pub use {
     error::Error,
-    model::{Alert, NewAlert},
+    model::{AlertRecord, NewAlertRecord},
     service::AlertService,
 };
 
@@ -36,7 +36,7 @@ use sqlx::types::chrono::Local;
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, trace};
 
-use self::command::{ALERT, Opts, USAGE};
+use self::command::{ALERT, Options, USAGE};
 use self::reply::{format_pending, success_message};
 use self::time::{parse_time, split_args};
 use crate::prelude::*;
@@ -75,24 +75,24 @@ impl Default for Settings {
 /// Alert plugin.
 ///
 /// Lets users schedule alerts for themselves with the `.alert <message> <in|at> <datetime>`
-/// command; a scheduler task delivers due alerts to a delivery task, started in [`loaded`],
+/// command; a scheduler task delivers due alerts to a delivery task, started in [`start`],
 /// which sends them in the channel the alert was created in.
 ///
 /// The alert service is published to [`Context::shared`], so other plugins can schedule alerts
 /// through [`AlertService::create`].
 ///
-/// [`loaded`]: Plugin::loaded
-pub struct AlertPlugin {
+/// [`start`]: Plugin::start
+pub struct Alert {
     /// The alert service, also published for other plugins to use.
     service: Arc<AlertService>,
-    /// The receiver of due alerts, moved into the delivery task on load.
-    receiver: Option<mpsc::UnboundedReceiver<Alert>>,
+    /// The receiver of due alerts, moved into the delivery task on start.
+    receiver: Option<mpsc::UnboundedReceiver<AlertRecord>>,
 }
 
-impl AlertPlugin {
+impl Alert {
     /// Spawns the delivery task that sends due alerts over IRC as they are delivered by the
     /// scheduler.
-    fn start_delivery(client: &Client, mut receiver: mpsc::UnboundedReceiver<Alert>) {
+    fn start_delivery(client: &IrcClient, mut receiver: mpsc::UnboundedReceiver<AlertRecord>) {
         let sender = client.sender();
 
         tokio::spawn(
@@ -118,15 +118,15 @@ impl AlertPlugin {
 }
 
 #[async_trait]
-impl Plugin<Context> for AlertPlugin {
+impl Plugin<Context> for Alert {
     type Settings = Settings;
 
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(ALERT);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(ALERT);
 
         let mut service = AlertService::new(ctx.db.clone(), settings);
         let receiver = service.take_receiver();
@@ -137,7 +137,7 @@ impl Plugin<Context> for AlertPlugin {
         Ok(Self { service, receiver })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, client: &IrcClient) -> Result<(), PluginError> {
         self.service.load().await.map_err(plugin_err)?;
         self.service.start_scheduler();
 
@@ -151,9 +151,9 @@ impl Plugin<Context> for AlertPlugin {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
 
         let Some(sender) = command.sender() else {
@@ -163,7 +163,7 @@ impl Plugin<Context> for AlertPlugin {
         let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
 
         let Some(opts) =
-            parse_words_or_usage::<Opts>(client, command, |line| reply("Alert", line))?
+            parse_words_or_usage::<Options>(client, command, |line| reply("Alert", line))?
         else {
             return Ok(());
         };
@@ -211,7 +211,7 @@ impl Plugin<Context> for AlertPlugin {
             }
         };
 
-        let alert = NewAlert {
+        let alert = NewAlertRecord {
             nickname: nickname.to_owned(),
             username: username.to_owned(),
             hostname: hostname.to_owned(),

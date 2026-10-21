@@ -82,17 +82,17 @@ impl Plugin<Context> for Health {
         _ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(HEALTH);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(HEALTH);
         Ok(Self)
     }
 
     async fn handle_command(
         &self,
         ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         if let Some(mut snapshot) = Snapshot::capture() {
             capture_pool_stats(&mut snapshot, ctx);
 

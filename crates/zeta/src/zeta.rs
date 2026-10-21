@@ -8,12 +8,12 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::Error;
-use crate::Registry;
+use crate::PluginRegistry;
 use crate::config::Config;
 use crate::consts::SHUTDOWN_GRACE;
-use crate::plugin::dispatch::EventIndex;
+use crate::plugin::dispatch::EventDispatcher;
 use crate::plugin::{Context, PluginTask};
-use zeta_plugin::Filters;
+use zeta_plugin::{FilterGate, PluginName};
 
 /// Returns the name of the first shutdown signal received by the process.
 ///
@@ -49,7 +49,7 @@ async fn shutdown_signal() -> &'static str {
 /// The tasks share a deadline `grace` seconds from now; any task still running when the deadline
 /// passes is aborted. The tasks are awaited concurrently, so a hanging task cannot consume the
 /// grace that is owed to the other plugins.
-async fn drain_plugin_handles(handles: Vec<(String, JoinHandle<()>)>, grace: Duration) {
+async fn drain_plugin_handles(handles: Vec<(PluginName, JoinHandle<()>)>, grace: Duration) {
     let deadline = tokio::time::Instant::now() + grace;
 
     let mut handles = handles;
@@ -110,7 +110,7 @@ fn drive_outgoing(client: &mut Client) {
 async fn dispatch_messages(
     context: &Context,
     stream: &mut irc::client::ClientStream,
-    index: &mut EventIndex,
+    dispatcher: &mut EventDispatcher,
 ) -> Result<(), Error> {
     while let Some(message) = stream.next().await.transpose()? {
         // Everything logged while this message is routed runs inside a span: the
@@ -122,12 +122,12 @@ async fn dispatch_messages(
 
         debug!(payload = %message, "processing irc message");
 
-        let filters = Filters::from_context(context);
+        let filters = FilterGate::from_context(context);
 
-        for stopped in index.dispatch(&filters, message) {
+        for stopped in dispatcher.dispatch(&filters, message) {
             warn!(plugin = %stopped, "plugin task has stopped");
 
-            index.evict(&stopped);
+            dispatcher.remove_plugin(&stopped);
         }
     }
 
@@ -170,8 +170,8 @@ fn exit_on_second_signal() {
 pub struct Zeta {
     /// The complete configuration loaded from file or environment
     config: Config,
-    /// The plugin containing all loaded plugins
-    registry: Registry,
+    /// The plugin registry containing all loaded plugins
+    registry: PluginRegistry,
     /// The shared context for plugins
     context: Arc<Context>,
 }
@@ -213,7 +213,7 @@ impl Zeta {
             }
         }
 
-        let mut registry = Registry::new();
+        let mut registry = PluginRegistry::new();
         plugins::register_bundled_plugins(&mut registry, &context, &plugins);
         registry.publish_catalog(&context);
 
@@ -272,11 +272,11 @@ impl Zeta {
 
         // Each plugin gets its own long-lived task with an unbounded mailbox, so a slow or
         // failing plugin cannot block the IRC connection or the other plugins.
-        let (mut index, plugins) = self.spawn_plugin_tasks(&client);
+        let (mut dispatcher, plugins) = self.spawn_plugin_tasks(&client);
 
         // Dispatching incoming IRC messages as events to the plugins that registered interest,
         // until the stream ends or a shutdown signal arrives.
-        let dispatch = dispatch_messages(&self.context, &mut stream, &mut index);
+        let dispatch = dispatch_messages(&self.context, &mut stream, &mut dispatcher);
 
         let mut quitting = false;
         let mut dispatch_error = None;
@@ -296,16 +296,17 @@ impl Zeta {
             }
         }
 
-        // Dropping the index closes every plugin mailbox: the tasks drain their queued events
-        // and run `Plugin::shutdown`. The dispatch future only borrows the index, so ending the
-        // `select!` above does not drop it — without this the tasks sit out the grace period.
-        drop(index);
+        // Dropping the dispatcher closes every plugin mailbox: the tasks drain their queued
+        // events and run `Plugin::shutdown`. The dispatch future only borrows the dispatcher,
+        // so ending the `select!` above does not drop it — without this the tasks sit out the
+        // grace period.
+        drop(dispatcher);
 
         flush_quit(&client, quitting, &quit_message).await;
 
         let handles = plugins
             .into_iter()
-            .map(PluginTask::into_handle)
+            .map(PluginTask::into_parts)
             .collect::<Vec<_>>();
 
         drain_plugin_handles(handles, SHUTDOWN_GRACE).await;
@@ -313,16 +314,16 @@ impl Zeta {
         dispatch_error.map_or_else(|| Ok(()), Err)
     }
 
-    /// Spawns a long-lived task per registered plugin and indexes its subscriptions.
+    /// Spawns a long-lived task per registered plugin and registers its subscriptions.
     ///
-    /// Returns the dispatch index — which holds the mailboxes' sending ends, so dropping it
+    /// Returns the event dispatcher — which holds the mailboxes' sending ends, so dropping it
     /// closes every mailbox at once, making the plugins drain and run their shutdown hooks —
     /// together with the spawned tasks.
-    fn spawn_plugin_tasks(&mut self, client: &Arc<Client>) -> (EventIndex, Vec<PluginTask>) {
-        let mut index = EventIndex::default();
+    fn spawn_plugin_tasks(&mut self, client: &Arc<Client>) -> (EventDispatcher, Vec<PluginTask>) {
+        let mut dispatcher = EventDispatcher::default();
         let mut plugins = Vec::new();
 
-        for registered in self.registry.take_plugins() {
+        for registered in self.registry.drain_plugins() {
             let name = registered.name;
             let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
 
@@ -333,10 +334,10 @@ impl Zeta {
                 Arc::clone(client),
                 receiver,
             ));
-            index.add(&name, &registered.subscriptions, sender);
+            dispatcher.register_plugin(name, &registered.subscriptions, sender);
         }
 
-        (index, plugins)
+        (dispatcher, plugins)
     }
 }
 
@@ -357,7 +358,7 @@ mod tests {
         let hung = tokio::spawn(futures::future::pending::<()>());
 
         drain_plugin_handles(
-            vec![("fast".to_string(), fast), ("hung".to_string(), hung)],
+            vec![("fast".into(), fast), ("hung".into(), hung)],
             Duration::from_millis(200),
         )
         .await;

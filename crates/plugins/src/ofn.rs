@@ -38,7 +38,7 @@ use model::{UrlRecord, YouTubeRecord};
 
 /// The `.ofn` command.
 const OFN: CommandSpec =
-    CommandSpec::with_args::<Opts>(".ofn", "Show URL and YouTube repost statistics");
+    CommandSpec::with_args::<Options>(".ofn", "Show URL and YouTube repost statistics");
 
 /// The ofn plugin: records posted URLs and reports reposts.
 pub struct Ofn {
@@ -61,12 +61,12 @@ enum Recorded {
 
 impl Ofn {
     /// Scrapes URLs posted in chat and updates/checks the database.
-    async fn process_single_url(
+    async fn process_url(
         &self,
-        client: &Client,
-        origin: &ChannelMessageOrigin<'_>,
+        client: &IrcClient,
+        origin: &MessageOrigin<'_>,
         url: &Url,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         match self
             .service
             .process_urls(origin, std::slice::from_ref(url))
@@ -86,12 +86,12 @@ impl Ofn {
                     )?;
                 }
 
-                if report.num_inserted > 0 {
-                    debug!("inserted {} new urls", report.num_inserted);
+                if report.inserted > 0 {
+                    debug!("inserted {} new urls", report.inserted);
                 }
             }
             Err(error) => {
-                client.send_privmsg(origin.channel, formatted_err(&error.to_string()))?;
+                client.send_privmsg(origin.channel, format_error(&error.to_string()))?;
             }
         }
 
@@ -101,20 +101,21 @@ impl Ofn {
     /// Handles explicit plugin commands (e.g., `.ofn stats`).
     async fn run_stats_command(
         &self,
-        client: &Client,
+        client: &IrcClient,
         channel: &str,
-        opts: Opts,
-    ) -> Result<(), ZetaError> {
+        opts: Options,
+    ) -> Result<(), PluginError> {
         match opts.command {
             Subcommand::Stats(_) => {
                 let stats = self.service.statistics().await.map_err(plugin_err)?;
-                let num_urls = stats.num_urls.to_formatted_string(&Locale::en);
-                let num_urls_today = stats.num_urls_today.to_formatted_string(&Locale::en);
-                let num_yt_ids = stats.num_yt_ids.to_formatted_string(&Locale::en);
-                let num_yt_ids_today = stats.num_yt_ids_today.to_formatted_string(&Locale::en);
+                let urls = stats.urls.to_formatted_string(&Locale::en);
+                let urls_today = stats.urls_today.to_formatted_string(&Locale::en);
+                let youtube_videos = stats.youtube_videos.to_formatted_string(&Locale::en);
+                let youtube_videos_today =
+                    stats.youtube_videos_today.to_formatted_string(&Locale::en);
 
                 let output = format!(
-                    "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"
+                    "URLs:\x0f {urls}\x0310 (\x0f{urls_today}\x0310 today) YouTube Videos:\x0f {youtube_videos}\x0310 (\x0f{youtube_videos_today}\x0310 today)"
                 );
 
                 client.send_privmsg(channel, reply("OFN", &output))?;
@@ -133,8 +134,10 @@ impl Plugin<Context> for Ofn {
         ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(OFN).urls(UrlScope::Any);
+    ) -> Result<Self, PluginError> {
+        subscriptions
+            .subscribe_command(OFN)
+            .subscribe_urls(UrlScope::Any);
 
         Ok(Self {
             service: OfnService::new(ctx.db.clone()),
@@ -144,11 +147,11 @@ impl Plugin<Context> for Ofn {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
-        let opts = match command.parse_args::<Opts>() {
+        let opts = match command.parse_args::<Options>() {
             Ok(opts) => opts,
             Err(err) => {
                 reply_usage_lines(client, channel, &err, |line| reply("OFN", line))?;
@@ -163,11 +166,11 @@ impl Plugin<Context> for Ofn {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         event: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         // Command invocations are handled in `handle_command` and are not recorded as history.
-        if OFN.parse(event.text()).is_some() {
+        if OFN.arguments_from(event.text()).is_some() {
             return Ok(());
         }
 
@@ -175,7 +178,7 @@ impl Plugin<Context> for Ofn {
             return Ok(());
         };
 
-        let origin = ChannelMessageOrigin {
+        let origin = MessageOrigin {
             channel: event.channel(),
             network: "irc.rwx.im:6697", // TODO: support multiple networks dynamically
             nickname: sender.nick,
@@ -183,13 +186,13 @@ impl Plugin<Context> for Ofn {
             hostname: sender.hostname,
         };
 
-        self.process_single_url(client, &origin, event.url()).await
+        self.process_url(client, &origin, event.url()).await
     }
 }
 
 /// Holds information about the origin of a URL, i.e., where it was posted and by whom.
 #[derive(Debug)]
-pub struct ChannelMessageOrigin<'a> {
+pub struct MessageOrigin<'a> {
     /// The name of the channel.
     channel: &'a str,
     /// The identifier of the network.
@@ -204,7 +207,7 @@ pub struct ChannelMessageOrigin<'a> {
 
 /// Look up whether a URL has been posted before.
 #[derive(FromArgs, ArgsInfo, Debug, PartialEq, Eq)]
-pub struct Opts {
+pub struct Options {
     #[argh(subcommand)]
     command: Subcommand,
 }
@@ -221,37 +224,37 @@ enum Subcommand {
 pub struct Stats {}
 
 /// The result of processing a batch of URLs: prior records found and how many were inserted.
-pub struct Report {
+pub struct UrlHistoryReport {
     /// List of URL records that were found in the database.
     found: Vec<Resource>,
     /// Number of resources that were added to the database.
-    num_inserted: usize,
+    inserted: usize,
 }
 
 /// A URL history resource from the database, either a YouTube video or a generic URL record.
 pub enum Resource {
     /// A YouTube video.
-    YouTubeRecord(YouTubeRecord),
+    YouTube(YouTubeRecord),
     /// A URL record.
-    UrlRecord(UrlRecord),
+    Url(UrlRecord),
 }
 
 impl Resource {
     const fn nickname(&self) -> &str {
         match self {
-            Self::YouTubeRecord(rec) => rec.nickname.as_str(),
-            Self::UrlRecord(rec) => rec.nickname.as_str(),
+            Self::YouTube(rec) => rec.nickname.as_str(),
+            Self::Url(rec) => rec.nickname.as_str(),
         }
     }
 
     const fn created_at(&self) -> DateTime<Utc> {
         match self {
-            Self::YouTubeRecord(rec) => rec.created_at,
-            Self::UrlRecord(rec) => rec.created_at,
+            Self::YouTube(rec) => rec.created_at,
+            Self::Url(rec) => rec.created_at,
         }
     }
 }
 
-fn formatted_err(s: &str) -> String {
+fn format_error(s: &str) -> String {
     reply("OFN", format!("Error:\x0f {s}"))
 }

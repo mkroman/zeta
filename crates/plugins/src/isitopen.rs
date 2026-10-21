@@ -228,8 +228,8 @@ impl Plugin<Context> for IsItOpen {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.receive_message();
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_message();
 
         let api_key = resolve_secret(settings.api_key.as_deref(), "GOOGLE_MAPS_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
@@ -240,9 +240,9 @@ impl Plugin<Context> for IsItOpen {
     async fn handle_message(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         event: &MessageEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let current_nickname = client.current_nickname();
 
         // Check if the message is addressed to the bot
@@ -264,8 +264,8 @@ impl IsItOpen {
         channel: &str,
         nick: &str,
         query: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         let mut place_name = None;
         let mut action = QueryAction::None;
 
@@ -293,10 +293,10 @@ impl IsItOpen {
                     QueryAction::IsClosed => Self::format_is_closed(&place, nick),
                     QueryAction::None => return Ok(()),
                 },
-                Err(Error::NotFound) => notice("place not found"),
+                Err(Error::NotFound) => plain_reply("place not found"),
                 Err(e) => {
                     warn!(?e, "isitopen error");
-                    notice(e)
+                    plain_reply(e)
                 }
             };
 

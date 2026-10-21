@@ -1979,14 +1979,14 @@ impl fmt::Display for EngineConfig {
 
 /// Look up the affective verdict for a subject.
 #[derive(ArgsInfo, Debug, FromArgs)]
-pub struct Opts {
+pub struct Options {
     /// the subject to profile
     #[argh(positional)]
     nick: String,
 }
 
 /// The `.gay` command.
-const GAY: CommandSpec = CommandSpec::with_args::<Opts>(
+const GAY: CommandSpec = CommandSpec::with_args::<Options>(
     ".gay",
     "Consult the normative resonance engine about a subject",
 );
@@ -2004,7 +2004,7 @@ pub struct Gay {
 ///
 /// The channel's user list is tracked by the client itself. A channel the engine cannot see is a
 /// channel the engine does not audit.
-fn designation_present(client: &Client, channel: &str, designation: &str) -> bool {
+fn designation_present(client: &IrcClient, channel: &str, designation: &str) -> bool {
     client
         .list_users(channel)
         .is_some_and(|users| users.iter().any(|user| user.get_nickname() == designation))
@@ -2018,8 +2018,8 @@ impl Plugin<Context> for Gay {
         _ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(GAY);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(GAY);
         let profile = EngineConfig::campaign_profile().map_err(plugin_err)?;
         let engine = GayEngine::assemble(profile).map_err(plugin_err)?;
 
@@ -2029,11 +2029,11 @@ impl Plugin<Context> for Gay {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
-        let opts = match command.parse_args::<Opts>() {
+        let opts = match command.parse_args::<Options>() {
             Ok(opts) => opts,
             Err(err) => {
                 client.send_privmsg(channel, err.to_string())?;

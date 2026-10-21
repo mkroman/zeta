@@ -67,7 +67,7 @@ where
 
 /// Look up DNS records for a domain.
 #[derive(FromArgs, ArgsInfo, Debug)]
-pub struct Opts {
+pub struct Options {
     /// the domain to look up
     #[argh(positional)]
     name: String,
@@ -89,7 +89,8 @@ pub enum Error {
 }
 
 /// The `.dig` command.
-const DIG: CommandSpec = CommandSpec::with_args::<Opts>(".dig", "Look up DNS records for a domain");
+const DIG: CommandSpec =
+    CommandSpec::with_args::<Options>(".dig", "Look up DNS records for a domain");
 
 /// The dig plugin: resolves DNS records on behalf of `.dig` commands.
 pub struct Dig {
@@ -129,9 +130,9 @@ impl Plugin<Context> for Dig {
         _ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(DIG);
-        let resolver = build_resolver(&settings.nameservers).map_err(ZetaError::from)?;
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(DIG);
+        let resolver = build_resolver(&settings.nameservers).map_err(PluginError::from)?;
 
         Ok(Self { resolver })
     }
@@ -139,11 +140,11 @@ impl Plugin<Context> for Dig {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let Some(opts) =
-            parse_args_or_usage::<Opts>(client, command, |line: &str| reply("Dig", line))?
+            parse_args_or_usage::<Options>(client, command, |line: &str| reply("Dig", line))?
         else {
             return Ok(());
         };

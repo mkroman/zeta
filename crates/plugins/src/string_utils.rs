@@ -3,7 +3,7 @@
 //! `.b <string>` prints the string's UTF-8 bytes as `\x..` hex escapes, `.len <string>` counts
 //! its characters, `.ord <chars>` lists each character's Unicode codepoint, and `.rev <string>`
 //! reverses it. An empty argument replies with the command's usage. Results are sent as a
-//! notice.
+//! plain reply.
 //!
 //! The registered `.uni` command ("Show a character's Unicode properties") is not yet
 //! implemented and is silently ignored.
@@ -43,22 +43,22 @@ impl Plugin<Context> for StringUtils {
         _ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    ) -> Result<Self, PluginError> {
         subscriptions
-            .command(BYTES)
-            .command(LENGTH)
-            .command(ORD)
-            .command(REVERSE)
-            .command(UNICODE);
+            .subscribe_command(BYTES)
+            .subscribe_command(LENGTH)
+            .subscribe_command(ORD)
+            .subscribe_command(REVERSE)
+            .subscribe_command(UNICODE);
         Ok(Self::new())
     }
 
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         if command.args().is_empty() {
             return Self::usage(client, command.channel(), command.spec);
         }
@@ -77,7 +77,7 @@ impl Plugin<Context> for StringUtils {
             _ => return Ok(()),
         };
 
-        client.send_privmsg(command.channel(), notice(&reply))?;
+        client.send_privmsg(command.channel(), plain_reply(&reply))?;
 
         Ok(())
     }
@@ -85,7 +85,7 @@ impl Plugin<Context> for StringUtils {
 
 impl StringUtils {
     /// Replies with usage information for the invoked command.
-    fn usage(client: &Client, channel: &str, command: CommandSpec) -> Result<(), ZetaError> {
+    fn usage(client: &IrcClient, channel: &str, command: CommandSpec) -> Result<(), PluginError> {
         let usage = if command == BYTES {
             "Usage: .b\x0f <byte..>"
         } else if command == LENGTH {
@@ -98,7 +98,7 @@ impl StringUtils {
             return Ok(());
         };
 
-        client.send_privmsg(channel, notice(usage))?;
+        client.send_privmsg(channel, plain_reply(usage))?;
 
         Ok(())
     }
@@ -140,7 +140,7 @@ mod tests {
 
         <StringUtils as Plugin<Context>>::new(
             &zeta_test_support::test_context(),
-            &NoSettings {},
+            &NoSettings,
             &mut subscriptions,
         )
         .unwrap();

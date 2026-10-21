@@ -6,7 +6,7 @@
 use std::fmt::Write;
 
 use num_format::{Locale, ToFormattedString};
-use zeta_plugin::prelude::{BOLD, COLOR, REPLY_PREFIX, RESET};
+use zeta_plugin::prelude::{BOLD, REPLY_COLOR, REPLY_MARKER, RESET};
 
 use super::model::{Person, Title};
 use zeta_utils::utils::Truncatable;
@@ -18,7 +18,7 @@ use zeta_utils::utils::Truncatable;
 /// carries no trailing space: the builders below append space-led segments, so a trailing space
 /// here would double up.
 pub(super) fn prefix() -> String {
-    format!("{REPLY_PREFIX}{RESET}{BOLD} IMDb{BOLD}{COLOR}:{RESET}")
+    format!("{REPLY_MARKER}{RESET}{BOLD} IMDb{BOLD}{REPLY_COLOR}:{RESET}")
 }
 
 /// Formats the details of `title` as a single IRC message.

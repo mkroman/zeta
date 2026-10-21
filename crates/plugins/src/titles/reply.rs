@@ -51,7 +51,7 @@ pub(super) fn format_page(
 
         reply(&site, &content)
     } else {
-        notice(&content)
+        plain_reply(&content)
     };
 
     Some(message.truncate_within(settings.max_message_length, "…"))

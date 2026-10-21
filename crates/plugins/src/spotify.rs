@@ -61,15 +61,15 @@ pub type Error = http::ApiError;
 #[derive(Deserialize)]
 struct Track {
     name: String,
-    artists: Vec<ArtistSimple>,
-    album: AlbumSimple,
+    artists: Vec<SimpleArtist>,
+    album: SimpleAlbum,
     external_urls: ExternalUrls,
 }
 
 #[derive(Deserialize)]
 struct Album {
     name: String,
-    artists: Vec<ArtistSimple>,
+    artists: Vec<SimpleArtist>,
     external_urls: ExternalUrls,
 }
 
@@ -91,12 +91,12 @@ struct Playlist {
 }
 
 #[derive(Deserialize)]
-struct ArtistSimple {
+struct SimpleArtist {
     name: String,
 }
 
 #[derive(Deserialize)]
-struct AlbumSimple {
+struct SimpleAlbum {
     name: String,
 }
 
@@ -129,10 +129,10 @@ impl Plugin<Context> for Spotify {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    ) -> Result<Self, PluginError> {
         subscriptions
-            .urls(UrlScope::Hosts(URL_HOSTS))
-            .receive_message();
+            .subscribe_urls(UrlScope::Hosts(URL_HOSTS))
+            .subscribe_message();
 
         let client_id = resolve_secret(settings.client_id.as_deref(), "SPOTIFY_CLIENT_ID")?;
         let client_secret =
@@ -151,9 +151,9 @@ impl Plugin<Context> for Spotify {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = url.channel();
 
         // Handle Spotify URLs (open.spotify.com/type/id); do not include an external URL for
@@ -169,9 +169,9 @@ impl Plugin<Context> for Spotify {
     async fn handle_message(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         event: &MessageEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = event.channel();
 
         // Handle bare Spotify URIs (spotify:type:id) posted as text.
@@ -210,8 +210,8 @@ impl Spotify {
         type_str: &str,
         id_str: &str,
         include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         match type_str {
             "track" => {
                 self.send_track_details(channel, id_str, include_url, client)
@@ -253,8 +253,8 @@ impl Spotify {
         channel: &str,
         id: &str,
         include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         match self.fetch::<Track>(&format!("tracks/{id}")).await {
             Ok(track) => {
                 let name = track.name;
@@ -280,8 +280,8 @@ impl Spotify {
         channel: &str,
         id: &str,
         include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         match self.fetch::<Album>(&format!("albums/{id}")).await {
             Ok(album) => {
                 let name = album.name;
@@ -305,8 +305,8 @@ impl Spotify {
         channel: &str,
         id: &str,
         include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         match self.fetch::<Artist>(&format!("artists/{id}")).await {
             Ok(artist) => {
                 let name = artist.name;
@@ -338,8 +338,8 @@ impl Spotify {
         channel: &str,
         id: &str,
         include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
+        client: &IrcClient,
+    ) -> Result<(), PluginError> {
         match self.fetch::<Playlist>(&format!("playlists/{id}")).await {
             Ok(playlist) => {
                 let name = playlist.name;
@@ -368,7 +368,7 @@ impl Spotify {
     }
 }
 
-fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), ZetaError> {
+fn handle_error(channel: &str, client: &IrcClient, error: &Error) -> Result<(), PluginError> {
     warn!("Spotify error: {}", error);
     // Mimic Ruby behavior: simplistic error messages for common HTTP codes could be added here
     // For now, we generally don't spam the channel with errors unless it's critical,
@@ -382,7 +382,7 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
     Ok(())
 }
 
-fn join_artists(artists: &[ArtistSimple]) -> String {
+fn join_artists(artists: &[SimpleArtist]) -> String {
     let names: Vec<String> = artists
         .iter()
         .map(|a| format!("\x0f{}\x0310", a.name))
@@ -462,7 +462,7 @@ mod tests {
         let artists = |names: &[&str]| {
             names
                 .iter()
-                .map(|name| ArtistSimple {
+                .map(|name| SimpleArtist {
                     name: (*name).to_string(),
                 })
                 .collect::<Vec<_>>()

@@ -19,7 +19,7 @@ impl Style {
     /// Returns the control code that enters this style.
     const fn code(self) -> &'static str {
         match self {
-            Self::Text => COLOR,
+            Self::Text => REPLY_COLOR,
             Self::Value => RESET,
         }
     }

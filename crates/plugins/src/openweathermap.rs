@@ -192,8 +192,8 @@ impl Plugin<Context> for OpenWeatherMap {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(WEATHER);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(WEATHER);
         let app_id = resolve_secret(settings.app_id.as_deref(), "OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -209,15 +209,15 @@ impl Plugin<Context> for OpenWeatherMap {
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let args = command.args();
 
         let location = if args.trim().is_empty() {
             let Some(location) = self.default_location.as_deref() else {
-                client.send_privmsg(channel, notice("Usage: .w\x0f <location>"))?;
+                client.send_privmsg(channel, plain_reply("Usage: .w\x0f <location>"))?;
 
                 return Ok(());
             };
@@ -229,10 +229,10 @@ impl Plugin<Context> for OpenWeatherMap {
 
         let message = match self.fetch_weather(location).await {
             Ok(weather) => format_weather(&weather, self.units),
-            Err(Error::LocationNotFound) => notice("Location not found"),
+            Err(Error::LocationNotFound) => plain_reply("Location not found"),
             Err(e) => {
                 warn!(error = ?e, "openweathermap error");
-                notice(e)
+                plain_reply(e)
             }
         };
 
@@ -335,7 +335,7 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
         extra_info.push(format!("Cloud coverage: \x0f{}%\x0310", clouds.all));
     }
 
-    notice(format!(
+    plain_reply(format!(
         "Right now in \x0f{}\x0310 it's \x0f{:.1} {temp_unit}\x0310 (feels like \x0f{:.1} {temp_unit}\x0310) with \x0f{}\x0310. {}",
         location,
         w.main.temp,

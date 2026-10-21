@@ -3,7 +3,7 @@
 //! The `.ddo <word>` command queries the dictionary's web service through the `dendanskeordbog`
 //! crate and replies with the phonetics and part of speech of the first matching entry, its
 //! inflection (Bøjning), origin (Oprindelse), first definition, and an example sentence
-//! (Eksempel). No results and lookup errors are sent as a notice.
+//! (Eksempel). No results and lookup errors are sent as a plain reply.
 //!
 //! The inflection, etymology, and example are optional; each is shown by default and can be
 //! turned off in `[plugins.dendanskeordbog]`.
@@ -89,7 +89,7 @@ impl Display for MessageFormatter<'_> {
                 }
             }
         } else {
-            write!(fmt, "{}", notice("No results"))?;
+            write!(fmt, "{}", plain_reply("No results"))?;
         }
 
         Ok(())
@@ -104,22 +104,22 @@ impl Plugin<Context> for DenDanskeOrdbog {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(DDO);
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_command(DDO);
         Ok(Self::new(&ctx.config.http, settings.clone()))
     }
 
     async fn handle_command(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         let channel = command.channel();
         let args = command.args();
 
         let message = if args.is_empty() {
-            notice("Usage: .ddo\x0f <query>")
+            plain_reply("Usage: .ddo\x0f <query>")
         } else {
             match self.client.query(args).await {
                 Ok(document) => MessageFormatter {
@@ -127,7 +127,7 @@ impl Plugin<Context> for DenDanskeOrdbog {
                     settings: &self.settings,
                 }
                 .to_string(),
-                Err(err) => notice(err),
+                Err(err) => plain_reply(err),
             }
         };
 

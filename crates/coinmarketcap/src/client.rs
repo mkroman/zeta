@@ -27,18 +27,18 @@ const COIN_MAP_LIMIT: u32 = 1000;
 /// size, so all supported currencies are fetched in a single request.
 const FIAT_MAP_LIMIT: u32 = 5000;
 
-/// Configuration for the CoinMarketCap client.
+/// Options for the CoinMarketCap client.
 #[derive(Clone, Debug)]
-pub struct Config {
+pub struct ClientOptions {
     /// The duration before a request times out.
     pub timeout: Duration,
     /// The `User-Agent` header sent with requests.
     pub user_agent: String,
 }
 
-impl Default for Config {
-    /// The default configuration: a 30-second timeout, and the crate's name and version as the
-    /// user agent.
+impl Default for ClientOptions {
+    /// The default options: a 30-second timeout, and the crate's name and version as the user
+    /// agent.
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(30),
@@ -57,26 +57,29 @@ pub struct Client {
 }
 
 impl Client {
-    /// Builds a client for the CoinMarketCap API with the default configuration. Use
-    /// [`Client::with_config`] to customize the timeout and user agent.
+    /// Builds a client for the CoinMarketCap API with the default options. Use
+    /// [`Client::with_options`] to customize the timeout and user agent.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidApiKey`] if the API key is not a valid HTTP header value, and
     /// [`Error::Build`] if the client could not be built.
     pub fn new(api_key: impl Into<String>) -> Result<Self, Error> {
-        Self::with_config(api_key, &Config::default())
+        Self::with_options(api_key, &ClientOptions::default())
     }
 
     /// Builds a client for the CoinMarketCap API, with the API key and the expected response
-    /// type set as default headers, and the timeout and user agent taken from `config`.
+    /// type set as default headers, and the timeout and user agent taken from `options`.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidApiKey`] if the API key is not a valid HTTP header value, and
     /// [`Error::Build`] if the client could not be built.
-    pub fn with_config(api_key: impl Into<String>, config: &Config) -> Result<Self, Error> {
-        Self::with_base(api_key, config, API_BASE_URL)
+    pub fn with_options(
+        api_key: impl Into<String>,
+        options: &ClientOptions,
+    ) -> Result<Self, Error> {
+        Self::with_base(api_key, options, API_BASE_URL)
     }
 
     /// Builds a client against `base` instead of the public API endpoint — for tests, and for
@@ -88,7 +91,7 @@ impl Client {
     /// [`Error::Build`] if the client could not be built.
     pub fn with_base(
         api_key: impl Into<String>,
-        config: &Config,
+        options: &ClientOptions,
         base: &str,
     ) -> Result<Self, Error> {
         let headers = HeaderMap::from_iter([
@@ -101,8 +104,8 @@ impl Client {
 
         let inner = reqwest::ClientBuilder::new()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(config.timeout)
-            .user_agent(&config.user_agent)
+            .timeout(options.timeout)
+            .user_agent(&options.user_agent)
             .default_headers(headers)
             .build()
             .map_err(RequestError::from)

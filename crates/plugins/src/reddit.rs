@@ -74,8 +74,8 @@ impl Plugin<Context> for Reddit {
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(&[
+    ) -> Result<Self, PluginError> {
+        subscriptions.subscribe_urls(UrlScope::Hosts(&[
             "i.redd.it",
             "oauth.reddit.com",
             "old.reddit.com",
@@ -108,7 +108,7 @@ impl Plugin<Context> for Reddit {
         Ok(Self { client, mirror })
     }
 
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+    async fn start(&mut self, _ctx: &Context, _client: &IrcClient) -> Result<(), PluginError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
         }
@@ -119,9 +119,9 @@ impl Plugin<Context> for Reddit {
     async fn handle_url(
         &self,
         _ctx: &Context,
-        client: &Client,
+        client: &IrcClient,
         url: &UrlEvent,
-    ) -> Result<(), ZetaError> {
+    ) -> Result<(), PluginError> {
         if let Some(link) = reddit::classify_reddit_url(url.url()) {
             let _ = self
                 .process_url(link, url.channel(), client)
@@ -140,7 +140,12 @@ impl Reddit {
     ///
     /// Returns an [`Error`] if a Reddit API request fails or a reply cannot be sent;
     /// unrecognized links are skipped.
-    async fn process_url(&self, link: Link, channel: &str, client: &Client) -> Result<(), Error> {
+    async fn process_url(
+        &self,
+        link: Link,
+        channel: &str,
+        client: &IrcClient,
+    ) -> Result<(), Error> {
         match link {
             Link::Gallery(id) | Link::Comments { id } | Link::Submission { id, .. } => {
                 self.process_submission(&id, channel, client).await?;
@@ -157,7 +162,7 @@ impl Reddit {
                 Err(err) => {
                     client.send_privmsg(
                         channel,
-                        notice(format!("could not resolve video link: {err}")),
+                        plain_reply(format!("could not resolve video link: {err}")),
                     )?;
                 }
             },
@@ -171,7 +176,7 @@ impl Reddit {
                     Err(err) => {
                         client.send_privmsg(
                             channel,
-                            notice(format!("could not resolve shortened link: {err}")),
+                            plain_reply(format!("could not resolve shortened link: {err}")),
                         )?;
                     }
                 }
@@ -188,7 +193,7 @@ impl Reddit {
                     Err(err) => {
                         client.send_privmsg(
                             channel,
-                            notice(format!("could not fetch subreddit details: {err}")),
+                            plain_reply(format!("could not fetch subreddit details: {err}")),
                         )?;
                     }
                 }
@@ -204,7 +209,7 @@ impl Reddit {
         &self,
         id: &str,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         match self.client.submission(id).await {
             Ok(submission) => {
@@ -214,7 +219,7 @@ impl Reddit {
             Err(err) => {
                 client.send_privmsg(
                     channel,
-                    notice(format!("could not fetch submission details: {err}")),
+                    plain_reply(format!("could not fetch submission details: {err}")),
                 )?;
             }
         }
@@ -228,13 +233,13 @@ impl Reddit {
         submission: Submission,
         fallback_id: &str,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
     ) -> Result<(), Error> {
         let id = submission.id.as_deref().unwrap_or(fallback_id).to_string();
 
         client.send_privmsg(
             channel,
-            notice(format!("{} : {}", submission.title, submission.subreddit)),
+            plain_reply(format!("{} : {}", submission.title, submission.subreddit)),
         )?;
 
         self.mirror_video(&submission, &id, channel, client).await;
@@ -252,7 +257,7 @@ impl Reddit {
         submission: &Submission,
         id: &str,
         channel: &str,
-        client: &Client,
+        client: &IrcClient,
     ) {
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
