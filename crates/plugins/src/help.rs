@@ -505,35 +505,33 @@ mod tests {
     struct Stats {}
 
     fn catalog() -> PluginCatalog {
-        PluginCatalog {
-            entries: vec![
-                CatalogEntry {
-                    name: "alert".into(),
-                    commands: ALERT_COMMANDS.to_vec(),
-                    url_hosts: Vec::new(),
-                },
-                CatalogEntry {
-                    name: "dig".into(),
-                    commands: DIG_COMMANDS.to_vec(),
-                    url_hosts: Vec::new(),
-                },
-                CatalogEntry {
-                    name: "imdb".into(),
-                    commands: IMDB_COMMANDS.to_vec(),
-                    url_hosts: Vec::new(),
-                },
-                CatalogEntry {
-                    name: "openweathermap".into(),
-                    commands: WEATHER_COMMANDS.to_vec(),
-                    url_hosts: Vec::new(),
-                },
-                CatalogEntry {
-                    name: "hooks".into(),
-                    commands: Vec::new(),
-                    url_hosts: Vec::new(),
-                },
-            ],
-        }
+        PluginCatalog::new(vec![
+            CatalogEntry {
+                name: "alert".into(),
+                commands: ALERT_COMMANDS.to_vec(),
+                url_hosts: Vec::new(),
+            },
+            CatalogEntry {
+                name: "dig".into(),
+                commands: DIG_COMMANDS.to_vec(),
+                url_hosts: Vec::new(),
+            },
+            CatalogEntry {
+                name: "imdb".into(),
+                commands: IMDB_COMMANDS.to_vec(),
+                url_hosts: Vec::new(),
+            },
+            CatalogEntry {
+                name: "openweathermap".into(),
+                commands: WEATHER_COMMANDS.to_vec(),
+                url_hosts: Vec::new(),
+            },
+            CatalogEntry {
+                name: "hooks".into(),
+                commands: Vec::new(),
+                url_hosts: Vec::new(),
+            },
+        ])
     }
 
     #[test]
@@ -734,15 +732,15 @@ mod tests {
 
     #[test]
     fn splits_long_lists_into_unheaded_continuations() {
-        let catalog = PluginCatalog {
-            entries: (0..100)
+        let catalog = PluginCatalog::new(
+            (0..100)
                 .map(|index| CatalogEntry {
                     name: format!("plugin-{index:03}{}", "x".repeat(90)),
                     commands: vec![HELP],
                     url_hosts: Vec::new(),
                 })
                 .collect(),
-        };
+        );
 
         let rendered = messages(&catalog, "");
 

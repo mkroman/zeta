@@ -6,6 +6,7 @@
 //! `register_bundled_plugins`), spawns each [`RegisteredPlugin`] into its own [`PluginTask`],
 //! and routes events to them through the dispatch index.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -128,6 +129,27 @@ pub struct CatalogEntry {
 pub struct PluginCatalog {
     /// The registered plugins, in registration order.
     pub entries: Vec<CatalogEntry>,
+    /// Every URL host advertised by an entry, for O(1) lookups.
+    url_hosts: HashSet<&'static str>,
+}
+
+impl PluginCatalog {
+    /// Builds a catalog from `entries`.
+    #[must_use]
+    pub fn new(entries: Vec<CatalogEntry>) -> Self {
+        let url_hosts = entries
+            .iter()
+            .flat_map(|entry| entry.url_hosts.iter().copied())
+            .collect();
+
+        Self { entries, url_hosts }
+    }
+
+    /// Whether a registered plugin handles `host` itself.
+    #[must_use]
+    pub fn handles_url_host(&self, host: &str) -> bool {
+        self.url_hosts.contains(host)
+    }
 }
 
 /// Plugin registry.
@@ -186,6 +208,7 @@ impl Registry {
                     _ => Vec::new(),
                 };
 
+                self.catalog.url_hosts.extend(url_hosts.iter().copied());
                 self.catalog.entries.push(CatalogEntry {
                     name: name.clone(),
                     commands: subscriptions.commands().to_vec(),
@@ -433,5 +456,25 @@ mod tests {
         let log = zeta_utils::sync::lock(&recording);
 
         assert_eq!(*log, ["message", "message", "shutdown"]);
+    }
+
+    #[test]
+    fn catalog_indexes_the_advertised_url_hosts() {
+        let catalog = PluginCatalog::new(vec![
+            CatalogEntry {
+                name: "imdb".into(),
+                commands: Vec::new(),
+                url_hosts: vec!["imdb.com", "www.imdb.com"],
+            },
+            CatalogEntry {
+                name: "dig".into(),
+                commands: Vec::new(),
+                url_hosts: Vec::new(),
+            },
+        ]);
+
+        assert!(catalog.handles_url_host("imdb.com"));
+        assert!(catalog.handles_url_host("www.imdb.com"));
+        assert!(!catalog.handles_url_host("dr.dk"));
     }
 }
