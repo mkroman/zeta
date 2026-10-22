@@ -35,13 +35,7 @@ impl SharedState {
     // `rcu` may retry its closure, so the state cannot be moved into it.
     #[allow(clippy::needless_pass_by_value)]
     pub fn publish<T: Send + Sync + 'static>(&self, state: Arc<T>) -> Option<Arc<T>> {
-        let mut previous = None;
-
-        self.states.rcu(|states| {
-            previous = states
-                .get(&TypeId::of::<T>())
-                .and_then(|published| Arc::clone(published).downcast::<T>().ok());
-
+        let previous = self.states.rcu(|states| {
             let mut next = (**states).clone();
             next.insert(TypeId::of::<T>(), state.clone());
 
@@ -49,6 +43,8 @@ impl SharedState {
         });
 
         previous
+            .get(&TypeId::of::<T>())
+            .and_then(|published| Arc::clone(published).downcast::<T>().ok())
     }
 
     /// Returns the state published under type `T`, if any.
