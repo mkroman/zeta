@@ -2,7 +2,9 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 
 use crate::config::HostConfig;
 
@@ -17,7 +19,7 @@ use crate::config::HostConfig;
 #[derive(Default)]
 pub struct SharedState {
     /// The published state, keyed by the type of the value.
-    states: RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
+    states: ArcSwap<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl SharedState {
@@ -30,16 +32,26 @@ impl SharedState {
     /// Publishes `state` under its concrete type.
     ///
     /// Returns the previously published state of the same type, if any.
+    // `rcu` may retry its closure, so the state cannot be moved into it.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn publish<T: Send + Sync + 'static>(&self, state: Arc<T>) -> Option<Arc<T>> {
-        zeta_utils::sync::write(&self.states)
-            .insert(TypeId::of::<T>(), state)
-            .and_then(|previous| previous.downcast::<T>().ok())
+        let previous = self.states.rcu(|states| {
+            let mut next = (**states).clone();
+            next.insert(TypeId::of::<T>(), state.clone());
+
+            Arc::new(next)
+        });
+
+        previous
+            .get(&TypeId::of::<T>())
+            .and_then(|published| Arc::clone(published).downcast::<T>().ok())
     }
 
     /// Returns the state published under type `T`, if any.
     #[must_use]
     pub fn get<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        zeta_utils::sync::read(&self.states)
+        self.states
+            .load()
             .get(&TypeId::of::<T>())
             .and_then(|state| Arc::clone(state).downcast::<T>().ok())
     }

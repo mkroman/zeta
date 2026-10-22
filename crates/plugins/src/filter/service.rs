@@ -1,7 +1,8 @@
 //! Filter service, persisting filters in the database and keeping them indexed in memory.
 
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use tracing::{debug, instrument};
 use url::Url;
 
@@ -24,7 +25,7 @@ pub struct FilterService {
     /// The filter repository.
     repo: FilterRepository,
     /// The in-memory index of all filters.
-    index: RwLock<FilterIndex>,
+    index: ArcSwap<FilterIndex>,
 }
 
 impl FilterService {
@@ -33,7 +34,7 @@ impl FilterService {
     pub fn new(db: Database) -> Self {
         Self {
             repo: FilterRepository::new(db),
-            index: RwLock::new(FilterIndex::default()),
+            index: ArcSwap::from_pointee(FilterIndex::default()),
         }
     }
 
@@ -52,7 +53,7 @@ impl FilterService {
 
         debug!(count = index.len(), "loaded filters into index");
 
-        *self.lock_index_mut() = index;
+        self.index.store(Arc::new(index));
 
         Ok(())
     }
@@ -66,7 +67,12 @@ impl FilterService {
     pub async fn add(&self, filter: NewFilter) -> Result<Filter, Error> {
         let filter = self.repo.insert(filter).await?;
 
-        self.lock_index_mut().insert(filter.clone());
+        self.index.rcu(|index| {
+            let mut next = (**index).clone();
+            next.insert(filter.clone());
+
+            Arc::new(next)
+        });
 
         Ok(filter)
     }
@@ -81,7 +87,12 @@ impl FilterService {
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         let removed = self.repo.delete_all(ids).await?;
 
-        self.lock_index_mut().remove_ids(ids);
+        self.index.rcu(|index| {
+            let mut next = (**index).clone();
+            next.remove_ids(ids);
+
+            Arc::new(next)
+        });
 
         Ok(removed)
     }
@@ -89,7 +100,7 @@ impl FilterService {
     /// Returns a snapshot of all filters, in id order.
     #[must_use]
     pub fn list(&self) -> Vec<Filter> {
-        self.lock_index().filters()
+        self.index.load().filters()
     }
 
     /// Returns a snapshot of the filters matching `criteria`, in id order.
@@ -104,24 +115,14 @@ impl FilterService {
     /// Whether `url`, posted by `sender` in `channel`, matches any filter.
     #[must_use]
     pub fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        self.lock_index().matches(channel, sender, url)
+        self.index.load().matches(channel, sender, url)
     }
 
     /// Whether messages from `sender` in `channel` are ignored entirely: the index holds a
     /// filter without URL criteria whose sender criteria match.
     #[must_use]
     pub fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
-        self.lock_index().ignores(channel, sender)
-    }
-
-    /// Locks the index for reading, continuing on poisoning.
-    fn lock_index(&self) -> RwLockReadGuard<'_, FilterIndex> {
-        zeta_utils::sync::read(&self.index)
-    }
-
-    /// Locks the index for writing, continuing on poisoning.
-    fn lock_index_mut(&self) -> RwLockWriteGuard<'_, FilterIndex> {
-        zeta_utils::sync::write(&self.index)
+        self.index.load().ignores(channel, sender)
     }
 }
 

@@ -17,6 +17,7 @@ members = [
 ]
 
 [workspace.dependencies]
+arc-swap = "1.9"
 argh = { version = "0.1.19" }
 async-trait = "0.1.89"
 chrono = { version = "0.4.45" }

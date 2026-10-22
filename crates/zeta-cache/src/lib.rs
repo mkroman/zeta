@@ -11,8 +11,10 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use arc_swap::{ArcSwap, ArcSwapOption};
 
 /// A single-slot cache holding a value until its time-to-live expires.
 ///
@@ -22,7 +24,7 @@ use std::time::{Duration, Instant};
 /// readers keep seeing it until a refresh succeeds.
 pub struct TtlCache<T> {
     /// The cached value and its expiry time, if populated.
-    entry: RwLock<Option<Entry<T>>>,
+    entry: ArcSwapOption<Entry<T>>,
     /// How long a cached value stays fresh.
     ttl: Duration,
     /// The single-flight lock: concurrent misses refresh once, the tasks that wait for the
@@ -31,6 +33,7 @@ pub struct TtlCache<T> {
 }
 
 /// A cached value with its absolute expiry time.
+#[derive(Clone)]
 struct Entry<T> {
     value: T,
     expires_at: Instant,
@@ -41,7 +44,7 @@ impl<T> TtlCache<T> {
     #[must_use]
     pub const fn new(ttl: Duration) -> Self {
         Self {
-            entry: RwLock::new(None),
+            entry: ArcSwapOption::const_empty(),
             ttl,
             refreshing: tokio::sync::Mutex::const_new(()),
         }
@@ -51,10 +54,10 @@ impl<T> TtlCache<T> {
     #[must_use]
     pub fn with_value(value: T, ttl: Duration) -> Self {
         Self {
-            entry: RwLock::new(Some(Entry {
+            entry: ArcSwapOption::from(Some(Arc::new(Entry {
                 value,
                 expires_at: Instant::now() + ttl,
-            })),
+            }))),
             ttl,
             refreshing: tokio::sync::Mutex::const_new(()),
         }
@@ -64,20 +67,17 @@ impl<T> TtlCache<T> {
     ///
     /// Stale values are served so callers that pair this with a preceding refresh attempt keep
     /// working with the last known data while the source is unavailable.
-    ///
-    /// Poisoned locks are recovered from, mirroring how plugins read their caches: a panic in
-    /// another task must not take the command handlers down.
     pub fn read<R>(&self, read: impl FnOnce(Option<&T>) -> R) -> R {
-        let guard = zeta_utils::sync::read(&self.entry);
+        let entry = self.entry.load();
 
-        read(guard.as_ref().map(|entry| &entry.value))
+        read(entry.as_ref().map(|entry| &entry.value))
     }
 
     /// Returns whether the cache holds a value that has not expired.
     fn is_fresh(&self) -> bool {
-        let guard = zeta_utils::sync::read(&self.entry);
+        let entry = self.entry.load();
 
-        guard
+        entry
             .as_ref()
             .is_some_and(|entry| entry.expires_at > Instant::now())
     }
@@ -91,9 +91,9 @@ impl<T> TtlCache<T> {
     where
         T: Clone,
     {
-        let guard = zeta_utils::sync::read(&self.entry);
+        let entry = self.entry.load();
 
-        guard
+        entry
             .as_ref()
             .filter(|entry| entry.expires_at > Instant::now())
             .map(|entry| entry.value.clone())
@@ -201,9 +201,9 @@ impl<T> TtlCache<T> {
         Ok(value)
     }
 
-    /// Replaces the cached entry, tolerating a poisoned lock.
+    /// Replaces the cached entry.
     fn replace(&self, entry: Entry<T>) {
-        *zeta_utils::sync::write(&self.entry) = Some(entry);
+        self.entry.store(Some(Arc::new(entry)));
     }
 }
 
@@ -218,7 +218,10 @@ const DEFAULT_TTL_MAP_CAPACITY: usize = 256;
 /// never served.
 pub struct TtlMap<K, V> {
     /// The cached entries, keyed by their lookup key.
-    entries: RwLock<HashMap<K, Entry<Option<V>>>>,
+    ///
+    /// Values are shared through [`Arc`], so publishing a snapshot copies the map's keys and
+    /// entries but not the cached values themselves.
+    entries: ArcSwap<HashMap<K, Entry<Option<Arc<V>>>>>,
     /// Per-key single-flight locks: concurrent misses for the same key refresh once. Entries
     /// are removed once they are uncontended, so the map does not grow with refreshed keys.
     flights: tokio::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
@@ -239,7 +242,7 @@ where
     #[must_use]
     pub fn with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
         Self {
-            entries: RwLock::new(HashMap::new()),
+            entries: ArcSwap::from_pointee(HashMap::new()),
             flights: tokio::sync::Mutex::new(HashMap::new()),
             ttl,
             negative_ttl,
@@ -255,8 +258,6 @@ where
     }
 
     /// Returns the cached value for `key` when it has not expired.
-    ///
-    /// Poisoned locks are recovered from, mirroring [`TtlCache::read`].
     pub fn get(&self, key: &K) -> Option<V>
     where
         V: Clone,
@@ -267,18 +268,16 @@ where
     /// Returns the cached entry for `key` when it has not expired, including negative results.
     ///
     /// `Some(None)` is a cached negative result; `None` means nothing is cached for `key`.
-    ///
-    /// Poisoned locks are recovered from, mirroring [`TtlCache::read`].
     pub fn peek(&self, key: &K) -> Option<Option<V>>
     where
         V: Clone,
     {
-        let guard = zeta_utils::sync::read(&self.entries);
+        let entries = self.entries.load();
 
-        guard
+        entries
             .get(key)
             .filter(|entry| entry.expires_at > Instant::now())
-            .map(|entry| entry.value.clone())
+            .map(|entry| entry.value.as_deref().cloned())
     }
 
     /// Returns the cached entry for `key` when fresh, refreshing through `refresh` otherwise.
@@ -356,6 +355,8 @@ where
 
     /// Inserts an entry for `key`, evicting expired and closest-to-expiring entries first when
     /// the cache is at capacity.
+    // `rcu` may retry its closure, so the key cannot be moved into it.
+    #[allow(clippy::needless_pass_by_value)]
     fn insert(&self, key: K, value: Option<V>) {
         let ttl = if value.is_some() {
             self.ttl
@@ -363,22 +364,26 @@ where
             self.negative_ttl
         };
         let entry = Entry {
-            value,
+            value: value.map(Arc::new),
             expires_at: Instant::now() + ttl,
         };
 
-        let mut entries = zeta_utils::sync::write(&self.entries);
+        self.entries.rcu(|entries| {
+            let mut next = (**entries).clone();
 
-        if entries.len() >= self.capacity && !entries.contains_key(&key) {
-            Self::evict(&mut entries, self.capacity);
-        }
+            if next.len() >= self.capacity && !next.contains_key(&key) {
+                Self::evict(&mut next, self.capacity);
+            }
 
-        entries.insert(key, entry);
+            next.insert(key.clone(), entry.clone());
+
+            Arc::new(next)
+        });
     }
 
     /// Makes room for a new entry by removing expired entries, then the entries closest to
     /// expiring, until at least one slot is free.
-    fn evict(entries: &mut HashMap<K, Entry<Option<V>>>, capacity: usize) {
+    fn evict(entries: &mut HashMap<K, Entry<Option<Arc<V>>>>, capacity: usize) {
         let now = Instant::now();
 
         entries.retain(|_, entry| entry.expires_at > now);
@@ -524,13 +529,12 @@ mod ttl_map_tests {
             .unwrap();
 
         // Expire only `a`'s entry.
-        cache
-            .entries
-            .write()
-            .unwrap()
+        let mut entries = cache.entries.load_full();
+        Arc::make_mut(&mut entries)
             .get_mut(&"a".to_string())
             .unwrap()
             .expires_at = Instant::now();
+        cache.entries.store(entries);
 
         assert_eq!(cache.get(&"a".to_string()), None);
         assert_eq!(cache.get(&"b".to_string()), Some(9));
@@ -573,14 +577,8 @@ mod ttl_map_tests {
         assert_eq!(refreshes, 1);
 
         // Negative results expire before values do.
-        let entry_expires_at = |key: &str| {
-            cache
-                .entries
-                .read()
-                .unwrap()
-                .get(key)
-                .map(|entry| entry.expires_at)
-        };
+        let entry_expires_at =
+            |key: &str| cache.entries.load().get(key).map(|entry| entry.expires_at);
 
         cache
             .get_or_refresh("present".to_string(), || async { Ok::<_, ()>(Some(7)) })
@@ -622,7 +620,7 @@ mod ttl_map_tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(cache.entries.read().unwrap().len(), 4);
+        assert_eq!(cache.entries.load().len(), 4);
 
         // A fifth entry evicts the closest-to-expiring one, keeping the cache bounded.
         cache
@@ -631,7 +629,7 @@ mod ttl_map_tests {
             .unwrap();
 
         let (len, contains_e) = {
-            let entries = cache.entries.read().unwrap();
+            let entries = cache.entries.load();
             (entries.len(), entries.contains_key(&"e".to_string()))
         };
 
@@ -734,10 +732,10 @@ mod tests {
     #[tokio::test]
     async fn expires_after_the_ttl() {
         let cache = TtlCache::new(Duration::ZERO);
-        *cache.entry.write().unwrap() = Some(Entry {
+        cache.entry.store(Some(Arc::new(Entry {
             value: 7,
             expires_at: Instant::now(),
-        });
+        })));
 
         // A zero TTL is never fresh, so `get` no longer sees the value...
         assert_eq!(cache.get(), None);
@@ -761,7 +759,9 @@ mod tests {
             .unwrap();
 
         // Expire the entry directly, so the test does not depend on wall-clock timing.
-        cache.entry.write().unwrap().as_mut().unwrap().expires_at = Instant::now();
+        let mut entry = cache.entry.load_full().expect("cache is populated");
+        Arc::make_mut(&mut entry).expires_at = Instant::now();
+        cache.entry.store(Some(entry));
 
         let error = cache
             .get_or_refresh(|| async { Err("denied") })

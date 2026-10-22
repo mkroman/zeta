@@ -19,6 +19,7 @@ native-tls-vendored = ["sqlx?/tls-native-tls"]
 rustls = ["sqlx?/tls-rustls-aws-lc-rs"]
 
 [dependencies]
+arc-swap.workspace = true
 argh.workspace = true
 async-trait.workspace = true
 humantime-serde.workspace = true
