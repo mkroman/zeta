@@ -6,7 +6,6 @@
 //! cryptocurrency table; that refresh warns and keeps the previous table when it fails, and a
 //! table rink rejects at load time is logged so the fiat data still lands.
 
-use std::sync::Mutex;
 use std::time::Duration;
 
 use rink_core::{Context as RinkContext, Value};
@@ -14,6 +13,7 @@ use tracing::debug;
 
 use crate::prelude::*;
 
+use super::actor::ActorHandle;
 use coinmarketcap::Client as CmcClient;
 use coinmarketcap::model::Listing;
 use rink_core::types::DateTime;
@@ -137,8 +137,8 @@ litoshi                  1e-8 LTC
 !endcategory
 "#;
 
-/// Fetches the fiat dataset and the cryptocurrency listings, then rebuilds and swaps a fresh
-/// context into `ctx`.
+/// Fetches the fiat dataset and the cryptocurrency listings, then asks the actor to rebuild the
+/// context from them.
 ///
 /// The fiat dataset is required — a failed fetch fails the whole refresh, leaving the previous
 /// context in place. A failed listings fetch is logged and the previous cryptocurrency table is
@@ -153,31 +153,31 @@ litoshi                  1e-8 LTC
 /// # Errors
 ///
 /// Returns a [`ZetaError`] when the fiat fetch fails, the response carries an error status, or
-/// the bundled or extra definitions cannot be loaded into a context.
+/// the actor cannot rebuild the context from the fetched data.
 pub async fn refresh_data(
     client: &reqwest::Client,
     currency: &zeta_cache::TtlCache<CurrencyData>,
     cmc: Option<&CmcClient>,
     crypto_enabled: bool,
     url: &str,
-    ctx: &Mutex<RinkContext>,
+    actor: &ActorHandle,
 ) -> Result<CurrencyData, ZetaError> {
     let fiat = fetch_fiat(client, url).await?;
     let crypto = fetch_crypto(currency, cmc, crypto_enabled).await;
     let data = CurrencyData { fiat, crypto };
 
-    swap_in(ctx, &data)?;
+    actor.refresh(data.clone()).await?;
 
     Ok(data)
 }
 
 /// Rebuilds a rink context from `data` and swaps it into `ctx`, carrying the previous result
 /// across so `ans` keeps resolving.
-fn swap_in(ctx: &Mutex<RinkContext>, data: &CurrencyData) -> Result<(), ZetaError> {
-    let previous = zeta_utils::sync::lock(ctx).previous_result.clone();
+pub(super) fn swap_in(ctx: &mut RinkContext, data: &CurrencyData) -> Result<(), ZetaError> {
+    let previous = ctx.previous_result.clone();
     let next = build_context(Some(data), previous)?;
 
-    *zeta_utils::sync::lock(ctx) = next;
+    *ctx = next;
     debug!("loaded live currency data into the rink context");
 
     Ok(())
