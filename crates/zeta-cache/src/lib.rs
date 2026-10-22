@@ -218,7 +218,10 @@ const DEFAULT_TTL_MAP_CAPACITY: usize = 256;
 /// never served.
 pub struct TtlMap<K, V> {
     /// The cached entries, keyed by their lookup key.
-    entries: ArcSwap<HashMap<K, Entry<Option<V>>>>,
+    ///
+    /// Values are shared through [`Arc`], so publishing a snapshot copies the map's keys and
+    /// entries but not the cached values themselves.
+    entries: ArcSwap<HashMap<K, Entry<Option<Arc<V>>>>>,
     /// Per-key single-flight locks: concurrent misses for the same key refresh once. Entries
     /// are removed once they are uncontended, so the map does not grow with refreshed keys.
     flights: tokio::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
@@ -274,7 +277,7 @@ where
         entries
             .get(key)
             .filter(|entry| entry.expires_at > Instant::now())
-            .map(|entry| entry.value.clone())
+            .map(|entry| entry.value.as_deref().cloned())
     }
 
     /// Returns the cached entry for `key` when fresh, refreshing through `refresh` otherwise.
@@ -354,17 +357,14 @@ where
     /// the cache is at capacity.
     // `rcu` may retry its closure, so the key cannot be moved into it.
     #[allow(clippy::needless_pass_by_value)]
-    fn insert(&self, key: K, value: Option<V>)
-    where
-        V: Clone,
-    {
+    fn insert(&self, key: K, value: Option<V>) {
         let ttl = if value.is_some() {
             self.ttl
         } else {
             self.negative_ttl
         };
         let entry = Entry {
-            value,
+            value: value.map(Arc::new),
             expires_at: Instant::now() + ttl,
         };
 
@@ -383,7 +383,7 @@ where
 
     /// Makes room for a new entry by removing expired entries, then the entries closest to
     /// expiring, until at least one slot is free.
-    fn evict(entries: &mut HashMap<K, Entry<Option<V>>>, capacity: usize) {
+    fn evict(entries: &mut HashMap<K, Entry<Option<Arc<V>>>>, capacity: usize) {
         let now = Instant::now();
 
         entries.retain(|_, entry| entry.expires_at > now);
