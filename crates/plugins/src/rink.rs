@@ -48,7 +48,7 @@ use tracing::{Instrument, debug, warn};
 
 mod actor;
 mod currency;
-use actor::{ActorHandle, EvalReply};
+use actor::{EvalOutcome, Handle};
 use currency::{CurrencyData, build_context, refresh_data};
 
 use crate::prelude::*;
@@ -71,11 +71,11 @@ pub struct Rink {
     /// The rink context, moved into the actor task when the plugin loads.
     ctx: Option<RinkContext>,
     /// The actor task owning the context and serializing evaluations through its mailbox.
-    actor: Option<ActorHandle>,
+    actor: Option<Handle>,
     /// The fetched live currency data, refreshed at the TTL and used to rebuild the context.
     currency: Arc<TtlCache<CurrencyData>>,
     /// The background task refreshing the currency data, stopped on shutdown.
-    currency_task: Option<tokio::task::JoinHandle<()>>,
+    refresh_task: Option<tokio::task::JoinHandle<()>>,
     /// The HTTP client used to fetch currency data; `None` when the `currency` setting is
     /// disabled, leaving currency queries to answer with rink's missing-dependencies error.
     client: Option<reqwest::Client>,
@@ -143,7 +143,7 @@ impl Plugin<Context> for Rink {
             ctx: Some(build_context(None, None)?),
             actor: None,
             currency: Arc::new(TtlCache::new(settings.currency_ttl)),
-            currency_task: None,
+            refresh_task: None,
             client,
             cmc: None,
             currency_url: settings.currency_url.clone(),
@@ -159,8 +159,8 @@ impl Plugin<Context> for Rink {
         // The coinmarketcap plugin publishes its keyed client for other plugins to reuse.
         self.cmc = ctx.shared.get::<CmcClient>();
 
-        self.start_actor();
-        self.start_currency_refresh();
+        self.spawn_actor();
+        self.spawn_refresh_task();
 
         Ok(())
     }
@@ -183,7 +183,7 @@ impl Plugin<Context> for Rink {
         // The refresh task holds a handle, so it would keep the actor alive after the plugin
         // shuts down. Stopping it and dropping the last handle closes the mailbox, which ends
         // the actor's loop.
-        if let Some(task) = self.currency_task.take() {
+        if let Some(task) = self.refresh_task.take() {
             task.abort();
         }
 
@@ -195,10 +195,10 @@ impl Plugin<Context> for Rink {
 
 impl Rink {
     /// Moves the context into the actor task that serializes evaluations.
-    fn start_actor(&mut self) {
+    fn spawn_actor(&mut self) {
         let ctx = self.ctx.take().expect("the rink context is built once");
 
-        self.actor = Some(ActorHandle::spawn(ctx));
+        self.actor = Some(Handle::spawn(ctx));
     }
 
     /// Starts the background task that refreshes the currency data at the TTL.
@@ -206,7 +206,7 @@ impl Rink {
     /// The task fetches on its first tick and again whenever the cached data expires, asking the
     /// actor to swap in a context rebuilt with the new rates. Requires the `currency` setting to
     /// have created an HTTP client and the actor to be running.
-    fn start_currency_refresh(&mut self) {
+    fn spawn_refresh_task(&mut self) {
         let Some(client) = self.client.clone() else {
             return;
         };
@@ -217,7 +217,7 @@ impl Rink {
         let (currency, url) = (Arc::clone(&self.currency), self.currency_url.clone());
         let (cmc, crypto_enabled) = (self.cmc.clone(), self.crypto_enabled);
 
-        self.currency_task = Some(tokio::spawn(
+        self.refresh_task = Some(tokio::spawn(
             async move {
                 debug!("starting currency refresh task");
 
@@ -270,12 +270,12 @@ impl Rink {
             .as_ref()
             .ok_or_else(|| plugin_err(std::io::Error::other("the rink actor is not running")))?;
 
-        let evaluated = match actor.eval(line.to_owned(), classify).await? {
-            EvalReply::Rendered(text) => return Ok(text),
-            EvalReply::MissingDeps { fallback, .. } if self.client.is_none() => {
-                return Ok(fallback);
+        let retry_line = match actor.eval(line.to_owned(), classify).await? {
+            EvalOutcome::Answer(text) => return Ok(text),
+            EvalOutcome::NeedsCurrency { error_reply, .. } if self.client.is_none() => {
+                return Ok(error_reply);
             }
-            EvalReply::MissingDeps { evaluated, .. } => evaluated,
+            EvalOutcome::NeedsCurrency { retry_line, .. } => retry_line,
         };
 
         // Currency data is missing: refresh what can still change the outcome, then
@@ -283,9 +283,9 @@ impl Rink {
         // on demand in the same situation.
         self.ensure_currency_cached().await;
 
-        match actor.eval(evaluated, false).await? {
-            EvalReply::Rendered(text) => Ok(text),
-            EvalReply::MissingDeps { fallback, .. } => Ok(fallback),
+        match actor.eval(retry_line, false).await? {
+            EvalOutcome::Answer(text) => Ok(text),
+            EvalOutcome::NeedsCurrency { error_reply, .. } => Ok(error_reply),
         }
     }
 
@@ -748,14 +748,14 @@ mod tests {
             ctx: Some(build_context(None, None).unwrap()),
             actor: None,
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
-            currency_task: None,
+            refresh_task: None,
             client: Some(zeta_http::build_client(&HttpConfig::default())),
             cmc: None,
             currency_url: url.unwrap_or_else(|| currency::CURRENCY_URL.to_string()),
             crypto_enabled: true,
         };
 
-        rink.start_actor();
+        rink.spawn_actor();
 
         rink
     }
@@ -766,14 +766,14 @@ mod tests {
             ctx: Some(build_context(None, None).unwrap()),
             actor: None,
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
-            currency_task: None,
+            refresh_task: None,
             client: None,
             cmc: None,
             currency_url: currency::CURRENCY_URL.to_string(),
             crypto_enabled: true,
         };
 
-        rink.start_actor();
+        rink.spawn_actor();
 
         rink
     }

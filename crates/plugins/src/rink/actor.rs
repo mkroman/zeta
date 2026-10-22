@@ -18,34 +18,34 @@ use super::{error_message, render_reply};
 
 /// A handle to the rink actor task.
 #[derive(Clone)]
-pub(super) struct ActorHandle(mpsc::UnboundedSender<RinkRequest>);
+pub(super) struct Handle(mpsc::UnboundedSender<Request>);
 
-/// The rendered answer to an evaluation request.
-pub(super) enum EvalReply {
+/// The rendered outcome of an evaluation request.
+pub(super) enum EvalOutcome {
     /// The final IRC reply, including the notice marker.
-    Rendered(String),
+    Answer(String),
     /// The query needs currency data that is not loaded yet.
-    MissingDeps {
-        /// The missing-dependencies error, rendered as the fallback IRC reply.
-        fallback: String,
+    NeedsCurrency {
+        /// The missing-dependencies error, rendered as the error reply.
+        error_reply: String,
         /// The classified line that was evaluated, for an unchanged retry.
-        evaluated: String,
+        retry_line: String,
     },
 }
 
 /// A request to the rink actor.
-enum RinkRequest {
+enum Request {
     /// Classify the line when asked, evaluate it, and render the result.
-    Eval {
+    Evaluate {
         /// The line to evaluate.
         line: String,
         /// Whether to case-correct unresolvable unit tokens first.
         classify: bool,
         /// The channel the rendered answer is sent back on.
-        reply: oneshot::Sender<EvalReply>,
+        reply: oneshot::Sender<EvalOutcome>,
     },
     /// Rebuild the context from freshly fetched currency data and swap it in.
-    Refresh {
+    UpdateContext {
         /// The fetched currency data.
         data: CurrencyData,
         /// The channel the swap result is sent back on.
@@ -53,7 +53,7 @@ enum RinkRequest {
     },
 }
 
-impl ActorHandle {
+impl Handle {
     /// Spawns the actor task owning `ctx`.
     pub(super) fn spawn(ctx: RinkContext) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -68,18 +68,18 @@ impl ActorHandle {
     /// # Errors
     ///
     /// Returns a [`ZetaError`] when the actor task has stopped.
-    pub(super) async fn eval(&self, line: String, classify: bool) -> Result<EvalReply, ZetaError> {
+    pub(super) async fn eval(&self, line: String, classify: bool) -> Result<EvalOutcome, ZetaError> {
         let (reply, response) = oneshot::channel();
 
         self.0
-            .send(RinkRequest::Eval {
+            .send(Request::Evaluate {
                 line,
                 classify,
                 reply,
             })
-            .map_err(|_| stopped())?;
+            .map_err(|_| actor_stopped())?;
 
-        response.await.map_err(|_| stopped())
+        response.await.map_err(|_| actor_stopped())
     }
 
     /// Asks the actor to rebuild the context from `data` and swap it in.
@@ -87,32 +87,32 @@ impl ActorHandle {
     /// # Errors
     ///
     /// Returns a [`ZetaError`] when the actor task has stopped or the context rebuild fails.
-    pub(super) async fn refresh(&self, data: CurrencyData) -> Result<(), ZetaError> {
+    pub(super) async fn update_context(&self, data: CurrencyData) -> Result<(), ZetaError> {
         let (reply, response) = oneshot::channel();
 
         self.0
-            .send(RinkRequest::Refresh { data, reply })
-            .map_err(|_| stopped())?;
+            .send(Request::UpdateContext { data, reply })
+            .map_err(|_| actor_stopped())?;
 
-        response.await.map_err(|_| stopped())?
+        response.await.map_err(|_| actor_stopped())?
     }
 }
 
 /// Returns the error reported when the actor task is gone.
-fn stopped() -> ZetaError {
+fn actor_stopped() -> ZetaError {
     plugin_err(std::io::Error::other("the rink actor has stopped"))
 }
 
 /// Runs the actor loop until every handle is dropped.
-async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<RinkRequest>) {
+async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<Request>) {
     while let Some(request) = rx.recv().await {
         match request {
-            RinkRequest::Eval {
+            Request::Evaluate {
                 line,
                 classify,
                 reply,
             } => {
-                let evaluated = if classify {
+                let evaluated_line = if classify {
                     super::classify(&ctx, &line)
                 } else {
                     line
@@ -120,18 +120,18 @@ async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<RinkRequest>)
 
                 // Rink's replies are not `Send`, so the answer is rendered here, before it is
                 // sent back over the channel.
-                let answer = match rink_core::eval(&mut ctx, &evaluated) {
-                    Ok(reply) => EvalReply::Rendered(notice(render_reply(&reply))),
-                    Err(error @ QueryError::MissingDeps(_)) => EvalReply::MissingDeps {
-                        fallback: notice(error_message(&error)),
-                        evaluated,
+                let answer = match rink_core::eval(&mut ctx, &evaluated_line) {
+                    Ok(reply) => EvalOutcome::Answer(notice(render_reply(&reply))),
+                    Err(error @ QueryError::MissingDeps(_)) => EvalOutcome::NeedsCurrency {
+                        error_reply: notice(error_message(&error)),
+                        retry_line: evaluated_line,
                     },
-                    Err(error) => EvalReply::Rendered(notice(error_message(&error))),
+                    Err(error) => EvalOutcome::Answer(notice(error_message(&error))),
                 };
 
                 let _ = reply.send(answer);
             }
-            RinkRequest::Refresh { data, reply } => {
+            Request::UpdateContext { data, reply } => {
                 let _ = reply.send(super::currency::swap_in(&mut ctx, &data));
             }
         }

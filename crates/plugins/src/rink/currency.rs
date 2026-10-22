@@ -13,7 +13,7 @@ use tracing::debug;
 
 use crate::prelude::*;
 
-use super::actor::ActorHandle;
+use super::actor::Handle;
 use coinmarketcap::Client as CmcClient;
 use coinmarketcap::model::Listing;
 use rink_core::types::DateTime;
@@ -160,13 +160,13 @@ pub async fn refresh_data(
     cmc: Option<&CmcClient>,
     crypto_enabled: bool,
     url: &str,
-    actor: &ActorHandle,
+    actor: &Handle,
 ) -> Result<CurrencyData, ZetaError> {
     let fiat = fetch_fiat(client, url).await?;
     let crypto = fetch_crypto(currency, cmc, crypto_enabled).await;
     let data = CurrencyData { fiat, crypto };
 
-    actor.refresh(data.clone()).await?;
+    actor.update_context(data.clone()).await?;
 
     Ok(data)
 }
