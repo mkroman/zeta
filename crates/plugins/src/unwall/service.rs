@@ -199,7 +199,7 @@ impl UnwallService {
     /// Returns a snapshot of the covered sites, ordered by host.
     #[must_use]
     pub fn sites(&self) -> Vec<Site> {
-        self.covered.load_full().as_ref().clone()
+        Arc::unwrap_or_clone(self.covered.load_full())
     }
 
     /// Returns the overall statistics of the unwalled URLs and fetches.
