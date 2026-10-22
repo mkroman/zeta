@@ -1,8 +1,9 @@
 //! Unwall service: the covered-site set, the URL cache, and the submissions.
 
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use sqlx::types::chrono::Utc;
 use tracing::{debug, instrument, warn};
 use url::Url;
@@ -35,7 +36,7 @@ pub struct UnwallService {
     /// The database is the source of truth, loaded on [`load`](UnwallService::load) and
     /// reloaded after every change; the hot lookup path ([`covers`](UnwallService::covers))
     /// only ever touches this set.
-    covered: RwLock<Vec<Site>>,
+    covered: ArcSwap<Vec<Site>>,
     /// Collapses a burst of the same article into a single submission.
     inflight: TtlMap<String, CachedUrl>,
 }
@@ -49,7 +50,7 @@ impl UnwallService {
             repo: UnwallRepository::new(db),
             client,
             reader_base,
-            covered: RwLock::new(Vec::new()),
+            covered: ArcSwap::from_pointee(Vec::new()),
             inflight: TtlMap::new(INFLIGHT_TTL),
         }
     }
@@ -65,7 +66,7 @@ impl UnwallService {
 
         debug!(count = covered.len(), "loaded unwall sites");
 
-        *self.lock_covered_mut() = covered;
+        self.covered.store(Arc::new(covered));
 
         Ok(())
     }
@@ -75,7 +76,8 @@ impl UnwallService {
     pub fn covers(&self, host: &str) -> bool {
         let host = host.to_lowercase();
 
-        self.lock_covered()
+        self.covered
+            .load()
             .iter()
             .any(|site| sites::matches_site(&host, &site.host))
     }
@@ -173,12 +175,14 @@ impl UnwallService {
     /// Returns [`Error::Database`] if the sites could not be deleted or reloaded.
     #[instrument(skip_all, err, fields(pattern = %pattern))]
     pub async fn remove_matching(&self, pattern: &str) -> Result<Vec<String>, Error> {
-        let mut affected: Vec<String> = self
-            .lock_covered()
-            .iter()
-            .filter(|site| sites::matches_site(&site.host, pattern))
-            .map(|site| site.host.clone())
-            .collect();
+        let mut affected: Vec<String> = {
+            let covered = self.covered.load();
+            covered
+                .iter()
+                .filter(|site| sites::matches_site(&site.host, pattern))
+                .map(|site| site.host.clone())
+                .collect()
+        };
 
         if affected.is_empty() {
             return Ok(Vec::new());
@@ -195,7 +199,7 @@ impl UnwallService {
     /// Returns a snapshot of the covered sites, ordered by host.
     #[must_use]
     pub fn sites(&self) -> Vec<Site> {
-        self.lock_covered().clone()
+        self.covered.load_full().as_ref().clone()
     }
 
     /// Returns the overall statistics of the unwalled URLs and fetches.
@@ -218,16 +222,6 @@ impl UnwallService {
         self.repo
             .host_statistics(&host.to_lowercase(), Utc::now().date_naive())
             .await
-    }
-
-    /// Locks the covered sites for reading, continuing on poisoning.
-    fn lock_covered(&self) -> RwLockReadGuard<'_, Vec<Site>> {
-        zeta_utils::sync::read(&self.covered)
-    }
-
-    /// Locks the covered sites for writing, continuing on poisoning.
-    fn lock_covered_mut(&self) -> RwLockWriteGuard<'_, Vec<Site>> {
-        zeta_utils::sync::write(&self.covered)
     }
 }
 

@@ -114,6 +114,7 @@ all = [
 ]
 
 [dependencies]
+arc-swap.workspace = true
 argh.workspace = true
 async-trait.workspace = true
 base64 = { version = "0.23.0", optional = true }

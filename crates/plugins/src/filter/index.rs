@@ -37,7 +37,7 @@ fn compile_sensitive(pattern: Option<&str>) -> Option<WildMatch> {
 }
 
 /// The compiled host pattern of a filter.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum HostMatcher {
     /// An exact host, matched for equality.
     Exact(String),
@@ -46,7 +46,7 @@ enum HostMatcher {
 }
 
 /// A filter with its wildcard patterns precompiled for matching.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Entry {
     /// The raw filter.
     filter: Filter,
@@ -146,7 +146,7 @@ impl Entry {
 }
 
 /// The filters of a single channel (or of all channels), indexed by URL host.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct HostIndex {
     /// Filters with an exact host pattern, keyed by the lowercased host.
     exact: HashMap<String, Vec<Entry>>,
@@ -221,7 +221,7 @@ impl HostIndex {
 /// The index is keyed by the lowercased channel name; the `None` key holds the filters that
 /// apply to all channels. A lookup consults both the channel's bucket and the all-channels
 /// bucket, and never touches the filters of other channels.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct FilterIndex {
     channels: HashMap<Option<String>, HostIndex>,
 }
