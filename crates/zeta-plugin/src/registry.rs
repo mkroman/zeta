@@ -15,9 +15,10 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{Instrument, debug, error, warn};
 
+use crate::command::CommandSpec;
 use crate::context::Context;
 use crate::event::{Event, Subscriptions, UrlScope};
-use crate::{Error, Plugin, command::CommandSpec};
+use crate::{Error, Plugin};
 
 /// Object-safe view of [`Plugin`], implemented automatically for every `Plugin<Context>`.
 ///

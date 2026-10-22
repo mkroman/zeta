@@ -19,7 +19,6 @@ use coinmarketcap::model::Listing;
 use rink_core::types::DateTime;
 use std::collections::HashSet;
 use std::fmt::Write;
-use std::sync::Arc;
 use tracing::warn;
 use zeta_utils::utils::strip_control_chars;
 
@@ -158,7 +157,7 @@ litoshi                  1e-8 LTC
 pub async fn refresh_data(
     client: &reqwest::Client,
     currency: &zeta_cache::TtlCache<CurrencyData>,
-    cmc: Option<&Arc<CmcClient>>,
+    cmc: Option<&CmcClient>,
     crypto_enabled: bool,
     url: &str,
     ctx: &Mutex<RinkContext>,
@@ -191,7 +190,7 @@ fn swap_in(ctx: &Mutex<RinkContext>, data: &CurrencyData) -> Result<(), ZetaErro
 /// shared its client.
 async fn fetch_crypto(
     currency: &zeta_cache::TtlCache<CurrencyData>,
-    cmc: Option<&Arc<CmcClient>>,
+    cmc: Option<&CmcClient>,
     enabled: bool,
 ) -> Option<Vec<Listing>> {
     let cmc = cmc.filter(|_| enabled)?;

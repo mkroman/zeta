@@ -10,9 +10,9 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
-use opentelemetry_semantic_conventions::{SCHEMA_URL, resource::SERVICE_VERSION};
+use opentelemetry_semantic_conventions::SCHEMA_URL;
+use opentelemetry_semantic_conventions::resource::SERVICE_VERSION;
 use tracing::info;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config;
 
@@ -27,6 +27,9 @@ fn otel_resource_detectors() -> Vec<Box<dyn ResourceDetector>> {
 }
 
 pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
     // Create a tracing layer with the configured tracer
     let telemetry_layer = if tracing.enabled {
         // Set up the OTLP exporter

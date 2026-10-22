@@ -2,7 +2,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::stream::StreamExt;
 use irc::client::prelude::Client;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
@@ -112,6 +111,8 @@ async fn dispatch_messages(
     stream: &mut irc::client::ClientStream,
     index: &mut EventIndex,
 ) -> Result<(), Error> {
+    use futures::stream::StreamExt;
+
     while let Some(message) = stream.next().await.transpose()? {
         // Everything logged while this message is routed runs inside a span: the
         // OpenTelemetry layer drops events that are not in the context of a span, so without

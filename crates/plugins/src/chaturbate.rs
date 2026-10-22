@@ -102,7 +102,8 @@ impl Chaturbate {
         // The dossier is assigned as a JSON-encoded string literal, terminated by a semicolon
         // before the closing </script> tag.
         let room_dossier_re =
-            Regex::new(r#"window\.initialRoomDossier\s*=\s*("(?:[^"\\]|\\.)*");"#).unwrap();
+            Regex::new(r#"window\.initialRoomDossier\s*=\s*("(?:[^"\\]|\\.)*");"#)
+                .expect("the room dossier regex is valid");
 
         Self {
             client,

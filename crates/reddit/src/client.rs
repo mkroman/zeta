@@ -1,7 +1,8 @@
 use std::time::{Duration, Instant};
 
+use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION};
-use reqwest::{StatusCode, redirect::Policy};
+use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde_json::Error as JsonError;

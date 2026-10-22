@@ -391,15 +391,11 @@ fn join_artists(artists: &[ArtistSimple]) -> String {
 }
 
 fn to_sentence(words: &[String]) -> String {
-    match words.len() {
-        0 => String::new(),
-        1 => words[0].clone(),
-        2 => format!("{} and {}", words[0], words[1]),
-        _ => {
-            let last = words.last().unwrap();
-            let others = words[..words.len() - 1].join(", ");
-            format!("{others} and {last}")
-        }
+    match words.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, [first])) => format!("{first} and {last}"),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
     }
 }
 

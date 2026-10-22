@@ -15,7 +15,6 @@ use aws_smithy_runtime_api::client::identity::Identity;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::{Body, Client, StatusCode};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncReadExt;
 use tracing::debug;
 use url::Url;
 
@@ -390,6 +389,8 @@ async fn ensure_success(response: reqwest::Response) -> Result<(), Error> {
 
 /// Returns the lowercase hex-encoded SHA-256 digest of the file at `path`.
 async fn sha256_file(path: &Path) -> Result<String, Error> {
+    use tokio::io::AsyncReadExt;
+
     let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; HASH_BUFFER_SIZE];
