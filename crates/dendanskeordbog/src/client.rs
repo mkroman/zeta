@@ -5,7 +5,8 @@
 
 use std::time::Duration;
 
-use reqwest::{ClientBuilder, redirect::Policy};
+use reqwest::ClientBuilder;
+use reqwest::redirect::Policy;
 
 use crate::{DictionaryDocument, Error, RequestError};
 

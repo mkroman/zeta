@@ -3,7 +3,8 @@
 //! The host owns the database story end to end: it connects the pool, applies the plugins'
 //! migrations at startup, and hands the pool to the plugins through their context.
 
-use sqlx::{migrate::Migrator, postgres::PgPoolOptions};
+use sqlx::migrate::Migrator;
+use sqlx::postgres::PgPoolOptions;
 
 use crate::Error;
 

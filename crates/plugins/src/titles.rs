@@ -11,7 +11,6 @@
 use std::cell::RefCell;
 use std::sync::mpsc;
 
-use futures::StreamExt;
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{
     BufferQueue, EndTag, StartTag, Tag, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts,
@@ -28,7 +27,7 @@ use crate::prelude::*;
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_url::redact_url;
-use zeta_utils::{utils::Truncatable, utils::collapse_whitespace};
+use zeta_utils::utils::{Truncatable, collapse_whitespace};
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
@@ -249,6 +248,8 @@ impl From<wreq::Error> for Error {
 ///
 /// Returns an error if the request fails or the server returns an unsuccessful response.
 async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMetadata, Error> {
+    use futures::StreamExt;
+
     let response = client.get(url.as_str()).send().await?;
     let status = response.status();
 
