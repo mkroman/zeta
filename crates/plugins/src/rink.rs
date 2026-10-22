@@ -16,23 +16,25 @@
 //!
 //! A rink context is built once at plugin initialization: the bundled unit definitions, the
 //! static currency units, and a small set of extra definitions (CSS lengths, resolutions,
-//! angles, and the cryptocurrency subunits) loaded on top. Evaluation calls are serialized
-//! through it, and a failed context build aborts plugin initialization.
+//! angles, and the cryptocurrency subunits) loaded on top. The context is moved into a
+//! dedicated actor task when the plugin loads: evaluation calls are serialized through that
+//! task's mailbox, and a failed context build aborts plugin initialization.
 //!
 //! When the `currency` setting is enabled (the default), live currency data is fetched from
 //! rink's dataset — fiat rates from the European Central Bank and Bitcoin from blockchain.info
 //! — and, when the coinmarketcap plugin is loaded and shares its
 //! client, the ranked cryptocurrency table from the CoinMarketCap API; without that feature
 //! the cryptocurrency units stay pending. The `crypto` setting turns the cryptocurrency
-//! loading off. Both datasets are rebuilt into the context by a background task started when
-//! the plugin loads, once per `currency_ttl`. A query that runs into missing currency data
-//! re-evaluates after an inline refresh — mirroring upstream rink's REPL, which fetches on
-//! demand in the same situation — but that refresh only runs when the cached dataset is
-//! missing, stale, or still lacks a requested cryptocurrency table, so an unresolvable
-//! dependency does not fetch once per query; failed fetches are logged and leave the last
-//! known rates in place. The dataset plumbing lives in the `currency` submodule.
+//! loading off. Both datasets are rebuilt into a fresh context by a background task started
+//! when the plugin loads, once per `currency_ttl`; the task asks the actor to swap it in. A
+//! query that runs into missing currency data re-evaluates after an inline refresh — mirroring
+//! upstream rink's REPL, which fetches on demand in the same situation — but that refresh only
+//! runs when the cached dataset is missing, stale, or still lacks a requested cryptocurrency
+//! table, so an unresolvable dependency does not fetch once per query; failed fetches are
+//! logged and leave the last known rates in place. The dataset plumbing lives in the `currency`
+//! submodule.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rink_core::Context as RinkContext;
@@ -44,7 +46,9 @@ use serde::{Deserialize, Serialize};
 use tokio::time::MissedTickBehavior;
 use tracing::{Instrument, debug, warn};
 
+mod actor;
 mod currency;
+use actor::{EvalOutcome, Handle};
 use currency::{CurrencyData, build_context, refresh_data};
 
 use crate::prelude::*;
@@ -64,11 +68,14 @@ const CLASSIFY: CommandSpec =
 
 /// Calculator plugin using rink-rs.
 pub struct Rink {
-    /// The rink context, shared with the currency refresh task, which swaps in a rebuilt
-    /// context after fetching new data.
-    ctx: Arc<Mutex<RinkContext>>,
+    /// The rink context, moved into the actor task when the plugin loads.
+    ctx: Option<RinkContext>,
+    /// The actor task owning the context and serializing evaluations through its mailbox.
+    actor: Option<Handle>,
     /// The fetched live currency data, refreshed at the TTL and used to rebuild the context.
     currency: Arc<TtlCache<CurrencyData>>,
+    /// The background task refreshing the currency data, stopped on shutdown.
+    refresh_task: Option<tokio::task::JoinHandle<()>>,
     /// The HTTP client used to fetch currency data; `None` when the `currency` setting is
     /// disabled, leaving currency queries to answer with rink's missing-dependencies error.
     client: Option<reqwest::Client>,
@@ -133,8 +140,10 @@ impl Plugin<Context> for Rink {
         };
 
         Ok(Self {
-            ctx: Arc::new(Mutex::new(build_context(None, None)?)),
+            ctx: Some(build_context(None, None)?),
+            actor: None,
             currency: Arc::new(TtlCache::new(settings.currency_ttl)),
+            refresh_task: None,
             client,
             cmc: None,
             currency_url: settings.currency_url.clone(),
@@ -150,7 +159,8 @@ impl Plugin<Context> for Rink {
         // The coinmarketcap plugin publishes its keyed client for other plugins to reuse.
         self.cmc = ctx.shared.get::<CmcClient>();
 
-        self.start_currency_refresh();
+        self.spawn_actor();
+        self.spawn_refresh_task();
 
         Ok(())
     }
@@ -162,34 +172,52 @@ impl Plugin<Context> for Rink {
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let classify = command.spec == CLASSIFY;
-        let message = self.eval_and_format(command.args(), classify).await;
+        let message = self.eval_and_format(command.args(), classify).await?;
 
         client.send_privmsg(command.channel(), message)?;
+
+        Ok(())
+    }
+
+    async fn shutdown(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+        // The refresh task holds a handle, so it would keep the actor alive after the plugin
+        // shuts down. Stopping it and dropping the last handle closes the mailbox, which ends
+        // the actor's loop.
+        if let Some(task) = self.refresh_task.take() {
+            task.abort();
+        }
+
+        self.actor = None;
 
         Ok(())
     }
 }
 
 impl Rink {
+    /// Moves the context into the actor task that serializes evaluations.
+    fn spawn_actor(&mut self) {
+        let ctx = self.ctx.take().expect("the rink context is built once");
+
+        self.actor = Some(Handle::spawn(ctx));
+    }
+
     /// Starts the background task that refreshes the currency data at the TTL.
     ///
-    /// The task fetches on its first tick and again whenever the cached data expires, rebuilding
-    /// the rink context with the new rates. Requires the `currency` setting to have created an
-    /// HTTP client.
-    fn start_currency_refresh(&self) {
+    /// The task fetches on its first tick and again whenever the cached data expires, asking the
+    /// actor to swap in a context rebuilt with the new rates. Requires the `currency` setting to
+    /// have created an HTTP client and the actor to be running.
+    fn spawn_refresh_task(&mut self) {
         let Some(client) = self.client.clone() else {
             return;
         };
+        let Some(actor) = self.actor.clone() else {
+            return;
+        };
 
-        let (ctx, currency, url) = (
-            Arc::clone(&self.ctx),
-            Arc::clone(&self.currency),
-            self.currency_url.clone(),
-        );
-
+        let (currency, url) = (Arc::clone(&self.currency), self.currency_url.clone());
         let (cmc, crypto_enabled) = (self.cmc.clone(), self.crypto_enabled);
 
-        tokio::spawn(
+        self.refresh_task = Some(tokio::spawn(
             async move {
                 debug!("starting currency refresh task");
 
@@ -207,7 +235,7 @@ impl Rink {
                                 cmc.as_deref(),
                                 crypto_enabled,
                                 &url,
-                                &ctx,
+                                &actor,
                             )
                         })
                         .await;
@@ -218,7 +246,7 @@ impl Rink {
                 }
             }
             .instrument(tracing::info_span!("currency_refresh")),
-        );
+        ));
     }
 
     /// Evaluates `line` and renders the result or error as a one-line IRC reply.
@@ -232,59 +260,33 @@ impl Rink {
     /// the cached dataset is missing, stale, or lacks a requested cryptocurrency table — so
     /// a dependency that stays unresolvable does not fetch on every query. A failed refresh
     /// is logged and the missing-dependencies error is answered instead.
-    async fn eval_and_format(&self, line: &str, classify: bool) -> String {
-        let line = if classify {
-            self.classify(line)
-        } else {
-            line.to_owned()
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ZetaError`] when the rink actor has stopped.
+    async fn eval_and_format(&self, line: &str, classify: bool) -> Result<String, ZetaError> {
+        let actor = self
+            .actor
+            .as_ref()
+            .ok_or_else(|| plugin_err(std::io::Error::other("the rink actor is not running")))?;
+
+        let retry_line = match actor.eval(line.to_owned(), classify).await? {
+            EvalOutcome::Answer(text) => return Ok(text),
+            EvalOutcome::NeedsCurrency { error_reply, .. } if self.client.is_none() => {
+                return Ok(error_reply);
+            }
+            EvalOutcome::NeedsCurrency { retry_line, .. } => retry_line,
         };
 
-        // Rink's results hold `Rc`s and are not `Send`, so each one is rendered before any
-        // await: everything but the missing-dependencies retry returns from this match, and
-        // the retry re-evaluates the same line below instead of keeping the first result
-        // alive across the fetch.
-        match self.eval(&line) {
-            Ok(reply) => return notice(render_reply(&reply)),
-            Err(QueryError::MissingDeps(_)) if self.client.is_some() => {}
-            Err(error) => return notice(error_message(&error)),
-        }
-
         // Currency data is missing: refresh what can still change the outcome, then
-        // re-evaluate, mirroring upstream rink's REPL, which fetches on demand in the same
-        // situation.
+        // re-evaluate the same classified line, mirroring upstream rink's REPL, which fetches
+        // on demand in the same situation.
         self.ensure_currency_cached().await;
 
-        match self.eval(&line) {
-            Ok(reply) => notice(render_reply(&reply)),
-            Err(error) => notice(error_message(&error)),
+        match actor.eval(retry_line, false).await? {
+            EvalOutcome::Answer(text) => Ok(text),
+            EvalOutcome::NeedsCurrency { error_reply, .. } => Ok(error_reply),
         }
-    }
-
-    /// Case-corrects the unit tokens in `line` that rink cannot resolve.
-    ///
-    /// The correction runs on rink's parsed query rather than the input string, so number-and-
-    /// unit words like `10usd` are handled by rink's own tokenizer. Each `Expr::Unit` name that
-    /// does not resolve is matched case-insensitively against the registry's names — defined
-    /// units, substances, base units and pending dependencies — and replaced when exactly one
-    /// candidate exists. Queries that end up untouched, including ones the parser cannot make
-    /// sense of, are returned unchanged.
-    fn classify(&self, line: &str) -> String {
-        let ctx = zeta_utils::sync::lock(&self.ctx);
-        let mut iter = TokenIterator::new(line.trim()).peekable();
-        let mut query = parse_query(&mut iter);
-
-        if fix_unit_casing(&ctx, &mut query) {
-            query.spans_to_string()
-        } else {
-            line.to_owned()
-        }
-    }
-
-    /// Evaluates `line` against the current context.
-    fn eval(&self, line: &str) -> Result<QueryReply, QueryError> {
-        let mut ctx = zeta_utils::sync::lock(&self.ctx);
-
-        rink_core::eval(&mut ctx, line)
     }
 
     /// Fetches and loads currency data when a refetch can still change the outcome.
@@ -301,6 +303,11 @@ impl Rink {
         let Some(client) = &self.client else {
             return;
         };
+        let Some(actor) = self.actor.as_ref() else {
+            warn!("the rink actor is not running; skipping the currency refresh");
+
+            return;
+        };
 
         let refreshed = {
             let fetch = || {
@@ -310,7 +317,7 @@ impl Rink {
                     self.cmc.as_deref(),
                     self.crypto_enabled,
                     &self.currency_url,
-                    &self.ctx,
+                    actor,
                 )
             };
 
@@ -341,6 +348,25 @@ impl Rink {
             && self
                 .currency
                 .read(|data| data.is_none_or(|entry| entry.crypto.is_none()))
+    }
+}
+
+/// Case-corrects the unit tokens in `line` that rink cannot resolve.
+///
+/// The correction runs on rink's parsed query rather than the input string, so number-and-
+/// unit words like `10usd` are handled by rink's own tokenizer. Each `Expr::Unit` name that
+/// does not resolve is matched case-insensitively against the registry's names — defined
+/// units, substances, base units and pending dependencies — and replaced when exactly one
+/// candidate exists. Queries that end up untouched, including ones the parser cannot make
+/// sense of, are returned unchanged.
+fn classify(ctx: &RinkContext, line: &str) -> String {
+    let mut iter = TokenIterator::new(line.trim()).peekable();
+    let mut query = parse_query(&mut iter);
+
+    if fix_unit_casing(ctx, &mut query) {
+        query.spans_to_string()
+    } else {
+        line.to_owned()
     }
 }
 
@@ -597,6 +623,13 @@ mod tests {
         },
     };
 
+    /// Evaluates `line` through the actor, panicking if it has stopped.
+    async fn evaluate(rink: &Rink, line: &str, classify: bool) -> String {
+        rink.eval_and_format(line, classify)
+            .await
+            .expect("the rink actor must be running")
+    }
+
     /// A minimal live currency dataset: USD, DKK and JPY against the bundled euro, plus a
     /// Bitcoin substance so the subunit expressions resolve.
     const TEST_CURRENCY_DATA: &str = r#"[
@@ -711,26 +744,38 @@ mod tests {
     /// Builds a plugin with a bundled-only context, with currency fetching enabled and pointed
     /// at `url` when given.
     fn test_plugin(url: Option<String>) -> Rink {
-        Rink {
-            ctx: Arc::new(Mutex::new(build_context(None, None).unwrap())),
+        let mut rink = Rink {
+            ctx: Some(build_context(None, None).unwrap()),
+            actor: None,
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
+            refresh_task: None,
             client: Some(zeta_http::build_client(&HttpConfig::default())),
             cmc: None,
             currency_url: url.unwrap_or_else(|| currency::CURRENCY_URL.to_string()),
             crypto_enabled: true,
-        }
+        };
+
+        rink.spawn_actor();
+
+        rink
     }
 
     /// Builds a plugin with currency fetching disabled.
     fn offline_plugin() -> Rink {
-        Rink {
-            ctx: Arc::new(Mutex::new(build_context(None, None).unwrap())),
+        let mut rink = Rink {
+            ctx: Some(build_context(None, None).unwrap()),
+            actor: None,
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
+            refresh_task: None,
             client: None,
             cmc: None,
             currency_url: currency::CURRENCY_URL.to_string(),
             crypto_enabled: true,
-        }
+        };
+
+        rink.spawn_actor();
+
+        rink
     }
 
     /// Starts a wiremock server serving `TEST_CURRENCY_DATA` at the currency path.
@@ -789,7 +834,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("4 m", false).await,
+            evaluate(&rink, "4 m", false).await,
             "\x0310> \x0f4 meter \x0310(\x0flength\x0310)"
         );
     }
@@ -800,7 +845,7 @@ mod tests {
 
         // A query without a close match carries no suggestion.
         assert_eq!(
-            rink.eval_and_format("wronginput", false).await,
+            evaluate(&rink, "wronginput", false).await,
             "\x0310> Error: No such unit \x0fwronginput"
         );
     }
@@ -809,10 +854,10 @@ mod tests {
     async fn ans_references_the_previous_result() {
         let rink = offline_plugin();
 
-        rink.eval_and_format("4 m", false).await;
+        evaluate(&rink, "4 m", false).await;
 
         assert_eq!(
-            rink.eval_and_format("ans * 2", false).await,
+            evaluate(&rink, "ans * 2", false).await,
             "\x0310> \x0f8 meter \x0310(\x0flength\x0310)"
         );
     }
@@ -822,7 +867,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("egg", false).await,
+            evaluate(&rink, "egg", false).await,
             concat!(
                 "\x0310> egg: USA large egg. ",
                 "\x0fmass_shelled\x0310 = \x0f50 gram \x0310(\x0fmass\x0310); ",
@@ -840,7 +885,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("helium", false).await,
+            evaluate(&rink, "helium", false).await,
             concat!(
                 "\x0310> helium: ",
                 "\x0fatomic_number\x0310 = \x0f2 \x0310(\x0fdimensionless\x0310); ",
@@ -854,11 +899,11 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("300 px -> mm", false).await,
+            evaluate(&rink, "300 px -> mm", false).await,
             "\x0310> \x0f79.375 millimeter \x0310(\x0flength\x0310)"
         );
         assert_eq!(
-            rink.eval_and_format("90 grad -> degree", false).await,
+            evaluate(&rink, "90 grad -> degree", false).await,
             "\x0310> \x0f81 degree \x0310(\x0fangle\x0310)"
         );
     }
@@ -868,11 +913,11 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("300 dpi -> dpcm", false).await,
+            evaluate(&rink, "300 dpi -> dpcm", false).await,
             "\x0310> \x0f15000/127\x0310, approx. \x0f118.1102 dpcm \x0310(\x0fm^-1\x0310)"
         );
         assert_eq!(
-            rink.eval_and_format("1 dppx -> dpi", false).await,
+            evaluate(&rink, "1 dppx -> dpi", false).await,
             "\x0310> \x0f96 dpi \x0310(\x0fm^-1\x0310)"
         );
     }
@@ -884,13 +929,13 @@ mod tests {
         rink.ensure_currency_cached().await;
 
         assert_eq!(
-            rink.eval_and_format("1 ETH to USD", false).await,
+            evaluate(&rink, "1 ETH to USD", false).await,
             "\x0310> \x0f2650.32 USD \x0310(\x0fmoney\x0310)"
         );
 
         // The classifier case-corrects lowercase coin abbreviations too.
         assert_eq!(
-            rink.eval_and_format("1 eth to usd", true).await,
+            evaluate(&rink, "1 eth to usd", true).await,
             "\x0310> \x0f2650.32 USD \x0310(\x0fmoney\x0310)"
         );
     }
@@ -904,7 +949,7 @@ mod tests {
         // The fake EUR coin (priced 1.2) must not shadow the bundled euro: 1 EUR is 0.5 USD
         // under the fiat fixture, and the rejected `1INCH` symbol must not break the load.
         assert_eq!(
-            rink.eval_and_format("1 EUR to USD", false).await,
+            evaluate(&rink, "1 EUR to USD", false).await,
             "\x0310> \x0f0.5 USD \x0310(\x0fmoney\x0310)"
         );
     }
@@ -952,11 +997,11 @@ mod tests {
 
         // 50_000 satoshis are 0.0005 bitcoin at the fixture's 65 000 USD price.
         assert_eq!(
-            rink.eval_and_format("50000 sats to usd", true).await,
+            evaluate(&rink, "50000 sats to usd", true).await,
             "\x0310> \x0f32.5 USD \x0310(\x0fmoney\x0310)"
         );
         // A gwei stays convertible without being resolvable as fiat.
-        let reply = rink.eval_and_format("1 gwei to usd", true).await;
+        let reply = evaluate(&rink, "1 gwei to usd", true).await;
         assert!(reply.contains("USD"), "{reply}");
     }
 
@@ -973,7 +1018,7 @@ mod tests {
         // The ETH unit is not loaded, but the subunits' pending dependency declaration
         // surfaces it in the missing-dependencies error.
         assert_eq!(
-            rink.eval_and_format("1 eth to usd", true).await,
+            evaluate(&rink, "1 eth to usd", true).await,
             "\x0310> Error: Missing dependencies: \x0fETH"
         );
     }
@@ -989,7 +1034,7 @@ mod tests {
         // The failed listings fetch keeps the crypto units out, but the subunits' pending
         // dependency still surfaces ETH in the error.
         assert_eq!(
-            rink.eval_and_format("1 eth to usd", true).await,
+            evaluate(&rink, "1 eth to usd", true).await,
             "\x0310> Error: Missing dependencies: \x0fETH"
         );
     }
@@ -1010,7 +1055,7 @@ mod tests {
         // The listings fetch failed, so the requested table is absent even though the fiat
         // entry is fresh: unlike an unresolvable dependency, this state a refetch can fix,
         // so the query retries the listings inline instead of waiting out the whole TTL.
-        let reply = rink.eval_and_format("1 gwei to usd", true).await;
+        let reply = evaluate(&rink, "1 gwei to usd", true).await;
         assert!(reply.contains("Missing dependencies"), "{reply}");
 
         assert_eq!(listings.received_requests().await.unwrap().len(), 2);
@@ -1022,7 +1067,7 @@ mod tests {
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
 
         assert_eq!(
-            rink.eval_and_format("1 USD", false).await,
+            evaluate(&rink, "1 USD", false).await,
             "\x0310> Error: Missing dependencies: \x0fUSD"
         );
     }
@@ -1041,7 +1086,7 @@ mod tests {
         // cannot add the missing table. The queries must not reach the network again.
         for _ in 0..3 {
             // `.c` case-corrects `usd`, so the pending `gwei` dependency is what surfaces.
-            let reply = rink.eval_and_format("1 gwei to usd", true).await;
+            let reply = evaluate(&rink, "1 gwei to usd", true).await;
 
             assert!(reply.contains("Missing dependencies"), "{reply}");
         }
@@ -1054,7 +1099,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("1 USD", false).await,
+            evaluate(&rink, "1 USD", false).await,
             "\x0310> Error: Missing dependencies: \x0fUSD"
         );
     }
@@ -1067,19 +1112,19 @@ mod tests {
         rink.ensure_currency_cached().await;
 
         assert_eq!(
-            rink.eval_and_format("10 usd to dkk", true).await,
+            evaluate(&rink, "10 usd to dkk", true).await,
             "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
         );
         assert_eq!(
-            rink.eval_and_format("10usd to dkk", true).await,
+            evaluate(&rink, "10usd to dkk", true).await,
             "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
         );
         assert_eq!(
-            rink.eval_and_format("10 USD to DKK", true).await,
+            evaluate(&rink, "10 USD to DKK", true).await,
             "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
         );
         assert_eq!(
-            rink.eval_and_format("30 eur to jpy", true).await,
+            evaluate(&rink, "30 eur to jpy", true).await,
             "\x0310> \x0f5115.6 JPY \x0310(\x0fmoney\x0310)"
         );
     }
@@ -1091,7 +1136,7 @@ mod tests {
         // The corrections land before any evaluation: the reply names the *tracked*
         // dependencies (USD), which only the rewritten `10 USD to DKK` can trigger.
         assert_eq!(
-            rink.eval_and_format("10 usd to dkk", true).await,
+            evaluate(&rink, "10 usd to dkk", true).await,
             "\x0310> Error: Missing dependencies: \x0fUSD"
         );
     }
@@ -1101,15 +1146,15 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("50 gram", true).await,
+            evaluate(&rink, "50 gram", true).await,
             "\x0310> \x0f50 gram \x0310(\x0fmass\x0310)"
         );
         assert_eq!(
-            rink.eval_and_format("banana", true).await,
+            evaluate(&rink, "banana", true).await,
             "\x0310> Error: No such unit \x0fbanana"
         );
         assert_eq!(
-            rink.eval_and_format("2 hours from now", true).await,
+            evaluate(&rink, "2 hours from now", true).await,
             "\x0310> Error: No such unit \x0ffrom\x0310, did you mean \x0ffreon\x0310?"
         );
     }
@@ -1119,7 +1164,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            rink.eval_and_format("20:00 in tokyo", true).await,
+            evaluate(&rink, "20:00 in tokyo", true).await,
             "\x0310> Error: Expected term, got `:`"
         );
     }
@@ -1132,8 +1177,8 @@ mod tests {
         // `<error: …>` unit, so the line stays verbatim and rink reports the real problem.
         for line in ["egg $%^", "10 usd +", "5 usd -> dkk + "] {
             assert_eq!(
-                rink.eval_and_format(line, true).await,
-                rink.eval_and_format(line, false).await,
+                evaluate(&rink, line, true).await,
+                evaluate(&rink, line, false).await,
                 "classification changed the outcome of {line:?}"
             );
         }
@@ -1145,8 +1190,15 @@ mod tests {
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
         rink.ensure_currency_cached().await;
 
+        // A bare `Option::cloned` is ambiguous between the `&T` and `&mut T` impls.
+        #[allow(clippy::redundant_closure_for_method_calls)]
+        let data = rink
+            .currency
+            .read(|data| data.cloned())
+            .expect("the fetched currency data must be cached");
+        let ctx = build_context(Some(&data), None).expect("the fetched data must build a context");
+
         let rewritten = |line: &str| {
-            let ctx = zeta_utils::sync::lock(&rink.ctx);
             let mut iter = TokenIterator::new(line.trim()).peekable();
             let mut query = parse_query(&mut iter);
 
@@ -1172,8 +1224,8 @@ mod tests {
 
         // Both list items are corrected, not just the left-hand side.
         assert_eq!(
-            rink.eval_and_format("5 usd -> dkk, eur", true).await,
-            rink.eval_and_format("5 USD -> DKK, EUR", false).await,
+            evaluate(&rink, "5 usd -> dkk, eur", true).await,
+            evaluate(&rink, "5 USD -> DKK, EUR", false).await,
         );
     }
 
@@ -1182,7 +1234,7 @@ mod tests {
         let rink = offline_plugin();
 
         // A fixed date keeps the assertions free of the clock and the host timezone.
-        let reply = rink.eval_and_format("#2016-08-24#", true).await;
+        let reply = evaluate(&rink, "#2016-08-24#", true).await;
         // The datetime renders as a value, inside the run opened right after the marker.
         assert!(reply.contains("\x0f2016-08-24"), "{reply}");
         // The value run closes right after the datetime's trailing timezone label.
@@ -1245,8 +1297,8 @@ mod tests {
             "20:00 in tokyo",
             "1 << meter",
         ] {
-            let strict = rink.eval_and_format(line, false).await;
-            let smart = rink.eval_and_format(line, true).await;
+            let strict = evaluate(&rink, line, false).await;
+            let smart = evaluate(&rink, line, true).await;
             assert_eq!(strict, smart, "classification changed {line:?}");
         }
     }
@@ -1258,10 +1310,10 @@ mod tests {
 
         rink.ensure_currency_cached().await;
 
-        let fiat = rink.eval_and_format("100 usd to eur", true).await;
+        let fiat = evaluate(&rink, "100 usd to eur", true).await;
         assert!(fiat.contains("euro") && fiat.contains("money"), "{fiat}");
 
-        let bitcoin = rink.eval_and_format("1 btc to usd", true).await;
+        let bitcoin = evaluate(&rink, "1 btc to usd", true).await;
         assert!(
             bitcoin.contains("USD") && bitcoin.contains("money"),
             "{bitcoin}"
