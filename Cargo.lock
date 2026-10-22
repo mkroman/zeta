@@ -69,6 +69,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "380962b3d93b99642e50b9febf72c071e97e8b32d86eae9cf4ef582bb960ae6e"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "argh"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2869,6 +2878,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "plugins"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
  "argh",
  "async-trait",
  "base64 0.23.1",
@@ -5315,9 +5325,9 @@ dependencies = [
 name = "zeta-cache"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
  "tokio",
  "zeta-test-support",
- "zeta-utils",
 ]
 
 [[package]]
@@ -5369,6 +5379,7 @@ dependencies = [
 name = "zeta-plugin"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
  "argh",
  "async-trait",
  "humantime-serde",
