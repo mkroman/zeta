@@ -27,7 +27,7 @@ pub use zeta_http as http;
 /// Shared media mirroring
 #[cfg(feature = "mirror")]
 pub use zeta_mirror as mirror;
-/// URL helper utillities
+/// URL helper utilities
 pub use zeta_url as url;
 /// Duration formatting and parsing utilities
 pub use zeta_utils::duration;

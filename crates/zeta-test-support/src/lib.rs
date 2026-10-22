@@ -183,7 +183,7 @@ pub fn assert_parses<T: std::fmt::Debug + PartialEq>(
     cases: &[(&str, T)],
 ) {
     for (input, expected) in cases {
-        let url = Url::parse(input).unwrap();
+        let url = Url::parse(input).expect("test URL parses");
 
         assert_eq!(&parse(&url), expected, "for {input}");
     }

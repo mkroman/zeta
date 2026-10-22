@@ -204,7 +204,7 @@ impl Rink {
                             refresh_data(
                                 &client,
                                 &currency,
-                                cmc.as_ref(),
+                                cmc.as_deref(),
                                 crypto_enabled,
                                 &url,
                                 &ctx,
@@ -307,7 +307,7 @@ impl Rink {
                 refresh_data(
                     client,
                     &self.currency,
-                    self.cmc.as_ref(),
+                    self.cmc.as_deref(),
                     self.crypto_enabled,
                     &self.currency_url,
                     &self.ctx,
