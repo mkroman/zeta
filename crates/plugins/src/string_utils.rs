@@ -113,18 +113,32 @@ impl StringUtils {
 ///
 /// When `args` is exactly one emoji sequence — `🏳️‍🌈`, `🫶🏼`, `2️⃣` — the reply names the
 /// sequence as a whole: `{U+1F3F3, U+FE0F, U+200D, U+1F308}: RAINBOW FLAG`. Otherwise every
-/// character gets its own entry, `U+0064: LATIN SMALL LETTER D (Lowercase Letter)`, and the
-/// listing stops at [`MAX_LISTING_LENGTH`] with an ellipsis.
+/// character gets its own entry, `U+0064: LATIN SMALL LETTER D (Lowercase Letter)`. Both
+/// listings stop at [`MAX_LISTING_LENGTH`] with an ellipsis.
 fn unicode_details(args: &str) -> String {
     const SUFFIX: &str = ", …";
+    const FRAMING: usize = 1 + 3 + 3; // `}`, `:\x0f ` and `\x0310`
 
     if let Some(sequence) = emoji_name(args) {
-        let points = args
-            .chars()
-            .map(|c| format!("U+{:04X}", u32::from(c)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return format!("{{{points}}}:\x0f {}\x0310", sequence.to_uppercase());
+        let name = sequence.to_uppercase();
+        // The codepoint list is a listing too: canonicalization strips every `U+FE0F`, so
+        // the input that matched can be much longer than the stored key. Reserve the
+        // trailing framing and the ellipsis so a padded input cannot push the reply past
+        // the IRC line budget.
+        let total = args.chars().count();
+        let mut message = String::from("{");
+        let appended = append_entries_within_budget(
+            &mut message,
+            args.chars().map(|c| format!("U+{:04X}", u32::from(c))),
+            ", ",
+            MAX_LISTING_LENGTH,
+            SUFFIX.len() + FRAMING + name.len(),
+        );
+        if appended < total {
+            message.push_str(SUFFIX);
+        }
+        let _ = write!(message, "}}:\x0f {name}\x0310");
+        return message;
     }
 
     let total = args.chars().count();
@@ -231,6 +245,18 @@ mod tests {
         assert!(reply.contains('…'), "reply was not truncated: {reply}");
         assert!(reply.ends_with(", …"));
         assert!(reply.len() <= MAX_LISTING_LENGTH + ", …".len());
+    }
+
+    #[test]
+    fn uni_budgets_a_padded_emoji_sequence() {
+        // `U+FE0F` is stripped by canonicalization, so this still matches the rainbow
+        // flag; without a budget the points list would be much longer than the input.
+        let padded = format!("🏳️‍🌈{}", "\u{FE0F}".repeat(60));
+        let reply = unicode_details(&padded);
+
+        assert!(reply.contains('…'), "reply was not truncated: {reply}");
+        assert!(reply.len() <= MAX_LISTING_LENGTH, "{reply}");
+        assert!(reply.ends_with("RAINBOW FLAG\x0310"));
     }
 
     #[test]

@@ -11,9 +11,10 @@
 //! section payloads (offsets inside a section are relative to that section)
 //! ```
 //!
-//! v0 stores names as a plain blob plus a `u32` offset table. That is deliberately naive: it
-//! is the reference encoder the tests round-trip against, and it gets swapped for the winning
-//! encoding from the compression experiments without touching any of the parsing here.
+//! The names are emitted by the vendored encoder in `build/build_names.rs`: front-coded against
+//! each code point predecessor and split into three PPMd8-I streams, with the names that
+//! `data/derived-names.rules` can rebuild left as generated Rust instead of table bytes. The
+//! encoder round-trips every name against `DerivedName.txt` while it builds.
 //!
 //! The general category table is the measured two-level design: a page directory (`u16`
 //! first-record index per 2,048-code-point page) over `u16` records packing the
@@ -33,7 +34,7 @@
 #[path = "build/build_names.rs"]
 mod build_names;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::PathBuf;
 
@@ -342,6 +343,11 @@ fn general_category_section(ranges: &GcRanges) -> Vec<u8> {
 
 /// Parses the emoji entries with lookup precedence: named sequences (3) over fully-qualified
 /// (2) over minimally-qualified and unqualified (0). Keys keep `U+FE0F` here.
+///
+/// `NamedSequences.txt` also names non-emoji sequences (Latin letters with combining marks);
+/// only the entries whose canonical key names an emoji sequence from `emoji-test.txt` are
+/// kept. In practice those are the keycaps, whose official names override the test file's
+/// lower-case ones.
 fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, String)> {
     let mut entries: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
 
@@ -371,6 +377,8 @@ fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, St
         keep_best(&mut entries, cps, rank, words[2..].join(" "));
     }
 
+    let emoji_keys: BTreeSet<Vec<u32>> = entries.keys().map(|cps| canonical_cps(cps)).collect();
+
     for (number, line) in named_text
         .lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -379,15 +387,19 @@ fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, St
         let (name, cps) = line
             .split_once(';')
             .unwrap_or_else(|| panic!("line {number}: {line}"));
-        keep_best(
-            &mut entries,
-            parse_code_points(cps, number),
-            3,
-            name.trim().to_owned(),
-        );
+        let cps = parse_code_points(cps, number);
+        if !emoji_keys.contains(&canonical_cps(&cps)) {
+            continue;
+        }
+        keep_best(&mut entries, cps, 3, name.trim().to_owned());
     }
 
     entries
+}
+
+/// The canonical key of a sequence: `U+FE0F` removed.
+fn canonical_cps(cps: &[u32]) -> Vec<u32> {
+    cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect()
 }
 
 /// Inserts an entry unless a higher-precedence name already covers the same code points.
@@ -419,7 +431,7 @@ fn canonical_emoji_entries(
     // Canonicalize: strip U+FE0F, keeping the highest-precedence name per canonical key.
     let mut canonical: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
     for (cps, (rank, name)) in &all {
-        let key: Vec<u32> = cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect();
+        let key = canonical_cps(cps);
         match canonical.get(&key) {
             Some((existing, _)) if *existing > *rank => {}
             _ => {
@@ -697,29 +709,10 @@ fn build_sections(gc: &GcRanges, emoji: &[u8]) -> Vec<Section> {
             ledger.streams[2].compressed,
             ledger.blob,
             ledger.runs.compressed,
-            ledger.patterns.compressed,
+            ledger.pattern_section.len(),
             ledger.table,
             ledger.table_strict
         );
-    }
-
-    // The `*` patterns are few (20 records) and looked up on every name miss, so they go in
-    // plainly rather than behind another codec: `start`, `end`, then the two halves of the
-    // pattern around the `*`.
-    let mut patterns = Vec::new();
-    for pattern in &ledger.pattern_ranges {
-        push_u32(&mut patterns, pattern.lo);
-        push_u32(&mut patterns, pattern.hi);
-        push_u16(
-            &mut patterns,
-            u16::try_from(pattern.prefix.len()).expect("prefix fits in u16"),
-        );
-        patterns.extend_from_slice(pattern.prefix.as_bytes());
-        push_u16(
-            &mut patterns,
-            u16::try_from(pattern.suffix.len()).expect("suffix fits in u16"),
-        );
-        patterns.extend_from_slice(pattern.suffix.as_bytes());
     }
 
     let read = |name: &str| -> Vec<u8> {
@@ -733,7 +726,7 @@ fn build_sections(gc: &GcRanges, emoji: &[u8]) -> Vec<Section> {
         },
         Section {
             id: SECTION_NAME_PATTERNS,
-            data: patterns,
+            data: ledger.pattern_section,
         },
         Section {
             id: SECTION_GC,

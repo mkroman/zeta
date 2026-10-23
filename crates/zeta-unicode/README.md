@@ -31,10 +31,10 @@ raw, so the table is over budget on purpose until the last two pieces land. The 
 | names | 69,062 | `UNNM` container: three PPMd8-I streams, decoded once at first lookup |
 | name runs | 1,066 | `varint(len), varint(gap)` per run, 720 runs, code point → name id |
 | name patterns | 691 | the 20 `*` ranges |
-| **names + index** | **70,818** | **budget 73,304 — met**, or 72,244 charging the shared literals to the table |
+| **names + index** | **70,819** | **budget 73,304 — met**, or 72,717 charging the shared literals to the table |
 | general category | 9,494 | two-level page table: 545 `u16` directory entries over 4,202 packed `u16` records |
-| emoji | 60,890 | 2,393 canonical keys answer for all 4,421 sequences (see below) |
-| **total** | **141,275** | budget 100,000 — the last two sections are still stored raw |
+| emoji | 45,171 | 1,944 stored keys answer for all 3,972 emoji sequences (see below) |
+| **total** | **125,556** | budget 100,000 — the last two sections are still stored raw |
 
 **Names.** Each name is front-coded against its code point predecessor — shared prefix length,
 shared suffix length, NUL-terminated middle — and the three streams are coded separately, because
@@ -53,7 +53,7 @@ This is where the names budget was won: the same streams without the rules are 7
 
 Two ideas carry the emoji section. **Keys are canonicalized**: `U+FE0F` is stripped, so
 text-presentation input answers like emoji presentation (`🚶‍♂` → `man walking`) at no storage
-cost, and named sequences (keycaps, flags) take precedence over the test file. **Skin-tone
+cost, and the keycap named sequences take precedence over the test file. **Skin-tone
 variants are never stored**: each of the 344 tone groups gets a 3-bit rule — insert the tone
 phrase after the first `": "` or append it, collapsing duplicate tones or not — and lookup strips
 the tones from the query, finds the base and renders the name. Twelve groups whose tone-stripped
@@ -70,10 +70,11 @@ does not hold; the design study measured 213.92 ns for that same path.
 ### What is left to fit the budget
 
 The names are done and inside their budget. The last step is the general category and emoji
-sections, which are still stored raw: 9,494 → 7,704 and 60,890 → 21,400 under lzma-9e, and
-front-coding the emoji names the way the character names are should take the emoji section well
-below that. Together with the name runs and patterns (1,757 B) that lands the whole table under
-100,000 B.
+sections, which are still stored raw: 9,494 → 7,704 for the general category, and the emoji
+section (45,171 B) under lzma-9e. The design study measured 60,890 → 21,400 for the larger
+pre-filter section, so the filtered one should compress below that; front-coding the emoji names
+the way the character names are should take it further down. Together with the name runs and
+patterns (1,757 B) that lands the whole table under 100,000 B.
 
 ### How bytes are spent: code first, data second
 

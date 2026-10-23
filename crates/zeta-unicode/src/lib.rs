@@ -5,7 +5,7 @@
 //! is no parsing, no allocation for stored names, and no decompression. The general category
 //! table is a two-level page structure (a `u16` directory plus `u16` range records), and emoji
 //! keys are canonicalized — `U+FE0F` is stripped and skin-tone variants are synthesized from a
-//! 3-bit rule — so 2,393 stored keys answer for every one of the 4,421 sequences the UCD names.
+//! 3-bit rule — so 1,944 stored keys answer for every one of the 3,972 sequences the UCD names.
 //!
 //! ```
 //! use zeta_unicode::{emoji_name, general_category, name, name_or_label};
@@ -154,8 +154,11 @@ pub fn general_category(c: char) -> GeneralCategory {
     general_category_of(u32::from(c)).unwrap_or(GeneralCategory::Unassigned)
 }
 
-/// Returns the CLDR short name of an emoji sequence such as `🏳️‍🌈`, as recorded in
-/// `emoji-test.txt` (or `NamedSequences.txt` where a sequence has an official name).
+/// Returns the CLDR short name of an emoji sequence such as `🏳️‍🌈`.
+///
+/// Names come from `emoji-test.txt`, or from `NamedSequences.txt` for the official name of an
+/// emoji sequence such as a keycap. Non-emoji named sequences such as Latin letters with
+/// combining marks are not part of this table.
 ///
 /// Keys are canonicalized: `U+FE0F` is optional (`🚶‍♂` answers like `🚶‍♂️`) and skin-tone
 /// variants resolve by synthesizing the base name with the recorded formatting rule. The name
@@ -494,7 +497,7 @@ fn tone_phrase(code: u8, tones: &[usize]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
 
@@ -666,6 +669,13 @@ mod tests {
             }
         }
 
+        // `NamedSequences.txt` also carries non-emoji sequences (Latin letters with combining
+        // marks); the build drops those, so the oracle must too.
+        let emoji_keys: BTreeSet<Vec<u32>> = ranked
+            .keys()
+            .map(|cps| cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect())
+            .collect();
+
         for line in NAMED_SEQUENCES
             .lines()
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -675,6 +685,10 @@ mod tests {
                 .split_whitespace()
                 .map(|cp| u32::from_str_radix(cp, 16).expect("code point"))
                 .collect();
+            let canonical: Vec<u32> = cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect();
+            if !emoji_keys.contains(&canonical) {
+                continue;
+            }
             ranked.insert(cps, (3, name.trim().to_owned()));
         }
 
@@ -702,8 +716,9 @@ mod tests {
         }
 
         assert!(
-            // 5,705 raw entries collapse onto 4,421 canonical keys (U+FE0F merged away).
-            oracle.len() > 4_400,
+            // 5,244 emoji-test entries collapse onto 3,972 canonical keys (U+FE0F merged
+            // away); the keycap named sequences only supply names for existing keys.
+            oracle.len() > 3_900,
             "only checked {} sequences",
             oracle.len()
         );
@@ -722,6 +737,8 @@ mod tests {
         );
         assert_eq!(emoji_name("d'être"), None);
         assert_eq!(emoji_name("🐱‍🏍"), None);
+        // A non-emoji named sequence (a decomposed Latin letter) is not an emoji.
+        assert_eq!(emoji_name("\u{0100}\u{0300}"), None);
     }
 
     #[test]

@@ -75,7 +75,8 @@
 //!   streams (`plen`, `slen`, `mids`).
 //! * `runs.bin` — the name index (`cp` → `name_id`), varint-coded, then
 //!   PPMd8-I.
-//! * `patterns.bin` — the `*`-pattern ranges, varint-coded, then PPMd8-I.
+//! * `patterns.bin` — the `*`-pattern ranges, varint-coded, then PPMd8-I. This is a
+//!   diagnostic check; the table ships the plain [`pattern_section`] layout.
 //! * `expected.txt` — the corpus as `<hex cp>\t<name>`, the decoder's ground truth.
 //! * `gen.rs` — the generated derivation tree (`.text` + `.rodata`), for
 //!   `include!` from `src/`.
@@ -138,7 +139,7 @@ pub struct Request {
     pub fold_aliases: bool,
     /// Round-trip the emitted artifact in-process before returning.
     pub verify: bool,
-    /// Fail if names + index + patterns exceed this many bytes.
+    /// Fail if the shipped names + index + patterns exceed this many bytes.
     pub budget: usize,
     /// Print the ledger to stderr.
     pub report: bool,
@@ -194,16 +195,17 @@ pub struct Ledger {
     pub streams_total: usize,
     /// The name index section.
     pub runs: SectionSize,
-    /// The pattern section.
+    /// The compressed diagnostic pattern stream (`patterns.bin`); the table ships
+    /// [`Self::pattern_section`] instead.
     pub patterns: SectionSize,
     /// Consecutive-code-point runs in the index.
     pub runs_count: usize,
     /// `*`-pattern ranges.
     pub patterns_count: usize,
-    /// The `*`-pattern ranges themselves, so the caller can emit its own
-    /// pattern section without re-reading the corpus.
-    pub pattern_ranges: Vec<Pattern>,
-    /// `blob + runs + patterns`, the number the budget is about.
+    /// The plain `*`-pattern section the table actually ships, exactly as
+    /// [`pattern_section`] encodes it.
+    pub pattern_section: Vec<u8>,
+    /// `blob + runs + pattern_section`, the number the budget is about.
     pub table: usize,
     /// `table + atom_bytes`: the strict reading that also charges the merged
     /// literals to the table.
@@ -1361,7 +1363,7 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Verify {
     );
 
     // Derived names come from the rules; the shipped code uses the generated
-    // tree, which `probe` checks separately.
+    // tree, which the crate's round-trip test exercises separately.
     let mut seen = 0usize;
     let (text, offsets) = reconstruct(&streams, |id, out| {
         let cp = corpus.entries[usize::try_from(id).expect("id fits")].0;
@@ -1736,6 +1738,10 @@ pub fn emit(request: &Request) -> Ledger {
     let atom_bytes: usize = rules.atoms.iter().map(String::len).sum();
     let runs_size = runs_bytes.len();
     let patterns_size = patterns_bytes.len();
+    // The table ships the plain section, not the compressed diagnostic artifact, so
+    // that is the size the budget has to charge.
+    let pattern_section_data = pattern_section(&corpus.patterns);
+    let pattern_section_len = pattern_section_data.len();
     let ledger = Ledger {
         entries: corpus.entries.len(),
         derived: derived_count,
@@ -1761,9 +1767,9 @@ pub fn emit(request: &Request) -> Ledger {
         },
         runs_count: run_count(&corpus),
         patterns_count: corpus.patterns.len(),
-        pattern_ranges: corpus.patterns.clone(),
-        table: blob.len() + runs_size + patterns_size,
-        table_strict: blob.len() + runs_size + patterns_size + atom_bytes,
+        pattern_section: pattern_section_data,
+        table: blob.len() + runs_size + pattern_section_len,
+        table_strict: blob.len() + runs_size + pattern_section_len + atom_bytes,
     };
     if request.report {
         report(&ledger, &corpus, &rules, request);
@@ -1847,11 +1853,10 @@ fn report(ledger: &Ledger, corpus: &Corpus, rules: &Rules, request: &Request) {
         ledger.runs.mem_mib
     );
     eprintln!(
-        "  PATTERNS  {:>8?} B  ({} ranges, raw {:?} -> {:?} + 4)",
-        ledger.patterns.compressed + SECTION_PREFIX_LEN,
+        "  PATTERNS  {:>8?} B  ({} ranges, shipped plainly; {:?} B compressed diagnostic)",
+        ledger.pattern_section.len(),
         ledger.patterns_count,
-        ledger.patterns.raw,
-        ledger.patterns.compressed
+        ledger.patterns.compressed + SECTION_PREFIX_LEN
     );
     eprintln!(
         "  TABLE     {:>8?} B  (budget {})",
@@ -2155,8 +2160,42 @@ fn runs_stream(corpus: &Corpus) -> Vec<u8> {
     out
 }
 
-/// The shipped pattern section: `varint(lo - 0x3400) varint(len) prefix|suffix|`
-/// per `*`-pattern range.
+fn push_u16(buf: &mut Vec<u8>, value: u16) {
+    buf.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u32(buf: &mut Vec<u8>, value: u32) {
+    buf.extend_from_slice(&value.to_le_bytes());
+}
+
+/// The shipped `*`-pattern section: `u32 lo`, `u32 hi`, `u16 prefix length`, the
+/// prefix, `u16 suffix length`, the suffix — one record per range, in ascending
+/// order.
+///
+/// The decoder scans these on every name miss, so they are stored plainly; the
+/// compressed `patterns.bin` below is a diagnostic artifact and a build check.
+#[must_use]
+pub fn pattern_section(patterns: &[Pattern]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for pattern in patterns {
+        push_u32(&mut out, pattern.lo);
+        push_u32(&mut out, pattern.hi);
+        push_u16(
+            &mut out,
+            u16::try_from(pattern.prefix.len()).expect("prefix fits in u16"),
+        );
+        out.extend_from_slice(pattern.prefix.as_bytes());
+        push_u16(
+            &mut out,
+            u16::try_from(pattern.suffix.len()).expect("suffix fits in u16"),
+        );
+        out.extend_from_slice(pattern.suffix.as_bytes());
+    }
+    out
+}
+
+/// The diagnostic pattern stream for `patterns.bin`: `varint(lo - 0x3400)
+/// varint(len) prefix|suffix|` per `*`-pattern range.
 ///
 /// `skip_single` drops the single-code-point pattern (U+18CFF in Unicode 18.0.0).
 /// It exists so the cost of answering it algorithmically — rather than storing
