@@ -1,0 +1,17 @@
+[package]
+name = "zeta-unicode-build"
+version = "0.0.0"
+edition = "2024"
+description = "Offline generator for the zeta-unicode packed Unicode tables."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[dependencies]
+ppmd-rust = "1.5.0"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

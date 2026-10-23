@@ -1,8 +1,8 @@
 //! The stored character names, decoded once from the table's three streams.
 //!
-//! `build.rs` front-codes every name against its code point predecessor and splits the result
-//! into three PPMd8-I streams: the shared prefix lengths, the shared suffix lengths and the
-//! NUL-terminated middles. Names that generated code can rebuild (see `build/build_names.rs`,
+//! The generator front-codes every name against its code point predecessor and splits the
+//! result into three PPMd8-I streams: the shared prefix lengths, the shared suffix lengths and
+//! the NUL-terminated middles. Names that generated code can rebuild (see `zeta-unicode-build`,
 //! which turns `data/derived-names.rules` into the tree `include!`d below) are left out of the
 //! streams but keep their id, so they stay valid predecessors.
 //!
@@ -234,7 +234,7 @@ fn decode_stream(bytes: &[u8], raw: usize, order: u32, mem: u32) -> Vec<u8> {
 }
 
 /// Decompresses a section shaped as `u32 raw length`, `u8 order` and `u8 memory in MiB`,
-/// followed by a PPMd8-I stream: the encoding the build script uses for the run table.
+/// followed by a PPMd8-I stream: the encoding the generator uses for the run table.
 fn decompress(section: &[u8]) -> Vec<u8> {
     let raw = tables::usize_at(section, 0).expect("the section records its raw length");
     let order = u32::from(
@@ -266,7 +266,7 @@ fn read_u32(buf: &[u8], offset: usize) -> u32 {
     tables::u32_at(buf, offset).expect("the container header is well formed")
 }
 
-/// The generated rule tree from `build.rs`.
+/// The generated rule tree from `zeta-unicode-build`.
 mod derive {
     #[allow(
         clippy::all,

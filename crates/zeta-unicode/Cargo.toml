@@ -10,26 +10,20 @@ keywords = ["unicode", "emoji", "ucd", "tables"]
 categories = ["encoding", "text-processing"]
 build = "build.rs"
 # Only what the build script and the decoder need: the vendored UCD files are the input to
-# `build.rs`, so the package must ship them or it cannot build downstream.
-include = [
-    "src/**",
-    "data/**",
-    "build.rs",
-    "build/**",
-    "Cargo.toml",
-    "README.md",
-    "LICENSE-UNICODE",
-]
+# `zeta-unicode-build`, so the package must ship them or it cannot build downstream.
+include = ["src/**", "data/**", "build.rs", "Cargo.toml", "README.md", "LICENSE-UNICODE"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-# The name streams are PPMd8-I: encoded here by `build.rs`, decoded once at first use.
+# The name streams are PPMd8-I: encoded by `zeta-unicode-build`, decoded once at first use.
 ppmd-rust = "1.5.0"
 
 [build-dependencies]
-ppmd-rust = "1.5.0"
+# `version` is required for `cargo package`: the packaged manifest must name a publishable
+# requirement even though the generator only exists in this workspace.
+zeta-unicode-build = { path = "../zeta-unicode-build", version = "0.0.0" }
 
 [lints]
 workspace = true

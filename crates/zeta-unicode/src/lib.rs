@@ -1,11 +1,12 @@
 //! Unicode 18.0.0 character names, general categories and emoji sequence names.
 //!
-//! [`build.rs`](build.rs) compiles the vendored UCD files in `data/` into one packed table that
-//! is linked into the binary with `include_bytes!`. A lookup walks that table directly: there
-//! is no parsing, no allocation for stored names, and no decompression. The general category
-//! table is a two-level page structure (a `u16` directory plus `u16` range records), and emoji
-//! keys are canonicalized — `U+FE0F` is stripped and skin-tone variants are synthesized from a
-//! 3-bit rule — so 1,944 stored keys answer for every one of the 3,972 sequences the UCD names.
+//! The `zeta-unicode-build` crate compiles the vendored UCD files in `data/` into one packed
+//! table that is linked into the binary with `include_bytes!`. A lookup walks that table
+//! directly: there is no parsing, no allocation for stored names, and no decompression. The
+//! general category table is a two-level page structure (a `u16` directory plus `u16` range
+//! records), and emoji keys are canonicalized — `U+FE0F` is stripped and skin-tone variants are
+//! synthesized from a 3-bit rule — so 1,944 stored keys answer for every one of the 3,972
+//! sequences the UCD names.
 //!
 //! ```
 //! use zeta_unicode::{emoji_name, general_category, name, name_or_label};
@@ -27,7 +28,7 @@ pub use gc::GeneralCategory;
 
 /// The Unicode version of the data this crate was built from, as `(major, minor, patch)`.
 ///
-/// [`build.rs`](build.rs) refuses to build when the vendored files disagree, so this cannot
+/// `zeta-unicode-build` refuses to build when the vendored files disagree, so this cannot
 /// drift from the table without a test failing.
 pub const UNICODE_VERSION: (u8, u8, u8) = (18, 0, 0);
 
@@ -65,8 +66,9 @@ const JAMO_TRAILING: [&str; 28] = [
 
 /// The general category abbreviations in table id order (id = position + 1).
 ///
-/// Keep in sync with `build.rs`, which emits ids in this order; the round-trip tests walk every
-/// range of the vendored `DerivedGeneralCategory.txt` and fail if the two ever disagree.
+/// Keep in sync with `zeta-unicode-build`, which emits ids in this order; the round-trip tests
+/// walk every range of the vendored `DerivedGeneralCategory.txt` and fail if the two ever
+/// disagree.
 const GC_SHORT_NAMES: [&str; 30] = [
     "Cc", "Cf", "Cn", "Co", "Cs", "Ll", "Lm", "Lo", "Lt", "Lu", "Mc", "Me", "Mn", "Nd", "Nl", "No",
     "Pc", "Pd", "Pe", "Pf", "Pi", "Po", "Ps", "Sc", "Sk", "Sm", "So", "Zl", "Zp", "Zs",
@@ -85,7 +87,7 @@ const TONE_NAMES: [&str; 5] = [
     "medium-dark skin tone",
     "dark skin tone",
 ];
-/// Longest canonical emoji key in bytes; `build.rs` asserts no stored key is longer.
+/// Longest canonical emoji key in bytes; `zeta-unicode-build` asserts no stored key is longer.
 const MAX_KEY: usize = 64;
 
 /// Returns the `Name` property of `c`, or the derived name Unicode defines algorithmically.
@@ -638,7 +640,7 @@ mod tests {
         assert_eq!(general_category('\u{378}'), GeneralCategory::Unassigned);
     }
 
-    /// Rebuilds the emoji oracle the way `build.rs` does: canonical keys (U+FE0F removed) with
+    /// Rebuilds the emoji oracle the way `zeta-unicode-build` does: canonical keys (U+FE0F removed) with
     /// named-sequence names taking precedence over fully-qualified, then qualified over
     /// unqualified.
     fn emoji_oracle() -> BTreeMap<String, String> {

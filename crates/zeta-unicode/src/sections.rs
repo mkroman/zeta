@@ -1,4 +1,4 @@
-//! Section ids of the generated table, shared with `build.rs`.
+//! Section ids of the generated table, shared with `zeta-unicode-build`.
 //!
 //! They are internal: nothing outside the crate names a section, and every reader tolerates a
 //! missing one by answering "no data" rather than panicking.

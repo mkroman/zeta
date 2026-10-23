@@ -9,7 +9,8 @@
 > the code before you trust it.
 
 Unicode 18.0.0 character names, general categories and emoji sequence names for the zeta IRC
-bot, compiled from the vendored UCD files in `data/` into one packed table by `build.rs`.
+bot, compiled from the vendored UCD files in `data/` into one packed table by
+`zeta-unicode-build`.
 
 ```rust
 assert_eq!(zeta_unicode::name('ß').unwrap(), "LATIN SMALL LETTER SHARP S");
@@ -128,13 +129,14 @@ ZETA_UNICODE_STATS=1 cargo build -p zeta-unicode   # prints the table and sectio
 ```
 
 `data/derived-names.rules` is the exception: its rules are mined from the UCD, not derived by
-formula, so they ship with the data they were mined from. `build.rs` checks every rule against
-`DerivedName.txt` while it builds, and the round-trip test covers them from the other side.
+formula, so they ship with the data they were mined from. `zeta-unicode-build` checks every rule
+against `DerivedName.txt` while it builds, and the round-trip test covers them from the other
+side.
 
-`build.rs` parses the `# <File>-<version>.txt` headers of all five files and refuses to build if
-they disagree, so a partial update cannot ship. The stats line also reports how the emoji section
-decomposed — stored entries, ruled tone groups, verbatim variants and groups with no base — which
-is the signal to watch when a new Unicode release adds sequences.
+`zeta-unicode-build` parses the `# <File>-<version>.txt` headers of all five files and refuses to
+build if they disagree, so a partial update cannot ship. The stats line also reports how the
+emoji section decomposed — stored entries, ruled tone groups, verbatim variants and groups with
+no base — which is the signal to watch when a new Unicode release adds sequences.
 
 ## Data and license
 

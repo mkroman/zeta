@@ -1,6 +1,6 @@
 //! The generated table: its header, section directory and bounds-checked readers.
 //!
-//! `build.rs` writes one binary file into `OUT_DIR` and the crate links it in with
+//! `zeta-unicode-build` writes one binary file into `OUT_DIR` and the crate links it in with
 //! `include_bytes!`, so the table costs no filesystem or startup work of its own.
 
 /// The generated table, linked in at compile time.
@@ -33,7 +33,7 @@ pub fn version() -> (u8, u8, u8) {
 /// Returns the payload of section `id`.
 ///
 /// Returns `None` for an id the table does not have, which keeps every reader total: a table
-/// built by a different `build.rs` answers "no data" instead of panicking on a lookup.
+/// built by a different generator answers "no data" instead of panicking on a lookup.
 #[must_use]
 pub fn section(id: u32) -> Option<&'static [u8]> {
     let count = usize::from(u16_at(TABLE, 10)?);
@@ -78,7 +78,7 @@ pub fn bytes_at(buf: &[u8], offset: usize, length: usize) -> Option<&[u8]> {
 
 /// Checks the table magic and returns its Unicode version.
 ///
-/// A table built from a different `build.rs` or a different UCD release is a build mistake, not a
+/// A table built from a different generator or a different UCD release is a build mistake, not a
 /// runtime condition, so this runs while the name streams are decoded rather than on a lookup.
 ///
 /// # Panics

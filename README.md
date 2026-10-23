@@ -21,6 +21,7 @@ leaf crates below both.
 | `zeta-url` | URL extraction, path validation and redaction. |
 | `zeta-utils` | Text shaping, duration formatting, lock recovery. |
 | `zeta-unicode` | Character names, general categories and emoji sequence names. |
+| `zeta-unicode-build` | Offline generator for the `zeta-unicode` packed tables. |
 | `kagi`, `reddit`, `dendanskeordbog`, `coinmarketcap` | Standalone API client crates. |
 | `zeta-test-support` | Shared test helpers (wiremock, redaction assertions). |
 
