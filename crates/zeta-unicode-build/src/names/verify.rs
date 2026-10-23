@@ -35,35 +35,59 @@ pub struct Streams {
     pub derived: usize,
 }
 
+/// The fixed `UNNM` header, parsed once before the stream directory.
+struct Header {
+    /// Transform id per stream, in container order.
+    transforms: [u8; STREAM_COUNT],
+    /// Number of entries the blob describes.
+    entries: usize,
+    /// Number of entries the header says are derived.
+    derived: usize,
+}
+
+impl Header {
+    /// Parses and validates the fixed header; the descriptors and payloads follow it.
+    fn parse(blob: &[u8]) -> Self {
+        assert!(blob.len() >= HEADER_LEN, "names.bin is truncated");
+        assert_eq!(&blob[..4], MAGIC, "names.bin magic");
+        assert_eq!(blob[4], BLOB_VERSION, "names.bin version");
+        assert_eq!(blob[5], CODEC_PPMD8I, "names.bin codec is not PPMd8-I");
+        Self {
+            transforms: [blob[6], blob[7], blob[8]],
+            entries: u32_at(blob, 9, "names.bin entry count") as usize,
+            derived: u32_at(blob, 13, "names.bin derived count") as usize,
+        }
+    }
+}
+
+/// Reads one stream descriptor at `off`:
+/// `(compressed length, raw length, order, memory bytes)`.
+fn stream_descriptor(blob: &[u8], off: usize, name: &str) -> (usize, usize, u32, u32) {
+    let compressed = u32_at(blob, off, name) as usize;
+    let raw = u32_at(blob, off + 4, name) as usize;
+    assert_eq!(
+        blob[off + 10],
+        CODEC_PPMD8I,
+        "stream {name}: only PPMd8 variant I is supported"
+    );
+    (
+        compressed,
+        raw,
+        u32::from(blob[off + 8]),
+        u32::from(blob[off + 9]) << 20,
+    )
+}
+
 /// Decompresses a `names.bin` exactly as the runtime decoder does.
 #[must_use]
 pub fn decode_blob(blob: &[u8]) -> Streams {
-    assert!(blob.len() >= HEADER_LEN, "names.bin is truncated");
-    assert_eq!(&blob[..4], MAGIC, "names.bin magic");
-    assert_eq!(blob[4], BLOB_VERSION, "names.bin version");
-    assert_eq!(blob[5], CODEC_PPMD8I, "names.bin codec is not PPMd8-I");
-    let transforms = [blob[6], blob[7], blob[8]];
-    let entries = u32::from_le_bytes(blob[9..13].try_into().unwrap()) as usize;
-    let derived = u32::from_le_bytes(blob[13..17].try_into().unwrap()) as usize;
+    let header = Header::parse(blob);
     let mut off = HEADER_LEN - STREAM_COUNT * STREAM_DESC_LEN;
     // All three descriptors come first, then the three streams: read the
     // directory before slicing any payload.
     let mut descriptors = [(0usize, 0usize, 0u32, 0u32); STREAM_COUNT];
     for (idx, slot) in descriptors.iter_mut().enumerate() {
-        let comp = u32::from_le_bytes(blob[off..off + 4].try_into().unwrap()) as usize;
-        let raw = u32::from_le_bytes(blob[off + 4..off + 8].try_into().unwrap()) as usize;
-        *slot = (
-            comp,
-            raw,
-            u32::from(blob[off + 8]),
-            u32::from(blob[off + 9]) << 20,
-        );
-        assert_eq!(
-            blob[off + 10],
-            CODEC_PPMD8I,
-            "stream {}: only PPMd8 variant I is supported",
-            STREAMS[idx]
-        );
+        *slot = stream_descriptor(blob, off, STREAMS[idx]);
         off += STREAM_DESC_LEN;
     }
     let mut out: Vec<Vec<u8>> = Vec::with_capacity(STREAM_COUNT);
@@ -81,14 +105,17 @@ pub fn decode_blob(blob: &[u8]) -> Streams {
             panic!(
                 "stream {name}: ppmd decode: {e} (comp {comp} raw {raw} order {order} \
                  mem {mem} transform {})",
-                transforms[idx]
+                header.transforms[idx]
             )
         });
         off += comp;
-        if transforms[idx] == TRANSFORM_DELTA8 {
+        if header.transforms[idx] == TRANSFORM_DELTA8 {
             undelta8(&mut buffer);
         } else {
-            assert_eq!(transforms[idx], 0, "stream {name}: unknown transform");
+            assert_eq!(
+                header.transforms[idx], 0,
+                "stream {name}: unknown transform"
+            );
         }
         out.push(buffer);
     }
@@ -98,8 +125,8 @@ pub fn decode_blob(blob: &[u8]) -> Streams {
         plen: streams.next().expect("plen"),
         slen: streams.next().expect("slen"),
         mids: streams.next().expect("mids"),
-        entries,
-        derived,
+        entries: header.entries,
+        derived: header.derived,
     }
 }
 
@@ -268,7 +295,7 @@ fn read_varint(bytes: &[u8]) -> (u32, usize) {
 /// Decompresses a standalone section (`u32` raw length + PPMd8-I stream).
 pub fn decode_section(bytes: &[u8], codec: SectionCodec) -> Vec<u8> {
     assert!(bytes.len() > SECTION_PREFIX_LEN, "truncated section");
-    let raw = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+    let raw = u32_at(bytes, 0, "section raw length") as usize;
     // The parameters are in the section; `codec` is only the caller's expectation, checked here
     // so a stale decoder fails loudly instead of producing garbage.
     let (order, mem_mib) = section_codec(bytes);
@@ -325,17 +352,19 @@ pub fn verify_pattern_section(section: &[u8], patterns: &[Pattern]) {
     assert_eq!(at, section.len(), "the pattern section has trailing bytes");
 }
 
+/// Reads a little-endian `u32` at `at`, naming the field through `what`.
 fn u32_at(buf: &[u8], at: usize, what: &str) -> u32 {
     let bytes = buf
         .get(at..at + 4)
-        .unwrap_or_else(|| panic!("{what} outside the pattern section"));
+        .unwrap_or_else(|| panic!("{what} is outside the buffer"));
     u32::from_le_bytes(bytes.try_into().expect("four bytes"))
 }
 
+/// Reads a little-endian `u16` at `at`, naming the field through `what`.
 fn u16_at(buf: &[u8], at: usize, what: &str) -> u16 {
     let bytes = buf
         .get(at..at + 2)
-        .unwrap_or_else(|| panic!("{what} outside the pattern section"));
+        .unwrap_or_else(|| panic!("{what} is outside the buffer"));
     u16::from_le_bytes(bytes.try_into().expect("two bytes"))
 }
 
@@ -347,14 +376,31 @@ fn u16_at(buf: &[u8], at: usize, what: &str) -> u16 {
 ///
 /// Returns [`Error`] when the written artifacts cannot be read back; every
 /// inconsistency in the artifacts themselves is an invariant violation and panics.
-#[allow(
-    clippy::too_many_lines,
-    reason = "one assertion per claim, kept together so the order is readable"
-)]
 pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, Error> {
     let start = std::time::Instant::now();
     let blob = crate::read(out_dir.join("names.bin"))?;
     let streams = decode_blob(&blob);
+    let derived = verify_names(&streams, corpus, rules);
+    verify_runs(out_dir, corpus, rules)?;
+    let coverage = verify_patterns(out_dir, corpus, rules)?;
+    verify_hangul(corpus);
+
+    Ok(Verify {
+        compared: corpus.entries.len(),
+        derived,
+        stored: corpus.entries.len() - derived,
+        index_hits: corpus.entries.len(),
+        pattern_cps: coverage.cps,
+        patterns: coverage.ranges,
+        millis: start.elapsed().as_secs_f64() * 1e3,
+    })
+}
+
+/// Reconstructs every name from the streams and compares it with the corpus.
+///
+/// Returns the number of names the rules rebuilt, i.e. the names that were absent from the
+/// streams.
+fn verify_names(streams: &Streams, corpus: &Corpus, rules: &Rules) -> usize {
     assert_eq!(
         streams.entries,
         corpus.entries.len(),
@@ -365,22 +411,21 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
 
     // Derived names come from the rules; the shipped code uses the generated
     // tree, which the crate's round-trip test exercises separately.
-    let mut seen = 0usize;
-    let (text, offsets) = reconstruct(&streams, |id, out| {
+    let mut derived = 0usize;
+    let (text, offsets) = reconstruct(streams, |id, out| {
         let cp = corpus.entries[usize::try_from(id).expect("id fits")].0;
         let Some(arm) = super::derive::arm_of(rules, cp) else {
             return false;
         };
         super::derive::build_name(&rules.atoms, &arm.ops, cp, out);
-        seen += 1;
+        derived += 1;
         true
     });
-    assert_eq!(seen, streams.derived, "derived count in the header");
-    assert_eq!(seen, rules.derived, "derived count from the rules");
+    assert_eq!(derived, streams.derived, "derived count in the header");
+    assert_eq!(derived, rules.derived, "derived count from the rules");
 
     for (id, (cp, want)) in corpus.entries.iter().enumerate() {
-        let got = &text[usize::try_from(offsets[id]).expect("offset fits")
-            ..usize::try_from(offsets[id + 1]).expect("offset fits")];
+        let got = name_at(&text, &offsets, id);
         assert_eq!(
             got,
             want.as_bytes(),
@@ -388,8 +433,11 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
             String::from_utf8_lossy(got)
         );
     }
+    derived
+}
 
-    // ---- the name index, from the shipped varint section ------------------
+/// Reads the shipped name index and checks every corpus lookup lands on its id.
+fn verify_runs(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<(), Error> {
     let runs = decode_runs(&decode_section(
         &crate::read(out_dir.join("runs.bin"))?,
         SectionCodec {
@@ -418,20 +466,16 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
         );
         cursor += usize::try_from(*len).expect("run fits");
     }
-    for (id, (cp, name)) in corpus.entries.iter().enumerate() {
+
+    // [`verify_names`] already proved the decoded text is the corpus name, so the
+    // only remaining claim is that every code point maps to its own id.
+    for (id, (cp, _)) in corpus.entries.iter().enumerate() {
         let found =
             name_id(&runs, *cp).unwrap_or_else(|| panic!("U+{cp:04X} is missing from the index"));
         let want = u32::try_from(id).expect("id fits");
         assert_eq!(
             found, want,
             "the index maps U+{cp:04X} to {found}, want {want}"
-        );
-        let got = &text[usize::try_from(offsets[id]).expect("offset fits")
-            ..usize::try_from(offsets[id + 1]).expect("offset fits")];
-        assert_eq!(
-            got,
-            name.as_bytes(),
-            "index lookup for U+{cp:04X} disagrees"
         );
     }
     for cp in [0x0D800u32, 0x0378, 0x2FA1E] {
@@ -442,8 +486,23 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
             );
         }
     }
+    Ok(())
+}
 
-    // ---- the pattern section ----------------------------------------------
+/// What the shipped `*`-pattern ranges cover.
+struct PatternCoverage {
+    /// Code points across every range.
+    cps: usize,
+    /// Number of ranges.
+    ranges: usize,
+}
+
+/// Reads the diagnostic `patterns.bin` and checks every range against the corpus.
+fn verify_patterns(
+    out_dir: &Path,
+    corpus: &Corpus,
+    rules: &Rules,
+) -> Result<PatternCoverage, Error> {
     let patterns = decode_patterns(&decode_section(
         &crate::read(out_dir.join("patterns.bin"))?,
         SectionCodec {
@@ -459,14 +518,14 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
             pair[1].lo
         );
     }
-    let mut pattern_cps = 0usize;
+    let mut cps = 0usize;
     for (got, want) in patterns.iter().zip(&corpus.patterns) {
         assert_eq!(
             (got.lo, got.hi, &got.prefix, &got.suffix),
             (want.lo, want.hi, &want.prefix, &want.suffix),
             "pattern range differs from DerivedName.txt"
         );
-        pattern_cps += usize::try_from(got.hi - got.lo + 1).expect("range fits");
+        cps += usize::try_from(got.hi - got.lo + 1).expect("range fits");
         for cp in got.lo..=got.hi {
             assert!(
                 corpus.id_of(cp).is_none(),
@@ -497,20 +556,24 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
             "algorithmic name for U+{cp:04X}"
         );
     }
+    Ok(PatternCoverage {
+        cps,
+        ranges: patterns.len(),
+    })
+}
+
+/// Samples the Hangul syllable block, which must stay algorithmic rather than stored.
+fn verify_hangul(corpus: &Corpus) {
     for cp in (HANGUL_START..=HANGUL_END).step_by(1_357) {
         assert!(
             corpus.id_of(cp).is_none(),
             "U+{cp:04X} is a Hangul syllable and must not be stored"
         );
     }
+}
 
-    Ok(Verify {
-        compared: corpus.entries.len(),
-        derived: seen,
-        stored: corpus.entries.len() - seen,
-        index_hits: corpus.entries.len(),
-        pattern_cps,
-        patterns: patterns.len(),
-        millis: start.elapsed().as_secs_f64() * 1e3,
-    })
+/// The decoded name at `id`, from the flat text and its offset table.
+fn name_at<'a>(text: &'a [u8], offsets: &[u32], id: usize) -> &'a [u8] {
+    &text[usize::try_from(offsets[id]).expect("offset fits")
+        ..usize::try_from(offsets[id + 1]).expect("offset fits")]
 }

@@ -73,8 +73,8 @@ sequence is not itself an entry get their base reconstructed (by inverting the r
 variant and checking it against the whole group), so **zero** tone names are stored verbatim.
 
 Measured on the current port (release, x86_64 — rerun the harness before trusting the numbers
-elsewhere): `general_category` 6.1 ns, `name` 19.2 ns, `emoji_name` 224 ns. The `name` figure is
-a binary search over the 719 runs plus two offset loads and a slice of text that was validated
+elsewhere): `general_category` 4.7 ns, `name` 20 ns, `emoji_name` 230 ns. The `name` figure is a
+binary search over the 719 runs plus two offset loads and a slice of text that was validated
 once while decoding; the first name lookup also materializes the ~0.9 MB name blob plus the
 codec's transient model (16 MiB for the middle stream), both released before the lookup returns.
 `emoji_name` is dominated by the tone fallback that has to render a name the table does not
@@ -129,7 +129,7 @@ Replace the files in `data/` from `https://www.unicode.org/Public/<version>/`, t
 
 ```sh
 cargo test -p zeta-unicode            # round-trips every name against the new files
-ZETA_UNICODE_STATS=1 cargo build -p zeta-unicode   # prints the table and section sizes
+ZETA_UNICODE_STATS=1 cargo build -p zeta-unicode   # prints sizes and writes expected.txt
 ```
 
 `data/derived-names.rules` is the exception: its rules are mined from the UCD, not derived by

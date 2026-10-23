@@ -26,9 +26,7 @@ mod tables;
 
 use std::borrow::Cow;
 
-use zeta_unicode_format::{
-    GC_PAGES, GC_SHIFT, GC_SHORT_NAMES, HANGUL_END, HANGUL_START, MAX_KEY, UNICODE_END,
-};
+use zeta_unicode_format::{GC_PAGES, GC_SHIFT, HANGUL_END, HANGUL_START, MAX_KEY, UNICODE_END};
 
 /// Returns the CLDR short name of an emoji sequence such as `🏳️‍🌈`.
 ///
@@ -281,9 +279,8 @@ fn general_category_of(cp: u32) -> Option<GeneralCategory> {
     }
     let record = low.checked_sub(1)?;
 
-    let id = usize::from(tables::u16_at(records, record.checked_mul(2)?)? & 31).checked_sub(1)?;
-    let short: [u8; 2] = GC_SHORT_NAMES.get(id)?.as_bytes().try_into().ok()?;
-    GeneralCategory::from_short_name(&short)
+    let id = usize::from(tables::u16_at(records, record.checked_mul(2)?)? & 31);
+    GeneralCategory::from_id(id)
 }
 
 #[cfg(test)]

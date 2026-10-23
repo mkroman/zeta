@@ -5,6 +5,8 @@ edition = "2024"
 description = "Offline generator for the zeta-unicode packed Unicode tables."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mkroman/zeta"
+# Workspace-internal generator for `zeta-unicode`; never published.
+publish = false
 
 [dependencies]
 ppmd-rust = "1.5.0"

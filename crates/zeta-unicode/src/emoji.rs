@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::sync::OnceLock;
 
-use zeta_unicode_format::{MAX_KEY, format_toned, is_tone, tone_positions};
+use zeta_unicode_format::{MAX_KEY, format_toned, is_tone, tone_indices};
 
 use crate::sections;
 use crate::tables;
@@ -123,8 +123,8 @@ impl<'a> Emoji<'a> {
         scratch: &mut [u8; MAX_KEY],
     ) -> Option<Cow<'static, str>> {
         let text = std::str::from_utf8(needle).ok()?;
-        let tones = tone_positions(text.chars().map(u32::from));
-        if !(1..=2).contains(&tones.len()) {
+        let (tones, tone_count) = tone_indices(text.chars().map(u32::from))?;
+        if !(1..=2).contains(&tone_count) {
             return None;
         }
 
@@ -135,11 +135,15 @@ impl<'a> Emoji<'a> {
             return None;
         }
         let mask = self.tone_mask(index)?;
-        if mask & (1 << (tones.len() - 1)) == 0 {
+        if mask & (1 << (tone_count - 1)) == 0 {
             return None;
         }
         let base_name = std::str::from_utf8(self.name(index)?).ok()?;
-        Some(Cow::Owned(format_toned(code, base_name, &tones)))
+        Some(Cow::Owned(format_toned(
+            code,
+            base_name,
+            &tones[..tone_count],
+        )))
     }
 }
 
@@ -247,6 +251,18 @@ mod tests {
         assert_eq!(emoji_name(""), None);
         assert_eq!(emoji_name("\u{FE0F}"), None);
         assert_eq!(emoji_name("👍🏻🏿🏾"), None);
+    }
+
+    #[test]
+    fn tone_fallback_synthesizes_known_names() {
+        assert_eq!(
+            emoji_name("🫶🏻").as_deref(),
+            Some("heart hands: light skin tone")
+        );
+        assert_eq!(
+            emoji_name("🫱🏻‍🫲🏿").as_deref(),
+            Some("handshake: light skin tone, dark skin tone")
+        );
     }
 
     #[test]

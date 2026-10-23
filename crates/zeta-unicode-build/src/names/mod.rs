@@ -83,8 +83,9 @@
 //!   PPMd8-I.
 //! * `patterns.bin` — the `*`-pattern ranges, varint-coded, then PPMd8-I. This is a
 //!   diagnostic check; the table ships the plain [`pattern_section`] layout.
-//! * `expected.txt` — the corpus as `<hex cp>\t<name>`, the decoder's ground truth. Both
-//!   files are diagnostics and are not consumed further.
+//! * `expected.txt` — only when [`crate::Request::report`] is set (a
+//!   `ZETA_UNICODE_STATS=1` build): the corpus as `<hex cp>\t<name>`. It is a
+//!   diagnostic dump that nothing reads back, so normal builds do not write it.
 //! * the generated derivation tree (`.text` + `.rodata`) under the
 //!   caller-chosen file name, for `include!` from the consumer's `src/`.
 //!
@@ -235,12 +236,15 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
         rules.patterns,
     )?;
 
-    // ---- ground truth and the generated tree -------------------------------
-    let mut expected = String::with_capacity(1_140_000);
-    for (cp, name) in &corpus.entries {
-        let _ = writeln!(expected, "{cp:X}\t{name}");
+    // ---- diagnostics and the generated tree --------------------------------
+    // A ~1.1 MB dump that nothing reads back, so only report builds create it.
+    if request.report {
+        let mut expected = String::with_capacity(1_140_000);
+        for (cp, name) in &corpus.entries {
+            let _ = writeln!(expected, "{cp:X}\t{name}");
+        }
+        crate::write(request.out_dir.join("expected.txt"), expected)?;
     }
-    crate::write(request.out_dir.join("expected.txt"), expected)?;
     let gen_rs = derive::emit_gen_rs(&rules, &corpus);
     crate::write(request.out_dir.join(&request.derive_file), gen_rs)?;
 

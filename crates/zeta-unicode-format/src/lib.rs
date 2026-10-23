@@ -161,11 +161,35 @@ pub fn undelta8(values: &mut [u8]) {
     }
 }
 
+/// The index into [`TONES`] of `cp`, or `None` when `cp` is not a skin-tone component.
+fn tone_index(cp: u32) -> Option<usize> {
+    TONES.iter().position(|&tone| tone == cp)
+}
+
 /// The indices into [`TONES`] of the skin-tone code points in `cps`, in order.
+///
+/// Returns the indices and their count in a fixed-capacity array, so a lookup with at most two
+/// tones does not allocate. Returns `None` as soon as a third tone is seen; callers that need
+/// every tone, however many, use [`tone_positions`].
+#[must_use]
+pub fn tone_indices(cps: impl IntoIterator<Item = u32>) -> Option<([usize; 2], usize)> {
+    let mut indices = [0usize; 2];
+    let mut count = 0usize;
+    for cp in cps {
+        let Some(index) = tone_index(cp) else {
+            continue;
+        };
+        *indices.get_mut(count)? = index;
+        count += 1;
+    }
+    Some((indices, count))
+}
+
+/// The indices into [`TONES`] of the skin-tone code points in `cps`, in order.
+///
+/// Unlike [`tone_indices`] this accepts any number of tones, at the cost of allocating.
 pub fn tone_positions(cps: impl IntoIterator<Item = u32>) -> Vec<usize> {
-    cps.into_iter()
-        .filter_map(|cp| TONES.iter().position(|&tone| tone == cp))
-        .collect()
+    cps.into_iter().filter_map(tone_index).collect()
 }
 
 /// Renders `base` with `tones` applied, following the 3-bit rule.
@@ -212,6 +236,27 @@ mod tests {
     fn tone_positions_finds_every_tone_in_order() {
         assert_eq!(tone_positions([0x1F3FF, 0x41, 0x1F3FB]), [4, 0]);
         assert_eq!(tone_positions(std::iter::empty()), []);
+    }
+
+    #[test]
+    fn tone_indices_handles_zero_one_and_two_tones() {
+        let (indices, count) = tone_indices(std::iter::empty()).expect("no tones is valid");
+        assert_eq!((indices, count), ([0, 0], 0));
+        assert_eq!(tone_indices([0x41, 0x42]), Some(([0, 0], 0)));
+        assert_eq!(tone_indices([0x1F3FF]), Some(([4, 0], 1)));
+        assert_eq!(
+            tone_indices([0x41, 0x1F3FB, 0x42, 0x1F3FD]),
+            Some(([0, 2], 2))
+        );
+    }
+
+    #[test]
+    fn tone_indices_rejects_a_third_tone() {
+        assert_eq!(
+            tone_indices([0x1F3FB, 0x1F3FC, 0x1F3FD]),
+            None,
+            "the fixed-capacity array only holds two tones"
+        );
     }
 
     #[test]

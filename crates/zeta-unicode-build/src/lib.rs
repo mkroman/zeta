@@ -67,7 +67,7 @@ pub struct Request {
     pub table_file: String,
     /// File name of the generated derivation tree source written into `out_dir`.
     pub derive_file: String,
-    /// Print a size report to stderr.
+    /// Print the size report to stderr and write the `expected.txt` diagnostic dump.
     pub report: bool,
 }
 
