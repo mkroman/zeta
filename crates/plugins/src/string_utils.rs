@@ -164,10 +164,10 @@ fn unicode_details(args: &str) -> String {
     message
 }
 
-/// Formats one `.uni` entry: `U+0064: LATIN SMALL LETTER D (Lowercase Letter)`.
+/// Formats one `.uni` entry: `U+0064:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310)`.
 fn format_char_entry(c: char) -> String {
     format!(
-        "U+{:04X}:\x0f {}\x0310 ({})",
+        "U+{:04X}:\x0f {}\x0310 (\x0f{}\x0310)",
         u32::from(c),
         name_or_label(c),
         general_category(c).long_name()
@@ -208,11 +208,11 @@ mod tests {
     fn uni_names_a_single_character() {
         assert_eq!(
             unicode_details("d"),
-            "U+0064:\x0f LATIN SMALL LETTER D\x0310 (Lowercase Letter)"
+            "U+0064:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310)"
         );
         assert_eq!(
             unicode_details("ˇ"),
-            "U+02C7:\x0f CARON\x0310 (Modifier Letter)"
+            "U+02C7:\x0f CARON\x0310 (\x0fModifier Letter\x0310)"
         );
     }
 
@@ -233,12 +233,12 @@ mod tests {
     fn uni_lists_every_characters_name_and_category() {
         assert_eq!(
             unicode_details("d'être"),
-            "U+0064:\x0f LATIN SMALL LETTER D\x0310 (Lowercase Letter), \
-             U+0027:\x0f APOSTROPHE\x0310 (Other Punctuation), \
-             U+00EA:\x0f LATIN SMALL LETTER E WITH CIRCUMFLEX\x0310 (Lowercase Letter), \
-             U+0074:\x0f LATIN SMALL LETTER T\x0310 (Lowercase Letter), \
-             U+0072:\x0f LATIN SMALL LETTER R\x0310 (Lowercase Letter), \
-             U+0065:\x0f LATIN SMALL LETTER E\x0310 (Lowercase Letter)"
+            "U+0064:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310), \
+             U+0027:\x0f APOSTROPHE\x0310 (\x0fOther Punctuation\x0310), \
+             U+00EA:\x0f LATIN SMALL LETTER E WITH CIRCUMFLEX\x0310 (\x0fLowercase Letter\x0310), \
+             U+0074:\x0f LATIN SMALL LETTER T\x0310 (\x0fLowercase Letter\x0310), \
+             U+0072:\x0f LATIN SMALL LETTER R\x0310 (\x0fLowercase Letter\x0310), \
+             U+0065:\x0f LATIN SMALL LETTER E\x0310 (\x0fLowercase Letter\x0310)"
         );
     }
 
