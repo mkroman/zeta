@@ -1,0 +1,35 @@
+[package]
+name = "zeta-unicode"
+version = "0.0.0"
+edition = "2024"
+description = "Unicode character names, general category and emoji sequence tables, generated at build time."
+license = "(MIT OR Apache-2.0) AND Unicode-3.0"
+repository = "https://github.com/mkroman/zeta"
+# Workspace-internal crate: `zeta-unicode` and its two companion crates are built from the
+# workspace and never published. The metadata below and `include` still describe a complete
+# `cargo package`.
+publish = false
+readme = "README.md"
+keywords = ["unicode", "emoji", "ucd", "tables"]
+categories = ["encoding", "text-processing"]
+build = "build.rs"
+# Only what the build script and the decoder need: the vendored UCD files are the input to
+# `zeta-unicode-build`, so the package must ship them or it cannot build downstream.
+include = ["src/**", "data/**", "build.rs", "Cargo.toml", "README.md", "LICENSE-UNICODE"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+# The name streams are PPMd8-I: encoded by `zeta-unicode-build`, decoded once at first use.
+ppmd-rust = "1.5.0"
+# The table layout and the tone wording are shared with the generator.
+zeta-unicode-format = { path = "../zeta-unicode-format", version = "0.0.0" }
+
+[build-dependencies]
+# `version` is required for `cargo package`, which strips paths; nothing is published, so it
+# merely names the workspace-local generator.
+zeta-unicode-build = { path = "../zeta-unicode-build", version = "0.0.0" }
+
+[lints]
+workspace = true
