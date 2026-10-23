@@ -1,6 +1,5 @@
 //! The `data/derived-names.rules` file: directives, atoms and derivation arms.
 
-use std::fs;
 use std::path::Path;
 
 use super::STREAMS;
@@ -68,15 +67,21 @@ pub struct Rules {
 /// `mk_rules.py`.
 const ALPHABET: &[u8; 52] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-/// Parses the rules file.  Panics with `path:line` on any error.
-#[must_use]
+/// Parses the rules file.
+///
+/// # Errors
+///
+/// Returns [`Error`](crate::Error) when the file cannot be read.
+///
+/// # Panics
+///
+/// Panics with `path:line` on any syntax error.
 #[allow(
     clippy::too_many_lines,
     reason = "one directive arm per line, and each has its own message"
 )]
-pub fn read_rules(path: &Path) -> Rules {
-    let text = fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("cannot read rules {}: {e}", path.display()));
+pub fn read_rules(path: &Path) -> Result<Rules, crate::Error> {
+    let text = crate::read_to_string(path)?;
     let mut atoms: Vec<String> = Vec::new();
     let mut arms: Vec<Arm> = Vec::new();
     let mut streams: [Option<StreamParams>; 3] = [None; 3];
@@ -213,7 +218,7 @@ pub fn read_rules(path: &Path) -> Rules {
             "@derived says {derived}, arms cover {covered}"
         );
     }
-    Rules {
+    Ok(Rules {
         atoms,
         arms,
         streams,
@@ -222,7 +227,7 @@ pub fn read_rules(path: &Path) -> Rules {
         unicode,
         corpus,
         derived,
-    }
+    })
 }
 
 /// Parses one `<cp_lo>[:<cp_hi>] <recipe>` line into an [`Arm`].

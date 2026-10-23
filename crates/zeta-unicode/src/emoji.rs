@@ -17,10 +17,12 @@ use crate::tables;
 struct Emoji<'a> {
     keys: &'a [u8],
     key_offsets: &'a [u8],
-    names: &'a [u8],
+    names: &'a str,
     name_offsets: &'a [u8],
     codes: &'a [u8],
     tone_masks: &'a [u8],
+    /// One bit per possible first key byte, for the cheap admission check.
+    first_bytes: [u64; 4],
     entries: usize,
 }
 
@@ -43,15 +45,38 @@ impl<'a> Emoji<'a> {
         let name_offsets_at = names_at.checked_add(name_bytes)?;
         let codes_at = name_offsets_at.checked_add(offsets)?;
         let tone_masks_at = codes_at.checked_add(code_bytes)?;
+        let keys = tables::bytes_at(section, keys_at, key_bytes)?;
+        let key_offsets = tables::bytes_at(section, key_offsets_at, offsets)?;
+        let first_bytes = Self::first_bytes(keys, key_offsets, entries)?;
         Some(Self {
-            keys: tables::bytes_at(section, keys_at, key_bytes)?,
-            key_offsets: tables::bytes_at(section, key_offsets_at, offsets)?,
-            names: tables::bytes_at(section, names_at, name_bytes)?,
+            keys,
+            key_offsets,
+            names: std::str::from_utf8(tables::bytes_at(section, names_at, name_bytes)?).ok()?,
             name_offsets: tables::bytes_at(section, name_offsets_at, offsets)?,
             codes: tables::bytes_at(section, codes_at, code_bytes)?,
             tone_masks: tables::bytes_at(section, tone_masks_at, mask_bytes)?,
+            first_bytes,
             entries,
         })
+    }
+
+    /// Builds the first-byte admission bitmap from every stored key.
+    fn first_bytes(keys: &[u8], key_offsets: &[u8], entries: usize) -> Option<[u64; 4]> {
+        let mut first_bytes = [0u64; 4];
+        for index in 0..entries {
+            let (start, end) = tables::u16_pair_at(key_offsets, index)?;
+            let start = usize::from(start);
+            let key = tables::bytes_at(keys, start, usize::from(end).checked_sub(start)?)?;
+            if let Some(&byte) = key.first() {
+                first_bytes[usize::from(byte) >> 6] |= 1 << (byte & 63);
+            }
+        }
+        Some(first_bytes)
+    }
+
+    /// Returns whether a stored key can start with `byte`.
+    fn admits(&self, byte: u8) -> bool {
+        self.first_bytes[usize::from(byte) >> 6] & (1 << (byte & 63)) != 0
     }
 
     /// Returns the parsed section, or `None` when the table has no emoji section.
@@ -63,12 +88,9 @@ impl<'a> Emoji<'a> {
 
     /// Returns entry `index` out of `blob`, using the matching `u16` offset table.
     fn blob(blob: &'a [u8], offsets: &[u8], index: usize) -> Option<&'a [u8]> {
-        let start = usize::from(tables::u16_at(offsets, index.checked_mul(2)?)?);
-        let end = usize::from(tables::u16_at(
-            offsets,
-            index.checked_mul(2)?.checked_add(2)?,
-        )?);
-        tables::bytes_at(blob, start, end.checked_sub(start)?)
+        let (start, end) = tables::u16_pair_at(offsets, index)?;
+        let start = usize::from(start);
+        tables::bytes_at(blob, start, usize::from(end).checked_sub(start)?)
     }
 
     /// Returns key `index` out of the key blob.
@@ -76,9 +98,10 @@ impl<'a> Emoji<'a> {
         Self::blob(self.keys, self.key_offsets, index)
     }
 
-    /// Returns name `index` out of the name blob.
-    fn name(&self, index: usize) -> Option<&'a [u8]> {
-        Self::blob(self.names, self.name_offsets, index)
+    /// Returns name `index` out of the validated name blob.
+    fn name(&self, index: usize) -> Option<&'a str> {
+        let (start, end) = tables::u16_pair_at(self.name_offsets, index)?;
+        self.names.get(usize::from(start)..usize::from(end))
     }
 
     /// Reads a packed `width`-bit field of `blob`, which may straddle a byte boundary.
@@ -138,13 +161,26 @@ impl<'a> Emoji<'a> {
         if mask & (1 << (tone_count - 1)) == 0 {
             return None;
         }
-        let base_name = std::str::from_utf8(self.name(index)?).ok()?;
+        let base_name = self.name(index)?;
         Some(Cow::Owned(format_toned(
             code,
             base_name,
             &tones[..tone_count],
         )))
     }
+}
+
+/// Returns whether `sequence` could start a stored emoji sequence.
+///
+/// This is an admission check, not a match: the first byte is tested against a bitmap built
+/// from every stored key, so `true` means the sequence is worth a lookup, never that it is an
+/// emoji. Empty input answers `false`.
+#[must_use]
+pub fn may_start_emoji_sequence(sequence: &str) -> bool {
+    let Some(&first) = sequence.as_bytes().first() else {
+        return false;
+    };
+    Emoji::section().is_some_and(|emoji| emoji.admits(first))
 }
 
 /// Returns the CLDR short name of an emoji sequence such as `🏳️‍🌈`.
@@ -163,6 +199,7 @@ impl<'a> Emoji<'a> {
 /// not known.
 #[must_use]
 pub fn emoji_name(sequence: &str) -> Option<Cow<'static, str>> {
+    let leading = *sequence.as_bytes().first()?;
     let mut chars = sequence.chars();
     let first = chars.next()?;
     // A lone skin-tone component is an emoji entry; a tone or variation selector in front of
@@ -171,15 +208,20 @@ pub fn emoji_name(sequence: &str) -> Option<Cow<'static, str>> {
         return None;
     }
 
-    let mut buffer = [0u8; MAX_KEY];
-    let mut scratch = [0u8; MAX_KEY];
-    let needle = canonical_key(sequence.as_bytes(), &mut buffer)?;
+    // Reject impossible sequences before touching the MAX_KEY buffers.
     let emoji = Emoji::section()?;
-
-    if let Some(index) = emoji.find(needle) {
-        let name = emoji.name(index)?;
-        return Some(Cow::Borrowed(std::str::from_utf8(name).ok()?));
+    if !emoji.admits(leading) {
+        return None;
     }
+
+    let mut buffer = [0u8; MAX_KEY];
+    let needle = canonical_key(sequence.as_bytes(), &mut buffer)?;
+    if let Some(index) = emoji.find(needle) {
+        return Some(Cow::Borrowed(emoji.name(index)?));
+    }
+
+    // Only the synthesis fallback needs the second buffer.
+    let mut scratch = [0u8; MAX_KEY];
     emoji.tone_variant(needle, &mut scratch)
 }
 
@@ -251,6 +293,15 @@ mod tests {
         assert_eq!(emoji_name(""), None);
         assert_eq!(emoji_name("\u{FE0F}"), None);
         assert_eq!(emoji_name("👍🏻🏿🏾"), None);
+    }
+
+    #[test]
+    fn admission_rejects_impossible_first_bytes() {
+        assert!(!may_start_emoji_sequence(""));
+        assert!(!may_start_emoji_sequence("d'être"));
+        assert!(may_start_emoji_sequence("🏳️‍🌈"));
+        // A keycap sequence stored by `NamedSequences.txt` starts with the digit.
+        assert!(may_start_emoji_sequence("0"));
     }
 
     #[test]

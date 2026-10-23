@@ -113,6 +113,8 @@ use zeta_unicode_format::{
     TRANSFORM_DELTA8, TRANSFORM_RAW, delta8,
 };
 
+use crate::table::{push_len_u16, push_len_u32, push_u32};
+
 /// Lowest code point the pattern section can describe (the CJK plane start).
 const PATTERN_BASE: u32 = 0x3400;
 
@@ -203,7 +205,7 @@ pub struct SectionSize {
 /// vendored data or the written artifacts is an invariant violation and panics.
 pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Ledger, crate::Error> {
     let corpus = corpus::read_corpus(&inputs.names, &inputs.aliases, inputs.version);
-    let rules = rules::read_rules(&request.rules);
+    let rules = rules::read_rules(&request.rules)?;
     if !rules.unicode.is_empty() {
         assert_eq!(
             corpus.unicode, rules.unicode,
@@ -219,7 +221,7 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
     let blob = build_blob(corpus.entries.len(), derived_count, &compressed);
     crate::write(request.out_dir.join("names.bin"), &blob)?;
 
-    let runs_raw = runs_stream(&corpus);
+    let (runs_raw, runs_count) = runs_stream(&corpus);
     let (runs_bytes, runs) = write_section(&request.out_dir, "runs.bin", &runs_raw, rules.runs)?;
 
     let patterns_raw = patterns_stream(&corpus);
@@ -262,7 +264,7 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
         runs_section: runs_bytes,
         runs,
         patterns,
-        runs_count: run_count(&corpus),
+        runs_count,
         patterns_count: corpus.patterns.len(),
         pattern_section: pattern_section_data,
         table,
@@ -316,16 +318,12 @@ fn compress_streams(rules: &Rules, plen: &[u8], slen: &[u8], mids: &[u8]) -> Com
             Cow::Borrowed(source)
         };
         let compressed = codec::ppmd8i(&source, params.order, params.mem_mib);
-        descriptors.extend_from_slice(
-            &u32::try_from(compressed.len())
-                .expect("compressed length fits in u32")
-                .to_le_bytes(),
+        push_len_u32(
+            &mut descriptors,
+            compressed.len(),
+            "compressed stream length",
         );
-        descriptors.extend_from_slice(
-            &u32::try_from(source.len())
-                .expect("stream length fits in u32")
-                .to_le_bytes(),
-        );
+        push_len_u32(&mut descriptors, source.len(), "stream raw length");
         descriptors.push(u8::try_from(params.order).expect("order fits in a byte"));
         descriptors.push(u8::try_from(params.mem_mib).expect("memory fits in a byte"));
         descriptors.push(CODEC_PPMD8I);
@@ -354,16 +352,8 @@ fn build_blob(entries: usize, derived: usize, compressed: &CompressedStreams) ->
     header.push(BLOB_VERSION);
     header.push(CODEC_PPMD8I);
     header.extend_from_slice(&compressed.transforms);
-    header.extend_from_slice(
-        &u32::try_from(entries)
-            .expect("fewer than 2^32 names")
-            .to_le_bytes(),
-    );
-    header.extend_from_slice(
-        &u32::try_from(derived)
-            .expect("fewer than 2^32 names")
-            .to_le_bytes(),
-    );
+    push_len_u32(&mut header, entries, "name entry count");
+    push_len_u32(&mut header, derived, "derived name count");
     header.extend_from_slice(&compressed.descriptors);
     assert_eq!(header.len(), HEADER_LEN, "the header layout changed");
 
@@ -435,7 +425,7 @@ fn front_code(rules: &Rules, corpus: &Corpus) -> (Vec<bool>, Vec<u8>, Vec<u8>, V
     (derived, plen, slen, mids, text_bytes)
 }
 
-/// Applies cumulative (delta-8) coding to `values`.
+/// Prints the size report to stderr when the request asks for it.
 fn report(ledger: &Ledger, corpus: &Corpus, rules: &Rules, request: &crate::Request) {
     eprintln!(
         "corpus: {} names / {} text bytes ({} individual lines - {} Hangul - {} \
@@ -495,7 +485,10 @@ fn report(ledger: &Ledger, corpus: &Corpus, rules: &Rules, request: &crate::Requ
 /// The shipped name index, varint-coded: one `(len, gap)` pair per run of
 /// consecutive code points.  The base name id is the running total of the lengths,
 /// so nothing else has to be stored.
-fn runs_stream(corpus: &Corpus) -> Vec<u8> {
+///
+/// Returns the stream and the number of runs it encodes.
+#[must_use]
+fn runs_stream(corpus: &Corpus) -> (Vec<u8>, usize) {
     let mut out = Vec::new();
     let mut run_count = 0usize;
     let mut run_start = 0usize;
@@ -516,7 +509,7 @@ fn runs_stream(corpus: &Corpus) -> Vec<u8> {
             run_start = id;
         }
     }
-    out
+    (out, run_count)
 }
 
 /// The shipped `*`-pattern section: `u32 lo`, `u32 hi`, `u16 prefix length`, the
@@ -529,17 +522,11 @@ fn runs_stream(corpus: &Corpus) -> Vec<u8> {
 fn pattern_section(patterns: &[corpus::Pattern]) -> Vec<u8> {
     let mut out = Vec::new();
     for pattern in patterns {
-        crate::table::push_u32(&mut out, pattern.lo);
-        crate::table::push_u32(&mut out, pattern.hi);
-        crate::table::push_u16(
-            &mut out,
-            u16::try_from(pattern.prefix.len()).expect("prefix fits in u16"),
-        );
+        push_u32(&mut out, pattern.lo);
+        push_u32(&mut out, pattern.hi);
+        push_len_u16(&mut out, pattern.prefix.len(), "pattern prefix");
         out.extend_from_slice(pattern.prefix.as_bytes());
-        crate::table::push_u16(
-            &mut out,
-            u16::try_from(pattern.suffix.len()).expect("suffix fits in u16"),
-        );
+        push_len_u16(&mut out, pattern.suffix.len(), "pattern suffix");
         out.extend_from_slice(pattern.suffix.as_bytes());
     }
     out
@@ -547,6 +534,7 @@ fn pattern_section(patterns: &[corpus::Pattern]) -> Vec<u8> {
 
 /// The diagnostic pattern stream for `patterns.bin`: `varint(lo - 0x3400)
 /// varint(len) prefix|suffix|` per `*`-pattern range.
+#[must_use]
 fn patterns_stream(corpus: &Corpus) -> Vec<u8> {
     let mut out = Vec::new();
     for pattern in &corpus.patterns {
@@ -559,18 +547,6 @@ fn patterns_stream(corpus: &Corpus) -> Vec<u8> {
         out.push(b'|');
     }
     out
-}
-
-/// The number of consecutive-code-point runs in the index.
-#[must_use]
-fn run_count(corpus: &Corpus) -> usize {
-    let mut count = 0usize;
-    for id in 1..corpus.entries.len() {
-        if corpus.entries[id].0 != corpus.entries[id - 1].0 + 1 {
-            count += 1;
-        }
-    }
-    count + usize::from(!corpus.entries.is_empty())
 }
 
 #[cfg(test)]
@@ -598,6 +574,6 @@ mod tests {
         let path = dir.path().join("derived-names.rules");
         std::fs::write(&path, format!("{text}\n@stream mids delta8 16 16\n")).expect("rules file");
 
-        let _ = rules::read_rules(&path);
+        rules::read_rules(&path).expect("the delta8 middle stream is rejected");
     }
 }

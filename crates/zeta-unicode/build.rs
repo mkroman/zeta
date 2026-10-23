@@ -53,9 +53,6 @@ fn main() {
             output.emoji.verbatim_variants,
             output.emoji.missing_bases
         );
-        for sample in &output.emoji.samples {
-            println!("cargo:warning=zeta-unicode: emoji verbatim: {sample}");
-        }
         println!(
             "cargo:warning=zeta-unicode: names: {} entries ({} derived, {} stored), \
              {} arms over {} atoms ({} B), streams {}/{}/{}, names {} + runs {} + patterns {} \

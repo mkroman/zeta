@@ -21,6 +21,8 @@ pub const TONE_NAMES: [&str; 5] = [
     "dark skin tone",
 ];
 
+const _: () = assert!(TONES.len() == TONE_NAMES.len());
+
 /// Longest canonical emoji key, in bytes.
 ///
 /// The runtime keeps a fixed scratch buffer of this size; the generator rejects a stored key
@@ -48,6 +50,10 @@ pub const GC_SHIFT: u32 = 11;
 /// This is one more than [`UNICODE_END`] needs, so the directory always has a page after the
 /// last scalar value and `ucd[page + 1]` is available for the run search.
 pub const GC_PAGES: usize = (UNICODE_LIMIT as usize >> GC_SHIFT) + 1;
+/// The low bits of a general-category record holding the category id.
+pub const GC_ID_BITS: u32 = 5;
+/// The mask that extracts the category id from a general-category record.
+pub const GC_ID_MASK: u16 = (1u16 << GC_ID_BITS) - 1;
 
 /// The general category abbreviations in table id order (id = position + 1).
 ///
@@ -129,6 +135,33 @@ pub fn read_varint(bytes: &[u8]) -> Option<(u32, usize)> {
     None
 }
 
+/// Writes `cp` as upper-case hex digits into `out`, returning how many bytes it wrote.
+///
+/// The shared hole filler for `*` name patterns and the generated rule tree, so both fill a
+/// hole the same way. `width` is a *minimum*, the way Unicode writes the placeholder:
+/// `EGYPTIAN HIEROGLYPH-13460` needs five digits where most code points need four.
+///
+/// # Panics
+///
+/// The digit count is clamped to the eight bytes of `out`, so this cannot panic in practice.
+pub fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
+    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let mut needed = 0usize;
+    let mut rest = cp;
+    while rest > 0 {
+        rest >>= 4;
+        needed += 1;
+    }
+    // Unicode always writes at least one digit, even for zero.
+    let count = needed.max(usize::from(width.min(8))).max(1);
+    let mut shift = u32::try_from(count - 1).expect("at most eight digits") * 4;
+    for slot in out.iter_mut().take(count) {
+        *slot = DIGITS[((cp >> shift) & 0xF) as usize];
+        shift = shift.saturating_sub(4);
+    }
+    count
+}
+
 /// Appends `value` as a LEB128 varint.
 pub fn write_varint(mut value: u64, out: &mut Vec<u8>) {
     while value >= 0x80 {
@@ -196,6 +229,11 @@ pub fn tone_positions(cps: impl IntoIterator<Item = u32>) -> Vec<usize> {
 ///
 /// Rule `1` inserts the tone phrase after the first `": "`, rule `2` appends it, and rules
 /// `3`/`4` do the same after collapsing consecutive duplicate tones.
+///
+/// # Panics
+///
+/// Panics when a tone index is not a position in [`TONES`]; [`tone_indices`] and
+/// [`tone_positions`] only produce valid indices.
 #[must_use]
 pub fn format_toned(code: u8, base: &str, tones: &[usize]) -> String {
     let phrase = tone_phrase(code, tones);
@@ -210,6 +248,11 @@ pub fn format_toned(code: u8, base: &str, tones: &[usize]) -> String {
 }
 
 /// The comma-joined tone names, collapsing consecutive duplicates for rules 3 and 4.
+///
+/// # Panics
+///
+/// Panics when a tone index is not a position in [`TONES`]; [`tone_indices`] and
+/// [`tone_positions`] only produce valid indices.
 #[must_use]
 pub fn tone_phrase(code: u8, tones: &[usize]) -> String {
     let dedup = matches!(code, 3 | 4);
@@ -291,6 +334,23 @@ mod tests {
     }
 
     #[test]
+    fn write_hex_pads_and_widens_as_unicode_spells_it() {
+        let mut digits = [0u8; 8];
+        assert_eq!(write_hex(&mut digits, 0, 0), 1);
+        assert_eq!(&digits[..1], b"0");
+        assert_eq!(write_hex(&mut digits, 0, 4), 4);
+        assert_eq!(&digits[..4], b"0000");
+        assert_eq!(write_hex(&mut digits, 0x4E2D, 0), 4);
+        assert_eq!(&digits[..4], b"4E2D");
+        // `EGYPTIAN HIEROGLYPH-13460` needs five digits where the width asks for four.
+        assert_eq!(write_hex(&mut digits, 0x13460, 4), 5);
+        assert_eq!(&digits[..5], b"13460");
+        // A width wider than the buffer is clamped rather than panicking.
+        assert_eq!(write_hex(&mut digits, 1, u8::MAX), 8);
+        assert_eq!(&digits[..8], b"00000001");
+    }
+
+    #[test]
     fn is_tone_accepts_only_the_five_components() {
         for tone in TONES {
             assert!(is_tone(tone));
@@ -340,6 +400,8 @@ mod tests {
         assert_eq!(NAMES_HEADER_LEN, 50);
         assert_eq!(GC_PAGES, 545);
         assert_eq!(GC_SHORT_NAMES.len(), 30);
+        assert!(GC_SHORT_NAMES.len() < 1usize << GC_ID_BITS);
+        assert_eq!(1u16 << GC_ID_BITS, GC_ID_MASK + 1);
         assert_eq!(UNICODE_START, 0);
         assert_eq!(UNICODE_LIMIT, UNICODE_END + 1);
         assert_eq!(UNICODE_LIMIT as usize >> GC_SHIFT, GC_PAGES - 1);

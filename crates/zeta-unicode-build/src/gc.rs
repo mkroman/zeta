@@ -1,6 +1,6 @@
 //! General category parsing and the two-level page-table section encoding.
 
-use zeta_unicode_format::{GC_SHIFT, GC_SHORT_NAMES, UNICODE_END, UNICODE_LIMIT};
+use zeta_unicode_format::{GC_ID_BITS, GC_PAGES, GC_SHIFT, GC_SHORT_NAMES, UNICODE_END};
 
 /// The general category range table: `(start, end, table id)`.
 type GcRanges = Vec<(u32, u32, u8)>;
@@ -18,10 +18,7 @@ fn general_category_id(letter: &str) -> u8 {
 pub fn parse_general_category(text: &str) -> GcRanges {
     let mut ranges: Vec<(u32, u32, u8)> = Vec::new();
 
-    for line in text
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
+    for (_, line) in crate::ucd::records(text) {
         let (lhs, rest) = line.split_once(';').expect("field separator");
         let letter = rest.split('#').next().expect("category field").trim();
         assert_eq!(letter.len(), 2, "unexpected general category: {letter}");
@@ -31,8 +28,8 @@ pub fn parse_general_category(text: &str) -> GcRanges {
             Some((start, end)) => (start, end),
             None => (lhs, lhs),
         };
-        let start = u32::from_str_radix(start, 16).expect("range start");
-        let end = u32::from_str_radix(end, 16).expect("range end");
+        let start = crate::ucd::hex_u32(start);
+        let end = crate::ucd::hex_u32(end);
         assert!(start <= end, "reversed range U+{start:04X}..U+{end:04X}");
 
         let id = general_category_id(letter);
@@ -63,7 +60,8 @@ pub fn parse_general_category(text: &str) -> GcRanges {
         );
     }
 
-    let mut seen = [false; 31];
+    // Index 0 is unused: table ids are one-based.
+    let mut seen = [false; GC_SHORT_NAMES.len() + 1];
     for &(_, _, id) in &ranges {
         seen[usize::from(id)] = true;
     }
@@ -79,25 +77,25 @@ pub fn parse_general_category(text: &str) -> GcRanges {
 }
 
 /// Builds the general category section: the page directory followed by the packed records.
+#[must_use]
 pub fn general_category_section(ranges: &GcRanges) -> Vec<u8> {
     let mut records = Vec::with_capacity(ranges.len() * 2);
     for (start, _, id) in ranges {
         let page = start >> GC_SHIFT;
         let relative = start - (page << GC_SHIFT);
-        let record = u16::try_from((relative << 5) | u32::from(*id))
+        let record = u16::try_from((relative << GC_ID_BITS) | u32::from(*id))
             .expect("page-relative start and id fit in 16 bits");
         assert_eq!(
-            u32::from(record >> 5),
+            u32::from(record >> GC_ID_BITS),
             relative,
             "page-relative start is lossy"
         );
         records.extend_from_slice(&record.to_le_bytes());
     }
 
-    let pages = usize::try_from(UNICODE_LIMIT >> GC_SHIFT).expect("page count fits") + 1;
-    let mut directory = Vec::with_capacity(pages * 2);
+    let mut directory = Vec::with_capacity(GC_PAGES * 2);
     let mut index = 0usize;
-    for page in 0..pages {
+    for page in 0..GC_PAGES {
         let base = u32::try_from(page << GC_SHIFT).expect("page base fits in u32");
         while index < ranges.len() && ranges[index].0 < base {
             index += 1;

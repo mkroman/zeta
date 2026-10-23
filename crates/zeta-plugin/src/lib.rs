@@ -60,8 +60,8 @@ pub mod prelude {
         PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
     };
     pub use super::irc::{
-        BOLD, COLOR, REPLY_PREFIX, RESET, notice, parse_args_or_usage, parse_words_or_usage, reply,
-        reply_prefix, reply_usage_lines,
+        BOLD, COLOR, NOTICE_PREFIX, REPLY_PREFIX, RESET, notice, parse_args_or_usage,
+        parse_words_or_usage, reply, reply_prefix, reply_usage_lines,
     };
     pub use super::types::NoSettings;
     pub use super::{Context, Error, Plugin};

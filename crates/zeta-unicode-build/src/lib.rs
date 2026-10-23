@@ -104,29 +104,30 @@ pub fn generate(request: &Request) -> Result<Output, Error> {
     let (emoji, emoji_stats) = emoji::emoji_section(&inputs.emoji, &inputs.sequences);
     let ledger = names::emit(request, &inputs)?;
 
+    let gc_section = gc::general_category_section(&gc);
     let sections = vec![
         table::Section {
             id: table::SECTION_NAME_RUNS,
-            data: ledger.runs_section.clone(),
+            data: &ledger.runs_section,
         },
         table::Section {
             id: table::SECTION_NAME_PATTERNS,
-            data: ledger.pattern_section.clone(),
+            data: &ledger.pattern_section,
         },
         table::Section {
             id: table::SECTION_GC,
-            data: gc::general_category_section(&gc),
+            data: &gc_section,
         },
         table::Section {
             id: table::SECTION_EMOJI,
-            data: emoji,
+            data: &emoji,
         },
         table::Section {
             id: table::SECTION_NAMES,
-            data: ledger.names_section.clone(),
+            data: &ledger.names_section,
         },
     ];
-    let table = table::pack(sections, inputs.version);
+    let table = table::pack(&sections, inputs.version);
     let table_bytes = table.len();
     write(request.out_dir.join(&request.table_file), &table)?;
 

@@ -4,10 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use zeta_unicode_format::{MAX_KEY, format_toned, is_tone, tone_phrase, tone_positions};
 
-use crate::table::push_u16;
-
-/// How many un-reproducible tone variants `ZETA_UNICODE_STATS` prints as examples.
-const MAX_EMOJI_SAMPLES: usize = 8;
+use crate::table::push_len_u16;
 
 /// Build-time counters for the emoji section, reported under `ZETA_UNICODE_STATS`.
 #[derive(Clone, Debug, Default)]
@@ -20,8 +17,6 @@ pub struct EmojiStats {
     pub verbatim_variants: usize,
     /// Tone-variant groups with no stored base to derive from.
     pub missing_bases: usize,
-    /// A few `want`/`got` examples of the verbatim variants.
-    pub samples: Vec<String>,
     /// The encoded section payload's size, in bytes.
     pub bytes: usize,
 }
@@ -44,8 +39,8 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
     let mut codes = vec![0u8; (entries.len() * 3).div_ceil(8)];
     let mut tone_masks = vec![0u8; (entries.len() * 2).div_ceil(8)];
     for (index, (key, name, code, tone_mask)) in entries.iter().enumerate() {
-        push_len(&mut key_offsets, keys.len(), "key offset");
-        push_len(&mut name_offsets, names.len(), "name offset");
+        push_len_u16(&mut key_offsets, keys.len(), "key offset");
+        push_len_u16(&mut name_offsets, names.len(), "name offset");
         keys.extend_from_slice(key.as_bytes());
         assert!(
             key.len() <= MAX_KEY,
@@ -56,8 +51,8 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
         insert_bits(&mut codes, index, 3, *code);
         insert_bits(&mut tone_masks, index, 2, *tone_mask);
     }
-    push_len(&mut key_offsets, keys.len(), "key offset");
-    push_len(&mut name_offsets, names.len(), "name offset");
+    push_len_u16(&mut key_offsets, keys.len(), "key offset");
+    push_len_u16(&mut name_offsets, names.len(), "name offset");
 
     let mut section = Vec::new();
     for (what, length) in [
@@ -67,7 +62,7 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
         ("code bytes", codes.len()),
         ("tone-mask bytes", tone_masks.len()),
     ] {
-        push_len(&mut section, length, what);
+        push_len_u16(&mut section, length, what);
     }
     section.extend_from_slice(&keys);
     section.extend_from_slice(&key_offsets);
@@ -77,14 +72,6 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
     section.extend_from_slice(&tone_masks);
     stats.bytes = section.len();
     (section, stats)
-}
-
-/// Appends `length` as a `u16`, naming the field when it does not fit.
-fn push_len(buf: &mut Vec<u8>, length: usize, what: &str) {
-    push_u16(
-        buf,
-        u16::try_from(length).unwrap_or_else(|_| panic!("{what} fits in u16")),
-    );
 }
 
 /// Writes the low `width` bits of `value` at `index * width`, even across a byte boundary.
@@ -107,28 +94,22 @@ fn insert_bits(blob: &mut [u8], index: usize, width: usize, value: u8) {
 fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, String)> {
     let mut entries: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
 
-    // The line numbers in the panic messages are the file's, so the loops enumerate every
-    // line and skip the comments inside.
-    for (number, line) in emoji_text.lines().enumerate() {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
+    for (number, line) in crate::ucd::records(emoji_text) {
         let (left, rest) = line
             .split_once(';')
-            .unwrap_or_else(|| panic!("line {}: {line}", number + 1));
+            .unwrap_or_else(|| panic!("line {number}: {line}"));
         let (status, comment) = rest.split_once('#').expect("comment");
-        let cps = parse_code_points(left, number + 1);
+        let cps = parse_code_points(left, number);
         let rank = match status.trim() {
             "fully-qualified" | "component" => 2u8,
             "minimally-qualified" => 1,
             "unqualified" => 0,
-            other => panic!("line {}: unknown status {other}", number + 1),
+            other => panic!("line {number}: unknown status {other}"),
         };
         let words: Vec<&str> = comment.split_whitespace().collect();
         assert!(
             words.len() >= 3,
-            "line {}: unexpected comment: {comment}",
-            number + 1
+            "line {number}: unexpected comment: {comment}"
         );
         // The comment is `<emoji> <E-version> <name>`; the name may contain anything, `#`
         // included (the `#` keycap).
@@ -137,14 +118,11 @@ fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, St
 
     let emoji_keys: BTreeSet<Vec<u32>> = entries.keys().map(|cps| canonical_cps(cps)).collect();
 
-    for (number, line) in named_text.lines().enumerate() {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
+    for (number, line) in crate::ucd::records(named_text) {
         let (name, cps) = line
             .split_once(';')
-            .unwrap_or_else(|| panic!("line {}: {line}", number + 1));
-        let cps = parse_code_points(cps, number + 1);
+            .unwrap_or_else(|| panic!("line {number}: {line}"));
+        let cps = parse_code_points(cps, number);
         if !emoji_keys.contains(&canonical_cps(&cps)) {
             continue;
         }
@@ -208,8 +186,9 @@ fn canonical_emoji_entries(
         }
     }
 
-    // Assign each base the formatting rule that reproduces all of its tone variants; a base
-    // whose variants do not agree keeps them stored verbatim, so nothing is lost.
+    // Assign each base the formatting rule that reproduces all of its tone variants. The rule
+    // is only chosen when every variant agrees; a group that no rule reproduces is stored
+    // verbatim, so nothing is lost.
     for (base, group) in &variants {
         // The 2-bit mask can only publish one- and two-tone counts. Reject the whole group
         // before rule selection: a rule that happens to reproduce a three-tone name would
@@ -272,18 +251,6 @@ fn canonical_emoji_entries(
             entry.1 = rule;
             entry.2 = tone_mask;
         }
-        for (tones, variant_name, full_cps) in group {
-            let formatted = format_toned(rule, &base_name, tones);
-            if formatted != *variant_name {
-                stats.verbatim_variants += 1;
-                if stats.samples.len() < MAX_EMOJI_SAMPLES {
-                    stats.samples.push(format!(
-                        "{base_name:?} + {tones:?} -> want {variant_name:?}, got {formatted:?}"
-                    ));
-                }
-                kept.insert(full_cps.clone(), (variant_name.clone(), 0, 0));
-            }
-        }
         stats.ruled_bases += 1;
     }
 
@@ -345,10 +312,7 @@ fn strip_phrase(rule: u8, name: &str, tones: &[usize]) -> Option<String> {
 
 /// Parses a whitespace-separated list of hexadecimal code points.
 fn parse_code_points(text: &str, line: usize) -> Vec<u32> {
-    let cps: Vec<u32> = text
-        .split_whitespace()
-        .map(|cp| u32::from_str_radix(cp, 16).expect("code point"))
-        .collect();
+    let cps: Vec<u32> = text.split_whitespace().map(crate::ucd::hex_u32).collect();
     assert!(!cps.is_empty(), "line {line}: no code points");
     cps
 }

@@ -67,8 +67,8 @@ pub fn section(id: u32) -> Option<&'static [u8]> {
         if section_id != id {
             continue;
         }
-        let offset = usize::try_from(u32_at(TABLE, record + 4)?).ok()?;
-        let length = usize::try_from(u32_at(TABLE, record + 8)?).ok()?;
+        let offset = usize_at(TABLE, record + 4)?;
+        let length = usize_at(TABLE, record + 8)?;
         return bytes_at(TABLE, offset, length);
     }
     None
@@ -79,6 +79,16 @@ pub fn section(id: u32) -> Option<&'static [u8]> {
 pub fn u16_at(buf: &[u8], offset: usize) -> Option<u16> {
     let bytes = buf.get(offset..offset.checked_add(2)?)?;
     Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+/// Reads the `u16` pair at `index * 2`, failing rather than wrapping.
+///
+/// This is the shape of every offset table and page directory in the generated table, so the
+/// callers that need both neighbours read them with one bounds check.
+#[must_use]
+pub fn u16_pair_at(buf: &[u8], index: usize) -> Option<(u16, u16)> {
+    let offset = index.checked_mul(2)?;
+    Some((u16_at(buf, offset)?, u16_at(buf, offset.checked_add(2)?)?))
 }
 
 /// Reads a `u32` at `offset`, failing rather than wrapping.
@@ -108,6 +118,8 @@ mod tests {
     fn readers_reject_truncated_input() {
         assert_eq!(u16_at(&[0], 0), None);
         assert_eq!(u16_at(&[0, 1], 1), None);
+        assert_eq!(u16_pair_at(&[0; 3], 0), None);
+        assert_eq!(u16_pair_at(&[0; 4], 1), None);
         assert_eq!(u32_at(&[0; 3], 0), None);
         assert_eq!(usize_at(&[0; 3], 0), None);
         assert_eq!(bytes_at(b"abc", 2, 2), None);
@@ -117,6 +129,10 @@ mod tests {
     #[test]
     fn readers_decode_little_endian() {
         assert_eq!(u16_at(&[0x34, 0x12], 0), Some(0x1234));
+        assert_eq!(
+            u16_pair_at(&[0x34, 0x12, 0x78, 0x56], 0),
+            Some((0x1234, 0x5678))
+        );
         assert_eq!(u32_at(&[0x78, 0x56, 0x34, 0x12], 0), Some(0x1234_5678));
         assert_eq!(usize_at(&[0x78, 0x56, 0x34, 0x12], 0), Some(0x1234_5678));
         assert_eq!(bytes_at(b"abcd", 1, 2), Some(b"bc".as_slice()));

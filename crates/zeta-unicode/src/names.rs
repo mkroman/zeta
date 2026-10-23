@@ -92,9 +92,18 @@ fn varint(buf: &[u8], offset: &mut usize) -> Option<u32> {
     Some(value)
 }
 
-/// Decodes the streams and rebuilds every name.
-fn decode() -> Names {
-    let section = tables::section(sections::NAMES).expect("the table has a name section");
+/// The parsed and validated `UNNM` container header.
+struct Header {
+    /// The number of name entries, derived names included.
+    entries: u32,
+    /// The number of entries rebuilt by the generated rule tree.
+    derived: u32,
+    /// The transform id of each of the three streams.
+    transforms: [u8; STREAM_COUNT],
+}
+
+/// Parses the container header and validates the codec, version and transforms.
+fn parse_header(section: &[u8]) -> Header {
     assert!(
         section.len() >= NAMES_HEADER_LEN,
         "the name section is truncated"
@@ -131,13 +140,17 @@ fn decode() -> Names {
     let derived = read_u32(section, 13);
     assert!(derived <= entries, "more derived names than entries");
 
-    let [mut prefixes, mut suffixes, middles] = decode_streams(section);
-    if transforms[0] == TRANSFORM_DELTA8 {
-        undelta8(&mut prefixes);
+    Header {
+        entries,
+        derived,
+        transforms,
     }
-    if transforms[1] == TRANSFORM_DELTA8 {
-        undelta8(&mut suffixes);
-    }
+}
+
+/// Rebuilds every name from the header and the three decoded streams.
+fn rebuild_names(header: &Header, streams: [Vec<u8>; STREAM_COUNT]) -> (String, Vec<u32>) {
+    let (entries, derived) = (header.entries, header.derived);
+    let [prefixes, suffixes, middles] = streams;
 
     let mut text: Vec<u8> = Vec::with_capacity(920_000);
     let mut derived_name = String::new();
@@ -149,6 +162,7 @@ fn decode() -> Names {
     // The length streams carry one record per *stored* name: derived names take no record, so
     // they are skipped rather than consuming one.
     let mut stored = 0usize;
+    let mut derived_seen = 0u32;
 
     for id in 0..entries {
         let start = text.len();
@@ -158,6 +172,7 @@ fn decode() -> Names {
         // against, so `previous` is updated either way.
         derived_name.clear();
         if derive::derive_at(id, &mut derived_name) {
+            derived_seen += 1;
             text.extend_from_slice(derived_name.as_bytes());
         } else {
             let prefix = usize::from(*prefixes.get(stored).expect("a prefix per stored name"));
@@ -190,10 +205,28 @@ fn decode() -> Names {
     }
     offsets.push(u32::try_from(text.len()).expect("names fit in u32"));
     assert_eq!(middle, middles.len(), "every middle must be consumed");
+    assert_eq!(stored, prefixes.len(), "every prefix must be consumed");
+    assert_eq!(stored, suffixes.len(), "every suffix must be consumed");
+    assert_eq!(
+        derived_seen, derived,
+        "the header's derived count must match the rebuilt names"
+    );
 
+    (
+        String::from_utf8(text).expect("the generated names are UTF-8"),
+        offsets,
+    )
+}
+
+/// Decodes the streams and rebuilds every name.
+fn decode() -> Names {
+    let section = tables::section(sections::NAMES).expect("the table has a name section");
+    let header = parse_header(section);
+    let streams = decode_streams(section, header.transforms);
+    let (text, offsets) = rebuild_names(&header, streams);
     let runs = parse_runs(tables::section(sections::NAME_RUNS).expect("the table has a run table"));
     Names {
-        text: String::from_utf8(text).expect("the generated names are UTF-8"),
+        text,
         offsets,
         runs,
     }
@@ -202,8 +235,9 @@ fn decode() -> Names {
 /// Decompresses the three name streams: prefix lengths, suffix lengths and middles.
 ///
 /// Each stream has an eleven-byte descriptor — compressed and raw lengths, model order, memory
-/// limit, variant — and all three descriptors come before all three payloads.
-fn decode_streams(section: &[u8]) -> [Vec<u8>; STREAM_COUNT] {
+/// limit, variant — and all three descriptors come before all three payloads. The declared
+/// stream transforms are applied here, so every caller sees the decoded values.
+fn decode_streams(section: &[u8], transforms: [u8; STREAM_COUNT]) -> [Vec<u8>; STREAM_COUNT] {
     let mut descriptor = NAMES_HEADER_LEN - STREAM_COUNT * STREAM_DESC_LEN;
     let mut described = [(0usize, 0usize, 0u32, 0u32); STREAM_COUNT];
     for slot in &mut described {
@@ -233,6 +267,11 @@ fn decode_streams(section: &[u8]) -> [Vec<u8>; STREAM_COUNT] {
         *out = decode_stream(bytes, raw, order, mem);
     }
     assert_eq!(cursor, section.len(), "the name section has trailing bytes");
+    for (stream, &transform) in decoded.iter_mut().zip(&transforms) {
+        if transform == TRANSFORM_DELTA8 {
+            undelta8(stream);
+        }
+    }
     decoded
 }
 
@@ -277,7 +316,6 @@ fn decompress(section: &[u8]) -> Vec<u8> {
     )
 }
 
-/// Turns delta-8 coding back into the values it coded.
 /// Reads the `u32` at `offset` of the container.
 fn read_u32(buf: &[u8], offset: usize) -> u32 {
     tables::u32_at(buf, offset).expect("the container header is well formed")

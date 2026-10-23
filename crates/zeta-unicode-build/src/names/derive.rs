@@ -21,30 +21,12 @@ pub fn build_name(atoms: &[String], ops: &[Op], cp: u32, out: &mut Vec<u8>) {
             Op::Hex { off, width } => {
                 let value = i64::from(cp) - off;
                 assert!(value >= 0, "hex hole at U+{cp:04X} is negative");
-                let mut text = [0u8; 16];
-                let mut n = text.len();
-                let mut v = value;
-                loop {
-                    n -= 1;
-                    let d = usize::try_from(v & 15).expect("nibble fits");
-                    // `d` is a nibble, so both casts are in range.
-                    #[allow(clippy::cast_possible_truncation)]
-                    let digit = if d < 10 {
-                        b'0' + d as u8
-                    } else {
-                        b'A' + (d as u8 - 10)
-                    };
-                    text[n] = digit;
-                    v >>= 4;
-                    if v == 0 {
-                        break;
-                    }
-                }
-                let digits = text.len() - n;
-                for _ in digits..usize::try_from(width).expect("width fits") {
-                    out.push(b'0');
-                }
-                out.extend_from_slice(&text[n..]);
+                let value = u32::try_from(value)
+                    .unwrap_or_else(|_| panic!("hex hole at U+{cp:04X} does not fit in u32"));
+                let width = u8::try_from(width).expect("hex width fits in a byte");
+                let mut digits = [0u8; 8];
+                let used = zeta_unicode_format::write_hex(&mut digits, value, width);
+                out.extend_from_slice(&digits[..used]);
             }
         }
     }
@@ -212,9 +194,7 @@ pub fn emit_gen_rs(rules: &Rules, corpus: &Corpus) -> String {
 
     // Self-check: simulate the tree exactly as the emitted Rust evaluates it, so
     // a dispatch bug cannot reach the compiler.
-    let hits = (0..=max_id)
-        .filter(|id| tree_covers(&leaves, (0, max_id), *id))
-        .count();
+    let hits = (0..=max_id).filter(|id| tree_covers(&leaves, *id)).count();
     assert_eq!(
         hits, covered,
         "the tree dispatch covers {hits} ids, the arms cover {covered}"
@@ -263,7 +243,6 @@ pub fn emit_gen_rs(rules: &Rules, corpus: &Corpus) -> String {
     let _ = writeln!(out, "    {}", tree(&leaves, (0, max_id)));
     let _ = writeln!(out, "}}");
     let _ = writeln!(out);
-    let () = eprintln!("  gen.rs: {covered} ids over {} arms", leaves.len());
     out
 }
 
@@ -313,7 +292,7 @@ fn tree(leaves: &[TreeLeaf], range: (u32, u32)) -> String {
 
 /// Whether the emitted tree would derive `id`: the same walk as [`tree`], used as
 /// the build's self-check.
-fn tree_covers(leaves: &[TreeLeaf], range: (u32, u32), id: u32) -> bool {
+fn tree_covers(leaves: &[TreeLeaf], id: u32) -> bool {
     if leaves.is_empty() {
         return false;
     }
@@ -324,9 +303,9 @@ fn tree_covers(leaves: &[TreeLeaf], range: (u32, u32), id: u32) -> bool {
     let k = leaves.len() / 2;
     let mid = leaves[k].lo;
     if id < mid {
-        tree_covers(&leaves[..k], (range.0, mid - 1), id)
+        tree_covers(&leaves[..k], id)
     } else {
-        tree_covers(&leaves[k..], (mid, range.1), id)
+        tree_covers(&leaves[k..], id)
     }
 }
 

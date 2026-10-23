@@ -18,6 +18,25 @@ pub struct Inputs {
     pub version: (u8, u8, u8),
 }
 
+/// Iterates the non-empty, non-comment lines of a UCD text with their 1-based line numbers.
+pub fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
+        .map(|(index, line)| (index + 1, line))
+}
+
+/// Parses one hexadecimal Unicode code point.
+///
+/// # Panics
+///
+/// Panics with the offending text when it is not a hexadecimal `u32`.
+#[must_use]
+pub fn hex_u32(text: &str) -> u32 {
+    u32::from_str_radix(text, 16)
+        .unwrap_or_else(|error| panic!("invalid hexadecimal code point {text:?}: {error}"))
+}
+
 /// Reads the five vendored UCD files from `data_dir` and validates their version headers.
 ///
 /// # Errors
