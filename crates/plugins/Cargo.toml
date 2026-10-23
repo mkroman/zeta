@@ -65,7 +65,7 @@ spotify = [
     "dep:num-format",
     "dep:regex",
 ]
-string-utils = []
+string-utils = ["dep:zeta-unicode"]
 thingiverse = ["http", "dep:num-format", "dep:regex"]
 tiktok = ["mirror", "http"]
 titles = ["emulated", "dep:futures", "dep:html5ever"]
@@ -158,6 +158,7 @@ zeta-cache = { path = "../zeta-cache" }
 zeta-http = { path = "../zeta-http", default-features = false }
 zeta-mirror = { path = "../zeta-mirror", optional = true }
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-unicode = { path = "../zeta-unicode", optional = true }
 zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils" }
 

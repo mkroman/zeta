@@ -12,6 +12,7 @@ members = [
     "crates/zeta-mirror",
     "crates/zeta-plugin",
     "crates/zeta-test-support",
+    "crates/zeta-unicode",
     "crates/zeta-url",
     "crates/zeta-utils",
 ]

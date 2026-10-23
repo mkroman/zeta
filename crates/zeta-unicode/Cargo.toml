@@ -1,0 +1,35 @@
+[package]
+name = "zeta-unicode"
+version = "0.0.0"
+edition = "2024"
+description = "Unicode character names, general category and emoji sequence tables, generated at build time."
+license = "(MIT OR Apache-2.0) AND Unicode-3.0"
+repository = "https://github.com/mkroman/zeta"
+readme = "README.md"
+keywords = ["unicode", "emoji", "ucd", "tables"]
+categories = ["encoding", "text-processing"]
+build = "build.rs"
+# Only what the build script and the decoder need: the vendored UCD files are the input to
+# `build.rs`, so the package must ship them or it cannot build downstream.
+include = [
+    "src/**",
+    "data/**",
+    "build.rs",
+    "build/**",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-UNICODE",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+# The name streams are PPMd8-I: encoded here by `build.rs`, decoded once at first use.
+ppmd-rust = "1.5.0"
+
+[build-dependencies]
+ppmd-rust = "1.5.0"
+
+[lints]
+workspace = true

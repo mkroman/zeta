@@ -20,6 +20,7 @@ leaf crates below both.
 | `zeta-cache` | TTL cache and keyed cache APIs. |
 | `zeta-url` | URL extraction, path validation and redaction. |
 | `zeta-utils` | Text shaping, duration formatting, lock recovery. |
+| `zeta-unicode` | Character names, general categories and emoji sequence names. |
 | `kagi`, `reddit`, `dendanskeordbog`, `coinmarketcap` | Standalone API client crates. |
 | `zeta-test-support` | Shared test helpers (wiremock, redaction assertions). |
 

@@ -52,6 +52,10 @@ COPY --parents \
     crates/reddit/src/lib.rs \
     crates/zeta-test-support/Cargo.toml \
     crates/zeta-test-support/src/lib.rs \
+    crates/zeta-unicode/Cargo.toml \
+    crates/zeta-unicode/src/lib.rs \
+    crates/zeta-unicode/build.rs \
+    crates/zeta-unicode/build/build_names.rs \
     crates/kagi/Cargo.toml \
     crates/kagi/src/lib.rs \
     ./
@@ -100,6 +104,11 @@ COPY --parents \
     crates/kagi/src \
     crates/zeta-test-support/Cargo.toml \
     crates/zeta-test-support/src \
+    crates/zeta-unicode/Cargo.toml \
+    crates/zeta-unicode/src \
+    crates/zeta-unicode/build \
+    crates/zeta-unicode/build.rs \
+    crates/zeta-unicode/data \
     ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
