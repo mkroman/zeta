@@ -120,7 +120,7 @@ const SUFFIX: &str = ", …";
 /// `notice()` supplies the teal `> ` marker the reply opens with; the message itself lists one
 /// entry per character, each entry naming its codepoint bold inside braces and its general
 /// category in parentheses: `d` answers
-/// `{\x02U+0064\x0f\x0310}:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310)`.
+/// `{\x0f\x02U+0064\x02\x0310}:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310)`.
 /// An emoji code point is named by its emoji name, which is the more informative spelling for
 /// the button and squared sets; a run of characters that names an emoji sequence of more than
 /// one code point — `🏳️‍🌈` — is grouped into one entry that names the sequence as a whole and
@@ -193,7 +193,7 @@ fn sequence_entry(text: &str, name: &str) -> String {
     let category = general_category(base).long_name();
     // Everything that may follow the list: the closing brace with the name and the base
     // character's category in parentheses.
-    let framing = RESET.len()
+    let framing = BOLD.len()
         + COLOR.len()
         + "}: ".len()
         + RESET.len()
@@ -207,13 +207,14 @@ fn sequence_entry(text: &str, name: &str) -> String {
     // The first codepoint is appended unconditionally, so the entry only fits while the name
     // leaves room for the prefix and `U+10FFFF` on top of the reserved bytes.
     debug_assert!(
-        NOTICE_PREFIX_LEN + "{".len() + BOLD.len() + "U+10FFFF".len() + SUFFIX.len() + framing
+        NOTICE_PREFIX_LEN + "{".len() + RESET.len() + BOLD.len() + "U+10FFFF".len()
+            + SUFFIX.len() + framing
             <= MAX_LISTING_LENGTH,
         "the sequence name {name:?} does not leave room for the codepoint list"
     );
 
     let total = text.chars().count();
-    let mut entry = format!("{{{BOLD}");
+    let mut entry = format!("{{{RESET}{BOLD}");
     let appended = append_entries_within_budget(
         &mut entry,
         text.chars().map(|c| format!("U+{:04X}", u32::from(c))),
@@ -224,7 +225,7 @@ fn sequence_entry(text: &str, name: &str) -> String {
     if appended < total {
         entry.push_str(SUFFIX);
     }
-    let _ = write!(entry, "{RESET}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})");
+    let _ = write!(entry, "{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})");
 
     entry
 }
@@ -242,7 +243,7 @@ fn char_entry(c: char) -> String {
     );
     let category = general_category(c).long_name();
     format!(
-        "{{{BOLD}U+{:04X}{RESET}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})",
+        "{{{RESET}{BOLD}U+{:04X}{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})",
         u32::from(c),
     )
 }
@@ -281,12 +282,12 @@ mod tests {
     fn uni_names_a_single_character() {
         assert_eq!(
             unicode_details("d"),
-            "{\x02U+0064\x0f\x0310}:\x0f LATIN SMALL LETTER D\x0310 \
+            "{\x0f\x02U+0064\x02\x0310}:\x0f LATIN SMALL LETTER D\x0310 \
              (\x0fLowercase Letter\x0310)"
         );
         assert_eq!(
             unicode_details("ˇ"),
-            "{\x02U+02C7\x0f\x0310}:\x0f CARON\x0310 \
+            "{\x0f\x02U+02C7\x02\x0310}:\x0f CARON\x0310 \
              (\x0fModifier Letter\x0310)"
         );
     }
@@ -295,18 +296,18 @@ mod tests {
     fn uni_names_an_emoji_sequence_as_a_whole() {
         assert_eq!(
             unicode_details("🏳️‍🌈"),
-            "{\x02U+1F3F3, U+FE0F, U+200D, U+1F308\x0f\x0310}:\x0f RAINBOW FLAG\x0310 \
+            "{\x0f\x02U+1F3F3, U+FE0F, U+200D, U+1F308\x02\x0310}:\x0f RAINBOW FLAG\x0310 \
              (\x0fOther Symbol\x0310)"
         );
         assert_eq!(
             unicode_details("2️⃣"),
-            "{\x02U+0032, U+FE0F, U+20E3\x0f\x0310}:\x0f KEYCAP DIGIT TWO\x0310 \
+            "{\x0f\x02U+0032, U+FE0F, U+20E3\x02\x0310}:\x0f KEYCAP DIGIT TWO\x0310 \
              (\x0fDecimal Number\x0310)"
         );
         // A single code point is a character entry of its own.
         assert_eq!(
             unicode_details("🐗"),
-            "{\x02U+1F417\x0f\x0310}:\x0f BOAR\x0310 (\x0fOther Symbol\x0310)"
+            "{\x0f\x02U+1F417\x02\x0310}:\x0f BOAR\x0310 (\x0fOther Symbol\x0310)"
         );
     }
 
@@ -315,7 +316,7 @@ mod tests {
         // `NEGATIVE SQUARED AB` is the character name; the emoji name says what it is for.
         assert_eq!(
             unicode_details("🆎"),
-            "{\x02U+1F18E\x0f\x0310}:\x0f AB BUTTON (BLOOD TYPE)\x0310 \
+            "{\x0f\x02U+1F18E\x02\x0310}:\x0f AB BUTTON (BLOOD TYPE)\x0310 \
              (\x0fOther Symbol\x0310)"
         );
     }
@@ -324,9 +325,9 @@ mod tests {
     fn uni_groups_a_sequence_beside_a_character() {
         assert_eq!(
             unicode_details("🏳️‍🌈🦔"),
-            "{\x02U+1F3F3, U+FE0F, U+200D, U+1F308\x0f\x0310}:\x0f RAINBOW FLAG\x0310 \
+            "{\x0f\x02U+1F3F3, U+FE0F, U+200D, U+1F308\x02\x0310}:\x0f RAINBOW FLAG\x0310 \
              (\x0fOther Symbol\x0310), \
-             {\x02U+1F994\x0f\x0310}:\x0f HEDGEHOG\x0310 (\x0fOther Symbol\x0310)"
+             {\x0f\x02U+1F994\x02\x0310}:\x0f HEDGEHOG\x0310 (\x0fOther Symbol\x0310)"
         );
     }
 
@@ -334,8 +335,8 @@ mod tests {
     fn uni_lists_single_emoji_as_characters() {
         assert_eq!(
             unicode_details("🦔🫠"),
-            "{\x02U+1F994\x0f\x0310}:\x0f HEDGEHOG\x0310 (\x0fOther Symbol\x0310), \
-             {\x02U+1FAE0\x0f\x0310}:\x0f MELTING FACE\x0310 (\x0fOther Symbol\x0310)"
+            "{\x0f\x02U+1F994\x02\x0310}:\x0f HEDGEHOG\x0310 (\x0fOther Symbol\x0310), \
+             {\x0f\x02U+1FAE0\x02\x0310}:\x0f MELTING FACE\x0310 (\x0fOther Symbol\x0310)"
         );
     }
 
@@ -343,14 +344,14 @@ mod tests {
     fn uni_lists_every_characters_name_and_category() {
         assert_eq!(
             unicode_details("d'êtr"),
-            "{\x02U+0064\x0f\x0310}:\x0f LATIN SMALL LETTER D\x0310 \
+            "{\x0f\x02U+0064\x02\x0310}:\x0f LATIN SMALL LETTER D\x0310 \
              (\x0fLowercase Letter\x0310), \
-             {\x02U+0027\x0f\x0310}:\x0f APOSTROPHE\x0310 (\x0fOther Punctuation\x0310), \
-             {\x02U+00EA\x0f\x0310}:\x0f LATIN SMALL LETTER E WITH CIRCUMFLEX\x0310 \
+             {\x0f\x02U+0027\x02\x0310}:\x0f APOSTROPHE\x0310 (\x0fOther Punctuation\x0310), \
+             {\x0f\x02U+00EA\x02\x0310}:\x0f LATIN SMALL LETTER E WITH CIRCUMFLEX\x0310 \
              (\x0fLowercase Letter\x0310), \
-             {\x02U+0074\x0f\x0310}:\x0f LATIN SMALL LETTER T\x0310 \
+             {\x0f\x02U+0074\x02\x0310}:\x0f LATIN SMALL LETTER T\x0310 \
              (\x0fLowercase Letter\x0310), \
-             {\x02U+0072\x0f\x0310}:\x0f LATIN SMALL LETTER R\x0310 \
+             {\x0f\x02U+0072\x02\x0310}:\x0f LATIN SMALL LETTER R\x0310 \
              (\x0fLowercase Letter\x0310)"
         );
     }
