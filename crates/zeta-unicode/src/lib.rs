@@ -72,6 +72,16 @@ const JAMO_TRAILING: [&str; 28] = [
     "B", "BS", "S", "SS", "NG", "J", "C", "K", "T", "P", "H",
 ];
 
+/// Decodes the name streams and parses the emoji table before the first lookup needs them.
+///
+/// Without this, the first name or emoji lookup pays for about a megabyte of `PPMd` streams and
+/// the emoji section parse. The call is idempotent and may run on any thread: a warm call is
+/// cheap and concurrent calls wait for the same initialization.
+pub fn init() {
+    names::init();
+    emoji::init();
+}
+
 /// Returns the `Name` property of `c`, a formal alias from `NameAliases.txt` when the `Name`
 /// property is empty (the control code points), or the derived name Unicode defines
 /// algorithmically.
@@ -515,6 +525,18 @@ mod tests {
         assert!(matches!(name('中'), Some(Cow::Owned(_))));
         assert!(matches!(emoji_name("🦔"), Some(Cow::Borrowed(_))));
         assert!(matches!(emoji_name("🫶🏻"), Some(Cow::Owned(_))));
+    }
+
+    #[test]
+    fn init_is_idempotent_and_lookups_are_stable() {
+        let name_before = name('A');
+        let emoji_before = emoji_name("🏳️‍🌈");
+
+        init();
+        init();
+
+        assert_eq!(name('A'), name_before);
+        assert_eq!(emoji_name("🏳️‍🌈"), emoji_before);
     }
 
     #[test]

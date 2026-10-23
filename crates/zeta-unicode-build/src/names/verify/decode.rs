@@ -1,24 +1,19 @@
-//! Round-trip verification: the emitter re-decodes its own artifacts and checks
-//! every claim against the vendored UCD text.
+//! Independent decoders for the emitted container and standalone sections.
 //!
-//! The decoder in this module is deliberately separate from the runtime decoder: it is an
-//! independent check of the written bytes, while `zeta-unicode`'s own round-trip tests check the
-//! runtime side against the same UCD files. Only the format constants are shared, through
-//! `zeta-unicode-format`.
-
-use std::path::Path;
+//! These functions read the bytes back without touching the runtime decoder, so a
+//! disagreement between the writer and this module is caught during generation. The
+//! verification checks that consume them live in the parent module.
 
 use zeta_unicode_format::{
-    CODEC_PPMD8I, HANGUL_END, HANGUL_START, NAMES_HEADER_LEN as HEADER_LEN, NAMES_MAGIC as MAGIC,
+    CODEC_PPMD8I, NAMES_HEADER_LEN as HEADER_LEN, NAMES_MAGIC as MAGIC,
     NAMES_VERSION as BLOB_VERSION, SECTION_PREFIX_LEN, STREAM_COUNT, STREAM_DESC_LEN,
-    TRANSFORM_DELTA8, undelta8,
+    TRANSFORM_DELTA8, TRANSFORM_RAW, undelta8,
 };
 
-use super::codec::{SectionCodec, section_codec};
-use super::corpus::{Corpus, Pattern};
-use super::rules::Rules;
-use super::{PATTERN_BASE, STREAMS};
-use crate::Error;
+use crate::names::STREAMS;
+use crate::names::codec::{SectionCodec, section_codec};
+use crate::names::corpus::Pattern;
+use crate::names::sections::PATTERN_BASE;
 
 /// The three decompressed name streams.
 #[derive(Clone, Debug)]
@@ -113,7 +108,7 @@ pub fn decode_blob(blob: &[u8]) -> Streams {
             undelta8(&mut buffer);
         } else {
             assert_eq!(
-                header.transforms[idx], 0,
+                header.transforms[idx], TRANSFORM_RAW,
                 "stream {name}: unknown transform"
             );
         }
@@ -185,25 +180,6 @@ where
     (text, offsets)
 }
 
-/// What [`verify`] found.
-#[derive(Clone, Debug, Default)]
-pub struct Verify {
-    /// Names compared against `DerivedName.txt`.
-    pub compared: usize,
-    /// Names reconstructed by an arm.
-    pub derived: usize,
-    /// Names taken from the streams.
-    pub stored: usize,
-    /// Code-point lookups that hit the index.
-    pub index_hits: usize,
-    /// Code points the pattern section covers.
-    pub pattern_cps: usize,
-    /// Pattern ranges.
-    pub patterns: usize,
-    /// Wall time of the round trip.
-    pub millis: f64,
-}
-
 /// The name index: `(start, len, base_name_id)` per run of consecutive code
 /// points.
 pub type Runs = Vec<(u32, u32, u32)>;
@@ -229,6 +205,7 @@ pub fn decode_runs(raw: &[u8]) -> Runs {
         let (len, n) = read_varint(&raw[at..]);
         let (gap, m) = read_varint(&raw[at + n..]);
         at += n + m;
+        assert!(len > 0, "zero-length run");
         let start = if out.is_empty() {
             u64::from(gap)
         } else {
@@ -261,6 +238,7 @@ pub fn decode_patterns(raw: &[u8]) -> Vec<Pattern> {
         let (lo, n) = read_varint(&raw[at..]);
         let (len, m) = read_varint(&raw[at + n..]);
         at += n + m;
+        assert!(len > 0, "pattern record has zero length");
         let tail = &raw[at..];
         let first = tail
             .iter()
@@ -316,44 +294,14 @@ pub fn decode_section(bytes: &[u8], codec: SectionCodec) -> Vec<u8> {
     out
 }
 
-/// Verifies the plain `*`-pattern section the table actually ships.
-///
-/// `verify` checks the compressed diagnostic `patterns.bin`, which is a different encoding from
-/// the bytes the runtime reads. This walks the shipped layout (`u32 lo`, `u32 hi`, `u16 prefix
-/// length`, prefix, `u16 suffix length`, suffix) and compares every record to the corpus.
-pub fn verify_pattern_section(section: &[u8], patterns: &[Pattern]) {
-    let mut at = 0usize;
-    for (index, want) in patterns.iter().enumerate() {
-        let lo = u32_at(section, at, "pattern start");
-        let hi = u32_at(section, at + 4, "pattern end");
-        let prefix_len = usize::from(u16_at(section, at + 8, "prefix length"));
-        let prefix_at = at + 10;
-        let prefix = section
-            .get(prefix_at..prefix_at + prefix_len)
-            .unwrap_or_else(|| panic!("pattern {index}: prefix outside the section"));
-        let suffix_len_at = prefix_at + prefix_len;
-        let suffix_len = usize::from(u16_at(section, suffix_len_at, "suffix length"));
-        let suffix_at = suffix_len_at + 2;
-        let suffix = section
-            .get(suffix_at..suffix_at + suffix_len)
-            .unwrap_or_else(|| panic!("pattern {index}: suffix outside the section"));
-        assert_eq!(
-            (lo, hi, prefix, suffix),
-            (
-                want.lo,
-                want.hi,
-                want.prefix.as_bytes(),
-                want.suffix.as_bytes()
-            ),
-            "shipped pattern {index} differs from DerivedName.txt"
-        );
-        at = suffix_at + suffix_len;
-    }
-    assert_eq!(at, section.len(), "the pattern section has trailing bytes");
+/// The decoded name at `id`, from the flat text and its offset table.
+pub(super) fn name_at<'a>(text: &'a [u8], offsets: &[u32], id: usize) -> &'a [u8] {
+    &text[usize::try_from(offsets[id]).expect("offset fits")
+        ..usize::try_from(offsets[id + 1]).expect("offset fits")]
 }
 
 /// Reads a little-endian `u32` at `at`, naming the field through `what`.
-fn u32_at(buf: &[u8], at: usize, what: &str) -> u32 {
+pub(super) fn u32_at(buf: &[u8], at: usize, what: &str) -> u32 {
     let bytes = buf
         .get(at..at + 4)
         .unwrap_or_else(|| panic!("{what} is outside the buffer"));
@@ -361,219 +309,185 @@ fn u32_at(buf: &[u8], at: usize, what: &str) -> u32 {
 }
 
 /// Reads a little-endian `u16` at `at`, naming the field through `what`.
-fn u16_at(buf: &[u8], at: usize, what: &str) -> u16 {
+pub(super) fn u16_at(buf: &[u8], at: usize, what: &str) -> u16 {
     let bytes = buf
         .get(at..at + 2)
         .unwrap_or_else(|| panic!("{what} is outside the buffer"));
     u16::from_le_bytes(bytes.try_into().expect("two bytes"))
 }
 
-/// Round-trips the emitted artifact and checks every claim this build makes:
-/// names byte-identical to `DerivedName.txt`, code points exact, index and
-/// pattern sections consistent.  Panics on the first failure.
-///
-/// # Errors
-///
-/// Returns [`Error`] when the written artifacts cannot be read back; every
-/// inconsistency in the artifacts themselves is an invariant violation and panics.
-pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, Error> {
-    let start = std::time::Instant::now();
-    let blob = crate::read(out_dir.join("names.bin"))?;
-    let streams = decode_blob(&blob);
-    let derived = verify_names(&streams, corpus, rules);
-    verify_runs(out_dir, corpus, rules)?;
-    let coverage = verify_patterns(out_dir, corpus, rules)?;
-    verify_hangul(corpus);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::names::codec::varint;
+    use crate::names::container::{build_blob, compress_streams};
+    use crate::names::rules::StreamParams;
+    use crate::names::sections::{patterns_stream, runs_stream};
 
-    Ok(Verify {
-        compared: corpus.entries.len(),
-        derived,
-        stored: corpus.entries.len() - derived,
-        index_hits: corpus.entries.len(),
-        pattern_cps: coverage.cps,
-        patterns: coverage.ranges,
-        millis: start.elapsed().as_secs_f64() * 1e3,
-    })
-}
-
-/// Reconstructs every name from the streams and compares it with the corpus.
-///
-/// Returns the number of names the rules rebuilt, i.e. the names that were absent from the
-/// streams.
-fn verify_names(streams: &Streams, corpus: &Corpus, rules: &Rules) -> usize {
-    assert_eq!(
-        streams.entries,
-        corpus.entries.len(),
-        "names.bin describes {} entries, the corpus has {}",
-        streams.entries,
-        corpus.entries.len()
-    );
-
-    // Derived names come from the rules; the shipped code uses the generated
-    // tree, which the crate's round-trip test exercises separately.
-    let mut derived = 0usize;
-    let (text, offsets) = reconstruct(streams, |id, out| {
-        let cp = corpus.entries[usize::try_from(id).expect("id fits")].0;
-        let Some(arm) = super::derive::arm_of(rules, cp) else {
-            return false;
-        };
-        super::derive::build_name(&rules.atoms, &arm.ops, cp, out);
-        derived += 1;
-        true
-    });
-    assert_eq!(derived, streams.derived, "derived count in the header");
-    assert_eq!(derived, rules.derived, "derived count from the rules");
-
-    for (id, (cp, want)) in corpus.entries.iter().enumerate() {
-        let got = name_at(&text, &offsets, id);
-        assert_eq!(
-            got,
-            want.as_bytes(),
-            "U+{cp:04X} decodes as {:?}, want {want:?}",
-            String::from_utf8_lossy(got)
-        );
-    }
-    derived
-}
-
-/// Reads the shipped name index and checks every corpus lookup lands on its id.
-fn verify_runs(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<(), Error> {
-    let runs = decode_runs(&decode_section(
-        &crate::read(out_dir.join("runs.bin"))?,
-        SectionCodec {
-            order: rules.runs.0,
-            mem_mib: rules.runs.1,
-        },
-    ));
-    let covered: usize = runs
-        .iter()
-        .map(|(_, len, _)| usize::try_from(*len).expect("run fits"))
-        .sum();
-    assert_eq!(
-        covered,
-        corpus.entries.len(),
-        "the index covers {covered} entries"
-    );
-    let mut cursor = 0usize;
-    for (start, len, base) in &runs {
-        assert_eq!(
-            *base as usize, cursor,
-            "run base id is not the running total"
-        );
-        assert_eq!(
-            corpus.entries[cursor].0, *start,
-            "run start does not match entry {cursor}"
-        );
-        cursor += usize::try_from(*len).expect("run fits");
+    fn stream_params() -> [StreamParams; STREAM_COUNT] {
+        [StreamParams {
+            delta8: false,
+            order: 10,
+            mem_mib: 1,
+        }; STREAM_COUNT]
     }
 
-    // [`verify_names`] already proved the decoded text is the corpus name, so the
-    // only remaining claim is that every code point maps to its own id.
-    for (id, (cp, _)) in corpus.entries.iter().enumerate() {
-        let found =
-            name_id(&runs, *cp).unwrap_or_else(|| panic!("U+{cp:04X} is missing from the index"));
-        let want = u32::try_from(id).expect("id fits");
-        assert_eq!(
-            found, want,
-            "the index maps U+{cp:04X} to {found}, want {want}"
-        );
+    fn sample_blob() -> Vec<u8> {
+        let compressed = compress_streams(&stream_params(), [b"", b"", b""]);
+        build_blob(0, 0, &compressed)
     }
-    for cp in [0x0D800u32, 0x0378, 0x2FA1E] {
-        if corpus.id_of(cp).is_none() {
-            assert!(
-                name_id(&runs, cp).is_none(),
-                "U+{cp:04X} must miss the index"
-            );
-        }
-    }
-    Ok(())
-}
 
-/// What the shipped `*`-pattern ranges cover.
-struct PatternCoverage {
-    /// Code points across every range.
-    cps: usize,
-    /// Number of ranges.
-    ranges: usize,
-}
-
-/// Reads the diagnostic `patterns.bin` and checks every range against the corpus.
-fn verify_patterns(
-    out_dir: &Path,
-    corpus: &Corpus,
-    rules: &Rules,
-) -> Result<PatternCoverage, Error> {
-    let patterns = decode_patterns(&decode_section(
-        &crate::read(out_dir.join("patterns.bin"))?,
-        SectionCodec {
-            order: rules.patterns.0,
-            mem_mib: rules.patterns.1,
-        },
-    ));
-    assert_eq!(patterns.len(), corpus.patterns.len(), "pattern count");
-    for pair in patterns.windows(2) {
-        assert!(
-            pair[0].hi < pair[1].lo,
-            "patterns overlap near U+{:04X}",
-            pair[1].lo
-        );
-    }
-    let mut cps = 0usize;
-    for (got, want) in patterns.iter().zip(&corpus.patterns) {
-        assert_eq!(
-            (got.lo, got.hi, &got.prefix, &got.suffix),
-            (want.lo, want.hi, &want.prefix, &want.suffix),
-            "pattern range differs from DerivedName.txt"
-        );
-        cps += usize::try_from(got.hi - got.lo + 1).expect("range fits");
-        for cp in got.lo..=got.hi {
-            assert!(
-                corpus.id_of(cp).is_none(),
-                "U+{cp:04X} is covered by a pattern and must not be stored"
-            );
-        }
-    }
-    // Unicode's algorithmic names are `prefix + uppercase hex + suffix`; if the
-    // convention were wrong nothing else here would notice.
-    for (cp, want) in [
-        (0x4E00u32, "CJK UNIFIED IDEOGRAPH-4E00"),
-        (0x9FFF, "CJK UNIFIED IDEOGRAPH-9FFF"),
-        (0x20000, "CJK UNIFIED IDEOGRAPH-20000"),
-        (0x2A700, "CJK UNIFIED IDEOGRAPH-2A700"),
-        (0x2F800, "CJK COMPATIBILITY IDEOGRAPH-2F800"),
-        (0x18CFF, "KHITAN SMALL SCRIPT CHARACTER-18CFF"),
-        (0x18D00, "TANGUT IDEOGRAPH-18D00"),
-        (0x1B170, "NUSHU CHARACTER-1B170"),
-        (0x3D000, "SMALL SEAL CHARACTER-3D000"),
-    ] {
-        let pattern = patterns
+    fn entries(pairs: &[(u32, &str)]) -> Vec<(u32, String)> {
+        pairs
             .iter()
-            .find(|p| (p.lo..=p.hi).contains(&cp))
-            .unwrap_or_else(|| panic!("U+{cp:04X} is in no pattern range"));
+            .map(|(cp, name)| (*cp, (*name).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    #[should_panic = "names.bin magic"]
+    fn rejects_bad_container_magic() {
+        let mut blob = sample_blob();
+        blob[0] ^= 0xFF;
+        let _ = decode_blob(&blob);
+    }
+
+    #[test]
+    #[should_panic = "names.bin version"]
+    fn rejects_bad_container_version() {
+        let mut blob = sample_blob();
+        blob[4] += 1;
+        let _ = decode_blob(&blob);
+    }
+
+    #[test]
+    #[should_panic = "names.bin codec is not PPMd8-I"]
+    fn rejects_bad_container_codec() {
+        let mut blob = sample_blob();
+        blob[5] ^= 0xFF;
+        let _ = decode_blob(&blob);
+    }
+
+    #[test]
+    #[should_panic = "only PPMd8 variant I is supported"]
+    fn rejects_bad_stream_codec() {
+        let mut blob = sample_blob();
+        let first_descriptor = HEADER_LEN - STREAM_COUNT * STREAM_DESC_LEN;
+        blob[first_descriptor + 10] ^= 0xFF;
+        let _ = decode_blob(&blob);
+    }
+
+    #[test]
+    #[should_panic = "unknown transform"]
+    fn rejects_unknown_stream_transform() {
+        let mut blob = sample_blob();
+        blob[6] = 0xFF;
+        let _ = decode_blob(&blob);
+    }
+
+    #[test]
+    #[should_panic = "names.bin is truncated"]
+    fn rejects_truncated_container() {
+        let blob = sample_blob();
+        let _ = decode_blob(&blob[..HEADER_LEN - 1]);
+    }
+
+    #[test]
+    #[should_panic = "truncated section"]
+    fn rejects_truncated_section() {
+        let _ = decode_section(
+            &[0u8; SECTION_PREFIX_LEN],
+            SectionCodec {
+                order: 10,
+                mem_mib: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn runs_round_trip() {
+        let entries = entries(&[
+            (0x41, "A"),
+            (0x42, "B"),
+            (0x45, "E"),
+            (0x46, "F"),
+            (0x47, "G"),
+        ]);
+        let (raw, count) = runs_stream(&entries);
+        assert_eq!(count, 2);
         assert_eq!(
-            format!("{}{:X}{}", pattern.prefix, cp, pattern.suffix),
-            want,
-            "algorithmic name for U+{cp:04X}"
+            decode_runs(&raw),
+            vec![(0x41, 2, 0), (0x45, 3, 2)],
+            "the runs must carry absolute starts and running base ids"
         );
     }
-    Ok(PatternCoverage {
-        cps,
-        ranges: patterns.len(),
-    })
-}
 
-/// Samples the Hangul syllable block, which must stay algorithmic rather than stored.
-fn verify_hangul(corpus: &Corpus) {
-    for cp in (HANGUL_START..=HANGUL_END).step_by(1_357) {
-        assert!(
-            corpus.id_of(cp).is_none(),
-            "U+{cp:04X} is a Hangul syllable and must not be stored"
+    #[test]
+    #[should_panic = "zero-length run"]
+    fn rejects_zero_length_run() {
+        let mut raw = Vec::new();
+        varint(0, &mut raw);
+        varint(0x41, &mut raw);
+        let _ = decode_runs(&raw);
+    }
+
+    #[test]
+    fn patterns_round_trip() {
+        let patterns = vec![
+            Pattern {
+                lo: PATTERN_BASE,
+                hi: PATTERN_BASE + 1,
+                prefix: "CJK UNIFIED IDEOGRAPH-".to_owned(),
+                suffix: String::new(),
+            },
+            Pattern {
+                lo: 0x4E00,
+                hi: 0x4E00,
+                prefix: "PREFIX ".to_owned(),
+                suffix: " SUFFIX".to_owned(),
+            },
+        ];
+        let raw = patterns_stream(&patterns);
+        assert_eq!(decode_patterns(&raw), patterns);
+    }
+
+    #[test]
+    #[should_panic = "pattern record has zero length"]
+    fn rejects_zero_length_pattern_record() {
+        let mut raw = Vec::new();
+        varint(0, &mut raw);
+        varint(0, &mut raw);
+        let _ = decode_patterns(&raw);
+    }
+
+    #[test]
+    fn reconstructs_across_a_derived_predecessor() {
+        let streams = Streams {
+            plen: vec![0, 0],
+            slen: vec![0, 3],
+            mids: b"FOO BAR\0QUX \0".to_vec(),
+            entries: 3,
+            derived: 1,
+        };
+        let (text, offsets) = reconstruct(&streams, |id, out| {
+            if id == 1 {
+                out.extend_from_slice(b"FOO BAZ");
+                true
+            } else {
+                false
+            }
+        });
+        assert_eq!(
+            [
+                name_at(&text, &offsets, 0),
+                name_at(&text, &offsets, 1),
+                name_at(&text, &offsets, 2),
+            ],
+            [
+                b"FOO BAR".as_slice(),
+                b"FOO BAZ".as_slice(),
+                b"QUX BAZ".as_slice()
+            ]
         );
     }
-}
-
-/// The decoded name at `id`, from the flat text and its offset table.
-fn name_at<'a>(text: &'a [u8], offsets: &[u32], id: usize) -> &'a [u8] {
-    &text[usize::try_from(offsets[id]).expect("offset fits")
-        ..usize::try_from(offsets[id + 1]).expect("offset fits")]
 }

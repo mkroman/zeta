@@ -43,6 +43,13 @@ struct Run {
 /// The decoded table, built on first use.
 static NAMES: OnceLock<Names> = OnceLock::new();
 
+/// Decodes the name streams now, so the first lookup does not pay for it.
+///
+/// Idempotent and cheap once the table exists.
+pub fn init() {
+    let _ = NAMES.get_or_init(decode);
+}
+
 /// Returns the stored name of `cp`, if it has one.
 ///
 /// Answering a name costs a binary search over the run table plus two `u32` loads.

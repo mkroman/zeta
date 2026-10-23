@@ -8,6 +8,7 @@
 //! notice, which supplies each reply's `\x0310> ` prefix.
 
 use std::fmt::Write;
+use std::sync::Once;
 
 use crate::prelude::*;
 
@@ -26,6 +27,9 @@ const REVERSE: CommandSpec = CommandSpec::new(".rev", "Reverse a string");
 /// The `.uni` Unicode properties command.
 const UNICODE: CommandSpec = CommandSpec::new(".uni", "Show a character's Unicode properties");
 
+/// Guards the one-time background warm-up of the Unicode tables.
+static UNICODE_INIT: Once = Once::new();
+
 /// The string utilities plugin: offline text transformations for its commands.
 #[derive(Default)]
 pub struct StringUtils;
@@ -39,6 +43,7 @@ impl StringUtils {
             .command(ORD)
             .command(REVERSE)
             .command(UNICODE);
+        warm_unicode();
         Ok(Self)
     }
 
@@ -108,6 +113,19 @@ fn str_to_hex_string(s: &str) -> String {
     }
 
     buf
+}
+
+/// Warms the Unicode tables in the background, at most once per process.
+///
+/// A few milliseconds of CPU here instead of stalling the first `.uni` on the name-stream
+/// decode and emoji parse. A failed spawn is harmless: the first command then pays the lazy
+/// cost itself.
+fn warm_unicode() {
+    UNICODE_INIT.call_once(|| {
+        let _ = std::thread::Builder::new()
+            .name("unicode-init".into())
+            .spawn(zeta_unicode::init);
+    });
 }
 
 #[cfg(test)]

@@ -29,6 +29,13 @@ struct Emoji<'a> {
 /// The parsed emoji section, initialized on the first emoji lookup.
 static EMOJI: OnceLock<Option<Emoji<'static>>> = OnceLock::new();
 
+/// Parses the emoji section now, so the first lookup does not pay for it.
+///
+/// Idempotent and cheap once the section exists.
+pub fn init() {
+    let _ = Emoji::section();
+}
+
 impl<'a> Emoji<'a> {
     /// Splits a section payload into its parts: entry count, key blob with `u16` offsets, name
     /// blob with `u16` offsets, the packed 3-bit tone rules and the 2-bit tone-count masks.

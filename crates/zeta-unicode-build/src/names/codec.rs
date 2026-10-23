@@ -2,7 +2,7 @@
 
 use std::io::Write as _;
 
-use super::SECTION_PREFIX_LEN;
+use zeta_unicode_format::SECTION_PREFIX_LEN;
 
 /// PPMd8-I at `order`/`mem_mib` through `ppmd-rust`, the same crate the
 /// runtime decoder uses.

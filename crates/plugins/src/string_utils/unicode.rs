@@ -126,6 +126,11 @@ fn grouped_entries(args: &str) -> Vec<Entry<'_>> {
     entries
 }
 
+/// The bytes [`render_entry`] appends after the codepoint list.
+fn entry_tail(name: &str, category: &str) -> String {
+    format!("{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})")
+}
+
 /// Renders an entry: its codepoints bold inside the braces, then name and category.
 ///
 /// The codepoint list is a listing too: canonicalization strips every `U+FE0F`, so the input
@@ -133,7 +138,7 @@ fn grouped_entries(args: &str) -> Vec<Entry<'_>> {
 /// inside the braces. `tail` is the exact text that follows the list, so the reserved budget
 /// cannot drift from what is written.
 fn render_entry(points: &str, name: &str, category: &str) -> String {
-    let tail = format!("{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})");
+    let tail = entry_tail(name, category);
     let mut entry = format!("{{{RESET}{BOLD}");
 
     // The first codepoint is appended unconditionally, so the entry only fits while the tail
@@ -426,5 +431,85 @@ mod tests {
             "{}",
             reply.len() + NOTICE_PREFIX_LEN
         );
+    }
+
+    /// The bytes [`render_entry`] writes before the codepoint list.
+    const ENTRY_PREFIX_LEN: usize = "{".len() + RESET.len() + BOLD.len();
+
+    #[test]
+    fn every_char_entry_tail_fits_the_entry_budget() {
+        let tail_base_len = entry_tail("", "").len();
+        let mut longest: Option<(usize, char, String, &'static str)> = None;
+        let mut encoded = [0u8; 4];
+
+        for cp in 0..=0x0010_FFFF {
+            let Some(c) = char::from_u32(cp) else {
+                continue;
+            };
+            // Mirror `char_entry`: an emoji name replaces the character name, and only the emoji
+            // name is upper-cased; `name.len()` after that accounts for any expansion.
+            let name: Cow<'static, str> = emoji_name(c.encode_utf8(&mut encoded))
+                .map_or_else(|| name_or_label(c), |name| Cow::Owned(name.to_uppercase()));
+            let category = general_category(c).long_name();
+            let tail_len = tail_base_len + name.len() + category.len();
+
+            if longest
+                .as_ref()
+                .is_none_or(|(longest_len, ..)| tail_len > *longest_len)
+            {
+                longest = Some((tail_len, c, name.into_owned(), category));
+            }
+        }
+
+        let (max_tail_len, c, name, category) = longest.expect("the scalar range has characters");
+        assert_eq!(entry_tail(&name, category).len(), max_tail_len);
+        assert!(
+            ENTRY_PREFIX_LEN + "U+10FFFF".len() + SUFFIX.len() + max_tail_len <= ENTRY_BUDGET,
+            "U+{:04X} ({name:?}, {category}) appends a {max_tail_len}-byte tail",
+            u32::from(c)
+        );
+
+        // The worst character as a single-point entry also fits.
+        let entry = render_entry(&c.to_string(), &name, category);
+        assert!(entry.len() <= ENTRY_BUDGET, "{entry:?}");
+    }
+
+    #[test]
+    fn render_entry_budgets_the_longest_codepoint_list() {
+        let (name, category) = ("X", "Other Symbol");
+        let tail = entry_tail(name, category);
+        // `U+10FFFF` is the widest a codepoint can be spelled.
+        let point = char::MAX;
+        let point_len = format!("U+{:04X}", u32::from(point)).len();
+        let separator_len = ", ".len();
+        let full_len = |points: usize| {
+            ENTRY_PREFIX_LEN + points * point_len + (points - 1) * separator_len + tail.len()
+        };
+
+        // The list is appended while the entry plus the reserved outer suffix fits; one more
+        // point would need the suffix instead.
+        let max_complete = (1..=ENTRY_BUDGET)
+            .take_while(|&points| full_len(points) + SUFFIX.len() <= ENTRY_BUDGET)
+            .last()
+            .expect("one point always fits");
+        let points = |count: usize| point.to_string().repeat(count);
+
+        let complete = render_entry(&points(max_complete), name, category);
+        assert!(!complete.contains(SUFFIX), "{complete:?}");
+        assert_eq!(complete.len(), full_len(max_complete));
+        assert!(complete.len() <= ENTRY_BUDGET, "{}", complete.len());
+
+        let truncated = render_entry(&points(max_complete + 1), name, category);
+        assert!(
+            truncated.ends_with(&format!("{SUFFIX}{tail}")),
+            "{truncated:?}"
+        );
+        assert_eq!(truncated.len(), complete.len() + SUFFIX.len());
+        assert!(truncated.len() <= ENTRY_BUDGET, "{}", truncated.len());
+
+        // A far longer list is cut at the same point.
+        let long = render_entry(&points(60), name, category);
+        assert_eq!(long, truncated);
+        assert!(long.len() <= ENTRY_BUDGET, "{}", long.len());
     }
 }
