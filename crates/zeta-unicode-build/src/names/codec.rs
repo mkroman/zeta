@@ -57,15 +57,4 @@ pub struct SectionCodec {
 }
 
 /// LEB128: seven payload bits per byte, high bit set on every byte but the last.
-///
-/// The `as u8` casts cannot truncate: `value` is below 128 inside the loop and below 128 after
-/// it.
-pub fn varint(mut value: u64, out: &mut Vec<u8>) {
-    #[allow(clippy::cast_possible_truncation)]
-    while value >= 128 {
-        out.push((value as u8 & 0x7F) | 0x80);
-        value >>= 7;
-    }
-    #[allow(clippy::cast_possible_truncation)]
-    out.push(value as u8);
-}
+pub use zeta_unicode_format::write_varint as varint;

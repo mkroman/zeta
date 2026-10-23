@@ -19,14 +19,12 @@ all-features = true
 [dependencies]
 # The name streams are PPMd8-I: encoded by `zeta-unicode-build`, decoded once at first use.
 ppmd-rust = "1.5.0"
+# The table layout and the tone wording are shared with the generator.
+zeta-unicode-format = { path = "../zeta-unicode-format", version = "0.0.0" }
 
 [build-dependencies]
 # `version` is required for `cargo package`: the packaged manifest must name a publishable
 # requirement even though the generator only exists in this workspace.
-zeta-unicode-build = { path = "../zeta-unicode-build", version = "0.0.0" }
-
-[dev-dependencies]
-# The test suite pins `MAX_KEY` to the generator's, for the same publish reason as above.
 zeta-unicode-build = { path = "../zeta-unicode-build", version = "0.0.0" }
 
 [lints]

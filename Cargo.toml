@@ -14,6 +14,7 @@ members = [
     "crates/zeta-test-support",
     "crates/zeta-unicode",
     "crates/zeta-unicode-build",
+    "crates/zeta-unicode-format",
     "crates/zeta-url",
     "crates/zeta-utils",
 ]

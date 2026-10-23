@@ -5420,6 +5420,7 @@ version = "0.0.0"
 dependencies = [
  "ppmd-rust",
  "zeta-unicode-build",
+ "zeta-unicode-format",
 ]
 
 [[package]]
@@ -5429,7 +5430,12 @@ dependencies = [
  "ppmd-rust",
  "tempfile",
  "thiserror 2.0.21",
+ "zeta-unicode-format",
 ]
+
+[[package]]
+name = "zeta-unicode-format"
+version = "0.0.0"
 
 [[package]]
 name = "zeta-url"

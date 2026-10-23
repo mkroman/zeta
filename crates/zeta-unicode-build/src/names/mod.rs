@@ -100,32 +100,25 @@ mod derive;
 mod rules;
 mod verify;
 
+use std::borrow::Cow;
 use std::fmt::Write as _;
+use std::path::Path;
 
 use corpus::Corpus;
 use rules::Rules;
+use zeta_unicode_format::{
+    CODEC_PPMD8I, NAMES_HEADER_LEN as HEADER_LEN, NAMES_MAGIC as MAGIC,
+    NAMES_VERSION as BLOB_VERSION, SECTION_PREFIX_LEN, STREAM_COUNT, STREAM_DESC_LEN,
+    TRANSFORM_DELTA8, TRANSFORM_RAW, delta8,
+};
 
 // ---------------------------------------------------------------- constants
 
-/// Container magic for the name blob.
-const MAGIC: &[u8; 4] = b"UNNM";
-/// Container version understood by this module and by the decoder.
-const BLOB_VERSION: u8 = 1;
-/// Codec id: PPMd8-I (`ppmd-rust`), the only codec this build emits.
-const CODEC_PPMD8I: u8 = 1;
-/// Transform id: cumulative (delta) sum of `u8`s.
-const TRANSFORM_DELTA8: u8 = 1;
-/// Length of the fixed container header.
-const HEADER_LEN: usize = 4 + 1 + 1 + 3 + 4 + 4 + 3 * 11;
-/// Length of one stream descriptor inside the header.
-const STREAM_DESC_LEN: usize = 11;
-/// `u32` raw length, `u8` model order and `u8` memory limit on the two standalone sections.
-const SECTION_PREFIX_LEN: usize = 6;
 /// Lowest code point the pattern section can describe (the CJK plane start).
 const PATTERN_BASE: u32 = 0x3400;
 
 /// The three name streams, in container order.
-pub const STREAMS: [&str; 3] = ["plen", "slen", "mids"];
+pub const STREAMS: [&str; STREAM_COUNT] = ["plen", "slen", "mids"];
 
 // ------------------------------------------------------------------- output
 
@@ -213,12 +206,8 @@ pub struct SectionSize {
 /// Returns [`Error`](crate::Error) when `out_dir` cannot be created or an artifact cannot be
 /// written, or when the verification cannot read the artifacts back. Every inconsistency in the
 /// vendored data or the written artifacts is an invariant violation and panics.
-#[allow(
-    clippy::too_many_lines,
-    reason = "the five artifacts in the order they are written"
-)]
 pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Ledger, crate::Error> {
-    let corpus = corpus::read_corpus(&inputs.names, &inputs.aliases);
+    let corpus = corpus::read_corpus(&inputs.names, &inputs.aliases, inputs.version);
     let rules = rules::read_rules(&request.rules);
     if !rules.unicode.is_empty() {
         assert_eq!(
@@ -231,80 +220,20 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
     let derived_count = derived.iter().filter(|d| **d).count();
     let stored = corpus.entries.len() - derived_count;
 
-    // ---- compress ----------------------------------------------------------
-    // Header layout, exactly as the decoder reads it:
-    //   0..4 magic | 4 version | 5 codec | 6..9 transform[3] | 9..13 entries |
-    //   13..17 derived | 17..50 three stream descriptors | 50.. the streams
-    let mut transforms: Vec<u8> = Vec::with_capacity(3);
-    let mut descriptors: Vec<u8> = Vec::with_capacity(3 * STREAM_DESC_LEN);
-    let mut sizes = [StreamSize::default(); 3];
-    let mut streams: Vec<Vec<u8>> = Vec::with_capacity(3);
-    for (idx, params) in rules.streams.iter().copied().enumerate() {
-        transforms.push(u8::from(params.delta8));
-        let source: Vec<u8> = match (idx, params.delta8) {
-            (0, true) => delta8(&plen),
-            (0, false) => plen.clone(),
-            (1, true) => delta8(&slen),
-            (1, false) => slen.clone(),
-            (_, false) => mids.clone(),
-            (_, true) => unreachable!("read_rules rejects a delta8-coded middle stream"),
-        };
-        let compressed = codec::ppmd8i(&source, params.order, params.mem_mib);
-        descriptors.extend_from_slice(
-            &u32::try_from(compressed.len())
-                .expect("compressed length fits in u32")
-                .to_le_bytes(),
-        );
-        descriptors.extend_from_slice(
-            &u32::try_from(source.len())
-                .expect("stream length fits in u32")
-                .to_le_bytes(),
-        );
-        descriptors.push(u8::try_from(params.order).expect("order fits in a byte"));
-        descriptors.push(u8::try_from(params.mem_mib).expect("memory fits in a byte"));
-        descriptors.push(1); // PPMd8 variant I
-        sizes[idx] = StreamSize {
-            raw: source.len(),
-            compressed: compressed.len(),
-            order: params.order,
-            mem_mib: params.mem_mib,
-            delta8: params.delta8,
-        };
-        streams.push(compressed);
-    }
-    let mut header: Vec<u8> = Vec::with_capacity(HEADER_LEN);
-    header.extend_from_slice(MAGIC);
-    header.push(BLOB_VERSION);
-    header.push(CODEC_PPMD8I);
-    header.extend_from_slice(&transforms);
-    header.extend_from_slice(
-        &u32::try_from(corpus.entries.len())
-            .expect("fewer than 2^32 names")
-            .to_le_bytes(),
-    );
-    header.extend_from_slice(
-        &u32::try_from(derived_count)
-            .expect("fewer than 2^32 names")
-            .to_le_bytes(),
-    );
-    header.extend_from_slice(&descriptors);
-    assert_eq!(header.len(), HEADER_LEN, "the header layout changed");
-
-    let mut blob = header;
-    for stream in &streams {
-        blob.extend_from_slice(stream);
-    }
+    let compressed = compress_streams(&rules, &plen, &slen, &mids);
+    let blob = build_blob(corpus.entries.len(), derived_count, &compressed);
     crate::write(request.out_dir.join("names.bin"), &blob)?;
 
-    // ---- the name index ----------------------------------------------------
     let runs_raw = runs_stream(&corpus);
-    let runs_bytes = codec::section_bytes(&runs_raw, rules.runs.0, rules.runs.1);
-    crate::write(request.out_dir.join("runs.bin"), &runs_bytes)?;
+    let (runs_bytes, runs) = write_section(&request.out_dir, "runs.bin", &runs_raw, rules.runs)?;
 
-    // ---- the pattern section ----------------------------------------------
     let patterns_raw = patterns_stream(&corpus);
-    let patterns_bytes = codec::section_bytes(&patterns_raw, rules.patterns.0, rules.patterns.1);
-    crate::write(request.out_dir.join("patterns.bin"), &patterns_bytes)?;
+    let (_, patterns) = write_section(
+        &request.out_dir,
+        "patterns.bin",
+        &patterns_raw,
+        rules.patterns,
+    )?;
 
     // ---- ground truth and the generated tree -------------------------------
     let mut expected = String::with_capacity(1_140_000);
@@ -315,15 +244,12 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
     let gen_rs = derive::emit_gen_rs(&rules, &corpus);
     crate::write(request.out_dir.join(&request.derive_file), gen_rs)?;
 
-    let streams_total: usize = sizes.iter().map(|s| s.compressed).sum();
     let atom_bytes: usize = rules.atoms.iter().map(String::len).sum();
-    let runs_size = runs_bytes.len();
-    let blob_len = blob.len();
-    let patterns_size = patterns_bytes.len();
     // The table ships the plain section, not the compressed diagnostic artifact, so
     // that is the size the budget has to charge.
     let pattern_section_data = pattern_section(&corpus.patterns);
-    let pattern_section_len = pattern_section_data.len();
+    verify::verify_pattern_section(&pattern_section_data, &corpus.patterns);
+    let table = blob.len() + runs_bytes.len() + pattern_section_data.len();
     let ledger = Ledger {
         entries: corpus.entries.len(),
         derived: derived_count,
@@ -332,28 +258,18 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
         atoms: rules.atoms.len(),
         atom_bytes,
         text_bytes,
-        streams: sizes,
-        blob: blob_len,
-        streams_total,
+        streams: compressed.sizes,
+        blob: blob.len(),
+        streams_total: compressed.sizes.iter().map(|size| size.compressed).sum(),
         names_section: blob,
         runs_section: runs_bytes,
-        runs: SectionSize {
-            raw: runs_raw.len(),
-            compressed: runs_size - SECTION_PREFIX_LEN,
-            order: rules.runs.0,
-            mem_mib: rules.runs.1,
-        },
-        patterns: SectionSize {
-            raw: patterns_raw.len(),
-            compressed: patterns_size - SECTION_PREFIX_LEN,
-            order: rules.patterns.0,
-            mem_mib: rules.patterns.1,
-        },
+        runs,
+        patterns,
         runs_count: run_count(&corpus),
         patterns_count: corpus.patterns.len(),
         pattern_section: pattern_section_data,
-        table: blob_len + runs_size + pattern_section_len,
-        table_strict: blob_len + runs_size + pattern_section_len + atom_bytes,
+        table,
+        table_strict: table + atom_bytes,
     };
     if request.report {
         report(&ledger, &corpus, &rules, request);
@@ -373,6 +289,110 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
         );
     }
     Ok(ledger)
+}
+
+/// The three compressed name streams and the header pieces that describe them.
+struct CompressedStreams {
+    transforms: Vec<u8>,
+    descriptors: Vec<u8>,
+    sizes: [StreamSize; STREAM_COUNT],
+    streams: Vec<Vec<u8>>,
+}
+
+/// Transforms (when configured) and compresses the three name streams.
+fn compress_streams(rules: &Rules, plen: &[u8], slen: &[u8], mids: &[u8]) -> CompressedStreams {
+    let sources = [plen, slen, mids];
+    let mut transforms = Vec::with_capacity(STREAM_COUNT);
+    let mut descriptors = Vec::with_capacity(STREAM_COUNT * STREAM_DESC_LEN);
+    let mut sizes = [StreamSize::default(); STREAM_COUNT];
+    let mut streams = Vec::with_capacity(STREAM_COUNT);
+
+    for (idx, (params, source)) in rules.streams.iter().copied().zip(sources).enumerate() {
+        transforms.push(if params.delta8 {
+            TRANSFORM_DELTA8
+        } else {
+            TRANSFORM_RAW
+        });
+        let source = if params.delta8 {
+            Cow::Owned(delta8(source))
+        } else {
+            Cow::Borrowed(source)
+        };
+        let compressed = codec::ppmd8i(&source, params.order, params.mem_mib);
+        descriptors.extend_from_slice(
+            &u32::try_from(compressed.len())
+                .expect("compressed length fits in u32")
+                .to_le_bytes(),
+        );
+        descriptors.extend_from_slice(
+            &u32::try_from(source.len())
+                .expect("stream length fits in u32")
+                .to_le_bytes(),
+        );
+        descriptors.push(u8::try_from(params.order).expect("order fits in a byte"));
+        descriptors.push(u8::try_from(params.mem_mib).expect("memory fits in a byte"));
+        descriptors.push(CODEC_PPMD8I);
+        sizes[idx] = StreamSize {
+            raw: source.len(),
+            compressed: compressed.len(),
+            order: params.order,
+            mem_mib: params.mem_mib,
+            delta8: params.delta8,
+        };
+        streams.push(compressed);
+    }
+
+    CompressedStreams {
+        transforms,
+        descriptors,
+        sizes,
+        streams,
+    }
+}
+
+/// Writes the `UNNM` container: fixed header, the stream descriptors, then the payloads.
+fn build_blob(entries: usize, derived: usize, compressed: &CompressedStreams) -> Vec<u8> {
+    let mut header = Vec::with_capacity(HEADER_LEN);
+    header.extend_from_slice(MAGIC);
+    header.push(BLOB_VERSION);
+    header.push(CODEC_PPMD8I);
+    header.extend_from_slice(&compressed.transforms);
+    header.extend_from_slice(
+        &u32::try_from(entries)
+            .expect("fewer than 2^32 names")
+            .to_le_bytes(),
+    );
+    header.extend_from_slice(
+        &u32::try_from(derived)
+            .expect("fewer than 2^32 names")
+            .to_le_bytes(),
+    );
+    header.extend_from_slice(&compressed.descriptors);
+    assert_eq!(header.len(), HEADER_LEN, "the header layout changed");
+
+    let mut blob = header;
+    for stream in &compressed.streams {
+        blob.extend_from_slice(stream);
+    }
+    blob
+}
+
+/// Writes one compressed standalone section and returns its bytes and its ledger entry.
+fn write_section(
+    out_dir: &Path,
+    file: &str,
+    raw: &[u8],
+    (order, mem_mib): (u32, u32),
+) -> Result<(Vec<u8>, SectionSize), crate::Error> {
+    let bytes = codec::section_bytes(raw, order, mem_mib);
+    crate::write(out_dir.join(file), &bytes)?;
+    let size = SectionSize {
+        raw: raw.len(),
+        compressed: bytes.len() - SECTION_PREFIX_LEN,
+        order,
+        mem_mib,
+    };
+    Ok((bytes, size))
 }
 
 /// Replays the arms, front-codes the corpus, and returns
@@ -419,16 +439,6 @@ fn front_code(rules: &Rules, corpus: &Corpus) -> (Vec<bool>, Vec<u8>, Vec<u8>, V
 }
 
 /// Applies cumulative (delta-8) coding to `values`.
-fn delta8(values: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(values.len());
-    let mut previous = 0u8;
-    for &value in values {
-        out.push(value.wrapping_sub(previous));
-        previous = value;
-    }
-    out
-}
-
 fn report(ledger: &Ledger, corpus: &Corpus, rules: &Rules, request: &crate::Request) {
     eprintln!(
         "corpus: {} names / {} text bytes ({} individual lines - {} Hangul - {} \
@@ -540,17 +550,9 @@ fn pattern_section(patterns: &[corpus::Pattern]) -> Vec<u8> {
 
 /// The diagnostic pattern stream for `patterns.bin`: `varint(lo - 0x3400)
 /// varint(len) prefix|suffix|` per `*`-pattern range.
-///
-/// `skip_single` drops the single-code-point pattern (U+18CFF in Unicode 18.0.0).
-/// It exists so the cost of answering it algorithmically — rather than storing
-/// `KHITAN SMALL SCRIPT CHARACTER-*` with a literal asterisk, as the incumbent
-/// does — can be measured; the build always ships it.
-fn patterns_stream_with(corpus: &Corpus, skip_single: bool) -> Vec<u8> {
+fn patterns_stream(corpus: &Corpus) -> Vec<u8> {
     let mut out = Vec::new();
     for pattern in &corpus.patterns {
-        if skip_single && pattern.lo == pattern.hi {
-            continue;
-        }
         assert!(pattern.lo >= PATTERN_BASE, "a pattern starts below U+3400");
         codec::varint(u64::from(pattern.lo - PATTERN_BASE), &mut out);
         codec::varint(u64::from(pattern.hi - pattern.lo + 1), &mut out);
@@ -560,10 +562,6 @@ fn patterns_stream_with(corpus: &Corpus, skip_single: bool) -> Vec<u8> {
         out.push(b'|');
     }
     out
-}
-
-fn patterns_stream(corpus: &Corpus) -> Vec<u8> {
-    patterns_stream_with(corpus, false)
 }
 
 /// The number of consecutive-code-point runs in the index.

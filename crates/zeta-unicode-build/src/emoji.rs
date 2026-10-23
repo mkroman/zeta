@@ -2,25 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use zeta_unicode_format::{MAX_KEY, format_toned, is_tone, tone_phrase, tone_positions};
+
 use crate::table::push_u16;
-
-/// The five emoji skin-tone code points, in tone order.
-const TONES: [u32; 5] = [0x1F3FB, 0x1F3FC, 0x1F3FD, 0x1F3FE, 0x1F3FF];
-
-/// The CLDR names of the five skin tones, in the same order; keep in sync with the decoder.
-const TONE_NAMES: [&str; 5] = [
-    "light skin tone",
-    "medium-light skin tone",
-    "medium skin tone",
-    "medium-dark skin tone",
-    "dark skin tone",
-];
-
-/// Longest canonical emoji key, in bytes, that the decoder's `MAX_KEY` scratch can hold.
-///
-/// Pinned to the decoder's `MAX_KEY` by a compile-time assert in `zeta-unicode`'s test suite:
-/// a longer key would silently become an emoji miss there instead of a build failure here.
-pub const MAX_KEY: usize = 64;
 
 /// How many un-reproducible tone variants `ZETA_UNICODE_STATS` prints as examples.
 const MAX_EMOJI_SAMPLES: usize = 8;
@@ -60,14 +44,8 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
     let mut codes = vec![0u8; (entries.len() * 3).div_ceil(8)];
     let mut tone_masks = vec![0u8; (entries.len() * 2).div_ceil(8)];
     for (index, (key, name, code, tone_mask)) in entries.iter().enumerate() {
-        push_u16(
-            &mut key_offsets,
-            u16::try_from(keys.len()).expect("keys fit in u16"),
-        );
-        push_u16(
-            &mut name_offsets,
-            u16::try_from(names.len()).expect("names fit in u16"),
-        );
+        push_len(&mut key_offsets, keys.len(), "key offset");
+        push_len(&mut name_offsets, names.len(), "name offset");
         keys.extend_from_slice(key.as_bytes());
         assert!(
             key.len() <= MAX_KEY,
@@ -75,50 +53,22 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
             key.len()
         );
         names.extend_from_slice(name.as_bytes());
-        let bit = index * 3;
-        let byte = bit / 8;
-        let shift = bit % 8;
-        // The 3-bit code can straddle a byte boundary, so it is OR-ed into two bytes — the
-        // decoder reads it the same way.
-        let [low, high] = (u16::from(*code) << shift).to_le_bytes();
-        codes[byte] |= low;
-        if let Some(slot) = codes.get_mut(byte + 1) {
-            *slot |= high;
-        }
-        // Two bits per entry, and 2 divides 8, so the field never straddles a byte.
-        let mask_bit = index * 2;
-        tone_masks[mask_bit / 8] |= *tone_mask << (mask_bit % 8);
+        insert_bits(&mut codes, index, 3, *code);
+        insert_bits(&mut tone_masks, index, 2, *tone_mask);
     }
-    push_u16(
-        &mut key_offsets,
-        u16::try_from(keys.len()).expect("keys fit in u16"),
-    );
-    push_u16(
-        &mut name_offsets,
-        u16::try_from(names.len()).expect("names fit in u16"),
-    );
+    push_len(&mut key_offsets, keys.len(), "key offset");
+    push_len(&mut name_offsets, names.len(), "name offset");
 
     let mut section = Vec::new();
-    push_u16(
-        &mut section,
-        u16::try_from(entries.len()).expect("entries fit in u16"),
-    );
-    push_u16(
-        &mut section,
-        u16::try_from(keys.len()).expect("keys fit in u16"),
-    );
-    push_u16(
-        &mut section,
-        u16::try_from(names.len()).expect("names fit in u16"),
-    );
-    push_u16(
-        &mut section,
-        u16::try_from(codes.len()).expect("codes fit in u16"),
-    );
-    push_u16(
-        &mut section,
-        u16::try_from(tone_masks.len()).expect("tone masks fit in u16"),
-    );
+    for (what, length) in [
+        ("entries", entries.len()),
+        ("key bytes", keys.len()),
+        ("name bytes", names.len()),
+        ("code bytes", codes.len()),
+        ("tone-mask bytes", tone_masks.len()),
+    ] {
+        push_len(&mut section, length, what);
+    }
     section.extend_from_slice(&keys);
     section.extend_from_slice(&key_offsets);
     section.extend_from_slice(&names);
@@ -127,6 +77,24 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
     section.extend_from_slice(&tone_masks);
     stats.bytes = section.len();
     (section, stats)
+}
+
+/// Appends `length` as a `u16`, naming the field when it does not fit.
+fn push_len(buf: &mut Vec<u8>, length: usize, what: &str) {
+    push_u16(
+        buf,
+        u16::try_from(length).unwrap_or_else(|_| panic!("{what} fits in u16")),
+    );
+}
+
+/// Writes the low `width` bits of `value` at `index * width`, even across a byte boundary.
+fn insert_bits(blob: &mut [u8], index: usize, width: usize, value: u8) {
+    let bit = index * width;
+    let [low, high] = (u16::from(value) << (bit % 8)).to_le_bytes();
+    blob[bit / 8] |= low;
+    if let Some(slot) = blob.get_mut(bit / 8 + 1) {
+        *slot |= high;
+    }
 }
 
 /// Parses the emoji entries with lookup precedence: named sequences (3) over fully-qualified
@@ -220,20 +188,14 @@ fn canonical_emoji_entries(
     // Canonicalize: strip U+FE0F, keeping the highest-precedence name per canonical key.
     let mut canonical: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
     for (cps, (rank, name)) in &all {
-        let key = canonical_cps(cps);
-        match canonical.get(&key) {
-            Some((existing, _)) if *existing > *rank => {}
-            _ => {
-                canonical.insert(key, (*rank, name.clone()));
-            }
-        }
+        keep_best(&mut canonical, canonical_cps(cps), *rank, name.clone());
     }
 
     // Split into bases (no skin-tone code point) and tone variants (dropped, synthesized).
     let mut kept: BTreeMap<Vec<u32>, (String, u8, u8)> = BTreeMap::new();
     let mut variants: ToneVariants = BTreeMap::new();
     for (cps, (_rank, name)) in &canonical {
-        let tones = tone_positions(cps);
+        let tones = tone_positions(cps.iter().copied());
         if tones.is_empty() || cps.len() == 1 {
             // Standalone entries; a lone skin tone is one of the five components.
             kept.insert(cps.clone(), (name.clone(), 0, 0));
@@ -249,6 +211,18 @@ fn canonical_emoji_entries(
     // Assign each base the formatting rule that reproduces all of its tone variants; a base
     // whose variants do not agree keeps them stored verbatim, so nothing is lost.
     for (base, group) in &variants {
+        // The 2-bit mask can only publish one- and two-tone counts. Reject the whole group
+        // before rule selection: a rule that happens to reproduce a three-tone name would
+        // otherwise hide a variant the decoder can never reach.
+        if group
+            .iter()
+            .any(|(tones, _, _)| !(1..=2).contains(&tones.len()))
+        {
+            stats.verbatim_variants += group.len();
+            store_verbatim(&mut kept, group);
+            continue;
+        }
+
         let (base_name, mut rule) = match kept.get(base) {
             Some((name, _, _)) => (name.clone(), 0),
             // No base entry (a tone-stripped sequence that Unicode does not list on its own):
@@ -259,10 +233,8 @@ fn canonical_emoji_entries(
             }
             None => {
                 stats.missing_bases += 1;
-                for (_tones, variant_name, full_cps) in group {
-                    stats.verbatim_variants += 1;
-                    kept.insert(full_cps.clone(), (variant_name.clone(), 0, 0));
-                }
+                stats.verbatim_variants += group.len();
+                store_verbatim(&mut kept, group);
                 continue;
             }
         };
@@ -281,8 +253,7 @@ fn canonical_emoji_entries(
             }
         }
 
-        // Published tone counts are 1 or 2. A group that needs anything else cannot be
-        // represented by the 2-bit mask, so keep every variant verbatim.
+        // Published tone counts are 1 or 2, checked above.
         let tone_mask = group.iter().fold(0u8, |mask, (tones, _, _)| {
             mask | match tones.len() {
                 1 => 1,
@@ -290,11 +261,9 @@ fn canonical_emoji_entries(
                 _ => 0,
             }
         });
-        if rule == 0 || tone_mask == 0 {
+        if rule == 0 {
             stats.verbatim_variants += group.len();
-            for (_tones, variant_name, full_cps) in group {
-                kept.insert(full_cps.clone(), (variant_name.clone(), 0, 0));
-            }
+            store_verbatim(&mut kept, group);
             continue;
         }
 
@@ -336,6 +305,13 @@ fn canonical_emoji_entries(
     entries
 }
 
+/// Stores every variant of `group` verbatim, so a group that no rule reproduces is not lost.
+fn store_verbatim(kept: &mut BTreeMap<Vec<u32>, (String, u8, u8)>, group: &[ToneVariant]) {
+    for (_tones, variant_name, full_cps) in group {
+        kept.insert(full_cps.clone(), (variant_name.clone(), 0, 0));
+    }
+}
+
 /// Reconstructs the base name and rule for a tone-variant group whose tone-stripped sequence is
 /// not itself an emoji entry: each candidate rule is inverted on the first variant's name and
 /// then has to reproduce the whole group.
@@ -365,45 +341,6 @@ fn strip_phrase(rule: u8, name: &str, tones: &[usize]) -> Option<String> {
             Some(format!("{head}: {tail}"))
         }
     }
-}
-
-/// Indices (into [`TONES`]) of the skin-tone code points in `cps`, in order.
-fn tone_positions(cps: &[u32]) -> Vec<usize> {
-    cps.iter()
-        .filter_map(|cp| TONES.iter().position(|&tone| tone == *cp))
-        .collect()
-}
-
-fn is_tone(cp: u32) -> bool {
-    TONES.contains(&cp)
-}
-
-/// Renders `base` with `tones` applied, following the 3-bit rule:
-/// `1` inserts the tone phrase after the first `": "`, `2` appends it, `3`/`4` do the same
-/// after collapsing consecutive duplicate tones.
-fn format_toned(code: u8, base: &str, tones: &[usize]) -> String {
-    let phrase = tone_phrase(code, tones);
-
-    match (base.find(": "), code) {
-        (Some(colon), 1 | 3) => {
-            format!("{}: {}, {}", &base[..colon], phrase, &base[colon + 2..])
-        }
-        (Some(_), _) => format!("{base}, {phrase}"),
-        (None, _) => format!("{base}: {phrase}"),
-    }
-}
-
-/// The comma-joined tone names, collapsing consecutive duplicates for rules 3 and 4.
-fn tone_phrase(code: u8, tones: &[usize]) -> String {
-    let mut tone_list = tones.to_vec();
-    if code == 3 || code == 4 {
-        tone_list.dedup();
-    }
-    tone_list
-        .iter()
-        .map(|&index| TONE_NAMES[index])
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// Parses a whitespace-separated list of hexadecimal code points.
@@ -479,6 +416,40 @@ mod tests {
         assert_eq!(find(&entries, "👍").2, 0);
         assert_eq!(find(&entries, "👍🏻").2, 0);
         assert_eq!(find(&entries, "👍🏼").2, 0);
+    }
+
+    #[test]
+    fn stores_every_variant_when_a_group_has_three_tones() {
+        // The 2-bit mask cannot publish a three-tone count; storing the variant verbatim keeps
+        // it reachable even if one of the formatting rules happens to reproduce its name.
+        let three = "\
+1F44D ; fully-qualified # x E0.6 thumbs up
+1F44D 1F3FB 1F3FC 1F3FD ; fully-qualified # x E0.6 thumbs up: light skin tone, medium-light skin tone, medium skin tone
+";
+        let mut stats = EmojiStats::default();
+        let entries = canonical_emoji_entries(three, "", &mut stats);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(stats.verbatim_variants, 1);
+        assert_eq!(find(&entries, "👍").2, 0);
+        assert_eq!(find(&entries, "👍🏻🏼🏽").2, 0);
+    }
+
+    #[test]
+    fn strip_phrase_inverts_every_supported_rule() {
+        for (rule, base) in [
+            (1, "handshake: base"),
+            (3, "women holding hands: base"),
+            (2, "thumbs up"),
+            (4, "thumbs up: base"),
+        ] {
+            let tones = [0usize, 1];
+            let formatted = format_toned(rule, base, &tones);
+            assert_eq!(
+                strip_phrase(rule, &formatted, &tones).as_deref(),
+                Some(base),
+                "rule {rule}"
+            );
+        }
     }
 
     #[test]

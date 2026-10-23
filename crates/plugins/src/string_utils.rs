@@ -7,6 +7,7 @@
 //! as a whole. An empty argument replies with the command's usage. Results are sent as a
 //! notice, which supplies each reply's `\x0310> ` prefix.
 
+use std::borrow::Cow;
 use std::fmt::Write;
 
 use zeta_unicode::{emoji_name, general_category, name_or_label};
@@ -97,29 +98,56 @@ impl StringUtils {
 
     /// The usage line of `command`, or `None` when it has none.
     fn usage_line(command: CommandSpec) -> Option<String> {
-        let usage = match command {
-            BYTES => format!("Usage: .b{RESET} <byte..>"),
-            LENGTH => format!("Usage: .len{RESET} <string>"),
-            ORD => format!("Usage: .ord{RESET} <chars..>"),
-            REVERSE => format!("Usage: .rev{RESET} <string>"),
-            UNICODE => format!("Usage: .uni{RESET} <chars>"),
+        let args = match command {
+            BYTES => " <byte..>",
+            LENGTH | REVERSE => " <string>",
+            ORD => " <chars..>",
+            UNICODE => " <chars>",
             _ => return None,
         };
 
-        Some(usage)
+        Some(format!("Usage: {}{RESET}{args}", command.trigger()))
     }
 }
 
 /// The `\x0310> ` marker `notice()` prefixes every reply with, budgeted out of the listings.
-const NOTICE_PREFIX_LEN: usize = REPLY_PREFIX.len() + 1;
+const NOTICE_PREFIX_LEN: usize = REPLY_PREFIX.len() + " ".len();
+/// The body budget of a `.uni` reply, after the notice prefix.
+const REPLY_BUDGET: usize = MAX_LISTING_LENGTH - NOTICE_PREFIX_LEN;
+/// The budget of one entry once the outer `SUFFIX` is reserved.
+const ENTRY_BUDGET: usize = REPLY_BUDGET - SUFFIX.len();
 /// Appended when a listing does not fit the budget.
 const SUFFIX: &str = ", …";
 /// Longest run of characters `.uni` probes for an emoji sequence.
 ///
-/// A stored emoji key is at most 64 bytes, and a valid UTF-8 key has at most 64 characters, so
-/// a longer run can only match through stripped `U+FE0F` or tone padding. Capping the probe
-/// keeps the nested scan linear in the input length instead of quadratic.
-const MAX_GROUPING_CHARS: usize = 64;
+/// A stored emoji key is at most [`zeta_unicode::MAX_EMOJI_KEY_BYTES`] bytes, hence at most that
+/// many characters. Only stripped `U+FE0F` padding can make a matching input run longer, so a
+/// larger cap would let a single padded sequence hide the rest of the input without ever
+/// matching a longer key.
+const MAX_GROUPING_CHARS: usize = zeta_unicode::MAX_EMOJI_KEY_BYTES;
+
+/// One entry of a `.uni` listing, kept cheap until the budget decides to render it.
+enum Entry<'a> {
+    /// A single character, named by its character or emoji name.
+    Char(char),
+    /// A run of two or more characters naming an emoji sequence as a whole.
+    Sequence {
+        /// The input text that matched, used for the codepoint list.
+        text: &'a str,
+        /// The published sequence name, before upper-casing.
+        name: Cow<'static, str>,
+    },
+}
+
+impl Entry<'_> {
+    /// Renders the entry in the `.uni` wire format.
+    fn render(&self) -> String {
+        match self {
+            Self::Char(c) => char_entry(*c),
+            Self::Sequence { text, name } => sequence_entry(text, &name.to_uppercase()),
+        }
+    }
+}
 
 /// Formats the reply to `.uni`.
 ///
@@ -136,12 +164,12 @@ const MAX_GROUPING_CHARS: usize = 64;
 fn unicode_details(args: &str) -> String {
     let entries = grouped_entries(args);
     let total = entries.len();
-    let mut message = String::new();
+    let mut message = String::with_capacity(REPLY_BUDGET);
     let appended = append_entries_within_budget(
         &mut message,
-        entries,
+        entries.iter().map(Entry::render),
         ", ",
-        MAX_LISTING_LENGTH - NOTICE_PREFIX_LEN,
+        REPLY_BUDGET,
         SUFFIX.len(),
     );
 
@@ -152,9 +180,9 @@ fn unicode_details(args: &str) -> String {
     message
 }
 
-/// Renders one entry per character of `args`, grouping each run of characters that names an
-/// emoji sequence of at least two code points into a single entry named as a whole.
-fn grouped_entries(args: &str) -> Vec<String> {
+/// Splits `args` into character entries, grouping each run that names an emoji sequence of at
+/// least two code points into a single entry.
+fn grouped_entries(args: &str) -> Vec<Entry<'_>> {
     let bounds: Vec<usize> = args
         .char_indices()
         .map(|(index, _)| index)
@@ -169,19 +197,21 @@ fn grouped_entries(args: &str) -> Vec<String> {
         // grouping but a character entry of its own.
         let end_limit = last.min(at.saturating_add(MAX_GROUPING_CHARS));
         let grouped = (at + 2..=end_limit)
-            .filter_map(|end| Some((end, emoji_name(&args[bounds[at]..bounds[end]])?)))
-            .max_by_key(|&(end, _)| end);
+            .rev()
+            .find_map(|end| Some((end, emoji_name(&args[bounds[at]..bounds[end]])?)));
 
         if let Some((end, name)) = grouped {
-            let name = name.to_uppercase();
-            entries.push(sequence_entry(&args[bounds[at]..bounds[end]], &name));
+            entries.push(Entry::Sequence {
+                text: &args[bounds[at]..bounds[end]],
+                name,
+            });
             at = end;
         } else {
             let c = args[bounds[at]..]
                 .chars()
                 .next()
                 .expect("a boundary starts a character");
-            entries.push(char_entry(c));
+            entries.push(Entry::Char(c));
             at += 1;
         }
     }
@@ -189,73 +219,60 @@ fn grouped_entries(args: &str) -> Vec<String> {
     entries
 }
 
-/// Renders one grouped emoji sequence: its codepoints bold inside the braces, then the
-/// sequence's name and the category of its base character.
+/// Renders an entry: its codepoints bold inside the braces, then name and category.
 ///
 /// The codepoint list is a listing too: canonicalization strips every `U+FE0F`, so the input
 /// that matched can be much longer than the stored key, and the list stops with [`SUFFIX`]
-/// inside the braces.
-fn sequence_entry(text: &str, name: &str) -> String {
-    let base = text.chars().next().expect("a sequence has a base character");
-    let category = general_category(base).long_name();
-    // Everything that may follow the list: the closing brace with the name and the base
-    // character's category in parentheses.
-    let framing = BOLD.len()
-        + COLOR.len()
-        + "}: ".len()
-        + RESET.len()
-        + name.len()
-        + COLOR.len()
-        + " (".len()
-        + RESET.len()
-        + category.len()
-        + COLOR.len()
-        + ")".len();
+/// inside the braces. `tail` is the exact text that follows the list, so the reserved budget
+/// cannot drift from what is written.
+fn render_entry(points: &str, name: &str, category: &str) -> String {
+    let tail = format!("{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})");
+    let mut entry = format!("{{{RESET}{BOLD}");
 
-    // The entry must leave room for the notice prefix and the outer `SUFFIX`; the inner suffix
-    // and framing are reserved by the listing helper.
-    let budget = MAX_LISTING_LENGTH - NOTICE_PREFIX_LEN - SUFFIX.len();
-    // The first codepoint is appended unconditionally, so the entry only fits while the name
+    // The first codepoint is appended unconditionally, so the entry only fits while the tail
     // leaves room for the prefix and `U+10FFFF` on top of the reserved bytes.
     debug_assert!(
-        "{".len() + RESET.len() + BOLD.len() + "U+10FFFF".len() + SUFFIX.len() + framing
-            <= budget,
-        "the sequence name {name:?} does not leave room for the codepoint list"
+        entry.len() + "U+10FFFF".len() + SUFFIX.len() + tail.len() <= ENTRY_BUDGET,
+        "the name {name:?} does not leave room for the codepoint list"
     );
 
-    let total = text.chars().count();
-    let mut entry = format!("{{{RESET}{BOLD}");
+    let total = points.chars().count();
     let appended = append_entries_within_budget(
         &mut entry,
-        text.chars().map(|c| format!("U+{:04X}", u32::from(c))),
+        points.chars().map(|c| format!("U+{:04X}", u32::from(c))),
         ", ",
-        budget,
-        SUFFIX.len() + framing,
+        ENTRY_BUDGET,
+        SUFFIX.len() + tail.len(),
     );
     if appended < total {
         entry.push_str(SUFFIX);
     }
-    let _ = write!(entry, "{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})");
+    entry.push_str(&tail);
 
     entry
 }
 
-/// Renders one character entry: its codepoint bold inside the braces, then name and category.
+/// Renders one grouped emoji sequence with the category of its base character.
+fn sequence_entry(text: &str, name: &str) -> String {
+    let base = text
+        .chars()
+        .next()
+        .expect("a sequence has a base character");
+    let category = general_category(base).long_name();
+    render_entry(text, name, category)
+}
+
+/// Renders one character entry.
 ///
 /// An emoji code point is named by its emoji name — the CLDR spelling says what a character is
 /// for (`AB button (blood type)`) where the character name spells its glyph (`NEGATIVE SQUARED
 /// AB`) — falling back to [`name_or_label`] for everything else.
 fn char_entry(c: char) -> String {
     let mut encoded = [0u8; 4];
-    let name = emoji_name(c.encode_utf8(&mut encoded)).map_or_else(
-        || name_or_label(c).into_owned(),
-        |name| name.to_uppercase(),
-    );
+    let name: Cow<'static, str> = emoji_name(c.encode_utf8(&mut encoded))
+        .map_or_else(|| name_or_label(c), |name| Cow::Owned(name.to_uppercase()));
     let category = general_category(c).long_name();
-    format!(
-        "{{{RESET}{BOLD}U+{:04X}{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})",
-        u32::from(c),
-    )
+    render_entry(c.encode_utf8(&mut encoded), &name, category)
 }
 
 fn str_to_hex_string(s: &str) -> String {
@@ -380,6 +397,30 @@ mod tests {
     }
 
     #[test]
+    fn notice_prefix_matches_the_budget() {
+        assert_eq!(notice("").len(), NOTICE_PREFIX_LEN);
+        assert_eq!(NOTICE_PREFIX_LEN, "\x0310> ".len());
+    }
+
+    #[test]
+    fn grouped_entries_keeps_a_sequence_whole() {
+        let entries = grouped_entries("a🏳️‍🌈");
+        assert!(matches!(entries[0], Entry::Char('a')));
+        match &entries[1] {
+            Entry::Sequence { text, .. } => assert_eq!(*text, "🏳️‍🌈"),
+            Entry::Char(_) => panic!("the rainbow flag must be grouped"),
+        }
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn uni_groups_a_regional_indicator_flag() {
+        let reply = unicode_details("🇩🇰");
+        assert!(reply.contains("U+1F1E9, U+1F1F0"), "{reply}");
+        assert!(reply.contains("FLAG: DENMARK"), "{reply}");
+    }
+
+    #[test]
     fn uni_stops_within_the_listing_budget() {
         assert!(!unicode_details("é").contains('…'));
 
@@ -416,6 +457,8 @@ mod tests {
         // does not fit.
         let input = format!("\u{2198}{}a", "\u{FE0F}".repeat(43));
         let reply = unicode_details(&input);
+        assert!(reply.ends_with(", …"), "{reply}");
+        assert!(!reply.contains("U+0061"), "{reply}");
         assert!(
             reply.len() + NOTICE_PREFIX_LEN <= MAX_LISTING_LENGTH,
             "{}",
@@ -444,6 +487,10 @@ mod tests {
         assert_eq!(
             StringUtils::usage_line(UNICODE).as_deref(),
             Some("Usage: .uni\x0f <chars>")
+        );
+        assert_eq!(
+            StringUtils::usage_line(CommandSpec::new(".nope", "not a command")),
+            None
         );
     }
 

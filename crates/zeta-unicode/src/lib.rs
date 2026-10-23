@@ -18,6 +18,7 @@
 //! assert_eq!(name_or_label('\u{f8ff}'), "<private-use-F8FF>");
 //! ```
 
+mod emoji;
 mod gc;
 mod names;
 mod sections;
@@ -25,12 +26,23 @@ mod tables;
 
 use std::borrow::Cow;
 
+use zeta_unicode_format::{
+    GC_PAGES, GC_SHIFT, GC_SHORT_NAMES, HANGUL_END, HANGUL_START, MAX_KEY, UNICODE_END,
+};
+
+/// Returns the CLDR short name of an emoji sequence such as `🏳️‍🌈`.
+///
+/// Names come from `emoji-test.txt`, or from `NamedSequences.txt` for official names. Keys are
+/// canonicalized (`U+FE0F` is optional) and skin-tone variants are synthesized from their base,
+/// so the name is returned as published rather than cased for a reply. See [`emoji::emoji_name`]
+/// for the full contract.
+pub use emoji::emoji_name;
 pub use gc::GeneralCategory;
 
 /// The Unicode version of the data this crate was built from, as `(major, minor, patch)`.
 ///
-/// `zeta-unicode-build` refuses to build when the vendored files disagree, so this cannot
-/// drift from the table without a test failing.
+/// `zeta-unicode-build` refuses to build when the vendored files disagree, and the table header
+/// is checked at compile time, so this cannot drift from the table.
 pub const UNICODE_VERSION: (u8, u8, u8) = (18, 0, 0);
 
 /// The target size budget for the generated table, in bytes.
@@ -39,15 +51,15 @@ pub const UNICODE_VERSION: (u8, u8, u8) = (18, 0, 0);
 /// test suite holds the table to the encoder's own `ENCODER_TABLE_LIMIT` instead.
 pub const TABLE_BUDGET: usize = 100_000;
 
+/// The longest emoji key the table stores, in bytes.
+///
+/// `.uni` uses it to bound how far it probes for a multi-character emoji sequence.
+pub const MAX_EMOJI_KEY_BYTES: usize = MAX_KEY;
+
 /// The upper bound the current reference encoder is held to, well above [`TABLE_BUDGET`]: the
 /// compressed encoder that meets the budget has not landed yet.
 #[cfg(test)]
-const ENCODER_TABLE_LIMIT: usize = 2_000_000;
-
-/// The first Hangul syllable, `HANGUL SYLLABLE GA`.
-const HANGUL_START: u32 = 0xAC00;
-/// The last Hangul syllable.
-const HANGUL_END: u32 = 0xD7A3;
+const ENCODER_TABLE_LIMIT: usize = 130_000;
 
 /// Choongbae (leading) jamo short names, in `Jamo_Short_Name` order.
 const JAMO_LEADING: [&str; 19] = [
@@ -65,32 +77,6 @@ const JAMO_TRAILING: [&str; 28] = [
     "B", "BS", "S", "SS", "NG", "J", "C", "K", "T", "P", "H",
 ];
 
-/// The general category abbreviations in table id order (id = position + 1).
-///
-/// Keep in sync with `zeta-unicode-build`, which emits ids in this order; the round-trip tests
-/// walk every range of the vendored `DerivedGeneralCategory.txt` and fail if the two ever
-/// disagree.
-const GC_SHORT_NAMES: [&str; 30] = [
-    "Cc", "Cf", "Cn", "Co", "Cs", "Ll", "Lm", "Lo", "Lt", "Lu", "Mc", "Me", "Mn", "Nd", "Nl", "No",
-    "Pc", "Pd", "Pe", "Pf", "Pi", "Po", "Ps", "Sc", "Sk", "Sm", "So", "Zl", "Zp", "Zs",
-];
-
-/// `cp >> GC_SHIFT` selects the page of the general category table.
-const GC_SHIFT: u32 = 11;
-
-/// The five emoji skin-tone code points, in tone order.
-const TONES: [u32; 5] = [0x1F3FB, 0x1F3FC, 0x1F3FD, 0x1F3FE, 0x1F3FF];
-/// The CLDR names of the five skin tones, in the same order.
-const TONE_NAMES: [&str; 5] = [
-    "light skin tone",
-    "medium-light skin tone",
-    "medium skin tone",
-    "medium-dark skin tone",
-    "dark skin tone",
-];
-/// Longest canonical emoji key in bytes; `zeta-unicode-build` asserts no stored key is longer.
-const MAX_KEY: usize = 64;
-
 /// Returns the `Name` property of `c`, a formal alias from `NameAliases.txt` when the `Name`
 /// property is empty (the control code points), or the derived name Unicode defines
 /// algorithmically.
@@ -99,21 +85,17 @@ const MAX_KEY: usize = 64;
 /// or from the Hangul jamo tables are allocated.
 #[must_use]
 pub fn name(c: char) -> Option<Cow<'static, str>> {
-    if let Some(stored) = stored_name(c) {
+    if let Some(stored) = names::name_for(u32::from(c)) {
         return Some(Cow::Borrowed(stored));
     }
     let mut buf = String::new();
-    if derived_name(c, &mut buf) {
-        return Some(Cow::Owned(buf));
-    }
-    None
+    derived_name(c, &mut buf).then_some(Cow::Owned(buf))
 }
 
 /// Appends the name of `c` to `buf`, returning `false` when `c` has no name.
 ///
-/// Stored names are copied straight out of the table and Hangul names are formatted into `buf`
-/// without allocating; `*` pattern names go through a temporary because the hex width and the
-/// two halves are assembled together.
+/// Stored names are copied straight out of the table and Hangul or pattern names are written
+/// into `buf` without a temporary allocation.
 ///
 /// # Examples
 ///
@@ -124,7 +106,7 @@ pub fn name(c: char) -> Option<Cow<'static, str>> {
 /// ```
 #[must_use = "the return value reports whether `c` has a name"]
 pub fn write_name(c: char, buf: &mut String) -> bool {
-    if let Some(stored) = stored_name(c) {
+    if let Some(stored) = names::name_for(u32::from(c)) {
         buf.push_str(stored);
         return true;
     }
@@ -161,29 +143,12 @@ pub fn general_category(c: char) -> GeneralCategory {
     general_category_of(u32::from(c)).unwrap_or(GeneralCategory::Unassigned)
 }
 
-/// Returns the CLDR short name of an emoji sequence such as `🏳️‍🌈`.
-///
-/// Names come from `emoji-test.txt`, or from `NamedSequences.txt` for the official name of an
-/// emoji sequence such as a keycap. Non-emoji named sequences such as Latin letters with
-/// combining marks are not part of this table.
-///
-/// Keys are canonicalized: `U+FE0F` is optional (`🚶‍♂` answers like `🚶‍♂️`) and skin-tone
-/// variants resolve by synthesizing the base name with the recorded formatting rule. The
-/// published tone count is checked, and a leading tone or `U+FE0F` is rejected, but the
-/// positions of the tones are not: an unlisted arrangement with a published tone count can
-/// still resolve. The name is returned as published — lower case for emoji, except the keycap
-/// names from `NamedSequences.txt`, which are upper case — so callers can case it however their
-/// reply needs. Returns `None` for non-emoji text and for sequences whose base or tone count is
-/// not known.
-#[must_use]
-pub fn emoji_name(sequence: &str) -> Option<Cow<'static, str>> {
-    emoji_name_of(sequence)
-}
-
 /// Is `cp` one of Unicode's noncharacters (`U+FDD0..U+FDEF` or `*FFFE`/`*FFFF`)?
+///
+/// Values above `U+10FFFF` are not code points and answer `false`.
 #[must_use]
 pub const fn is_noncharacter(cp: u32) -> bool {
-    matches!(cp, 0xFDD0..=0xFDEF) || matches!(cp & 0xFFFF, 0xFFFE | 0xFFFF)
+    cp <= UNICODE_END && (matches!(cp, 0xFDD0..=0xFDEF) || matches!(cp & 0xFFFF, 0xFFFE | 0xFFFF))
 }
 
 /// Writes `cp` as upper-case hex digits into `out`, returning how many bytes it wrote.
@@ -199,10 +164,8 @@ fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
         rest >>= 4;
         needed += 1;
     }
-    let count = needed.max(usize::from(width.min(8)));
-    if count == 0 {
-        return 0;
-    }
+    // Unicode always writes at least one digit, even for zero.
+    let count = needed.max(usize::from(width.min(8))).max(1);
     let mut shift = u32::try_from(count - 1).expect("at most eight digits") * 4;
     for slot in out.iter_mut().take(count) {
         *slot = DIGITS[((cp >> shift) & 0xF) as usize];
@@ -211,19 +174,11 @@ fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
     count
 }
 
-/// [`write_hex`] for the generated rule tree, which appends into the decoded name buffer.
-///
-/// The `*` patterns reach it through [`pattern_name`]; the tree keeps the two filling a hole the
-/// same way.
-fn push_hex(out: &mut Vec<u8>, cp: u32, width: u8) {
+/// Appends `cp` as upper-case hex digits to `buf`.
+fn push_hex(buf: &mut String, cp: u32, width: u8) {
     let mut digits = [0u8; 8];
     let used = write_hex(&mut digits, cp, width);
-    out.extend_from_slice(&digits[..used]);
-}
-
-/// Looks up a stored (non-derived) name.
-fn stored_name(c: char) -> Option<&'static str> {
-    names::name_for(u32::from(c))
+    buf.push_str(std::str::from_utf8(&digits[..used]).expect("hex digits are ASCII"));
 }
 
 /// Formats a derived name (an `*` pattern or a Hangul syllable) into `buf`.
@@ -231,11 +186,6 @@ fn stored_name(c: char) -> Option<&'static str> {
 /// Returns `false` when `c` has no name at all.
 fn derived_name(c: char, buf: &mut String) -> bool {
     let cp = u32::from(c);
-
-    if let Some(pattern) = pattern_name(cp) {
-        buf.push_str(&pattern);
-        return true;
-    }
 
     if (HANGUL_START..=HANGUL_END).contains(&cp) {
         let index = cp - HANGUL_START;
@@ -249,288 +199,91 @@ fn derived_name(c: char, buf: &mut String) -> bool {
         return true;
     }
 
-    false
+    pattern_name(cp, buf)
 }
 
-/// Finds the `*` pattern covering `cp` and renders it, prefix and suffix included.
+/// Writes the `*` pattern covering `cp` into `buf`, prefix and suffix included.
 ///
 /// Records are `(start, end)` followed by the two halves of Unicode's `*` pattern, so the name
 /// is `prefix + hex(cp) + suffix`. They are stored plainly: there are twenty of them and a name
 /// miss reads them on every call.
-fn pattern_name(cp: u32) -> Option<String> {
-    let records = tables::section(sections::NAME_PATTERNS)?;
+fn pattern_name(cp: u32, buf: &mut String) -> bool {
+    let Some(records) = tables::section(sections::NAME_PATTERNS) else {
+        return false;
+    };
     let mut at = 0usize;
     while at < records.len() {
-        let start = tables::u32_at(records, at)?;
-        let end = tables::u32_at(records, at + 4)?;
-        let prefix_len = usize::from(tables::u16_at(records, at + 8)?);
-        let prefix = tables::bytes_at(records, at + 10, prefix_len)?;
-        let suffix_len_at = at + 10 + prefix_len;
-        let suffix_len = usize::from(tables::u16_at(records, suffix_len_at)?);
-        let suffix = tables::bytes_at(records, suffix_len_at + 2, suffix_len)?;
-        at = suffix_len_at + 2 + suffix_len;
+        let (Some(start), Some(end), Some(prefix_len)) = (
+            tables::u32_at(records, at),
+            tables::u32_at(records, at + 4),
+            tables::u16_at(records, at + 8),
+        ) else {
+            return false;
+        };
+        let prefix_at = at + 10;
+        let Some(prefix) = tables::bytes_at(records, prefix_at, usize::from(prefix_len)) else {
+            return false;
+        };
+        let suffix_len_at = prefix_at + usize::from(prefix_len);
+        let Some(suffix_len) = tables::u16_at(records, suffix_len_at) else {
+            return false;
+        };
+        let suffix_at = suffix_len_at + 2;
+        let Some(suffix) = tables::bytes_at(records, suffix_at, usize::from(suffix_len)) else {
+            return false;
+        };
+        at = suffix_at + usize::from(suffix_len);
 
         if cp < start {
-            return None;
+            return false;
         }
         if cp <= end {
-            let mut name = Vec::with_capacity(prefix.len() + suffix.len() + 8);
-            name.extend_from_slice(prefix);
-            push_hex(&mut name, cp, 0);
-            name.extend_from_slice(suffix);
-            return String::from_utf8(name).ok();
+            let (Ok(prefix), Ok(suffix)) =
+                (std::str::from_utf8(prefix), std::str::from_utf8(suffix))
+            else {
+                return false;
+            };
+            buf.push_str(prefix);
+            push_hex(buf, cp, 0);
+            buf.push_str(suffix);
+            return true;
         }
     }
-    None
+    false
 }
 
 /// Looks up the general category of `cp` in the two-level page table.
 fn general_category_of(cp: u32) -> Option<GeneralCategory> {
-    const GC_PAGES: usize = (0x0011_0000_usize >> GC_SHIFT) + 1;
-
     let table = tables::section(sections::GC)?;
     let directory = tables::bytes_at(table, 0, GC_PAGES * 2)?;
     let records = table.get(GC_PAGES * 2..).unwrap_or_default();
 
     let page = usize::try_from(cp >> GC_SHIFT).ok()?;
-    let relative = cp - (u32::try_from(page).ok()? << GC_SHIFT);
-    let first = usize::from(tables::u16_at(directory, page * 2)?);
-    let end = usize::from(tables::u16_at(directory, page * 2 + 2)?);
+    let relative = cp & ((1 << GC_SHIFT) - 1);
+    let first = usize::from(tables::u16_at(directory, page.checked_mul(2)?)?);
+    let end = usize::from(tables::u16_at(
+        directory,
+        page.checked_mul(2)?.checked_add(2)?,
+    )?);
 
-    // The run ending before `first` may carry into this page — because the page has no run
-    // starting in it (`first == end`), or because `cp` falls before the page's first run —
-    // otherwise find the last run in the page whose start is at or before `cp`.
-    let record = if first == end || relative < u32::from(tables::u16_at(records, first * 2)? >> 5) {
-        first.checked_sub(1)?
-    } else {
-        let (mut low, mut high) = (first, end);
-        while low < high {
-            let mid = low + (high - low) / 2;
-            if u32::from(tables::u16_at(records, mid * 2)? >> 5) <= relative {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
+    // Find the last run in the page whose start is at or before `cp`. When no run starts in
+    // this page (`first == end`) or `cp` falls before the page's first run, `low` stays at
+    // `first` and the carried-over run ending just before it answers instead.
+    let (mut low, mut high) = (first, end);
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let start = u32::from(tables::u16_at(records, mid.checked_mul(2)?)? >> 5);
+        if start <= relative {
+            low = mid + 1;
+        } else {
+            high = mid;
         }
-        low.checked_sub(1)?
-    };
+    }
+    let record = low.checked_sub(1)?;
 
-    let id = usize::from(tables::u16_at(records, record * 2)? & 31).checked_sub(1)?;
+    let id = usize::from(tables::u16_at(records, record.checked_mul(2)?)? & 31).checked_sub(1)?;
     let short: [u8; 2] = GC_SHORT_NAMES.get(id)?.as_bytes().try_into().ok()?;
     GeneralCategory::from_short_name(&short)
-}
-
-/// The emoji section, split into the blobs and offset tables it stores.
-struct Emoji<'a> {
-    keys: &'a [u8],
-    key_offsets: &'a [u8],
-    names: &'a [u8],
-    name_offsets: &'a [u8],
-    codes: &'a [u8],
-    tone_masks: &'a [u8],
-    entries: usize,
-}
-
-impl<'a> Emoji<'a> {
-    /// Splits the section payload into its parts: entry count, key blob with `u16` offsets,
-    /// name blob with `u16` offsets, the packed 3-bit tone rules and the 2-bit tone-count masks.
-    fn section() -> Option<Self> {
-        let section = tables::section(sections::EMOJI)?;
-        let entries = usize::from(tables::u16_at(section, 0)?);
-        let key_bytes = usize::from(tables::u16_at(section, 2)?);
-        let name_bytes = usize::from(tables::u16_at(section, 4)?);
-        let code_bytes = usize::from(tables::u16_at(section, 6)?);
-        let mask_bytes = usize::from(tables::u16_at(section, 8)?);
-        let offsets = (entries + 1) * 2;
-        let codes_at = 10 + key_bytes + name_bytes + 2 * offsets;
-        Some(Self {
-            keys: tables::bytes_at(section, 10, key_bytes)?,
-            key_offsets: tables::bytes_at(section, 10 + key_bytes, offsets)?,
-            names: tables::bytes_at(section, 10 + key_bytes + offsets, name_bytes)?,
-            name_offsets: tables::bytes_at(
-                section,
-                10 + key_bytes + offsets + name_bytes,
-                offsets,
-            )?,
-            codes: tables::bytes_at(section, codes_at, code_bytes)?,
-            tone_masks: tables::bytes_at(section, codes_at + code_bytes, mask_bytes)?,
-            entries,
-        })
-    }
-
-    /// Returns key `index` out of the key blob, using the `u16` offset table.
-    fn key(&self, index: usize) -> Option<&'a [u8]> {
-        let start = usize::from(tables::u16_at(self.key_offsets, index * 2)?);
-        let end = usize::from(tables::u16_at(self.key_offsets, index * 2 + 2)?);
-        tables::bytes_at(self.keys, start, end.checked_sub(start)?)
-    }
-
-    /// Returns name `index` out of the name blob, using the `u16` offset table.
-    fn name(&self, index: usize) -> Option<&'a [u8]> {
-        let start = usize::from(tables::u16_at(self.name_offsets, index * 2)?);
-        let end = usize::from(tables::u16_at(self.name_offsets, index * 2 + 2)?);
-        tables::bytes_at(self.names, start, end.checked_sub(start)?)
-    }
-
-    /// Returns the 3-bit tone formatting rule of entry `index`.
-    ///
-    /// The rule can straddle a byte boundary, which is why two bytes are read and the value
-    /// rotated into place.
-    fn tone_code(&self, index: usize) -> Option<u8> {
-        let bit = index * 3;
-        let byte = self.codes.get(bit / 8)?;
-        let next = self.codes.get(bit / 8 + 1).copied().unwrap_or(0);
-        let value = (u16::from(*byte) | (u16::from(next) << 8)) >> (bit % 8);
-        Some((value & 7) as u8)
-    }
-
-    /// Returns the 2-bit published-tone-count mask of entry `index`: bit 0 allows one tone,
-    /// bit 1 allows two.
-    fn tone_mask(&self, index: usize) -> Option<u8> {
-        let bit = index * 2;
-        let byte = self.tone_masks.get(bit / 8)?;
-        Some((byte >> (bit % 8)) & 3)
-    }
-
-    /// Binary-searches the stored keys for `needle`.
-    fn find(&self, needle: &[u8]) -> Option<usize> {
-        let (mut low, mut high) = (0usize, self.entries);
-        while low < high {
-            let mid = low + (high - low) / 2;
-            match needle.cmp(self.key(mid)?) {
-                std::cmp::Ordering::Less => high = mid,
-                std::cmp::Ordering::Greater => low = mid + 1,
-                std::cmp::Ordering::Equal => return Some(mid),
-            }
-        }
-        None
-    }
-
-    /// Resolves `needle` (already canonicalized) by stripping its skin tones and synthesizing
-    /// the base name with that entry's formatting rule.
-    fn tone_variant(
-        &self,
-        needle: &[u8],
-        scratch: &mut [u8; MAX_KEY],
-    ) -> Option<Cow<'static, str>> {
-        let text = std::str::from_utf8(needle).ok()?;
-        let tones = tone_positions(text);
-        let count = tones.len();
-        if !(1..=2).contains(&count) {
-            return None;
-        }
-
-        let base = strip_tones(text, scratch)?;
-        let index = self.find(base)?;
-        let code = self.tone_code(index)?;
-        if code == 0 {
-            return None;
-        }
-        let mask = self.tone_mask(index)?;
-        if mask & (1 << (count - 1)) == 0 {
-            return None;
-        }
-        let base_name = std::str::from_utf8(self.name(index)?).ok()?;
-        Some(Cow::Owned(format_toned(code, base_name, &tones)))
-    }
-}
-
-/// Looks up the emoji entry whose canonical key equals `sequence`.
-fn emoji_name_of(sequence: &str) -> Option<Cow<'static, str>> {
-    let mut chars = sequence.chars();
-    let first = chars.next()?;
-    // A lone skin-tone component is an emoji entry; a tone or variation selector in front of
-    // anything else is not a sequence.
-    if chars.next().is_some() && (TONES.contains(&u32::from(first)) || first == '\u{FE0F}') {
-        return None;
-    }
-
-    let emoji = Emoji::section()?;
-    let mut buffer = [0u8; MAX_KEY];
-    let mut scratch = [0u8; MAX_KEY];
-    let needle = canonical_key(sequence.as_bytes(), &mut buffer)?;
-
-    if let Some(index) = emoji.find(needle) {
-        let name = emoji.name(index)?;
-        return Some(Cow::Borrowed(std::str::from_utf8(name).ok()?));
-    }
-    emoji.tone_variant(needle, &mut scratch)
-}
-
-/// Strips `U+FE0F` (`EF B8 8F`) into `buffer` without allocating.
-///
-/// Returns `None` when the canonical form does not fit; no stored key is longer than
-/// [`MAX_KEY`], so an overlong input is a certain miss.
-fn canonical_key<'a>(key: &[u8], buffer: &'a mut [u8; MAX_KEY]) -> Option<&'a [u8]> {
-    let mut used = 0usize;
-    let mut index = 0usize;
-    while index < key.len() {
-        if key[index] == 0xEF
-            && key.get(index + 1) == Some(&0xB8)
-            && key.get(index + 2) == Some(&0x8F)
-        {
-            index += 3;
-            continue;
-        }
-        let byte = *key.get(index)?;
-        *buffer.get_mut(used)? = byte;
-        used += 1;
-        index += 1;
-    }
-    buffer.get(..used)
-}
-
-/// Indices (into [`TONES`]) of the skin-tone characters in `text`, in order.
-fn tone_positions(text: &str) -> Vec<usize> {
-    text.chars()
-        .filter_map(|c| TONES.iter().position(|&tone| tone == u32::from(c)))
-        .collect()
-}
-
-/// Copies `text` into `buffer` without its skin-tone characters, so the tone fallback needs no
-/// allocation.
-fn strip_tones<'a>(text: &str, buffer: &'a mut [u8; MAX_KEY]) -> Option<&'a [u8]> {
-    let mut used = 0usize;
-    for c in text.chars() {
-        if TONES.contains(&u32::from(c)) {
-            continue;
-        }
-        let end = used.checked_add(c.len_utf8())?;
-        let mut encoded = [0u8; 4];
-        buffer
-            .get_mut(used..end)?
-            .copy_from_slice(c.encode_utf8(&mut encoded).as_bytes());
-        used = end;
-    }
-    buffer.get(..used)
-}
-
-/// Renders `base` with `tones` applied, following the 3-bit rule: `1` inserts the tone phrase
-/// after the first `": "`, `2` appends it, `3`/`4` do the same after collapsing consecutive
-/// duplicate tones.
-fn format_toned(code: u8, base: &str, tones: &[usize]) -> String {
-    let phrase = tone_phrase(code, tones);
-
-    match (base.find(": "), code) {
-        (Some(colon), 1 | 3) => {
-            format!("{}: {}, {}", &base[..colon], phrase, &base[colon + 2..])
-        }
-        (Some(_), _) => format!("{base}, {phrase}"),
-        (None, _) => format!("{base}: {phrase}"),
-    }
-}
-
-/// The comma-joined tone names, collapsing consecutive duplicates for rules 3 and 4.
-fn tone_phrase(code: u8, tones: &[usize]) -> String {
-    let mut tone_list = tones.to_vec();
-    if code == 3 || code == 4 {
-        tone_list.dedup();
-    }
-    tone_list
-        .iter()
-        .map(|&index| TONE_NAMES[index])
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 #[cfg(test)]
@@ -657,7 +410,7 @@ mod tests {
             let start = u32::from_str_radix(start, 16).expect("range start");
             let end = u32::from_str_radix(end, 16).expect("range end");
 
-            for cp in [start, end, start + (end - start) / 2] {
+            for cp in start..=end {
                 let Some(c) = char::from_u32(cp) else {
                     continue;
                 };
@@ -670,7 +423,8 @@ mod tests {
             }
         }
 
-        assert!(checked > 10_000, "only checked {checked} ranges");
+        // Surrogates are not `char` values; everything else must be covered.
+        assert!(checked > 1_100_000, "only checked {checked} code points");
         assert_eq!(general_category('A'), GeneralCategory::UppercaseLetter);
         assert_eq!(general_category('あ'), GeneralCategory::OtherLetter);
         assert_eq!(general_category('\u{378}'), GeneralCategory::Unassigned);
@@ -820,10 +574,28 @@ mod tests {
     }
 
     #[test]
+    fn name_returns_borrowed_stored_names() {
+        assert!(matches!(name('A'), Some(Cow::Borrowed(_))));
+        assert!(matches!(name('中'), Some(Cow::Owned(_))));
+        assert!(matches!(emoji_name("🦔"), Some(Cow::Borrowed(_))));
+        assert!(matches!(emoji_name("🫶🏻"), Some(Cow::Owned(_))));
+    }
+
+    #[test]
+    fn noncharacter_boundaries_are_exact() {
+        for cp in [0xFDD0, 0xFDEF, 0xFFFE, 0xFFFF, 0x0001_FFFE, 0x0010_FFFF] {
+            assert!(is_noncharacter(cp), "U+{cp:04X}");
+        }
+        for cp in [0xFDCF, 0xFDF0, 0x0001_FDD0, 0x0011_FFFE, 0x0011_0000] {
+            assert!(!is_noncharacter(cp), "U+{cp:04X}");
+        }
+    }
+
+    #[test]
     fn write_name_matches_name() {
-        let mut buf = String::new();
+        let mut buf = String::from("x");
         assert!(write_name('中', &mut buf));
-        assert_eq!(buf, "CJK UNIFIED IDEOGRAPH-4E2D");
+        assert_eq!(buf, "xCJK UNIFIED IDEOGRAPH-4E2D");
 
         buf.clear();
         assert!(write_name('가', &mut buf));
@@ -837,7 +609,8 @@ mod tests {
     #[test]
     fn write_hex_handles_the_boundaries() {
         let mut digits = [0u8; 8];
-        assert_eq!(write_hex(&mut digits, 0, 0), 0);
+        assert_eq!(write_hex(&mut digits, 0, 0), 1);
+        assert_eq!(&digits[..1], b"0");
         assert_eq!(write_hex(&mut digits, 0, 4), 4);
         assert_eq!(&digits[..4], b"0000");
         assert_eq!(write_hex(&mut digits, 0x4E2D, 0), 4);
@@ -846,11 +619,6 @@ mod tests {
         assert_eq!(write_hex(&mut digits, 0x13460, 4), 5);
         assert_eq!(&digits[..5], b"13460");
     }
-
-    /// The generator must reject keys the decoder's fixed scratch cannot hold, so the two
-    /// constants are pinned equal: a drift would make an overlong key a silent emoji miss
-    /// instead of a build failure.
-    const _: () = assert!(MAX_KEY == zeta_unicode_build::MAX_KEY);
 
     /// Prints every section's size, then holds the table to the current reference encoder's
     /// limit. [`TABLE_BUDGET`] is the target for the compressed encoder, not this encoder.
@@ -944,13 +712,12 @@ mod tests {
         // The interesting emoji shapes: canonical hit, named sequence, synthesized tone
         // variant, tone fallback with two tones, a miss, and a long tag sequence.
         let probes = ["🏳️‍🌈", "2️⃣", "👨🏻‍❤️‍💋‍👨🏻", "🫶🏻", "🧑🏽‍🦰", "🐱‍🏍", "d'être", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"];
-        let probes: u32 = u32::try_from(probes.len()).expect("a handful of probes");
+        let probe_count = u32::try_from(probes.len()).expect("a handful of probes");
         for round in 0..4 {
             let start = Instant::now();
             let mut sink = 0u64;
             for i in 0..SAMPLES {
-                for probe in ["🏳️‍🌈", "2️⃣", "👨🏻‍❤️‍💋‍👨🏻", "🫶🏻", "🧑🏽‍🦰", "🐱‍🏍", "d'être", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"]
-                {
+                for probe in probes {
                     sink += emoji_name(probe).map_or(0, |found| found.len() as u64);
                     std::hint::black_box(i);
                 }
@@ -958,7 +725,7 @@ mod tests {
             if round == 3 {
                 eprintln!(
                     "emoji_name:       {:>8.2} ns/lookup (sink {sink})",
-                    per_lookup(start.elapsed(), SAMPLES * probes)
+                    per_lookup(start.elapsed(), SAMPLES * probe_count)
                 );
             }
         }

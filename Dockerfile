@@ -57,6 +57,8 @@ COPY --parents \
     crates/zeta-unicode/build.rs \
     crates/zeta-unicode-build/Cargo.toml \
     crates/zeta-unicode-build/src/lib.rs \
+    crates/zeta-unicode-format/Cargo.toml \
+    crates/zeta-unicode-format/src/lib.rs \
     crates/kagi/Cargo.toml \
     crates/kagi/src/lib.rs \
     ./
@@ -111,6 +113,8 @@ COPY --parents \
     crates/zeta-unicode/data \
     crates/zeta-unicode-build/Cargo.toml \
     crates/zeta-unicode-build/src \
+    crates/zeta-unicode-format/Cargo.toml \
+    crates/zeta-unicode-format/src \
     ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \

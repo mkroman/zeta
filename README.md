@@ -22,6 +22,7 @@ leaf crates below both.
 | `zeta-utils` | Text shaping, duration formatting, lock recovery. |
 | `zeta-unicode` | Character names, general categories and emoji sequence names. |
 | `zeta-unicode-build` | Offline generator for the `zeta-unicode` packed tables. |
+| `zeta-unicode-format` | Table layout and tone formatting shared by the two Unicode crates. |
 | `kagi`, `reddit`, `dendanskeordbog`, `coinmarketcap` | Standalone API client crates. |
 | `zeta-test-support` | Shared test helpers (wiremock, redaction assertions). |
 

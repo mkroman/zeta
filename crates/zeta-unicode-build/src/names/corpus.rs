@@ -1,11 +1,6 @@
 //! The name corpus: `DerivedName.txt` plus the folded `NameAliases.txt` names.
 
-/// `U+AC00`, the first Hangul syllable; syllables are derived, never stored.
-pub const HANGUL_START: u32 = 0xAC00;
-/// `U+D7A3`, the last Hangul syllable.
-pub const HANGUL_END: u32 = 0xD7A3;
-/// Hangul syllables in Unicode 18.0.0, asserted while parsing.
-pub const HANGUL_COUNT: usize = 11_172;
+use zeta_unicode_format::{HANGUL_COUNT, HANGUL_END, HANGUL_START};
 
 /// One `*`-pattern range: `prefix + hex(cp) + suffix`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,12 +46,13 @@ impl Corpus {
 /// Parses `DerivedName.txt` (the `names_text`) and folds in the `NameAliases.txt` names
 /// (`aliases_text`).
 ///
-/// The corpus is every code point that carries a `Name` value of its own, minus
-/// the Hangul syllables and minus every `*` pattern (19 ranges plus the
-/// single-code-point one, U+18CFF).  All three are reconstructed at lookup time.
+/// `version` is the version `ucd::read_inputs` already validated across every vendored file.
+/// The corpus is every code point that carries a `Name` value of its own, minus the Hangul
+/// syllables and minus every `*` pattern (19 ranges plus the single-code-point one, U+18CFF).
+/// All three are reconstructed at lookup time.
 #[must_use]
-pub fn read_corpus(names_text: &str, aliases_text: &str) -> Corpus {
-    let unicode = header_version(names_text);
+pub fn read_corpus(names_text: &str, aliases_text: &str, version: (u8, u8, u8)) -> Corpus {
+    let unicode = format!("{}.{}.{}", version.0, version.1, version.2);
     let mut entries: Vec<(u32, String)> = Vec::with_capacity(35_400);
     let mut patterns: Vec<Pattern> = Vec::new();
     let mut hangul = 0usize;
@@ -201,16 +197,4 @@ fn parse_cp(text: &str, number: usize) -> u32 {
             number + 1
         )
     })
-}
-
-/// The `# DerivedName-18.0.0.txt` header.
-fn header_version(text: &str) -> String {
-    for line in text.lines().take(8) {
-        if let Some(rest) = line.strip_prefix("# DerivedName-")
-            && let Some(version) = rest.strip_suffix(".txt")
-        {
-            return version.to_owned();
-        }
-    }
-    panic!("no version header in DerivedName.txt");
 }

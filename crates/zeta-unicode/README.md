@@ -53,13 +53,14 @@ decodes them once into a flat `Vec<u8>` plus a `Vec<u32>` of offsets; afterwards
 binary search over the runs and two `u32` loads.
 
 **Names as code.** 6,677 of the 35,416 names are not stored at all: `data/derived-names.rules`
-holds 5,286 rules over 324 shared literals, and `build.rs` turns them into a balanced comparison
-tree in generated Rust (`$OUT_DIR/zeta_unicode_derive.rs`) that rebuilds each name from its code
-point. Those names keep their id but take no space in the streams, and because the decoder walks
-ids in ascending order they remain valid front-code predecessors. The tree runs once per name at
-startup and never on a lookup, so its size cannot affect lookup latency; `build.rs` verifies every
-rule against `DerivedName.txt` and the crate's round-trip test checks them from the decoder side.
-This is where the names budget was won: the same streams without the rules are 78,910 B.
+holds 5,286 rules over 324 shared literals, and `zeta-unicode-build` turns them into a balanced
+comparison tree in generated Rust (`$OUT_DIR/zeta_unicode_derive.rs`) that rebuilds each name
+from its code point. Those names keep their id but take no space in the streams, and because the
+decoder walks ids in ascending order they remain valid front-code predecessors. The tree runs
+once per name at startup and never on a lookup, so its size cannot affect lookup latency; the
+generator verifies every rule against `DerivedName.txt` and the crate's round-trip test checks
+them from the decoder side. This is where the names budget was won: the same streams without the
+rules are 78,910 B.
 
 Two ideas carry the emoji section. **Keys are canonicalized**: `U+FE0F` is stripped, so
 text-presentation input answers like emoji presentation (`🚶‍♂` → `man walking`) at no storage
@@ -72,11 +73,12 @@ sequence is not itself an entry get their base reconstructed (by inverting the r
 variant and checking it against the whole group), so **zero** tone names are stored verbatim.
 
 Measured on the current port (release, x86_64 — rerun the harness before trusting the numbers
-elsewhere): `general_category` 6.6 ns, `name` 41.9 ns, `emoji_name` 195 ns. The `name` figure is a
-binary search over the 719 runs plus one UTF-8 validation of the returned slice — safe Rust has no
-unchecked conversion, and the alternative (leaking 35,416 `&'static str` at init) trades ~1.5 MB of
-heap for it. `emoji_name` is dominated by the tone fallback that has to render a name the table
-does not hold; the design study measured 213.92 ns for that same path.
+elsewhere): `general_category` 6.1 ns, `name` 19.2 ns, `emoji_name` 224 ns. The `name` figure is
+a binary search over the 719 runs plus two offset loads and a slice of text that was validated
+once while decoding; the first name lookup also materializes the ~0.9 MB name blob plus the
+codec's transient model (16 MiB for the middle stream), both released before the lookup returns.
+`emoji_name` is dominated by the tone fallback that has to render a name the table does not
+hold.
 
 ### What is left to fit the budget
 

@@ -1,16 +1,6 @@
 //! General category parsing and the two-level page-table section encoding.
 
-/// The general category abbreviations in table id order (id = position + 1).
-///
-/// Keep in sync with the decoder's `GC_SHORT_NAMES` in `src/lib.rs`: the crate's round-trip
-/// tests walk every range of `DerivedGeneralCategory.txt` and would fail if the two drifted.
-const GC_SHORT_NAMES: [&str; 30] = [
-    "Cc", "Cf", "Cn", "Co", "Cs", "Ll", "Lm", "Lo", "Lt", "Lu", "Mc", "Me", "Mn", "Nd", "Nl", "No",
-    "Pc", "Pd", "Pe", "Pf", "Pi", "Po", "Ps", "Sc", "Sk", "Sm", "So", "Zl", "Zp", "Zs",
-];
-
-/// `cp >> GC_SHIFT` selects the page of the general category table.
-const GC_SHIFT: u32 = 11;
+use zeta_unicode_format::{GC_SHIFT, GC_SHORT_NAMES, UNICODE_END, UNICODE_LIMIT};
 
 /// The general category range table: `(start, end, table id)`.
 type GcRanges = Vec<(u32, u32, u8)>;
@@ -60,6 +50,18 @@ pub fn parse_general_category(text: &str) -> GcRanges {
             pair[1].1
         );
     }
+    // The decoder attributes a gap to the preceding run, so the data must cover the whole
+    // scalar range without holes. `DerivedGeneralCategory.txt` includes the `Cn` ranges that
+    // make this true; assert it rather than relying on that detail.
+    assert_eq!(ranges.first().map(|range| range.0), Some(0));
+    assert_eq!(ranges.last().map(|range| range.1), Some(UNICODE_END));
+    for pair in ranges.windows(2) {
+        assert_eq!(
+            pair[0].1.checked_add(1),
+            Some(pair[1].0),
+            "general category ranges must be contiguous"
+        );
+    }
 
     let mut seen = [false; 31];
     for &(_, _, id) in &ranges {
@@ -92,7 +94,7 @@ pub fn general_category_section(ranges: &GcRanges) -> Vec<u8> {
         records.extend_from_slice(&record.to_le_bytes());
     }
 
-    let pages = (0x0011_0000 >> GC_SHIFT) + 1;
+    let pages = usize::try_from(UNICODE_LIMIT >> GC_SHIFT).expect("page count fits") + 1;
     let mut directory = Vec::with_capacity(pages * 2);
     let mut index = 0usize;
     for page in 0..pages {

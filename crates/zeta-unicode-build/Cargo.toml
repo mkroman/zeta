@@ -9,6 +9,7 @@ repository = "https://github.com/mkroman/zeta"
 [dependencies]
 ppmd-rust = "1.5.0"
 thiserror = { workspace = true }
+zeta-unicode-format = { path = "../zeta-unicode-format", version = "0.0.0" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

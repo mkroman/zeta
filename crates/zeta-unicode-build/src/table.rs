@@ -1,22 +1,10 @@
 //! The packed table container: header, section directory and payload packing.
 
-/// Magic at the start of the generated table.
-const MAGIC: &[u8; 4] = b"ZUCD";
-/// Length of the fixed header: magic, three version components and a section count.
-const HEADER_LEN: usize = 4 + 2 * 3 + 2;
-/// Length of one section directory entry: id, file offset, payload length.
-const ENTRY_LEN: usize = 12;
+use zeta_unicode_format::{TABLE_ENTRY_LEN, TABLE_HEADER_LEN, TABLE_MAGIC};
 
-/// The name index section.
-pub const SECTION_NAME_RUNS: u32 = 1;
-/// The `*`-pattern ranges section.
-pub const SECTION_NAME_PATTERNS: u32 = 2;
-/// The general category section.
-pub const SECTION_GC: u32 = 3;
-/// The emoji section.
-pub const SECTION_EMOJI: u32 = 4;
-/// The name streams section.
-pub const SECTION_NAMES: u32 = 5;
+pub use zeta_unicode_format::{
+    SECTION_EMOJI, SECTION_GC, SECTION_NAME_PATTERNS, SECTION_NAME_RUNS, SECTION_NAMES,
+};
 
 /// One section of the table: its id and its payload bytes.
 pub struct Section {
@@ -28,9 +16,9 @@ pub struct Section {
 
 /// Writes the header, the section directory and the payloads.
 pub fn pack(sections: Vec<Section>, version: (u8, u8, u8)) -> Vec<u8> {
-    let directory_len = HEADER_LEN + sections.len() * ENTRY_LEN;
+    let directory_len = TABLE_HEADER_LEN + sections.len() * TABLE_ENTRY_LEN;
     let mut table = Vec::with_capacity(directory_len);
-    table.extend_from_slice(MAGIC);
+    table.extend_from_slice(TABLE_MAGIC);
     push_u16(&mut table, u16::from(version.0));
     push_u16(&mut table, u16::from(version.1));
     push_u16(&mut table, u16::from(version.2));
@@ -61,4 +49,28 @@ pub fn push_u16(buf: &mut Vec<u8>, value: u16) {
 /// Appends `value` little-endian.
 pub fn push_u32(buf: &mut Vec<u8>, value: u32) {
     buf.extend_from_slice(&value.to_le_bytes());
+}
+
+// The section ids are shared with the decoder through `zeta-unicode-format`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn packs_the_header_and_directory() {
+        let table = pack(
+            vec![Section {
+                id: SECTION_GC,
+                data: vec![1, 2, 3],
+            }],
+            (18, 0, 0),
+        );
+        assert_eq!(&table[..4], TABLE_MAGIC);
+        assert_eq!(u16::from_le_bytes([table[4], table[5]]), 18);
+        assert_eq!(u16::from_le_bytes([table[10], table[11]]), 1);
+        let offset = u32::from_le_bytes(table[16..20].try_into().expect("offset")) as usize;
+        assert_eq!(offset, TABLE_HEADER_LEN + TABLE_ENTRY_LEN);
+        assert_eq!(&table[offset..], [1, 2, 3]);
+    }
 }

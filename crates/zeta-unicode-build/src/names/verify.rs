@@ -1,15 +1,23 @@
 //! Round-trip verification: the emitter re-decodes its own artifacts and checks
 //! every claim against the vendored UCD text.
+//!
+//! The decoder in this module is deliberately separate from the runtime decoder: it is an
+//! independent check of the written bytes, while `zeta-unicode`'s own round-trip tests check the
+//! runtime side against the same UCD files. Only the format constants are shared, through
+//! `zeta-unicode-format`.
 
 use std::path::Path;
 
-use super::codec::{SectionCodec, section_codec};
-use super::corpus::{Corpus, HANGUL_END, HANGUL_START, Pattern};
-use super::rules::Rules;
-use super::{
-    BLOB_VERSION, CODEC_PPMD8I, HEADER_LEN, MAGIC, PATTERN_BASE, SECTION_PREFIX_LEN,
-    STREAM_DESC_LEN, STREAMS, TRANSFORM_DELTA8,
+use zeta_unicode_format::{
+    CODEC_PPMD8I, HANGUL_END, HANGUL_START, NAMES_HEADER_LEN as HEADER_LEN, NAMES_MAGIC as MAGIC,
+    NAMES_VERSION as BLOB_VERSION, SECTION_PREFIX_LEN, STREAM_COUNT, STREAM_DESC_LEN,
+    TRANSFORM_DELTA8, undelta8,
 };
+
+use super::codec::{SectionCodec, section_codec};
+use super::corpus::{Corpus, Pattern};
+use super::rules::Rules;
+use super::{PATTERN_BASE, STREAMS};
 use crate::Error;
 
 /// The three decompressed name streams.
@@ -37,10 +45,10 @@ pub fn decode_blob(blob: &[u8]) -> Streams {
     let transforms = [blob[6], blob[7], blob[8]];
     let entries = u32::from_le_bytes(blob[9..13].try_into().unwrap()) as usize;
     let derived = u32::from_le_bytes(blob[13..17].try_into().unwrap()) as usize;
-    let mut off = 17usize;
+    let mut off = HEADER_LEN - STREAM_COUNT * STREAM_DESC_LEN;
     // All three descriptors come first, then the three streams: read the
     // directory before slicing any payload.
-    let mut descriptors = [(0usize, 0usize, 0u32, 0u32); 3];
+    let mut descriptors = [(0usize, 0usize, 0u32, 0u32); STREAM_COUNT];
     for (idx, slot) in descriptors.iter_mut().enumerate() {
         let comp = u32::from_le_bytes(blob[off..off + 4].try_into().unwrap()) as usize;
         let raw = u32::from_le_bytes(blob[off + 4..off + 8].try_into().unwrap()) as usize;
@@ -52,13 +60,13 @@ pub fn decode_blob(blob: &[u8]) -> Streams {
         );
         assert_eq!(
             blob[off + 10],
-            1,
+            CODEC_PPMD8I,
             "stream {}: only PPMd8 variant I is supported",
             STREAMS[idx]
         );
         off += STREAM_DESC_LEN;
     }
-    let mut out: Vec<Vec<u8>> = Vec::with_capacity(3);
+    let mut out: Vec<Vec<u8>> = Vec::with_capacity(STREAM_COUNT);
     for (idx, name) in STREAMS.iter().enumerate() {
         let (comp, raw, order, mem) = descriptors[idx];
         let mut buffer = vec![0u8; raw];
@@ -78,11 +86,7 @@ pub fn decode_blob(blob: &[u8]) -> Streams {
         });
         off += comp;
         if transforms[idx] == TRANSFORM_DELTA8 {
-            let mut previous = 0u8;
-            for byte in &mut buffer {
-                previous = previous.wrapping_add(*byte);
-                *byte = previous;
-            }
+            undelta8(&mut buffer);
         } else {
             assert_eq!(transforms[idx], 0, "stream {name}: unknown transform");
         }
@@ -258,16 +262,7 @@ pub fn decode_patterns(raw: &[u8]) -> Vec<Pattern> {
 }
 
 fn read_varint(bytes: &[u8]) -> (u32, usize) {
-    let mut value = 0u32;
-    let mut shift = 0u32;
-    for (n, &byte) in bytes.iter().enumerate() {
-        value |= u32::from(byte & 0x7F) << shift;
-        if byte & 0x80 == 0 {
-            return (value, n + 1);
-        }
-        shift += 7;
-    }
-    panic!("truncated varint");
+    zeta_unicode_format::read_varint(bytes).unwrap_or_else(|| panic!("truncated varint"))
 }
 
 /// Decompresses a standalone section (`u32` raw length + PPMd8-I stream).
@@ -292,6 +287,56 @@ pub fn decode_section(bytes: &[u8], codec: SectionCodec) -> Vec<u8> {
     .expect("ppmd decoder for a section");
     std::io::Read::read_exact(&mut decoder, &mut out).expect("ppmd section");
     out
+}
+
+/// Verifies the plain `*`-pattern section the table actually ships.
+///
+/// `verify` checks the compressed diagnostic `patterns.bin`, which is a different encoding from
+/// the bytes the runtime reads. This walks the shipped layout (`u32 lo`, `u32 hi`, `u16 prefix
+/// length`, prefix, `u16 suffix length`, suffix) and compares every record to the corpus.
+pub fn verify_pattern_section(section: &[u8], patterns: &[Pattern]) {
+    let mut at = 0usize;
+    for (index, want) in patterns.iter().enumerate() {
+        let lo = u32_at(section, at, "pattern start");
+        let hi = u32_at(section, at + 4, "pattern end");
+        let prefix_len = usize::from(u16_at(section, at + 8, "prefix length"));
+        let prefix_at = at + 10;
+        let prefix = section
+            .get(prefix_at..prefix_at + prefix_len)
+            .unwrap_or_else(|| panic!("pattern {index}: prefix outside the section"));
+        let suffix_len_at = prefix_at + prefix_len;
+        let suffix_len = usize::from(u16_at(section, suffix_len_at, "suffix length"));
+        let suffix_at = suffix_len_at + 2;
+        let suffix = section
+            .get(suffix_at..suffix_at + suffix_len)
+            .unwrap_or_else(|| panic!("pattern {index}: suffix outside the section"));
+        assert_eq!(
+            (lo, hi, prefix, suffix),
+            (
+                want.lo,
+                want.hi,
+                want.prefix.as_bytes(),
+                want.suffix.as_bytes()
+            ),
+            "shipped pattern {index} differs from DerivedName.txt"
+        );
+        at = suffix_at + suffix_len;
+    }
+    assert_eq!(at, section.len(), "the pattern section has trailing bytes");
+}
+
+fn u32_at(buf: &[u8], at: usize, what: &str) -> u32 {
+    let bytes = buf
+        .get(at..at + 4)
+        .unwrap_or_else(|| panic!("{what} outside the pattern section"));
+    u32::from_le_bytes(bytes.try_into().expect("four bytes"))
+}
+
+fn u16_at(buf: &[u8], at: usize, what: &str) -> u16 {
+    let bytes = buf
+        .get(at..at + 2)
+        .unwrap_or_else(|| panic!("{what} outside the pattern section"));
+    u16::from_le_bytes(bytes.try_into().expect("two bytes"))
 }
 
 /// Round-trips the emitted artifact and checks every claim this build makes:

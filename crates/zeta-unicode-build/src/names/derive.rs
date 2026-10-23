@@ -138,7 +138,9 @@ pub fn derive_all(rules: &Rules, corpus: &Corpus) -> Vec<bool> {
 /// The tree runs once per name when the table is constructed, never on a lookup,
 /// so the arm count cannot affect lookup latency.  It is `include!`d from
 /// `src/`; the atoms become `.rodata` and the tree `.text`, neither of which is
-/// charged to the table budget by the incumbent accounting.
+/// charged to the table budget by the incumbent accounting. Hex holes call the
+/// consumer's `crate::names::push_hex_string`, so a rule and a `*` pattern are
+/// rendered by the same formatter.
 #[must_use]
 #[allow(
     clippy::too_many_lines,
@@ -176,7 +178,10 @@ pub fn emit_gen_rs(rules: &Rules, corpus: &Corpus) -> String {
                     let _ = write!(body, " out.push((((c) + ({delta})) as u8) as char);");
                 }
                 Op::Hex { off, width } => {
-                    let _ = write!(body, " write_hex(out, (c) - ({off}), {width});");
+                    let _ = write!(
+                        body,
+                        " crate::names::push_hex_string(out, (c) - ({off}), {width});"
+                    );
                 }
             }
         }
@@ -241,35 +246,6 @@ pub fn emit_gen_rs(rules: &Rules, corpus: &Corpus) -> String {
             escape(&rules.atoms[*id])
         );
     }
-    let _ = writeln!(out);
-    let _ = writeln!(
-        out,
-        "/// Upper-case hex, zero-padded to `width` (0 = no padding)."
-    );
-    let _ = writeln!(out, "#[allow(clippy::all)]");
-    let _ = writeln!(out, "#[inline(never)]");
-    let _ = writeln!(
-        out,
-        "fn write_hex(out: &mut String, mut v: i64, width: u32) {{"
-    );
-    let _ = writeln!(out, "    let mut buf = [0u8; 16];");
-    let _ = writeln!(out, "    let mut n = 0usize;");
-    let _ = writeln!(out, "    loop {{");
-    let _ = writeln!(out, "        let d = (v & 15) as usize;");
-    let _ = writeln!(
-        out,
-        "        buf[n] = if d < 10 {{ b'0' + d as u8 }} else {{ b'A' + (d as u8 - 10) }};"
-    );
-    let _ = writeln!(out, "        n += 1;");
-    let _ = writeln!(out, "        v >>= 4;");
-    let _ = writeln!(out, "        if v == 0 {{ break; }}");
-    let _ = writeln!(out, "    }}");
-    let _ = writeln!(out, "    for _ in n..width as usize {{ out.push('0'); }}");
-    let _ = writeln!(
-        out,
-        "    while n > 0 {{ n -= 1; out.push(buf[n] as char); }}"
-    );
-    let _ = writeln!(out, "}}");
     let _ = writeln!(out);
     let _ = writeln!(
         out,

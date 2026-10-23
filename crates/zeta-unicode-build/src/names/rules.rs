@@ -178,7 +178,7 @@ pub fn read_rules(path: &Path) -> Rules {
             );
             let token = line[6..].to_owned();
             assert!(!token.is_empty(), "{where_}: atom {id} is empty");
-            atoms.push(token.clone());
+            atoms.push(token);
             continue;
         }
         arms.push(parse_arm(line, &where_));

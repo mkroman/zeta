@@ -4,7 +4,7 @@ use std::env;
 use std::path::PathBuf;
 
 /// Budget the generated name sections (names + index + patterns) must fit into.
-const NAMES_BUDGET: usize = 73_304;
+const NAMES_BUDGET: usize = zeta_unicode_build::NAMES_BUDGET;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");

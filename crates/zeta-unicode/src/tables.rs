@@ -3,20 +3,44 @@
 //! `zeta-unicode-build` writes one binary file into `OUT_DIR` and the crate links it in with
 //! `include_bytes!`, so the table costs no filesystem or startup work of its own.
 
+use zeta_unicode_format::{TABLE_ENTRY_LEN, TABLE_HEADER_LEN, TABLE_MAGIC};
+
 /// The generated table, linked in at compile time.
-pub static TABLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zeta_unicode_tables.bin"));
+const TABLE_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zeta_unicode_tables.bin"));
 
-/// `ZUCD`, the table magic.
-const MAGIC: &[u8; 4] = b"ZUCD";
-/// Bytes before the section directory: magic plus three version components and a count.
-const HEADER_LEN: usize = 4 + 2 * 3 + 2;
-/// One directory entry: id, file offset, payload length.
-const ENTRY_LEN: usize = 12;
+/// The generated table, linked in at compile time.
+pub static TABLE: &[u8] = TABLE_BYTES;
 
-/// The Unicode version the table was built from.
-///
-/// The decoder compares it with the crate's `UNICODE_VERSION`, so a table built from a different
-/// UCD release cannot slip through unnoticed.
+/// Reads a little-endian `u16` at a fixed offset for the compile-time header check.
+const fn header_u16(at: usize) -> u16 {
+    u16::from_le_bytes([TABLE_BYTES[at], TABLE_BYTES[at + 1]])
+}
+
+// The version check is a build invariant: a stale table must fail the build, not the first
+// lookup. `build.rs` regenerates the table whenever its inputs change, so this can only trip
+// when `UNICODE_VERSION` is bumped without regenerating.
+const _: () = {
+    assert!(
+        TABLE_BYTES.len() >= TABLE_HEADER_LEN,
+        "the generated table is truncated"
+    );
+    assert!(
+        TABLE_BYTES[0] == TABLE_MAGIC[0]
+            && TABLE_BYTES[1] == TABLE_MAGIC[1]
+            && TABLE_BYTES[2] == TABLE_MAGIC[2]
+            && TABLE_BYTES[3] == TABLE_MAGIC[3],
+        "the generated table is not a zeta-unicode table"
+    );
+    assert!(
+        header_u16(4) == crate::UNICODE_VERSION.0 as u16
+            && header_u16(6) == crate::UNICODE_VERSION.1 as u16
+            && header_u16(8) == crate::UNICODE_VERSION.2 as u16,
+        "the generated table was built from a different Unicode release"
+    );
+};
+
+/// The Unicode version the table was built from, for the version test.
+#[cfg(test)]
 pub fn version() -> (u8, u8, u8) {
     let (major, minor, patch) = (
         u16_at(TABLE, 4).expect("version in the header"),
@@ -38,7 +62,7 @@ pub fn version() -> (u8, u8, u8) {
 pub fn section(id: u32) -> Option<&'static [u8]> {
     let count = usize::from(u16_at(TABLE, 10)?);
     for index in 0..count {
-        let record = HEADER_LEN + index * ENTRY_LEN;
+        let record = TABLE_HEADER_LEN + index * TABLE_ENTRY_LEN;
         let section_id = u32_at(TABLE, record)?;
         if section_id != id {
             continue;
@@ -76,20 +100,36 @@ pub fn bytes_at(buf: &[u8], offset: usize, length: usize) -> Option<&[u8]> {
     buf.get(offset..offset.checked_add(length)?)
 }
 
-/// Checks the table magic and returns its Unicode version.
-///
-/// A table built from a different generator or a different UCD release is a build mistake, not a
-/// runtime condition, so this runs while the name streams are decoded rather than on a lookup.
-///
-/// # Panics
-///
-/// When the magic does not match, or the table was built from another Unicode release than the
-/// crate declares.
-pub fn validate() -> (u8, u8, u8) {
-    assert_eq!(
-        TABLE.get(..4),
-        Some(MAGIC.as_slice()),
-        "the generated table is not a zeta-unicode table"
-    );
-    version()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readers_reject_truncated_input() {
+        assert_eq!(u16_at(&[0], 0), None);
+        assert_eq!(u16_at(&[0, 1], 1), None);
+        assert_eq!(u32_at(&[0; 3], 0), None);
+        assert_eq!(usize_at(&[0; 3], 0), None);
+        assert_eq!(bytes_at(b"abc", 2, 2), None);
+        assert_eq!(bytes_at(b"abc", usize::MAX, 1), None);
+    }
+
+    #[test]
+    fn readers_decode_little_endian() {
+        assert_eq!(u16_at(&[0x34, 0x12], 0), Some(0x1234));
+        assert_eq!(u32_at(&[0x78, 0x56, 0x34, 0x12], 0), Some(0x1234_5678));
+        assert_eq!(usize_at(&[0x78, 0x56, 0x34, 0x12], 0), Some(0x1234_5678));
+        assert_eq!(bytes_at(b"abcd", 1, 2), Some(b"bc".as_slice()));
+    }
+
+    #[test]
+    fn missing_sections_answer_none() {
+        assert_eq!(section(0), None);
+        assert_eq!(section(u32::MAX), None);
+    }
+
+    #[test]
+    fn the_table_reports_its_build_version() {
+        assert_eq!(version(), crate::UNICODE_VERSION);
+    }
 }
