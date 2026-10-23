@@ -22,25 +22,32 @@
 //!
 //! # Rules-file grammar
 //!
-//! Line oriented, ASCII, no dependencies.  Blank lines and `#` comments are
-//! ignored, `@` lines are directives, `A<dddd>` lines are atoms, and everything
-//! else is an arm.
+//! Line oriented, ASCII, no dependencies.  Blank lines and whole-line `#`
+//! comments are ignored — an inline `#` is *not* a comment, it never appears in
+//! a valid directive, atom or recipe — `@` lines are directives, `A<dddd>`
+//! lines are atoms, and everything else is an arm.
 //!
 //! ```text
-//! @unicode 18.0.0                                # informational, cross-checked
-//! @corpus 35351                                  # entries the rules were mined against
-//! @derived 6677                                  # entries the arms reconstruct
-//! @arms 5286                                     # informational
-//! @atoms 324                                     # informational
-//! @stream <label> <transform> <order> <mem_mib>  # one per name stream
-//! @runs <order> <mem_mib>                        # PPMd params for the index section
-//! @patterns <order> <mem_mib>                    # PPMd params for the pattern section
+//! @unicode 18.0.0
+//! @corpus 35351
+//! @derived 6677
+//! @arms 5286
+//! @atoms 324
+//! @stream <label> <transform> <order> <mem_mib>
+//! @runs <order> <mem_mib>
+//! @patterns <order> <mem_mib>
 //!
-//! A0000 <token>                                  # atom 0, verbatim
+//! A0000 <token>
 //! ...
 //!
-//! 0041:005A fga+65                               # arm over U+0041..=U+005A
+//! 0041:005A fga+65
 //! ```
+//!
+//! `@unicode`, `@arms` and `@atoms` are informational; `@corpus` and `@derived`
+//! are cross-checked against the parsed corpus and the arms.  The arm in the
+//! example covers U+0041..=U+005A.  `<label>` is one of the [`STREAMS`] names,
+//! `<transform>` is `raw` or `delta8` — the middle stream only supports `raw`,
+//! because the decoder refuses to undelta it.
 //!
 //! An **atom** is one space-delimited token of a name, trailing space included.
 //! The line is `A`, four decimal digits, one space, then the token — so the
@@ -121,7 +128,8 @@ pub const STREAMS: [&str; 3] = ["plen", "slen", "mids"];
 
 // ------------------------------------------------------------------- output
 
-/// Every size one build produces, in bytes, plus the `*`-pattern records the caller emits.
+/// Every size one build produces, in bytes, plus the packed section payloads the caller
+/// ships in the table.
 #[derive(Clone, Debug)]
 pub struct Ledger {
     /// Names in the corpus (index space).
@@ -144,6 +152,10 @@ pub struct Ledger {
     pub blob: usize,
     /// The three compressed streams alone, i.e. `blob` without the header.
     pub streams_total: usize,
+    /// The packed name blob the table ships, byte-identical to the `names.bin` artifact.
+    pub names_section: Vec<u8>,
+    /// The packed name index the table ships, byte-identical to the `runs.bin` artifact.
+    pub runs_section: Vec<u8>,
     /// The name index section.
     pub runs: SectionSize,
     /// The compressed diagnostic pattern stream (`patterns.bin`); the table ships
@@ -228,11 +240,13 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
     let mut streams: Vec<Vec<u8>> = Vec::with_capacity(3);
     for (idx, params) in rules.streams.iter().copied().enumerate() {
         transforms.push(u8::from(params.delta8));
-        let source: Vec<u8> = match idx {
-            0 if params.delta8 => delta8(&plen),
-            0 => plen.clone(),
-            1 => slen.clone(),
-            _ => mids.clone(),
+        let source: Vec<u8> = match (idx, params.delta8) {
+            (0, true) => delta8(&plen),
+            (0, false) => plen.clone(),
+            (1, true) => delta8(&slen),
+            (1, false) => slen.clone(),
+            (_, false) => mids.clone(),
+            (_, true) => unreachable!("read_rules rejects a delta8-coded middle stream"),
         };
         let compressed = codec::ppmd8i(&source, params.order, params.mem_mib);
         descriptors.extend_from_slice(
@@ -303,6 +317,7 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
     let streams_total: usize = sizes.iter().map(|s| s.compressed).sum();
     let atom_bytes: usize = rules.atoms.iter().map(String::len).sum();
     let runs_size = runs_bytes.len();
+    let blob_len = blob.len();
     let patterns_size = patterns_bytes.len();
     // The table ships the plain section, not the compressed diagnostic artifact, so
     // that is the size the budget has to charge.
@@ -317,8 +332,10 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
         atom_bytes,
         text_bytes,
         streams: sizes,
-        blob: blob.len(),
+        blob: blob_len,
         streams_total,
+        names_section: blob,
+        runs_section: runs_bytes,
         runs: SectionSize {
             raw: runs_raw.len(),
             compressed: runs_size - SECTION_PREFIX_LEN,
@@ -334,8 +351,8 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
         runs_count: run_count(&corpus),
         patterns_count: corpus.patterns.len(),
         pattern_section: pattern_section_data,
-        table: blob.len() + runs_size + pattern_section_len,
-        table_strict: blob.len() + runs_size + pattern_section_len + atom_bytes,
+        table: blob_len + runs_size + pattern_section_len,
+        table_strict: blob_len + runs_size + pattern_section_len + atom_bytes,
     };
     if request.report {
         report(&ledger, &corpus, &rules, request);
@@ -558,4 +575,33 @@ fn run_count(corpus: &Corpus) -> usize {
         }
     }
     count + usize::from(!corpus.entries.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    #[should_panic = "cannot be delta8-coded"]
+    fn a_delta8_middle_stream_is_rejected() {
+        // The decoder refuses to undelta the middle stream, so the rules parser has to
+        // reject the configuration instead of emitting a table the runtime cannot read.
+        let data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../zeta-unicode/data");
+        let text =
+            std::fs::read_to_string(data_dir.join("derived-names.rules")).expect("rules file");
+        // The vendored file already configures `mids`; swap its transform instead of
+        // adding a second directive.
+        let text = text
+            .lines()
+            .filter(|line| !line.starts_with("@stream mids"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("derived-names.rules");
+        std::fs::write(&path, format!("{text}\n@stream mids delta8 16 16\n")).expect("rules file");
+
+        let _ = rules::read_rules(&path);
+    }
 }

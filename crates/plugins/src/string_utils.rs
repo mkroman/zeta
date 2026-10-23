@@ -127,6 +127,12 @@ fn unicode_details(args: &str) -> String {
         // the IRC line budget.
         let total = args.chars().count();
         let mut message = String::from("{");
+        // The first entry is appended unconditionally, so the reply only fits while the
+        // stored name leaves room for `{U+10FFFF` on top of the reserved bytes.
+        debug_assert!(
+            "{U+10FFFF".len() + SUFFIX.len() + FRAMING + name.len() <= MAX_LISTING_LENGTH,
+            "the emoji name {name:?} does not leave room for the codepoint list"
+        );
         let appended = append_entries_within_budget(
             &mut message,
             args.chars().map(|c| format!("U+{:04X}", u32::from(c))),

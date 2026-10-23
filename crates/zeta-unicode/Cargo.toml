@@ -25,5 +25,9 @@ ppmd-rust = "1.5.0"
 # requirement even though the generator only exists in this workspace.
 zeta-unicode-build = { path = "../zeta-unicode-build", version = "0.0.0" }
 
+[dev-dependencies]
+# The test suite pins `MAX_KEY` to the generator's, for the same publish reason as above.
+zeta-unicode-build = { path = "../zeta-unicode-build", version = "0.0.0" }
+
 [lints]
 workspace = true

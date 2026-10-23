@@ -43,7 +43,7 @@ mod ucd;
 
 use std::path::{Path, PathBuf};
 
-pub use emoji::EmojiStats;
+pub use emoji::{EmojiStats, MAX_KEY};
 pub use error::Error;
 pub use names::{Ledger, SectionSize, StreamSize};
 
@@ -97,12 +97,10 @@ pub fn generate(request: &Request) -> Result<Output, Error> {
     let (emoji, emoji_stats) = emoji::emoji_section(&inputs.emoji, &inputs.sequences);
     let ledger = names::emit(request, &inputs)?;
 
-    let runs = read(request.out_dir.join("runs.bin"))?;
-    let names = read(request.out_dir.join("names.bin"))?;
     let sections = vec![
         table::Section {
             id: table::SECTION_NAME_RUNS,
-            data: runs,
+            data: ledger.runs_section.clone(),
         },
         table::Section {
             id: table::SECTION_NAME_PATTERNS,
@@ -118,7 +116,7 @@ pub fn generate(request: &Request) -> Result<Output, Error> {
         },
         table::Section {
             id: table::SECTION_NAMES,
-            data: names,
+            data: ledger.names_section.clone(),
         },
     ];
     let table = table::pack(sections, inputs.version);

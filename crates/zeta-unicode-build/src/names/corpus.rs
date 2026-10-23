@@ -153,6 +153,10 @@ fn alias_rank(kind: &str) -> u8 {
 
 /// Adds `NameAliases.txt` names for code points that have none, keeping the list
 /// sorted by code point.  Returns how many were added.
+///
+/// Aliases of the same kind keep the first row in `NameAliases.txt` order, which
+/// the runtime test suite pins: U+0009 must answer `CHARACTER TABULATION`, the
+/// file's first `control` alias, not its second.
 fn fold_aliases_into(entries: &mut Vec<(u32, String)>, aliases_text: &str) -> usize {
     let mut best: Vec<(u32, u8, &str)> = Vec::new();
     for line in aliases_text

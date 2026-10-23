@@ -192,6 +192,9 @@ fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
         needed += 1;
     }
     let count = needed.max(usize::from(width.min(8)));
+    if count == 0 {
+        return 0;
+    }
     let mut shift = u32::try_from(count - 1).expect("at most eight digits") * 4;
     for slot in out.iter_mut().take(count) {
         *slot = DIGITS[((cp >> shift) & 0xF) as usize];
@@ -278,19 +281,19 @@ fn general_category_of(cp: u32) -> Option<GeneralCategory> {
     const GC_PAGES: usize = (0x0011_0000_usize >> GC_SHIFT) + 1;
 
     let table = tables::section(sections::GC)?;
-    let (directory, records) = tables::bytes_at(table, 0, table.len())?.split_at(GC_PAGES * 2);
+    let directory = tables::bytes_at(table, 0, GC_PAGES * 2)?;
+    let records = table.get(GC_PAGES * 2..).unwrap_or_default();
 
     let page = usize::try_from(cp >> GC_SHIFT).ok()?;
     let relative = cp - (u32::try_from(page).ok()? << GC_SHIFT);
     let first = usize::from(tables::u16_at(directory, page * 2)?);
     let end = usize::from(tables::u16_at(directory, page * 2 + 2)?);
 
-    // The run ending before `first` may carry into this page; otherwise find the last run in
-    // the page whose start is at or before `cp`.
-    let record = if first == end {
+    // The run ending before `first` may carry into this page — because the page has no run
+    // starting in it (`first == end`), or because `cp` falls before the page's first run —
+    // otherwise find the last run in the page whose start is at or before `cp`.
+    let record = if first == end || relative < u32::from(tables::u16_at(records, first * 2)? >> 5) {
         first.checked_sub(1)?
-    } else if relative < u32::from(tables::u16_at(records, first * 2)? >> 5) {
-        first - 1
     } else {
         let (mut low, mut high) = (first, end);
         while low < high {
@@ -765,6 +768,24 @@ mod tests {
         assert!(!write_name('\u{378}', &mut buf));
         assert_eq!(buf, "");
     }
+
+    #[test]
+    fn write_hex_handles_the_boundaries() {
+        let mut digits = [0u8; 8];
+        assert_eq!(write_hex(&mut digits, 0, 0), 0);
+        assert_eq!(write_hex(&mut digits, 0, 4), 4);
+        assert_eq!(&digits[..4], b"0000");
+        assert_eq!(write_hex(&mut digits, 0x4E2D, 0), 4);
+        assert_eq!(&digits[..4], b"4E2D");
+        // `EGYPTIAN HIEROGLYPH-13460` needs five digits where the width asks for four.
+        assert_eq!(write_hex(&mut digits, 0x13460, 4), 5);
+        assert_eq!(&digits[..5], b"13460");
+    }
+
+    /// The generator must reject keys the decoder's fixed scratch cannot hold, so the two
+    /// constants are pinned equal: a drift would make an overlong key a silent emoji miss
+    /// instead of a build failure.
+    const _: () = assert!(MAX_KEY == zeta_unicode_build::MAX_KEY);
 
     /// Prints every section's size, then holds the table to [`ENCODER_TABLE_LIMIT`]: the budget
     /// itself is not reachable until the compressed encoder replaces the uncompressed reference

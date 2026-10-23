@@ -18,9 +18,9 @@ const TONE_NAMES: [&str; 5] = [
 
 /// Longest canonical emoji key, in bytes, that the decoder's `MAX_KEY` scratch can hold.
 ///
-/// Keep in sync with `MAX_KEY` in `src/lib.rs`: a longer key would silently become an
-/// emoji miss there instead of a build failure here.
-const MAX_KEY: usize = 64;
+/// Pinned to the decoder's `MAX_KEY` by a compile-time assert in `zeta-unicode`'s test suite:
+/// a longer key would silently become an emoji miss there instead of a build failure here.
+pub const MAX_KEY: usize = 64;
 
 /// How many un-reproducible tone variants `ZETA_UNICODE_STATS` prints as examples.
 const MAX_EMOJI_SAMPLES: usize = 8;
@@ -130,26 +130,28 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
 fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, String)> {
     let mut entries: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
 
-    for (number, line) in emoji_text
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .enumerate()
-    {
+    // The line numbers in the panic messages are the file's, so the loops enumerate every
+    // line and skip the comments inside.
+    for (number, line) in emoji_text.lines().enumerate() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         let (left, rest) = line
             .split_once(';')
-            .unwrap_or_else(|| panic!("line {number}: {line}"));
+            .unwrap_or_else(|| panic!("line {}: {line}", number + 1));
         let (status, comment) = rest.split_once('#').expect("comment");
-        let cps = parse_code_points(left, number);
+        let cps = parse_code_points(left, number + 1);
         let rank = match status.trim() {
             "fully-qualified" | "component" => 2u8,
             "minimally-qualified" => 1,
             "unqualified" => 0,
-            other => panic!("line {number}: unknown status {other}"),
+            other => panic!("line {}: unknown status {other}", number + 1),
         };
         let words: Vec<&str> = comment.split_whitespace().collect();
         assert!(
             words.len() >= 3,
-            "line {number}: unexpected comment: {comment}"
+            "line {}: unexpected comment: {comment}",
+            number + 1
         );
         // The comment is `<emoji> <E-version> <name>`; the name may contain anything, `#`
         // included (the `#` keycap).
@@ -158,15 +160,14 @@ fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, St
 
     let emoji_keys: BTreeSet<Vec<u32>> = entries.keys().map(|cps| canonical_cps(cps)).collect();
 
-    for (number, line) in named_text
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .enumerate()
-    {
+    for (number, line) in named_text.lines().enumerate() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         let (name, cps) = line
             .split_once(';')
-            .unwrap_or_else(|| panic!("line {number}: {line}"));
-        let cps = parse_code_points(cps, number);
+            .unwrap_or_else(|| panic!("line {}: {line}", number + 1));
+        let cps = parse_code_points(cps, number + 1);
         if !emoji_keys.contains(&canonical_cps(&cps)) {
             continue;
         }

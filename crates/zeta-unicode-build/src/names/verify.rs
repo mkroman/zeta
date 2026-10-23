@@ -407,6 +407,13 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
         },
     ));
     assert_eq!(patterns.len(), corpus.patterns.len(), "pattern count");
+    for pair in patterns.windows(2) {
+        assert!(
+            pair[0].hi < pair[1].lo,
+            "patterns overlap near U+{:04X}",
+            pair[1].lo
+        );
+    }
     let mut pattern_cps = 0usize;
     for (got, want) in patterns.iter().zip(&corpus.patterns) {
         assert_eq!(
@@ -446,8 +453,6 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
         );
     }
     for cp in (HANGUL_START..=HANGUL_END).step_by(1_357) {
-        let (index, syllable) = hangul_parts(cp);
-        assert_eq!(index * 588 + syllable, cp - HANGUL_START, "Hangul split");
         assert!(
             corpus.id_of(cp).is_none(),
             "U+{cp:04X} is a Hangul syllable and must not be stored"
@@ -463,14 +468,4 @@ pub fn verify(out_dir: &Path, corpus: &Corpus, rules: &Rules) -> Result<Verify, 
         patterns: patterns.len(),
         millis: start.elapsed().as_secs_f64() * 1e3,
     })
-}
-
-/// Hangul syllable decomposition `(leading, vowel-trailing)`.
-#[must_use]
-pub const fn hangul_parts(cp: u32) -> (u32, u32) {
-    const V_COUNT: u32 = 21;
-    const T_COUNT: u32 = 28;
-    const N_COUNT: u32 = V_COUNT * T_COUNT;
-    let s = cp - HANGUL_START;
-    (s / N_COUNT, s % N_COUNT)
 }

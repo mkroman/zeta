@@ -123,6 +123,11 @@ pub fn read_rules(path: &Path) -> Rules {
                         streams[slot].is_none(),
                         "{where_}: stream {label} configured twice"
                     );
+                    assert!(
+                        slot != 2 || transform != "delta8",
+                        "{where_}: the {label} stream cannot be delta8-coded; the decoder only \
+                         undeltas the prefix and suffix streams"
+                    );
                     streams[slot] = Some(StreamParams {
                         delta8: match transform {
                             "raw" => false,
