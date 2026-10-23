@@ -1,7 +1,8 @@
 //! Section ids of the generated table, shared with `zeta-unicode-build`.
 //!
-//! They are internal: nothing outside the crate names a section, and every reader tolerates a
-//! missing one by answering "no data" rather than panicking.
+//! They are internal: nothing outside the crate names a section. The lookup readers answer
+//! "no data" when a section is missing; the name decoder treats its two sections as build
+//! invariants and panics if they are absent.
 
 /// The name index: `varint(len), varint(gap)` per run of consecutive named code points, behind a
 /// `u32` raw length, a `u8` model order and a `u8` memory limit in MiB, PPMd8-I compressed.
@@ -14,7 +15,8 @@ pub const NAME_PATTERNS: u32 = 2;
 /// General category: a page directory (`u16` per 2,048-code-point page) over packed `u16`
 /// records (page-relative range start in the top 11 bits, category id in the low 5).
 pub const GC: u32 = 3;
-/// Emoji entries: key and name blobs, `u16` offset tables and packed 3-bit tone rules.
+/// Emoji entries: key and name blobs, `u16` offset tables, packed 3-bit tone rules and packed
+/// 2-bit published-tone-count masks.
 pub const EMOJI: u32 = 4;
 /// The name streams: the `UNNM` container with its three PPMd8-I streams.
 pub const NAMES: u32 = 5;

@@ -58,7 +58,8 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
     let mut names = Vec::new();
     let mut name_offsets = Vec::new();
     let mut codes = vec![0u8; (entries.len() * 3).div_ceil(8)];
-    for (index, (key, name, code)) in entries.iter().enumerate() {
+    let mut tone_masks = vec![0u8; (entries.len() * 2).div_ceil(8)];
+    for (index, (key, name, code, tone_mask)) in entries.iter().enumerate() {
         push_u16(
             &mut key_offsets,
             u16::try_from(keys.len()).expect("keys fit in u16"),
@@ -84,6 +85,9 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
         if let Some(slot) = codes.get_mut(byte + 1) {
             *slot |= high;
         }
+        // Two bits per entry, and 2 divides 8, so the field never straddles a byte.
+        let mask_bit = index * 2;
+        tone_masks[mask_bit / 8] |= *tone_mask << (mask_bit % 8);
     }
     push_u16(
         &mut key_offsets,
@@ -111,11 +115,16 @@ pub fn emoji_section(emoji_text: &str, named_text: &str) -> (Vec<u8>, EmojiStats
         &mut section,
         u16::try_from(codes.len()).expect("codes fit in u16"),
     );
+    push_u16(
+        &mut section,
+        u16::try_from(tone_masks.len()).expect("tone masks fit in u16"),
+    );
     section.extend_from_slice(&keys);
     section.extend_from_slice(&key_offsets);
     section.extend_from_slice(&names);
     section.extend_from_slice(&name_offsets);
     section.extend_from_slice(&codes);
+    section.extend_from_slice(&tone_masks);
     stats.bytes = section.len();
     (section, stats)
 }
@@ -200,12 +209,12 @@ fn keep_best(
 /// Collects the emoji entries to store: canonicalized keys (U+FE0F removed, so
 /// text-presentation variants merge into their emoji-presentation form) with skin-tone
 /// variants synthesized from a formatting rule instead of stored. Returns
-/// `(key, name, tone rule)` sorted by key bytes.
+/// `(key, name, tone rule, tone-count mask)` sorted by key bytes.
 fn canonical_emoji_entries(
     emoji_text: &str,
     named_text: &str,
     stats: &mut EmojiStats,
-) -> Vec<(String, String, u8)> {
+) -> Vec<(String, String, u8, u8)> {
     let all = parse_emoji(emoji_text, named_text);
 
     // Canonicalize: strip U+FE0F, keeping the highest-precedence name per canonical key.
@@ -221,13 +230,13 @@ fn canonical_emoji_entries(
     }
 
     // Split into bases (no skin-tone code point) and tone variants (dropped, synthesized).
-    let mut kept: BTreeMap<Vec<u32>, (String, u8)> = BTreeMap::new();
+    let mut kept: BTreeMap<Vec<u32>, (String, u8, u8)> = BTreeMap::new();
     let mut variants: ToneVariants = BTreeMap::new();
     for (cps, (_rank, name)) in &canonical {
         let tones = tone_positions(cps);
         if tones.is_empty() || cps.len() == 1 {
             // Standalone entries; a lone skin tone is one of the five components.
-            kept.insert(cps.clone(), (name.clone(), 0));
+            kept.insert(cps.clone(), (name.clone(), 0, 0));
         } else {
             let base: Vec<u32> = cps.iter().copied().filter(|cp| !is_tone(*cp)).collect();
             variants
@@ -241,25 +250,28 @@ fn canonical_emoji_entries(
     // whose variants do not agree keeps them stored verbatim, so nothing is lost.
     for (base, group) in &variants {
         let (base_name, mut rule) = match kept.get(base) {
-            Some((name, _)) => (name.clone(), 0),
+            Some((name, _, _)) => (name.clone(), 0),
             // No base entry (a tone-stripped sequence that Unicode does not list on its own):
             // reconstruct one from the variants, and store it so lookups can reach it.
             None if let Some((name, rule)) = derive_base(group) => {
-                kept.insert(base.clone(), (name.clone(), rule));
+                kept.insert(base.clone(), (name.clone(), rule, 0));
                 (name, rule)
             }
             None => {
                 stats.missing_bases += 1;
                 for (_tones, variant_name, full_cps) in group {
                     stats.verbatim_variants += 1;
-                    kept.insert(full_cps.clone(), (variant_name.clone(), 0));
+                    kept.insert(full_cps.clone(), (variant_name.clone(), 0, 0));
                 }
                 continue;
             }
         };
 
         if rule == 0 {
-            for candidate in 1..=4u8 {
+            // Prefer the deduplicating rules when both reproduce the published variants: the
+            // same-tone ZWJ forms (which Unicode represents with a different single codepoint)
+            // would otherwise get a duplicated tone phrase.
+            for candidate in [3u8, 1, 4, 2] {
                 if group.iter().all(|(tones, variant_name, _)| {
                     format_toned(candidate, &base_name, tones) == *variant_name
                 }) {
@@ -268,7 +280,29 @@ fn canonical_emoji_entries(
                 }
             }
         }
-        kept.get_mut(base).expect("base entry exists").1 = rule;
+
+        // Published tone counts are 1 or 2. A group that needs anything else cannot be
+        // represented by the 2-bit mask, so keep every variant verbatim.
+        let tone_mask = group.iter().fold(0u8, |mask, (tones, _, _)| {
+            mask | match tones.len() {
+                1 => 1,
+                2 => 2,
+                _ => 0,
+            }
+        });
+        if rule == 0 || tone_mask == 0 {
+            stats.verbatim_variants += group.len();
+            for (_tones, variant_name, full_cps) in group {
+                kept.insert(full_cps.clone(), (variant_name.clone(), 0, 0));
+            }
+            continue;
+        }
+
+        {
+            let entry = kept.get_mut(base).expect("base entry exists");
+            entry.1 = rule;
+            entry.2 = tone_mask;
+        }
         for (tones, variant_name, full_cps) in group {
             let formatted = format_toned(rule, &base_name, tones);
             if formatted != *variant_name {
@@ -278,22 +312,20 @@ fn canonical_emoji_entries(
                         "{base_name:?} + {tones:?} -> want {variant_name:?}, got {formatted:?}"
                     ));
                 }
-                kept.insert(full_cps.clone(), (variant_name.clone(), 0));
+                kept.insert(full_cps.clone(), (variant_name.clone(), 0, 0));
             }
         }
-        if rule != 0 {
-            stats.ruled_bases += 1;
-        }
+        stats.ruled_bases += 1;
     }
 
-    let mut entries: Vec<(String, String, u8)> = kept
+    let mut entries: Vec<(String, String, u8, u8)> = kept
         .into_iter()
-        .map(|(cps, (name, code))| {
+        .map(|(cps, (name, code, tone_mask))| {
             let key: String = cps
                 .iter()
                 .map(|&cp| char::from_u32(cp).expect("code point is a scalar value"))
                 .collect();
-            (key, name, code)
+            (key, name, code, tone_mask)
         })
         .collect();
     entries.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
@@ -309,7 +341,7 @@ fn canonical_emoji_entries(
 /// then has to reproduce the whole group.
 fn derive_base(group: &[ToneVariant]) -> Option<(String, u8)> {
     let (tones, first_name, _) = group.first()?;
-    (1..=4u8).find_map(|rule| {
+    [3u8, 1, 4, 2].into_iter().find_map(|rule| {
         let base = strip_phrase(rule, first_name, tones)?;
         group
             .iter()
@@ -382,4 +414,82 @@ fn parse_code_points(text: &str, line: usize) -> Vec<u32> {
         .collect();
     assert!(!cps.is_empty(), "line {line}: no code points");
     cps
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HANDSHAKE: &str = "\
+1FAF1 200D 1FAF2 ; fully-qualified # x E14.0 handshake
+1FAF1 1F3FB 200D 1FAF2 1F3FB ; fully-qualified # x E14.0 handshake: light skin tone
+1FAF1 1F3FB 200D 1FAF2 1F3FC ; fully-qualified # x E14.0 handshake: light skin tone, medium-light skin tone
+";
+
+    fn entries(text: &str) -> Vec<(String, String, u8, u8)> {
+        canonical_emoji_entries(text, "", &mut EmojiStats::default())
+    }
+
+    fn find<'a>(
+        entries: &'a [(String, String, u8, u8)],
+        key: &str,
+    ) -> &'a (String, String, u8, u8) {
+        entries
+            .iter()
+            .find(|entry| entry.0.as_str() == key)
+            .expect("entry")
+    }
+
+    #[test]
+    fn prefers_the_deduplicating_rule_for_same_tone_groups() {
+        let entries = entries(HANDSHAKE);
+        let base = find(&entries, "🫱‍🫲");
+        assert!(
+            matches!(base.2, 3 | 4),
+            "a deduplicating rule is required, got {}",
+            base.2
+        );
+        assert_eq!(base.3, 2, "the group only publishes two-tone variants");
+    }
+
+    #[test]
+    fn derives_a_base_with_the_deduplicating_rule() {
+        let without_base = HANDSHAKE
+            .lines()
+            .filter(|line| !line.starts_with("1FAF1 200D"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let entries = entries(&without_base);
+        let base = find(&entries, "🫱‍🫲");
+        assert!(matches!(base.2, 3 | 4), "got rule {}", base.2);
+        assert_eq!(base.3, 2);
+    }
+
+    #[test]
+    fn stores_every_variant_when_no_rule_matches() {
+        let no_rule = "\
+1F44D ; fully-qualified # x E0.6 thumbs up
+1F44D 1F3FB ; fully-qualified # x E0.6 thumbs up: light skin tone
+1F44D 1F3FC ; fully-qualified # x E0.6 thumbs up, medium skin tone
+";
+        let mut stats = EmojiStats::default();
+        let entries = canonical_emoji_entries(no_rule, "", &mut stats);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(stats.verbatim_variants, 2);
+        assert_eq!(find(&entries, "👍").2, 0);
+        assert_eq!(find(&entries, "👍🏻").2, 0);
+        assert_eq!(find(&entries, "👍🏼").2, 0);
+    }
+
+    #[test]
+    fn records_published_tone_counts() {
+        let one_tone = "\
+1F44D ; fully-qualified # x E0.6 thumbs up
+1F44D 1F3FB ; fully-qualified # x E0.6 thumbs up: light skin tone
+";
+        let entries = entries(one_tone);
+        let base = find(&entries, "👍");
+        assert_ne!(base.2, 0, "the one-tone variant has a formatting rule");
+        assert_eq!(base.3, 1, "the base only publishes one-tone variants");
+    }
 }

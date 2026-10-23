@@ -33,17 +33,18 @@ assert_eq!(zeta_unicode::name_or_label('\u{f8ff}'), "<private-use-F8FF>");
 
 The names are stored as three PPMd8-I streams and decoded once; everything else is still stored
 raw, so the table is over budget on purpose until the last two pieces land. The ledger
-(`table_stays_within_the_size_budget`, or `ZETA_UNICODE_STATS=1` at build time):
+(`table_stays_within_the_encoder_limit`, or `ZETA_UNICODE_STATS=1` at build time):
 
 | section | bytes | note |
 |---|---:|---|
 | names | 69,062 | `UNNM` container: three PPMd8-I streams, decoded once at first lookup |
-| name runs | 1,066 | `varint(len), varint(gap)` per run, 720 runs, code point → name id |
+| name runs | 1,066 | `varint(len), varint(gap)` per run, 719 runs, code point → name id |
 | name patterns | 691 | the 20 `*` ranges |
 | **names + index** | **70,819** | **budget 73,304 — met**, or 72,717 charging the shared literals to the table |
 | general category | 9,494 | two-level page table: 545 `u16` directory entries over 4,202 packed `u16` records |
-| emoji | 45,171 | 1,944 stored keys answer for all 3,972 emoji sequences (see below) |
-| **total** | **125,556** | budget 100,000 — the last two sections are still stored raw |
+| emoji | 45,659 | 1,944 stored keys answer for all 3,972 emoji sequences (see below) |
+| header + directory | 72 | magic, version, section count and five 12-byte directory entries |
+| **total** | **126,044** | budget 100,000 — the last two sections are still stored raw |
 
 **Names.** Each name is front-coded against its code point predecessor — shared prefix length,
 shared suffix length, NUL-terminated middle — and the three streams are coded separately, because
@@ -64,15 +65,16 @@ Two ideas carry the emoji section. **Keys are canonicalized**: `U+FE0F` is strip
 text-presentation input answers like emoji presentation (`🚶‍♂` → `man walking`) at no storage
 cost, and the keycap named sequences take precedence over the test file. **Skin-tone
 variants are never stored**: each of the 344 tone groups gets a 3-bit rule — insert the tone
-phrase after the first `": "` or append it, collapsing duplicate tones or not — and lookup strips
-the tones from the query, finds the base and renders the name. Twelve groups whose tone-stripped
+phrase after the first `": "` or append it, collapsing duplicate tones or not — plus a 2-bit
+mask of the tone counts the group publishes, and lookup strips the tones from the query, checks
+the published count, finds the base and renders the name. Twelve groups whose tone-stripped
 sequence is not itself an entry get their base reconstructed (by inverting the rule on one
 variant and checking it against the whole group), so **zero** tone names are stored verbatim.
 
 Measured on the current port (release, x86_64 — rerun the harness before trusting the numbers
 elsewhere): `general_category` 6.6 ns, `name` 41.9 ns, `emoji_name` 195 ns. The `name` figure is a
-binary search over the 720 runs plus one UTF-8 validation of the returned slice — safe Rust has no
-unchecked conversion, and the alternative (leaking 35,417 `&'static str` at init) trades ~1.5 MB of
+binary search over the 719 runs plus one UTF-8 validation of the returned slice — safe Rust has no
+unchecked conversion, and the alternative (leaking 35,416 `&'static str` at init) trades ~1.5 MB of
 heap for it. `emoji_name` is dominated by the tone fallback that has to render a name the table
 does not hold; the design study measured 213.92 ns for that same path.
 
@@ -80,7 +82,7 @@ does not hold; the design study measured 213.92 ns for that same path.
 
 The names are done and inside their budget. The last step is the general category and emoji
 sections, which are still stored raw: 9,494 → 7,704 for the general category, and the emoji
-section (45,171 B) under lzma-9e. The design study measured 60,890 → 21,400 for the larger
+section (45,659 B) under lzma-9e. The design study measured 60,890 → 21,400 for the larger
 pre-filter section, so the filtered one should compress below that; front-coding the emoji names
 the way the character names are should take it further down. Together with the name runs and
 patterns (1,757 B) that lands the whole table under 100,000 B.
@@ -97,7 +99,7 @@ cheapest place for anything derivable:
   once.
 * **Fragments live in `&'static str` literals.** The linker merges identical constants, so a
   template text shared by 300 names is paid once, in `.rodata`, not once per name.
-* **Indices stay data.** A two-level table beats a generated `match` on ranges: 720 `match` arms
+* **Indices stay data.** A two-level table beats a generated `match` on ranges: 719 `match` arms
   compile to a compare tree of roughly 10–20 bytes each of `.text` (and i-cache pressure) versus
   4,320 B of data with a predictable 10-probe walk. Tables where a load and a mask beat a branch
   are data; content that only makes sense as a procedure is code.

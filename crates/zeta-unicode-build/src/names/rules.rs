@@ -262,7 +262,8 @@ fn parse_arm(line: &str, where_: &str) -> Arm {
                     let (w, n) = read_decimal(recipe, i + used + 2, where_);
                     (u32::try_from(w).expect("width fits in u32"), n + 2)
                 } else {
-                    (0, 0)
+                    // `used` counts the hex digits only; the leading `=` is one more byte.
+                    (0, 1)
                 };
                 // The arm's smallest hex value is the one at `cp_lo`, and that is
                 // exactly `value`; `read_hex_value` cannot produce a negative, so
@@ -355,4 +356,22 @@ fn read_hex_value(text: &str, at: usize, where_: &str) -> (i64, usize) {
         "{where_}: hex value expected at byte {at} of {text:?}"
     );
     (value, n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_hex_holes_with_and_without_width() {
+        let arm = parse_arm("003D =41", "test");
+        assert_eq!(arm.ops, vec![Op::Hex { off: -4, width: 0 }]);
+
+        // `A` is a valid atom code; a parser that stops on the last hex digit would consume it.
+        let arm = parse_arm("003D =4A", "test");
+        assert_eq!(arm.ops, vec![Op::Hex { off: -13, width: 0 }]);
+
+        let arm = parse_arm("003D =41,4", "test");
+        assert_eq!(arm.ops, vec![Op::Hex { off: -4, width: 4 }]);
+    }
 }

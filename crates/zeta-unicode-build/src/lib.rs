@@ -24,7 +24,8 @@
 //!
 //! Emoji keys are canonicalized: `U+FE0F` is stripped, so fully-qualified and text-presentation
 //! inputs hit the same key, and every skin-tone variant is *synthesized* at lookup from its
-//! base name plus a 3-bit formatting rule — 1,944 stored entries answer for all 5,244.
+//! base name plus a 3-bit formatting rule and a 2-bit published-tone-count mask — 1,944 stored
+//! entries answer for all 5,244.
 //!
 //! # Panics
 //!

@@ -70,7 +70,7 @@ fn main() {
             output.names.streams[1].compressed,
             output.names.streams[2].compressed,
             output.names.blob,
-            output.names.runs.compressed,
+            output.names.runs_section.len(),
             output.names.pattern_section.len(),
             output.names.table,
             output.names.table_strict

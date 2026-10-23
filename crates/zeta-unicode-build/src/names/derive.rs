@@ -40,7 +40,8 @@ pub fn build_name(atoms: &[String], ops: &[Op], cp: u32, out: &mut Vec<u8>) {
                         break;
                     }
                 }
-                for _ in n..usize::try_from(width).expect("width fits") {
+                let digits = text.len() - n;
+                for _ in digits..usize::try_from(width).expect("width fits") {
                     out.push(b'0');
                 }
                 out.extend_from_slice(&text[n..]);
@@ -366,4 +367,20 @@ fn escape(text: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_name_pads_hex_to_the_requested_width() {
+        let mut out = Vec::new();
+        build_name(&[], &[Op::Hex { off: 0, width: 4 }], 0x41, &mut out);
+        assert_eq!(out, b"0041");
+
+        out.clear();
+        build_name(&[], &[Op::Hex { off: 0, width: 0 }], 0x41, &mut out);
+        assert_eq!(out, b"41");
+    }
 }

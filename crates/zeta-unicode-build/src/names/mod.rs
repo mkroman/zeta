@@ -17,7 +17,7 @@
 //! * `data/DerivedName.txt` — the ground truth: every individually named code
 //!   point, plus the `*`-pattern ranges (which stay algorithmic at lookup time).
 //! * `data/NameAliases.txt` — the control names are always folded in, which
-//!   reproduces the incumbent behaviour (35,417 entries instead of 35,351).
+//!   reproduces the incumbent behaviour (35,416 entries instead of 35,351).
 //! * `data/derived-names.rules` — the rules file (grammar below).
 //!
 //! # Rules-file grammar
@@ -89,9 +89,10 @@
 //!   caller-chosen file name, for `include!` from the consumer's `src/`.
 //!
 //! and returns a [`Ledger`] with every size, so the caller can assert against
-//! its budget.  Each of `runs.bin` and `patterns.bin` is a `u32` raw
-//! length followed by the compressed stream; the name blob carries those
-//! lengths in its header instead, which is why only the two sections pay 4 B.
+//! its budget.  Each of `runs.bin` and `patterns.bin` is a `u32` raw length, a
+//! `u8` model order and a `u8` memory limit followed by the compressed stream;
+//! the name blob carries those lengths in its header instead, which is why only
+//! the two sections pay the 6 B prefix.
 
 mod codec;
 mod corpus;
@@ -118,7 +119,7 @@ const TRANSFORM_DELTA8: u8 = 1;
 const HEADER_LEN: usize = 4 + 1 + 1 + 3 + 4 + 4 + 3 * 11;
 /// Length of one stream descriptor inside the header.
 const STREAM_DESC_LEN: usize = 11;
-/// `u32` raw-length prefix on the two standalone sections.
+/// `u32` raw length, `u8` model order and `u8` memory limit on the two standalone sections.
 const SECTION_PREFIX_LEN: usize = 6;
 /// Lowest code point the pattern section can describe (the CJK plane start).
 const PATTERN_BASE: u32 = 0x3400;
@@ -195,7 +196,7 @@ pub struct StreamSize {
 pub struct SectionSize {
     /// Bytes handed to the codec.
     pub raw: usize,
-    /// Bytes the codec produced, excluding the `u32` raw-length prefix.
+    /// Bytes the codec produced, excluding the six-byte section prefix.
     pub compressed: usize,
     /// `PPMd` model order.
     pub order: u32,
@@ -463,7 +464,7 @@ fn report(ledger: &Ledger, corpus: &Corpus, rules: &Rules, request: &crate::Requ
         ledger.blob, HEADER_LEN, ledger.streams_total
     );
     eprintln!(
-        "  RUNS      {:>8?} B  ({} runs, raw {:?} -> {:?} + 4, o{}/m{}M)",
+        "  RUNS      {:>8?} B  ({} runs, raw {:?} -> {:?} + 6, o{}/m{}M)",
         ledger.runs.compressed + SECTION_PREFIX_LEN,
         ledger.runs_count,
         ledger.runs.raw,

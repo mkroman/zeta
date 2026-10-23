@@ -114,6 +114,12 @@ impl StringUtils {
 const NOTICE_PREFIX_LEN: usize = REPLY_PREFIX.len() + 1;
 /// Appended when a listing does not fit the budget.
 const SUFFIX: &str = ", …";
+/// Longest run of characters `.uni` probes for an emoji sequence.
+///
+/// A stored emoji key is at most 64 bytes, and a valid UTF-8 key has at most 64 characters, so
+/// a longer run can only match through stripped `U+FE0F` or tone padding. Capping the probe
+/// keeps the nested scan linear in the input length instead of quadratic.
+const MAX_GROUPING_CHARS: usize = 64;
 
 /// Formats the reply to `.uni`.
 ///
@@ -161,7 +167,8 @@ fn grouped_entries(args: &str) -> Vec<String> {
     while at < last {
         // The longest run from here that names a sequence; a single code point is not a
         // grouping but a character entry of its own.
-        let grouped = (at + 2..=last)
+        let end_limit = last.min(at.saturating_add(MAX_GROUPING_CHARS));
+        let grouped = (at + 2..=end_limit)
             .filter_map(|end| Some((end, emoji_name(&args[bounds[at]..bounds[end]])?)))
             .max_by_key(|&(end, _)| end);
 
@@ -200,16 +207,19 @@ fn sequence_entry(text: &str, name: &str) -> String {
         + name.len()
         + COLOR.len()
         + " (".len()
+        + RESET.len()
         + category.len()
         + COLOR.len()
         + ")".len();
 
+    // The entry must leave room for the notice prefix and the outer `SUFFIX`; the inner suffix
+    // and framing are reserved by the listing helper.
+    let budget = MAX_LISTING_LENGTH - NOTICE_PREFIX_LEN - SUFFIX.len();
     // The first codepoint is appended unconditionally, so the entry only fits while the name
     // leaves room for the prefix and `U+10FFFF` on top of the reserved bytes.
     debug_assert!(
-        NOTICE_PREFIX_LEN + "{".len() + RESET.len() + BOLD.len() + "U+10FFFF".len()
-            + SUFFIX.len() + framing
-            <= MAX_LISTING_LENGTH,
+        "{".len() + RESET.len() + BOLD.len() + "U+10FFFF".len() + SUFFIX.len() + framing
+            <= budget,
         "the sequence name {name:?} does not leave room for the codepoint list"
     );
 
@@ -219,7 +229,7 @@ fn sequence_entry(text: &str, name: &str) -> String {
         &mut entry,
         text.chars().map(|c| format!("U+{:04X}", u32::from(c))),
         ", ",
-        MAX_LISTING_LENGTH - NOTICE_PREFIX_LEN,
+        budget,
         SUFFIX.len() + framing,
     );
     if appended < total {
@@ -332,6 +342,19 @@ mod tests {
     }
 
     #[test]
+    fn uni_uses_the_published_tone_count() {
+        let same_tone = unicode_details("👩🏻‍🤝‍👩🏻");
+        assert!(same_tone.contains("WOMEN HOLDING HANDS: LIGHT SKIN TONE"));
+        assert!(!same_tone.contains("LIGHT SKIN TONE, LIGHT SKIN TONE"));
+
+        // A second tone on a one-tone base is not a sequence; the valid prefix is grouped and
+        // the trailing modifier is listed as its own character.
+        let invalid = unicode_details("👍🏻🏿");
+        assert!(invalid.contains("THUMBS UP: LIGHT SKIN TONE"));
+        assert!(invalid.contains("DARK SKIN TONE"));
+    }
+
+    #[test]
     fn uni_lists_single_emoji_as_characters() {
         assert_eq!(
             unicode_details("🦔🫠"),
@@ -364,7 +387,11 @@ mod tests {
         let reply = unicode_details(&repeated);
         assert!(reply.contains('…'), "reply was not truncated: {reply}");
         assert!(reply.ends_with(", …"));
-        assert!(reply.len() <= MAX_LISTING_LENGTH + ", …".len());
+        assert!(
+            reply.len() + NOTICE_PREFIX_LEN <= MAX_LISTING_LENGTH,
+            "{}",
+            reply.len() + NOTICE_PREFIX_LEN
+        );
     }
 
     #[test]
@@ -375,8 +402,25 @@ mod tests {
         let reply = unicode_details(&padded);
 
         assert!(reply.contains('…'), "reply was not truncated: {reply}");
-        assert!(reply.len() <= MAX_LISTING_LENGTH, "{reply}");
+        assert!(
+            reply.len() + NOTICE_PREFIX_LEN <= MAX_LISTING_LENGTH,
+            "{}",
+            reply.len() + NOTICE_PREFIX_LEN
+        );
         assert!(reply.ends_with("Other Symbol\x0310)"), "{reply}");
+    }
+
+    #[test]
+    fn uni_reserves_the_outer_suffix_for_a_grouped_sequence() {
+        // The sequence entry must leave room for the outer `, …` when a following character
+        // does not fit.
+        let input = format!("\u{2198}{}a", "\u{FE0F}".repeat(43));
+        let reply = unicode_details(&input);
+        assert!(
+            reply.len() + NOTICE_PREFIX_LEN <= MAX_LISTING_LENGTH,
+            "{}",
+            reply.len() + NOTICE_PREFIX_LEN
+        );
     }
 
     #[test]

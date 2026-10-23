@@ -2,10 +2,11 @@
 //!
 //! The `zeta-unicode-build` crate compiles the vendored UCD files in `data/` into one packed
 //! table that is linked into the binary with `include_bytes!`. A lookup walks that table
-//! directly: there is no parsing, no allocation for stored names, and no decompression. The
-//! general category table is a two-level page structure (a `u16` directory plus `u16` range
-//! records), and emoji keys are canonicalized — `U+FE0F` is stripped and skin-tone variants are
-//! synthesized from a 3-bit rule — so 1,944 stored keys answer for every one of the 3,972
+//! directly: there is no per-lookup parsing or decompression, and stored names are borrowed.
+//! The name streams are decoded once, on the first name lookup. The general category table is a
+//! two-level page structure (a `u16` directory plus `u16` range records), and emoji keys are
+//! canonicalized — `U+FE0F` is stripped and skin-tone variants are synthesized from a 3-bit
+//! rule plus a 2-bit tone-count mask — so 1,944 stored keys answer for every one of the 3,972
 //! sequences the UCD names.
 //!
 //! ```
@@ -32,10 +33,10 @@ pub use gc::GeneralCategory;
 /// drift from the table without a test failing.
 pub const UNICODE_VERSION: (u8, u8, u8) = (18, 0, 0);
 
-/// The size budget for the generated table, in bytes.
+/// The target size budget for the generated table, in bytes.
 ///
-/// The current encoder does not meet it yet; `table_stays_within_the_size_budget` is the gate
-/// that starts enforcing it.
+/// The current reference encoder does not meet it yet; until the compressed encoder lands the
+/// test suite holds the table to the encoder's own `ENCODER_TABLE_LIMIT` instead.
 pub const TABLE_BUDGET: usize = 100_000;
 
 /// The upper bound the current reference encoder is held to, well above [`TABLE_BUDGET`]: the
@@ -90,7 +91,9 @@ const TONE_NAMES: [&str; 5] = [
 /// Longest canonical emoji key in bytes; `zeta-unicode-build` asserts no stored key is longer.
 const MAX_KEY: usize = 64;
 
-/// Returns the `Name` property of `c`, or the derived name Unicode defines algorithmically.
+/// Returns the `Name` property of `c`, a formal alias from `NameAliases.txt` when the `Name`
+/// property is empty (the control code points), or the derived name Unicode defines
+/// algorithmically.
 ///
 /// Stored names come back borrowed; names built from a pattern (`CJK UNIFIED IDEOGRAPH-4E00`)
 /// or from the Hangul jamo tables are allocated.
@@ -108,8 +111,9 @@ pub fn name(c: char) -> Option<Cow<'static, str>> {
 
 /// Appends the name of `c` to `buf`, returning `false` when `c` has no name.
 ///
-/// This is the zero-allocation path: stored names are copied straight out of the table and
-/// derived names are formatted into `buf`.
+/// Stored names are copied straight out of the table and Hangul names are formatted into `buf`
+/// without allocating; `*` pattern names go through a temporary because the hex width and the
+/// two halves are assembled together.
 ///
 /// # Examples
 ///
@@ -131,7 +135,8 @@ pub fn write_name(c: char, buf: &mut String) -> bool {
 ///
 /// Labels are `<private-use-F8FF>`, `<reserved-0378>`, `<noncharacter-FFFE>` and
 /// `<control-0000>`; they are rendered on the spot because storing them would cost more than
-/// the six bytes they take.
+/// the six bytes they take. Controls with a formal alias answer with the alias instead (the
+/// current data gives every `Cc` code point one), so the control label is the fallback.
 #[must_use]
 pub fn name_or_label(c: char) -> Cow<'static, str> {
     if let Some(name) = name(c) {
@@ -163,10 +168,13 @@ pub fn general_category(c: char) -> GeneralCategory {
 /// combining marks are not part of this table.
 ///
 /// Keys are canonicalized: `U+FE0F` is optional (`🚶‍♂` answers like `🚶‍♂️`) and skin-tone
-/// variants resolve by synthesizing the base name with the recorded formatting rule. The name
-/// is returned as published — lower case for emoji — so callers can case it however their
-/// reply needs. Returns `None` for anything that is not a known sequence, including non-emoji
-/// text.
+/// variants resolve by synthesizing the base name with the recorded formatting rule. The
+/// published tone count is checked, and a leading tone or `U+FE0F` is rejected, but the
+/// positions of the tones are not: an unlisted arrangement with a published tone count can
+/// still resolve. The name is returned as published — lower case for emoji, except the keycap
+/// names from `NamedSequences.txt`, which are upper case — so callers can case it however their
+/// reply needs. Returns `None` for non-emoji text and for sequences whose base or tone count is
+/// not known.
 #[must_use]
 pub fn emoji_name(sequence: &str) -> Option<Cow<'static, str>> {
     emoji_name_of(sequence)
@@ -319,29 +327,33 @@ struct Emoji<'a> {
     names: &'a [u8],
     name_offsets: &'a [u8],
     codes: &'a [u8],
+    tone_masks: &'a [u8],
     entries: usize,
 }
 
 impl<'a> Emoji<'a> {
     /// Splits the section payload into its parts: entry count, key blob with `u16` offsets,
-    /// name blob with `u16` offsets, and the packed 3-bit tone rules.
+    /// name blob with `u16` offsets, the packed 3-bit tone rules and the 2-bit tone-count masks.
     fn section() -> Option<Self> {
         let section = tables::section(sections::EMOJI)?;
         let entries = usize::from(tables::u16_at(section, 0)?);
         let key_bytes = usize::from(tables::u16_at(section, 2)?);
         let name_bytes = usize::from(tables::u16_at(section, 4)?);
         let code_bytes = usize::from(tables::u16_at(section, 6)?);
+        let mask_bytes = usize::from(tables::u16_at(section, 8)?);
         let offsets = (entries + 1) * 2;
+        let codes_at = 10 + key_bytes + name_bytes + 2 * offsets;
         Some(Self {
-            keys: tables::bytes_at(section, 8, key_bytes)?,
-            key_offsets: tables::bytes_at(section, 8 + key_bytes, offsets)?,
-            names: tables::bytes_at(section, 8 + key_bytes + offsets, name_bytes)?,
-            name_offsets: tables::bytes_at(section, 8 + key_bytes + offsets + name_bytes, offsets)?,
-            codes: tables::bytes_at(
+            keys: tables::bytes_at(section, 10, key_bytes)?,
+            key_offsets: tables::bytes_at(section, 10 + key_bytes, offsets)?,
+            names: tables::bytes_at(section, 10 + key_bytes + offsets, name_bytes)?,
+            name_offsets: tables::bytes_at(
                 section,
-                8 + key_bytes + name_bytes + 2 * offsets,
-                code_bytes,
+                10 + key_bytes + offsets + name_bytes,
+                offsets,
             )?,
+            codes: tables::bytes_at(section, codes_at, code_bytes)?,
+            tone_masks: tables::bytes_at(section, codes_at + code_bytes, mask_bytes)?,
             entries,
         })
     }
@@ -372,6 +384,14 @@ impl<'a> Emoji<'a> {
         Some((value & 7) as u8)
     }
 
+    /// Returns the 2-bit published-tone-count mask of entry `index`: bit 0 allows one tone,
+    /// bit 1 allows two.
+    fn tone_mask(&self, index: usize) -> Option<u8> {
+        let bit = index * 2;
+        let byte = self.tone_masks.get(bit / 8)?;
+        Some((byte >> (bit % 8)) & 3)
+    }
+
     /// Binary-searches the stored keys for `needle`.
     fn find(&self, needle: &[u8]) -> Option<usize> {
         let (mut low, mut high) = (0usize, self.entries);
@@ -395,7 +415,8 @@ impl<'a> Emoji<'a> {
     ) -> Option<Cow<'static, str>> {
         let text = std::str::from_utf8(needle).ok()?;
         let tones = tone_positions(text);
-        if tones.is_empty() {
+        let count = tones.len();
+        if !(1..=2).contains(&count) {
             return None;
         }
 
@@ -405,6 +426,10 @@ impl<'a> Emoji<'a> {
         if code == 0 {
             return None;
         }
+        let mask = self.tone_mask(index)?;
+        if mask & (1 << (count - 1)) == 0 {
+            return None;
+        }
         let base_name = std::str::from_utf8(self.name(index)?).ok()?;
         Some(Cow::Owned(format_toned(code, base_name, &tones)))
     }
@@ -412,6 +437,14 @@ impl<'a> Emoji<'a> {
 
 /// Looks up the emoji entry whose canonical key equals `sequence`.
 fn emoji_name_of(sequence: &str) -> Option<Cow<'static, str>> {
+    let mut chars = sequence.chars();
+    let first = chars.next()?;
+    // A lone skin-tone component is an emoji entry; a tone or variation selector in front of
+    // anything else is not a sequence.
+    if chars.next().is_some() && (TONES.contains(&u32::from(first)) || first == '\u{FE0F}') {
+        return None;
+    }
+
     let emoji = Emoji::section()?;
     let mut buffer = [0u8; MAX_KEY];
     let mut scratch = [0u8; MAX_KEY];
@@ -747,11 +780,43 @@ mod tests {
     }
 
     #[test]
+    fn tone_fallback_respects_published_tone_counts() {
+        // Two tones on a base that only publishes one-tone variants.
+        assert_eq!(emoji_name("👍🏻🏿"), None);
+        // One tone on a base that only publishes two-tone variants.
+        assert_eq!(emoji_name("🫱🏻‍🫲"), None);
+        // Published counts still resolve, and same-tone groups deduplicate the phrase.
+        assert_eq!(
+            emoji_name("👩🏻‍🤝‍👩🏻").as_deref(),
+            Some("women holding hands: light skin tone")
+        );
+        assert_eq!(
+            emoji_name("🫱🏻‍🫲🏻").as_deref(),
+            Some("handshake: light skin tone")
+        );
+        assert_eq!(
+            emoji_name("🧑🏻‍🤝‍🧑🏻").as_deref(),
+            Some("people holding hands: light skin tone")
+        );
+    }
+
+    #[test]
+    fn leading_tone_or_variation_selector_is_not_a_sequence() {
+        assert_eq!(emoji_name("🏻👋"), None);
+        assert_eq!(emoji_name("\u{FE0F}👍"), None);
+        // A lone skin-tone component is still an entry.
+        assert_eq!(emoji_name("🏻").as_deref(), Some("light skin tone"));
+    }
+
+    #[test]
     fn unnamed_code_points_get_a_label() {
         assert_eq!(name_or_label('\u{f8ff}'), "<private-use-F8FF>");
         assert_eq!(name_or_label('\u{378}'), "<reserved-0378>");
         assert_eq!(name_or_label('\u{FFFE}'), "<noncharacter-FFFE>");
         assert_eq!(name('\u{0}').as_deref(), Some("NULL"));
+        // Controls answer with their formal alias rather than the `<control-…>` label.
+        assert_eq!(name_or_label('\u{0}'), "NULL");
+        assert_eq!(name_or_label('\u{80}'), "PADDING CHARACTER");
     }
 
     #[test]
@@ -787,11 +852,10 @@ mod tests {
     /// instead of a build failure.
     const _: () = assert!(MAX_KEY == zeta_unicode_build::MAX_KEY);
 
-    /// Prints every section's size, then holds the table to [`ENCODER_TABLE_LIMIT`]: the budget
-    /// itself is not reachable until the compressed encoder replaces the uncompressed reference
-    /// one this crate still ships.
+    /// Prints every section's size, then holds the table to the current reference encoder's
+    /// limit. [`TABLE_BUDGET`] is the target for the compressed encoder, not this encoder.
     #[test]
-    fn table_stays_within_the_size_budget() {
+    fn table_stays_within_the_encoder_limit() {
         let measured = [
             ("names", sections::NAMES),
             ("name runs", sections::NAME_RUNS),
