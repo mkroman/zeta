@@ -2,9 +2,10 @@
 //!
 //! `.b <string>` prints the string's UTF-8 bytes as `\x..` hex escapes, `.len <string>` counts
 //! its characters, `.ord <chars>` lists each character's Unicode codepoint, `.rev <string>`
-//! reverses it, and `.uni <chars>` prints every character's Unicode name and general category —
-//! or, when the argument is one emoji sequence, that sequence's name. An empty argument replies
-//! with the command's usage. Results are sent as a notice.
+//! reverses it, and `.uni <chars>` lists every character's name — the emoji name where one
+//! exists — and general category, naming each run of characters that forms an emoji sequence
+//! as a whole. An empty argument replies with the command's usage. Results are sent as a
+//! notice, which supplies each reply's `\x0310> ` prefix.
 
 use std::fmt::Write;
 
@@ -95,13 +96,13 @@ impl StringUtils {
     }
 
     /// The usage line of `command`, or `None` when it has none.
-    fn usage_line(command: CommandSpec) -> Option<&'static str> {
+    fn usage_line(command: CommandSpec) -> Option<String> {
         let usage = match command {
-            BYTES => "Usage: .b\x0f <byte..>",
-            LENGTH => "Usage: .len\x0f <string>",
-            ORD => "Usage: .ord\x0f <chars..>",
-            REVERSE => "Usage: .rev\x0f <string>",
-            UNICODE => "Usage: .uni\x0f <chars>",
+            BYTES => format!("Usage: .b{RESET} <byte..>"),
+            LENGTH => format!("Usage: .len{RESET} <string>"),
+            ORD => format!("Usage: .ord{RESET} <chars..>"),
+            REVERSE => format!("Usage: .rev{RESET} <string>"),
+            UNICODE => format!("Usage: .uni{RESET} <chars>"),
             _ => return None,
         };
 
@@ -109,51 +110,32 @@ impl StringUtils {
     }
 }
 
+/// The `\x0310> ` marker `notice()` prefixes every reply with, budgeted out of the listings.
+const NOTICE_PREFIX_LEN: usize = REPLY_PREFIX.len() + 1;
+/// Appended when a listing does not fit the budget.
+const SUFFIX: &str = ", …";
+
 /// Formats the reply to `.uni`.
 ///
-/// When `args` is exactly one emoji sequence — `🏳️‍🌈`, `🫶🏼`, `2️⃣` — the reply names the
-/// sequence as a whole: `{U+1F3F3, U+FE0F, U+200D, U+1F308}: RAINBOW FLAG`. Otherwise every
-/// character gets its own entry, `U+0064: LATIN SMALL LETTER D (Lowercase Letter)`. Both
-/// listings stop at [`MAX_LISTING_LENGTH`] with an ellipsis.
+/// `notice()` supplies the teal `> ` marker the reply opens with; the message itself lists one
+/// entry per character, each entry naming its codepoint bold inside braces and its general
+/// category in parentheses: `d` answers
+/// `{\x02U+0064\x0f\x0310}:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310)`.
+/// An emoji code point is named by its emoji name, which is the more informative spelling for
+/// the button and squared sets; a run of characters that names an emoji sequence of more than
+/// one code point — `🏳️‍🌈` — is grouped into one entry that names the sequence as a whole and
+/// carries the category of its base character. A listing that does not fit
+/// [`MAX_LISTING_LENGTH`] once the notice prefix is added stops with [`SUFFIX`], and a grouped
+/// sequence's codepoint list is budgeted the same way.
 fn unicode_details(args: &str) -> String {
-    const SUFFIX: &str = ", …";
-    const FRAMING: usize = 1 + 3 + 3; // `}`, `:\x0f ` and `\x0310`
-
-    if let Some(sequence) = emoji_name(args) {
-        let name = sequence.to_uppercase();
-        // The codepoint list is a listing too: canonicalization strips every `U+FE0F`, so
-        // the input that matched can be much longer than the stored key. Reserve the
-        // trailing framing and the ellipsis so a padded input cannot push the reply past
-        // the IRC line budget.
-        let total = args.chars().count();
-        let mut message = String::from("{");
-        // The first entry is appended unconditionally, so the reply only fits while the
-        // stored name leaves room for `{U+10FFFF` on top of the reserved bytes.
-        debug_assert!(
-            "{U+10FFFF".len() + SUFFIX.len() + FRAMING + name.len() <= MAX_LISTING_LENGTH,
-            "the emoji name {name:?} does not leave room for the codepoint list"
-        );
-        let appended = append_entries_within_budget(
-            &mut message,
-            args.chars().map(|c| format!("U+{:04X}", u32::from(c))),
-            ", ",
-            MAX_LISTING_LENGTH,
-            SUFFIX.len() + FRAMING + name.len(),
-        );
-        if appended < total {
-            message.push_str(SUFFIX);
-        }
-        let _ = write!(message, "}}:\x0f {name}\x0310");
-        return message;
-    }
-
-    let total = args.chars().count();
+    let entries = grouped_entries(args);
+    let total = entries.len();
     let mut message = String::new();
     let appended = append_entries_within_budget(
         &mut message,
-        args.chars().map(format_char_entry),
+        entries,
         ", ",
-        MAX_LISTING_LENGTH,
+        MAX_LISTING_LENGTH - NOTICE_PREFIX_LEN,
         SUFFIX.len(),
     );
 
@@ -164,13 +146,104 @@ fn unicode_details(args: &str) -> String {
     message
 }
 
-/// Formats one `.uni` entry: `U+0064:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310)`.
-fn format_char_entry(c: char) -> String {
+/// Renders one entry per character of `args`, grouping each run of characters that names an
+/// emoji sequence of at least two code points into a single entry named as a whole.
+fn grouped_entries(args: &str) -> Vec<String> {
+    let bounds: Vec<usize> = args
+        .char_indices()
+        .map(|(index, _)| index)
+        .chain(std::iter::once(args.len()))
+        .collect();
+    let last = bounds.len() - 1;
+    let mut entries = Vec::new();
+    let mut at = 0usize;
+
+    while at < last {
+        // The longest run from here that names a sequence; a single code point is not a
+        // grouping but a character entry of its own.
+        let grouped = (at + 2..=last)
+            .filter_map(|end| Some((end, emoji_name(&args[bounds[at]..bounds[end]])?)))
+            .max_by_key(|&(end, _)| end);
+
+        if let Some((end, name)) = grouped {
+            let name = name.to_uppercase();
+            entries.push(sequence_entry(&args[bounds[at]..bounds[end]], &name));
+            at = end;
+        } else {
+            let c = args[bounds[at]..]
+                .chars()
+                .next()
+                .expect("a boundary starts a character");
+            entries.push(char_entry(c));
+            at += 1;
+        }
+    }
+
+    entries
+}
+
+/// Renders one grouped emoji sequence: its codepoints bold inside the braces, then the
+/// sequence's name and the category of its base character.
+///
+/// The codepoint list is a listing too: canonicalization strips every `U+FE0F`, so the input
+/// that matched can be much longer than the stored key, and the list stops with [`SUFFIX`]
+/// inside the braces.
+fn sequence_entry(text: &str, name: &str) -> String {
+    let base = text.chars().next().expect("a sequence has a base character");
+    let category = general_category(base).long_name();
+    // Everything that may follow the list: the closing brace with the name and the base
+    // character's category in parentheses.
+    let framing = RESET.len()
+        + COLOR.len()
+        + "}: ".len()
+        + RESET.len()
+        + name.len()
+        + COLOR.len()
+        + " (".len()
+        + category.len()
+        + COLOR.len()
+        + ")".len();
+
+    // The first codepoint is appended unconditionally, so the entry only fits while the name
+    // leaves room for the prefix and `U+10FFFF` on top of the reserved bytes.
+    debug_assert!(
+        NOTICE_PREFIX_LEN + "{".len() + BOLD.len() + "U+10FFFF".len() + SUFFIX.len() + framing
+            <= MAX_LISTING_LENGTH,
+        "the sequence name {name:?} does not leave room for the codepoint list"
+    );
+
+    let total = text.chars().count();
+    let mut entry = format!("{{{BOLD}");
+    let appended = append_entries_within_budget(
+        &mut entry,
+        text.chars().map(|c| format!("U+{:04X}", u32::from(c))),
+        ", ",
+        MAX_LISTING_LENGTH - NOTICE_PREFIX_LEN,
+        SUFFIX.len() + framing,
+    );
+    if appended < total {
+        entry.push_str(SUFFIX);
+    }
+    let _ = write!(entry, "{RESET}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})");
+
+    entry
+}
+
+/// Renders one character entry: its codepoint bold inside the braces, then name and category.
+///
+/// An emoji code point is named by its emoji name — the CLDR spelling says what a character is
+/// for (`AB button (blood type)`) where the character name spells its glyph (`NEGATIVE SQUARED
+/// AB`) — falling back to [`name_or_label`] for everything else.
+fn char_entry(c: char) -> String {
+    let mut encoded = [0u8; 4];
+    let name = emoji_name(c.encode_utf8(&mut encoded)).map_or_else(
+        || name_or_label(c).into_owned(),
+        |name| name.to_uppercase(),
+    );
+    let category = general_category(c).long_name();
     format!(
-        "U+{:04X}:\x0f {}\x0310 (\x0f{}\x0310)",
+        "{{{BOLD}U+{:04X}{RESET}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})",
         u32::from(c),
-        name_or_label(c),
-        general_category(c).long_name()
     )
 }
 
@@ -208,37 +281,77 @@ mod tests {
     fn uni_names_a_single_character() {
         assert_eq!(
             unicode_details("d"),
-            "U+0064:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310)"
+            "{\x02U+0064\x0f\x0310}:\x0f LATIN SMALL LETTER D\x0310 \
+             (\x0fLowercase Letter\x0310)"
         );
         assert_eq!(
             unicode_details("ˇ"),
-            "U+02C7:\x0f CARON\x0310 (\x0fModifier Letter\x0310)"
+            "{\x02U+02C7\x0f\x0310}:\x0f CARON\x0310 \
+             (\x0fModifier Letter\x0310)"
         );
     }
 
     #[test]
     fn uni_names_an_emoji_sequence_as_a_whole() {
-        assert_eq!(unicode_details("🐗"), "{U+1F417}:\x0f BOAR\x0310");
         assert_eq!(
             unicode_details("🏳️‍🌈"),
-            "{U+1F3F3, U+FE0F, U+200D, U+1F308}:\x0f RAINBOW FLAG\x0310"
+            "{\x02U+1F3F3, U+FE0F, U+200D, U+1F308\x0f\x0310}:\x0f RAINBOW FLAG\x0310 \
+             (\x0fOther Symbol\x0310)"
         );
         assert_eq!(
             unicode_details("2️⃣"),
-            "{U+0032, U+FE0F, U+20E3}:\x0f KEYCAP DIGIT TWO\x0310"
+            "{\x02U+0032, U+FE0F, U+20E3\x0f\x0310}:\x0f KEYCAP DIGIT TWO\x0310 \
+             (\x0fDecimal Number\x0310)"
+        );
+        // A single code point is a character entry of its own.
+        assert_eq!(
+            unicode_details("🐗"),
+            "{\x02U+1F417\x0f\x0310}:\x0f BOAR\x0310 (\x0fOther Symbol\x0310)"
+        );
+    }
+
+    #[test]
+    fn uni_names_an_emoji_code_point_by_its_emoji_name() {
+        // `NEGATIVE SQUARED AB` is the character name; the emoji name says what it is for.
+        assert_eq!(
+            unicode_details("🆎"),
+            "{\x02U+1F18E\x0f\x0310}:\x0f AB BUTTON (BLOOD TYPE)\x0310 \
+             (\x0fOther Symbol\x0310)"
+        );
+    }
+
+    #[test]
+    fn uni_groups_a_sequence_beside_a_character() {
+        assert_eq!(
+            unicode_details("🏳️‍🌈🦔"),
+            "{\x02U+1F3F3, U+FE0F, U+200D, U+1F308\x0f\x0310}:\x0f RAINBOW FLAG\x0310 \
+             (\x0fOther Symbol\x0310), \
+             {\x02U+1F994\x0f\x0310}:\x0f HEDGEHOG\x0310 (\x0fOther Symbol\x0310)"
+        );
+    }
+
+    #[test]
+    fn uni_lists_single_emoji_as_characters() {
+        assert_eq!(
+            unicode_details("🦔🫠"),
+            "{\x02U+1F994\x0f\x0310}:\x0f HEDGEHOG\x0310 (\x0fOther Symbol\x0310), \
+             {\x02U+1FAE0\x0f\x0310}:\x0f MELTING FACE\x0310 (\x0fOther Symbol\x0310)"
         );
     }
 
     #[test]
     fn uni_lists_every_characters_name_and_category() {
         assert_eq!(
-            unicode_details("d'être"),
-            "U+0064:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310), \
-             U+0027:\x0f APOSTROPHE\x0310 (\x0fOther Punctuation\x0310), \
-             U+00EA:\x0f LATIN SMALL LETTER E WITH CIRCUMFLEX\x0310 (\x0fLowercase Letter\x0310), \
-             U+0074:\x0f LATIN SMALL LETTER T\x0310 (\x0fLowercase Letter\x0310), \
-             U+0072:\x0f LATIN SMALL LETTER R\x0310 (\x0fLowercase Letter\x0310), \
-             U+0065:\x0f LATIN SMALL LETTER E\x0310 (\x0fLowercase Letter\x0310)"
+            unicode_details("d'êtr"),
+            "{\x02U+0064\x0f\x0310}:\x0f LATIN SMALL LETTER D\x0310 \
+             (\x0fLowercase Letter\x0310), \
+             {\x02U+0027\x0f\x0310}:\x0f APOSTROPHE\x0310 (\x0fOther Punctuation\x0310), \
+             {\x02U+00EA\x0f\x0310}:\x0f LATIN SMALL LETTER E WITH CIRCUMFLEX\x0310 \
+             (\x0fLowercase Letter\x0310), \
+             {\x02U+0074\x0f\x0310}:\x0f LATIN SMALL LETTER T\x0310 \
+             (\x0fLowercase Letter\x0310), \
+             {\x02U+0072\x0f\x0310}:\x0f LATIN SMALL LETTER R\x0310 \
+             (\x0fLowercase Letter\x0310)"
         );
     }
 
@@ -262,29 +375,29 @@ mod tests {
 
         assert!(reply.contains('…'), "reply was not truncated: {reply}");
         assert!(reply.len() <= MAX_LISTING_LENGTH, "{reply}");
-        assert!(reply.ends_with("RAINBOW FLAG\x0310"));
+        assert!(reply.ends_with("Other Symbol\x0310)"), "{reply}");
     }
 
     #[test]
     fn usage_lines_cover_every_command() {
         assert_eq!(
-            StringUtils::usage_line(BYTES),
+            StringUtils::usage_line(BYTES).as_deref(),
             Some("Usage: .b\x0f <byte..>")
         );
         assert_eq!(
-            StringUtils::usage_line(LENGTH),
+            StringUtils::usage_line(LENGTH).as_deref(),
             Some("Usage: .len\x0f <string>")
         );
         assert_eq!(
-            StringUtils::usage_line(ORD),
+            StringUtils::usage_line(ORD).as_deref(),
             Some("Usage: .ord\x0f <chars..>")
         );
         assert_eq!(
-            StringUtils::usage_line(REVERSE),
+            StringUtils::usage_line(REVERSE).as_deref(),
             Some("Usage: .rev\x0f <string>")
         );
         assert_eq!(
-            StringUtils::usage_line(UNICODE),
+            StringUtils::usage_line(UNICODE).as_deref(),
             Some("Usage: .uni\x0f <chars>")
         );
     }
