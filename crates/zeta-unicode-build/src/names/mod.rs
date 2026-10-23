@@ -113,15 +113,11 @@ use zeta_unicode_format::{
     TRANSFORM_DELTA8, TRANSFORM_RAW, delta8,
 };
 
-// ---------------------------------------------------------------- constants
-
 /// Lowest code point the pattern section can describe (the CJK plane start).
 const PATTERN_BASE: u32 = 0x3400;
 
 /// The three name streams, in container order.
 pub const STREAMS: [&str; STREAM_COUNT] = ["plen", "slen", "mids"];
-
-// ------------------------------------------------------------------- output
 
 /// Every size one build produces, in bytes, plus the packed section payloads the caller
 /// ships in the table.
@@ -198,8 +194,6 @@ pub struct SectionSize {
     pub mem_mib: u32,
 }
 
-// -------------------------------------------------------------------- build
-
 /// Builds every artifact and returns the ledger.
 ///
 /// # Errors
@@ -236,7 +230,6 @@ pub fn emit(request: &crate::Request, inputs: &crate::ucd::Inputs) -> Result<Led
         rules.patterns,
     )?;
 
-    // ---- diagnostics and the generated tree --------------------------------
     // A ~1.1 MB dump that nothing reads back, so only report builds create it.
     if request.report {
         let mut expected = String::with_capacity(1_140_000);
