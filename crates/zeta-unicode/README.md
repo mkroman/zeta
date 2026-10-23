@@ -1,5 +1,13 @@
 # zeta-unicode
 
+> [!WARNING]
+> **AI slop — loosely verified.** This crate (the encoder, build script, data handling and this
+> README) was written almost entirely by an AI and reviewed only lightly by a human. The
+> generated table *is* checked at build time against the vendored UCD files, and the crate's
+> tests round-trip every name, but treat the rest — the design notes, the performance claims and
+> the size figures below — as unverified marketing until you have measured them yourself. Read
+> the code before you trust it.
+
 Unicode 18.0.0 character names, general categories and emoji sequence names for the zeta IRC
 bot, compiled from the vendored UCD files in `data/` into one packed table by `build.rs`.
 
