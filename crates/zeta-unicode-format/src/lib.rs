@@ -9,6 +9,8 @@
 //! This crate is deliberately dependency-free: it is linked into the bot through
 //! `zeta-unicode` and into the build script through `zeta-unicode-build`.
 
+pub mod huffman;
+
 /// The five emoji skin-tone code points, in tone order.
 pub const TONES: [u32; 5] = [0x1F3FB, 0x1F3FC, 0x1F3FD, 0x1F3FE, 0x1F3FF];
 

@@ -426,17 +426,19 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
         }
     }
 
+    // Parse the name corpus once; the candidates, pattern section and verification reuse it.
+    let corpus = names::parse_corpus(inputs);
     let (emoji_section, emoji_stats) =
         emoji::build(&inputs.emoji, &inputs.sequences, &inputs.names);
     let (gc_section, gc_stats) = gc::build(&inputs.gc);
-    let (pattern_section, pattern_stats) = patterns::build(&inputs.names);
+    let (pattern_section, pattern_stats) = patterns::pattern_section(corpus.patterns());
     assert_eq!(emoji_stats.section_bytes, emoji_section.len());
     assert_eq!(gc_stats.section_bytes, gc_section.len());
     assert_eq!(pattern_stats.section_bytes, pattern_section.len());
 
     let mut builds: Vec<CandidateBuild> = Vec::with_capacity(shifts.len());
     for &shift in &shifts {
-        let encoded = names::encode_global_with_block_shift(inputs, shift);
+        let encoded = names::encode_global_corpus(&corpus, shift);
         let packed = image::pack_with_layout(
             [
                 encoded.bytes.as_slice(),
@@ -487,7 +489,7 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
         .expect("the chosen index came from this candidate list");
 
     let CandidateBuild { encoded, image, .. } = builds.swap_remove(chosen_index);
-    let layout = verify(&image, inputs)?;
+    let layout = verify_with_corpus(&image, &corpus, inputs.version)?;
     let name_stats = NameStats::from_encoded(&encoded);
     assert_eq!(
         name_stats.total_bytes(),
@@ -561,8 +563,18 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
 /// Panics when the name section does not decode back to every input name: a mismatch is a
 /// build failure, not a runtime condition.
 pub fn verify(image: &[u8], inputs: &Inputs) -> Result<ImageLayout, Error> {
+    let corpus = names::parse_corpus(inputs);
+    verify_with_corpus(image, &corpus, inputs.version)
+}
+
+/// Verifies a packed image against a corpus that has already been parsed.
+fn verify_with_corpus(
+    image: &[u8],
+    corpus: &names::Corpus,
+    version: (u8, u8, u8),
+) -> Result<ImageLayout, Error> {
     let layout = ImageLayout::parse(image)?;
-    if layout.version != inputs.version {
+    if layout.version != version {
         return Err(Error::Image {
             reason: "the image version does not match the inputs",
         });
@@ -579,10 +591,15 @@ pub fn verify(image: &[u8], inputs: &Inputs) -> Result<ImageLayout, Error> {
         })?;
     match layout.name_layout {
         image::LAYOUT_BLOCK_LOCAL => {
-            names::verify_with_block_shift(section, inputs, layout.name_block_shift);
+            names::verify_corpus(
+                section,
+                corpus,
+                layout.name_block_shift,
+                names::NameLayout::BlockLocal,
+            );
         }
         image::LAYOUT_GLOBAL => {
-            names::verify_global_with_block_shift(section, inputs, layout.name_block_shift);
+            names::verify_global_corpus(section, corpus, layout.name_block_shift);
         }
         _ => {
             return Err(Error::Image {

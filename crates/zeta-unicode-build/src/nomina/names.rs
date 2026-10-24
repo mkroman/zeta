@@ -236,6 +236,22 @@ pub fn encode_global_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encod
     encode_layout(inputs, block_shift, NameLayout::Global)
 }
 
+/// Encodes an already parsed corpus with the global checkpointed layout.
+///
+/// Training parses the corpus once and reuses it for every candidate block shift.
+///
+/// # Panics
+///
+/// Panics when `block_shift` is outside [`MIN_BLOCK_SHIFT`]..=[`MAX_BLOCK_SHIFT`].
+#[must_use]
+pub fn encode_global_corpus(corpus: &Corpus, block_shift: u8) -> Encoded {
+    assert!(
+        (MIN_BLOCK_SHIFT..=MAX_BLOCK_SHIFT).contains(&block_shift),
+        "block shift {block_shift} is outside {MIN_BLOCK_SHIFT}..={MAX_BLOCK_SHIFT}"
+    );
+    encode_corpus(corpus, block_shift, NameLayout::Global)
+}
+
 /// Parses the inputs and encodes them with `layout`.
 fn encode_layout(inputs: &Inputs, block_shift: u8, layout: NameLayout) -> Encoded {
     assert!(
@@ -808,7 +824,7 @@ impl BitWriter {
 }
 
 /// The parsed name corpus.
-struct Corpus {
+pub struct Corpus {
     /// `(code point, name)`, ascending by code point.
     entries: Vec<(u32, String)>,
     /// The `*` pattern ranges, ascending by first code point.
@@ -820,6 +836,12 @@ struct Corpus {
 }
 
 impl Corpus {
+    /// The `*` pattern ranges, sorted by start code point.
+    #[must_use]
+    pub fn patterns(&self) -> &[crate::nomina::patterns::Pattern] {
+        &self.patterns
+    }
+
     /// The Hangul name for `cp`, or `None` outside the syllable range.
     fn hangul_name(cp: u32) -> Option<String> {
         if !(HANGUL_START..=HANGUL_END).contains(&cp) {
@@ -861,7 +883,7 @@ const JAMO_TRAILING: [&str; 28] = [
 /// Panics with the file and line when a record is malformed, when a name is longer than
 /// 255 bytes, or when a code point appears twice. Malformed vendored data is a build
 /// failure.
-fn parse_corpus(inputs: &Inputs) -> Corpus {
+pub fn parse_corpus(inputs: &Inputs) -> Corpus {
     let mut entries: Vec<(u32, String)> = Vec::with_capacity(35_400);
     let mut hangul: Vec<(u32, String)> = Vec::with_capacity(HANGUL_COUNT);
 
@@ -1037,6 +1059,24 @@ pub fn verify_global_with_block_shift(section: &[u8], inputs: &Inputs, block_shi
 /// Panics on the first mismatch, or when the section is malformed.
 pub fn verify_layout(section: &[u8], inputs: &Inputs, block_shift: u8, layout: NameLayout) {
     let corpus = parse_corpus(inputs);
+    verify_corpus(section, &corpus, block_shift, layout);
+}
+
+/// Verifies a global, checkpointed section against an already parsed corpus.
+///
+/// # Panics
+///
+/// Panics on the first mismatch, or when the section is malformed.
+pub fn verify_global_corpus(section: &[u8], corpus: &Corpus, block_shift: u8) {
+    verify_corpus(section, corpus, block_shift, NameLayout::Global);
+}
+
+/// The corpus-level checks shared by every verification entry point.
+///
+/// # Panics
+///
+/// Panics on the first mismatch, or when the section is malformed.
+pub fn verify_corpus(section: &[u8], corpus: &Corpus, block_shift: u8, layout: NameLayout) {
     let mut decoded = Decoded::new(section, block_shift, layout);
     assert_eq!(
         decoded.name_count,

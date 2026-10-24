@@ -20,6 +20,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use bytes::Buf;
+use zeta_unicode_format::huffman;
 use zeta_unicode_format::{
     MAX_CPS, MAX_KEY, RULE_CLOCK, RULE_COUNT, RULE_COUPLE, RULE_FACING, RULE_FAMILY,
     RULE_GENDER_MAN, RULE_GENDER_WOMAN, RULE_KEYCAP, RULE_KEYCAP_10, RULE_KISS, RULE_LITERAL,
@@ -543,139 +544,6 @@ fn packed(blob: &[u8], index: usize, width: usize) -> Option<u8> {
     let next = blob.get(bit / 8 + 1).copied().unwrap_or(0);
     let value = (u16::from(*byte) | (u16::from(next) << 8)) >> (bit % 8);
     Some(u8::try_from(value & ((1u16 << width) - 1)).expect("the field fits in a byte"))
-}
-
-/// Hand-written canonical Huffman decoding for the section streams.
-pub mod huffman {
-    /// The longest code a model may use.
-    const MAX_BITS: usize = 32;
-
-    /// Decodes a stream built by the generator.
-    ///
-    /// Returns `None` for a truncated codebook, an invalid code, or a payload shorter than
-    /// `raw_len`.
-    #[must_use]
-    pub fn decode(stream: &[u8], raw_len: usize, order: u8) -> Option<Vec<u8>> {
-        if raw_len == 0 {
-            return Some(Vec::new());
-        }
-        if order > 1 {
-            return None;
-        }
-        let mut at = 0usize;
-        let context_count = usize::from(*stream.get(at)?);
-        at += 1;
-        let mut models: Vec<Option<Model>> = Vec::new();
-        models.resize_with(256, || None);
-        for _ in 0..context_count {
-            let context = usize::from(*stream.get(at)?);
-            at += 1;
-            let symbol_count = usize::from(*stream.get(at)?);
-            at += 1;
-            let mut pairs = Vec::with_capacity(symbol_count);
-            for _ in 0..symbol_count {
-                let symbol = *stream.get(at)?;
-                at += 1;
-                let length = usize::from(*stream.get(at)?);
-                at += 1;
-                if length == 0 || length > MAX_BITS {
-                    return None;
-                }
-                pairs.push((symbol, length));
-            }
-            *models.get_mut(context)? = Some(Model::new(&pairs)?);
-        }
-
-        let mut reader = BitReader::new(stream.get(at..)?);
-        let mut out = Vec::with_capacity(raw_len);
-        let mut previous = 0u8;
-        for _ in 0..raw_len {
-            let context = if order == 0 { 0 } else { previous };
-            let symbol = models
-                .get(usize::from(context))?
-                .as_ref()?
-                .symbol(&mut reader)?;
-            out.push(symbol);
-            previous = symbol;
-        }
-        Some(out)
-    }
-
-    /// A canonical Huffman model: bit-length counts and symbols in canonical order.
-    struct Model {
-        counts: [u16; MAX_BITS + 1],
-        symbols: Vec<u8>,
-        max_bits: usize,
-    }
-
-    impl Model {
-        /// Builds the decoder model from `(symbol, length)` pairs.
-        fn new(pairs: &[(u8, usize)]) -> Option<Self> {
-            let mut counts = [0u16; MAX_BITS + 1];
-            let mut lengths = [0usize; 256];
-            let mut max_bits = 0usize;
-            for &(symbol, length) in pairs {
-                let symbol = usize::from(symbol);
-                if length == 0 || length > MAX_BITS || lengths[symbol] != 0 {
-                    return None;
-                }
-                lengths[symbol] = length;
-                counts[length] += 1;
-                max_bits = max_bits.max(length);
-            }
-            let mut symbols = Vec::with_capacity(pairs.len());
-            for length in 1..=max_bits {
-                for (symbol, &symbol_length) in lengths.iter().enumerate() {
-                    if symbol_length == length {
-                        symbols.push(u8::try_from(symbol).ok()?);
-                    }
-                }
-            }
-            Some(Self {
-                counts,
-                symbols,
-                max_bits,
-            })
-        }
-
-        /// Decodes one symbol.
-        fn symbol(&self, reader: &mut BitReader<'_>) -> Option<u8> {
-            let mut code = 0usize;
-            let mut first = 0usize;
-            let mut index = 0usize;
-            for length in 1..=self.max_bits {
-                code = (code << 1) | usize::from(reader.bit()?);
-                let count = usize::from(*self.counts.get(length)?);
-                if code >= first && code - first < count {
-                    return self.symbols.get(index + code - first).copied();
-                }
-                index += count;
-                first = (first + count) << 1;
-            }
-            None
-        }
-    }
-
-    /// An MSB-first bit reader.
-    struct BitReader<'a> {
-        data: &'a [u8],
-        position: usize,
-    }
-
-    impl<'a> BitReader<'a> {
-        /// Starts at the first bit of `data`.
-        const fn new(data: &'a [u8]) -> Self {
-            Self { data, position: 0 }
-        }
-
-        /// Reads one bit.
-        fn bit(&mut self) -> Option<u8> {
-            let byte = self.data.get(self.position >> 3)?;
-            let bit = (byte >> (7 - (self.position & 7))) & 1;
-            self.position += 1;
-            Some(bit)
-        }
-    }
 }
 
 #[cfg(test)]

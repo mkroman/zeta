@@ -19,11 +19,10 @@
 //! offending range. This is build-time code generation: a bad byte is a build failure.
 
 use bytes::BufMut;
+use zeta_unicode_format::huffman;
 use zeta_unicode_format::{GC_SHORT_NAMES, UNICODE_END, write_varint};
 
 use crate::ucd::{hex_u32, records};
-
-use super::emoji::huffman;
 
 /// The general category range table: `(start, end, table id)`.
 pub type GcRange = (u32, u32, u8);

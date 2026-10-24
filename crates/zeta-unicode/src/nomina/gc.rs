@@ -17,11 +17,10 @@
 //! in the low [`GC_ID_BITS`] bits.
 
 use bytes::Buf;
+use zeta_unicode_format::huffman;
 use zeta_unicode_format::{
     GC_ID_BITS, GC_ID_MASK, GC_PAGES, GC_SHIFT, GC_SHORT_NAMES, UNICODE_END,
 };
-
-use super::emoji::huffman;
 
 /// The parsed general-category section.
 pub struct Gc {
