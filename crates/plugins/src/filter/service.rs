@@ -163,7 +163,11 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(Some("#smoke"), Some("example.com"), Some("*other")))
+            .add(new_filter(
+                Some("#smoke"),
+                Some("example.com"),
+                Some("*other"),
+            ))
             .await
             .unwrap();
 
@@ -178,7 +182,11 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(Some("#smoke"), Some("example.com"), Some("*other")))
+            .add(new_filter(
+                Some("#smoke"),
+                Some("example.com"),
+                Some("*other"),
+            ))
             .await
             .unwrap();
 
@@ -203,7 +211,10 @@ mod tests {
     async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
         let service = FilterService::new(db);
 
-        service.add(new_filter(None, Some("*.com"), None)).await.unwrap();
+        service
+            .add(new_filter(None, Some("*.com"), None))
+            .await
+            .unwrap();
 
         assert!(service.matches(
             "#anywhere",

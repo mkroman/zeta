@@ -93,24 +93,31 @@ impl Criteria {
     /// Whether the criteria select `filter`.
     #[must_use]
     pub fn matches(&self, filter: &Filter) -> bool {
-        Self::matches_field(self.channel.as_deref(), filter.channel.as_deref(), Case::Insensitive)
-            && Self::matches_field(self.host.as_deref(), filter.host.as_deref(), Case::Insensitive)
-            && Self::matches_field(self.path.as_deref(), filter.path.as_deref(), Case::Sensitive)
-            && Self::matches_field(
-                self.nickname.as_deref(),
-                filter.nickname.as_deref(),
-                Case::Insensitive,
-            )
-            && Self::matches_field(
-                self.username.as_deref(),
-                filter.username.as_deref(),
-                Case::Insensitive,
-            )
-            && Self::matches_field(
-                self.hostname.as_deref(),
-                filter.hostname.as_deref(),
-                Case::Insensitive,
-            )
+        Self::matches_field(
+            self.channel.as_deref(),
+            filter.channel.as_deref(),
+            Case::Insensitive,
+        ) && Self::matches_field(
+            self.host.as_deref(),
+            filter.host.as_deref(),
+            Case::Insensitive,
+        ) && Self::matches_field(
+            self.path.as_deref(),
+            filter.path.as_deref(),
+            Case::Sensitive,
+        ) && Self::matches_field(
+            self.nickname.as_deref(),
+            filter.nickname.as_deref(),
+            Case::Insensitive,
+        ) && Self::matches_field(
+            self.username.as_deref(),
+            filter.username.as_deref(),
+            Case::Insensitive,
+        ) && Self::matches_field(
+            self.hostname.as_deref(),
+            filter.hostname.as_deref(),
+            Case::Insensitive,
+        )
     }
 
     /// Whether `pattern` matches `value`, or is unset.
@@ -125,8 +132,9 @@ impl Criteria {
 
         match case {
             Case::Sensitive => wildmatch::WildMatch::new(pattern).matches(value),
-            Case::Insensitive => wildmatch::WildMatch::new(&pattern.to_lowercase())
-                .matches(&value.to_lowercase()),
+            Case::Insensitive => {
+                wildmatch::WildMatch::new(&pattern.to_lowercase()).matches(&value.to_lowercase())
+            }
         }
     }
 }

@@ -102,9 +102,7 @@ impl Entry {
     fn sender_matches(&self, sender: Option<Sender<'_>>) -> bool {
         let Some(sender) = sender else {
             // A set sender criterion needs a sender to match against.
-            return self.nickname.is_none()
-                && self.username.is_none()
-                && self.hostname.is_none();
+            return self.nickname.is_none() && self.username.is_none() && self.hostname.is_none();
         };
 
         Self::field_matches(self.nickname.as_ref(), sender.nick)
@@ -437,7 +435,10 @@ mod tests {
         }]);
 
         assert!(index.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
-        assert!(!index.ignores("#chan", Some(Sender::new("someone", "user", "host.example"))));
+        assert!(!index.ignores(
+            "#chan",
+            Some(Sender::new("someone", "user", "host.example"))
+        ));
         assert!(!index.ignores("#chan", None));
 
         let user = index_with(&[NewFilter {
@@ -445,7 +446,10 @@ mod tests {
             ..new_filter(None, None)
         }]);
 
-        assert!(user.ignores("#chan", Some(Sender::new("someone", "~cliother", "host.example"))));
+        assert!(user.ignores(
+            "#chan",
+            Some(Sender::new("someone", "~cliother", "host.example"))
+        ));
 
         let hostname = index_with(&[NewFilter {
             hostname: Some("*.isp.example".into()),

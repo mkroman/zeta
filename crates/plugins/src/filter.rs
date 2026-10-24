@@ -406,7 +406,10 @@ impl FilterPlugin {
             listing(
                 reply(
                     "Filter",
-                    format!("{} matching your criteria: ", plural(filters.len(), "filter")),
+                    format!(
+                        "{} matching your criteria: ",
+                        plural(filters.len(), "filter")
+                    ),
                 ),
                 &filters,
                 0,
@@ -432,9 +435,14 @@ impl FilterPlugin {
 
             // The removed filter is named in the reply, and an unknown id is answered without
             // touching the database.
-            let Some(filter) = self.service.list().into_iter().find(|filter| filter.id == id)
+            let Some(filter) = self
+                .service
+                .list()
+                .into_iter()
+                .find(|filter| filter.id == id)
             else {
-                client.send_privmsg(channel, reply("Filter", format!("No filter with id {id}.")))?;
+                client
+                    .send_privmsg(channel, reply("Filter", format!("No filter with id {id}.")))?;
 
                 return Ok(());
             };
@@ -499,10 +507,7 @@ impl FilterPlugin {
             Ok(removed) if removed == filters.len() as u64 => {
                 changed_response("Filter", "Removed", &filters)
             }
-            Ok(removed) => format!(
-                "Removed {removed} of {} matching filters.",
-                filters.len()
-            ),
+            Ok(removed) => format!("Removed {removed} of {} matching filters.", filters.len()),
             Err(error) => format!("could not delete the filters: {error}"),
         };
 
@@ -524,7 +529,8 @@ impl Plugin<Context> for FilterPlugin {
         subscriptions.command(FILTER);
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 
-        ctx.shared.publish(Arc::new(UrlFilters::new(service.clone())));
+        ctx.shared
+            .publish(Arc::new(UrlFilters::new(service.clone())));
 
         let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");
 

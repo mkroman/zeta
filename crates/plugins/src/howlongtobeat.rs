@@ -297,11 +297,7 @@ impl HowLongToBeat {
     }
 
     /// Executes the HTTP POST request to the API with the necessary headers and payload.
-    async fn perform_search_request(
-        &self,
-        token: &str,
-        query: &str,
-    ) -> Result<Vec<Game>, Error> {
+    async fn perform_search_request(&self, token: &str, query: &str) -> Result<Vec<Game>, Error> {
         let url = format!("{BASE_URL}/api/search/site");
         let search_terms: Vec<&str> = query.split_whitespace().collect();
 
