@@ -90,25 +90,23 @@ pub struct Imdb {
     client: GraphQlClient,
 }
 
-#[async_trait]
-impl Plugin<Context> for Imdb {
-    type Settings = Settings;
-
+#[plugin(name = "imdb", settings = Settings, urls(hosts = URL_HOSTS))]
+impl Imdb {
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions
-            .command(COMMAND)
-            .urls(UrlScope::Hosts(URL_HOSTS));
+        subscriptions.command(COMMAND);
 
         let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
 
         Ok(Self { client })
     }
 
-    async fn handle_command(
+    /// Replies to `!imdb` with the top title matching the query.
+    #[handler(command)]
+    async fn search(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -147,7 +145,9 @@ impl Plugin<Context> for Imdb {
         Ok(())
     }
 
-    async fn handle_url(
+    /// Expands posted IMDb links with details about the title or person they point at.
+    #[handler(url)]
+    async fn expand_url(
         &self,
         _ctx: &Context,
         client: &Client,
