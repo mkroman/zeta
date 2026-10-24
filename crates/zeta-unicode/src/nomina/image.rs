@@ -76,11 +76,11 @@ impl<'a> Nomina<'a> {
     /// Parses a Nomina image.
     ///
     /// Returns `None` when the magic, section count, header shifts, section bounds or the
-    /// name section are invalid. The image must live for `'static` because every returned
-    /// name borrows from it.
+    /// name section are invalid. The image must outlive the returned [`Nomina`] because every
+    /// returned name borrows from it.
     #[must_use]
     pub fn new(table: &'a [u8]) -> Option<Self> {
-        if table.len() < HEADER_LEN || table.get(..4) != Some(MAGIC.as_slice()) {
+        if table.len() < HEADER_LEN || table.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
             return None;
         }
         let section_count = *table.get(SECTION_COUNT_AT)?;
