@@ -15,10 +15,6 @@ use argh::{CommandInfoWithArgs, FlagInfo, FlagInfoKind, Optionality, PositionalI
 use crate::prelude::*;
 use zeta_utils::utils::append_entries_within_budget;
 
-/// The `.help` command.
-const HELP: CommandSpec =
-    CommandSpec::new(".help", "List plugins and commands, or show usage for one");
-
 /// The maximum length of a help message, assuming the IRCv3 extended line length of 8191 bytes
 /// and leaving room for the sender prefix, `PRIVMSG` framing and line ending overhead.
 const MAX_MESSAGE_LENGTH: usize = 7679;
@@ -37,21 +33,21 @@ pub struct Help;
 impl Help {
     // The constructor signature is fixed by the `Plugin` trait: `NoSettings` is a unit type the
     // constructor cannot fail over, so the by-reference parameter and the `Result` wrapper stay.
-    fn new(
+    const fn new(
         _ctx: &Context,
         _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(HELP);
         Ok(Self)
     }
 
     /// Replies with a usage hint and plugin index, a plugin's commands, or a command's usage.
-    #[handler(command)]
+    #[command(".help", "List plugins and commands, or show usage for one", event)]
     async fn help(
         &self,
         ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
