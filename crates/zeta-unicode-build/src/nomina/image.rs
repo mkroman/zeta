@@ -73,14 +73,14 @@ pub fn pack_global(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> V
 
 /// Packs four sections with explicit header shifts.
 ///
-/// The shifts are exposed for the block-size and page-size measurements; the shipped image
-/// uses [`pack`], so a decoder that ignores the header fields still sees the documented
-/// layout.
+/// The shifts are exposed for the block-size measurements; the shipped image uses [`pack`],
+/// so a decoder that ignores the header fields still sees the documented layout.
 ///
 /// # Panics
 ///
-/// Panics when a section length or the final image size does not fit in a `u32`. The
-/// generator never produces anything near that limit.
+/// Panics when a section length or the final image size does not fit in a `u32`, or when
+/// `gc_page_shift` is not [`GC_PAGE_SHIFT`]. The generator never produces anything near that
+/// limit, and the runtime rejects any other page shift in `Nomina::new`.
 #[must_use]
 pub fn pack_with(
     sections: [&[u8]; SECTION_COUNT],
@@ -101,8 +101,9 @@ pub fn pack_with(
 ///
 /// # Panics
 ///
-/// Panics when a section length or the final image size does not fit in a `u32`, or when
-/// `name_layout` is not one of [`LAYOUT_BLOCK_LOCAL`] / [`LAYOUT_GLOBAL`].
+/// Panics when a section length or the final image size does not fit in a `u32`, when
+/// `gc_page_shift` is not [`GC_PAGE_SHIFT`], or when `name_layout` is not one of
+/// [`LAYOUT_BLOCK_LOCAL`] / [`LAYOUT_GLOBAL`].
 #[must_use]
 pub fn pack_with_layout(
     sections: [&[u8]; SECTION_COUNT],
@@ -111,6 +112,11 @@ pub fn pack_with_layout(
     gc_page_shift: u8,
     name_layout: u8,
 ) -> Vec<u8> {
+    assert!(
+        gc_page_shift == GC_PAGE_SHIFT,
+        "the general-category page shift is fixed at {GC_PAGE_SHIFT} \
+         (the runtime rejects any other value), got {gc_page_shift}"
+    );
     assert!(
         matches!(name_layout, LAYOUT_BLOCK_LOCAL | LAYOUT_GLOBAL),
         "unknown name layout {name_layout}"
@@ -189,13 +195,19 @@ mod tests {
 
     #[test]
     fn explicit_shifts_are_recorded() {
-        let image = pack_with([b"", b"", b"", b""], (1, 2, 3), 7, 12);
+        let image = pack_with([b"", b"", b"", b""], (1, 2, 3), 7, GC_PAGE_SHIFT);
         assert_eq!(image[11], 7);
-        assert_eq!(image[12], 12);
+        assert_eq!(image[12], GC_PAGE_SHIFT);
         assert_eq!(image[13], LAYOUT_BLOCK_LOCAL);
         assert_eq!(u16::from_le_bytes([image[4], image[5]]), 1);
         assert_eq!(u16::from_le_bytes([image[6], image[7]]), 2);
         assert_eq!(u16::from_le_bytes([image[8], image[9]]), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "general-category page shift is fixed at 11")]
+    fn a_non_canonical_gc_page_shift_is_rejected() {
+        let _ = pack_with([b"", b"", b"", b""], (1, 2, 3), 7, 12);
     }
 
     #[test]

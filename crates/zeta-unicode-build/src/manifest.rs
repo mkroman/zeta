@@ -60,7 +60,8 @@ fn push_versions(out: &mut String, inputs: &crate::ucd::Inputs) {
 ///
 /// # Errors
 ///
-/// Returns [`Error`](crate::Error) when `manifest.json` cannot be written.
+/// Returns [`Error`](crate::Error) when `manifest.json` cannot be written, or when an input
+/// path is not inside `data_dir`.
 pub fn write_manifest(
     data_dir: &Path,
     out_dir: &Path,
@@ -225,7 +226,7 @@ fn input_records(
             path: path.to_path_buf(),
             source,
         })?;
-        records.push(record(path, &bytes, data_dir));
+        records.push(record(path, &bytes, data_dir)?);
     }
     Ok(records)
 }
@@ -279,35 +280,84 @@ fn push_json_string(out: &mut String, value: &str) {
 }
 
 /// Builds one manifest record from a resolved path and its contents.
-fn record(path: &Path, bytes: &[u8], data_dir: &Path) -> InputRecord {
-    InputRecord {
+///
+/// # Errors
+///
+/// Returns [`Error::OutsideDataDir`] when `path` is not inside `data_dir`: the manifest must
+/// never fall back to a wrong shorter path.
+fn record(path: &Path, bytes: &[u8], data_dir: &Path) -> Result<InputRecord, crate::Error> {
+    Ok(InputRecord {
         name: path.file_name().map_or_else(
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         ),
-        path: relative_path(path, data_dir),
+        path: relative_path(path, data_dir)?,
         size: bytes.len(),
         hash: fnv1a64(bytes),
-    }
+    })
 }
 
 /// Renders `path` relative to `data_dir`, with `/` separators and no absolute components.
-fn relative_path(path: &Path, data_dir: &Path) -> String {
-    let relative = if data_dir.as_os_str().is_empty() {
-        path.file_name().map_or(path, Path::new)
-    } else {
-        path.strip_prefix(data_dir)
-            .ok()
-            .filter(|relative| !relative.as_os_str().is_empty())
-            .or_else(|| path.file_name().map(Path::new))
-            .unwrap_or(path)
+///
+/// # Errors
+///
+/// Returns [`Error::OutsideDataDir`] when `path` is not strictly inside `data_dir`. The
+/// manifest records where a rebuild must place every input, so a silently shortened path
+/// would lie about that.
+fn relative_path(path: &Path, data_dir: &Path) -> Result<String, crate::Error> {
+    let outside = || crate::Error::OutsideDataDir {
+        path: path.to_path_buf(),
+        data_dir: data_dir.to_path_buf(),
     };
-    relative
+    let relative = path.strip_prefix(data_dir).map_err(|_| outside())?;
+    if relative.as_os_str().is_empty() {
+        return Err(outside());
+    }
+    let rendered = relative
         .components()
         .filter_map(|component| match component {
             Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
             _ => None,
         })
         .collect::<Vec<_>>()
-        .join("/")
+        .join("/");
+    if rendered.is_empty() {
+        return Err(outside());
+    }
+    Ok(rendered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_path_under_the_data_dir_renders_with_slash_separators() {
+        let path = Path::new("/data/ucd/extracted/DerivedName.txt");
+        let rendered = relative_path(path, Path::new("/data")).expect("a path under the data dir");
+        assert_eq!(rendered, "ucd/extracted/DerivedName.txt");
+    }
+
+    #[test]
+    fn a_path_outside_the_data_dir_is_an_error() {
+        for (path, data_dir) in [
+            ("/other/DerivedName.txt", "/data"),
+            ("/data", "/data"),
+            ("/database/DerivedName.txt", "/data"),
+        ] {
+            let error = relative_path(Path::new(path), Path::new(data_dir))
+                .expect_err("the path is not strictly inside the data dir");
+            assert!(
+                matches!(error, crate::Error::OutsideDataDir { .. }),
+                "{path} under {data_dir}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_data_dir_takes_the_whole_relative_path() {
+        let rendered = relative_path(Path::new("data/DerivedName.txt"), Path::new(""))
+            .expect("an empty prefix matches every relative path");
+        assert_eq!(rendered, "data/DerivedName.txt");
+    }
 }

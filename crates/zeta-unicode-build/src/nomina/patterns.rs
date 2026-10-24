@@ -108,10 +108,14 @@ pub fn parse_patterns(derived_names: &str) -> Vec<Pattern> {
 
 /// Encodes a sorted pattern list.
 ///
+/// The section is decoded back and every range and dictionary entry is asserted to round-trip
+/// exactly before it is returned.
+///
 /// # Panics
 ///
-/// Panics when a range is unsorted or reversed, a dictionary string is over 255 bytes, or the
-/// list is longer than 255 entries. That is a build failure, not a runtime condition.
+/// Panics when a range is unsorted or reversed, a dictionary string is over 255 bytes, the
+/// list is longer than 255 entries, or the encoded section does not decode back to
+/// `patterns`. That is a build failure, not a runtime condition.
 #[must_use]
 pub fn pattern_section(patterns: &[Pattern]) -> (Vec<u8>, PatternStats) {
     let mut stats = PatternStats {
@@ -189,7 +193,130 @@ pub fn pattern_section(patterns: &[Pattern]) -> (Vec<u8>, PatternStats) {
     stats.section_bytes = section.len();
     stats.dictionary_bytes = dictionary_bytes;
     stats.records_bytes = records.len();
+    assert_round_trip(&section, patterns);
     (section, stats)
+}
+
+/// A decoded pattern section: both dictionaries and every range with its dictionary ids.
+struct DecodedSection {
+    prefixes: Vec<String>,
+    suffixes: Vec<String>,
+    /// `(start, end, prefix id, suffix id)` per record, in section order.
+    ranges: Vec<(u32, u32, u8, u8)>,
+}
+
+/// Decodes a pattern section back into its dictionaries and ranges.
+///
+/// # Panics
+///
+/// Panics when the section is truncated or a dictionary string is not UTF-8: a malformed
+/// section is a build failure, not a runtime condition.
+fn decode_section(section: &[u8]) -> DecodedSection {
+    let mut at = 1usize;
+    let count = usize::from(section[0]);
+    let mut dictionaries = Vec::with_capacity(2);
+    for _ in 0..2 {
+        let entries = usize::from(section[at]);
+        at += 1;
+        let mut dictionary = Vec::with_capacity(entries);
+        for _ in 0..entries {
+            let length = usize::from(section[at]);
+            at += 1;
+            dictionary.push(
+                std::str::from_utf8(&section[at..at + length])
+                    .expect("UTF-8")
+                    .to_owned(),
+            );
+            at += length;
+        }
+        dictionaries.push(dictionary);
+    }
+    let mut ranges = Vec::with_capacity(count);
+    let mut start = 0u32;
+    for _ in 0..count {
+        let (delta, used) =
+            zeta_unicode_format::read_varint(section.get(at..).expect("a start varint"))
+                .expect("a start varint");
+        at += used;
+        start = start.checked_add(delta).expect("pattern starts fit in u32");
+        let (length, used) =
+            zeta_unicode_format::read_varint(section.get(at..).expect("a length varint"))
+                .expect("a length varint");
+        at += used;
+        let end = start
+            .checked_add(length.checked_sub(1).expect("a pattern length of zero"))
+            .expect("a pattern end fits in u32");
+        ranges.push((start, end, section[at], section[at + 1]));
+        at += 2;
+    }
+    assert_eq!(at, section.len(), "trailing pattern-section bytes");
+    DecodedSection {
+        prefixes: dictionaries.remove(0),
+        suffixes: dictionaries.remove(0),
+        ranges,
+    }
+}
+
+/// Asserts the section decodes back to exactly `patterns`.
+///
+/// # Panics
+///
+/// Panics on the first range or dictionary entry that does not match: a mismatch is a build
+/// failure, not a runtime condition.
+fn assert_round_trip(section: &[u8], patterns: &[Pattern]) {
+    let decoded = decode_section(section);
+    assert_eq!(
+        decoded.ranges.len(),
+        patterns.len(),
+        "the pattern count does not round-trip"
+    );
+    for (index, pattern) in patterns.iter().enumerate() {
+        let (start, end, prefix_id, suffix_id) = decoded.ranges[index];
+        assert_eq!(start, pattern.lo, "pattern {index} start");
+        assert_eq!(end, pattern.hi, "pattern {index} end");
+        assert_eq!(
+            decoded
+                .prefixes
+                .get(usize::from(prefix_id))
+                .map(String::as_str),
+            Some(pattern.prefix.as_str()),
+            "pattern {index} prefix"
+        );
+        assert_eq!(
+            decoded
+                .suffixes
+                .get(usize::from(suffix_id))
+                .map(String::as_str),
+            Some(pattern.suffix.as_str()),
+            "pattern {index} suffix"
+        );
+    }
+    let wanted_prefixes: BTreeSet<&str> = patterns
+        .iter()
+        .map(|pattern| pattern.prefix.as_str())
+        .collect();
+    let wanted_suffixes: BTreeSet<&str> = patterns
+        .iter()
+        .map(|pattern| pattern.suffix.as_str())
+        .collect();
+    assert_eq!(
+        decoded
+            .prefixes
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        wanted_prefixes,
+        "the prefix dictionary does not round-trip"
+    );
+    assert_eq!(
+        decoded
+            .suffixes
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        wanted_suffixes,
+        "the suffix dictionary does not round-trip"
+    );
 }
 
 /// The non-empty, non-comment records of a UCD file, with 1-based line numbers.
@@ -255,42 +382,11 @@ mod tests {
     }
 
     fn decode(section: &[u8]) -> Decoded {
-        let mut at = 0usize;
-        let count = usize::from(section[at]);
-        at += 1;
-        let mut dictionaries = Vec::new();
-        for _ in 0..2 {
-            let entries = usize::from(section[at]);
-            at += 1;
-            let mut dictionary = Vec::with_capacity(entries);
-            for _ in 0..entries {
-                let length = usize::from(section[at]);
-                at += 1;
-                dictionary.push(
-                    std::str::from_utf8(&section[at..at + length])
-                        .expect("UTF-8")
-                        .to_owned(),
-                );
-                at += length;
-            }
-            dictionaries.push(dictionary);
-        }
-        let mut ranges = Vec::with_capacity(count);
-        let mut start = 0u32;
-        for _ in 0..count {
-            let (delta, used) = zeta_unicode_format::read_varint(&section[at..]).expect("delta");
-            at += used;
-            start += delta;
-            let (length, used) = zeta_unicode_format::read_varint(&section[at..]).expect("length");
-            at += used;
-            ranges.push((start, start + length - 1, section[at], section[at + 1]));
-            at += 2;
-        }
-        assert_eq!(at, section.len());
+        let decoded = decode_section(section);
         Decoded {
-            prefixes: dictionaries.remove(0),
-            suffixes: dictionaries.remove(0),
-            ranges,
+            prefixes: decoded.prefixes,
+            suffixes: decoded.suffixes,
+            ranges: decoded.ranges,
         }
     }
 

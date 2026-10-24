@@ -3,9 +3,10 @@
 //! [`train`] parses the vendored inputs through the [`crate::nomina`] encoders and measures
 //! every name-block candidate a [`Profile`] asks for. The emoji, general-category and
 //! pattern sections do not depend on the name layout, so they are encoded once; only the name
-//! section and the final packing run per candidate. [`Profile::priority`] then picks one
-//! image, [`verify`] re-decodes its name section, and the budget and optional baseline are
-//! checked before [`TrainOutput`] is returned.
+//! section and the final packing run per candidate. Candidates that miss the budget are
+//! dropped, [`Profile::priority`] then picks one image among the fitting ones, [`verify`]
+//! re-decodes its name section, and the optional baseline is checked before [`TrainOutput`]
+//! is returned.
 //!
 //! Training is deterministic: the same [`Inputs`] and profile always produce byte-identical
 //! images and reports. Nothing reads the clock or the filesystem.
@@ -42,7 +43,7 @@ pub enum Error {
         /// Why the image was rejected.
         reason: &'static str,
     },
-    /// The chosen image is larger than the profile's budget.
+    /// No candidate fits the profile's budget; the reported image is the smallest candidate.
     #[error("the image is {total_bytes} B, over the {max_bytes} B budget (block shift {shift})")]
     Budget {
         /// The block shift the chosen image used.
@@ -263,21 +264,29 @@ pub struct Candidate {
 }
 
 /// What each stage round-tripped.
+///
+/// Every flag is backed by a check that actually runs before a [`TrainOutput`] is returned:
+/// the builders and the name verifier `assert!` on any mismatch, so a failed round-trip
+/// aborts training with a panic rather than reporting `false`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "the five checks are independent facts reported in the manifest"
 )]
 pub struct Verification {
-    /// The name section decoded back to every name.
+    /// The chosen name section decoded back to every input name, in [`verify`].
     pub names: bool,
-    /// The emoji streams decoded back to every entry.
+    /// The emoji streams decoded back to every entry; enforced by the emoji builder's
+    /// internal round-trip assertions.
     pub emoji: bool,
-    /// The category streams rebuilt every range.
+    /// The category streams rebuilt into every range; enforced by the general-category
+    /// builder's internal round-trip assertions.
     pub gc: bool,
-    /// The pattern ranges materialized every code point.
+    /// Every pattern range and dictionary entry decoded back; enforced by the pattern
+    /// builder's internal round-trip assertions.
     pub patterns: bool,
-    /// The image header and section directory are consistent.
+    /// The image header and section directory validated by [`ImageLayout::parse`] in
+    /// [`verify`].
     pub image: bool,
 }
 
@@ -338,16 +347,18 @@ pub struct BaselineComparison {
 /// Trains one Nomina image from already parsed inputs.
 ///
 /// Emoji, general-category and pattern sections are encoded and verified once. Each candidate
-/// block shift then encodes the name section, packs a complete image and records its size; the
-/// priority picks one candidate. The chosen name section is re-decoded against the inputs, the
-/// image layout is validated, and the budget and baseline are enforced.
+/// block shift then encodes the name section, packs a complete image and records its size;
+/// candidates over [`Profile::max_table_bytes`] are dropped and the priority picks one of the
+/// rest. The chosen name section is re-decoded against the inputs, the image layout is
+/// validated, and the baseline is enforced.
 ///
 /// # Errors
 ///
 /// Returns [`Error::NoCandidates`] for an empty candidate list, [`Error::Shift`] for a shift
-/// outside 3..=8, [`Error::Image`] for an inconsistent packed image, [`Error::Budget`] when
-/// the chosen image exceeds [`Profile::max_table_bytes`], and
-/// [`Error::BaselineRegression`] when it grows past the baseline allowance.
+/// outside 3..=8, [`Error::Budget`] when no candidate fits
+/// [`Profile::max_table_bytes`] (a pinned [`Profile::name_block_shift`] has no alternative,
+/// so it keeps the hard error), [`Error::Image`] for an inconsistent packed image, and
+/// [`Error::BaselineRegression`] when the chosen image grows past the baseline allowance.
 ///
 /// # Panics
 ///
@@ -421,7 +432,20 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
         images.push(packed);
     }
 
-    let chosen_index = choose_index(profile.priority, &measured);
+    // Only candidates that fit the budget may be chosen; a pinned shift has no alternative
+    // and keeps the hard error through the empty `fitting` set.
+    let chosen_index = choose_index(profile.priority, &measured, profile.max_table_bytes)
+        .ok_or_else(|| {
+            let smallest = measured
+                .iter()
+                .min_by_key(|measurement| (measurement.total_bytes, measurement.shift))
+                .expect("training always measures at least one candidate");
+            Error::Budget {
+                shift: smallest.shift,
+                total_bytes: smallest.total_bytes,
+                max_bytes: profile.max_table_bytes,
+            }
+        })?;
     let candidates: Vec<Candidate> = measured
         .iter()
         .enumerate()
@@ -458,13 +482,10 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
         "the name breakdown must sum to the section size"
     );
 
-    if layout.total_bytes > profile.max_table_bytes {
-        return Err(Error::Budget {
-            shift: chosen.name_block_shift,
-            total_bytes: layout.total_bytes,
-            max_bytes: profile.max_table_bytes,
-        });
-    }
+    assert!(
+        layout.total_bytes <= profile.max_table_bytes,
+        "the chosen candidate was filtered to fit the budget"
+    );
     let baseline = match &profile.baseline {
         Some(baseline) => {
             let allowed = baseline.len().saturating_add(profile.max_delta_bytes);
@@ -486,6 +507,9 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
 
     let chosen_profile = profile.chosen(chosen.name_block_shift);
     let report = render_report(&chosen_profile, &candidates, &layout);
+    // Every flag is backed by a check that ran above or inside the builders: `verify`
+    // re-decoded the chosen name section and validated the layout, and the emoji,
+    // general-category and pattern builders assert their internal round-trips.
     let verification = Verification {
         names: true,
         emoji: true,
@@ -586,27 +610,34 @@ struct Measurement {
     total_bytes: usize,
 }
 
-/// Picks the candidate index for `priority`; ties always go to the lower shift.
-fn choose_index(priority: Priority, measurements: &[Measurement]) -> usize {
+/// Picks the candidate index for `priority` among the candidates that fit
+/// `max_table_bytes`; ties always go to the lower shift.
+///
+/// Returns `None` when no candidate fits; the caller then reports the smallest candidate.
+fn choose_index(
+    priority: Priority,
+    measurements: &[Measurement],
+    max_table_bytes: usize,
+) -> Option<usize> {
     assert!(
         !measurements.is_empty(),
         "training always measures at least one candidate"
     );
-    match priority {
-        Priority::Latency => measurements
+    let fitting = || {
+        measurements
             .iter()
             .enumerate()
+            .filter(|(_, measurement)| measurement.total_bytes <= max_table_bytes)
+    };
+    match priority {
+        Priority::Latency => fitting()
             .min_by_key(|(_, measurement)| measurement.shift)
-            .map_or(0, |(index, _)| index),
-        Priority::Size => smallest_index(measurements.iter().enumerate()).unwrap_or(0),
+            .map(|(index, _)| index),
+        Priority::Size => smallest_index(fitting()),
         Priority::Balanced => smallest_index(
-            measurements
-                .iter()
-                .enumerate()
-                .filter(|(_, measurement)| measurement.shift <= BALANCED_MAX_SHIFT),
+            fitting().filter(|(_, measurement)| measurement.shift <= BALANCED_MAX_SHIFT),
         )
-        .or_else(|| smallest_index(measurements.iter().enumerate()))
-        .unwrap_or(0),
+        .or_else(|| smallest_index(fitting())),
     }
 }
 
@@ -723,13 +754,13 @@ mod tests {
             measurement(5, 90),
             measurement(6, 95),
         ];
-        assert_eq!(choose_index(Priority::Size, &rows), 1);
+        assert_eq!(choose_index(Priority::Size, &rows, usize::MAX), Some(1));
     }
 
     #[test]
     fn latency_picks_the_lowest_shift() {
         let rows = [measurement(5, 10), measurement(3, 100), measurement(4, 20)];
-        assert_eq!(choose_index(Priority::Latency, &rows), 1);
+        assert_eq!(choose_index(Priority::Latency, &rows, usize::MAX), Some(1));
     }
 
     #[test]
@@ -741,11 +772,83 @@ mod tests {
             measurement(6, 60),
             measurement(7, 50),
         ];
-        assert_eq!(choose_index(Priority::Balanced, &rows), 3);
+        assert_eq!(choose_index(Priority::Balanced, &rows, usize::MAX), Some(3));
         let large = [measurement(7, 50), measurement(8, 40)];
-        assert_eq!(choose_index(Priority::Balanced, &large), 1);
+        assert_eq!(
+            choose_index(Priority::Balanced, &large, usize::MAX),
+            Some(1)
+        );
         let single = [measurement(8, 40)];
-        assert_eq!(choose_index(Priority::Balanced, &single), 0);
+        assert_eq!(
+            choose_index(Priority::Balanced, &single, usize::MAX),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn candidates_over_the_budget_are_never_chosen() {
+        let rows = [
+            measurement(5, 300),
+            measurement(6, 200),
+            measurement(7, 150),
+            measurement(8, 120),
+        ];
+        // Only shifts 7 and 8 fit a 150 B budget: latency takes the lowest fitting shift,
+        // balanced falls back to the smallest fitting image, size takes the smallest.
+        assert_eq!(choose_index(Priority::Latency, &rows, 150), Some(2));
+        assert_eq!(choose_index(Priority::Balanced, &rows, 150), Some(3));
+        assert_eq!(choose_index(Priority::Size, &rows, 150), Some(3));
+        // A 199 B budget fits shifts 7 and 8: size takes 8, latency still takes 7.
+        assert_eq!(choose_index(Priority::Size, &rows, 199), Some(3));
+        assert_eq!(choose_index(Priority::Latency, &rows, 199), Some(2));
+        assert_eq!(choose_index(Priority::Latency, &rows, 119), None);
+        assert_eq!(choose_index(Priority::Size, &rows, 119), None);
+        assert_eq!(choose_index(Priority::Balanced, &rows, 119), None);
+    }
+
+    #[test]
+    fn a_budget_between_candidate_sizes_selects_a_fitting_candidate() {
+        let inputs = inputs();
+        let balanced = Profile::new(Priority::Balanced, 185_000);
+        let output = train(&inputs, &balanced).expect("a fitting candidate exists");
+        assert_eq!(output.chosen.name_block_shift, 8);
+        assert_eq!(output.chosen.total_bytes, 181_026);
+        assert_eq!(output.total_bytes, 181_026);
+        assert!(
+            output.report.contains("chosen: block shift 8"),
+            "{}",
+            output.report
+        );
+
+        let latency = Profile::new(Priority::Latency, 190_000);
+        let output = train(&inputs, &latency).expect("a fitting candidate exists");
+        // Shift 5 misses the 190,000 B budget, so latency takes the lowest shift that fits.
+        assert_eq!(output.chosen.name_block_shift, 6);
+
+        let size = Profile::new(Priority::Size, 185_000);
+        let output = train(&inputs, &size).expect("a fitting candidate exists");
+        assert_eq!(output.chosen.name_block_shift, 8);
+        assert_eq!(output.chosen.total_bytes, 181_026);
+    }
+
+    #[test]
+    fn an_impossible_budget_reports_the_smallest_candidate() {
+        let inputs = inputs();
+        let error = train(&inputs, &Profile::new(Priority::Balanced, 1_000))
+            .expect_err("no candidate fits 1,000 bytes");
+        match error {
+            Error::Budget {
+                shift,
+                total_bytes,
+                max_bytes,
+            } => {
+                // Shift 8 packs the smallest image, so it is the one reported.
+                assert_eq!(shift, 8);
+                assert_eq!(total_bytes, 181_026);
+                assert_eq!(max_bytes, 1_000);
+            }
+            other => panic!("expected Budget, got {other:?}"),
+        }
     }
 
     #[test]

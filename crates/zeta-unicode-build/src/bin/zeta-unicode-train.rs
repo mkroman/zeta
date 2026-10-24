@@ -28,7 +28,8 @@ Options:
   --baseline <table>  compare the trained image against an existing image
   --max-delta <n>     tolerated growth over the baseline in bytes (default: 0)
   --report            print per-section and per-stream details
-  --verify            re-verify the trained image and its name section
+  --verify            read the written nomina.bin back from disk and verify its layout
+                      and name section
   -h, --help          print this help
 ";
 
@@ -50,7 +51,7 @@ struct Options {
     max_delta_bytes: usize,
     /// Whether to print per-section details.
     report: bool,
-    /// Whether to re-verify the written image.
+    /// Whether to verify the image after writing it.
     verify: bool,
 }
 
@@ -195,9 +196,14 @@ fn run(options: &Options) -> Result<(), String> {
         print_details(&output);
     }
     if options.verify {
-        let layout = verify(&output.image, &inputs).map_err(|error| error.to_string())?;
+        // Verify the artifact on disk, not the in-memory buffer: the flag exists to check
+        // the bytes a rebuild would actually load.
+        let written = std::fs::read(&image_path)
+            .map_err(|error| format!("failed to read back {}: {error}", image_path.display()))?;
+        let layout = verify(&written, &inputs).map_err(|error| error.to_string())?;
         println!(
-            "verified: {} B, {} sections, Unicode {}.{}.{}, name block shift {}",
+            "verified {} on disk: {} B, {} sections, Unicode {}.{}.{}, name block shift {}",
+            image_path.display(),
             layout.total_bytes,
             layout.sections.len(),
             layout.version.0,

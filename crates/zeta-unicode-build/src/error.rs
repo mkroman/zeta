@@ -25,4 +25,17 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    /// An input path is not inside the data directory, so the manifest has no relative path
+    /// for it.
+    #[error(
+        "input {} is outside the data directory {}; the manifest records only relative paths",
+        .path.display(),
+        .data_dir.display()
+    )]
+    OutsideDataDir {
+        /// The input file that is not under the data directory.
+        path: PathBuf,
+        /// The data directory every input must live under.
+        data_dir: PathBuf,
+    },
 }

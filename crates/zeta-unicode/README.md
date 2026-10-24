@@ -13,12 +13,13 @@ checked-in derivation-rules file and no runtime compression library:
 - Hangul syllables and `*`-pattern names are generated from the code point;
 - emoji names are generated from the lowercase UCD name where a verified grammar rule
   reproduces the published CLDR name, with literal fallback;
-- general-category runs are delta-varint and Huffman streams, rebuilt into the existing
-  two-level page table at startup;
+- general-category runs are delta-varint and Huffman streams, decoded once and rebuilt into
+  the existing two-level page table lazily on first use;
 - emoji keys, names and tone rules are compact Huffman/bit-packed streams.
 
-The runtime keeps one name decoder per thread (fixed 256-byte scratch, zero allocations per
-lookup) and one process-wide emoji and general-category table.
+The runtime keeps one name decoder per thread (fixed 256-byte scratch; `write_name` fills a
+caller-provided buffer with zero allocations, while `name()` returns an owned `String`) and
+one process-wide emoji and general-category table.
 
 ## Layout
 
@@ -79,15 +80,17 @@ ZETA_UNICODE_MAX_BYTES=200000 \
 cargo build -p zeta-unicode
 ```
 
-`ZETA_UNICODE_BLOCK_SHIFT` pins a block size (5..8) instead of searching.
+`ZETA_UNICODE_BLOCK_SHIFT` pins a block shift (3..=8) instead of searching.
 `ZETA_UNICODE_STATS=1` prints the candidate and section report.
 
 ## Supported Unicode versions
 
 `DerivedName.txt` exists from Unicode 10.0 onward; older releases fail with a clear
 `MissingDerivedName` error rather than silently generating incomplete names. The version
-headers of all inputs are validated against each other, and `emoji-test.txt` may use the older
-comment shape (`# 😀 name`) or the modern one (`# 😀 E5.0 name`).
+headers of the UCD inputs are validated against `DerivedName.txt`; `emoji-test.txt` is
+checked only for a well-formed header, because the Emoji release version is independent and
+does not track the UCD version. `emoji-test.txt` may use the older comment shape
+(`# 😀 name`) or the modern one (`# 😀 E5.0 name`).
 
 The runtime tests read the same `ZETA_UNICODE_DATA_DIR` when it is set, so the full name,
 emoji, general-category and pattern verification can be run against an older release:
@@ -98,6 +101,11 @@ ZETA_UNICODE_DATA_DIR=/path/to/ucd-15.1 cargo test -p zeta-unicode --all-feature
 
 ## Verification
 
-Every training run replays all explicit names, Hangul syllables and pattern code points,
-every stored emoji entry and all 1,114,112 general-category code points before writing the
-image. The build also pins the image budget and `UNICODE_VERSION` against the image header.
+Training verifies every stage before the image is accepted: the emoji, general-category and
+pattern builders decode their own sections back and assert every entry round-trips, the
+chosen name section is re-decoded against all explicit names (Hangul syllables and pattern
+code points included), and the packed image header and section directory are re-parsed. A
+mismatch aborts the build with a panic rather than a bad image. `--verify` additionally reads
+the written `nomina.bin` back from disk and re-validates its layout and name section, so the
+flag checks the actual artifact. The build also pins the image budget and `UNICODE_VERSION`
+against the image header.
