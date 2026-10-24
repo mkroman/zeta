@@ -495,16 +495,14 @@ fn join_and(items: &[String]) -> String {
     joined
 }
 
-#[async_trait]
-impl Plugin<Context> for Unwall {
-    type Settings = Settings;
-
+#[plugin(name = "unwall", settings = Settings, urls(any))]
+impl Unwall {
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(UNWALL).urls(UrlScope::Any);
+        subscriptions.command(UNWALL);
 
         let api_base = client::base_url(&settings.api_base).map_err(plugin_err)?;
         let reader_base = client::base_url(&settings.reader_base).map_err(plugin_err)?;
@@ -522,12 +520,14 @@ impl Plugin<Context> for Unwall {
         })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -567,6 +567,7 @@ impl Plugin<Context> for Unwall {
         }
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
