@@ -121,19 +121,18 @@ struct PlaylistTracks {
     total: u64,
 }
 
-#[async_trait]
-impl Plugin<Context> for Spotify {
-    type Settings = Settings;
-
+#[plugin(
+    name = "spotify",
+    settings = Settings,
+    urls(hosts = URL_HOSTS),
+    messages
+)]
+impl Spotify {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions
-            .urls(UrlScope::Hosts(URL_HOSTS))
-            .receive_message();
-
         let client_id = resolve_secret(settings.client_id.as_deref(), "SPOTIFY_CLIENT_ID")?;
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
@@ -148,6 +147,7 @@ impl Plugin<Context> for Spotify {
         })
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
@@ -166,6 +166,7 @@ impl Plugin<Context> for Spotify {
         Ok(())
     }
 
+    #[handler(message)]
     async fn handle_message(
         &self,
         _ctx: &Context,
