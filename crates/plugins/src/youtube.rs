@@ -55,9 +55,6 @@ const CATEGORIES_TTL: Duration = Duration::from_hours(24);
 /// fetch retry within an hour instead of after a full TTL.
 const CATEGORIES_CHECK_INTERVAL: Duration = Duration::from_hours(1);
 
-/// The `.yt` command.
-const YOUTUBE: CommandSpec = CommandSpec::new(".yt", "Search YouTube and link the top video");
-
 /// The safe search filter applied to YouTube search requests.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -260,41 +257,42 @@ pub type CategoriesResponse = ApiListResponse<Category>;
 /// Response with a list of YouTube search results.
 pub type SearchListResponse = ApiListResponse<Search>;
 
-#[async_trait]
-impl Plugin<Context> for YouTube {
-    type Settings = Settings;
-
+#[plugin(name = "youtube", settings = Settings, urls(hosts = urls::URL_HOSTS))]
+impl YouTube {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        // Handle YouTube URLs.
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
-
-        // Enable the `.yt` command.
-        if settings.enable_command {
-            subscriptions.command(YOUTUBE);
-        }
-
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
 
         Ok(Self::with_config(settings, api_key, &ctx.config.http))
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.start_categories_refresh();
 
         Ok(())
     }
 
+    /// Replies to `.yt` with the top video matching the query.
+    ///
+    /// An invocation whose arguments are themselves a YouTube URL resolves it as a link below
+    /// instead of searching for it as a query, so the two event kinds do not double up.
+    #[command(
+        ".yt",
+        "Search YouTube and link the top video",
+        event,
+        register_if = settings.enable_command
+    )]
     async fn handle_command(
         &self,
         _ctx: &Context,
         client: &Client,
+        channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let channel = command.channel();
         let args = command.args();
 
         // An invocation whose arguments are a YouTube URL resolves the video below instead of
@@ -331,6 +329,7 @@ impl Plugin<Context> for YouTube {
         Ok(())
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
