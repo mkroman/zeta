@@ -302,6 +302,13 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
             }
             checkpoint_freq[0] += 1;
         }
+        if checkpoint_freq.iter().all(|&count| count == 0) {
+            // At most one block means no checkpoint is ever coded, but the runtime still
+            // requires a non-empty model; seed one 1-bit symbol (the terminator) so the
+            // serialized codebook has a maximum length. When checkpoints exist, `checkpoint_freq`
+            // already counts their terminator bytes and this does not trigger.
+            checkpoint_freq[0] = 1;
+        }
     }
 
     let contexts: Vec<u8> = (0..=u8::MAX)
@@ -1496,7 +1503,7 @@ fn u32_at(buf: &[u8], at: usize, what: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::*;
 
@@ -1504,6 +1511,49 @@ mod tests {
     fn inputs() -> Inputs {
         let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../zeta-unicode/data");
         crate::ucd::read_inputs(&data).expect("vendored inputs")
+    }
+
+    /// A minimal corpus: two names and one `*` pattern range from a synthetic
+    /// `DerivedName.txt`. Only `names` and `aliases` are parsed.
+    fn minimal_inputs() -> Inputs {
+        Inputs {
+            names: "# DerivedName-18.0.0.txt\n\
+                    0041; LATIN CAPITAL LETTER A\n\
+                    0042; LATIN CAPITAL LETTER B\n\
+                    3400..4DBF; CJK UNIFIED IDEOGRAPH-*\n"
+                .to_owned(),
+            gc: String::new(),
+            aliases: String::new(),
+            sequences: String::new(),
+            emoji: String::new(),
+            version: (18, 0, 0),
+            emoji_version: (18, 0),
+            paths: crate::ucd::InputPaths {
+                names: PathBuf::from("DerivedName.txt"),
+                gc: PathBuf::from("DerivedGeneralCategory.txt"),
+                aliases: PathBuf::from("NameAliases.txt"),
+                sequences: None,
+                emoji: PathBuf::from("emoji-test.txt"),
+            },
+        }
+    }
+
+    /// A corpus smaller than one block has no checkpoints at all, but the global layout still
+    /// serializes the checkpoint model; it must round-trip instead of writing an empty book.
+    #[test]
+    fn a_single_block_corpus_round_trips_in_the_global_layout() {
+        let inputs = minimal_inputs();
+        assert_eq!(parse_corpus(&inputs).entries.len(), 2);
+        for shift in [1, 5] {
+            // Two entries fit one 2^shift-name block: block_count == 1, no checkpoints.
+            let encoded = encode_global_with_block_shift(&inputs, shift);
+            assert_eq!(encoded.block_count, 1, "block count at shift {shift}");
+            assert_eq!(
+                encoded.checkpoint_bits, 0,
+                "checkpoint bits at shift {shift}"
+            );
+            verify_global_with_block_shift(&encoded.bytes, &inputs, shift);
+        }
     }
 
     #[test]

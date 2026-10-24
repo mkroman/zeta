@@ -252,7 +252,10 @@ fn general_category_id(letter: &str) -> u8 {
 }
 
 /// The non-empty, non-comment records of a UCD file, with 1-based line numbers.
+///
+/// A leading byte-order mark is ignored, so a BOM-prefixed file parses like a plain one.
 fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     text.lines()
         .enumerate()
         .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))

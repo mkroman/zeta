@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-/// The first Unicode release whose UCD ships `NamedSequences.txt`.
+/// The first Unicode release whose UCD ships `NamedSequences.txt` (4.1.0 introduced it).
 ///
 /// Releases before this one may omit the file; later releases must include it.
-pub const NAMED_SEQUENCES_SINCE: (u8, u8, u8) = (4, 0, 0);
+pub const NAMED_SEQUENCES_SINCE: (u8, u8, u8) = (4, 1, 0);
 
 /// The five UCD texts, the UCD version their headers agree on, and the Emoji version.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,7 +187,10 @@ const EMOJI_TEST: InputSpec = InputSpec {
 };
 
 /// Iterates the non-empty, non-comment lines of a UCD text with their 1-based line numbers.
+///
+/// A leading byte-order mark is ignored, so a BOM-prefixed file parses like a plain one.
 pub fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     text.lines()
         .enumerate()
         .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
@@ -764,6 +767,22 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parses_a_bom_prefixed_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        flat_18(dir.path());
+        write(
+            dir.path(),
+            "DerivedName.txt",
+            "\u{feff}# DerivedName-18.0.0.txt\n0041; LATIN CAPITAL LETTER A\n",
+        );
+
+        let inputs = read_inputs(dir.path()).expect("BOM-prefixed inputs");
+        assert_eq!(inputs.version, (18, 0, 0));
+        let parsed: Vec<_> = records(&inputs.names).collect();
+        assert_eq!(parsed, vec![(2, "0041; LATIN CAPITAL LETTER A")]);
     }
 
     #[test]

@@ -35,6 +35,12 @@ use zeta_unicode_format::{
 /// The longest code a canonical Huffman model may use.
 const HUFFMAN_MAX_BITS: usize = 32;
 
+/// The most code points one stored key may have; the runtime decoder rejects more.
+const MAX_CPS: usize = 16;
+
+/// The largest rule argument the runtime's packed `(argument << 4) | rule` entry encodes.
+const MAX_RULE_ARGUMENT: u16 = 0x0FFF;
+
 /// Rule id `literal`: the name is stored in the literal-name stream.
 pub const RULE_LITERAL: u8 = 0;
 /// Rule id `ucd_mask`: select words from the lowercase UCD name.
@@ -278,8 +284,10 @@ pub fn ucd_names(derived_names: &str) -> BTreeMap<u32, String> {
 ///
 /// # Panics
 ///
-/// Panics when an entry is malformed, when a stream outgrows its `u16` length, or when the
-/// assembled section does not round-trip. That is a build failure, not a runtime condition.
+/// Panics when an entry is malformed (an empty key, more code points than the runtime decodes,
+/// or a key over `MAX_KEY`), when a stream or arena outgrows its `u16` length or the 12-bit
+/// rule argument, or when the assembled section does not round-trip. That is a build failure,
+/// not a runtime condition.
 #[must_use]
 pub fn emoji_section(entries: &[EmojiEntry], ucd: &BTreeMap<u32, String>) -> (Vec<u8>, EmojiStats) {
     let all_cps: Vec<Vec<u32>> = entries
@@ -408,6 +416,12 @@ fn encode_payload(
             "emoji key {:?} is over MAX_KEY",
             entry.key
         );
+        assert!(
+            cps.len() <= MAX_CPS,
+            "emoji key {:?} has {} code points, over the {MAX_CPS} the runtime decodes",
+            entry.key,
+            cps.len()
+        );
         let first = *cps.first().expect("a non-empty key");
         assert!(first >= previous, "keys are not sorted by first code point");
         write_varint(u64::from(first - previous), &mut key_raw);
@@ -452,6 +466,16 @@ fn encode_payload(
     assert!(
         u16::try_from(entries.len()).is_ok() && u16::try_from(literal_names.len()).is_ok(),
         "too many entries or literal names"
+    );
+    assert!(
+        literal_names.len() <= usize::from(MAX_RULE_ARGUMENT) + 1,
+        "{} literal names do not fit the 12-bit rule argument (max {})",
+        literal_names.len(),
+        usize::from(MAX_RULE_ARGUMENT) + 1
+    );
+    assert!(
+        u16::try_from(key_bytes).is_ok(),
+        "the key arena is {key_bytes} bytes; the runtime's key offsets are u16"
     );
 
     let decoded_keys = huffman::decode(&key_stream, key_raw.len(), 1).expect("keys round-trip");
@@ -997,7 +1021,9 @@ fn clock_name(ucd: &str) -> Option<String> {
 }
 
 /// Parses emoji entries with the precedence named sequences (3) > fully-qualified (2) >
-/// minimally-qualified (1) > unqualified (0).
+/// minimally-qualified (1) > unqualified (0). Emoji 5.0 and 11.0 spell some rows
+/// `non-fully-qualified`, which ranks with `unqualified`: it is safe because the
+/// fully-qualified variant of the same canonical key outranks it.
 fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, String)> {
     let mut entries: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
     for (number, line) in records(emoji_text) {
@@ -1009,7 +1035,7 @@ fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, St
         let rank = match status.trim() {
             "fully-qualified" | "component" => 2u8,
             "minimally-qualified" => 1,
-            "unqualified" => 0,
+            "unqualified" | "non-fully-qualified" => 0,
             other => panic!("line {number}: unknown status {other}"),
         };
         let words: Vec<&str> = comment.split_whitespace().collect();
@@ -1103,7 +1129,10 @@ fn code_points(key: &str) -> Vec<u32> {
 }
 
 /// The non-empty, non-comment records of a UCD file, with 1-based line numbers.
+///
+/// A leading byte-order mark is ignored, so a BOM-prefixed file parses like a plain one.
 fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     text.lines()
         .enumerate()
         .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
@@ -1911,6 +1940,35 @@ mod tests {
         assert_eq!(find("🫶").tone_mask, 1);
         assert_eq!(find("🫱‍🫲").tone_mask, 2);
         assert_eq!(find("🚶‍♂").name, "man walking");
+    }
+
+    #[test]
+    fn non_fully_qualified_status_parses_like_unqualified() {
+        // An Emoji 5.0-style file: `non-fully-qualified` rows exist next to every modern
+        // status, and the comments carry the `E<version>` token `read_inputs` inserts.
+        let emoji = "# emoji-test.txt\n\
+                     # Version: 5.0\n\
+                     263A ; non-fully-qualified # ☺ E5.0 smiling face\n\
+                     263A FE0F ; fully-qualified # ☺️ E5.0 smiling face\n\
+                     1F600 ; fully-qualified # 😀 E5.0 grinning face\n\
+                     1F3FB ; component # 🏻 E5.0 light skin tone\n\
+                     1F1E6 1F1E7 ; minimally-qualified # 🇦🇧 E5.0 flag\n\
+                     1F1E8 1F1E9 ; unqualified # 🇨🇩 E5.0 flag\n";
+        let entries = canonical_entries(emoji, "");
+        let find = |key: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.key == key)
+                .unwrap_or_else(|| panic!("missing {key:?}"))
+        };
+        assert_eq!(entries.len(), 5, "one canonical entry per status family");
+        // `U+FE0F` is stripped, so the non-fully-qualified and fully-qualified rows of `263A`
+        // fold into one entry.
+        assert_eq!(find("☺").name, "smiling face");
+        assert_eq!(find("😀").name, "grinning face");
+        assert_eq!(find("🏻").name, "light skin tone");
+        assert_eq!(find("🇦🇧").name, "flag");
+        assert_eq!(find("🇨🇩").name, "flag");
     }
 
     #[test]
