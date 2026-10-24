@@ -84,9 +84,6 @@ pub struct Settings {
     pub default_location: Option<String>,
 }
 
-/// The `.w` command.
-const WEATHER: CommandSpec = CommandSpec::new(".w", "Show current weather for a location");
-
 /// Plugin for querying weather data.
 pub struct OpenWeatherMap {
     /// HTTP client for making API requests.
@@ -189,9 +186,8 @@ impl OpenWeatherMap {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(WEATHER);
         let app_id = resolve_secret(settings.app_id.as_deref(), "OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -205,11 +201,12 @@ impl OpenWeatherMap {
     }
 
     /// Replies to `.w` with the current weather for the requested (or default) location.
-    #[handler(command)]
+    #[command(".w", "Show current weather for a location", event)]
     async fn weather(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
