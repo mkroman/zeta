@@ -67,8 +67,9 @@ fn main() {
          /// The Unicode version of the data this crate was built from, as \
          `(major, minor, patch)`.\n\
          ///\n\
-         /// Generated at build time from the version headers; the image header is checked\n\
-         /// against it at compile time, so it cannot drift from the table.\n\
+         /// Generated at build time from the version headers; the\n\
+         /// `generated_version_matches_the_table_header` test checks the image header\n\
+         /// against it, so the two cannot drift apart.\n\
          pub const UNICODE_VERSION: (u8, u8, u8) = ({}, {}, {});\n",
         version.0, version.1, version.2
     );

@@ -18,6 +18,5 @@ pub mod emoji;
 pub mod gc;
 pub mod image;
 pub mod names;
-pub mod patterns;
 
 pub use image::Nomina;

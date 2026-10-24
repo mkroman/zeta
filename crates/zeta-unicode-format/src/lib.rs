@@ -46,8 +46,8 @@ pub const UNICODE_LIMIT: u32 = 0x11_0000;
 pub const GC_SHIFT: u32 = 11;
 /// The number of pages in the general-category table.
 ///
-/// This is one more than [`UNICODE_END`] needs, so the directory always has a page after the
-/// last scalar value and `ucd[page + 1]` is available for the run search.
+/// This is one more than [`UNICODE_END`] needs, so the runtime's page directory carries a
+/// final sentinel entry and the run search on the last page has an upper bound.
 pub const GC_PAGES: usize = (UNICODE_LIMIT as usize >> GC_SHIFT) + 1;
 /// The low bits of a general-category record holding the category id.
 pub const GC_ID_BITS: u32 = 5;
@@ -99,13 +99,17 @@ pub fn read_varint(bytes: &[u8]) -> Option<(u32, usize)> {
 
 /// Writes `cp` as upper-case hex digits into `out`, returning how many bytes it wrote.
 ///
-/// The shared hole filler for `*` name patterns and the generated rule tree, so both fill a
-/// hole the same way. `width` is a *minimum*, the way Unicode writes the placeholder:
-/// `EGYPTIAN HIEROGLYPH-13460` needs five digits where most code points need four.
+/// Shared by the runtime and the trainer so a `*` pattern name materializes identically on
+/// both sides: the runtime fills the placeholder in `prefix + hex + suffix` when it composes
+/// the name, and the trainer verifies every pattern range with the same format. `width` is a
+/// *minimum*, the way Unicode writes the placeholder: `EGYPTIAN HIEROGLYPH-13460` needs five
+/// digits where most code points need four. The digit count is clamped to the eight bytes of
+/// `out`, so a wider `width` pads with leading zeros up to that bound instead of overflowing.
 ///
 /// # Panics
 ///
-/// The digit count is clamped to the eight bytes of `out`, so this cannot panic in practice.
+/// Panics if the digit count exceeded `u32::MAX`, which the clamp to `out`'s eight bytes
+/// rules out before the shift is computed: every `width` is accepted.
 pub fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
     const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
     let mut needed = 0usize;

@@ -256,6 +256,15 @@ mod tests {
         u32::from_str_radix(text.trim(), 16).expect("a hexadecimal code point")
     }
 
+    /// Is the Unicode release under test at least `(major, minor)`?
+    ///
+    /// The sample assertions below name emoji that specific releases introduced; gating them
+    /// on the generated [`UNICODE_VERSION`] keeps the suite meaningful on the vendored data
+    /// and passing against an older `ZETA_UNICODE_DATA_DIR`.
+    fn release_at_least(major: u8, minor: u8) -> bool {
+        (major, minor, 0) <= UNICODE_VERSION
+    }
+
     /// Parses a `start..end` range, or a single code point as a one-element range.
     fn range(text: &str) -> (u32, u32) {
         let text = text.trim();
@@ -380,7 +389,8 @@ mod tests {
 
     /// Rebuilds the emoji oracle the way `zeta-unicode-build` does: canonical keys (U+FE0F
     /// removed) with named-sequence names taking precedence over fully-qualified, then
-    /// qualified over unqualified.
+    /// qualified over unqualified. `non-fully-qualified` ranks with `unqualified`, as Emoji
+    /// 5.0 and 11.0 use it for sequences that later releases re-qualified.
     fn emoji_oracle() -> BTreeMap<String, String> {
         /// Keeps the higher-precedence name for a canonical key; a tie keeps the later entry.
         fn keep_best(
@@ -413,7 +423,7 @@ mod tests {
             let rank = match status.trim() {
                 "fully-qualified" | "component" => 2,
                 "minimally-qualified" => 1,
-                "unqualified" => 0,
+                "unqualified" | "non-fully-qualified" => 0,
                 other => panic!("unknown status {other}"),
             };
             let words: Vec<&str> = comment.split_whitespace().collect();
@@ -466,10 +476,17 @@ mod tests {
             );
         }
 
+        // The keycap named sequences only supply names for existing keys; every canonical
+        // key must resolve. Emoji 5.0 (Unicode 10.0), the oldest supported release, answers
+        // for about 2,600 keys, and modern releases for nearly 4,000 (5,244 emoji-test
+        // entries collapse onto 3,972 canonical keys once U+FE0F is merged away).
+        let minimum = if release_at_least(12, 0) {
+            3_000
+        } else {
+            2_500
+        };
         assert!(
-            // 5,244 emoji-test entries collapse onto 3,972 canonical keys (U+FE0F merged
-            // away); the keycap named sequences only supply names for existing keys.
-            oracle.len() > 3_000,
+            oracle.len() > minimum,
             "only checked {} sequences",
             oracle.len()
         );
@@ -479,13 +496,15 @@ mod tests {
         assert_eq!(emoji_name("🚶‍♂").as_deref(), Some("man walking"));
         // A skin-tone variant is synthesized from its base and the 3-bit rule.
         assert_eq!(
-            emoji_name("🫶🏻").as_deref(),
-            Some("heart hands: light skin tone")
-        );
-        assert_eq!(
             emoji_name("🖐🏻").as_deref(),
             Some("hand with fingers splayed: light skin tone")
         );
+        if release_at_least(14, 0) {
+            assert_eq!(
+                emoji_name("🫶🏻").as_deref(),
+                Some("heart hands: light skin tone")
+            );
+        }
         assert_eq!(emoji_name("d'être"), None);
         assert_eq!(emoji_name("🐱‍🏍"), None);
         // A non-emoji named sequence (a decomposed Latin letter) is not an emoji.
@@ -496,29 +515,36 @@ mod tests {
     fn tone_fallback_respects_published_tone_counts() {
         // Two tones on a base that only publishes one-tone variants.
         assert_eq!(emoji_name("👍🏻🏿"), None);
-        // One tone on a base that only publishes two-tone variants.
-        assert_eq!(emoji_name("🫱🏻‍🫲"), None);
-        // Published counts still resolve, and same-tone groups deduplicate the phrase.
-        assert_eq!(
-            emoji_name("👩🏻‍🤝‍👩🏻").as_deref(),
-            Some("women holding hands: light skin tone")
-        );
-        assert_eq!(
-            emoji_name("🫱🏻‍🫲🏻").as_deref(),
-            Some("handshake: light skin tone")
-        );
-        assert_eq!(
-            emoji_name("🧑🏻‍🤝‍🧑🏻").as_deref(),
-            Some("people holding hands: light skin tone")
-        );
+        if release_at_least(12, 0) {
+            // Published counts still resolve, and same-tone groups deduplicate the phrase.
+            assert_eq!(
+                emoji_name("👩🏻‍🤝‍👩🏻").as_deref(),
+                Some("women holding hands: light skin tone")
+            );
+            assert_eq!(
+                emoji_name("🧑🏻‍🤝‍🧑🏻").as_deref(),
+                Some("people holding hands: light skin tone")
+            );
+        }
+        if release_at_least(14, 0) {
+            // One tone on a base that only publishes two-tone variants.
+            assert_eq!(emoji_name("🫱🏻‍🫲"), None);
+            assert_eq!(
+                emoji_name("🫱🏻‍🫲🏻").as_deref(),
+                Some("handshake: light skin tone")
+            );
+        }
     }
 
     #[test]
     fn leading_tone_or_variation_selector_is_not_a_sequence() {
         assert_eq!(emoji_name("🏻👋"), None);
         assert_eq!(emoji_name("\u{FE0F}👍"), None);
-        // A lone skin-tone component is still an entry.
-        assert_eq!(emoji_name("🏻").as_deref(), Some("light skin tone"));
+        if release_at_least(11, 0) {
+            // A lone skin-tone component is still an entry. Emoji data only lists the
+            // components from Emoji 11.0 on; older files carry no standalone rows for them.
+            assert_eq!(emoji_name("🏻").as_deref(), Some("light skin tone"));
+        }
     }
 
     #[test]
@@ -538,7 +564,9 @@ mod tests {
         assert!(matches!(name('A'), Some(Cow::Owned(_))));
         assert!(matches!(name('中'), Some(Cow::Owned(_))));
         assert!(emoji_name("🦔").is_some());
-        assert!(matches!(emoji_name("🫶🏻"), Some(Cow::Owned(_))));
+        if release_at_least(14, 0) {
+            assert!(matches!(emoji_name("🫶🏻"), Some(Cow::Owned(_))));
+        }
     }
 
     #[test]

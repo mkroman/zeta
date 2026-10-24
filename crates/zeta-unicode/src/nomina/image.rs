@@ -25,7 +25,8 @@
 //! Section 3 is the `*`-pattern table written by `zeta_unicode_build::nomina::patterns`:
 //! a pattern count, a prefix dictionary, a suffix dictionary, then one record per range
 //! (`varint start delta`, `varint length`, `u8 prefix id`, `u8 suffix id`). Pattern names are
-//! `prefix + upper-case hex(cp) + suffix`.
+//! `prefix + upper-case hex(cp) + suffix`, with the hex padded to at least four digits so a
+//! future range below U+1000 formats the way the trainer's verifier writes it.
 
 use std::borrow::Cow;
 
@@ -47,8 +48,6 @@ pub const GC: usize = 2;
 pub const PATTERNS: usize = 3;
 /// The size of the padded image header.
 pub const HEADER_LEN: usize = 64;
-/// The name-block shift the shipped image uses.
-pub const NAME_BLOCK_SHIFT: u8 = 5;
 /// The general-category page shift the shipped image uses.
 pub const GC_PAGE_SHIFT: u8 = 11;
 
@@ -164,9 +163,9 @@ struct Patterns {
     /// Number of ranges.
     count: usize,
     /// Prefix strings, by dictionary id.
-    prefixes: Vec<&'static [u8]>,
+    prefixes: Vec<&'static str>,
     /// Suffix strings, by dictionary id.
-    suffixes: Vec<&'static [u8]>,
+    suffixes: Vec<&'static str>,
     /// The range records.
     records: &'static [u8],
 }
@@ -247,9 +246,11 @@ impl Patterns {
                 return Some(false);
             }
             if cp < end {
-                out.push_str(std::str::from_utf8(prefix).ok()?);
+                // Both dictionaries were validated as UTF-8 in [`Self::new`], so the whole
+                // name is appended or nothing is.
+                out.push_str(prefix);
                 push_hex(out, cp);
-                out.push_str(std::str::from_utf8(suffix).ok()?);
+                out.push_str(suffix);
                 return Some(true);
             }
         }
@@ -257,16 +258,19 @@ impl Patterns {
     }
 }
 
-/// Reads a `u8`-counted dictionary of `u8`-length strings, returning it and the next offset.
-fn read_dictionary(section: &'static [u8], at: usize) -> Option<(Vec<&'static [u8]>, usize)> {
+/// Reads a `u8`-counted dictionary of `u8`-length UTF-8 strings, returning it and the next
+/// offset. A dictionary entry that is not valid UTF-8 rejects the section, so a lookup can
+/// push the strings it returns without a partial write.
+fn read_dictionary(section: &'static [u8], at: usize) -> Option<(Vec<&'static str>, usize)> {
     let count = usize::from(*section.get(at)?);
     let mut cursor = at + 1;
     let mut dictionary = Vec::with_capacity(count);
     for _ in 0..count {
         let length = usize::from(*section.get(cursor)?);
         cursor += 1;
-        dictionary.push(section.get(cursor..cursor + length)?);
+        let text = std::str::from_utf8(section.get(cursor..cursor + length)?).ok()?;
         cursor += length;
+        dictionary.push(text);
     }
     Some((dictionary, cursor))
 }
@@ -279,11 +283,12 @@ fn u32_at(buf: &[u8], at: usize) -> Option<u32> {
     ))
 }
 
-/// Appends the upper-case hex of `cp` with no minimum width, as Unicode writes a `*`
-/// placeholder (`U+18CFF` is five digits, `U+4E00` four).
+/// Appends the upper-case hex of `cp`, padded to at least four digits the way Unicode spells
+/// its `*` placeholder and the trainer's verifier writes it (`U+3400` is four digits,
+/// `U+18CFF` five).
 fn push_hex(out: &mut String, cp: u32) {
     let mut digits = [0u8; 8];
-    let used = zeta_unicode_format::write_hex(&mut digits, cp, 0);
+    let used = zeta_unicode_format::write_hex(&mut digits, cp, 4);
     out.push_str(std::str::from_utf8(&digits[..used]).expect("hex digits are ASCII"));
 }
 
@@ -372,6 +377,60 @@ mod tests {
             pattern_section(&[(0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", "")]).leak();
         assert!(Patterns::new(section).is_some());
         assert!(Patterns::new(&section[..section.len() - 1]).is_none());
+    }
+
+    #[test]
+    fn every_truncation_of_a_pattern_section_is_rejected() {
+        let section: &'static [u8] = pattern_section(&[(0x41, 0x41, "A-", "")]).leak();
+        assert!(Patterns::new(section).is_some());
+        // An empty section is a valid, empty table rather than a truncated one.
+        assert!(Patterns::new(&section[..0]).is_some());
+        for length in 1..section.len() {
+            assert!(
+                Patterns::new(&section[..length]).is_none(),
+                "length {length}"
+            );
+        }
+    }
+
+    #[test]
+    fn pattern_hex_is_padded_to_four_digits() {
+        let section: &'static [u8] = pattern_section(&[
+            (0x10, 0x12, "TEST-", ""),
+            (0x18CFF, 0x18CFF, "LONGER-", "-END"),
+        ])
+        .leak();
+        let patterns = Patterns::new(section).expect("a valid pattern section");
+
+        let mut out = String::new();
+        assert!(patterns.write(0x10, &mut out));
+        assert_eq!(out, "TEST-0010", "the usual four-digit placeholder");
+        out.clear();
+        assert!(patterns.write(0x12, &mut out));
+        assert_eq!(out, "TEST-0012");
+        out.clear();
+        assert!(patterns.write(0x18CFF, &mut out));
+        assert_eq!(
+            out, "LONGER-18CFF-END",
+            "five digits where four are not enough"
+        );
+        out.clear();
+        assert!(!patterns.write(0xF, &mut out));
+        assert!(!patterns.write(0x13, &mut out));
+        assert!(!patterns.write(0x18D00, &mut out));
+        assert_eq!(out, "", "a miss must not extend the output");
+    }
+
+    #[test]
+    fn a_pattern_section_with_non_utf8_dictionaries_is_rejected() {
+        // One pattern whose prefix dictionary entry is not valid UTF-8.
+        let prefix_case: &'static [u8] = vec![1, 1, 2, 0xFF, 0xFE, 0, 0x41, 1, 0, 0].leak();
+        assert!(Patterns::new(prefix_case).is_none());
+
+        // The suffix dictionary is validated the same way.
+        let suffix_case: &'static [u8] =
+            vec![1, 1, 1, b'A', 1, 2, 0xFF, 0xFE, 0x41, 1, 0, 0].leak();
+        assert!(Patterns::new(suffix_case).is_none());
     }
 
     /// One flat model: every symbol is an eight-bit code.
