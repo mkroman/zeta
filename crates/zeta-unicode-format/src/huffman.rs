@@ -15,11 +15,13 @@ use std::collections::BinaryHeap;
 /// The longest code a model may use.
 const MAX_BITS: usize = 32;
 
-/// A canonical code: its bit pattern and length.
-#[derive(Clone, Copy)]
-struct Code {
-    bits: u64,
-    len: u8,
+/// A canonical Huffman code: its bit pattern and length.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Code {
+    /// The code's bits, right-aligned; only the low [`Self::len`] bits are meaningful.
+    pub bits: u64,
+    /// The number of bits in [`Self::bits`]; zero marks an absent symbol.
+    pub len: u8,
 }
 
 /// Encodes `data` with an order-`order` canonical Huffman model.
@@ -76,9 +78,11 @@ pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
     let codes: Vec<Vec<Code>> = models
         .iter()
         .map(|model| {
-            let mut table = vec![Code { bits: 0, len: 0 }; 256];
-            canonical_codes(model, &mut table);
-            table
+            let mut table_lengths = [0u8; 256];
+            for &(symbol, length) in model {
+                table_lengths[usize::from(symbol)] = length;
+            }
+            canonical_codes(&table_lengths)
         })
         .collect();
 
@@ -203,14 +207,6 @@ impl Model {
     }
 }
 
-/// A symbol's canonical code.
-#[derive(Clone, Copy)]
-struct SymbolCode {
-    symbol: u8,
-    bits: u64,
-    len: u8,
-}
-
 /// One node of the Huffman tree.
 struct Node {
     left: Option<usize>,
@@ -290,54 +286,85 @@ fn lengths(frequencies: &[u32; 256]) -> Vec<(u8, u8)> {
     }
 }
 
-/// Assigns canonical codes to a model's symbols.
-fn canonical_codes(model: &[(u8, u8)], codes: &mut [Code]) {
-    let mut ordered: Vec<SymbolCode> = model
+/// Assigns canonical codes to a set of code lengths.
+///
+/// `lengths[symbol]` is the code length of that symbol; zero marks an absent symbol. The
+/// returned table is indexed by symbol, with zeroed entries for absent symbols.
+#[must_use]
+pub fn canonical_codes(lengths: &[u8]) -> Vec<Code> {
+    let mut ordered: Vec<(u8, usize)> = lengths
         .iter()
-        .map(|&(symbol, len)| SymbolCode {
-            symbol,
-            bits: 0,
-            len,
-        })
+        .enumerate()
+        .filter(|&(_, &length)| length != 0)
+        .map(|(symbol, &length)| (length, symbol))
         .collect();
-    ordered.sort_unstable_by_key(|code| (code.len, code.symbol));
+    ordered.sort_unstable();
+    let mut codes = vec![Code::default(); lengths.len()];
     let mut bits = 0u64;
     let mut previous = 0u8;
-    for code in &mut ordered {
-        bits <<= u32::from(code.len - previous);
-        code.bits = bits;
+    for (len, symbol) in ordered {
+        bits <<= u32::from(len - previous);
+        codes[symbol] = Code { bits, len };
         bits += 1;
-        previous = code.len;
-        codes[usize::from(code.symbol)] = Code {
-            bits: code.bits,
-            len: code.len,
-        };
+        previous = len;
     }
+    codes
 }
 
 /// An MSB-first bit writer.
 #[derive(Default)]
-struct BitWriter {
+pub struct BitWriter {
     out: Vec<u8>,
     accumulator: u64,
     bits: usize,
 }
 
 impl BitWriter {
-    /// Appends the low `len` bits of `value`, most significant first.
-    fn push(&mut self, value: u64, len: usize) {
-        self.accumulator = (self.accumulator << len) | value;
-        self.bits += len;
-        while self.bits >= 8 {
-            #[allow(clippy::cast_possible_truncation, reason = "the top byte")]
-            self.out.push((self.accumulator >> (self.bits - 8)) as u8);
-            self.bits -= 8;
+    /// An empty writer.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            out: Vec::new(),
+            accumulator: 0,
+            bits: 0,
         }
-        self.accumulator &= (1u64 << self.bits) - 1;
     }
 
-    /// Pads the final byte with zeros.
-    fn finish(mut self) -> Vec<u8> {
+    /// The number of bits written so far, including bits still pending in the last byte.
+    #[must_use]
+    pub const fn bit_len(&self) -> usize {
+        self.out.len() * 8 + self.bits
+    }
+
+    /// Appends the low `len` bits of `value`, most significant first.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `len` is greater than 64.
+    pub fn push(&mut self, value: u64, len: usize) {
+        assert!(len <= 64, "at most 64 bits fit one push");
+        let mut remaining = len;
+        while remaining > 0 {
+            // The accumulator holds fewer than eight pending bits, so a 56-bit chunk always
+            // leaves room to shift it into the accumulator.
+            let take = remaining.min(56);
+            let shift = remaining - take;
+            let chunk = (value >> shift) & ((1u64 << take) - 1);
+            self.accumulator = (self.accumulator << take) | chunk;
+            self.bits += take;
+            while self.bits >= 8 {
+                #[allow(clippy::cast_possible_truncation, reason = "the top byte")]
+                self.out.push((self.accumulator >> (self.bits - 8)) as u8);
+                self.bits -= 8;
+            }
+            self.accumulator &= (1u64 << self.bits) - 1;
+            remaining -= take;
+        }
+    }
+
+    /// Pads the final byte with zeros and returns the written bytes.
+    #[must_use]
+    pub fn finish(mut self) -> Vec<u8> {
         if self.bits != 0 {
             #[allow(clippy::cast_possible_truncation, reason = "the padded byte")]
             self.out.push((self.accumulator << (8 - self.bits)) as u8);
@@ -392,5 +419,44 @@ mod tests {
         for length in 0..stream.len() {
             assert_eq!(decode(&stream[..length], data.len(), 1), None);
         }
+    }
+
+    #[test]
+    fn canonical_codes_assign_shortlex_codes() {
+        let codes = canonical_codes(&[1, 2, 3, 3]);
+        assert_eq!(codes[0], Code { bits: 0b0, len: 1 });
+        assert_eq!(codes[1], Code { bits: 0b10, len: 2 });
+        assert_eq!(
+            codes[2],
+            Code {
+                bits: 0b110,
+                len: 3
+            }
+        );
+        assert_eq!(
+            codes[3],
+            Code {
+                bits: 0b111,
+                len: 3
+            }
+        );
+    }
+
+    #[test]
+    fn bit_writer_packs_msb_first_and_handles_wide_pushes() {
+        let mut writer = BitWriter::new();
+        writer.push(0b1, 1);
+        writer.push(0b01, 2);
+        writer.push(0b101, 3);
+        assert_eq!(writer.bit_len(), 6);
+        assert_eq!(writer.finish(), vec![0b1011_0100]);
+
+        let mut writer = BitWriter::new();
+        writer.push(1, 1);
+        writer.push(u64::MAX, 64);
+        assert_eq!(writer.bit_len(), 65);
+        let mut expected = vec![0xFF; 8];
+        expected.push(0x80);
+        assert_eq!(writer.finish(), expected);
     }
 }

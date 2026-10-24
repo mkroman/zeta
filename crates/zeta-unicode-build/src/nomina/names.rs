@@ -88,6 +88,7 @@ use std::collections::BinaryHeap;
 
 use bytes::{Buf, BufMut};
 
+use zeta_unicode_format::huffman::{BitWriter, Code, canonical_codes};
 use zeta_unicode_format::{HANGUL_COUNT, HANGUL_END, HANGUL_START, UNICODE_END};
 
 use crate::ucd::Inputs;
@@ -345,12 +346,14 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
         } else {
             0
         };
-        writer.write_symbol(
+        write_symbol(
+            &mut writer,
             &prefix_book,
             u8::try_from(prefix).expect("prefix fits in a byte"),
         );
         if global {
-            writer.write_symbol(
+            write_symbol(
+                &mut writer,
                 &suffix_book,
                 u8::try_from(suffix).expect("suffix fits in a byte"),
             );
@@ -367,7 +370,7 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
                 context,
                 context_base,
             );
-            writer.write_symbol(model, byte);
+            write_symbol(&mut writer, model, byte);
             context = byte;
         }
         let model = model_of(
@@ -377,12 +380,16 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
             context,
             context_base,
         );
-        writer.write_symbol(model, 0);
+        write_symbol(&mut writer, model, 0);
     }
 
     // Serialize the header, directory and runs.
     let mut bytes = Vec::with_capacity(
-        12 + page_dir.len() * 2 + run_count * 8 + block_count * 12 + 6_000 + writer.out.len(),
+        12 + page_dir.len() * 2
+            + run_count * 8
+            + block_count * 12
+            + 6_000
+            + writer.bit_len().div_ceil(8),
     );
     bytes.put_u32_le(u32::try_from(entries.len()).expect("name count fits in u32"));
     bytes.put_u32_le(u32::try_from(block_count).expect("block count fits in u32"));
@@ -437,9 +444,9 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     let model_directory_bytes = blobs_at - model_start;
 
     let stream_bits = writer.bit_len();
-    writer.finish();
-    let stream_bytes = writer.out.len();
-    bytes.extend_from_slice(&writer.out);
+    let stream = writer.finish();
+    let stream_bytes = stream.len();
+    bytes.extend_from_slice(&stream);
 
     Encoded {
         bytes,
@@ -465,9 +472,9 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
 /// on every checkpoint name, so it is guaranteed to contain every byte of the corpus.
 fn write_checkpoint(writer: &mut BitWriter, name: &[u8], checkpoint_book: &Codebook) {
     for &byte in name {
-        writer.write_symbol(checkpoint_book, byte);
+        write_symbol(writer, checkpoint_book, byte);
     }
-    writer.write_symbol(checkpoint_book, 0);
+    write_symbol(writer, checkpoint_book, 0);
 }
 
 /// The predecessor a name is front-coded against.
@@ -568,8 +575,6 @@ fn page_directory(runs: &[(u32, u32, u32)]) -> Vec<u16> {
 /// A canonical Huffman codebook for one 256-symbol alphabet.
 #[derive(Clone)]
 struct Codebook {
-    /// Code length per symbol; zero means the symbol is absent.
-    lengths: [u8; 256],
     /// The longest code in the book.
     max_bits: u8,
     /// `counts[length]` is the number of symbols with that length (`counts[0] == 0`).
@@ -577,7 +582,7 @@ struct Codebook {
     /// Symbols in canonical order.
     symbols: Vec<u8>,
     /// The canonical code per symbol.
-    codes: [u32; 256],
+    codes: Vec<Code>,
 }
 
 impl Codebook {
@@ -599,7 +604,6 @@ impl Codebook {
         let max_bits = pairs.last().map_or(0, |&(length, _)| length);
         let codes = canonical_codes(&lengths);
         Self {
-            lengths,
             max_bits,
             counts,
             symbols,
@@ -713,79 +717,11 @@ impl Node {
     }
 }
 
-/// Assigns canonical codes to a set of code lengths.
-fn canonical_codes(lengths: &[u8; 256]) -> [u32; 256] {
-    let mut pairs: Vec<(u8, u8)> = (0..=u8::MAX)
-        .filter(|&symbol| lengths[usize::from(symbol)] > 0)
-        .map(|symbol| (lengths[usize::from(symbol)], symbol))
-        .collect();
-    pairs.sort_unstable();
-    let mut codes = [0u32; 256];
-    let mut code = 0u32;
-    let mut previous = 0u8;
-    for (length, symbol) in pairs {
-        code <<= length - previous;
-        codes[usize::from(symbol)] = code;
-        code += 1;
-        previous = length;
-    }
-    codes
-}
-
-/// An MSB-first bit writer.
-struct BitWriter {
-    /// Completed bytes.
-    out: Vec<u8>,
-    /// The pending bits, left-aligned in the low `pending` bits.
-    accumulator: u64,
-    /// How many bits in `accumulator` are pending.
-    pending: u32,
-}
-
-impl BitWriter {
-    /// An empty writer.
-    const fn new() -> Self {
-        Self {
-            out: Vec::new(),
-            accumulator: 0,
-            pending: 0,
-        }
-    }
-
-    /// The number of bits written so far.
-    fn bit_len(&self) -> usize {
-        self.out.len() * 8 + usize::try_from(self.pending).expect("pending fits in usize")
-    }
-
-    /// Appends `code` with `length` bits, most significant bit first.
-    fn write(&mut self, code: u32, length: u8) {
-        self.accumulator = (self.accumulator << length) | u64::from(code);
-        self.pending += u32::from(length);
-        while self.pending >= 8 {
-            self.pending -= 8;
-            self.out
-                .push(u8::try_from((self.accumulator >> self.pending) & 0xFF).expect("one byte"));
-        }
-        self.accumulator &= (1u64 << self.pending) - 1;
-    }
-
-    /// Appends one symbol from `book`.
-    fn write_symbol(&mut self, book: &Codebook, symbol: u8) {
-        let length = book.lengths[usize::from(symbol)];
-        assert!(length > 0, "symbol {symbol} is absent from the model");
-        self.write(book.codes[usize::from(symbol)], length);
-    }
-
-    /// Pads the pending bits into one final byte, zero-filled on the right.
-    fn finish(&mut self) {
-        if self.pending > 0 {
-            let padded = self.accumulator << (8 - self.pending);
-            self.out
-                .push(u8::try_from(padded & 0xFF).expect("one padded byte"));
-            self.pending = 0;
-            self.accumulator = 0;
-        }
-    }
+/// Appends `symbol`'s canonical code to `writer`.
+fn write_symbol(writer: &mut BitWriter, book: &Codebook, symbol: u8) {
+    let code = book.codes[usize::from(symbol)];
+    assert!(code.len > 0, "symbol {symbol} is absent from the model");
+    writer.push(code.bits, usize::from(code.len));
 }
 
 /// The parsed name corpus.
@@ -1669,10 +1605,10 @@ mod tests {
                 .sum();
             assert_eq!(kraft, 1 << MAX_CODE_BITS, "the code is not complete");
             for symbol in 0..=u8::MAX {
-                let length = book.lengths[usize::from(symbol)];
-                if length > 0 {
+                let code = book.codes[usize::from(symbol)];
+                if code.len > 0 {
                     assert!(
-                        book.codes[usize::from(symbol)] < (1u32 << length),
+                        code.bits < (1u64 << code.len),
                         "symbol {symbol} does not fit its code length"
                     );
                 }
