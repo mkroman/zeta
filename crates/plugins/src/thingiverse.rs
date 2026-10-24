@@ -83,17 +83,13 @@ struct Creator {
     name: String,
 }
 
-#[async_trait]
-impl Plugin<Context> for Thingiverse {
-    type Settings = Settings;
-
+#[plugin(name = "thingiverse", settings = Settings, urls(hosts = URL_HOSTS))]
+impl Thingiverse {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
-
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client(&ctx.config.http);
         // Regex to match /thing:<id>
@@ -106,6 +102,7 @@ impl Plugin<Context> for Thingiverse {
         })
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
