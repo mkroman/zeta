@@ -33,10 +33,11 @@ const SEPARATOR: &str = "\x0310,\x0f ";
 /// derived from its `argh` type.
 pub struct Help;
 
-#[async_trait]
-impl Plugin<Context> for Help {
-    type Settings = NoSettings;
-
+#[plugin(name = "help")]
+impl Help {
+    // The constructor signature is fixed by the `Plugin` trait: `NoSettings` is a unit type the
+    // constructor cannot fail over, so the by-reference parameter and the `Result` wrapper stay.
+    #[allow(clippy::trivially_copy_pass_by_ref, clippy::unnecessary_wraps)]
     fn new(
         _ctx: &Context,
         _settings: &NoSettings,
@@ -46,7 +47,9 @@ impl Plugin<Context> for Help {
         Ok(Self)
     }
 
-    async fn handle_command(
+    /// Replies with a usage hint and plugin index, a plugin's commands, or a command's usage.
+    #[handler(command)]
+    async fn help(
         &self,
         ctx: &Context,
         client: &Client,
