@@ -1,8 +1,6 @@
 //! The Unicode general category property (UAX #44).
 
-use zeta_unicode_format::{GC_ID_BITS, GC_ID_MASK, GC_PAGES, GC_SHIFT, GC_SHORT_NAMES};
-
-use crate::{sections, tables};
+use zeta_unicode_format::GC_SHORT_NAMES;
 
 /// A Unicode general category value.
 ///
@@ -198,43 +196,6 @@ impl std::fmt::Display for GeneralCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.long_name())
     }
-}
-
-/// Looks up the general category of `cp` in the two-level page table.
-///
-/// The section is a page directory of `u16` record indices over packed `u16` records: the
-/// page-relative run start in the high bits and the category id in the low
-/// [`GC_ID_BITS`](zeta_unicode_format::GC_ID_BITS) bits.
-#[allow(
-    clippy::redundant_pub_crate,
-    reason = "the module is private, but `pub(crate)` states the intended visibility"
-)]
-pub(crate) fn general_category_of(cp: u32) -> Option<GeneralCategory> {
-    let table = tables::section(sections::GC)?;
-    let directory = tables::bytes_at(table, 0, GC_PAGES * 2)?;
-    let records = table.get(GC_PAGES * 2..).unwrap_or_default();
-
-    let page = usize::try_from(cp >> GC_SHIFT).ok()?;
-    let relative = cp & ((1 << GC_SHIFT) - 1);
-    let (first, end) = tables::u16_pair_at(directory, page)?;
-
-    // Find the last run in the page whose start is at or before `cp`. When no run starts in
-    // this page (`first == end`) or `cp` falls before the page's first run, `low` stays at
-    // `first` and the carried-over run ending just before it answers instead.
-    let (mut low, mut high) = (usize::from(first), usize::from(end));
-    while low < high {
-        let mid = low + (high - low) / 2;
-        let start = u32::from(tables::u16_at(records, mid.checked_mul(2)?)? >> GC_ID_BITS);
-        if start <= relative {
-            low = mid + 1;
-        } else {
-            high = mid;
-        }
-    }
-    let record = low.checked_sub(1)?;
-
-    let id = usize::from(tables::u16_at(records, record.checked_mul(2)?)? & GC_ID_MASK);
-    GeneralCategory::from_id(id)
 }
 
 #[cfg(test)]

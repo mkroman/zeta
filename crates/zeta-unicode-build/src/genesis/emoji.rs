@@ -1,0 +1,1939 @@
+//! Genesis emoji section: rule-generated names over Huffman-coded streams.
+//!
+//! The section stores the 1,944 canonical entries of the shipped table, but most names are not
+//! stored: 1,341 entries name themselves through one of the thirteen grammar rules measured in
+//! the prototype (`ucd_mask`, gender swaps, family, facing, keycap, ...). Every rule candidate is
+//! replayed here against the published name, and any mismatch falls back to a literal, so the
+//! encoder can never publish a name it did not reproduce.
+//!
+//! Streams are hand-written canonical Huffman over an order-0 or order-1 byte model. Keys are
+//! sorted canonical UTF-8 sequences, delta-coded by first code point; names are the literal
+//! names in entry order; rules are one `u8` per entry with an optional argument byte; skin-tone
+//! rules and published-tone masks are bit-packed. The runtime decodes the four streams once and
+//! binary-searches a UTF-8 key arena.
+//!
+//! # Layout
+//!
+//! ```text
+//! u16 entries | u16 literal_count
+//! four descriptors: u16 raw_len | u16 coded_len | u8 order
+//! keys   (order 0 or 1) | names | rules | masks
+//! packed 3-bit tone codes | packed 2-bit tone masks
+//! ```
+//!
+//! # Panics
+//!
+//! Malformed vendored data is an invariant violation and panics with a message naming the
+//! offending entry. This is build-time code generation: a bad byte is a build failure.
+
+use std::collections::BTreeMap;
+
+use zeta_unicode_format::{
+    MAX_KEY, TONE_NAMES, TONES, format_toned, is_tone, tone_phrase, tone_positions,
+};
+
+/// The longest code a canonical Huffman model may use.
+const HUFFMAN_MAX_BITS: usize = 32;
+
+/// Rule id `literal`: the name is stored in the literal-name stream.
+pub const RULE_LITERAL: u8 = 0;
+/// Rule id `ucd_mask`: select words from the lowercase UCD name.
+pub const RULE_UCD_MASK: u8 = 1;
+/// Rule id `ucd_mask_hyphen`: select words, joining the first two with a hyphen.
+pub const RULE_UCD_MASK_HYPHEN: u8 = 2;
+/// Rule id `keycap`: `KEYCAP ` plus the keycap word.
+pub const RULE_KEYCAP: u8 = 3;
+/// Rule id `gender_w`: swap `person` for `woman` in a base name.
+pub const RULE_GENDER_WOMAN: u8 = 4;
+/// Rule id `gender_m`: swap `person` for `man` in a base name.
+pub const RULE_GENDER_MAN: u8 = 5;
+/// Rule id `facing`: base name plus ` facing right`.
+pub const RULE_FACING: u8 = 6;
+/// Rule id `family`: `family: ` plus comma-joined family words.
+pub const RULE_FAMILY: u8 = 7;
+/// Rule id `couple`: `couple with heart: ` plus comma-joined family words.
+pub const RULE_COUPLE: u8 = 8;
+/// Rule id `kiss`: `kiss: ` plus comma-joined family words.
+pub const RULE_KISS: u8 = 9;
+/// Rule id `pair`: plural word plus the pair phrase.
+pub const RULE_PAIR: u8 = 10;
+/// Rule id `tone_component`: one of the five skin-tone names.
+pub const RULE_TONE_COMPONENT: u8 = 11;
+/// Rule id `clock`: the hour word plus ` o’clock`.
+pub const RULE_CLOCK: u8 = 12;
+/// Rule id `keycap10`: the literal name `keycap: 10`.
+pub const RULE_KEYCAP_10: u8 = 13;
+
+/// The number of grammar rules, literal included.
+pub const RULE_COUNT: usize = 14;
+
+/// One canonical emoji entry, as it should appear in the table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmojiEntry {
+    /// Canonical UTF-8 key with `U+FE0F` removed.
+    pub key: String,
+    /// The published CLDR name.
+    pub name: String,
+    /// The 3-bit tone formatting rule (`0` when the base has no variants).
+    pub tone_code: u8,
+    /// The 2-bit published-tone-count mask.
+    pub tone_mask: u8,
+}
+
+/// One skin-tone variant: its tone indices, its name and its canonical code points.
+type ToneVariant = (Vec<usize>, String, Vec<u32>);
+
+/// Tone variants grouped by the sequence they derive from (with the tones removed).
+type ToneVariants = BTreeMap<Vec<u32>, Vec<ToneVariant>>;
+
+/// Counters and measured sizes for one emoji section build.
+#[derive(Clone, Debug, Default)]
+pub struct EmojiStats {
+    /// Canonical entries encoded.
+    pub entries: usize,
+    /// Entries stored as literal names.
+    pub literals: usize,
+    /// Entries whose name a grammar rule reproduces.
+    pub ruled: usize,
+    /// Entries per rule id, indexed by the `RULE_*` constants.
+    pub rule_counts: [usize; RULE_COUNT],
+    /// Total encoded section size, in bytes.
+    pub section_bytes: usize,
+    /// Encoded key stream size.
+    pub key_stream: usize,
+    /// Encoded literal-name stream size.
+    pub name_stream: usize,
+    /// Encoded rule stream size.
+    pub rule_stream: usize,
+    /// Encoded mask stream size.
+    pub mask_stream: usize,
+    /// Candidates that a rule could not reproduce and that fell back to a literal.
+    pub fallbacks: usize,
+    /// Packed tone-code and tone-mask bytes.
+    pub tone_bytes: usize,
+    /// Raw (pre-Huffman) key stream size.
+    pub key_raw: usize,
+    /// Raw literal-name stream size.
+    pub name_raw: usize,
+    /// Raw rule stream size.
+    pub rule_raw: usize,
+    /// Raw mask stream size.
+    pub mask_raw: usize,
+    /// Decoded runtime heap: key arena, offsets, names, args and tone bytes.
+    pub heap_bytes: usize,
+}
+
+/// Builds the emoji section from the vendored `emoji-test.txt`, `NamedSequences.txt` and
+/// `DerivedName.txt` texts.
+///
+/// Every grammar rule is replayed against the published name before it is accepted; a rule that
+/// does not reproduce the name falls back to a literal. Every stream round-trips through the
+/// decoder before the section is returned.
+#[must_use]
+pub fn build(emoji_text: &str, named_text: &str, derived_names: &str) -> (Vec<u8>, EmojiStats) {
+    let entries = canonical_entries(emoji_text, named_text);
+    let ucd = ucd_names(derived_names);
+    emoji_section(&entries, &ucd)
+}
+
+/// Parses the canonical emoji entries exactly as the shipped table does.
+///
+/// `NamedSequences.txt` names win over fully-qualified entries, which win over minimally
+/// qualified and unqualified ones. Keys are canonicalized by removing `U+FE0F`; tone variants
+/// are folded into their base, and a base records the 3-bit formatting rule and 2-bit published
+/// tone counts. Variants that no rule reproduces are stored verbatim.
+///
+/// # Panics
+///
+/// Panics when a vendored line is malformed or a canonical key is not a scalar value. That is
+/// a build failure, not a runtime condition.
+#[must_use]
+pub fn canonical_entries(emoji_text: &str, named_text: &str) -> Vec<EmojiEntry> {
+    let all = parse_emoji(emoji_text, named_text);
+
+    // Canonicalize: strip U+FE0F, keeping the highest-precedence name per canonical key.
+    let mut canonical: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
+    for (cps, (rank, name)) in &all {
+        keep_best(&mut canonical, canonical_cps(cps), *rank, name.clone());
+    }
+
+    let mut kept: BTreeMap<Vec<u32>, (String, u8, u8)> = BTreeMap::new();
+    let mut variants: ToneVariants = BTreeMap::new();
+    for (cps, (_rank, name)) in &canonical {
+        let tones = tone_positions(cps.iter().copied());
+        if tones.is_empty() || cps.len() == 1 {
+            kept.insert(cps.clone(), (name.clone(), 0, 0));
+        } else {
+            let base: Vec<u32> = cps.iter().copied().filter(|cp| !is_tone(*cp)).collect();
+            variants
+                .entry(base)
+                .or_default()
+                .push((tones, name.clone(), cps.clone()));
+        }
+    }
+
+    for (base, group) in &variants {
+        if group
+            .iter()
+            .any(|(tones, _, _)| !(1..=2).contains(&tones.len()))
+        {
+            store_verbatim(&mut kept, group);
+            continue;
+        }
+
+        let (base_name, mut rule) = match kept.get(base) {
+            Some((name, _, _)) => (name.clone(), 0),
+            None if let Some((name, rule)) = derive_base(group) => {
+                kept.insert(base.clone(), (name.clone(), rule, 0));
+                (name, rule)
+            }
+            None => {
+                store_verbatim(&mut kept, group);
+                continue;
+            }
+        };
+
+        if rule == 0 {
+            for candidate in [3u8, 1, 4, 2] {
+                if group.iter().all(|(tones, variant_name, _)| {
+                    format_toned(candidate, &base_name, tones) == *variant_name
+                }) {
+                    rule = candidate;
+                    break;
+                }
+            }
+        }
+
+        let tone_mask = group.iter().fold(0u8, |mask, (tones, _, _)| {
+            mask | match tones.len() {
+                1 => 1,
+                2 => 2,
+                _ => 0,
+            }
+        });
+        if rule == 0 {
+            store_verbatim(&mut kept, group);
+            continue;
+        }
+
+        {
+            let entry = kept.get_mut(base).expect("base entry exists");
+            entry.1 = rule;
+            entry.2 = tone_mask;
+        }
+    }
+
+    let mut entries: Vec<EmojiEntry> = kept
+        .into_iter()
+        .map(|(cps, (name, tone_code, tone_mask))| {
+            let key: String = cps
+                .iter()
+                .map(|&cp| char::from_u32(cp).expect("code point is a scalar value"))
+                .collect();
+            EmojiEntry {
+                key,
+                name,
+                tone_code,
+                tone_mask,
+            }
+        })
+        .collect();
+    entries.sort_by(|left, right| left.key.as_bytes().cmp(right.key.as_bytes()));
+    for pair in entries.windows(2) {
+        assert!(
+            pair[0].key < pair[1].key,
+            "duplicate emoji key {:?}",
+            pair[0].key
+        );
+    }
+    entries
+}
+
+/// Parses the single-code-point names of `DerivedName.txt` into a code point map.
+///
+/// Range lines and the `*` patterns are skipped: the grammar only asks for the name of one
+/// code point.
+///
+/// # Panics
+///
+/// Panics when a vendored line is malformed. That is a build failure, not a runtime condition.
+#[must_use]
+pub fn ucd_names(derived_names: &str) -> BTreeMap<u32, String> {
+    let mut names = BTreeMap::new();
+    for (number, line) in records(derived_names) {
+        let (lhs, rhs) = line
+            .split_once(';')
+            .unwrap_or_else(|| panic!("line {number}: {line}"));
+        let lhs = lhs.trim();
+        let rhs = rhs.trim();
+        if rhs.contains('*') || lhs.contains("..") {
+            continue;
+        }
+        names.insert(hex_u32(lhs), rhs.to_owned());
+    }
+    names
+}
+
+/// Encodes the emoji section for `entries`, using `ucd` for the `ucd_mask` and `clock` rules.
+///
+/// # Panics
+///
+/// Panics when an entry is malformed, when a stream outgrows its `u16` length, or when the
+/// assembled section does not round-trip. That is a build failure, not a runtime condition.
+#[must_use]
+pub fn emoji_section(entries: &[EmojiEntry], ucd: &BTreeMap<u32, String>) -> (Vec<u8>, EmojiStats) {
+    let all_cps: Vec<Vec<u32>> = entries
+        .iter()
+        .map(|entry| code_points(&entry.key))
+        .collect();
+    let mut stats = EmojiStats {
+        entries: entries.len(),
+        ..EmojiStats::default()
+    };
+    let (assigned, literal_names, masks) = assign_rules(entries, &all_cps, ucd, &mut stats);
+    let payload = encode_payload(entries, &all_cps, &assigned, &literal_names, &masks);
+    verify_streams(
+        entries,
+        &all_cps,
+        &assigned,
+        &payload.decoded_keys,
+        &payload.decoded_names,
+        ucd,
+    );
+    let section = assemble(entries.len(), literal_names.len(), &payload);
+
+    stats.literals = literal_names.len();
+    stats.ruled = entries.len() - stats.literals;
+    stats.section_bytes = section.len();
+    stats.key_stream = payload.key_stream.len();
+    stats.name_stream = payload.name_stream.len();
+    stats.rule_stream = payload.rule_stream.len();
+    stats.mask_stream = payload.mask_stream.len();
+    stats.tone_bytes = payload.tone_codes.len() + payload.tone_masks.len();
+    stats.key_raw = payload.key_raw.len();
+    stats.name_raw = payload.name_raw.len();
+    stats.rule_raw = payload.rule_raw.len();
+    stats.mask_raw = masks.len();
+    stats.heap_bytes = payload.key_bytes
+        + (entries.len() + 1) * 2
+        + payload.literal_bytes
+        + (literal_names.len() + 1) * 2
+        + entries.len() * 2
+        + stats.tone_bytes;
+    (section, stats)
+}
+
+/// Assigns one rule per entry, verifying it against the published name and falling back to a
+/// literal.
+fn assign_rules(
+    entries: &[EmojiEntry],
+    all_cps: &[Vec<u32>],
+    ucd: &BTreeMap<u32, String>,
+    stats: &mut EmojiStats,
+) -> (Vec<(u8, u16)>, Vec<String>, Vec<u8>) {
+    let by_key: BTreeMap<&str, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.key.as_str(), index))
+        .collect();
+    assert_eq!(by_key.len(), entries.len(), "duplicate emoji keys");
+
+    let mut assigned = Vec::with_capacity(entries.len());
+    let mut literal_names = Vec::new();
+    let mut masks = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let cps = &all_cps[index];
+        let candidate = rule_for(entry, cps, entries, ucd);
+        let accepted = candidate.filter(|&(rule, arg)| {
+            generated_name(rule, arg, cps, entries, ucd).as_deref() == Some(entry.name.as_str())
+        });
+        let (rule, arg) = if let Some((rule, arg)) = accepted {
+            (rule, arg)
+        } else {
+            if candidate.is_some() {
+                stats.fallbacks += 1;
+            }
+            let ordinal = u16::try_from(literal_names.len()).expect("fewer than 65536 literals");
+            literal_names.push(entry.name.clone());
+            (RULE_LITERAL, ordinal)
+        };
+        stats.rule_counts[usize::from(rule)] += 1;
+        if rule == RULE_UCD_MASK || rule == RULE_UCD_MASK_HYPHEN {
+            masks.push(u8::try_from(arg).expect("a mask fits in a byte"));
+        }
+        assigned.push((rule, arg));
+    }
+    assert_eq!(
+        stats.rule_counts[usize::from(RULE_LITERAL)],
+        literal_names.len(),
+        "literal rule count"
+    );
+    (assigned, literal_names, masks)
+}
+
+/// The raw streams, their coded forms, the packed tone arrays and the round-trip decodes.
+struct Payload {
+    key_raw: Vec<u8>,
+    name_raw: Vec<u8>,
+    rule_raw: Vec<u8>,
+    mask_raw: Vec<u8>,
+    key_stream: Vec<u8>,
+    name_stream: Vec<u8>,
+    rule_stream: Vec<u8>,
+    mask_stream: Vec<u8>,
+    decoded_keys: Vec<u8>,
+    decoded_names: Vec<u8>,
+    tone_codes: Vec<u8>,
+    tone_masks: Vec<u8>,
+    key_bytes: usize,
+    literal_bytes: usize,
+}
+
+/// Encodes the key, literal-name, rule and mask streams and round-trips each one.
+fn encode_payload(
+    entries: &[EmojiEntry],
+    all_cps: &[Vec<u32>],
+    assigned: &[(u8, u16)],
+    literal_names: &[String],
+    masks: &[u8],
+) -> Payload {
+    // Keys: sorted canonical UTF-8 sequences, delta-coded by first code point.
+    let mut key_raw = Vec::new();
+    let mut previous = 0u32;
+    let mut key_bytes = 0usize;
+    for (entry, cps) in entries.iter().zip(all_cps) {
+        assert!(!cps.is_empty(), "empty emoji key");
+        assert!(
+            entry.key.len() <= MAX_KEY,
+            "emoji key {:?} is over MAX_KEY",
+            entry.key
+        );
+        let first = *cps.first().expect("a non-empty key");
+        assert!(first >= previous, "keys are not sorted by first code point");
+        write_varint(u64::from(first - previous), &mut key_raw);
+        previous = first;
+        write_varint(
+            u64::try_from(cps.len()).expect("a key length"),
+            &mut key_raw,
+        );
+        for &cp in cps.iter().skip(1) {
+            write_varint(u64::from(cp), &mut key_raw);
+        }
+        key_bytes += entry.key.len();
+    }
+
+    // Literal names in entry order, NUL-separated.
+    let mut name_raw = Vec::new();
+    let mut literal_bytes = 0usize;
+    for (index, name) in literal_names.iter().enumerate() {
+        if index > 0 {
+            name_raw.push(0);
+        }
+        literal_bytes += name.len();
+        name_raw.extend_from_slice(name.as_bytes());
+    }
+
+    let rule_raw: Vec<u8> = assigned.iter().map(|&(rule, _)| rule).collect();
+    let key_stream = huffman::encode(&key_raw, 1);
+    let name_stream = huffman::encode(&name_raw, 0);
+    let rule_stream = huffman::encode(&rule_raw, 0);
+    let mask_stream = huffman::encode(masks, 0);
+    for (label, raw, coded) in [
+        ("keys", key_raw.len(), key_stream.len()),
+        ("names", name_raw.len(), name_stream.len()),
+        ("rules", rule_raw.len(), rule_stream.len()),
+        ("masks", masks.len(), mask_stream.len()),
+    ] {
+        assert!(
+            u16::try_from(raw).is_ok() && u16::try_from(coded).is_ok(),
+            "{label} stream is {raw} raw / {coded} coded bytes"
+        );
+    }
+    assert!(
+        u16::try_from(entries.len()).is_ok() && u16::try_from(literal_names.len()).is_ok(),
+        "too many entries or literal names"
+    );
+
+    let decoded_keys = huffman::decode(&key_stream, key_raw.len(), 1).expect("keys round-trip");
+    let decoded_names = huffman::decode(&name_stream, name_raw.len(), 0).expect("names round-trip");
+    let decoded_rules = huffman::decode(&rule_stream, rule_raw.len(), 0).expect("rules round-trip");
+    let decoded_masks = huffman::decode(&mask_stream, masks.len(), 0).expect("masks round-trip");
+    assert_eq!(decoded_keys, key_raw, "key stream round-trip");
+    assert_eq!(decoded_names, name_raw, "name stream round-trip");
+    assert_eq!(decoded_rules, rule_raw, "rule stream round-trip");
+    assert_eq!(decoded_masks, masks, "mask stream round-trip");
+
+    Payload {
+        key_raw,
+        name_raw,
+        rule_raw,
+        mask_raw: masks.to_vec(),
+        key_stream,
+        name_stream,
+        rule_stream,
+        mask_stream,
+        decoded_keys,
+        decoded_names,
+        tone_codes: pack_bits(entries.iter().map(|entry| entry.tone_code), 3),
+        tone_masks: pack_bits(entries.iter().map(|entry| entry.tone_mask), 2),
+        key_bytes,
+        literal_bytes,
+    }
+}
+
+/// Writes the section header, descriptors, streams and tone arrays.
+fn assemble(entries: usize, literals: usize, payload: &Payload) -> Vec<u8> {
+    let mut section = Vec::new();
+    push_u16(&mut section, u16::try_from(entries).expect("entry count"));
+    push_u16(
+        &mut section,
+        u16::try_from(literals).expect("literal count"),
+    );
+    for (raw, coded, order) in [
+        (&payload.key_raw, &payload.key_stream, 1u8),
+        (&payload.name_raw, &payload.name_stream, 0),
+        (&payload.rule_raw, &payload.rule_stream, 0),
+        (&payload.mask_raw, &payload.mask_stream, 0),
+    ] {
+        push_u16(&mut section, u16::try_from(raw.len()).expect("raw length"));
+        push_u16(
+            &mut section,
+            u16::try_from(coded.len()).expect("coded length"),
+        );
+        section.push(order);
+    }
+    section.extend_from_slice(&payload.key_stream);
+    section.extend_from_slice(&payload.name_stream);
+    section.extend_from_slice(&payload.rule_stream);
+    section.extend_from_slice(&payload.mask_stream);
+    section.extend_from_slice(&payload.tone_codes);
+    section.extend_from_slice(&payload.tone_masks);
+    section
+}
+
+/// Rebuilds every entry from the decoded streams and compares it to the input.
+fn verify_streams(
+    entries: &[EmojiEntry],
+    all_cps: &[Vec<u32>],
+    assigned: &[(u8, u16)],
+    decoded_keys: &[u8],
+    decoded_names: &[u8],
+    ucd: &BTreeMap<u32, String>,
+) {
+    let decoded_entries = decode_entries(entries.len(), assigned, decoded_keys, decoded_names)
+        .expect("decoded streams parse");
+    for (index, entry) in entries.iter().enumerate() {
+        let (cps, name, rule, arg) = &decoded_entries[index];
+        assert_eq!(cps, &all_cps[index], "decoded key {index}");
+        let materialized = if *rule == RULE_LITERAL {
+            Some(name.clone())
+        } else {
+            generated_name(*rule, *arg, cps, entries, ucd)
+        };
+        assert_eq!(
+            materialized.as_deref(),
+            Some(entry.name.as_str()),
+            "decoded name for {:?}",
+            entry.key
+        );
+        assert_eq!(*rule, assigned[index].0, "decoded rule {index}");
+    }
+}
+
+/// A decoded entry: `(code points, literal name, rule, argument)`.
+type DecodedEntry = (Vec<u32>, String, u8, u16);
+
+/// Decodes the key and literal-name streams back into entries.
+fn decode_entries(
+    count: usize,
+    assigned: &[(u8, u16)],
+    keys: &[u8],
+    names: &[u8],
+) -> Option<Vec<DecodedEntry>> {
+    let literal_count = assigned
+        .iter()
+        .filter(|(rule, _)| *rule == RULE_LITERAL)
+        .count();
+    let mut literals = Vec::with_capacity(literal_count);
+    if literal_count > 0 {
+        let mut parts = names.split(|&byte| byte == 0);
+        for _ in 0..literal_count {
+            literals.push(std::str::from_utf8(parts.next()?).ok()?);
+        }
+    } else {
+        assert!(names.is_empty(), "literal bytes without a literal rule");
+    }
+    let mut out = Vec::with_capacity(count);
+    let mut at = 0usize;
+    let mut previous = 0u32;
+    for &(rule, arg) in assigned.iter().take(count) {
+        let (delta, used) = zeta_unicode_format::read_varint(keys.get(at..)?).expect("a key delta");
+        at += used;
+        let first = previous.checked_add(delta)?;
+        previous = first;
+        let (length, used) = zeta_unicode_format::read_varint(keys.get(at..)?)?;
+        at += used;
+        let length = usize::try_from(length).ok()?;
+        let mut cps = Vec::with_capacity(length);
+        cps.push(first);
+        for _ in 1..length {
+            let (cp, used) = zeta_unicode_format::read_varint(keys.get(at..)?)?;
+            at += used;
+            cps.push(cp);
+        }
+        let literal = if rule == RULE_LITERAL {
+            literals.get(usize::from(arg))?.to_string()
+        } else {
+            String::new()
+        };
+        out.push((cps, literal, rule, arg));
+    }
+    Some(out)
+}
+
+/// Assigns the first grammar rule that reproduces `entry.name`, if any.
+///
+/// The returned argument is the `ucd_mask` word mask, the literal ordinal, or the gender base
+/// candidate (`0` direct, `1` through the `person` base).
+fn rule_for(
+    entry: &EmojiEntry,
+    cps: &[u32],
+    entries: &[EmojiEntry],
+    ucd: &BTreeMap<u32, String>,
+) -> Option<(u8, u16)> {
+    let name = entry.name.as_str();
+    if let Some(rule) = single_code_point_rule(cps, name, ucd) {
+        return Some(rule);
+    }
+    if let Some(rule) = gender_rule(cps, name, entries) {
+        return Some(rule);
+    }
+    if let Some(rule) = facing_rule(cps, name, entries) {
+        return Some(rule);
+    }
+    if let Some(rule) = role_rule(cps, name, entries) {
+        return Some(rule);
+    }
+    if let Some(rule) = pair_rule(cps, name) {
+        return Some(rule);
+    }
+    family_rule(cps, name)
+}
+
+/// The rules that apply to one or two code points: keycap, tone component, `ucd_mask`, clock.
+fn single_code_point_rule(
+    cps: &[u32],
+    name: &str,
+    ucd: &BTreeMap<u32, String>,
+) -> Option<(u8, u16)> {
+    if cps.len() == 2
+        && cps.get(1) == Some(&0x20E3)
+        && keycap_word(cps[0]).is_some_and(|word| name == format!("KEYCAP {word}"))
+    {
+        return Some((RULE_KEYCAP, 0));
+    }
+    if cps.len() != 1 {
+        return None;
+    }
+    let first = cps[0];
+    if let Some(index) = TONES.iter().position(|&tone| tone == first)
+        && name == TONE_NAMES[index]
+    {
+        return Some((RULE_TONE_COMPONENT, 0));
+    }
+    if first == 0x1F51F && name == "keycap: 10" {
+        return Some((RULE_KEYCAP_10, 0));
+    }
+    let ucd_name = ucd.get(&first)?;
+    if let Some((mask, hyphen)) = ucd_mask(ucd_name, name) {
+        return Some((
+            if hyphen {
+                RULE_UCD_MASK_HYPHEN
+            } else {
+                RULE_UCD_MASK
+            },
+            u16::from(mask),
+        ));
+    }
+    clock_name(ucd_name)
+        .is_some_and(|clock| clock == name)
+        .then_some((RULE_CLOCK, 0))
+}
+
+/// A gender swap with an explicit `ZWJ` plus `U+2640`/`U+2642` suffix.
+fn gender_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(u8, u16)> {
+    let last = *cps.last()?;
+    if cps.len() < 3 || cps[cps.len() - 2] != ZWJ || !matches!(last, 0x2640 | 0x2642) {
+        return None;
+    }
+    let gender = if last == 0x2640 { "woman" } else { "man" };
+    let rule = if last == 0x2640 {
+        RULE_GENDER_WOMAN
+    } else {
+        RULE_GENDER_MAN
+    };
+    if let Some(base) = find_entry(&cps[..cps.len() - 2], entries) {
+        return (swap_person(&entries[base].name, gender) == name).then_some((rule, 0));
+    }
+    if matches!(cps[0], 0x1F468 | 0x1F469) {
+        let mut candidate = vec![0x1F9D1];
+        candidate.extend_from_slice(&cps[1..cps.len() - 2]);
+        let base = find_entry(&candidate, entries)?;
+        return (swap_person(&entries[base].name, gender) == name).then_some((rule, 0));
+    }
+    None
+}
+
+/// A `ZWJ` plus `U+27A1` suffix: the base name plus ` facing right`.
+fn facing_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(u8, u16)> {
+    if cps.len() < 3 || cps[cps.len() - 2] != ZWJ || cps.last() != Some(&0x27A1) {
+        return None;
+    }
+    let base = find_entry(&cps[..cps.len() - 2], entries)?;
+    (format!("{} facing right", entries[base].name) == name).then_some((RULE_FACING, 0))
+}
+
+/// A three-code-point role whose `person` base supplies the name.
+fn role_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(u8, u16)> {
+    if cps.len() != 3 || cps[1] != ZWJ || cps[0] == 0x1F9D1 {
+        return None;
+    }
+    let gender = people_word(cps[0])?;
+    let mut candidate = vec![0x1F9D1];
+    candidate.extend_from_slice(&cps[1..]);
+    let base = find_entry(&candidate, entries)?;
+    (swap_person(&entries[base].name, gender) == name).then_some((
+        if cps[0] == 0x1F469 {
+            RULE_GENDER_WOMAN
+        } else {
+            RULE_GENDER_MAN
+        },
+        0,
+    ))
+}
+
+/// Two people plus an activity: `plural word + pair phrase`.
+fn pair_rule(cps: &[u32], name: &str) -> Option<(u8, u16)> {
+    if cps.len() != 5 || cps[1] != ZWJ || cps[3] != ZWJ {
+        return None;
+    }
+    let word = plural(cps[0], cps[4])?;
+    let phrase = pair_phrase(cps[2])?;
+    (name == format!("{word} {phrase}")).then_some((RULE_PAIR, 0))
+}
+
+/// Family, couple and kiss: comma-joined family words around a `U+2764`/`U+1F48B` heart.
+fn family_rule(cps: &[u32], name: &str) -> Option<(u8, u16)> {
+    if !cps.contains(&ZWJ) {
+        return None;
+    }
+    if cps.iter().all(|&cp| cp == ZWJ || family_word(cp).is_some())
+        && name == format!("family: {}", join_family(cps, &[ZWJ]))
+    {
+        return Some((RULE_FAMILY, 0));
+    }
+    if !cps.contains(&0x2764) {
+        return None;
+    }
+    let allowed = cps
+        .iter()
+        .all(|&cp| cp == ZWJ || cp == 0x2764 || cp == 0x1F48B || family_word(cp).is_some());
+    if !allowed {
+        return None;
+    }
+    let words = join_family(cps, &[ZWJ, 0x2764, 0x1F48B]);
+    if cps.contains(&0x1F48B) {
+        return (name == format!("kiss: {words}")).then_some((RULE_KISS, 0));
+    }
+    (name == format!("couple with heart: {words}")).then_some((RULE_COUPLE, 0))
+}
+
+/// Materialises the name a rule produces, or `None` when its base is not in the table.
+fn generated_name(
+    rule: u8,
+    arg: u16,
+    cps: &[u32],
+    entries: &[EmojiEntry],
+    ucd: &BTreeMap<u32, String>,
+) -> Option<String> {
+    match rule {
+        RULE_UCD_MASK | RULE_UCD_MASK_HYPHEN => {
+            let name = ucd.get(cps.first()?)?;
+            Some(ucd_mask_name(
+                name,
+                u8::try_from(arg).ok()?,
+                rule == RULE_UCD_MASK_HYPHEN,
+            ))
+        }
+        RULE_KEYCAP => Some(format!("KEYCAP {}", keycap_word(*cps.first()?)?)),
+        RULE_GENDER_WOMAN | RULE_GENDER_MAN => {
+            let gender = if rule == RULE_GENDER_WOMAN {
+                "woman"
+            } else {
+                "man"
+            };
+            let base = gender_base(cps, entries)?;
+            Some(swap_person(&entries[base].name, gender))
+        }
+        RULE_FACING => {
+            let base = find_entry(&cps[..cps.len().checked_sub(2)?], entries)?;
+            Some(format!("{} facing right", entries[base].name))
+        }
+        RULE_FAMILY => Some(format!("family: {}", join_family(cps, &[ZWJ]))),
+        RULE_COUPLE => Some(format!(
+            "couple with heart: {}",
+            join_family(cps, &[ZWJ, 0x2764, 0x1F48B])
+        )),
+        RULE_KISS => Some(format!(
+            "kiss: {}",
+            join_family(cps, &[ZWJ, 0x2764, 0x1F48B])
+        )),
+        RULE_PAIR => Some(format!(
+            "{} {}",
+            plural(*cps.first()?, *cps.get(4)?)?,
+            pair_phrase(*cps.get(2)?)?
+        )),
+        RULE_TONE_COMPONENT => {
+            let first = *cps.first()?;
+            let index = TONES.iter().position(|&tone| tone == first)?;
+            Some(TONE_NAMES[index].to_owned())
+        }
+        RULE_CLOCK => clock_name(ucd.get(cps.first()?)?),
+        RULE_KEYCAP_10 => Some("keycap: 10".to_owned()),
+        _ => None,
+    }
+}
+
+/// The first existing base a gender rule applies to.
+fn gender_base(cps: &[u32], entries: &[EmojiEntry]) -> Option<usize> {
+    let suffix = cps.len() >= 3
+        && cps.get(cps.len() - 2) == Some(&ZWJ)
+        && matches!(cps.last().copied(), Some(0x2640 | 0x2642));
+    if suffix {
+        if let Some(base) = find_entry(cps.get(..cps.len() - 2)?, entries) {
+            return Some(base);
+        }
+        let mut candidate = vec![0x1F9D1];
+        candidate.extend_from_slice(cps.get(1..cps.len() - 2)?);
+        return find_entry(&candidate, entries);
+    }
+    if cps.len() == 3 && cps.get(1) == Some(&ZWJ) {
+        let mut candidate = vec![0x1F9D1];
+        candidate.extend_from_slice(cps.get(1..)?);
+        return find_entry(&candidate, entries);
+    }
+    None
+}
+
+/// The index of `cps` in the sorted entry table.
+fn find_entry(cps: &[u32], entries: &[EmojiEntry]) -> Option<usize> {
+    let key: String = cps
+        .iter()
+        .map(|&cp| char::from_u32(cp).expect("code point is a scalar value"))
+        .collect();
+    let index = entries
+        .binary_search_by(|entry| entry.key.as_str().cmp(key.as_str()))
+        .ok()?;
+    Some(index)
+}
+
+/// The `swap_person` transform from the prototype.
+fn swap_person(name: &str, gender: &str) -> String {
+    if name == "person" {
+        return gender.to_owned();
+    }
+    if let Some(rest) = name.strip_prefix("person: ") {
+        return format!("{gender}: {rest}");
+    }
+    if let Some(rest) = name.strip_prefix("person ") {
+        return format!("{gender} {rest}");
+    }
+    if let Some(head) = name.strip_suffix(" person") {
+        return format!("{head} {gender}");
+    }
+    format!("{gender} {name}")
+}
+
+/// Comma-joins the family words of `cps`, skipping `ignored`.
+fn join_family(cps: &[u32], ignored: &[u32]) -> String {
+    let mut out = String::new();
+    for &cp in cps {
+        if ignored.contains(&cp) {
+            continue;
+        }
+        if let Some(word) = family_word(cp) {
+            if !out.is_empty() {
+                out.push_str(", ");
+            }
+            out.push_str(word);
+        }
+    }
+    out
+}
+
+/// The family-member word of a code point.
+const fn family_word(cp: u32) -> Option<&'static str> {
+    Some(match cp {
+        0x1F9D1 => "adult",
+        0x1F9D2 => "child",
+        0x1F468 => "man",
+        0x1F469 => "woman",
+        0x1F466 => "boy",
+        0x1F467 => "girl",
+        _ => return None,
+    })
+}
+
+/// The plural word of a pair.
+const fn plural(left: u32, right: u32) -> Option<&'static str> {
+    Some(match (left, right) {
+        (0x1F468, 0x1F468) => "men",
+        (0x1F469, 0x1F469) => "women",
+        (0x1F9D1, 0x1F9D1) => "people",
+        (0x1F469, 0x1F468) => "woman and man",
+        _ => return None,
+    })
+}
+
+/// The phrase a pair's middle code point contributes.
+const fn pair_phrase(cp: u32) -> Option<&'static str> {
+    Some(match cp {
+        0x1F430 => "with bunny ears",
+        0x1FAEF => "wrestling",
+        0x1F91D => "holding hands",
+        _ => return None,
+    })
+}
+
+/// The gender word of a role's leading code point.
+const fn people_word(cp: u32) -> Option<&'static str> {
+    Some(match cp {
+        0x1F9D1 => "person",
+        0x1F468 => "man",
+        0x1F469 => "woman",
+        _ => return None,
+    })
+}
+
+/// The keycap word of a base code point.
+const fn keycap_word(cp: u32) -> Option<&'static str> {
+    Some(match cp {
+        0x23 => "NUMBER SIGN",
+        0x2A => "ASTERISK",
+        0x30 => "DIGIT ZERO",
+        0x31 => "DIGIT ONE",
+        0x32 => "DIGIT TWO",
+        0x33 => "DIGIT THREE",
+        0x34 => "DIGIT FOUR",
+        0x35 => "DIGIT FIVE",
+        0x36 => "DIGIT SIX",
+        0x37 => "DIGIT SEVEN",
+        0x38 => "DIGIT EIGHT",
+        0x39 => "DIGIT NINE",
+        _ => return None,
+    })
+}
+
+/// The `ucd_mask` rule: the first mask selecting `name` from `ucd`'s lowercase words.
+fn ucd_mask(ucd: &str, name: &str) -> Option<(u8, bool)> {
+    let lower = ucd.to_ascii_lowercase();
+    let words: Vec<&str> = lower.split(' ').collect();
+    if words.is_empty() || words.len() > 8 {
+        return None;
+    }
+    for mask in 1u16..(1u16 << words.len()) {
+        let selected: Vec<&str> = words
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| mask >> index & 1 != 0)
+            .map(|(_, word)| *word)
+            .collect();
+        if selected.join(" ") == name {
+            return Some((u8::try_from(mask).ok()?, false));
+        }
+        if selected.len() >= 2 {
+            let mut hyphenated = String::from(selected[0]);
+            hyphenated.push('-');
+            hyphenated.push_str(selected[1]);
+            for word in selected.iter().skip(2) {
+                hyphenated.push(' ');
+                hyphenated.push_str(word);
+            }
+            if hyphenated == name {
+                return Some((u8::try_from(mask).ok()?, true));
+            }
+        }
+    }
+    None
+}
+
+/// The `ucd_mask` materializer: selects words and joins them, optionally hyphenating the first
+/// two.
+fn ucd_mask_name(ucd: &str, mask: u8, hyphen: bool) -> String {
+    let lower = ucd.to_ascii_lowercase();
+    let mut out = String::new();
+    let mut selected = 0usize;
+    for (index, word) in lower.split(' ').enumerate() {
+        if index >= 8 || mask >> index & 1 == 0 {
+            continue;
+        }
+        if selected > 0 {
+            out.push(if hyphen && selected == 1 { '-' } else { ' ' });
+        }
+        out.push_str(word);
+        selected += 1;
+    }
+    out
+}
+
+/// The clock rule: `CLOCK FACE <HOUR> OCLOCK` becomes `<hour> o’clock`.
+fn clock_name(ucd: &str) -> Option<String> {
+    let words: Vec<&str> = ucd.split(' ').collect();
+    if words.len() == 4 && words[0] == "CLOCK" && words[1] == "FACE" && words[3] == "OCLOCK" {
+        Some(format!("{} o’clock", words[2].to_ascii_lowercase()))
+    } else {
+        None
+    }
+}
+
+/// Parses emoji entries with the precedence named sequences (3) > fully-qualified (2) >
+/// minimally-qualified (1) > unqualified (0).
+fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, String)> {
+    let mut entries: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
+    for (number, line) in records(emoji_text) {
+        let (left, rest) = line
+            .split_once(';')
+            .unwrap_or_else(|| panic!("line {number}: {line}"));
+        let (status, comment) = rest.split_once('#').expect("comment");
+        let cps = parse_code_points(left, number);
+        let rank = match status.trim() {
+            "fully-qualified" | "component" => 2u8,
+            "minimally-qualified" => 1,
+            "unqualified" => 0,
+            other => panic!("line {number}: unknown status {other}"),
+        };
+        let words: Vec<&str> = comment.split_whitespace().collect();
+        assert!(
+            words.len() >= 3,
+            "line {number}: unexpected comment: {comment}"
+        );
+        keep_best(&mut entries, cps, rank, words[2..].join(" "));
+    }
+
+    let emoji_keys: std::collections::BTreeSet<Vec<u32>> =
+        entries.keys().map(|cps| canonical_cps(cps)).collect();
+    for (number, line) in records(named_text) {
+        let (name, cps) = line
+            .split_once(';')
+            .unwrap_or_else(|| panic!("line {number}: {line}"));
+        let cps = parse_code_points(cps, number);
+        if !emoji_keys.contains(&canonical_cps(&cps)) {
+            continue;
+        }
+        keep_best(&mut entries, cps, 3, name.trim().to_owned());
+    }
+    entries
+}
+
+/// The canonical key of a sequence: `U+FE0F` removed.
+fn canonical_cps(cps: &[u32]) -> Vec<u32> {
+    cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect()
+}
+
+/// Keeps the higher-precedence name; a tie keeps the later entry.
+fn keep_best(
+    entries: &mut BTreeMap<Vec<u32>, (u8, String)>,
+    cps: Vec<u32>,
+    rank: u8,
+    name: String,
+) {
+    match entries.get(&cps) {
+        Some((existing, _)) if *existing > rank => {}
+        _ => {
+            entries.insert(cps, (rank, name));
+        }
+    }
+}
+
+/// Stores every variant of `group` verbatim, so a group no rule reproduces is not lost.
+fn store_verbatim(kept: &mut BTreeMap<Vec<u32>, (String, u8, u8)>, group: &[ToneVariant]) {
+    for (_tones, variant_name, full_cps) in group {
+        kept.insert(full_cps.clone(), (variant_name.clone(), 0, 0));
+    }
+}
+
+/// Reconstructs a base entry for a tone-variant group whose base Unicode does not list.
+fn derive_base(group: &[ToneVariant]) -> Option<(String, u8)> {
+    let (tones, first_name, _) = group.first()?;
+    [3u8, 1, 4, 2].into_iter().find_map(|rule| {
+        let base = strip_phrase(rule, first_name, tones)?;
+        group
+            .iter()
+            .all(|(tones, name, _)| format_toned(rule, &base, tones) == *name)
+            .then_some((base, rule))
+    })
+}
+
+/// The inverse of [`format_toned`] for one variant: removes the tone phrase `rule` inserts.
+fn strip_phrase(rule: u8, name: &str, tones: &[usize]) -> Option<String> {
+    let phrase = tone_phrase(rule, tones);
+    match rule {
+        2 | 4 => name
+            .strip_suffix(&format!(", {phrase}"))
+            .or_else(|| name.strip_suffix(&format!(": {phrase}")))
+            .map(str::to_owned),
+        _ => {
+            let (head, rest) = name.split_once(": ")?;
+            let tail = rest.strip_prefix(&format!("{phrase}, "))?;
+            Some(format!("{head}: {tail}"))
+        }
+    }
+}
+
+/// Parses a whitespace-separated list of hexadecimal code points.
+fn parse_code_points(text: &str, line: usize) -> Vec<u32> {
+    let cps: Vec<u32> = text.split_whitespace().map(hex_u32).collect();
+    assert!(!cps.is_empty(), "line {line}: no code points");
+    cps
+}
+
+/// Parses the code points of a key string.
+fn code_points(key: &str) -> Vec<u32> {
+    key.chars().map(u32::from).collect()
+}
+
+/// The non-empty, non-comment records of a UCD file, with 1-based line numbers.
+fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
+        .map(|(index, line)| (index + 1, line))
+}
+
+/// Parses one hexadecimal Unicode code point.
+fn hex_u32(text: &str) -> u32 {
+    u32::from_str_radix(text.trim(), 16)
+        .unwrap_or_else(|error| panic!("invalid hexadecimal code point {text:?}: {error}"))
+}
+
+/// Appends a LEB128 varint.
+fn write_varint(mut value: u64, out: &mut Vec<u8>) {
+    while value >= 0x80 {
+        #[allow(clippy::cast_possible_truncation, reason = "the low seven bits")]
+        out.push((value as u8 & 0x7F) | 0x80);
+        value >>= 7;
+    }
+    #[allow(clippy::cast_possible_truncation, reason = "the remaining byte")]
+    out.push(value as u8);
+}
+
+/// Appends a little-endian `u16`.
+fn push_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+/// Packs `values` low `width` bits each, low bits first.
+fn pack_bits(values: impl IntoIterator<Item = u8>, width: usize) -> Vec<u8> {
+    let values: Vec<u8> = values.into_iter().collect();
+    let mut out = vec![0u8; (values.len() * width).div_ceil(8)];
+    for (index, value) in values.iter().enumerate() {
+        let bit = index * width;
+        let shifted = u16::from(*value) << (bit % 8);
+        let [low, high] = shifted.to_le_bytes();
+        out[bit / 8] |= low;
+        if let Some(slot) = out.get_mut(bit / 8 + 1) {
+            *slot |= high;
+        }
+    }
+    out
+}
+
+/// The `U+200D` zero-width joiner.
+const ZWJ: u32 = 0x200D;
+
+/// Hand-written canonical Huffman coding over an order-0 or order-1 byte model.
+pub(crate) mod huffman {
+    #![allow(
+        clippy::redundant_pub_crate,
+        reason = "the module is private, but `pub(crate)` states the intended visibility"
+    )]
+
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    /// The longest code a model may use.
+    const MAX_BITS: usize = 32;
+
+    /// A canonical code: its bit pattern and length.
+    #[derive(Clone, Copy)]
+    struct Code {
+        bits: u64,
+        len: u8,
+    }
+
+    /// Encodes `data` with an order-`order` canonical Huffman model.
+    ///
+    /// The stream is the codebook, then the MSB-first bit payload. The codebook is
+    /// `u8 context_count`, then per context `u8 context, u8 symbol_count` and a
+    /// `(u8 symbol, u8 length)` pair per symbol.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the codebook or payload does not fit the section's `u16` lengths. Vendored
+    /// data never does.
+    #[must_use]
+    pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
+        assert!(order <= 1, "only order-0 and order-1 models exist");
+        if data.is_empty() {
+            return vec![0];
+        }
+
+        let mut contexts: Vec<u8> = Vec::new();
+        let mut frequencies: Vec<[u32; 256]> = Vec::new();
+        for (index, &byte) in data.iter().enumerate() {
+            let context = if order == 0 || index == 0 {
+                0
+            } else {
+                data[index - 1]
+            };
+            let slot = match contexts.binary_search(&context) {
+                Ok(slot) => slot,
+                Err(slot) => {
+                    contexts.insert(slot, context);
+                    frequencies.insert(slot, [0u32; 256]);
+                    slot
+                }
+            };
+            frequencies[slot][usize::from(byte)] += 1;
+        }
+
+        let mut models = Vec::with_capacity(contexts.len());
+        for frequency in &frequencies {
+            models.push(lengths(frequency));
+        }
+
+        let mut out = Vec::new();
+        out.push(u8::try_from(contexts.len()).expect("at most 256 contexts"));
+        assert!(
+            contexts.len() <= 256,
+            "an order-1 model has at most 256 contexts"
+        );
+        for (slot, &context) in contexts.iter().enumerate() {
+            let model = &models[slot];
+            let symbols: Vec<(u8, u8)> = model.clone();
+            out.push(context);
+            out.push(u8::try_from(symbols.len()).expect("at most 256 symbols"));
+            for (symbol, length) in symbols {
+                out.push(symbol);
+                out.push(length);
+            }
+        }
+
+        let codes: Vec<Vec<Code>> = models
+            .iter()
+            .map(|model| {
+                let mut table = vec![Code { bits: 0, len: 0 }; 256];
+                canonical_codes(model, &mut table);
+                table
+            })
+            .collect();
+
+        let mut bits = BitWriter::default();
+        for (index, &byte) in data.iter().enumerate() {
+            let context = if order == 0 || index == 0 {
+                0
+            } else {
+                data[index - 1]
+            };
+            let slot = contexts
+                .binary_search(&context)
+                .expect("the context was registered");
+            let code = codes
+                .get(slot)
+                .and_then(|table| table.get(usize::from(byte)))
+                .copied()
+                .expect("the model covers every symbol");
+            assert!(code.len != 0, "every symbol has a code");
+            bits.push(code.bits, usize::from(code.len));
+        }
+        out.extend_from_slice(&bits.finish());
+        assert!(
+            u16::try_from(out.len()).is_ok(),
+            "the Huffman stream is over u16 bytes"
+        );
+        out
+    }
+
+    /// Decodes a stream built by [`encode`].
+    ///
+    /// Returns `None` for a truncated codebook, an invalid code, or a payload shorter than
+    /// `raw_len`.
+    #[must_use]
+    pub fn decode(stream: &[u8], raw_len: usize, order: u8) -> Option<Vec<u8>> {
+        if raw_len == 0 {
+            return Some(Vec::new());
+        }
+        if order > 1 {
+            return None;
+        }
+        let mut at = 0usize;
+        let context_count = usize::from(*stream.get(at)?);
+        at += 1;
+        let mut models: Vec<Option<Model>> = Vec::new();
+        models.resize_with(256, || None);
+        for _ in 0..context_count {
+            let context = usize::from(*stream.get(at)?);
+            at += 1;
+            let symbol_count = usize::from(*stream.get(at)?);
+            at += 1;
+            let mut pairs = Vec::with_capacity(symbol_count);
+            for _ in 0..symbol_count {
+                let symbol = *stream.get(at)?;
+                at += 1;
+                let length = usize::from(*stream.get(at)?);
+                at += 1;
+                if length == 0 || length > MAX_BITS {
+                    return None;
+                }
+                pairs.push((symbol, length));
+            }
+            models[context] = Some(Model::new(pairs)?);
+        }
+
+        let mut reader = BitReader::new(stream.get(at..)?);
+        let mut out = Vec::with_capacity(raw_len);
+        let mut previous = 0u8;
+        for _ in 0..raw_len {
+            let context = if order == 0 { 0 } else { previous };
+            let symbol = models
+                .get(usize::from(context))?
+                .as_ref()?
+                .symbol(&mut reader)?;
+            out.push(symbol);
+            previous = symbol;
+        }
+        Some(out)
+    }
+
+    /// A canonical Huffman model: bit-length counts and symbols in canonical order.
+    struct Model {
+        counts: [u16; MAX_BITS + 1],
+        symbols: Vec<u8>,
+        max_bits: usize,
+    }
+
+    impl Model {
+        /// Builds the decoder model from `(symbol, length)` pairs.
+        fn new(pairs: Vec<(u8, usize)>) -> Option<Self> {
+            let mut counts = [0u16; MAX_BITS + 1];
+            let mut max_bits = 0usize;
+            for &(_, length) in &pairs {
+                *counts.get_mut(length)? += 1;
+                max_bits = max_bits.max(length);
+            }
+            let mut ordered = pairs;
+            ordered.sort_unstable_by_key(|&(symbol, length)| (length, symbol));
+            let mut symbols = Vec::with_capacity(ordered.len());
+            for (symbol, _) in ordered {
+                symbols.push(symbol);
+            }
+            Some(Self {
+                counts,
+                symbols,
+                max_bits,
+            })
+        }
+
+        /// Decodes one symbol.
+        fn symbol(&self, reader: &mut BitReader<'_>) -> Option<u8> {
+            let mut code = 0usize;
+            let mut first = 0usize;
+            let mut index = 0usize;
+            for length in 1..=self.max_bits {
+                code = (code << 1) | usize::from(reader.bit()?);
+                let count = usize::from(*self.counts.get(length)?);
+                if code >= first && code - first < count {
+                    return self.symbols.get(index + code - first).copied();
+                }
+                index += count;
+                first = (first + count) << 1;
+            }
+            None
+        }
+    }
+
+    /// A symbol's canonical code.
+    #[derive(Clone, Copy)]
+    struct SymbolCode {
+        symbol: u8,
+        bits: u64,
+        len: u8,
+    }
+
+    /// One node of the Huffman tree.
+    struct Node {
+        frequency: u64,
+        left: Option<usize>,
+        right: Option<usize>,
+        symbol: Option<u8>,
+    }
+
+    /// Builds the code lengths of a canonical Huffman model from `frequencies`.
+    fn lengths(frequencies: &[u32; 256]) -> Vec<(u8, u8)> {
+        let used: Vec<u8> = frequencies
+            .iter()
+            .enumerate()
+            .filter(|&(_, &frequency)| frequency != 0)
+            .map(|(symbol, _)| u8::try_from(symbol).expect("a byte symbol"))
+            .collect();
+        match used.len() {
+            0 => Vec::new(),
+            1 => vec![(used[0], 1)],
+            _ => {
+                let mut heap = BinaryHeap::new();
+                let mut nodes: Vec<Node> = Vec::new();
+                for &symbol in &used {
+                    let frequency = u64::from(frequencies[usize::from(symbol)]);
+                    nodes.push(Node {
+                        frequency,
+                        left: None,
+                        right: None,
+                        symbol: Some(symbol),
+                    });
+                    heap.push(Reverse((frequency, nodes.len() - 1)));
+                }
+                while heap.len() > 1 {
+                    let Some(Reverse((left_frequency, left))) = heap.pop() else {
+                        break;
+                    };
+                    let Some(Reverse((right_frequency, right))) = heap.pop() else {
+                        break;
+                    };
+                    nodes.push(Node {
+                        frequency: left_frequency + right_frequency,
+                        left: Some(left),
+                        right: Some(right),
+                        symbol: None,
+                    });
+                    heap.push(Reverse((left_frequency + right_frequency, nodes.len() - 1)));
+                }
+                let Some(Reverse((_, root))) = heap.pop() else {
+                    return Vec::new();
+                };
+                let mut depths = vec![0u8; 256];
+                let mut stack = vec![(root, 0u8)];
+                while let Some((index, depth)) = stack.pop() {
+                    let Some(node) = nodes.get(index) else {
+                        continue;
+                    };
+                    if let Some(symbol) = node.symbol {
+                        assert!(
+                            usize::from(depth) <= MAX_BITS,
+                            "Huffman depth {depth} exceeds {MAX_BITS}"
+                        );
+                        depths[usize::from(symbol)] = depth;
+                        continue;
+                    }
+                    if let (Some(left), Some(right)) = (node.left, node.right) {
+                        stack.push((left, depth + 1));
+                        stack.push((right, depth + 1));
+                    }
+                }
+                let mut out: Vec<(u8, u8)> = used
+                    .into_iter()
+                    .map(|symbol| {
+                        let depth = depths[usize::from(symbol)];
+                        (symbol, depth)
+                    })
+                    .collect();
+                out.sort_unstable();
+                out
+            }
+        }
+    }
+
+    /// Assigns canonical codes to a model's symbols.
+    fn canonical_codes(model: &[(u8, u8)], codes: &mut [Code]) {
+        let mut ordered: Vec<SymbolCode> = model
+            .iter()
+            .map(|&(symbol, len)| SymbolCode {
+                symbol,
+                bits: 0,
+                len,
+            })
+            .collect();
+        ordered.sort_unstable_by_key(|code| (code.len, code.symbol));
+        let mut bits = 0u64;
+        let mut previous = 0u8;
+        for code in &mut ordered {
+            bits <<= u32::from(code.len - previous);
+            code.bits = bits;
+            bits += 1;
+            previous = code.len;
+            codes[usize::from(code.symbol)] = Code {
+                bits: code.bits,
+                len: code.len,
+            };
+        }
+    }
+
+    /// An MSB-first bit writer.
+    #[derive(Default)]
+    struct BitWriter {
+        out: Vec<u8>,
+        accumulator: u64,
+        bits: usize,
+    }
+
+    impl BitWriter {
+        /// Appends the low `len` bits of `value`, most significant first.
+        fn push(&mut self, value: u64, len: usize) {
+            self.accumulator = (self.accumulator << len) | value;
+            self.bits += len;
+            while self.bits >= 8 {
+                #[allow(clippy::cast_possible_truncation, reason = "the top byte")]
+                self.out.push((self.accumulator >> (self.bits - 8)) as u8);
+                self.bits -= 8;
+            }
+            self.accumulator &= (1u64 << self.bits) - 1;
+        }
+
+        /// Pads the final byte with zeros.
+        fn finish(mut self) -> Vec<u8> {
+            if self.bits != 0 {
+                #[allow(clippy::cast_possible_truncation, reason = "the padded byte")]
+                self.out.push((self.accumulator << (8 - self.bits)) as u8);
+            }
+            self.out
+        }
+    }
+
+    /// An MSB-first bit reader.
+    struct BitReader<'a> {
+        data: &'a [u8],
+        position: usize,
+    }
+
+    impl<'a> BitReader<'a> {
+        /// Starts at the first bit of `data`.
+        const fn new(data: &'a [u8]) -> Self {
+            Self { data, position: 0 }
+        }
+
+        /// Reads one bit.
+        fn bit(&mut self) -> Option<u8> {
+            let byte = self.data.get(self.position >> 3)?;
+            let bit = (byte >> (7 - (self.position & 7))) & 1;
+            self.position += 1;
+            Some(bit)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EMOJI: &str = include_str!("../../../zeta-unicode/data/emoji-test.txt");
+    const NAMED: &str = include_str!("../../../zeta-unicode/data/NamedSequences.txt");
+    const DERIVED: &str = include_str!("../../../zeta-unicode/data/DerivedName.txt");
+
+    /// The canonical emoji table, rebuilt here from the vendored files without calling the
+    /// encoder's own parser.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "a direct transcription of the shipped table's tone splitting"
+    )]
+    fn oracle_entries() -> Vec<EmojiEntry> {
+        let mut ranked: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
+        for (number, line) in records(EMOJI) {
+            let (left, rest) = line
+                .split_once(';')
+                .unwrap_or_else(|| panic!("line {number}: {line}"));
+            let (status, comment) = rest.split_once('#').expect("comment");
+            let cps = parse_code_points(left, number);
+            let rank = match status.trim() {
+                "fully-qualified" | "component" => 2u8,
+                "minimally-qualified" => 1,
+                "unqualified" => 0,
+                other => panic!("line {number}: unknown status {other}"),
+            };
+            let words: Vec<&str> = comment.split_whitespace().collect();
+            let name = words[2..].join(" ");
+            match ranked.get(&cps) {
+                Some((best, _)) if *best > rank => {}
+                _ => {
+                    ranked.insert(cps, (rank, name));
+                }
+            }
+        }
+        let emoji_keys: std::collections::BTreeSet<Vec<u32>> =
+            ranked.keys().map(|cps| canonical_cps(cps)).collect();
+        for (number, line) in records(NAMED) {
+            let (name, cps) = line
+                .split_once(';')
+                .unwrap_or_else(|| panic!("line {number}: {line}"));
+            let cps = parse_code_points(cps, number);
+            if !emoji_keys.contains(&canonical_cps(&cps)) {
+                continue;
+            }
+            match ranked.get(&cps) {
+                Some((best, _)) if *best > 3 => {}
+                _ => {
+                    ranked.insert(cps, (3, name.trim().to_owned()));
+                }
+            }
+        }
+
+        let mut canonical: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
+        for (cps, (rank, name)) in &ranked {
+            let cps = canonical_cps(cps);
+            match canonical.get(&cps) {
+                Some((best, _)) if *best > *rank => {}
+                _ => {
+                    canonical.insert(cps, (*rank, name.clone()));
+                }
+            }
+        }
+
+        let mut kept: BTreeMap<Vec<u32>, (String, u8, u8)> = BTreeMap::new();
+        let mut groups: ToneVariants = BTreeMap::new();
+        for (cps, (_, name)) in &canonical {
+            let tones = tone_positions(cps.iter().copied());
+            if tones.is_empty() || cps.len() == 1 {
+                kept.insert(cps.clone(), (name.clone(), 0, 0));
+            } else {
+                let base: Vec<u32> = cps.iter().copied().filter(|cp| !is_tone(*cp)).collect();
+                groups
+                    .entry(base)
+                    .or_default()
+                    .push((tones, name.clone(), cps.clone()));
+            }
+        }
+        for (base, group) in &groups {
+            if group
+                .iter()
+                .any(|(tones, _, _)| !(1..=2).contains(&tones.len()))
+            {
+                for (_tones, name, cps) in group {
+                    kept.insert(cps.clone(), (name.clone(), 0, 0));
+                }
+                continue;
+            }
+            let (base_name, mut rule) = if let Some((name, _, _)) = kept.get(base) {
+                (name.clone(), 0)
+            } else {
+                let derived = group.first().and_then(|(tones, first, _)| {
+                    [3u8, 1, 4, 2].into_iter().find_map(|rule| {
+                        let phrase = tone_phrase(rule, tones);
+                        let base = match rule {
+                            2 | 4 => first
+                                .strip_suffix(&format!(", {phrase}"))
+                                .or_else(|| first.strip_suffix(&format!(": {phrase}")))?,
+                            _ => {
+                                let (head, rest) = first.split_once(": ")?;
+                                let tail = rest.strip_prefix(&format!("{phrase}, "))?;
+                                return Some((format!("{head}: {tail}"), rule));
+                            }
+                        };
+                        Some((base.to_owned(), rule))
+                    })
+                });
+                let Some((derived, derived_rule)) = derived else {
+                    for (_tones, name, cps) in group {
+                        kept.insert(cps.clone(), (name.clone(), 0, 0));
+                    }
+                    continue;
+                };
+                kept.insert(base.clone(), (derived.clone(), derived_rule, 0));
+                (derived, derived_rule)
+            };
+            if rule == 0 {
+                for candidate in [3u8, 1, 4, 2] {
+                    if group.iter().all(|(tones, variant, _)| {
+                        format_toned(candidate, &base_name, tones) == *variant
+                    }) {
+                        rule = candidate;
+                        break;
+                    }
+                }
+            }
+            let tone_mask = group.iter().fold(0u8, |mask, (tones, _, _)| {
+                mask | match tones.len() {
+                    1 => 1,
+                    2 => 2,
+                    _ => 0,
+                }
+            });
+            if rule == 0 {
+                for (_tones, name, cps) in group {
+                    kept.insert(cps.clone(), (name.clone(), 0, 0));
+                }
+                continue;
+            }
+            let entry = kept.get_mut(base).expect("base entry");
+            entry.1 = rule;
+            entry.2 = tone_mask;
+        }
+
+        let mut entries: Vec<EmojiEntry> = kept
+            .into_iter()
+            .map(|(cps, (name, tone_code, tone_mask))| EmojiEntry {
+                key: cps
+                    .iter()
+                    .map(|&cp| char::from_u32(cp).expect("scalar value"))
+                    .collect(),
+                name,
+                tone_code,
+                tone_mask,
+            })
+            .collect();
+        entries.sort_by(|left, right| left.key.as_bytes().cmp(right.key.as_bytes()));
+        entries
+    }
+
+    /// A decoded emoji section.
+    struct Decoded {
+        keys: Vec<Vec<u32>>,
+        names: Vec<String>,
+        rules: Vec<u8>,
+        arguments: Vec<u16>,
+        tone_codes: Vec<u8>,
+        tone_masks: Vec<u8>,
+    }
+
+    /// Decodes the section layout independently of the runtime crate.
+    fn decode(section: &[u8]) -> Decoded {
+        let count = usize::from(u16::from_le_bytes([section[0], section[1]]));
+        let literal_count = usize::from(u16::from_le_bytes([section[2], section[3]]));
+        let mut descriptors = Vec::new();
+        let mut at = 4usize;
+        for _ in 0..4 {
+            let raw = usize::from(u16::from_le_bytes([section[at], section[at + 1]]));
+            let coded = usize::from(u16::from_le_bytes([section[at + 2], section[at + 3]]));
+            let order = section[at + 4];
+            descriptors.push((raw, coded, order));
+            at += 5;
+        }
+        let mut streams = Vec::new();
+        for &(raw, coded, order) in &descriptors {
+            streams.push(huffman::decode(&section[at..at + coded], raw, order).expect("stream"));
+            at += coded;
+        }
+        let key_raw = &streams[0];
+        let name_raw = &streams[1];
+        let rule_raw = &streams[2];
+        let mask_raw = &streams[3];
+        assert_eq!(rule_raw.len(), count);
+        let names: Vec<String> = if literal_count == 0 {
+            Vec::new()
+        } else {
+            name_raw
+                .split(|&byte| byte == 0)
+                .map(|part| std::str::from_utf8(part).expect("UTF-8").to_owned())
+                .collect()
+        };
+        assert_eq!(names.len(), literal_count);
+        let mut keys = Vec::with_capacity(count);
+        let mut cursor = 0usize;
+        let mut previous = 0u32;
+        for _ in 0..count {
+            let (delta, used) =
+                zeta_unicode_format::read_varint(&key_raw[cursor..]).expect("delta");
+            cursor += used;
+            let first = previous + delta;
+            previous = first;
+            let (length, used) =
+                zeta_unicode_format::read_varint(&key_raw[cursor..]).expect("length");
+            cursor += used;
+            let length = usize::try_from(length).expect("key length");
+            let mut cps = Vec::with_capacity(length);
+            cps.push(first);
+            for _ in 1..length {
+                let (cp, used) =
+                    zeta_unicode_format::read_varint(&key_raw[cursor..]).expect("code point");
+                cursor += used;
+                cps.push(cp);
+            }
+            keys.push(cps);
+        }
+        assert_eq!(cursor, key_raw.len());
+        let mut rules = Vec::with_capacity(count);
+        let mut arguments = Vec::with_capacity(count);
+        let mut literal = 0u16;
+        let mut mask_at = 0usize;
+        for &rule in rule_raw {
+            let argument = match rule {
+                0 => {
+                    let ordinal = literal;
+                    literal += 1;
+                    ordinal
+                }
+                1 | 2 => {
+                    let mask = u16::from(mask_raw[mask_at]);
+                    mask_at += 1;
+                    mask
+                }
+                _ => 0,
+            };
+            rules.push(rule);
+            arguments.push(argument);
+        }
+        assert_eq!(usize::from(literal), literal_count);
+        assert_eq!(mask_at, mask_raw.len());
+        let tone_codes_len = (count * 3).div_ceil(8);
+        let tone_codes = section[at..at + tone_codes_len].to_vec();
+        at += tone_codes_len;
+        let tone_masks = section[at..].to_vec();
+        let tone_codes = (0..count)
+            .map(|index| unpack(&tone_codes, index, 3))
+            .collect();
+        let tone_masks = (0..count)
+            .map(|index| unpack(&tone_masks, index, 2))
+            .collect();
+        Decoded {
+            keys,
+            names,
+            rules,
+            arguments,
+            tone_codes,
+            tone_masks,
+        }
+    }
+
+    /// Reads a packed little-endian bit field.
+    fn unpack(blob: &[u8], index: usize, width: usize) -> u8 {
+        let bit = index * width;
+        let byte = u16::from(blob[bit / 8]);
+        let next = u16::from(blob.get(bit / 8 + 1).copied().unwrap_or(0));
+        let value = (byte | (next << 8)) >> (bit % 8);
+        u8::try_from(value & ((1u16 << width) - 1)).expect("field fits")
+    }
+
+    #[test]
+    fn encodes_every_canonical_entry_exactly() {
+        let oracle = oracle_entries();
+        assert_eq!(oracle.len(), 1_944, "canonical entry count");
+        assert_eq!(
+            oracle.len(),
+            canonical_entries(EMOJI, NAMED).len(),
+            "the encoder and the test oracle disagree on the entry set"
+        );
+
+        let (section, stats) = build(EMOJI, NAMED, DERIVED);
+        assert_eq!(stats.entries, 1_944);
+        assert_eq!(stats.literals, 603);
+        assert_eq!(stats.ruled, 1_341);
+        assert_eq!(
+            stats.fallbacks, 0,
+            "a grammar rule failed to reproduce a name"
+        );
+        assert_eq!(stats.rule_counts[usize::from(RULE_LITERAL)], 603);
+        assert_eq!(stats.rule_counts[usize::from(RULE_UCD_MASK)], 1_099);
+        assert_eq!(stats.rule_counts[usize::from(RULE_UCD_MASK_HYPHEN)], 5);
+        assert_eq!(stats.rule_counts[usize::from(RULE_KEYCAP)], 12);
+        assert_eq!(stats.rule_counts[usize::from(RULE_GENDER_WOMAN)], 72);
+        assert_eq!(stats.rule_counts[usize::from(RULE_GENDER_MAN)], 72);
+        assert_eq!(stats.rule_counts[usize::from(RULE_FACING)], 18);
+        assert_eq!(stats.rule_counts[usize::from(RULE_FAMILY)], 29);
+        assert_eq!(stats.rule_counts[usize::from(RULE_COUPLE)], 3);
+        assert_eq!(stats.rule_counts[usize::from(RULE_KISS)], 3);
+        assert_eq!(stats.rule_counts[usize::from(RULE_PAIR)], 10);
+        assert_eq!(stats.rule_counts[usize::from(RULE_TONE_COMPONENT)], 5);
+        assert_eq!(stats.rule_counts[usize::from(RULE_CLOCK)], 12);
+        assert_eq!(stats.rule_counts[usize::from(RULE_KEYCAP_10)], 1);
+        assert!(
+            stats.section_bytes <= 15_000,
+            "section grew to {}",
+            stats.section_bytes
+        );
+
+        let decoded = decode(&section);
+        assert_eq!(decoded.keys.len(), oracle.len());
+        let ucd = ucd_names(DERIVED);
+        for (index, expected) in oracle.iter().enumerate() {
+            let key: String = decoded.keys[index]
+                .iter()
+                .map(|&cp| char::from_u32(cp).expect("scalar value"))
+                .collect();
+            assert_eq!(key, expected.key, "key {index}");
+            assert_eq!(
+                decoded.tone_codes[index], expected.tone_code,
+                "tone code {key:?}"
+            );
+            assert_eq!(
+                decoded.tone_masks[index], expected.tone_mask,
+                "tone mask {key:?}"
+            );
+            let rule = decoded.rules[index];
+            let name = if rule == RULE_LITERAL {
+                decoded.names[usize::from(decoded.arguments[index])].clone()
+            } else {
+                generated_name(
+                    rule,
+                    decoded.arguments[index],
+                    &decoded.keys[index],
+                    &oracle,
+                    &ucd,
+                )
+                .unwrap_or_else(|| panic!("rule {rule} did not materialize for {key:?}"))
+            };
+            assert_eq!(name, expected.name, "name for {key:?}");
+        }
+        for pair in decoded.keys.windows(2) {
+            assert!(pair[0] < pair[1], "keys are not sorted");
+        }
+    }
+
+    #[test]
+    fn every_literal_name_is_unique_and_stored_once() {
+        let (section, stats) = build(EMOJI, NAMED, DERIVED);
+        let decoded = decode(&section);
+        assert_eq!(decoded.names.len(), stats.literals);
+        let mut seen = std::collections::BTreeSet::new();
+        for name in &decoded.names {
+            assert!(seen.insert(name.clone()), "duplicate literal {name:?}");
+        }
+        assert!(
+            stats.heap_bytes <= 32_000,
+            "heap grew to {}",
+            stats.heap_bytes
+        );
+    }
+
+    #[test]
+    fn tone_components_and_keycaps_keep_their_published_names() {
+        let entries = canonical_entries(EMOJI, NAMED);
+        let find = |key: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.key == key)
+                .unwrap_or_else(|| panic!("missing {key:?}"))
+        };
+        assert_eq!(find("🏻").name, "light skin tone");
+        assert_eq!(find("🏻").tone_code, 0);
+        assert_eq!(find("2⃣").name, "KEYCAP DIGIT TWO");
+        assert_eq!(find("🫶").tone_mask, 1);
+        assert_eq!(find("🫱‍🫲").tone_mask, 2);
+        assert_eq!(find("🚶‍♂").name, "man walking");
+    }
+
+    #[test]
+    fn ucd_names_are_the_single_code_point_records() {
+        let names = ucd_names(DERIVED);
+        assert_eq!(
+            names.get(&0x41).map(String::as_str),
+            Some("LATIN CAPITAL LETTER A")
+        );
+        assert_eq!(names.get(&0xA9).map(String::as_str), Some("COPYRIGHT SIGN"));
+        assert_eq!(
+            names.get(&0x1F44D).map(String::as_str),
+            Some("THUMBS UP SIGN")
+        );
+        assert!(
+            !names.contains_key(&0x3400),
+            "range lines must not be stored"
+        );
+        assert!(names.len() > 1_400);
+    }
+}

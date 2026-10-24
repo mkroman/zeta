@@ -1,13 +1,12 @@
 //! Layout constants and emoji tone formatting shared by `zeta-unicode` and `zeta-unicode-build`.
 //!
-//! The runtime crate decodes the table the offline generator writes, and both sides have to
-//! agree on every byte of the format: the container headers, the section ids and the page size
-//! of the general-category table. The generator also has to reproduce the runtime's skin-tone
-//! wording exactly, because it selects the rule that the runtime later replays.
+//! The runtime crate and the offline trainer share the general-category encoding constants,
+//! the Hangul and emoji tone tables, and the name-pattern hex formatter. The generator also has
+//! to reproduce the runtime's skin-tone wording exactly, because it selects the rule that the
+//! runtime later replays.
 //!
-//! Keeping those definitions here means a format change cannot update only one side. This crate
-//! is deliberately dependency-free: it is linked into the bot through `zeta-unicode` and into
-//! the build script through `zeta-unicode-build`.
+//! This crate is deliberately dependency-free: it is linked into the bot through
+//! `zeta-unicode` and into the build script through `zeta-unicode-build`.
 
 /// The five emoji skin-tone code points, in tone order.
 pub const TONES: [u32; 5] = [0x1F3FB, 0x1F3FC, 0x1F3FD, 0x1F3FE, 0x1F3FF];
@@ -63,43 +62,6 @@ pub const GC_SHORT_NAMES: [&str; 30] = [
     "Cc", "Cf", "Cn", "Co", "Cs", "Ll", "Lm", "Lo", "Lt", "Lu", "Mc", "Me", "Mn", "Nd", "Nl", "No",
     "Pc", "Pd", "Pe", "Pf", "Pi", "Po", "Ps", "Sc", "Sk", "Sm", "So", "Zl", "Zp", "Zs",
 ];
-
-/// The magic at the start of the generated table.
-pub const TABLE_MAGIC: &[u8; 4] = b"ZUCD";
-/// Bytes before the table's section directory: magic, three version components and a count.
-pub const TABLE_HEADER_LEN: usize = 4 + 2 * 3 + 2;
-/// Length of one table section directory entry: id, offset and payload length.
-pub const TABLE_ENTRY_LEN: usize = 12;
-
-/// The name index section.
-pub const SECTION_NAME_RUNS: u32 = 1;
-/// The `*`-pattern ranges section.
-pub const SECTION_NAME_PATTERNS: u32 = 2;
-/// The general-category section.
-pub const SECTION_GC: u32 = 3;
-/// The emoji section.
-pub const SECTION_EMOJI: u32 = 4;
-/// The name streams section.
-pub const SECTION_NAMES: u32 = 5;
-
-/// The magic at the start of the name-stream container.
-pub const NAMES_MAGIC: &[u8; 4] = b"UNNM";
-/// The name-container version understood by the runtime and the generator.
-pub const NAMES_VERSION: u8 = 1;
-/// Codec id: PPMd8-I through `ppmd-rust`.
-pub const CODEC_PPMD8I: u8 = 1;
-/// Stream transform id: no transform.
-pub const TRANSFORM_RAW: u8 = 0;
-/// Stream transform id: cumulative (delta) sum of `u8`s.
-pub const TRANSFORM_DELTA8: u8 = 1;
-/// The number of compressed name streams.
-pub const STREAM_COUNT: usize = 3;
-/// Length of one stream descriptor in the name-container header.
-pub const STREAM_DESC_LEN: usize = 11;
-/// Length of the fixed name-container header.
-pub const NAMES_HEADER_LEN: usize = 4 + 1 + 1 + 3 + 4 + 4 + STREAM_COUNT * STREAM_DESC_LEN;
-/// `u32` raw length, `u8` model order and `u8` memory limit on a standalone section.
-pub const SECTION_PREFIX_LEN: usize = 6;
 
 /// Is `cp` one of the five emoji skin-tone components?
 #[must_use]
@@ -171,27 +133,6 @@ pub fn write_varint(mut value: u64, out: &mut Vec<u8>) {
     }
     #[allow(clippy::cast_possible_truncation)]
     out.push(value as u8);
-}
-
-/// Applies cumulative (delta-8) coding to `values`.
-#[must_use]
-pub fn delta8(values: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(values.len());
-    let mut previous = 0u8;
-    for &value in values {
-        out.push(value.wrapping_sub(previous));
-        previous = value;
-    }
-    out
-}
-
-/// Turns delta-8 coding back into the values it coded.
-pub fn undelta8(values: &mut [u8]) {
-    let mut previous = 0u8;
-    for value in values.iter_mut() {
-        *value = value.wrapping_add(previous);
-        previous = *value;
-    }
 }
 
 /// The index into [`TONES`] of `cp`, or `None` when `cp` is not a skin-tone component.
@@ -325,15 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn delta8_round_trips() {
-        let values = [0u8, 5, 5, 200, 1];
-        let mut coded = delta8(&values);
-        assert_ne!(coded, values);
-        undelta8(&mut coded);
-        assert_eq!(coded, values);
-    }
-
-    #[test]
     fn write_hex_pads_and_widens_as_unicode_spells_it() {
         let mut digits = [0u8; 8];
         assert_eq!(write_hex(&mut digits, 0, 0), 1);
@@ -397,7 +329,6 @@ mod tests {
 
     #[test]
     fn the_layout_constants_are_self_consistent() {
-        assert_eq!(NAMES_HEADER_LEN, 50);
         assert_eq!(GC_PAGES, 545);
         assert_eq!(GC_SHORT_NAMES.len(), 30);
         assert!(GC_SHORT_NAMES.len() < 1usize << GC_ID_BITS);

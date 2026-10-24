@@ -1,11 +1,10 @@
-//! The I/O errors [`generate`](crate::generate) reports.
+//! The I/O errors the trainer and manifest writer report.
 
 use std::path::PathBuf;
 
 use thiserror::Error;
 
-/// Fails [`generate`](crate::generate) when an input cannot be read or an artifact cannot be
-/// written.
+/// Fails a training run when an input cannot be read or an artifact cannot be written.
 #[derive(Debug, Error)]
 pub enum Error {
     /// Reading a vendored UCD input failed.

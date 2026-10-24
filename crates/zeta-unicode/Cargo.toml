@@ -21,9 +21,7 @@ include = ["src/**", "data/**", "build.rs", "Cargo.toml", "README.md", "LICENSE-
 all-features = true
 
 [dependencies]
-# The name streams are PPMd8-I: encoded by `zeta-unicode-build`, decoded once at first use.
-ppmd-rust = "1.5.0"
-# The table layout and the tone wording are shared with the generator.
+# The image layout and the tone wording are shared with the generator.
 zeta-unicode-format = { path = "../zeta-unicode-format", version = "0.0.0" }
 
 [build-dependencies]
