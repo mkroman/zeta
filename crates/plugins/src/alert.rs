@@ -156,10 +156,8 @@ impl AlertPlugin {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for AlertPlugin {
-    type Settings = Settings;
-
+#[plugin(name = "alert", settings = Settings)]
+impl AlertPlugin {
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -171,11 +169,13 @@ impl Plugin<Context> for AlertPlugin {
         let receiver = service.take_receiver();
         let service = Arc::new(service);
 
+        // Intentional: other plugins register alerts through the shared service.
         ctx.shared.publish(Arc::clone(&service));
 
         Ok(Self { service, receiver })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
         self.service.start_scheduler();
@@ -187,6 +187,7 @@ impl Plugin<Context> for AlertPlugin {
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
