@@ -39,10 +39,6 @@ impl Default for Settings {
     }
 }
 
-/// The `.ud` command.
-const URBAN_DICTIONARY: CommandSpec =
-    CommandSpec::new(".ud", "Look up the top Urban Dictionary definition");
-
 /// Urban Dictionary plugin.
 pub struct UrbanDictionary {
     client: reqwest::Client,
@@ -93,18 +89,18 @@ impl UrbanDictionary {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(URBAN_DICTIONARY);
         Ok(Self::with_http_config(&ctx.config.http, settings.clone()))
     }
 
     /// Replies to `.ud` with the top Urban Dictionary definition of the query.
-    #[handler(command)]
+    #[command(".ud", "Look up the top Urban Dictionary definition", event)]
     async fn define(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
