@@ -133,24 +133,21 @@ pub struct Category {
     pub category: String,
 }
 
-#[async_trait]
-impl Plugin<Context> for PornHub {
-    type Settings = NoSettings;
-
+#[plugin(name = "pornhub", urls(hosts = &[PORNHUB_HOST]))]
+impl PornHub {
     /// Creates a new instance of the PornHub plugin.
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(&[PORNHUB_HOST]));
-
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self { client })
     }
 
     /// Processes incoming PornHub URLs.
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
