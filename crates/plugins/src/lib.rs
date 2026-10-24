@@ -32,12 +32,12 @@ use zeta_plugin::NoSettings;
 
 /// Declares the bundled plugins and generates the configuration and registration helpers.
 ///
-/// For each entry, it generates:
-/// 1. The plugin's module declaration, gated on the plugin's feature.
-/// 2. A [`zeta_plugin::PluginName`] implementation for the plugin's struct.
-/// 3. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
+/// The plugin modules themselves are declared literally above this invocation so rustfmt can
+/// see them. For each entry, the macro generates:
+/// 1. A [`zeta_plugin::PluginName`] implementation for the plugin's struct.
+/// 2. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
 ///    for plugins with settings, `=> NoSettings` otherwise.
-/// 4. A call to [`zeta_plugin::Registry::register`] inside [`register_bundled_plugins`], gated on
+/// 3. A call to [`zeta_plugin::Registry::register`] inside [`register_bundled_plugins`], gated on
 ///    the plugin's `enabled` configuration and passing the plugin's own settings through to its
 ///    constructor.
 macro_rules! declare_plugins {
@@ -48,11 +48,6 @@ macro_rules! declare_plugins {
             $mod_name:ident :: $struct_name:ident => $settings:ty
         ),* $(,)?
     ) => {
-        $(
-            #[cfg(feature = $feature)]
-            pub mod $mod_name;
-        )*
-
         // The plugin name is the module name.
         $(
             #[cfg(feature = $feature)]
@@ -225,6 +220,80 @@ macro_rules! declare_plugins {
     };
 }
 
+// The bundled plugin modules are declared literally, outside `declare_plugins!`, so
+// rustfmt can discover them. Rustfmt does not expand macros, so a generated `pub mod`
+// would leave every plugin file invisible to `cargo fmt`.
+#[cfg(feature = "alert")]
+pub mod alert;
+#[cfg(feature = "chaturbate")]
+pub mod chaturbate;
+#[cfg(feature = "choices")]
+pub mod choices;
+#[cfg(feature = "coinmarketcap")]
+pub mod coinmarketcap;
+#[cfg(feature = "dendanskeordbog")]
+pub mod dendanskeordbog;
+#[cfg(feature = "dig")]
+pub mod dig;
+#[cfg(feature = "filter")]
+pub mod filter;
+#[cfg(feature = "gay")]
+pub mod gay;
+#[cfg(feature = "geoip")]
+pub mod geoip;
+#[cfg(feature = "github")]
+pub mod github;
+#[cfg(feature = "health")]
+pub mod health;
+#[cfg(feature = "help")]
+pub mod help;
+#[cfg(feature = "howlongtobeat")]
+pub mod howlongtobeat;
+#[cfg(feature = "imdb")]
+pub mod imdb;
+#[cfg(feature = "instagram")]
+pub mod instagram;
+#[cfg(feature = "isitopen")]
+pub mod isitopen;
+#[cfg(feature = "kagi")]
+pub mod kagi;
+#[cfg(feature = "notification")]
+pub mod notification;
+#[cfg(feature = "ofn")]
+pub mod ofn;
+#[cfg(feature = "openweathermap")]
+pub mod openweathermap;
+#[cfg(feature = "pornhub")]
+pub mod pornhub;
+#[cfg(feature = "reddit")]
+pub mod reddit;
+#[cfg(feature = "rink")]
+pub mod rink;
+#[cfg(feature = "rust-playground")]
+pub mod rust_playground;
+#[cfg(feature = "spotify")]
+pub mod spotify;
+#[cfg(feature = "string-utils")]
+pub mod string_utils;
+#[cfg(feature = "thingiverse")]
+pub mod thingiverse;
+#[cfg(feature = "tiktok")]
+pub mod tiktok;
+#[cfg(feature = "titles")]
+pub mod titles;
+#[cfg(feature = "trustpilot")]
+pub mod trustpilot;
+#[cfg(feature = "tvmaze")]
+pub mod tvmaze;
+#[cfg(feature = "twitch")]
+pub mod twitch;
+#[cfg(feature = "unwall")]
+pub mod unwall;
+#[cfg(feature = "urban-dictionary")]
+pub mod urban_dictionary;
+#[cfg(feature = "youtube")]
+pub mod youtube;
+
 declare_plugins! {
   /// Channel-scoped URL and sender filters.
   #[cfg(feature = "filter")]
@@ -369,6 +438,8 @@ declare_plugins! {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeSet, HashSet};
+
     use super::*;
 
     #[test]
@@ -376,36 +447,120 @@ mod tests {
         assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 35);
     }
 
+    /// The feature named by `#[cfg(feature = "...")]`, if the attribute has that shape.
+    fn feature_gate(attrs: &[syn::Attribute]) -> Option<String> {
+        attrs.iter().find_map(|attribute| {
+            if !attribute.path().is_ident("cfg") {
+                return None;
+            }
+            let mut feature = None;
+            attribute
+                .parse_nested_meta(|meta| {
+                    if meta.path.is_ident("feature") {
+                        feature = Some(meta.value()?.parse::<syn::LitStr>()?.value());
+                    }
+                    Ok(())
+                })
+                .ok()?;
+            feature
+        })
+    }
+
+    /// The file modules (`mod name;`, not `mod name { ... }`) declared in `source`.
+    fn declared_modules(source: &str) -> Vec<String> {
+        syn::parse_file(source)
+            .expect("a parsable Rust source file")
+            .items
+            .into_iter()
+            .filter_map(|item| match item {
+                syn::Item::Mod(module) if module.content.is_none() => {
+                    Some(module.ident.to_string())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The public, feature-gated `pub mod name;` declarations in `source`.
+    fn plugin_modules(source: &str) -> BTreeSet<String> {
+        syn::parse_file(source)
+            .expect("a parsable Rust source file")
+            .items
+            .into_iter()
+            .filter_map(|item| {
+                let syn::Item::Mod(module) = item else {
+                    return None;
+                };
+                if module.content.is_some()
+                    || !matches!(module.vis, syn::Visibility::Public(_))
+                    || feature_gate(&module.attrs).is_none()
+                {
+                    return None;
+                }
+                Some(module.ident.to_string())
+            })
+            .collect()
+    }
+
+    /// The module of every `module::Struct => settings` entry in the `declare_plugins!`
+    /// invocation.
+    fn registered_modules(source: &str) -> BTreeSet<String> {
+        /// One `module::Struct => settings` macro entry.
+        struct Entry {
+            module: syn::Ident,
+        }
+
+        impl syn::parse::Parse for Entry {
+            fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
+                let _ = input.call(syn::Attribute::parse_outer)?;
+                let module = input.parse()?;
+                input.parse::<syn::Token![::]>()?;
+                let _ = input.parse::<syn::Ident>()?;
+                input.parse::<syn::Token![=>]>()?;
+                let _ = input.parse::<syn::Type>()?;
+                Ok(Self { module })
+            }
+        }
+
+        let file = syn::parse_file(source).expect("a parsable Rust source file");
+        let invocation = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Macro(item)
+                    if item.ident.is_none() && item.mac.path.is_ident("declare_plugins") =>
+                {
+                    Some(&item.mac)
+                }
+                _ => None,
+            })
+            .expect("the declare_plugins! invocation");
+        invocation
+            .parse_body_with(syn::punctuated::Punctuated::<Entry, syn::Token![,]>::parse_terminated)
+            .expect("parseable declare_plugins! entries")
+            .into_iter()
+            .map(|entry| entry.module.to_string())
+            .collect()
+    }
+
+    /// The literal plugin module list and the `declare_plugins!` entries are two views of the
+    /// same registry: rustfmt needs literal `pub mod` declarations, and the macro needs entries
+    /// for the `PluginName` impls, configuration and registration. Keep them in step.
+    #[test]
+    fn plugin_module_declarations_match_registry_entries() {
+        let source = include_str!("lib.rs");
+        assert_eq!(plugin_modules(source), registered_modules(source));
+    }
+
     /// Every source file under `src` must be declared as a module by its parent: an undeclared
     /// file is dead on disk — cargo compiles it never, and nothing else flags it. The check
-    /// parses the declarations textually, so feature-gated modules count whether or not the
+    /// parses the files as Rust items, so feature-gated modules count whether or not the
     /// feature is enabled.
     #[test]
     fn every_source_file_is_declared_as_a_module() {
-        /// Collects the names declared by `mod name;` lines in `source`.
-        ///
-        /// Brace-form modules (`mod tests { .. }`) do not match: they are inline by definition.
-        fn declared_children(source: &str) -> Vec<String> {
-            source
-                .lines()
-                .filter_map(|line| {
-                    let line = line.trim();
-                    let visibility = line
-                        .strip_prefix("pub(crate) ")
-                        .or_else(|| line.strip_prefix("pub "))
-                        .unwrap_or(line)
-                        .trim_start();
-                    visibility
-                        .strip_prefix("mod ")?
-                        .strip_suffix(';')
-                        .map(str::to_string)
-                })
-                .collect()
-        }
-
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut declared = std::collections::HashSet::from([src.join("lib.rs")]);
-        let mut existing = std::collections::HashSet::new();
+        let mut declared = HashSet::from([src.join("lib.rs")]);
+        let mut existing = HashSet::new();
 
         let mut stack = vec![src];
         while let Some(dir) = stack.pop() {
@@ -433,32 +588,9 @@ mod tests {
                         _ => path.with_file_name(stem.as_ref()),
                     };
 
-                    for name in declared_children(&source) {
+                    for name in declared_modules(&source) {
                         declared.insert(child_dir.join(format!("{name}.rs")));
                         declared.insert(child_dir.join(name).join("mod.rs"));
-                    }
-
-                    // `declare_plugins!` entries declare their plugin module through the macro,
-                    // so the names are collected from the `mod::Struct => settings` entry
-                    // lines. The scan is loose on purpose: non-identifier heads (the macro's
-                    // matcher line, match arms elsewhere) are skipped, and a collected name
-                    // with no file behind it is harmless since only existing-but-undeclared
-                    // files fail.
-                    for line in source.lines() {
-                        let Some((entry, _)) = line.split_once(" => ") else {
-                            continue;
-                        };
-                        let Some((module, _)) = entry.trim_start().split_once("::") else {
-                            continue;
-                        };
-
-                        if !module.is_empty()
-                            && module
-                                .chars()
-                                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-                        {
-                            declared.insert(child_dir.join(format!("{module}.rs")));
-                        }
                     }
                 }
             }

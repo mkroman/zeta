@@ -2913,6 +2913,7 @@ dependencies = [
  "similar-asserts",
  "sqlx",
  "strsim 0.11.1",
+ "syn 2.0.119",
  "thiserror 2.0.21",
  "time",
  "tokio",
