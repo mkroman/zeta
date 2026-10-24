@@ -47,10 +47,6 @@ pub enum Error {
     Api(#[from] http::ApiError),
 }
 
-/// The `.gh` command.
-const GITHUB: CommandSpec =
-    CommandSpec::new(".gh", "Search GitHub and show the most starred match");
-
 /// Structure representing the GitHub Plugin.
 /// Holds the HTTP client to reuse connection pools.
 pub struct GitHubPlugin {
@@ -79,9 +75,8 @@ impl GitHubPlugin {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(GITHUB);
         // The token is optional; it only raises the API rate limit.
         let token = resolve_secret(settings.token.as_deref(), "GITHUB_TOKEN").ok();
         let plugin = Self::with_token(&ctx.config.http, token).map_err(plugin_err)?;
@@ -90,11 +85,12 @@ impl GitHubPlugin {
     }
 
     /// Replies to `.gh` with the most starred repository matching the query.
-    #[handler(command)]
+    #[command(".gh", "Search GitHub and show the most starred match", event)]
     async fn search(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
