@@ -709,6 +709,8 @@ fn display_type(ty: &Type) -> String {
 ///
 /// - annotated command and handler methods may never await (`unused_async`), because the
 ///   generated dispatch awaits them;
+/// - `loaded` and `shutdown` handlers take `&mut self` because the trait's signature says so,
+///   even when the body only reads (`needless_pass_by_ref_mut`);
 /// - the recognized inherent constructor returns `Result` even when initialization cannot
 ///   fail (`unnecessary_wraps`), because the `Plugin` trait fixes its signature, and takes
 ///   `&NoSettings` by reference (`trivially_copy_pass_by_ref`) when the plugin has no
@@ -726,9 +728,23 @@ fn strip_annotations(plugin: &Plugin, inherent: &mut syn::ItemImpl) {
             });
 
             if annotated {
-                method.attrs.push(syn::parse_quote!(
-                    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
-                ));
+                let mutable = plugin.handlers.iter().any(|handler| {
+                    handler.kind.mutable_receiver() && handler.method == method.sig.ident
+                });
+
+                if mutable {
+                    method.attrs.push(syn::parse_quote!(
+                        #[allow(
+                            clippy::unused_async,
+                            clippy::unused_async_trait_impl,
+                            clippy::needless_pass_by_ref_mut
+                        )
+                    ]));
+                } else {
+                    method.attrs.push(syn::parse_quote!(
+                        #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
+                    ));
+                }
             } else if plugin.constructor && method.sig.ident == "new" {
                 method.attrs.push(syn::parse_quote!(
                     #[allow(clippy::unnecessary_wraps, clippy::trivially_copy_pass_by_ref)]
