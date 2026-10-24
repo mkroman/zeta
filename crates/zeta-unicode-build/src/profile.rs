@@ -1,4 +1,4 @@
-//! Training profiles for the Genesis Lean image.
+//! Training profiles for the Nomina image.
 //!
 //! A profile says which name-block shifts training measures and how it picks one. The choice
 //! is deterministic: candidates are sorted and deduplicated, ties break toward the lower
@@ -72,7 +72,7 @@ impl fmt::Display for Priority {
 /// the trained size against an existing image, allowing at most [`Self::max_delta_bytes`]
 /// bytes of growth.
 #[derive(Clone, Debug)]
-pub struct LeanProfile {
+pub struct Profile {
     /// The rule used to choose between candidates.
     pub priority: Priority,
     /// A fixed block shift, or `None` to search [`Self::candidates`].
@@ -87,7 +87,7 @@ pub struct LeanProfile {
     pub max_delta_bytes: usize,
 }
 
-impl LeanProfile {
+impl Profile {
     /// A profile that searches [`DEFAULT_CANDIDATE_SHIFTS`] with `priority` and `budget`.
     #[must_use]
     pub fn new(priority: Priority, max_table_bytes: usize) -> Self {
@@ -158,13 +158,13 @@ impl LeanProfile {
     }
 }
 
-impl Default for LeanProfile {
+impl Default for Profile {
     fn default() -> Self {
         Self::new(Priority::Balanced, DEFAULT_MAX_TABLE_BYTES)
     }
 }
 
-/// The subset of a [`LeanProfile`] that describes a finished training run.
+/// The subset of a [`Profile`] that describes a finished training run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChosenProfile {
     /// The block shift the image was encoded with.
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn default_profile_searches_every_candidate() {
-        let profile = LeanProfile::default();
+        let profile = Profile::default();
         assert_eq!(profile.priority, Priority::Balanced);
         assert_eq!(profile.max_table_bytes, DEFAULT_MAX_TABLE_BYTES);
         assert_eq!(profile.resolved_candidates(), DEFAULT_CANDIDATE_SHIFTS);
@@ -204,13 +204,13 @@ mod tests {
 
     #[test]
     fn candidates_are_sorted_and_deduplicated() {
-        let profile = LeanProfile::default().with_candidates([8, 3, 5, 3]);
+        let profile = Profile::default().with_candidates([8, 3, 5, 3]);
         assert_eq!(profile.resolved_candidates(), [3, 5, 8]);
     }
 
     #[test]
     fn a_fixed_shift_wins_over_the_candidate_list() {
-        let profile = LeanProfile::default()
+        let profile = Profile::default()
             .with_candidates([3, 4, 8])
             .with_block_shift(7);
         assert_eq!(profile.resolved_candidates(), [7]);
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn baseline_and_budget_are_kept_in_the_chosen_profile() {
-        let profile = LeanProfile::new(Priority::Size, 12_345)
+        let profile = Profile::new(Priority::Size, 12_345)
             .with_baseline(vec![0; 99], 17)
             .with_max_delta_bytes(23);
         let chosen = profile.chosen(6);

@@ -1,27 +1,27 @@
-//! Command-line front end for the Genesis Lean trainer.
+//! Command-line front end for the Nomina trainer.
 //!
 //! The trainer reads the vendored UCD files, measures every requested name-block shift,
-//! writes `genesis.bin` and `manifest.json` into the output directory, and prints the
+//! writes `nomina.bin` and `manifest.json` into the output directory, and prints the
 //! candidate table. Arguments are parsed by hand so the generator stays dependency-free.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use zeta_unicode_build::{
-    DEFAULT_MAX_TABLE_BYTES, LeanProfile, MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT, Priority,
-    TrainOutput, read_inputs, train, verify_lean, write_lean,
+    DEFAULT_MAX_TABLE_BYTES, MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT, Priority, Profile,
+    TrainOutput, read_inputs, train, verify, write_manifest,
 };
 
 /// The help text printed by `--help` and on a usage error.
 const HELP: &str = "\
-zeta-unicode-train - train a Genesis Lean Unicode image
+zeta-unicode-train - train a Nomina Unicode image
 
 Usage: zeta-unicode-train [options]
 
 Options:
   --data-dir <dir>    UCD directory (default: $ZETA_UNICODE_DATA_DIR, then
                       ../zeta-unicode/data, crates/zeta-unicode/data or data)
-  --out-dir <dir>     output directory (default: target/genesis-lean)
+  --out-dir <dir>     output directory (default: target/nomina)
   --block-shift <n>   fix the name block shift (3..=8) instead of searching
   --priority <mode>   size, balanced (default) or latency
   --max-bytes <n>     image budget in bytes (default: 200000)
@@ -58,7 +58,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             data_dir: None,
-            out_dir: PathBuf::from("target/genesis-lean"),
+            out_dir: PathBuf::from("target/nomina"),
             block_shift: None,
             priority: Priority::Balanced,
             max_bytes: DEFAULT_MAX_TABLE_BYTES,
@@ -165,7 +165,7 @@ fn run(options: &Options) -> Result<(), String> {
         )
     })?;
 
-    let mut profile = LeanProfile::new(options.priority, options.max_bytes);
+    let mut profile = Profile::new(options.priority, options.max_bytes);
     if let Some(shift) = options.block_shift {
         profile = profile.with_block_shift(shift);
     }
@@ -184,17 +184,18 @@ fn run(options: &Options) -> Result<(), String> {
             options.out_dir.display()
         )
     })?;
-    let image_path = options.out_dir.join("genesis.bin");
+    let image_path = options.out_dir.join("nomina.bin");
     std::fs::write(&image_path, &output.image)
         .map_err(|error| format!("failed to write {}: {error}", image_path.display()))?;
-    write_lean(&data_dir, &options.out_dir, &inputs, &output).map_err(|error| error.to_string())?;
+    write_manifest(&data_dir, &options.out_dir, &inputs, &output)
+        .map_err(|error| error.to_string())?;
 
     print!("{}", output.report);
     if options.report {
         print_details(&output);
     }
     if options.verify {
-        let layout = verify_lean(&output.image, &inputs).map_err(|error| error.to_string())?;
+        let layout = verify(&output.image, &inputs).map_err(|error| error.to_string())?;
         println!(
             "verified: {} B, {} sections, Unicode {}.{}.{}, name block shift {}",
             layout.total_bytes,
@@ -272,7 +273,7 @@ mod tests {
     fn defaults_match_the_help_text() {
         let options = parse(&[]).expect("defaults parse");
         assert!(options.data_dir.is_none());
-        assert_eq!(options.out_dir, PathBuf::from("target/genesis-lean"));
+        assert_eq!(options.out_dir, PathBuf::from("target/nomina"));
         assert!(options.block_shift.is_none());
         assert_eq!(options.priority, Priority::Balanced);
         assert_eq!(options.max_bytes, DEFAULT_MAX_TABLE_BYTES);

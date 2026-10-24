@@ -1,6 +1,6 @@
-//! The flat Genesis image and its four sections.
+//! The flat Nomina image and its four sections.
 //!
-//! [`Genesis::new`] validates the 64-byte header once and keeps a slice per section; every
+//! [`Nomina::new`] validates the 64-byte header once and keeps a slice per section; every
 //! lookup then reads those slices directly. There is no startup decode, no `OnceLock` and no
 //! heap allocation in a name lookup.
 //!
@@ -10,7 +10,7 @@
 //!
 //! ```text
 //! off  field
-//!   0  magic "ZGL1"
+//!   0  magic "NOM1"
 //!   4  Unicode version, three u16
 //!  10  section count (4)
 //!  11  name block shift (5 = 32 names, 6 = 64)
@@ -22,7 +22,7 @@
 //!
 //! # Pattern section
 //!
-//! Section 3 is the `*`-pattern table written by `zeta_unicode_build::genesis::patterns`:
+//! Section 3 is the `*`-pattern table written by `zeta_unicode_build::nomina::patterns`:
 //! a pattern count, a prefix dictionary, a suffix dictionary, then one record per range
 //! (`varint start delta`, `varint length`, `u8 prefix id`, `u8 suffix id`). Pattern names are
 //! `prefix + upper-case hex(cp) + suffix`.
@@ -34,7 +34,7 @@ use zeta_unicode_format::{UNICODE_END, read_varint};
 use super::names::{self, Layout, Names};
 
 /// The image magic.
-pub const MAGIC: &[u8; 4] = b"ZGL1";
+pub const MAGIC: &[u8; 4] = b"NOM1";
 /// The number of sections in the image.
 pub const SECTION_COUNT: usize = 4;
 /// The section id of the stored names.
@@ -52,8 +52,8 @@ pub const NAME_BLOCK_SHIFT: u8 = 5;
 /// The general-category page shift the shipped image uses.
 pub const GC_PAGE_SHIFT: u8 = 11;
 
-/// A parsed Genesis image.
-pub struct Genesis {
+/// A parsed Nomina image.
+pub struct Nomina {
     /// The four section payloads, in id order.
     sections: [Option<&'static [u8]>; SECTION_COUNT],
     /// The decoded name section.
@@ -62,8 +62,8 @@ pub struct Genesis {
     patterns: Patterns,
 }
 
-impl Genesis {
-    /// Parses a Genesis image.
+impl Nomina {
+    /// Parses a Nomina image.
     ///
     /// Returns `None` when the magic, section count, header shifts, section bounds or the
     /// name section are invalid. The image must live for `'static` because every returned
@@ -137,9 +137,8 @@ impl Genesis {
     /// Returns the name of `cp`, or the label Unicode defines for code points without one.
     ///
     /// Labels are `<private-use-F8FF>`, `<reserved-0378>`, `<noncharacter-FFFE>` and
-    /// `<control-0000>`, exactly as [`crate::name_or_label`] renders them. The category used
-    /// for the label is still the shipped general-category table; wiring it to the Genesis
-    /// section is the general-category workstream's step.
+    /// `<control-0000>`, exactly as [`crate::name_or_label`] renders them. The category comes
+    /// from the same general-category table used by the production API.
     #[must_use]
     pub fn name_or_label(&mut self, cp: u32) -> Cow<'static, str> {
         if let Some(name) = self.name(cp) {
@@ -566,12 +565,12 @@ mod tests {
         section
     }
 
-    /// Packs four sections into a Genesis image with the block-local name layout.
+    /// Packs four sections into a Nomina image with the block-local name layout.
     fn pack_image(sections: [&[u8]; 4]) -> Vec<u8> {
         pack_image_layout(sections, 0)
     }
 
-    /// Packs four sections into a Genesis image with an explicit name-layout byte.
+    /// Packs four sections into a Nomina image with an explicit name-layout byte.
     fn pack_image_layout(sections: [&[u8]; 4], layout: u8) -> Vec<u8> {
         let mut image = vec![0u8; HEADER_LEN];
         image[..4].copy_from_slice(MAGIC);
@@ -621,13 +620,13 @@ mod tests {
         .leak();
         let names: &'static [u8] = name_section(&entries).leak();
         let image: &'static [u8] = pack_image([names, &[], &[], patterns]).leak();
-        let mut genesis = Genesis::new(image).expect("a valid image");
+        let mut nomina = Nomina::new(image).expect("a valid image");
 
         for (cp, name) in &entries {
             let mut out = String::new();
-            assert!(genesis.write_name(*cp, &mut out), "U+{cp:04X}");
+            assert!(nomina.write_name(*cp, &mut out), "U+{cp:04X}");
             assert_eq!(&out, name, "U+{cp:04X}");
-            assert_eq!(genesis.name(*cp).as_deref(), Some(name.as_str()));
+            assert_eq!(nomina.name(*cp).as_deref(), Some(name.as_str()));
         }
 
         // Reverse order forces a fresh block decode for every entry; a pseudo-random walk
@@ -635,7 +634,7 @@ mod tests {
         for index in (0..entries.len()).rev() {
             let mut out = String::new();
             let (cp, name) = &entries[index];
-            assert!(genesis.write_name(*cp, &mut out));
+            assert!(nomina.write_name(*cp, &mut out));
             assert_eq!(&out, name);
         }
         let mut state = 0x1234_5678u32;
@@ -644,14 +643,14 @@ mod tests {
             let index = usize::try_from(state % u32::try_from(entries.len()).unwrap()).unwrap();
             let mut out = String::new();
             let (cp, name) = &entries[index];
-            assert!(genesis.write_name(*cp, &mut out));
+            assert!(nomina.write_name(*cp, &mut out));
             assert_eq!(&out, name);
         }
 
         // The gaps between the seven runs are misses.
         for cp in [0x10A, 0x11A, 0x164] {
             let mut out = String::from("unchanged");
-            assert!(!genesis.write_name(cp, &mut out), "U+{cp:04X} must miss");
+            assert!(!nomina.write_name(cp, &mut out), "U+{cp:04X} must miss");
             assert_eq!(out, "unchanged");
         }
     }
@@ -661,29 +660,29 @@ mod tests {
         let entries = corpus();
         let names: &'static [u8] = global_name_section(&entries).leak();
         let image: &'static [u8] = pack_image_layout([names, &[], &[], &[]], 1).leak();
-        let mut genesis = Genesis::new(image).expect("a valid global image");
+        let mut nomina = Nomina::new(image).expect("a valid global image");
 
         for (cp, name) in &entries {
             let mut out = String::new();
-            assert!(genesis.write_name(*cp, &mut out), "U+{cp:04X}");
+            assert!(nomina.write_name(*cp, &mut out), "U+{cp:04X}");
             assert_eq!(&out, name, "U+{cp:04X}");
         }
         for index in (0..entries.len()).rev() {
             let mut out = String::new();
             let (cp, name) = &entries[index];
-            assert!(genesis.write_name(*cp, &mut out));
+            assert!(nomina.write_name(*cp, &mut out));
             assert_eq!(&out, name, "U+{cp:04X}");
         }
         // Cross-block sequential access must resume from the cursor, not reload checkpoints.
         let mut out = String::new();
         for (cp, name) in &entries {
             out.clear();
-            assert!(genesis.write_name(*cp, &mut out));
+            assert!(nomina.write_name(*cp, &mut out));
             assert_eq!(&out, name);
         }
         for cp in [0x10A, 0x11A, 0x164] {
             let mut out = String::from("unchanged");
-            assert!(!genesis.write_name(cp, &mut out), "U+{cp:04X} must miss");
+            assert!(!nomina.write_name(cp, &mut out), "U+{cp:04X} must miss");
             assert_eq!(out, "unchanged");
         }
     }
@@ -697,27 +696,27 @@ mod tests {
         ])
         .leak();
         let image: &'static [u8] = pack_image([names, &[], &[], patterns]).leak();
-        let mut genesis = Genesis::new(image).expect("a valid image");
+        let mut nomina = Nomina::new(image).expect("a valid image");
 
         let mut out = String::new();
-        assert!(genesis.write_name(0xAC00, &mut out));
+        assert!(nomina.write_name(0xAC00, &mut out));
         assert_eq!(out, "HANGUL SYLLABLE GA");
         out.clear();
-        assert!(genesis.write_name(0xD7A3, &mut out));
+        assert!(nomina.write_name(0xD7A3, &mut out));
         assert_eq!(out, "HANGUL SYLLABLE HIH");
         out.clear();
-        assert!(genesis.write_name(0x3401, &mut out));
+        assert!(nomina.write_name(0x3401, &mut out));
         assert_eq!(out, "CJK UNIFIED IDEOGRAPH-3401");
         out.clear();
-        assert!(genesis.write_name(0x18CFF, &mut out));
+        assert!(nomina.write_name(0x18CFF, &mut out));
         assert_eq!(out, "KHITAN SMALL SCRIPT CHARACTER-18CFF-X");
 
-        assert_eq!(genesis.name_or_label(0xF8FF), "<private-use-F8FF>");
-        assert_eq!(genesis.name_or_label(0x378), "<reserved-0378>");
-        assert_eq!(genesis.name_or_label(0xFFFE), "<noncharacter-FFFE>");
-        assert_eq!(genesis.name_or_label(0x0), "<control-0000>");
+        assert_eq!(nomina.name_or_label(0xF8FF), "<private-use-F8FF>");
+        assert_eq!(nomina.name_or_label(0x378), "<reserved-0378>");
+        assert_eq!(nomina.name_or_label(0xFFFE), "<noncharacter-FFFE>");
+        assert_eq!(nomina.name_or_label(0x0), "<control-0000>");
         assert_eq!(
-            genesis.name_or_label(0x100).as_ref(),
+            nomina.name_or_label(0x100).as_ref(),
             "TEST PREFIX 000 SUFFIX"
         );
     }
@@ -728,37 +727,37 @@ mod tests {
         let patterns: &'static [u8] =
             pattern_section(&[(0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", "")]).leak();
         let image: &'static [u8] = pack_image([names, b"emoji", b"gc", patterns]).leak();
-        let genesis = Genesis::new(image).expect("a valid image");
-        assert_eq!(genesis.section(NAMES), Some(names));
-        assert_eq!(genesis.section(EMOJI), Some(b"emoji".as_slice()));
-        assert_eq!(genesis.section(GC), Some(b"gc".as_slice()));
-        assert_eq!(genesis.section(PATTERNS), Some(patterns));
-        assert_eq!(genesis.section(4), None);
+        let nomina = Nomina::new(image).expect("a valid image");
+        assert_eq!(nomina.section(NAMES), Some(names));
+        assert_eq!(nomina.section(EMOJI), Some(b"emoji".as_slice()));
+        assert_eq!(nomina.section(GC), Some(b"gc".as_slice()));
+        assert_eq!(nomina.section(PATTERNS), Some(patterns));
+        assert_eq!(nomina.section(4), None);
     }
 
     #[test]
     fn malformed_images_are_rejected() {
-        assert!(Genesis::new(&[]).is_none());
-        assert!(Genesis::new(b"nope").is_none());
+        assert!(Nomina::new(&[]).is_none());
+        assert!(Nomina::new(b"nope").is_none());
 
         let names: &'static [u8] = name_section(&corpus()).leak();
         let image: &'static [u8] = pack_image([names, &[], &[], &[]]).leak();
-        assert!(Genesis::new(image).is_some());
+        assert!(Nomina::new(image).is_some());
 
         let mut wrong_magic = image.to_vec();
         wrong_magic[0] = b'X';
-        assert!(Genesis::new(wrong_magic.leak()).is_none());
+        assert!(Nomina::new(wrong_magic.leak()).is_none());
 
         let mut wrong_count = image.to_vec();
         wrong_count[10] = 3;
-        assert!(Genesis::new(wrong_count.leak()).is_none());
+        assert!(Nomina::new(wrong_count.leak()).is_none());
 
         let mut wrong_page = image.to_vec();
         wrong_page[12] = 10;
-        assert!(Genesis::new(wrong_page.leak()).is_none());
+        assert!(Nomina::new(wrong_page.leak()).is_none());
 
         let mut out_of_bounds = image.to_vec();
         out_of_bounds[14..18].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(Genesis::new(out_of_bounds.leak()).is_none());
+        assert!(Nomina::new(out_of_bounds.leak()).is_none());
     }
 }

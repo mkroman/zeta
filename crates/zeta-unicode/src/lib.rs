@@ -1,7 +1,8 @@
 //! Unicode character names, general categories and emoji sequence names.
 //!
-//! The `zeta-unicode-build` crate trains one flat "Genesis Lean" image from the vendored UCD
-//! files and links it into the binary with `include_bytes!`. A lookup decodes at most one
+//! The image format is called Nomina (Latin for names). The `zeta-unicode-build` crate trains
+//! one flat Nomina image from the vendored UCD files and links it into the binary with
+//! `include_bytes!`. A lookup decodes at most one
 //! front-coded block, so there is no full name arena and no heap allocation on the
 //! name path. Hangul syllables and `*`-pattern names are generated from their code point.
 //! Emoji keys are canonicalized (`U+FE0F` is stripped) and skin-tone variants are synthesized
@@ -23,22 +24,22 @@ use std::sync::OnceLock;
 
 use zeta_unicode_format::{MAX_KEY, UNICODE_END};
 
-mod gc;
-pub mod genesis;
-
-use genesis::Genesis;
-use genesis::emoji::Emoji;
-use genesis::gc::Gc;
-use genesis::image;
+use nomina::Nomina;
+use nomina::emoji::Emoji;
+use nomina::gc::Gc;
+use nomina::image;
 
 #[doc(inline)]
 pub use gc::GeneralCategory;
 
+mod gc;
+mod nomina;
+
 include!(concat!(env!("OUT_DIR"), "/zeta_unicode_version.rs"));
 
-/// The target size budget for the Genesis Lean image, in bytes.
+/// The target size budget for the Nomina image, in bytes.
 ///
-/// This is the measured random-access budget, not the smaller full-decode budget: the Lean
+/// This is the measured random-access budget, not the smaller full-decode budget: the Nomina
 /// image trades table bytes for a tiny decoder and a sub-100 KB heap.
 pub const TABLE_BUDGET: usize = 200_000;
 
@@ -47,8 +48,8 @@ pub const TABLE_BUDGET: usize = 200_000;
 /// `.uni` uses it to bound how far it probes for a multi-character emoji sequence.
 pub const MAX_EMOJI_KEY_BYTES: usize = MAX_KEY;
 
-/// The generated Genesis image, linked in at compile time.
-static IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zeta_unicode_genesis.bin"));
+/// The generated Nomina image, linked in at compile time.
+static IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zeta_unicode_nomina.bin"));
 
 /// The parsed emoji section, initialized on the first emoji lookup.
 static EMOJI: OnceLock<Emoji> = OnceLock::new();
@@ -58,27 +59,27 @@ static GC: OnceLock<Gc> = OnceLock::new();
 thread_local! {
     /// The per-thread name decoder. Its fixed scratch buffer is the only mutable state left
     /// after initialization, so lookups do not allocate or share a lock.
-    static NAMES: RefCell<Option<Genesis>> = const { RefCell::new(None) };
+    static NAMES: RefCell<Option<Nomina>> = const { RefCell::new(None) };
 }
 
 /// Runs `f` with this thread's name decoder, building it on first use.
-fn with_genesis<R>(f: impl FnOnce(&mut Genesis) -> R) -> R {
+fn with_nomina<R>(f: impl FnOnce(&mut Nomina) -> R) -> R {
     NAMES.with(|cell| {
         let mut slot = cell.borrow_mut();
-        let genesis = slot.get_or_insert_with(|| {
-            Genesis::new(IMAGE).expect("the generated Genesis image is valid")
+        let nomina = slot.get_or_insert_with(|| {
+            Nomina::new(IMAGE).expect("the generated Nomina image is valid")
         });
-        f(genesis)
+        f(nomina)
     })
 }
 
 /// Returns the parsed emoji section, building it on first use.
 fn emoji() -> &'static Emoji {
     EMOJI.get_or_init(|| {
-        let section = with_genesis(|genesis| {
-            genesis
+        let section = with_nomina(|nomina| {
+            nomina
                 .section(image::EMOJI)
-                .expect("the Genesis image has an emoji section")
+                .expect("the Nomina image has an emoji section")
         });
         Emoji::parse(section).expect("the generated emoji section is valid")
     })
@@ -87,10 +88,10 @@ fn emoji() -> &'static Emoji {
 /// Returns the parsed general-category section, building it on first use.
 fn gc() -> &'static Gc {
     GC.get_or_init(|| {
-        let section = with_genesis(|genesis| {
-            genesis
+        let section = with_nomina(|nomina| {
+            nomina
                 .section(image::GC)
-                .expect("the Genesis image has a general-category section")
+                .expect("the Nomina image has a general-category section")
         });
         Gc::parse(section).expect("the generated general-category section is valid")
     })
@@ -101,7 +102,7 @@ fn gc() -> &'static Gc {
 /// The name decoder is per thread; the emoji and category sections are process-wide. A warm
 /// call is cheap and idempotent.
 pub fn init() {
-    with_genesis(|_| ());
+    with_nomina(|_| ());
     emoji();
     gc();
 }
@@ -113,7 +114,7 @@ pub fn init() {
 /// [`write_name`] for the zero-allocation path.
 #[must_use]
 pub fn name(c: char) -> Option<Cow<'static, str>> {
-    with_genesis(|genesis| genesis.name(u32::from(c)))
+    with_nomina(|nomina| nomina.name(u32::from(c)))
 }
 
 /// Appends the name of `c` to `buf`, returning `false` when `c` has no name.
@@ -130,7 +131,7 @@ pub fn name(c: char) -> Option<Cow<'static, str>> {
 /// ```
 #[must_use = "the return value reports whether `c` has a name"]
 pub fn write_name(c: char, buf: &mut String) -> bool {
-    with_genesis(|genesis| genesis.write_name(u32::from(c), buf))
+    with_nomina(|nomina| nomina.write_name(u32::from(c), buf))
 }
 
 /// Returns the name of `c`, or the label Unicode defines for code points without one.
@@ -142,7 +143,7 @@ pub fn write_name(c: char, buf: &mut String) -> bool {
 pub fn name_or_label(c: char) -> Cow<'static, str> {
     let code_point = u32::from(c);
     let mut buffer = String::new();
-    if with_genesis(|genesis| genesis.write_name(code_point, &mut buffer)) {
+    if with_nomina(|nomina| nomina.write_name(code_point, &mut buffer)) {
         return Cow::Owned(buffer);
     }
 
@@ -181,9 +182,9 @@ pub const fn is_noncharacter(cp: u32) -> bool {
 #[must_use]
 pub fn emoji_name(sequence: &str) -> Option<Cow<'static, str>> {
     let table = emoji();
-    with_genesis(|genesis| {
+    with_nomina(|nomina| {
         table.emoji_name(
-            &mut |cp: u32, out: &mut String| genesis.write_name(cp, out),
+            &mut |cp: u32, out: &mut String| nomina.write_name(cp, out),
             sequence,
         )
     })
@@ -256,7 +257,7 @@ mod tests {
         }
     }
 
-    /// Reads the version from the Genesis image header.
+    /// Reads the version from the Nomina image header.
     fn image_version() -> (u8, u8, u8) {
         let u16_at = |at: usize| u16::from_le_bytes([IMAGE[at], IMAGE[at + 1]]);
         (
@@ -523,7 +524,7 @@ mod tests {
 
     #[test]
     fn name_decodes_stored_and_generated_names() {
-        // Stored names are decoded from one block, so the Lean backend returns an owned name.
+        // Stored names are decoded from one block, so the Nomina backend returns an owned name.
         assert!(matches!(name('A'), Some(Cow::Owned(_))));
         assert!(matches!(name('中'), Some(Cow::Owned(_))));
         assert!(emoji_name("🦔").is_some());
@@ -589,10 +590,10 @@ mod tests {
         assert_eq!(name('中').as_deref(), Some("CJK UNIFIED IDEOGRAPH-4E2D"));
     }
 
-    /// Prints the image size and holds it to the Lean budget.
+    /// Prints the image size and holds it to the Nomina budget.
     #[test]
-    fn table_stays_within_the_lean_budget() {
-        eprintln!("Genesis Lean image: {} bytes", IMAGE.len());
+    fn table_stays_within_the_nomina_budget() {
+        eprintln!("Nomina image: {} bytes", IMAGE.len());
         assert!(
             IMAGE.len() <= TABLE_BUDGET,
             "image grew to {} bytes",

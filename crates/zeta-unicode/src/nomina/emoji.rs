@@ -1,4 +1,4 @@
-//! Genesis emoji lookup: canonical keys, binary search and rule-generated names.
+//! Nomina emoji lookup: canonical keys, binary search and rule-generated names.
 //!
 //! The section stores the 1,944 canonical entries of the shipped table in four Huffman-coded
 //! streams. [`Emoji::parse`] decodes them once into a UTF-8 key arena with `u16` starts, a
@@ -726,12 +726,7 @@ fn u16_at(buf: &[u8], offset: usize) -> Option<u16> {
 }
 
 /// Hand-written canonical Huffman decoding for the section streams.
-pub(crate) mod huffman {
-    #![allow(
-        clippy::redundant_pub_crate,
-        reason = "the module is private, but `pub(crate)` states the intended visibility"
-    )]
-
+pub mod huffman {
     /// The longest code a model may use.
     const MAX_BITS: usize = 32;
 
@@ -740,7 +735,7 @@ pub(crate) mod huffman {
     /// Returns `None` for a truncated codebook, an invalid code, or a payload shorter than
     /// `raw_len`.
     #[must_use]
-    pub(crate) fn decode(stream: &[u8], raw_len: usize, order: u8) -> Option<Vec<u8>> {
+    pub fn decode(stream: &[u8], raw_len: usize, order: u8) -> Option<Vec<u8>> {
         if raw_len == 0 {
             return Some(Vec::new());
         }

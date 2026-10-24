@@ -1,8 +1,8 @@
-//! Packing the flat Genesis image.
+//! Packing the flat Nomina image.
 //!
 //! ```text
 //! off  size  field
-//!   0     4  magic "ZGL1"
+//!   0     4  magic "NOM1"
 //!   4     2  Unicode major
 //!   6     2  Unicode minor
 //!   8     2  Unicode patch
@@ -18,12 +18,12 @@
 //! The directory starts at offset 14, exactly as the format contract states; the runtime
 //! reads the `u32`s with unaligned little-endian loads, so no alignment padding is needed
 //! before it. The header is padded to one 64-byte cache line, and only [`pack`] and the
-//! runtime's `Genesis::new` ever read it.
+//! runtime's `Nomina::new` ever read it.
 
 /// The image magic.
-pub const MAGIC: &[u8; 4] = b"ZGL1";
+pub const MAGIC: &[u8; 4] = b"NOM1";
 
-/// The number of sections in a Genesis image.
+/// The number of sections in a Nomina image.
 pub const SECTION_COUNT: usize = 4;
 
 /// The documented name-block shift: 32 names per block.
@@ -48,7 +48,7 @@ pub const LAYOUT_BLOCK_LOCAL: u8 = 0;
 /// The name layout byte for the global checkpointed layout.
 pub const LAYOUT_GLOBAL: u8 = 1;
 
-/// Packs four sections into a flat Genesis image with the documented shifts.
+/// Packs four sections into a flat Nomina image with the documented shifts.
 ///
 /// Sections are appended in id order, each starting on an 8-byte boundary.
 #[must_use]
@@ -56,10 +56,10 @@ pub fn pack(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> 
     pack_with(sections, version, NAME_BLOCK_SHIFT, GC_PAGE_SHIFT)
 }
 
-/// Packs four sections into a global-checkpointed Genesis image.
+/// Packs four sections into a global-checkpointed Nomina image.
 ///
 /// The name layout byte is set to [`LAYOUT_GLOBAL`]; the name section must have been built by
-/// `genesis::names::encode_global`.
+/// `nomina::names::encode_global`.
 #[must_use]
 pub fn pack_global(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> {
     pack_with_layout(
@@ -206,8 +206,8 @@ mod tests {
         assert_eq!(image[13], LAYOUT_GLOBAL);
     }
 
-    /// Builds the complete measurement image and writes it to `GENESIS_IMAGE` (default
-    /// `$TMPDIR/genesis.bin`). The runtime benchmark loads it read-only.
+    /// Builds the complete measurement image and writes it to `NOMINA_IMAGE` (default
+    /// `$TMPDIR/nomina.bin`). The runtime benchmark loads it read-only.
     #[test]
     #[ignore = "writes the measurement image"]
     fn writes_the_measurement_image() {
@@ -215,22 +215,22 @@ mod tests {
 
         let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../zeta-unicode/data");
         let inputs = crate::ucd::read_inputs(&data).expect("vendored inputs");
-        let block_shift = std::env::var("GENESIS_BLOCK_SHIFT")
+        let block_shift = std::env::var("NOMINA_BLOCK_SHIFT")
             .ok()
-            .map_or(crate::genesis::names::NAME_BLOCK_SHIFT, |value| {
+            .map_or(crate::nomina::names::NAME_BLOCK_SHIFT, |value| {
                 value.parse().expect("a numeric block shift")
             });
-        let global = std::env::var("GENESIS_LAYOUT").is_ok_and(|value| value == "global");
+        let global = std::env::var("NOMINA_LAYOUT").is_ok_and(|value| value == "global");
         let encoded = if global {
-            crate::genesis::names::encode_global_with_block_shift(&inputs, block_shift)
+            crate::nomina::names::encode_global_with_block_shift(&inputs, block_shift)
         } else {
-            crate::genesis::names::encode_with_block_shift(&inputs, block_shift)
+            crate::nomina::names::encode_with_block_shift(&inputs, block_shift)
         };
         let names = encoded.bytes;
         let (emoji, emoji_stats) =
-            crate::genesis::emoji::build(&inputs.emoji, &inputs.sequences, &inputs.names);
-        let (gc, gc_stats) = crate::genesis::gc::build(&inputs.gc);
-        let (patterns, pattern_stats) = crate::genesis::patterns::build(&inputs.names);
+            crate::nomina::emoji::build(&inputs.emoji, &inputs.sequences, &inputs.names);
+        let (gc, gc_stats) = crate::nomina::gc::build(&inputs.gc);
+        let (patterns, pattern_stats) = crate::nomina::patterns::build(&inputs.names);
         let image = pack_with_layout(
             [&names, &emoji, &gc, &patterns],
             inputs.version,
@@ -238,8 +238,8 @@ mod tests {
             GC_PAGE_SHIFT,
             encoded.layout.id(),
         );
-        let path = std::env::var_os("GENESIS_IMAGE").map_or_else(
-            || std::env::temp_dir().join("genesis.bin"),
+        let path = std::env::var_os("NOMINA_IMAGE").map_or_else(
+            || std::env::temp_dir().join("nomina.bin"),
             std::path::PathBuf::from,
         );
         std::fs::write(&path, &image).expect("write the measurement image");

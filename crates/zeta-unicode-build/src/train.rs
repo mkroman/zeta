@@ -1,9 +1,9 @@
-//! End-to-end training for the Genesis Lean image.
+//! End-to-end training for the Nomina image.
 //!
-//! [`train`] parses the vendored inputs through the [`crate::genesis`] encoders and measures
-//! every name-block candidate a [`LeanProfile`] asks for. The emoji, general-category and
+//! [`train`] parses the vendored inputs through the [`crate::nomina`] encoders and measures
+//! every name-block candidate a [`Profile`] asks for. The emoji, general-category and
 //! pattern sections do not depend on the name layout, so they are encoded once; only the name
-//! section and the final packing run per candidate. [`LeanProfile::priority`] then picks one
+//! section and the final packing run per candidate. [`Profile::priority`] then picks one
 //! image, [`verify`] re-decodes its name section, and the budget and optional baseline are
 //! checked before [`TrainOutput`] is returned.
 //!
@@ -14,10 +14,9 @@ use std::fmt::Write as _;
 
 use thiserror::Error;
 
-use crate::genesis::{emoji, gc, image, names, patterns};
+use crate::nomina::{emoji, gc, image, names, patterns};
 use crate::profile::{
-    BALANCED_MAX_SHIFT, ChosenProfile, LeanProfile, MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT,
-    Priority,
+    BALANCED_MAX_SHIFT, ChosenProfile, MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT, Priority, Profile,
 };
 use crate::ucd::Inputs;
 
@@ -38,7 +37,7 @@ pub enum Error {
         max: u8,
     },
     /// The packed image does not have the documented header and section layout.
-    #[error("the Genesis image is malformed: {reason}")]
+    #[error("the Nomina image is malformed: {reason}")]
     Image {
         /// Why the image was rejected.
         reason: &'static str,
@@ -68,7 +67,7 @@ pub enum Error {
     },
 }
 
-/// One section of a packed Genesis image.
+/// One section of a packed Nomina image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SectionRecord {
     /// The section id (name, emoji, general category or patterns).
@@ -81,7 +80,7 @@ pub struct SectionRecord {
     pub size: usize,
 }
 
-/// The validated layout of a Genesis image.
+/// The validated layout of a Nomina image.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageLayout {
     /// The Unicode version from the image header.
@@ -99,7 +98,7 @@ pub struct ImageLayout {
 }
 
 impl ImageLayout {
-    /// Parses and validates the 64-byte Genesis header and its section directory.
+    /// Parses and validates the 64-byte Nomina header and its section directory.
     ///
     /// # Errors
     ///
@@ -113,7 +112,7 @@ impl ImageLayout {
         }
         if &image[..4] != image::MAGIC {
             return Err(Error::Image {
-                reason: "the magic is not ZGL1",
+                reason: "the magic is not NOM1",
             });
         }
         if usize::from(image[10]) != image::SECTION_COUNT {
@@ -293,7 +292,7 @@ impl Verification {
 /// The result of one successful training run.
 #[derive(Debug)]
 pub struct TrainOutput {
-    /// The complete Genesis image, ready to write.
+    /// The complete Nomina image, ready to write.
     pub image: Vec<u8>,
     /// The Unicode version from the inputs and the image header.
     pub version: (u8, u8, u8),
@@ -336,7 +335,7 @@ pub struct BaselineComparison {
     pub max_delta_bytes: usize,
 }
 
-/// Trains one Genesis Lean image from already parsed inputs.
+/// Trains one Nomina image from already parsed inputs.
 ///
 /// Emoji, general-category and pattern sections are encoded and verified once. Each candidate
 /// block shift then encodes the name section, packs a complete image and records its size; the
@@ -347,7 +346,7 @@ pub struct BaselineComparison {
 ///
 /// Returns [`Error::NoCandidates`] for an empty candidate list, [`Error::Shift`] for a shift
 /// outside 3..=8, [`Error::Image`] for an inconsistent packed image, [`Error::Budget`] when
-/// the chosen image exceeds [`LeanProfile::max_table_bytes`], and
+/// the chosen image exceeds [`Profile::max_table_bytes`], and
 /// [`Error::BaselineRegression`] when it grows past the baseline allowance.
 ///
 /// # Panics
@@ -359,7 +358,7 @@ pub struct BaselineComparison {
     clippy::too_many_lines,
     reason = "the candidate loop, verification and budget checks are one linear pipeline"
 )]
-pub fn train(inputs: &Inputs, profile: &LeanProfile) -> Result<TrainOutput, Error> {
+pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
     let shifts = profile.resolved_candidates();
     if shifts.is_empty() {
         return Err(Error::NoCandidates);
@@ -610,7 +609,7 @@ fn render_report(chosen: &ChosenProfile, candidates: &[Candidate], layout: &Imag
     let mut out = String::with_capacity(1_024);
     let _ = writeln!(
         out,
-        "Genesis Lean training: priority {}, budget {} B",
+        "Nomina training: priority {}, budget {} B",
         chosen.priority, chosen.max_table_bytes
     );
     let _ = writeln!(
@@ -654,7 +653,7 @@ fn render_report(chosen: &ChosenProfile, candidates: &[Candidate], layout: &Imag
     out
 }
 
-/// The stable manifest name of a Genesis section id.
+/// The stable manifest name of a Nomina section id.
 const fn section_name(id: usize) -> &'static str {
     match id {
         image::NAMES => "names",
@@ -737,7 +736,7 @@ mod tests {
     #[test]
     fn trains_the_vendored_data_within_budget() {
         let inputs = inputs();
-        let output = train(&inputs, &LeanProfile::default()).expect("training succeeds");
+        let output = train(&inputs, &Profile::default()).expect("training succeeds");
 
         assert_eq!(output.version, (18, 0, 0));
         assert_eq!(output.emoji_version, (18, 0));
@@ -802,7 +801,7 @@ mod tests {
     #[test]
     fn a_second_run_is_byte_identical() {
         let inputs = inputs();
-        let profile = LeanProfile::default();
+        let profile = Profile::default();
         let first = train(&inputs, &profile).expect("first run");
         let second = train(&inputs, &profile).expect("second run");
         assert_eq!(first.image, second.image, "the image must be deterministic");
@@ -820,7 +819,7 @@ mod tests {
         for shift in MIN_CANDIDATE_SHIFT..=MAX_CANDIDATE_SHIFT {
             // Shift 3 is larger than the default budget; this test is about the format, not
             // the size policy.
-            let profile = LeanProfile::new(Priority::Balanced, usize::MAX).with_block_shift(shift);
+            let profile = Profile::new(Priority::Balanced, usize::MAX).with_block_shift(shift);
             let output = train(&inputs, &profile).expect("candidate training");
             assert_eq!(output.profile.name_block_shift, shift);
             assert_eq!(output.candidates.len(), 1);
@@ -850,23 +849,23 @@ mod tests {
     }
 
     #[test]
-    fn the_lean_manifest_is_deterministic_and_relative() {
+    fn the_nomina_manifest_is_deterministic_and_relative() {
         let data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../zeta-unicode/data");
         let inputs = crate::ucd::read_inputs(&data_dir).expect("vendored inputs");
         let output =
-            train(&inputs, &LeanProfile::default().with_block_shift(8)).expect("training succeeds");
+            train(&inputs, &Profile::default().with_block_shift(8)).expect("training succeeds");
         let out = tempfile::tempdir().expect("out dir");
 
-        crate::manifest::write_lean(&data_dir, out.path(), &inputs, &output)
+        crate::manifest::write_manifest(&data_dir, out.path(), &inputs, &output)
             .expect("first manifest");
         let first = std::fs::read(out.path().join("manifest.json")).expect("first read");
-        crate::manifest::write_lean(&data_dir, out.path(), &inputs, &output)
+        crate::manifest::write_manifest(&data_dir, out.path(), &inputs, &output)
             .expect("second manifest");
         let second = std::fs::read(out.path().join("manifest.json")).expect("second read");
         assert_eq!(first, second, "the manifest must not depend on the run");
 
         let text = String::from_utf8(first).expect("UTF-8 manifest");
-        assert!(text.contains("\"layout\": \"genesis-lean\""));
+        assert!(text.contains("\"layout\": \"nomina\""));
         assert!(text.contains("\"unicode_version\": [18, 0, 0]"));
         assert!(text.contains("\"emoji_version\": [18, 0]"));
         assert!(text.contains(&format!("\"total_bytes\": {}", output.total_bytes)));
@@ -883,7 +882,7 @@ mod tests {
         assert!(text.contains("\"status\": \"verified\""));
         assert!(
             !text.contains("derived-names.rules"),
-            "the Lean manifest has no rules file"
+            "the Nomina manifest has no rules file"
         );
         assert!(
             !text.contains(env!("CARGO_MANIFEST_DIR")),
@@ -894,7 +893,7 @@ mod tests {
     #[test]
     fn a_tight_budget_is_a_structured_error() {
         let inputs = inputs();
-        let profile = LeanProfile::new(Priority::Balanced, 1_000).with_block_shift(3);
+        let profile = Profile::new(Priority::Balanced, 1_000).with_block_shift(3);
         let error = train(&inputs, &profile).expect_err("the budget is too small");
         match error {
             Error::Budget {
@@ -913,10 +912,10 @@ mod tests {
     #[test]
     fn a_baseline_regression_is_a_structured_error() {
         let inputs = inputs();
-        let profile = LeanProfile::default().with_block_shift(8);
+        let profile = Profile::default().with_block_shift(8);
         let output = train(&inputs, &profile).expect("training succeeds");
         let baseline = output.image[..output.image.len() - 1].to_vec();
-        let regressing = LeanProfile::default()
+        let regressing = Profile::default()
             .with_block_shift(8)
             .with_baseline(baseline, 0);
         let error = train(&inputs, &regressing).expect_err("one byte over the baseline");
@@ -937,9 +936,9 @@ mod tests {
     #[test]
     fn a_baseline_with_room_is_recorded() {
         let inputs = inputs();
-        let profile = LeanProfile::default().with_block_shift(8);
+        let profile = Profile::default().with_block_shift(8);
         let output = train(&inputs, &profile).expect("training succeeds");
-        let baselined = LeanProfile::default()
+        let baselined = Profile::default()
             .with_block_shift(8)
             .with_baseline(output.image.clone(), 32);
         let comparison = train(&inputs, &baselined)
@@ -955,7 +954,7 @@ mod tests {
     fn a_fixed_shift_outside_the_candidate_range_is_rejected() {
         let inputs = inputs();
         for shift in [0, 1, 2, 9, 255] {
-            let error = train(&inputs, &LeanProfile::default().with_block_shift(shift))
+            let error = train(&inputs, &Profile::default().with_block_shift(shift))
                 .expect_err("the shift is outside the candidate range");
             assert!(matches!(error, Error::Shift { shift: found, .. } if found == shift));
         }
@@ -964,17 +963,17 @@ mod tests {
     #[test]
     fn an_empty_candidate_list_is_rejected() {
         let inputs = inputs();
-        let profile = LeanProfile::default().with_candidates([]);
+        let profile = Profile::default().with_candidates([]);
         assert!(matches!(train(&inputs, &profile), Err(Error::NoCandidates)));
     }
 
     #[test]
     fn malformed_images_are_rejected() {
         assert!(ImageLayout::parse(&[]).is_err());
-        assert!(ImageLayout::parse(b"ZGL1").is_err());
+        assert!(ImageLayout::parse(b"NOM1").is_err());
         let inputs = inputs();
         let output =
-            train(&inputs, &LeanProfile::default().with_block_shift(8)).expect("training succeeds");
+            train(&inputs, &Profile::default().with_block_shift(8)).expect("training succeeds");
 
         let mut wrong_magic = output.image.clone();
         wrong_magic[0] = b'X';

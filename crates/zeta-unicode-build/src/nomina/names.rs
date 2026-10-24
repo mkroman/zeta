@@ -149,7 +149,7 @@ impl NameLayout {
 /// The size breakdown of one encoded name section.
 #[derive(Clone, Debug)]
 pub struct Encoded {
-    /// The complete section, ready for [`crate::genesis::image::pack`].
+    /// The complete section, ready for [`crate::nomina::image::pack`].
     pub bytes: Vec<u8>,
     /// The layout the section was encoded with.
     pub layout: NameLayout,

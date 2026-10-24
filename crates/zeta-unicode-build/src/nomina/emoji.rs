@@ -1,4 +1,4 @@
-//! Genesis emoji section: rule-generated names over Huffman-coded streams.
+//! Nomina emoji section: rule-generated names over Huffman-coded streams.
 //!
 //! The section stores the 1,944 canonical entries of the shipped table, but most names are not
 //! stored: 1,341 entries name themselves through one of the thirteen grammar rules measured in
@@ -1152,12 +1152,7 @@ fn pack_bits(values: impl IntoIterator<Item = u8>, width: usize) -> Vec<u8> {
 const ZWJ: u32 = 0x200D;
 
 /// Hand-written canonical Huffman coding over an order-0 or order-1 byte model.
-pub(crate) mod huffman {
-    #![allow(
-        clippy::redundant_pub_crate,
-        reason = "the module is private, but `pub(crate)` states the intended visibility"
-    )]
-
+pub mod huffman {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
 

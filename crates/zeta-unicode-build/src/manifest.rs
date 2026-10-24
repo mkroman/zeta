@@ -50,10 +50,10 @@ fn push_versions(out: &mut String, inputs: &crate::ucd::Inputs) {
     );
 }
 
-/// Writes `manifest.json` for one Genesis Lean training run.
+/// Writes `manifest.json` for one Nomina training run.
 ///
-/// The Lean image has no name-derivation rules file, so the manifest records only the UCD
-/// inputs: each one's path relative to `data_dir`, its in-memory size and its FNV-1a 64 hash.
+/// The Nomina image has no name-derivation rules file, so the manifest records only the UCD
+/// inputs: each one's path relative to `data_dir`, its size and its FNV-1a 64 hash.
 /// It also records the four image sections, the chosen profile, every measured candidate and
 /// the verification status. There are no timestamps and no absolute paths, so two runs over
 /// the same inputs render identical bytes.
@@ -61,24 +61,24 @@ fn push_versions(out: &mut String, inputs: &crate::ucd::Inputs) {
 /// # Errors
 ///
 /// Returns [`Error`](crate::Error) when `manifest.json` cannot be written.
-pub fn write_lean(
+pub fn write_manifest(
     data_dir: &Path,
     out_dir: &Path,
     inputs: &crate::ucd::Inputs,
     output: &TrainOutput,
 ) -> Result<(), crate::Error> {
-    let mut records = lean_records(data_dir, inputs)?;
+    let mut records = input_records(data_dir, inputs)?;
     records.sort();
-    let text = render_lean(inputs, output, &records);
+    let text = render_manifest(inputs, output, &records);
     crate::write(out_dir.join("manifest.json"), text)
 }
 
-/// Renders the Lean manifest for one training run.
+/// Renders the Nomina manifest for one training run.
 #[allow(
     clippy::too_many_lines,
     reason = "one linear JSON rendering pass, like the legacy manifest"
 )]
-fn render_lean(
+fn render_manifest(
     inputs: &crate::ucd::Inputs,
     output: &TrainOutput,
     records: &[InputRecord],
@@ -88,13 +88,13 @@ fn render_lean(
     push_json_string(&mut out, FORMAT);
     let _ = writeln!(out, ",\n  \"format_version\": {FORMAT_VERSION},");
     push_tool(&mut out);
-    out.push_str("  \"layout\": \"genesis-lean\",\n");
+    out.push_str("  \"layout\": \"nomina\",\n");
     out.push_str("  \"name_layout\": ");
     push_json_string(
         &mut out,
         match output.names.layout {
-            crate::genesis::names::NameLayout::BlockLocal => "block-local",
-            crate::genesis::names::NameLayout::Global => "global-checkpointed",
+            crate::nomina::names::NameLayout::BlockLocal => "block-local",
+            crate::nomina::names::NameLayout::Global => "global-checkpointed",
         },
     );
     out.push_str(",\n");
@@ -201,12 +201,12 @@ fn render_lean(
     out
 }
 
-/// Collects the input records for a Lean run, hashing the bytes on disk.
+/// Collects the input records for a Nomina run, hashing the bytes on disk.
 ///
 /// The emoji text may be normalized in memory for older files, so hashing the in-memory text
 /// would make the manifest depend on that normalization; the on-disk bytes are the actual
 /// inputs a rebuild needs.
-fn lean_records(
+fn input_records(
     data_dir: &Path,
     inputs: &crate::ucd::Inputs,
 ) -> Result<Vec<InputRecord>, crate::Error> {

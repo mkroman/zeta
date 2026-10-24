@@ -1,6 +1,6 @@
-//! Decoding the Genesis name section without materializing the dictionary.
+//! Decoding the Nomina name section without materializing the dictionary.
 //!
-//! The format is documented in `zeta_unicode_build::genesis::names`; this module is the
+//! The format is documented in `zeta_unicode_build::nomina::names`; this module is the
 //! runtime half. A lookup resolves `cp -> run -> name id` with one page-directory read and a
 //! short scan of the run records, then decodes at most one block. A cursor resumes
 //! inside the block when consecutive ids are requested, so walking `.uni` from `U+0000`
@@ -92,7 +92,7 @@ fn build_table(model: &Model, table: &mut [u16]) {
 
 /// The name layout an image was built with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Layout {
+pub enum Layout {
     /// The predecessor resets at every block boundary.
     BlockLocal,
     /// Every name uses its code-point predecessor; each block has a checkpoint.
@@ -116,7 +116,7 @@ impl Layout {
 }
 
 /// The decoded name section's fixed-size lookup state.
-pub(crate) struct Names {
+pub struct Names {
     /// First run index of every 2,048-code-point page.
     page_dir: &'static [u8],
     /// `{ u32 first_cp, u16 length, u16 base_id }` records.
@@ -460,7 +460,7 @@ impl Names {
 }
 
 /// Writes the Hangul name of `cp` into `out`, returning `false` outside the syllable range.
-pub(crate) fn write_hangul(cp: u32, out: &mut String) -> bool {
+pub fn write_hangul(cp: u32, out: &mut String) -> bool {
     if !(HANGUL_START..=HANGUL_END).contains(&cp) {
         return false;
     }

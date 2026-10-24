@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use zeta_unicode_build::{
-    DEFAULT_MAX_TABLE_BYTES, LeanProfile, Priority, read_inputs, train, write_lean,
+    DEFAULT_MAX_TABLE_BYTES, Priority, Profile, read_inputs, train, write_manifest,
 };
 
 fn main() {
@@ -45,7 +45,7 @@ fn main() {
                     .parse()
                     .unwrap_or_else(|_| panic!("ZETA_UNICODE_MAX_BYTES must be a byte count"))
             });
-    let mut profile = LeanProfile::new(priority, max_bytes);
+    let mut profile = Profile::new(priority, max_bytes);
     if let Some(value) = env::var_os("ZETA_UNICODE_BLOCK_SHIFT") {
         let shift = value
             .to_string_lossy()
@@ -56,9 +56,9 @@ fn main() {
 
     let inputs = read_inputs(&data_dir).expect("failed to read the Unicode data");
     let output = train(&inputs, &profile).expect("failed to train the Unicode image");
-    fs::write(out_dir.join("zeta_unicode_genesis.bin"), &output.image)
-        .expect("failed to write the Genesis image");
-    write_lean(&data_dir, &out_dir, &inputs, &output)
+    fs::write(out_dir.join("zeta_unicode_nomina.bin"), &output.image)
+        .expect("failed to write the Nomina image");
+    write_manifest(&data_dir, &out_dir, &inputs, &output)
         .expect("failed to write the Unicode manifest");
 
     let version = output.version;

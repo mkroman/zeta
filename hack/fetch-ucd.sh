@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fetch the five UCD files a Genesis Lean training run needs.
+# Fetch the five UCD files a Nomina training run needs.
 #
 # Usage: hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]
 #
@@ -34,4 +34,4 @@ fi
 
 printf 'Fetched Unicode %s (emoji %s) into %s\n' "$version" "$emoji_version" "$dest"
 printf 'Train with:\n  cargo run -p zeta-unicode-build --bin zeta-unicode-train -- \\\n'
-printf '    --data-dir %s --out-dir /tmp/genesis-%s --report --verify\n' "$dest" "$version"
+printf '    --data-dir %s --out-dir /tmp/nomina-%s --report --verify\n' "$dest" "$version"

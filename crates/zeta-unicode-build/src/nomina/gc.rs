@@ -1,4 +1,4 @@
-//! Genesis general-category section: contiguous runs over two Huffman streams.
+//! Nomina general-category section: contiguous runs over two Huffman streams.
 //!
 //! `DerivedGeneralCategory.txt` partitions the whole code space into 4,202 contiguous runs.
 //! The section stores only the run starts (varint gaps) and the category ids (one byte each);

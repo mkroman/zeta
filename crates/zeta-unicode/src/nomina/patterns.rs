@@ -1,4 +1,4 @@
-//! Genesis `*`-pattern lookup: varint ranges plus prefix and suffix dictionaries.
+//! Nomina `*`-pattern lookup: varint ranges plus prefix and suffix dictionaries.
 //!
 //! The section stores the twenty `DerivedName.txt` ranges that spell a name as
 //! `prefix + hex(cp) + suffix`. Prefixes and suffixes are dictionary strings, so the eight

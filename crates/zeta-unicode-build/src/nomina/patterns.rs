@@ -1,4 +1,4 @@
-//! Genesis `*`-pattern section: varint ranges plus prefix and suffix dictionaries.
+//! Nomina `*`-pattern section: varint ranges plus prefix and suffix dictionaries.
 //!
 //! `DerivedName.txt` defines twenty ranges whose name is `prefix + hex(cp) + suffix`; every
 //! suffix is empty in Unicode 18.0.0 and eight prefixes cover all twenty ranges. The section

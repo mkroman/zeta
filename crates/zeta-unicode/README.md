@@ -1,7 +1,8 @@
 # zeta-unicode
 
 Unicode character names, general categories and emoji sequence names, trained at build time
-into one flat "Genesis Lean" image and linked into the binary with `include_bytes!`.
+into one flat Nomina image and linked into the binary with `include_bytes!`. Nomina is Latin
+for names.
 
 The image is generated from the vendored UCD files by `zeta-unicode-build`. There is no
 checked-in derivation-rules file and no runtime compression library:
@@ -51,12 +52,12 @@ extracted release root:
 ```sh
 cargo run -p zeta-unicode-build --bin zeta-unicode-train -- \
     --data-dir ../ucd/15.1.0 \
-    --out-dir target/genesis-15.1 \
+    --out-dir target/nomina-15.1 \
     --priority balanced \
     --report --verify
 ```
 
-It writes `genesis.bin`, `manifest.json` (versions, relative input paths, sizes, FNV-1a
+It writes `nomina.bin`, `manifest.json` (versions, relative input paths, sizes, FNV-1a
 hashes, section sizes, candidate table, chosen profile and verification status) and prints the
 candidate table. Inputs may be laid out as either
 

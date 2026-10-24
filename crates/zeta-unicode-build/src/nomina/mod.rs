@@ -1,4 +1,4 @@
-//! The "Genesis Lean" image: one flat, zero-copy Unicode table.
+//! The Nomina image: one flat, zero-copy Unicode table.
 //!
 //! The image is a 64-byte header followed by four 8-byte-aligned sections:
 //!
@@ -9,16 +9,13 @@
 //! | 2 | general category | `gc` |
 //! | 3 | `*` name patterns | `patterns` |
 //!
-//! The header records the magic `ZGL1`, the Unicode version as three `u16`s, the section
+//! The header records the magic `NOM1`, the Unicode version as three `u16`s, the section
 //! count, the name block shift, the general-category page shift and one `(offset, length)`
-//! pair per section. [`image::pack`] writes it; the runtime's `Genesis` reads it.
-//!
-//! This module is the generator side only. It deliberately does not replace the production
-//! path in [`crate`]; the caller decides when the new image becomes the shipped table.
+//! pair per section. [`image::pack`] writes it; the runtime's `Nomina` reads it.
 
 #![allow(
     dead_code,
-    reason = "the Genesis image is not wired into the production path yet"
+    reason = "the module keeps the full encoder surface for training, measurement and tests"
 )]
 
 pub mod emoji;

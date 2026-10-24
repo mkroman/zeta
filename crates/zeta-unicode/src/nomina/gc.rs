@@ -1,4 +1,4 @@
-//! Genesis general-category lookup.
+//! Nomina general-category lookup.
 //!
 //! The section stores 4,202 contiguous runs as two Huffman streams: varint start gaps and
 //! category ids. [`Gc::parse`] decodes them once and rebuilds the incumbent two-level page

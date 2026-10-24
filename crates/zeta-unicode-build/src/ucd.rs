@@ -210,8 +210,8 @@ pub fn hex_u32(text: &str) -> u32 {
 /// Every file is resolved through a candidate list, so both a flat layout
 /// (`data/DerivedName.txt`) and an extracted release (`data/ucd/extracted/DerivedName.txt`,
 /// `data/emoji/emoji-test.txt`) are accepted. `NamedSequences.txt` may be absent only for
-/// releases before [`NAMED_SEQUENCES_SINCE`]; `DerivedName.txt` itself exists from Unicode
-/// 10.0 onward, and its absence is reported with the paths that were tried. The Emoji version
+/// releases before Unicode 4.0; `DerivedName.txt` itself exists from Unicode 10.0 onward, and
+/// its absence is reported with the paths that were tried. The Emoji version
 /// in `emoji-test.txt` is recorded independently because it does not track the UCD release
 /// number (Unicode 10.0 ships Emoji 5.0).
 ///
@@ -431,8 +431,8 @@ fn emoji_test_version(text: &str, path: &Path) -> Result<(u8, u8), InputError> {
 /// Upgrades the pre-13.0 `emoji-test.txt` comment shape to the modern one.
 ///
 /// Emoji 13.0 added the `E<version>` token to each data line's comment; Emoji 5.0 through 12.0
-/// write `<emoji> <name>` instead. Both the current generator and the Genesis generator expect
-/// the token, so the ingestion layer inserts the file's own Emoji version into older files.
+/// write `<emoji> <name>` instead. The emoji-section generator expects the token, so the
+/// ingestion layer inserts the file's own Emoji version into older files.
 /// Header and blank lines are left untouched.
 fn upgrade_emoji_comments(text: &str, version: (u8, u8)) -> String {
     let mut out = String::with_capacity(text.len() + 1_024);
@@ -647,7 +647,7 @@ mod tests {
             inputs.emoji
         );
         let (_, stats) =
-            crate::genesis::emoji::build(&inputs.emoji, &inputs.sequences, &inputs.names);
+            crate::nomina::emoji::build(&inputs.emoji, &inputs.sequences, &inputs.names);
         assert_eq!(stats.entries, 1, "the upgraded comment must parse");
     }
 
