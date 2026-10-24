@@ -28,10 +28,6 @@ use crate::ofn::model::{InsertYouTubeRecord, YouTubeRecord};
 use crate::youtube::{self, UrlKind};
 use model::{InsertUrlRecord, UrlRecord};
 
-/// The `.ofn` command.
-const OFN: CommandSpec =
-    CommandSpec::with_args::<Opts>(".ofn", "Show URL and YouTube repost statistics");
-
 /// The ofn plugin: records posted URLs and reports reposts.
 pub struct Ofn;
 
@@ -368,33 +364,6 @@ impl Ofn {
         Ok(())
     }
 
-    /// Handles explicit plugin commands (e.g., `.ofn stats`).
-    async fn run_stats_command(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        channel: &str,
-        opts: Opts,
-    ) -> Result<(), ZetaError> {
-        match opts.command {
-            Subcommand::Stats(_) => {
-                let stats = self.stats(ctx).await.map_err(plugin_err)?;
-                let num_urls = stats.num_urls.to_formatted_string(&Locale::en);
-                let num_urls_today = stats.num_urls_today.to_formatted_string(&Locale::en);
-                let num_yt_ids = stats.num_yt_ids.to_formatted_string(&Locale::en);
-                let num_yt_ids_today = stats.num_yt_ids_today.to_formatted_string(&Locale::en);
-
-                let output = format!(
-                    "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"
-                );
-
-                client.send_privmsg(channel, reply("OFN", &output))?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Processes the given list of `urls` with the associated `origin` by querying them from the
     /// database and inserting any of the URLs that aren't already present.
     ///
@@ -446,46 +415,16 @@ impl Ofn {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for Ofn {
-    type Settings = NoSettings;
-
-    fn new(
-        _ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(OFN).urls(UrlScope::Any);
-
-        Ok(Self::new())
-    }
-
-    async fn handle_command(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
-        let channel = command.channel();
-        let opts = match command.parse_args::<Opts>() {
-            Ok(opts) => opts,
-            Err(err) => {
-                reply_usage_lines(client, channel, &err, |line| reply("OFN", line))?;
-
-                return Ok(());
-            }
-        };
-
-        self.run_stats_command(ctx, client, channel, opts).await
-    }
-
+#[plugin(name = "ofn", urls(any))]
+impl Ofn {
+    #[handler(url)]
     async fn handle_url(
         &self,
         ctx: &Context,
         client: &Client,
         event: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        // Command invocations are handled in `handle_command` and are not recorded as history.
+        // Command invocations are handled in `run_stats_command` and are not recorded as history.
         if OFN.parse(event.text()).is_some() {
             return Ok(());
         }
@@ -504,6 +443,39 @@ impl Plugin<Context> for Ofn {
 
         self.process_single_url(ctx, client, &origin, event.url().clone())
             .await
+    }
+
+    /// Handles explicit plugin commands (e.g., `.ofn stats`).
+    #[command(
+        ".ofn",
+        "Show URL and YouTube repost statistics",
+        args = Opts,
+        label = "OFN"
+    )]
+    async fn run_stats_command(
+        &self,
+        ctx: &Context,
+        client: &Client,
+        channel: &str,
+        opts: Opts,
+    ) -> Result<(), ZetaError> {
+        match opts.command {
+            Subcommand::Stats(_) => {
+                let stats = self.stats(ctx).await.map_err(plugin_err)?;
+                let num_urls = stats.num_urls.to_formatted_string(&Locale::en);
+                let num_urls_today = stats.num_urls_today.to_formatted_string(&Locale::en);
+                let num_yt_ids = stats.num_yt_ids.to_formatted_string(&Locale::en);
+                let num_yt_ids_today = stats.num_yt_ids_today.to_formatted_string(&Locale::en);
+
+                let output = format!(
+                    "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"
+                );
+
+                client.send_privmsg(channel, reply("OFN", &output))?;
+            }
+        }
+
+        Ok(())
     }
 }
 
