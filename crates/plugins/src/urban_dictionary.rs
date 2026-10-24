@@ -86,20 +86,23 @@ pub struct Definition {
     pub written_on: OffsetDateTime,
 }
 
-#[async_trait]
-impl Plugin<Context> for UrbanDictionary {
-    type Settings = Settings;
-
+#[plugin(name = "urban_dictionary", settings = Settings)]
+impl UrbanDictionary {
+    // The constructor signature is fixed by the `Plugin` trait, which returns `Result` even when
+    // initialization cannot fail.
+    #[allow(clippy::unnecessary_wraps)]
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
         subscriptions.command(URBAN_DICTIONARY);
-        Ok(Self::new(&ctx.config.http, settings.clone()))
+        Ok(Self::with_http_config(&ctx.config.http, settings.clone()))
     }
 
-    async fn handle_command(
+    /// Replies to `.ud` with the top Urban Dictionary definition of the query.
+    #[handler(command)]
+    async fn define(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -156,7 +159,7 @@ impl Display for DefinitionFormatter<'_> {
 impl UrbanDictionary {
     /// Creates a new plugin instance around a client built for the given HTTP configuration.
     #[must_use]
-    pub fn new(config: &HttpConfig, settings: Settings) -> Self {
+    pub fn with_http_config(config: &HttpConfig, settings: Settings) -> Self {
         let client = http::build_client(config);
 
         Self { client, settings }
