@@ -56,20 +56,17 @@ pub struct RoomDossier {
     pub broadcaster_gender: String,
 }
 
-#[async_trait]
-impl Plugin<Context> for Chaturbate {
-    type Settings = NoSettings;
-
+#[plugin(name = "chaturbate", urls(hosts = URL_HOSTS))]
+impl Chaturbate {
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
-
-        Ok(Self::new(&ctx.config.http))
+        Ok(Self::with_http_config(&ctx.config.http))
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
@@ -97,7 +94,7 @@ impl Chaturbate {
     /// Panics if the room dossier extraction regex fails to compile, which can only happen on a
     /// programming error since the pattern is a constant.
     #[must_use]
-    pub fn new(config: &HttpConfig) -> Self {
+    pub fn with_http_config(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
         // The dossier is assigned as a JSON-encoded string literal, terminated by a semicolon
         // before the closing </script> tag.
@@ -196,7 +193,7 @@ mod tests {
     #[test]
     fn test_parse_room_dossier_fiery_redhead() {
         let html = fixture_html("fiery_redhead");
-        let plugin = Chaturbate::new(&HttpConfig::default());
+        let plugin = Chaturbate::with_http_config(&HttpConfig::default());
         let dossier = parse_room_dossier_with_re(&plugin.room_dossier_re, &html)
             .expect("should parse dossier");
 
@@ -212,7 +209,7 @@ mod tests {
     #[test]
     fn test_parse_room_dossier_milabunny() {
         let html = fixture_html("milabunny_");
-        let plugin = Chaturbate::new(&HttpConfig::default());
+        let plugin = Chaturbate::with_http_config(&HttpConfig::default());
         let dossier = parse_room_dossier_with_re(&plugin.room_dossier_re, &html)
             .expect("should parse dossier");
 
