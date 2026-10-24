@@ -41,16 +41,16 @@ fn main() {
         env::var("ZETA_UNICODE_MAX_BYTES")
             .ok()
             .map_or(DEFAULT_MAX_TABLE_BYTES, |value| {
-                value
-                    .parse()
-                    .unwrap_or_else(|_| panic!("ZETA_UNICODE_MAX_BYTES must be a byte count"))
+                value.parse().unwrap_or_else(|error| {
+                    panic!("ZETA_UNICODE_MAX_BYTES must be a byte count, got {value:?}: {error}")
+                })
             });
     let mut profile = Profile::new(priority, max_bytes);
     if let Some(value) = env::var_os("ZETA_UNICODE_BLOCK_SHIFT") {
-        let shift = value
-            .to_string_lossy()
-            .parse()
-            .unwrap_or_else(|_| panic!("ZETA_UNICODE_BLOCK_SHIFT must be a number"));
+        let value = value.to_string_lossy();
+        let shift = value.parse().unwrap_or_else(|error| {
+            panic!("ZETA_UNICODE_BLOCK_SHIFT must be a number, got {value:?}: {error}")
+        });
         profile = profile.with_block_shift(shift);
     }
 

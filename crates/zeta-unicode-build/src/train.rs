@@ -15,7 +15,12 @@ use std::fmt::Write as _;
 
 use bytes::Buf;
 use thiserror::Error;
+use zeta_unicode_format::{
+    DIRECTORY_AT, DIRECTORY_ENTRY_LEN, GC_PAGE_SHIFT_AT, NAME_BLOCK_SHIFT_AT, NAME_LAYOUT_AT,
+    SECTION_COUNT_AT, VERSION_AT,
+};
 
+use crate::nomina::names::{NameLayout, NameStats};
 use crate::nomina::{emoji, gc, image, names, patterns};
 use crate::profile::{
     BALANCED_MAX_SHIFT, ChosenProfile, MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT, Priority, Profile,
@@ -70,7 +75,7 @@ pub enum Error {
 }
 
 /// One section of a packed Nomina image.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct SectionRecord {
     /// The section id (name, emoji, general category or patterns).
     pub id: usize,
@@ -90,7 +95,7 @@ pub struct ImageLayout {
     /// The number of names per front-coded block, as a power of two.
     pub name_block_shift: u8,
     /// The name-section layout id (`0` block-local, `1` global checkpointed).
-    pub name_layout: u8,
+    pub name_layout: NameLayout,
     /// The general-category page shift from the image header.
     pub gc_page_shift: u8,
     /// The four sections, in image order.
@@ -108,37 +113,23 @@ impl ImageLayout {
     /// ordering are invalid, or when the last section does not end at the end of the image.
     pub fn parse(image: &[u8]) -> Result<Self, Error> {
         if image.len() < image::HEADER_LEN {
-            return Err(Error::Image {
-                reason: "the header is truncated",
-            });
+            return Err(bad("the header is truncated"));
         }
-        if &image[..4] != image::MAGIC {
-            return Err(Error::Image {
-                reason: "the magic is not NOM1",
-            });
+        if &image[..image::MAGIC.len()] != image::MAGIC {
+            return Err(bad("the magic is not NOM1"));
         }
-        if usize::from(image[10]) != image::SECTION_COUNT {
-            return Err(Error::Image {
-                reason: "the section count is not four",
-            });
+        if usize::from(image[SECTION_COUNT_AT]) != image::SECTION_COUNT {
+            return Err(bad("the section count is not four"));
         }
-        let name_layout = image[13];
-        if names::NameLayout::from_id(name_layout).is_none() {
-            return Err(Error::Image {
-                reason: "the name layout byte is unknown",
-            });
-        }
-        let name_block_shift = image[11];
+        let name_layout = NameLayout::from_id(image[NAME_LAYOUT_AT])
+            .ok_or_else(|| bad("the name layout byte is unknown"))?;
+        let name_block_shift = image[NAME_BLOCK_SHIFT_AT];
         if !(names::MIN_BLOCK_SHIFT..=names::MAX_BLOCK_SHIFT).contains(&name_block_shift) {
-            return Err(Error::Image {
-                reason: "the name block shift is outside the supported range",
-            });
+            return Err(bad("the name block shift is outside the supported range"));
         }
-        let gc_page_shift = image[12];
+        let gc_page_shift = image[GC_PAGE_SHIFT_AT];
         if gc_page_shift != image::GC_PAGE_SHIFT {
-            return Err(Error::Image {
-                reason: "the general-category page shift is not eleven",
-            });
+            return Err(bad("the general-category page shift is not eleven"));
         }
 
         Ok(Self {
@@ -152,30 +143,21 @@ impl ImageLayout {
     }
 }
 
+/// Builds an [`Error::Image`] with a static reason.
+const fn bad(reason: &'static str) -> Error {
+    Error::Image { reason }
+}
+
 /// Reads the three `u16` version fields from the image header.
 fn parse_version(image: &[u8]) -> Result<(u8, u8, u8), Error> {
-    let mut version_bytes = image.get(4..10).ok_or(Error::Image {
-        reason: "the version is truncated",
-    })?;
-    let major = version_bytes.try_get_u16_le().map_err(|_| Error::Image {
-        reason: "the version is truncated",
-    })?;
-    let minor = version_bytes.try_get_u16_le().map_err(|_| Error::Image {
-        reason: "the version is truncated",
-    })?;
-    let patch = version_bytes.try_get_u16_le().map_err(|_| Error::Image {
-        reason: "the version is truncated",
-    })?;
+    let bytes = image
+        .get(VERSION_AT..SECTION_COUNT_AT)
+        .ok_or_else(|| bad("the version is truncated"))?;
+    let field = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
     Ok((
-        u8::try_from(major).map_err(|_| Error::Image {
-            reason: "the major version does not fit in a byte",
-        })?,
-        u8::try_from(minor).map_err(|_| Error::Image {
-            reason: "the minor version does not fit in a byte",
-        })?,
-        u8::try_from(patch).map_err(|_| Error::Image {
-            reason: "the patch version does not fit in a byte",
-        })?,
+        u8::try_from(field(0)).map_err(|_| bad("the major version does not fit in a byte"))?,
+        u8::try_from(field(2)).map_err(|_| bad("the minor version does not fit in a byte"))?,
+        u8::try_from(field(4)).map_err(|_| bad("the patch version does not fit in a byte"))?,
     ))
 }
 
@@ -184,39 +166,33 @@ fn parse_sections(image: &[u8]) -> Result<Vec<SectionRecord>, Error> {
     let mut sections = Vec::with_capacity(image::SECTION_COUNT);
     let mut previous_end = image::HEADER_LEN;
     for id in 0..image::SECTION_COUNT {
-        let at = 14 + id * 8;
-        let mut entry = image.get(at..at + 8).ok_or(Error::Image {
-            reason: "a section directory entry is truncated",
-        })?;
-        let offset = usize::try_from(entry.try_get_u32_le().map_err(|_| Error::Image {
-            reason: "a section offset is truncated",
-        })?)
-        .map_err(|_| Error::Image {
-            reason: "a section offset does not fit in usize",
-        })?;
-        let size = usize::try_from(entry.try_get_u32_le().map_err(|_| Error::Image {
-            reason: "a section length is truncated",
-        })?)
-        .map_err(|_| Error::Image {
-            reason: "a section length does not fit in usize",
-        })?;
+        let at = DIRECTORY_AT + id * DIRECTORY_ENTRY_LEN;
+        let mut entry = image
+            .get(at..at + DIRECTORY_ENTRY_LEN)
+            .ok_or_else(|| bad("a section directory entry is truncated"))?;
+        let offset = usize::try_from(
+            entry
+                .try_get_u32_le()
+                .map_err(|_| bad("a section offset is truncated"))?,
+        )
+        .map_err(|_| bad("a section offset does not fit in usize"))?;
+        let size = usize::try_from(
+            entry
+                .try_get_u32_le()
+                .map_err(|_| bad("a section length is truncated"))?,
+        )
+        .map_err(|_| bad("a section length does not fit in usize"))?;
         if !offset.is_multiple_of(8) {
-            return Err(Error::Image {
-                reason: "a section offset is not eight-byte aligned",
-            });
+            return Err(bad("a section offset is not eight-byte aligned"));
         }
         if offset < previous_end {
-            return Err(Error::Image {
-                reason: "section payloads overlap or are out of order",
-            });
+            return Err(bad("section payloads overlap or are out of order"));
         }
-        let end = offset.checked_add(size).ok_or(Error::Image {
-            reason: "a section end overflows usize",
-        })?;
+        let end = offset
+            .checked_add(size)
+            .ok_or_else(|| bad("a section end overflows usize"))?;
         if end > image.len() {
-            return Err(Error::Image {
-                reason: "a section lies outside the image",
-            });
+            return Err(bad("a section lies outside the image"));
         }
         sections.push(SectionRecord {
             id,
@@ -227,58 +203,13 @@ fn parse_sections(image: &[u8]) -> Result<Vec<SectionRecord>, Error> {
         previous_end = end;
     }
     if previous_end != image.len() {
-        return Err(Error::Image {
-            reason: "the image has trailing bytes",
-        });
+        return Err(bad("the image has trailing bytes"));
     }
     Ok(sections)
 }
 
-/// The statistic and size breakdown of the chosen name section.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NameStats {
-    /// Names in the section.
-    pub name_count: usize,
-    /// Front-coded blocks.
-    pub block_count: usize,
-    /// Maximal runs of consecutive named code points.
-    pub run_count: usize,
-    /// The block shift the section was encoded with.
-    pub block_shift: u8,
-    /// The name layout the section was encoded with.
-    pub layout: names::NameLayout,
-    /// Header, page directory, runs and their padding.
-    pub index_bytes: usize,
-    /// The `u32` bit offset of every block (block-local layout only).
-    pub offset_bytes: usize,
-    /// The checkpoint offset directory (global layout only).
-    pub checkpoint_directory_bytes: usize,
-    /// The checkpoint bit offsets and predecessor names (global layout only).
-    pub checkpoint_bytes: usize,
-    /// The context map, model directory and model blobs.
-    pub model_bytes: usize,
-    /// The context map and model directory inside [`Self::model_bytes`].
-    pub model_directory_bytes: usize,
-    /// The Huffman bitstream.
-    pub stream_bytes: usize,
-    /// The exact bit length of [`Self::stream_bytes`] before its final-byte padding.
-    pub stream_bits: usize,
-    /// The number of byte contexts, including the start-of-name context.
-    pub context_count: usize,
-}
-
-impl NameStats {
-    /// The total section size in bytes.
-    #[must_use]
-    pub const fn total_bytes(&self) -> usize {
-        // Checkpoint bits are part of the main stream, so they are reported separately but
-        // must not be added here.
-        self.index_bytes + self.offset_bytes + self.model_bytes + self.stream_bytes
-    }
-}
-
 /// One measured candidate in a training run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Candidate {
     /// The candidate block shift.
     pub name_block_shift: u8,
@@ -385,24 +316,9 @@ pub struct BaselineComparison {
 /// # Ok(())
 /// # }
 /// ```
-#[allow(
-    clippy::too_many_lines,
-    reason = "the candidate loop, verification and budget checks are one linear pipeline"
-)]
 pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
     let shifts = profile.resolved_candidates();
-    if shifts.is_empty() {
-        return Err(Error::NoCandidates);
-    }
-    for &shift in &shifts {
-        if !(MIN_CANDIDATE_SHIFT..=MAX_CANDIDATE_SHIFT).contains(&shift) {
-            return Err(Error::Shift {
-                shift,
-                min: MIN_CANDIDATE_SHIFT,
-                max: MAX_CANDIDATE_SHIFT,
-            });
-        }
-    }
+    validate_shifts(&shifts)?;
 
     // Parse the name corpus once; the candidates, pattern section and verification reuse it.
     let corpus = names::parse_corpus(inputs);
@@ -414,89 +330,38 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
     assert_eq!(gc_stats.section_bytes, gc_section.len());
     assert_eq!(pattern_stats.section_bytes, pattern_section.len());
 
-    let mut builds: Vec<CandidateBuild> = Vec::with_capacity(shifts.len());
-    for &shift in &shifts {
-        let encoded = names::encode_global_corpus(&corpus, shift);
-        let packed = image::pack_with_layout(
-            [
-                encoded.bytes.as_slice(),
-                emoji_section.as_slice(),
-                gc_section.as_slice(),
-                pattern_section.as_slice(),
-            ],
-            inputs.version,
-            shift,
-            image::GC_PAGE_SHIFT,
-            encoded.layout.id(),
-        );
-        builds.push(CandidateBuild {
-            shift,
-            encoded,
-            image: packed,
-        });
-    }
+    let mut builds = measure_candidates(
+        inputs,
+        &corpus,
+        &shifts,
+        &emoji_section,
+        &gc_section,
+        &pattern_section,
+    );
     let measured: Vec<Measurement> = builds.iter().map(CandidateBuild::measurement).collect();
 
     // Only candidates that fit the budget may be chosen; a pinned shift has no alternative
     // and keeps the hard error through the empty `fitting` set.
     let chosen_index = choose_index(profile.priority, &measured, profile.max_table_bytes)
-        .ok_or_else(|| {
-            let smallest = measured
-                .iter()
-                .min_by_key(|measurement| (measurement.total_bytes, measurement.shift))
-                .expect("training always measures at least one candidate");
-            Error::Budget {
-                shift: smallest.shift,
-                total_bytes: smallest.total_bytes,
-                max_bytes: profile.max_table_bytes,
-            }
-        })?;
-    let candidates: Vec<Candidate> = builds
-        .iter()
-        .enumerate()
-        .map(|(index, build)| Candidate {
-            name_block_shift: build.shift,
-            name_bytes: build.encoded.bytes.len(),
-            total_bytes: build.image.len(),
-            chosen: index == chosen_index,
-        })
-        .collect();
-    let chosen = candidates
+        .ok_or_else(|| smallest_candidate(&measured, profile.max_table_bytes))?;
+    let candidates = candidate_rows(&builds, chosen_index);
+    let chosen = *candidates
         .get(chosen_index)
-        .copied()
         .expect("the chosen index came from this candidate list");
 
     let CandidateBuild { encoded, image, .. } = builds.swap_remove(chosen_index);
     let layout = verify_with_corpus(&image, &corpus, inputs.version)?;
-    let name_stats = NameStats::from_encoded(&encoded);
+    let name_stats = encoded.stats;
     assert_eq!(
         name_stats.total_bytes(),
         encoded.bytes.len(),
         "the name breakdown must sum to the section size"
     );
-
     assert!(
         layout.total_bytes <= profile.max_table_bytes,
         "the chosen candidate was filtered to fit the budget"
     );
-    let baseline = match &profile.baseline {
-        Some(baseline) => {
-            let allowed = baseline.len().saturating_add(profile.max_delta_bytes);
-            if layout.total_bytes > allowed {
-                return Err(Error::BaselineRegression {
-                    total_bytes: layout.total_bytes,
-                    baseline_bytes: baseline.len(),
-                    max_delta_bytes: profile.max_delta_bytes,
-                });
-            }
-            Some(BaselineComparison {
-                baseline_bytes: baseline.len(),
-                total_bytes: layout.total_bytes,
-                max_delta_bytes: profile.max_delta_bytes,
-            })
-        }
-        None => None,
-    };
+    let baseline = baseline_comparison(profile, layout.total_bytes)?;
 
     let chosen_profile = profile.chosen(chosen.name_block_shift);
     let report = render_report(&chosen_profile, &candidates, &layout);
@@ -517,6 +382,109 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
         verification: &VERIFICATION_CHECKS,
         baseline,
     })
+}
+
+/// Rejects an empty candidate list and any shift outside the candidate range.
+fn validate_shifts(shifts: &[u8]) -> Result<(), Error> {
+    if shifts.is_empty() {
+        return Err(Error::NoCandidates);
+    }
+    for &shift in shifts {
+        if !(MIN_CANDIDATE_SHIFT..=MAX_CANDIDATE_SHIFT).contains(&shift) {
+            return Err(Error::Shift {
+                shift,
+                min: MIN_CANDIDATE_SHIFT,
+                max: MAX_CANDIDATE_SHIFT,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Encodes one complete image per candidate shift.
+///
+/// The emoji, general-category and pattern sections are shared; only the name section and the
+/// packing run per candidate.
+fn measure_candidates(
+    inputs: &Inputs,
+    corpus: &names::Corpus,
+    shifts: &[u8],
+    emoji_section: &[u8],
+    gc_section: &[u8],
+    pattern_section: &[u8],
+) -> Vec<CandidateBuild> {
+    let mut builds = Vec::with_capacity(shifts.len());
+    for &shift in shifts {
+        let encoded = names::encode_global_corpus(corpus, shift);
+        let image = image::pack_with_layout(
+            [
+                encoded.bytes.as_slice(),
+                emoji_section,
+                gc_section,
+                pattern_section,
+            ],
+            inputs.version,
+            shift,
+            image::GC_PAGE_SHIFT,
+            encoded.stats.layout.id(),
+        );
+        builds.push(CandidateBuild {
+            shift,
+            encoded,
+            image,
+        });
+    }
+    builds
+}
+
+/// The budget error for the smallest measured candidate.
+fn smallest_candidate(measured: &[Measurement], max_bytes: usize) -> Error {
+    let smallest = measured
+        .iter()
+        .min_by_key(|measurement| (measurement.total_bytes, measurement.shift))
+        .expect("training always measures at least one candidate");
+    Error::Budget {
+        shift: smallest.shift,
+        total_bytes: smallest.total_bytes,
+        max_bytes,
+    }
+}
+
+/// The public candidate rows, marking the chosen one.
+fn candidate_rows(builds: &[CandidateBuild], chosen_index: usize) -> Vec<Candidate> {
+    builds
+        .iter()
+        .enumerate()
+        .map(|(index, build)| Candidate {
+            name_block_shift: build.shift,
+            name_bytes: build.encoded.bytes.len(),
+            total_bytes: build.image.len(),
+            chosen: index == chosen_index,
+        })
+        .collect()
+}
+
+/// Enforces the optional baseline allowance and returns the recorded comparison.
+const fn baseline_comparison(
+    profile: &Profile,
+    total_bytes: usize,
+) -> Result<Option<BaselineComparison>, Error> {
+    let Some(baseline) = &profile.baseline else {
+        return Ok(None);
+    };
+    let allowed = baseline.len().saturating_add(profile.max_delta_bytes);
+    if total_bytes > allowed {
+        return Err(Error::BaselineRegression {
+            total_bytes,
+            baseline_bytes: baseline.len(),
+            max_delta_bytes: profile.max_delta_bytes,
+        });
+    }
+    Ok(Some(BaselineComparison {
+        baseline_bytes: baseline.len(),
+        total_bytes,
+        max_delta_bytes: profile.max_delta_bytes,
+    }))
 }
 
 /// Re-validates a packed image and re-decodes its name section against `inputs`.
@@ -558,46 +526,19 @@ fn verify_with_corpus(
             reason: "the name section is outside the image",
         })?;
     match layout.name_layout {
-        image::LAYOUT_BLOCK_LOCAL => {
+        NameLayout::BlockLocal => {
             names::verify_corpus(
                 section,
                 corpus,
                 layout.name_block_shift,
-                names::NameLayout::BlockLocal,
+                NameLayout::BlockLocal,
             );
         }
-        image::LAYOUT_GLOBAL => {
+        NameLayout::Global => {
             names::verify_global_corpus(section, corpus, layout.name_block_shift);
-        }
-        _ => {
-            return Err(Error::Image {
-                reason: "the name layout byte is unknown",
-            });
         }
     }
     Ok(layout)
-}
-
-impl NameStats {
-    /// Copies the breakdown out of an encoded name section.
-    const fn from_encoded(encoded: &names::Encoded) -> Self {
-        Self {
-            name_count: encoded.name_count,
-            block_count: encoded.block_count,
-            run_count: encoded.run_count,
-            block_shift: encoded.block_shift,
-            layout: encoded.layout,
-            index_bytes: encoded.index_bytes,
-            offset_bytes: encoded.offset_bytes,
-            checkpoint_directory_bytes: encoded.checkpoint_directory_bytes,
-            checkpoint_bytes: encoded.checkpoint_bytes,
-            model_bytes: encoded.model_bytes,
-            model_directory_bytes: encoded.model_directory_bytes,
-            stream_bytes: encoded.stream_bytes,
-            stream_bits: encoded.stream_bits,
-            context_count: encoded.context_count,
-        }
-    }
 }
 
 /// One candidate's size, before the priority rule picks a winner.
@@ -695,7 +636,7 @@ fn render_report(chosen: &ChosenProfile, candidates: &[Candidate], layout: &Imag
         "chosen: block shift {} ({} names per block, {}), total {} B",
         chosen.name_block_shift,
         1usize << chosen.name_block_shift,
-        if layout.name_layout == image::LAYOUT_GLOBAL {
+        if layout.name_layout == NameLayout::Global {
             "global checkpointed"
         } else {
             "block-local"
@@ -981,22 +922,66 @@ mod tests {
         let second = std::fs::read(out.path().join("manifest.json")).expect("second read");
         assert_eq!(first, second, "the manifest must not depend on the run");
 
-        let text = String::from_utf8(first).expect("UTF-8 manifest");
-        assert!(text.contains("\"layout\": \"nomina\""));
-        assert!(text.contains("\"unicode_version\": [18, 0, 0]"));
-        assert!(text.contains("\"emoji_version\": [18, 0]"));
-        assert!(text.contains(&format!("\"total_bytes\": {}", output.total_bytes)));
-        assert!(text.contains("\"name_block_shift\": 8"));
-        assert!(text.contains("\"path\": \"DerivedName.txt\""));
-        assert!(text.contains(&format!(
-            "\"name_block_shift\": 8, \"name_bytes\": {}",
-            output.names.total_bytes()
-        )));
-        assert!(text.contains(&format!(
-            "\"offset\": {}, \"size\": {}",
-            output.sections[0].offset, output.sections[0].size
-        )));
-        assert!(text.contains("\"status\": \"verified\""));
+        let text = std::str::from_utf8(&first).expect("UTF-8 manifest");
+        let manifest: serde_json::Value = serde_json::from_slice(&first).expect("valid JSON");
+        assert_eq!(manifest["format"], "zeta-unicode-manifest");
+        assert_eq!(manifest["format_version"], 1);
+        assert_eq!(manifest["tool"]["name"], "zeta-unicode-build");
+        assert_eq!(manifest["layout"], "nomina");
+        assert_eq!(manifest["name_layout"], "global-checkpointed");
+        assert_eq!(manifest["unicode_version"], serde_json::json!([18, 0, 0]));
+        assert_eq!(manifest["emoji_version"], serde_json::json!([18, 0]));
+        assert_eq!(manifest["total_bytes"], output.total_bytes);
+        assert_eq!(manifest["profile"]["name"], "balanced");
+        assert_eq!(manifest["profile"]["parameters"]["name_block_shift"], 8);
+        assert_eq!(
+            manifest["profile"]["parameters"]["max_table_bytes"],
+            DEFAULT_MAX_TABLE_BYTES
+        );
+        assert_eq!(
+            manifest["profile"]["parameters"]["candidates"],
+            serde_json::json!([8])
+        );
+
+        let sections = manifest["sections"].as_array().expect("a section array");
+        assert_eq!(sections.len(), output.sections.len());
+        assert_eq!(sections[0]["name"], "names");
+        assert_eq!(sections[0]["offset"], output.sections[0].offset);
+        assert_eq!(sections[0]["size"], output.sections[0].size);
+
+        let input_records = manifest["inputs"].as_array().expect("an input array");
+        let derived = input_records
+            .iter()
+            .find(|input| input["path"] == "DerivedName.txt")
+            .expect("DerivedName.txt is recorded");
+        assert_eq!(derived["name"], "DerivedName.txt");
+        assert!(
+            derived["size"].as_u64().is_some_and(|size| size > 0),
+            "the input size is recorded"
+        );
+        let hash = derived["fnv1a64"].as_str().expect("a hash string");
+        assert_eq!(hash.len(), 16);
+        assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+        let candidates = manifest["candidates"]
+            .as_array()
+            .expect("a candidate array");
+        let chosen = candidates
+            .iter()
+            .find(|candidate| candidate["chosen"].as_bool() == Some(true))
+            .expect("one candidate is chosen");
+        assert_eq!(chosen["name_block_shift"], 8);
+        assert_eq!(chosen["name_bytes"], output.names.total_bytes());
+        assert_eq!(chosen["total_bytes"], output.total_bytes);
+        assert_eq!(manifest["verification"]["status"], "verified");
+        assert_eq!(
+            manifest["verification"]["checks"]
+                .as_array()
+                .expect("a checks array")
+                .len(),
+            VERIFICATION_CHECKS.len()
+        );
+
         assert!(
             !text.contains("derived-names.rules"),
             "the Nomina manifest has no rules file"

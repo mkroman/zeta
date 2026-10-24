@@ -24,6 +24,7 @@ use zeta_unicode_format::huffman;
 use zeta_unicode_format::{
     MAX_CPS, MAX_KEY, Rule, TONE_NAMES, TONES, ZWJ, clock_name, encode_cps, format_toned, is_tone,
     join_family, keycap_word, pair_phrase, plural, swap_person, tone_indices, ucd_mask_name,
+    unpack_bits,
 };
 
 /// Four stream descriptors of `u16 raw_len | u16 coded_len | u8 order`.
@@ -135,10 +136,15 @@ impl Emoji {
 
         let mut first_bytes = [0u64; 4];
         let mut first_cps = Vec::with_capacity(key_offsets.len().checked_sub(1)?);
+        let mut previous: Option<&[u8]> = None;
         for pair in key_offsets.windows(2) {
             let start = usize::from(pair[0]);
             let end = usize::from(pair[1]);
             let key = keys.get(start..end)?;
+            if previous.is_some_and(|previous| previous >= key) {
+                return None;
+            }
+            previous = Some(key);
             let first = *key.first()?;
             first_bytes[usize::from(first) >> 6] |= 1 << (first & 63);
             // The arena is built from validated scalars, so this cannot fail; decoding the
@@ -269,12 +275,12 @@ impl Emoji {
 
     /// Returns the 3-bit tone formatting rule of entry `index`.
     fn tone_code(&self, index: usize) -> Option<u8> {
-        packed(&self.tone_codes, index, 3)
+        unpack_bits(&self.tone_codes, index, 3)
     }
 
     /// Returns the 2-bit published-tone-count mask of entry `index`.
     fn tone_mask(&self, index: usize) -> Option<u8> {
-        packed(&self.tone_masks, index, 2)
+        unpack_bits(&self.tone_masks, index, 2)
     }
 
     /// Materializes the name of entry `index`.
@@ -283,8 +289,8 @@ impl Emoji {
     /// rules that inspect the whole sequence decode it into [`Cps`].
     fn materialize<L: NameLookup>(&self, index: usize, lookup: &mut L) -> Option<Cow<'_, str>> {
         let packed = *self.entries.get(index)?;
-        let rule = Rule::from_id(u8::try_from(packed & 0xF).ok()?)?;
-        let argument = usize::from(packed >> 4);
+        let (rule, argument) = Rule::unpack(packed)?;
+        let argument = usize::from(argument);
         match rule {
             Rule::Literal => Some(Cow::Borrowed(self.literal(argument)?)),
             Rule::UcdMask | Rule::UcdMaskHyphen => {
@@ -464,10 +470,7 @@ fn decode_entries(rules: &[u8], masks: &[u8], literal_count: usize) -> Option<(V
             | Rule::Clock
             | Rule::Keycap10 => 0,
         };
-        if argument > 0xFFF {
-            return None;
-        }
-        entries.push((u16::try_from(argument).ok()? << 4) | u16::from(rule.id()));
+        entries.push(rule.pack(u16::try_from(argument).ok()?)?);
     }
     if literal != literal_count {
         return None;
@@ -566,18 +569,10 @@ fn gender_base(cps: &[u32], emoji: &Emoji) -> Option<usize> {
     None
 }
 
-/// Reads a packed `width`-bit field that may straddle a byte boundary.
-fn packed(blob: &[u8], index: usize, width: usize) -> Option<u8> {
-    let bit = index.checked_mul(width)?;
-    let byte = blob.get(bit / 8)?;
-    let next = blob.get(bit / 8 + 1).copied().unwrap_or(0);
-    let value = (u16::from(*byte) | (u16::from(next) << 8)) >> (bit % 8);
-    Some(u8::try_from(value & ((1u16 << width) - 1)).expect("the field fits in a byte"))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::flat_stream;
+    use zeta_unicode_format::pack_bits;
+
     use super::*;
 
     /// A name lookup backed by a small static map.
@@ -594,21 +589,6 @@ mod tests {
             out.push_str(name);
             true
         }
-    }
-
-    /// Packs `values` low `width` bits each.
-    fn pack(values: &[u8], width: usize) -> Vec<u8> {
-        let mut out = vec![0u8; (values.len() * width).div_ceil(8)];
-        for (index, &value) in values.iter().enumerate() {
-            let bit = index * width;
-            let shifted = u16::from(value) << (bit % 8);
-            let [low, high] = shifted.to_le_bytes();
-            out[bit / 8] |= low;
-            if let Some(slot) = out.get_mut(bit / 8 + 1) {
-                *slot |= high;
-            }
-        }
-        out
     }
 
     /// Builds a section from explicit streams and tone arrays.
@@ -642,10 +622,10 @@ mod tests {
         // Drop the final NUL: the decoder splits between names.
         name_raw.pop();
         let streams = [
-            (flat_stream(&key_raw, 0), key_raw.len(), 0u8),
-            (flat_stream(&name_raw, 0), name_raw.len(), 0),
-            (flat_stream(&rule_raw, 0), rule_raw.len(), 0),
-            (flat_stream(&masks, 0), masks.len(), 0),
+            (huffman::encode(&key_raw, 0), key_raw.len(), 0u8),
+            (huffman::encode(&name_raw, 0), name_raw.len(), 0),
+            (huffman::encode(&rule_raw, 0), rule_raw.len(), 0),
+            (huffman::encode(&masks, 0), masks.len(), 0),
         ];
         let mut out = Vec::new();
         out.extend_from_slice(&u16::try_from(entries.len()).unwrap().to_le_bytes());
@@ -660,8 +640,8 @@ mod tests {
         }
         let codes: Vec<u8> = tones.iter().map(|&(code, _)| code).collect();
         let masks: Vec<u8> = tones.iter().map(|&(_, mask)| mask).collect();
-        out.extend_from_slice(&pack(&codes, 3));
-        out.extend_from_slice(&pack(&masks, 2));
+        out.extend_from_slice(&pack_bits(codes, 3));
+        out.extend_from_slice(&pack_bits(masks, 2));
         out
     }
 
@@ -826,21 +806,5 @@ mod tests {
             assert!(Emoji::parse(&blob[..length]).is_none(), "length {length}");
         }
         assert!(Emoji::parse(&[]).is_none());
-    }
-
-    #[test]
-    fn huffman_streams_round_trip_through_the_flat_test_encoder() {
-        for (data, order) in [
-            (b"aaaaabbbbcc".as_slice(), 0u8),
-            (b"abracadabra".as_slice(), 1u8),
-            (b"".as_slice(), 0u8),
-            (b"x".as_slice(), 1u8),
-        ] {
-            let stream = flat_stream(data, order);
-            assert_eq!(
-                huffman::decode(&stream, data.len(), order).as_deref(),
-                Some(data)
-            );
-        }
     }
 }

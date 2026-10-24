@@ -27,8 +27,44 @@ const REVERSE: CommandSpec = CommandSpec::new(".rev", "Reverse a string");
 /// The `.uni` Unicode properties command.
 const UNICODE: CommandSpec = CommandSpec::new(".uni", "Show a character's Unicode properties");
 
+/// One command this plugin serves: its specification, usage arguments and renderer.
+struct Command {
+    /// The registered command.
+    spec: CommandSpec,
+    /// The arguments shown after the trigger in the usage line.
+    usage: &'static str,
+    /// Renders one reply body from the argument text.
+    render: fn(&str) -> String,
+}
+
 /// Every command this plugin registers, in usage order.
-const COMMANDS: [CommandSpec; 5] = [BYTES, LENGTH, ORD, REVERSE, UNICODE];
+const COMMANDS: [Command; 5] = [
+    Command {
+        spec: BYTES,
+        usage: " <byte..>",
+        render: str_to_hex,
+    },
+    Command {
+        spec: LENGTH,
+        usage: " <string>",
+        render: character_count,
+    },
+    Command {
+        spec: ORD,
+        usage: " <chars..>",
+        render: code_points,
+    },
+    Command {
+        spec: REVERSE,
+        usage: " <string>",
+        render: reverse,
+    },
+    Command {
+        spec: UNICODE,
+        usage: " <chars>",
+        render: unicode_details,
+    },
+];
 
 /// Guards the one-time background warm-up of the Unicode tables.
 static UNICODE_INIT: Once = Once::new();
@@ -40,8 +76,8 @@ pub struct StringUtils;
 #[plugin(name = "string_utils")]
 impl StringUtils {
     fn new(subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        for command in COMMANDS {
-            subscriptions.command(command);
+        for command in &COMMANDS {
+            subscriptions.command(command.spec);
         }
         warm_unicode();
         Ok(Self)
@@ -54,32 +90,29 @@ impl StringUtils {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
+        let Some(definition) = Self::find(command.spec) else {
+            return Ok(());
+        };
+
         if command.args().is_empty() {
             return Self::usage(client, command.channel(), command.spec);
         }
 
-        let reply = match command.spec {
-            BYTES => str_to_hex_string(command.args()),
-            LENGTH => command.args().chars().count().to_string(),
-            ORD => command
-                .args()
-                .chars()
-                .map(|c| u32::from(c).to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            REVERSE => command.args().chars().rev().collect(),
-            UNICODE => unicode_details(command.args()),
-            // Unhandled commands are ignored.
-            _ => return Ok(()),
-        };
-
-        client.send_privmsg(command.channel(), notice(&reply))?;
+        client.send_privmsg(
+            command.channel(),
+            notice((definition.render)(command.args())),
+        )?;
 
         Ok(())
     }
 }
 
 impl StringUtils {
+    /// Finds the command definition for `spec`.
+    fn find(spec: CommandSpec) -> Option<&'static Command> {
+        COMMANDS.iter().find(|command| command.spec == spec)
+    }
+
     /// Replies with usage information for the invoked command.
     fn usage(client: &Client, channel: &str, command: CommandSpec) -> Result<(), ZetaError> {
         let Some(usage) = Self::usage_line(command) else {
@@ -91,21 +124,37 @@ impl StringUtils {
         Ok(())
     }
 
-    /// The usage line of `command`, or `None` when it has none.
+    /// The usage line of `command`, or `None` when it is not a command of this plugin.
     fn usage_line(command: CommandSpec) -> Option<String> {
-        let args = match command {
-            BYTES => " <byte..>",
-            LENGTH | REVERSE => " <string>",
-            ORD => " <chars..>",
-            UNICODE => " <chars>",
-            _ => return None,
-        };
-
-        Some(format!("Usage: {}{RESET}{args}", command.trigger()))
+        let definition = Self::find(command)?;
+        Some(format!(
+            "Usage: {}{RESET}{}",
+            definition.spec.trigger(),
+            definition.usage
+        ))
     }
 }
 
-fn str_to_hex_string(s: &str) -> String {
+/// Renders `.len`: the number of characters in `text`.
+fn character_count(text: &str) -> String {
+    text.chars().count().to_string()
+}
+
+/// Renders `.ord`: each character's code point, comma separated.
+fn code_points(text: &str) -> String {
+    text.chars()
+        .map(|c| u32::from(c).to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Renders `.rev`: the characters in reverse order.
+fn reverse(text: &str) -> String {
+    text.chars().rev().collect()
+}
+
+/// Renders `.b`: the UTF-8 bytes as `\x..` escapes.
+fn str_to_hex(s: &str) -> String {
     let mut buf = String::with_capacity(s.len() * 4);
 
     for b in s.bytes() {
@@ -122,9 +171,12 @@ fn str_to_hex_string(s: &str) -> String {
 /// command then pays the lazy cost itself.
 fn warm_unicode() {
     UNICODE_INIT.call_once(|| {
-        let _ = std::thread::Builder::new()
+        let spawn = std::thread::Builder::new()
             .name("unicode-init".into())
             .spawn(zeta_unicode::init);
+        if let Err(error) = spawn {
+            tracing::warn!(%error, "failed to spawn the Unicode warm-up thread");
+        }
     });
 }
 
@@ -133,9 +185,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn str_to_hex_string_test() {
+    fn str_to_hex_test() {
         assert_eq!(
-            str_to_hex_string("🏳️‍🌈"),
+            str_to_hex("🏳️‍🌈"),
             r"\xf0\x9f\x8f\xb3\xef\xb8\x8f\xe2\x80\x8d\xf0\x9f\x8c\x88"
         );
     }
@@ -179,12 +231,12 @@ mod tests {
         )
         .unwrap();
 
-        for command in COMMANDS {
-            assert!(subscriptions.commands().contains(&command));
+        for command in &COMMANDS {
+            assert!(subscriptions.commands().contains(&command.spec));
             assert!(
-                StringUtils::usage_line(command).is_some(),
+                StringUtils::usage_line(command.spec).is_some(),
                 "{} has no usage line",
-                command.trigger()
+                command.spec.trigger()
             );
         }
     }

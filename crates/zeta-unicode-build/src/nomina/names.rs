@@ -2,9 +2,9 @@
 //!
 //! # Section layout
 //!
-//! All integers are little-endian. `page_count` is 545 pages of 2,048 code points
-//! (`0x11_0000 >> 11` rounded up), and every name id is the position of its name in
-//! ascending code-point order.
+//! All integers are little-endian. `page_count` is 544 pages of 2,048 code points plus one
+//! sentinel page (`0x11_0000 >> 11` rounded up), and every name id is the position of its name
+//! in ascending code-point order.
 //!
 //! ```text
 //! off  field
@@ -84,84 +84,45 @@
 //! measurement entry points; training calls [`encode_global_corpus`] after parsing the corpus
 //! once. The `*_with_block_shift` forms return the size breakdown the layout study reports.
 
-use std::collections::BinaryHeap;
-
 use bytes::{Buf, BufMut};
 
-use zeta_unicode_format::huffman::{BitWriter, Code, canonical_codes};
-use zeta_unicode_format::{HANGUL_COUNT, HANGUL_END, HANGUL_START, UNICODE_END};
+use zeta_unicode_format::huffman::{BitWriter, Code, canonical_codes, code_lengths};
+use zeta_unicode_format::{
+    HANGUL_COUNT, HANGUL_END, HANGUL_START, MAX_CODE_BITS, MAX_NAME_BYTES, NAME_CONTEXT_MAP_LEN,
+    NAME_INDEX_HEADER_LEN, NAME_MODEL_COUNT_LEN, NAME_MODEL_DIRECTORY_ENTRY_LEN, NAME_PAGE_COUNT,
+    NAME_PAGE_DIRECTORY_ENTRY_LEN, NAME_PAGE_SHIFT, NAME_RUN_LEN, UNICODE_END, write_hangul,
+    write_pattern_name,
+};
 
 use crate::ucd::Inputs;
+
+pub use zeta_unicode_format::{
+    MAX_NAME_BLOCK_SHIFT as MAX_BLOCK_SHIFT, MIN_NAME_BLOCK_SHIFT as MIN_BLOCK_SHIFT, NameLayout,
+};
 
 /// The default block shift of the unparameterized helpers (32 names).
 #[cfg(test)]
 pub const NAME_BLOCK_SHIFT: u8 = 5;
-/// The smallest block shift a measurement may use.
-pub const MIN_BLOCK_SHIFT: u8 = 1;
-/// The largest block shift a measurement may use.
-pub const MAX_BLOCK_SHIFT: u8 = 8;
-/// The code-point page shift of the run directory.
-pub const PAGE_SHIFT: u32 = 11;
-/// The number of pages in the run directory, including the sentinel page.
-pub const PAGE_COUNT: usize = 545;
-/// The maximum code length the canonical model writer allows.
-pub const MAX_CODE_BITS: u8 = 16;
 /// The number of `u16` length counts in one model, including the unused zero entry.
 const CODE_LENGTH_SLOTS: usize = MAX_CODE_BITS as usize + 1;
-/// The largest name the decoder scratch buffer holds, in bytes.
-pub const MAX_NAME_BYTES: usize = 256;
 
-/// The two name layouts the generator can emit.
+/// The statistic and size breakdown of one encoded name section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NameLayout {
-    /// Reset the front-coding predecessor at every block boundary.
-    BlockLocal,
-    /// Front-code every name against its code-point predecessor and checkpoint each block.
-    Global,
-}
-
-impl NameLayout {
-    /// The layout id written into the image header.
-    #[must_use]
-    pub const fn id(self) -> u8 {
-        match self {
-            Self::BlockLocal => 0,
-            Self::Global => 1,
-        }
-    }
-
-    /// Parses a layout id from the image header.
-    #[must_use]
-    pub const fn from_id(id: u8) -> Option<Self> {
-        match id {
-            0 => Some(Self::BlockLocal),
-            1 => Some(Self::Global),
-            _ => None,
-        }
-    }
-}
-
-/// The size breakdown of one encoded name section.
-#[derive(Clone, Debug)]
-pub struct Encoded {
-    /// The complete section, ready for [`crate::nomina::image::pack`].
-    pub bytes: Vec<u8>,
-    /// The layout the section was encoded with.
-    pub layout: NameLayout,
+pub struct NameStats {
     /// Names in the section.
     pub name_count: usize,
-    /// Blocks of `2^block_shift` names.
+    /// Front-coded blocks.
     pub block_count: usize,
     /// Maximal runs of consecutive named code points.
     pub run_count: usize,
     /// The block shift the section was encoded with.
     pub block_shift: u8,
+    /// The name layout the section was encoded with.
+    pub layout: NameLayout,
     /// Header, page directory, runs and their padding.
     pub index_bytes: usize,
-    /// The `u32` block bit offsets (both layouts).
+    /// The `u32` bit offset of every block (block-local layout only).
     pub offset_bytes: usize,
-    /// The checkpoint offset directory (zero for the in-stream checkpoint format).
-    pub checkpoint_directory_bytes: usize,
     /// The bits spent on in-stream checkpoint names (global only).
     #[allow(
         dead_code,
@@ -182,13 +143,23 @@ pub struct Encoded {
     pub context_count: usize,
 }
 
-impl Encoded {
+impl NameStats {
     /// The total section size in bytes.
     #[must_use]
-    #[cfg(test)]
-    pub const fn total(&self) -> usize {
+    pub const fn total_bytes(&self) -> usize {
+        // Checkpoint bits are part of the main stream, so they are reported separately but
+        // must not be added here.
         self.index_bytes + self.offset_bytes + self.model_bytes + self.stream_bytes
     }
+}
+
+/// An encoded name section plus its size breakdown.
+#[derive(Clone, Debug)]
+pub struct Encoded {
+    /// The complete section, ready for [`crate::nomina::image::pack`].
+    pub bytes: Vec<u8>,
+    /// The statistics and size breakdown of the section.
+    pub stats: NameStats,
 }
 
 #[cfg(test)]
@@ -385,8 +356,9 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
 
     // Serialize the header, directory and runs.
     let mut bytes = Vec::with_capacity(
-        12 + page_dir.len() * 2
-            + run_count * 8
+        NAME_INDEX_HEADER_LEN
+            + page_dir.len() * NAME_PAGE_DIRECTORY_ENTRY_LEN
+            + run_count * NAME_RUN_LEN
             + block_count * 12
             + 6_000
             + writer.bit_len().div_ceil(8),
@@ -394,7 +366,7 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     bytes.put_u32_le(u32::try_from(entries.len()).expect("name count fits in u32"));
     bytes.put_u32_le(u32::try_from(block_count).expect("block count fits in u32"));
     bytes.put_u16_le(u16::try_from(run_count).expect("run count fits in u16"));
-    bytes.put_u16_le(u16::try_from(PAGE_COUNT).expect("page count fits in u16"));
+    bytes.put_u16_le(u16::try_from(NAME_PAGE_COUNT).expect("page count fits in u16"));
     for &first in &page_dir {
         bytes.put_u16_le(first);
     }
@@ -419,7 +391,10 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     let model_count = context_books.len() + if global { 4 } else { 2 };
     bytes.put_u16_le(u16::try_from(model_count).expect("model count fits in u16"));
     let directory_at = bytes.len();
-    bytes.resize(directory_at + model_count * 2, 0);
+    bytes.resize(
+        directory_at + model_count * NAME_MODEL_DIRECTORY_ENTRY_LEN,
+        0,
+    );
     let blobs_at = bytes.len();
     let mut blob_offsets = Vec::with_capacity(model_count);
     let mut books: Vec<&Codebook> = vec![&prefix_book];
@@ -437,7 +412,7 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
         book.write(&mut bytes);
     }
     for (index, offset) in blob_offsets.iter().enumerate() {
-        let at = directory_at + index * 2;
+        let at = directory_at + index * NAME_MODEL_DIRECTORY_ENTRY_LEN;
         (&mut bytes[at..at + 2]).put_u16_le(*offset);
     }
     let model_bytes = bytes.len() - model_start;
@@ -450,21 +425,22 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
 
     Encoded {
         bytes,
-        layout,
-        name_count: entries.len(),
-        block_count,
-        run_count,
-        block_shift,
-        index_bytes,
-        offset_bytes,
-        checkpoint_directory_bytes: 0,
-        checkpoint_bits,
-        checkpoint_bytes: checkpoint_bits.div_ceil(8),
-        model_bytes,
-        model_directory_bytes,
-        stream_bytes,
-        stream_bits,
-        context_count: contexts.len(),
+        stats: NameStats {
+            name_count: entries.len(),
+            block_count,
+            run_count,
+            block_shift,
+            layout,
+            index_bytes,
+            offset_bytes,
+            checkpoint_bits,
+            checkpoint_bytes: checkpoint_bits.div_ceil(8),
+            model_bytes,
+            model_directory_bytes,
+            stream_bytes,
+            stream_bits,
+            context_count: contexts.len(),
+        },
     }
 }
 
@@ -558,12 +534,12 @@ fn runs(entries: &[(u32, String)]) -> (Vec<(u32, u32, u32)>, usize) {
     (runs, count)
 }
 
-/// `page_directory[page]` is the first run whose end is at or after `page << PAGE_SHIFT`.
+/// `page_directory[page]` is the first run whose end is at or after `page << NAME_PAGE_SHIFT`.
 fn page_directory(runs: &[(u32, u32, u32)]) -> Vec<u16> {
-    let mut directory = Vec::with_capacity(PAGE_COUNT);
+    let mut directory = Vec::with_capacity(NAME_PAGE_COUNT);
     let mut index = 0usize;
-    for page in 0..PAGE_COUNT {
-        let base = u32::try_from(page).expect("page fits in u32") << PAGE_SHIFT;
+    for page in 0..NAME_PAGE_COUNT {
+        let base = u32::try_from(page).expect("page fits in u32") << NAME_PAGE_SHIFT;
         while index < runs.len() && runs[index].0 + runs[index].1 <= base {
             index += 1;
         }
@@ -588,7 +564,7 @@ struct Codebook {
 impl Codebook {
     /// Builds the canonical book for `frequencies`.
     fn new(frequencies: &[u64; 256]) -> Self {
-        let lengths = length_limited_lengths(frequencies);
+        let lengths = code_lengths(frequencies, MAX_CODE_BITS);
         let mut counts = [0u16; CODE_LENGTH_SLOTS];
         for &length in &lengths {
             if length > 0 {
@@ -621,102 +597,6 @@ impl Codebook {
     }
 }
 
-/// Length-limited Huffman code lengths.
-///
-/// The tree is built at full precision; when it is deeper than [`MAX_CODE_BITS`], every
-/// frequency is halved (never below one) and the tree is rebuilt. Flattening the
-/// distribution this way bounds the depth without ever changing the prefix property.
-fn length_limited_lengths(frequencies: &[u64; 256]) -> [u8; 256] {
-    let mut lengths = [0u8; 256];
-    let symbols: Vec<u8> = (0..=u8::MAX)
-        .filter(|&symbol| frequencies[usize::from(symbol)] > 0)
-        .collect();
-    match symbols.len() {
-        0 => return lengths,
-        1 => {
-            lengths[usize::from(symbols[0])] = 1;
-            return lengths;
-        }
-        _ => {}
-    }
-
-    let mut scale = 1u64;
-    loop {
-        let mut nodes: Vec<Node> = Vec::with_capacity(symbols.len() * 2);
-        for &symbol in &symbols {
-            nodes.push(Node::leaf(symbol));
-        }
-        let mut heap: BinaryHeap<std::cmp::Reverse<(u64, usize)>> = symbols
-            .iter()
-            .enumerate()
-            .map(|(index, &symbol)| {
-                let weight = (frequencies[usize::from(symbol)] / scale).max(1);
-                std::cmp::Reverse((weight, index))
-            })
-            .collect();
-        let mut serial = nodes.len();
-        while heap.len() > 1 {
-            let Some(std::cmp::Reverse((left_weight, left))) = heap.pop() else {
-                unreachable!("two nodes were pushed");
-            };
-            let Some(std::cmp::Reverse((right_weight, right))) = heap.pop() else {
-                unreachable!("two nodes were pushed");
-            };
-            nodes.push(Node::branch(left, right));
-            heap.push(std::cmp::Reverse((left_weight + right_weight, serial)));
-            serial += 1;
-        }
-        let root = serial - 1;
-        let mut max_depth = 0u16;
-        let mut stack = vec![(root, 0u16)];
-        while let Some((node, level)) = stack.pop() {
-            if let Some(symbol) = nodes[node].symbol {
-                lengths[usize::from(symbol)] =
-                    u8::try_from(level).expect("tree depth fits in a byte");
-                max_depth = max_depth.max(level);
-            } else {
-                let child = level + 1;
-                stack.push((nodes[node].left, child));
-                stack.push((nodes[node].right, child));
-            }
-        }
-        if max_depth <= u16::from(MAX_CODE_BITS) {
-            return lengths;
-        }
-        scale = scale.checked_mul(2).expect("frequency scale fits in u64");
-    }
-}
-
-/// One node of the Huffman tree.
-struct Node {
-    /// The leaf's symbol, or `None` for a branch.
-    symbol: Option<u8>,
-    /// The left child of a branch (the lower-priority subtree).
-    left: usize,
-    /// The right child of a branch.
-    right: usize,
-}
-
-impl Node {
-    /// A leaf node.
-    const fn leaf(symbol: u8) -> Self {
-        Self {
-            symbol: Some(symbol),
-            left: 0,
-            right: 0,
-        }
-    }
-
-    /// A branch node.
-    const fn branch(left: usize, right: usize) -> Self {
-        Self {
-            symbol: None,
-            left,
-            right,
-        }
-    }
-}
-
 /// Appends `symbol`'s canonical code to `writer`.
 fn write_symbol(writer: &mut BitWriter, book: &Codebook, symbol: u8) {
     let code = book.codes[usize::from(symbol)];
@@ -746,33 +626,10 @@ impl Corpus {
 
     /// The Hangul name for `cp`, or `None` outside the syllable range.
     fn hangul_name(cp: u32) -> Option<String> {
-        if !(HANGUL_START..=HANGUL_END).contains(&cp) {
-            return None;
-        }
-        let index = cp - HANGUL_START;
-        let mut name = String::from("HANGUL SYLLABLE ");
-        name.push_str(JAMO_LEADING[usize::try_from(index / 588).expect("leading index")]);
-        name.push_str(JAMO_VOWEL[usize::try_from((index % 588) / 28).expect("vowel index")]);
-        name.push_str(JAMO_TRAILING[usize::try_from(index % 28).expect("trailing index")]);
-        Some(name)
+        let mut name = String::new();
+        write_hangul(cp, &mut name).then_some(name)
     }
 }
-
-/// Choseong (leading) jamo short names, in `Jamo_Short_Name` order.
-const JAMO_LEADING: [&str; 19] = [
-    "G", "GG", "N", "D", "DD", "R", "M", "B", "BB", "S", "SS", "", "J", "JJ", "C", "K", "T", "P",
-    "H",
-];
-/// Vowel (medial) jamo short names.
-const JAMO_VOWEL: [&str; 21] = [
-    "A", "AE", "YA", "YAE", "EO", "E", "YEO", "YE", "O", "WA", "WAE", "OE", "YO", "U", "WEO", "WE",
-    "WI", "YU", "EU", "YI", "I",
-];
-/// Trailing jamo short names, index 0 being "no trailing consonant".
-const JAMO_TRAILING: [&str; 28] = [
-    "", "G", "GG", "GS", "N", "NJ", "NH", "D", "L", "LG", "LM", "LB", "LS", "LT", "LP", "LH", "M",
-    "B", "BS", "S", "SS", "NG", "J", "C", "K", "T", "P", "H",
-];
 
 /// Parses the name corpus from the vendored inputs.
 ///
@@ -1032,7 +889,9 @@ fn pattern_name(pattern: &crate::nomina::patterns::Pattern, cp: u32) -> Option<S
     if cp < pattern.lo || cp > pattern.hi {
         return None;
     }
-    Some(format!("{}{cp:04X}{}", pattern.prefix, pattern.suffix))
+    let mut name = String::new();
+    write_pattern_name(&pattern.prefix, &pattern.suffix, cp, &mut name);
+    Some(name)
 }
 
 /// A decoder used only by the build-time verifier. It is deliberately independent of the
@@ -1100,7 +959,7 @@ impl<'a> Decoded<'a> {
                 .expect("block count fits");
         let run_count = usize::from(header.try_get_u16_le().expect("run count: truncated u16"));
         let page_count = usize::from(header.try_get_u16_le().expect("page count: truncated u16"));
-        assert_eq!(page_count, PAGE_COUNT, "the page directory size");
+        assert_eq!(page_count, NAME_PAGE_COUNT, "the page directory size");
         let block_size = 1usize << block_shift;
         assert_eq!(
             block_count,
@@ -1108,9 +967,9 @@ impl<'a> Decoded<'a> {
             "the block count"
         );
 
-        let page_dir_at = 12;
-        let runs_at = page_dir_at + page_count * 2;
-        let runs_end = runs_at + run_count * 8;
+        let page_dir_at = NAME_INDEX_HEADER_LEN;
+        let runs_at = page_dir_at + page_count * NAME_PAGE_DIRECTORY_ENTRY_LEN;
+        let runs_end = runs_at + run_count * NAME_RUN_LEN;
         assert!(runs_end <= section.len(), "the run records are truncated");
         let starts_at = (runs_end + 3) & !3;
         let starts_end = starts_at + block_count * 4;
@@ -1123,9 +982,9 @@ impl<'a> Decoded<'a> {
         let models_at = starts_end;
 
         let context_model = section
-            .get(models_at..models_at + 256)
+            .get(models_at..models_at + NAME_CONTEXT_MAP_LEN)
             .expect("the context map is truncated");
-        let count_at = models_at + 256;
+        let count_at = models_at + NAME_CONTEXT_MAP_LEN;
         let mut count_bytes = section.get(count_at..).expect("model count: truncated u16");
         let model_count = usize::from(
             count_bytes
@@ -1133,8 +992,8 @@ impl<'a> Decoded<'a> {
                 .expect("model count: truncated u16"),
         );
         assert!(model_count > 0, "no models");
-        let directory_at = models_at + 258;
-        let blobs_at = directory_at + model_count * 2;
+        let directory_at = models_at + NAME_CONTEXT_MAP_LEN + NAME_MODEL_COUNT_LEN;
+        let blobs_at = directory_at + model_count * NAME_MODEL_DIRECTORY_ENTRY_LEN;
         assert!(
             blobs_at <= section.len(),
             "the model directory is truncated"
@@ -1143,7 +1002,7 @@ impl<'a> Decoded<'a> {
         let mut books = Vec::with_capacity(model_count);
         let mut expected = 0usize;
         for index in 0..model_count {
-            let offset_at = directory_at + index * 2;
+            let offset_at = directory_at + index * NAME_MODEL_DIRECTORY_ENTRY_LEN;
             let mut offset_bytes = section
                 .get(offset_at..)
                 .expect("model offset: truncated u16");
@@ -1212,7 +1071,7 @@ impl<'a> Decoded<'a> {
         if cp > UNICODE_END {
             return None;
         }
-        let page = usize::try_from(cp >> PAGE_SHIFT).expect("page fits in usize");
+        let page = usize::try_from(cp >> NAME_PAGE_SHIFT).expect("page fits in usize");
         let mut page_bytes = self
             .page_dir
             .get(page * 2..)
@@ -1453,9 +1312,9 @@ mod tests {
         for shift in [1, 5] {
             // Two entries fit one 2^shift-name block: block_count == 1, no checkpoints.
             let encoded = encode_global_with_block_shift(&inputs, shift);
-            assert_eq!(encoded.block_count, 1, "block count at shift {shift}");
+            assert_eq!(encoded.stats.block_count, 1, "block count at shift {shift}");
             assert_eq!(
-                encoded.checkpoint_bits, 0,
+                encoded.stats.checkpoint_bits, 0,
                 "checkpoint bits at shift {shift}"
             );
             verify_global_with_block_shift(&encoded.bytes, &inputs, shift);
@@ -1491,21 +1350,21 @@ mod tests {
     fn encodes_and_verifies_every_name() {
         let inputs = inputs();
         let encoded = encode_with_block_shift(&inputs, NAME_BLOCK_SHIFT);
-        assert_eq!(encoded.name_count, 35_416);
-        assert_eq!(encoded.block_count, 1_107);
-        assert_eq!(encoded.run_count, 719);
-        assert_eq!(encoded.context_count, 39);
-        assert_eq!(encoded.total(), encoded.bytes.len());
+        assert_eq!(encoded.stats.name_count, 35_416);
+        assert_eq!(encoded.stats.block_count, 1_107);
+        assert_eq!(encoded.stats.run_count, 719);
+        assert_eq!(encoded.stats.context_count, 39);
+        assert_eq!(encoded.stats.total_bytes(), encoded.bytes.len());
         eprintln!(
             "B=32: total {} = index {} + offsets {} + models {} (dir {}) + stream {} \
              ({} bits)",
-            encoded.total(),
-            encoded.index_bytes,
-            encoded.offset_bytes,
-            encoded.model_bytes,
-            encoded.model_directory_bytes,
-            encoded.stream_bytes,
-            encoded.stream_bits
+            encoded.stats.total_bytes(),
+            encoded.stats.index_bytes,
+            encoded.stats.offset_bytes,
+            encoded.stats.model_bytes,
+            encoded.stats.model_directory_bytes,
+            encoded.stats.stream_bytes,
+            encoded.stats.stream_bits
         );
         // The section is the current design's measured size; this bound catches runaway
         // growth without pretending the 160 KB target is met.
@@ -1527,7 +1386,7 @@ mod tests {
                 "block-local B={}: total {} (stream {})",
                 1 << shift,
                 encoded.bytes.len(),
-                encoded.stream_bytes
+                encoded.stats.stream_bytes
             );
         }
     }
@@ -1538,19 +1397,19 @@ mod tests {
         for shift in 3..=8 {
             let encoded = encode_global_with_block_shift(&inputs, shift);
             verify_global_with_block_shift(&encoded.bytes, &inputs, shift);
-            assert_eq!(encoded.layout, NameLayout::Global);
-            assert_eq!(encoded.total(), encoded.bytes.len());
+            assert_eq!(encoded.stats.layout, NameLayout::Global);
+            assert_eq!(encoded.stats.total_bytes(), encoded.bytes.len());
             eprintln!(
                 "global B={}: total {} = index {} + offsets {} + models {} + stream {} \
                  ({} bits, checkpoint {} bytes)",
                 1 << shift,
                 encoded.bytes.len(),
-                encoded.index_bytes,
-                encoded.offset_bytes,
-                encoded.model_bytes,
-                encoded.stream_bytes,
-                encoded.stream_bits,
-                encoded.checkpoint_bytes,
+                encoded.stats.index_bytes,
+                encoded.stats.offset_bytes,
+                encoded.stats.model_bytes,
+                encoded.stats.stream_bytes,
+                encoded.stats.stream_bits,
+                encoded.stats.checkpoint_bytes,
             );
         }
     }
@@ -1627,7 +1486,7 @@ mod tests {
             a = b;
             b = next;
         }
-        let lengths = length_limited_lengths(&frequencies);
+        let lengths = code_lengths(&frequencies, MAX_CODE_BITS);
         assert!(lengths.iter().all(|&length| length <= MAX_CODE_BITS));
         assert!(lengths.iter().any(|&length| length > 0));
     }
@@ -1636,10 +1495,10 @@ mod tests {
     fn page_directory_points_at_the_first_overlapping_run() {
         let runs = [(0x20u32, 1u32, 0u32), (0x100, 4, 1), (0x2000, 1, 5)];
         let directory = page_directory(&runs);
-        assert_eq!(directory.len(), PAGE_COUNT);
+        assert_eq!(directory.len(), NAME_PAGE_COUNT);
         assert_eq!(directory[0], 0);
-        assert_eq!(directory[0x2000 >> PAGE_SHIFT], 2);
-        assert_eq!(directory[PAGE_COUNT - 1], 3);
+        assert_eq!(directory[0x2000 >> NAME_PAGE_SHIFT], 2);
+        assert_eq!(directory[NAME_PAGE_COUNT - 1], 3);
     }
 
     #[test]

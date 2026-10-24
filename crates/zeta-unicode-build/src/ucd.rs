@@ -5,7 +5,6 @@
 //! extracted Unicode release (`data/ucd/extracted/DerivedName.txt`,
 //! `data/ucd/emoji/emoji-test.txt`). A missing file reports every path that was tried.
 
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -26,7 +25,7 @@ pub struct Inputs {
     pub aliases: String,
     /// `NamedSequences.txt`, or an empty string when the release predates it.
     pub sequences: String,
-    /// `emoji-test.txt`, with pre-13.0 comments upgraded to the `E<version>` form.
+    /// `emoji-test.txt`, raw as published.
     pub emoji: String,
     /// The `(major, minor, patch)` version every UCD header advertises.
     pub version: (u8, u8, u8),
@@ -192,8 +191,9 @@ const EMOJI_TEST: InputSpec = InputSpec {
 pub fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     text.lines()
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .enumerate()
-        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
+        .filter(|(_, line)| !line.is_empty() && !line.trim_start().starts_with('#'))
         .map(|(index, line)| (index + 1, line))
 }
 
@@ -241,9 +241,6 @@ pub fn read_inputs(data_dir: &Path) -> Result<Inputs, InputError> {
     // Emoji 5.0, and an Emoji 13.1 file is valid on top of Unicode 13.0. Validate that the
     // header parses, but do not force it to equal the UCD release.
     let emoji_version = emoji_test_version(&emoji, &emoji_path)?;
-    // Emoji 13.0 added the `E<version>` token to each line's comment. Older releases omit it;
-    // upgrade them here so every downstream parser sees one shape.
-    let emoji = upgrade_emoji_comments(&emoji, emoji_version);
 
     let (sequences, sequences_path) = match find_input(data_dir, &NAMED_SEQUENCES) {
         Some(path) => {
@@ -356,7 +353,7 @@ fn check_version(
 fn header_version(file: &'static str, text: &str, path: &Path) -> Result<(u8, u8, u8), InputError> {
     let stem = file.strip_suffix(".txt").unwrap_or(file);
     for line in text.lines().take(32) {
-        let line = line.strip_prefix('\u{feff}').unwrap_or(line);
+        let line = line.strip_prefix('\u{feff}').unwrap_or(line).trim_end();
         let Some(rest) = line.strip_prefix("# ") else {
             continue;
         };
@@ -430,63 +427,6 @@ fn emoji_test_version(text: &str, path: &Path) -> Result<(u8, u8), InputError> {
         file: EMOJI_TEST.file,
         path: path.to_path_buf(),
     })
-}
-
-/// Upgrades the pre-13.0 `emoji-test.txt` comment shape to the modern one.
-///
-/// Emoji 13.0 added the `E<version>` token to each data line's comment; Emoji 5.0 through 12.0
-/// write `<emoji> <name>` instead. The emoji-section generator expects the token, so the
-/// ingestion layer inserts the file's own Emoji version into older files.
-/// Header and blank lines are left untouched.
-fn upgrade_emoji_comments(text: &str, version: (u8, u8)) -> String {
-    let mut out = String::with_capacity(text.len() + 1_024);
-    for line in text.split_inclusive('\n') {
-        let (body, ending) = line.strip_suffix('\n').map_or((line, ""), |body| {
-            body.strip_suffix('\r')
-                .map_or((body, "\n"), |body| (body, "\r\n"))
-        });
-        let Some((data, comment)) = body.split_once('#') else {
-            out.push_str(body);
-            out.push_str(ending);
-            continue;
-        };
-        if body.trim_start().starts_with('#') {
-            out.push_str(body);
-            out.push_str(ending);
-            continue;
-        }
-        let Some((emoji, rest)) = comment.trim_start().split_once(char::is_whitespace) else {
-            out.push_str(body);
-            out.push_str(ending);
-            continue;
-        };
-        let rest = rest.trim_start();
-        let first_name_word = rest.split_whitespace().next().unwrap_or_default();
-        if is_emoji_version(first_name_word) {
-            out.push_str(body);
-            out.push_str(ending);
-            continue;
-        }
-        out.push_str(data);
-        out.push_str("# ");
-        out.push_str(emoji);
-        let _ = write!(out, " E{}.{} ", version.0, version.1);
-        out.push_str(rest);
-        out.push_str(ending);
-    }
-    out
-}
-
-/// Does `word` look like the `E<major>.<minor>` token in modern `emoji-test.txt` comments?
-fn is_emoji_version(word: &str) -> bool {
-    let Some(rest) = word.strip_prefix('E') else {
-        return false;
-    };
-    let mut parts = rest.split('.');
-    let numeric = |part: Option<&str>| {
-        part.is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-    };
-    numeric(parts.next()) && numeric(parts.next()) && parts.next().is_none()
 }
 
 /// Formats a version for an error message.
@@ -646,24 +586,13 @@ mod tests {
         assert!(
             inputs
                 .emoji
-                .contains("1F600 ; fully-qualified # 😀 E5.0 grinning face"),
-            "old comment shape was not upgraded: {}",
+                .contains("1F600 ; fully-qualified # 😀 grinning face"),
+            "the raw Emoji 5.0 comment must be preserved: {}",
             inputs.emoji
         );
         let (_, stats) =
             crate::nomina::emoji::build(&inputs.emoji, &inputs.sequences, &inputs.names);
-        assert_eq!(stats.entries, 1, "the upgraded comment must parse");
-    }
-
-    #[test]
-    fn upgrades_old_emoji_comments_without_touching_new_ones() {
-        let text = "# emoji-test.txt\n# Version: 5.0\n\
-                    1F600 ; fully-qualified # 😀 grinning face\n\
-                    1F601 ; fully-qualified # 😁 E1.0 beaming face\n";
-        let upgraded = upgrade_emoji_comments(text, (5, 0));
-        assert!(upgraded.contains("# 😀 E5.0 grinning face"));
-        assert!(upgraded.contains("# 😁 E1.0 beaming face"));
-        assert!(upgraded.starts_with("# emoji-test.txt\n# Version: 5.0\n"));
+        assert_eq!(stats.entries, 1, "the pre-13.0 comment must parse");
     }
 
     #[test]
@@ -768,6 +697,13 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn records_ignore_crlf_and_indented_comments() {
+        let parsed: Vec<_> =
+            records("# header\r\n  # indented\r\n0041; LATIN CAPITAL LETTER A\r\n\r\n").collect();
+        assert_eq!(parsed, vec![(3, "0041; LATIN CAPITAL LETTER A")]);
     }
 
     #[test]

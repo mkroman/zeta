@@ -116,9 +116,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             }
             "--priority" => {
                 let value = next_value(&mut args, &arg)?;
-                options.priority = Priority::parse(&value).ok_or_else(|| {
-                    format!("{arg} expects size, balanced or latency, got {value:?}")
-                })?;
+                options.priority = value
+                    .parse()
+                    .map_err(|expected| format!("{arg} expects {expected}, got {value:?}"))?;
             }
             "--max-bytes" => options.max_bytes = parse_usize(&mut args, &arg)?,
             "--baseline" => options.baseline = Some(PathBuf::from(next_value(&mut args, &arg)?)),

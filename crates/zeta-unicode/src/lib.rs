@@ -25,9 +25,11 @@
 //!
 //! # Panics
 //!
-//! The first name lookup on a thread panics if the generated image is malformed; the first
-//! emoji or general-category lookup panics process-wide for the same reason. The build verifies
-//! every section, so this is a build invariant rather than a runtime condition.
+//! The first name lookup on a thread panics if the generated image header is malformed; the
+//! first emoji or general-category lookup panics process-wide for the same reason. A corrupt
+//! entry inside an otherwise valid section makes that one lookup return `None`/`false` rather
+//! than panic. The build verifies every section, so both are build invariants rather than
+//! runtime conditions.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -70,11 +72,11 @@ static GC: OnceLock<Gc> = OnceLock::new();
 thread_local! {
     /// The per-thread name decoder. Its fixed scratch buffer is the only mutable state left
     /// after initialization, so lookups do not allocate or share a lock.
-    static NAMES: RefCell<Option<Nomina>> = const { RefCell::new(None) };
+    static NAMES: RefCell<Option<Nomina<'static>>> = const { RefCell::new(None) };
 }
 
 /// Runs `f` with this thread's name decoder, building it on first use.
-fn with_nomina<R>(f: impl FnOnce(&mut Nomina) -> R) -> R {
+fn with_nomina<R>(f: impl FnOnce(&mut Nomina<'static>) -> R) -> R {
     NAMES.with(|cell| {
         let mut slot = cell.borrow_mut();
         let nomina = slot.get_or_insert_with(|| {
@@ -212,6 +214,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use bytes::Buf;
+    use zeta_unicode_format::VERSION_AT;
 
     use super::*;
 
@@ -276,7 +279,7 @@ mod tests {
     /// Reads the version from the Nomina image header.
     fn image_version() -> (u8, u8, u8) {
         let mut image = IMAGE;
-        image.advance(4);
+        image.advance(VERSION_AT);
         let major = image.try_get_u16_le().expect("major version");
         let minor = image.try_get_u16_le().expect("minor version");
         let patch = image.try_get_u16_le().expect("patch version");
@@ -309,7 +312,7 @@ mod tests {
             // point in hex", on a single-code-point line as well as on a range: U+18CFF is the
             // one that matters, since it is the only point whose line carries a `*`.
             let value = rhs.trim();
-            if let Some((prefix, _width)) = value.split_once('*') {
+            if let Some((prefix, suffix)) = value.split_once('*') {
                 let (start, end) = range(lhs);
                 for cp in start..=end {
                     let Some(c) = char::from_u32(cp) else {
@@ -317,7 +320,7 @@ mod tests {
                     };
                     assert_eq!(
                         name(c).as_deref(),
-                        Some(format!("{prefix}{cp:04X}").as_str()),
+                        Some(format!("{prefix}{cp:04X}{suffix}").as_str()),
                         "pattern name for U+{cp:04X}"
                     );
                     checked += 1;

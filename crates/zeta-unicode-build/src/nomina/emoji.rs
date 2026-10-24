@@ -32,8 +32,8 @@ use bytes::BufMut;
 
 use zeta_unicode_format::{
     MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, TONE_NAMES, TONES, ZWJ, clock_name, encode_cps,
-    family_word, format_toned, is_tone, join_family, keycap_word, pair_phrase, plural, swap_person,
-    tone_phrase, tone_positions, ucd_mask_name, write_varint,
+    family_word, format_toned, is_tone, join_family, keycap_word, pack_bits, pair_phrase, plural,
+    swap_person, tone_phrase, tone_positions, ucd_mask_name, write_varint,
 };
 
 use zeta_unicode_format::huffman;
@@ -833,33 +833,21 @@ const fn people_word(cp: u32) -> Option<&'static str> {
 }
 
 /// The `ucd_mask` rule: the first mask selecting `name` from `ucd`'s lowercase words.
+///
+/// This searches with [`ucd_mask_name`] itself, so the accepted mask is guaranteed to render
+/// the way the runtime will render it.
 fn ucd_mask(ucd: &str, name: &str) -> Option<(u8, bool)> {
-    let lower = ucd.to_ascii_lowercase();
-    let words: Vec<&str> = lower.split(' ').collect();
-    if words.is_empty() || words.len() > 8 {
+    let words = ucd.split(' ').count();
+    if words == 0 || words > 8 {
         return None;
     }
-    for mask in 1u16..(1u16 << words.len()) {
-        let selected: Vec<&str> = words
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| mask >> index & 1 != 0)
-            .map(|(_, word)| *word)
-            .collect();
-        if selected.join(" ") == name {
-            return Some((u8::try_from(mask).ok()?, false));
+    for mask in 1u16..(1u16 << words) {
+        let mask = u8::try_from(mask).ok()?;
+        if ucd_mask_name(ucd, mask, false) == name {
+            return Some((mask, false));
         }
-        if selected.len() >= 2 {
-            let mut hyphenated = String::from(selected[0]);
-            hyphenated.push('-');
-            hyphenated.push_str(selected[1]);
-            for word in selected.iter().skip(2) {
-                hyphenated.push(' ');
-                hyphenated.push_str(word);
-            }
-            if hyphenated == name {
-                return Some((u8::try_from(mask).ok()?, true));
-            }
+        if ucd_mask_name(ucd, mask, true) == name {
+            return Some((mask, true));
         }
     }
     None
@@ -885,10 +873,12 @@ fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, St
         };
         let words: Vec<&str> = comment.split_whitespace().collect();
         assert!(
-            words.len() >= 3,
+            words.len() >= 2,
             "line {number}: unexpected comment: {comment}"
         );
-        keep_best(&mut entries, cps, rank, words[2..].join(" "));
+        // Emoji 13.0 added the `E<version>` token; pre-13.0 comments are `<emoji> <name>`.
+        let name_at = usize::from(words.get(1).is_some_and(|word| is_emoji_version(word))) + 1;
+        keep_best(&mut entries, cps, rank, words[name_at..].join(" "));
     }
 
     let emoji_keys: std::collections::BTreeSet<Vec<u32>> =
@@ -904,6 +894,18 @@ fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, St
         keep_best(&mut entries, cps, 3, name.trim().to_owned());
     }
     entries
+}
+
+/// Does `word` look like the `E<major>.<minor>` token in modern `emoji-test.txt` comments?
+fn is_emoji_version(word: &str) -> bool {
+    let Some(rest) = word.strip_prefix('E') else {
+        return false;
+    };
+    let mut parts = rest.split('.');
+    let numeric = |part: Option<&str>| {
+        part.is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    };
+    numeric(parts.next()) && numeric(parts.next()) && parts.next().is_none()
 }
 
 /// The canonical key of a sequence: `U+FE0F` removed.
@@ -973,24 +975,10 @@ fn code_points(key: &str) -> Vec<u32> {
     key.chars().map(u32::from).collect()
 }
 
-/// Packs `values` low `width` bits each, low bits first.
-fn pack_bits(values: impl IntoIterator<Item = u8>, width: usize) -> Vec<u8> {
-    let values: Vec<u8> = values.into_iter().collect();
-    let mut out = vec![0u8; (values.len() * width).div_ceil(8)];
-    for (index, &value) in values.iter().enumerate() {
-        let bit = index * width;
-        let shifted = u16::from(value) << (bit % 8);
-        let [low, high] = shifted.to_le_bytes();
-        out[bit / 8] |= low;
-        if let Some(slot) = out.get_mut(bit / 8 + 1) {
-            *slot |= high;
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
+    use zeta_unicode_format::unpack_bits;
+
     use super::*;
 
     const EMOJI: &str = include_str!("../../../zeta-unicode/data/emoji-test.txt");
@@ -1014,11 +1002,12 @@ mod tests {
             let rank = match status.trim() {
                 "fully-qualified" | "component" => 2u8,
                 "minimally-qualified" => 1,
-                "unqualified" => 0,
+                "unqualified" | "non-fully-qualified" => 0,
                 other => panic!("line {number}: unknown status {other}"),
             };
             let words: Vec<&str> = comment.split_whitespace().collect();
-            let name = words[2..].join(" ");
+            let name_at = usize::from(words.get(1).is_some_and(|word| is_emoji_version(word))) + 1;
+            let name = words[name_at..].join(" ");
             match ranked.get(&cps) {
                 Some((best, _)) if *best > rank => {}
                 _ => {
@@ -1246,10 +1235,10 @@ mod tests {
         at += tone_codes_len;
         let tone_masks = section[at..].to_vec();
         let tone_codes = (0..count)
-            .map(|index| unpack(&tone_codes, index, 3))
+            .map(|index| unpack_bits(&tone_codes, index, 3).expect("a packed tone code"))
             .collect();
         let tone_masks = (0..count)
-            .map(|index| unpack(&tone_masks, index, 2))
+            .map(|index| unpack_bits(&tone_masks, index, 2).expect("a packed tone mask"))
             .collect();
         Decoded {
             keys,
@@ -1259,15 +1248,6 @@ mod tests {
             tone_codes,
             tone_masks,
         }
-    }
-
-    /// Reads a packed little-endian bit field.
-    fn unpack(blob: &[u8], index: usize, width: usize) -> u8 {
-        let bit = index * width;
-        let byte = u16::from(blob[bit / 8]);
-        let next = u16::from(blob.get(bit / 8 + 1).copied().unwrap_or(0));
-        let value = (byte | (next << 8)) >> (bit % 8);
-        u8::try_from(value & ((1u16 << width) - 1)).expect("field fits")
     }
 
     #[test]
@@ -1381,7 +1361,7 @@ mod tests {
     #[test]
     fn non_fully_qualified_status_parses_like_unqualified() {
         // An Emoji 5.0-style file: `non-fully-qualified` rows exist next to every modern
-        // status, and the comments carry the `E<version>` token `read_inputs` inserts.
+        // status, and the comments use the modern `E<version>` token shape.
         let emoji = "# emoji-test.txt\n\
                      # Version: 5.0\n\
                      263A ; non-fully-qualified # ☺ E5.0 smiling face\n\

@@ -21,33 +21,21 @@
 //! the runtime's `Nomina::new` ever read it.
 
 use bytes::BufMut;
+use zeta_unicode_format::{
+    DIRECTORY_AT, DIRECTORY_ENTRY_LEN, GC_PAGE_SHIFT_AT, NAME_BLOCK_SHIFT_AT, NAME_LAYOUT_AT,
+    SECTION_COUNT_AT, VERSION_AT,
+};
 
 use super::names::NameLayout;
 
-/// The image magic.
-pub const MAGIC: &[u8; 4] = b"NOM1";
-
-/// The number of sections in a Nomina image.
-pub const SECTION_COUNT: usize = 4;
+pub use zeta_unicode_format::{
+    EMOJI, GC, GC_PAGE_SHIFT, HEADER_LEN, MAGIC, NAMES, PATTERNS, SECTION_COUNT,
+};
 
 /// The block shift of the unparameterized [`pack`] helper: 32 names per block.
 #[cfg(test)]
 pub const NAME_BLOCK_SHIFT: u8 = 5;
 
-/// The documented general-category page shift.
-pub const GC_PAGE_SHIFT: u8 = 11;
-
-/// The size of the padded image header.
-pub const HEADER_LEN: usize = 64;
-
-/// The section id of the stored character names.
-pub const NAMES: usize = 0;
-/// The section id of the emoji entries.
-pub const EMOJI: usize = 1;
-/// The section id of the general-category table.
-pub const GC: usize = 2;
-/// The section id of the `*` name patterns.
-pub const PATTERNS: usize = 3;
 /// The name layout byte for the block-local front-coding layout.
 pub const LAYOUT_BLOCK_LOCAL: u8 = NameLayout::BlockLocal.id();
 /// The name layout byte for the global checkpointed layout.
@@ -138,14 +126,14 @@ pub fn pack_with_layout(
                 .sum::<usize>(),
     );
     image.resize(HEADER_LEN, 0);
-    image[..4].copy_from_slice(MAGIC);
-    (&mut image[4..6]).put_u16_le(u16::from(version.0));
-    (&mut image[6..8]).put_u16_le(u16::from(version.1));
-    (&mut image[8..10]).put_u16_le(u16::from(version.2));
-    image[10] = u8::try_from(SECTION_COUNT).expect("four sections fit in a byte");
-    image[11] = name_block_shift;
-    image[12] = gc_page_shift;
-    image[13] = name_layout;
+    image[..MAGIC.len()].copy_from_slice(MAGIC);
+    (&mut image[VERSION_AT..VERSION_AT + 2]).put_u16_le(u16::from(version.0));
+    (&mut image[VERSION_AT + 2..VERSION_AT + 4]).put_u16_le(u16::from(version.1));
+    (&mut image[VERSION_AT + 4..VERSION_AT + 6]).put_u16_le(u16::from(version.2));
+    image[SECTION_COUNT_AT] = u8::try_from(SECTION_COUNT).expect("four sections fit in a byte");
+    image[NAME_BLOCK_SHIFT_AT] = name_block_shift;
+    image[GC_PAGE_SHIFT_AT] = gc_page_shift;
+    image[NAME_LAYOUT_AT] = name_layout;
 
     for (id, section) in sections.iter().enumerate() {
         while image.len() % 8 != 0 {
@@ -153,7 +141,7 @@ pub fn pack_with_layout(
         }
         let offset = u32::try_from(image.len()).expect("image offset fits in u32");
         let length = u32::try_from(section.len()).expect("section length fits in u32");
-        let directory = 14 + id * 8;
+        let directory = DIRECTORY_AT + id * DIRECTORY_ENTRY_LEN;
         (&mut image[directory..directory + 4]).put_u32_le(offset);
         (&mut image[directory + 4..directory + 8]).put_u32_le(length);
         image.extend_from_slice(section);
@@ -173,19 +161,28 @@ mod tests {
         let image = pack(sections, (18, 0, 0));
 
         assert_eq!(&image[..4], MAGIC);
-        assert_eq!(u16::from_le_bytes([image[4], image[5]]), 18);
-        assert_eq!(u16::from_le_bytes([image[6], image[7]]), 0);
-        assert_eq!(u16::from_le_bytes([image[8], image[9]]), 0);
-        assert_eq!(image[10], 4);
-        assert_eq!(image[11], 5);
-        assert_eq!(image[12], 11);
-        assert_eq!(image[13], 0);
+        assert_eq!(
+            u16::from_le_bytes([image[VERSION_AT], image[VERSION_AT + 1]]),
+            18
+        );
+        assert_eq!(
+            u16::from_le_bytes([image[VERSION_AT + 2], image[VERSION_AT + 3]]),
+            0
+        );
+        assert_eq!(
+            u16::from_le_bytes([image[VERSION_AT + 4], image[VERSION_AT + 5]]),
+            0
+        );
+        assert_eq!(image[SECTION_COUNT_AT], 4);
+        assert_eq!(image[NAME_BLOCK_SHIFT_AT], 5);
+        assert_eq!(image[GC_PAGE_SHIFT_AT], 11);
+        assert_eq!(image[NAME_LAYOUT_AT], 0);
         assert_eq!(image.len() % 8, 0);
         assert_eq!(&image[46..64], &[0; 18]);
 
         let mut previous_end = HEADER_LEN;
         for (id, section) in sections.iter().enumerate() {
-            let directory = 14 + id * 8;
+            let directory = DIRECTORY_AT + id * DIRECTORY_ENTRY_LEN;
             let mut entry = image
                 .get(directory..directory + 8)
                 .expect("a directory entry");
@@ -205,12 +202,21 @@ mod tests {
     #[test]
     fn explicit_shifts_are_recorded() {
         let image = pack_with([b"", b"", b"", b""], (1, 2, 3), 7, GC_PAGE_SHIFT);
-        assert_eq!(image[11], 7);
-        assert_eq!(image[12], GC_PAGE_SHIFT);
-        assert_eq!(image[13], LAYOUT_BLOCK_LOCAL);
-        assert_eq!(u16::from_le_bytes([image[4], image[5]]), 1);
-        assert_eq!(u16::from_le_bytes([image[6], image[7]]), 2);
-        assert_eq!(u16::from_le_bytes([image[8], image[9]]), 3);
+        assert_eq!(image[NAME_BLOCK_SHIFT_AT], 7);
+        assert_eq!(image[GC_PAGE_SHIFT_AT], GC_PAGE_SHIFT);
+        assert_eq!(image[NAME_LAYOUT_AT], LAYOUT_BLOCK_LOCAL);
+        assert_eq!(
+            u16::from_le_bytes([image[VERSION_AT], image[VERSION_AT + 1]]),
+            1
+        );
+        assert_eq!(
+            u16::from_le_bytes([image[VERSION_AT + 2], image[VERSION_AT + 3]]),
+            2
+        );
+        assert_eq!(
+            u16::from_le_bytes([image[VERSION_AT + 4], image[VERSION_AT + 5]]),
+            3
+        );
     }
 
     #[test]
@@ -222,9 +228,9 @@ mod tests {
     #[test]
     fn the_global_pack_sets_the_layout_byte() {
         let image = pack_global([b"", b"", b"", b""], (18, 0, 0));
-        assert_eq!(image[13], LAYOUT_GLOBAL);
+        assert_eq!(image[NAME_LAYOUT_AT], LAYOUT_GLOBAL);
         let image = pack_with_layout([b"", b"", b"", b""], (18, 0, 0), 5, 11, LAYOUT_GLOBAL);
-        assert_eq!(image[13], LAYOUT_GLOBAL);
+        assert_eq!(image[NAME_LAYOUT_AT], LAYOUT_GLOBAL);
     }
 
     /// Builds the complete measurement image and writes it to `NOMINA_IMAGE` (default
@@ -257,7 +263,7 @@ mod tests {
             inputs.version,
             block_shift,
             GC_PAGE_SHIFT,
-            encoded.layout.id(),
+            encoded.stats.layout.id(),
         );
         let path = std::env::var_os("NOMINA_IMAGE").map_or_else(
             || std::env::temp_dir().join("nomina.bin"),

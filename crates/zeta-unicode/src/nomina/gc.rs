@@ -74,7 +74,10 @@ impl Gc {
             if start > UNICODE_END {
                 return None;
             }
-            if starts_list.last().is_some_and(|&previous| start < previous) {
+            if starts_list
+                .last()
+                .is_some_and(|&previous| start <= previous)
+            {
                 return None;
             }
             starts_list.push(start);
@@ -148,7 +151,6 @@ impl Gc {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::flat_stream;
     use super::*;
 
     /// Builds a section from explicit `(start, category id)` runs.
@@ -160,8 +162,8 @@ mod tests {
             previous = start;
         }
         let cats: Vec<u8> = runs.iter().map(|&(_, id)| id).collect();
-        let starts_stream = flat_stream(&starts, 0);
-        let cats_stream = flat_stream(&cats, 1);
+        let starts_stream = huffman::encode(&starts, 0);
+        let cats_stream = huffman::encode(&cats, 1);
         let mut out = Vec::new();
         out.extend_from_slice(&u16::try_from(runs.len()).unwrap().to_le_bytes());
         out.extend_from_slice(&u16::try_from(starts.len()).unwrap().to_le_bytes());
@@ -201,5 +203,11 @@ mod tests {
             assert!(Gc::parse(&blob[..length]).is_none(), "length {length}");
         }
         assert!(Gc::parse(&[]).is_none());
+    }
+
+    #[test]
+    fn duplicate_run_starts_are_rejected() {
+        let blob = section(&[(0, 1), (0, 2)]);
+        assert!(Gc::parse(&blob).is_none());
     }
 }

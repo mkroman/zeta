@@ -28,9 +28,10 @@ pub struct Code {
 ///
 /// # Panics
 ///
-/// Panics when `order` is greater than one, or when the codebook or payload does not fit the
-/// section's `u16` lengths. Vendored Unicode data never does; a malformed call is a build
-/// invariant violation.
+/// Panics when `order` is greater than one, when one context uses all 256 byte symbols (the
+/// stream counts symbols in a `u8`), or when the codebook or payload does not fit the section's
+/// `u16` lengths. Vendored Unicode data never does; a malformed call is a build invariant
+/// violation.
 #[must_use]
 pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
     assert!(order <= 1, "only order-0 and order-1 models exist");
@@ -41,11 +42,7 @@ pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
     let mut contexts: Vec<u8> = Vec::new();
     let mut frequencies: Vec<[u32; 256]> = Vec::new();
     for (index, &byte) in data.iter().enumerate() {
-        let context = if order == 0 || index == 0 {
-            0
-        } else {
-            data[index - 1]
-        };
+        let context = context_at(data, index, order);
         let slot = match contexts.binary_search(&context) {
             Ok(slot) => slot,
             Err(slot) => {
@@ -60,15 +57,19 @@ pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
     let models: Vec<Vec<(u8, u8)>> = frequencies.iter().map(lengths).collect();
 
     let mut out = Vec::new();
-    out.push(u8::try_from(contexts.len()).expect("at most 256 contexts"));
     assert!(
         contexts.len() <= 256,
         "an order-1 model has at most 256 contexts"
     );
+    out.push(u8::try_from(contexts.len()).expect("at most 256 contexts"));
     for (slot, &context) in contexts.iter().enumerate() {
         let model = &models[slot];
+        assert!(
+            model.len() <= 255,
+            "a context with all 256 symbols needs a wider count than the u8 format has"
+        );
         out.push(context);
-        out.push(u8::try_from(model.len()).expect("at most 256 symbols"));
+        out.push(u8::try_from(model.len()).expect("at most 255 symbols"));
         for &(symbol, length) in model {
             out.push(symbol);
             out.push(length);
@@ -88,11 +89,7 @@ pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
 
     let mut bits = BitWriter::default();
     for (index, &byte) in data.iter().enumerate() {
-        let context = if order == 0 || index == 0 {
-            0
-        } else {
-            data[index - 1]
-        };
+        let context = context_at(data, index, order);
         let slot = contexts
             .binary_search(&context)
             .expect("the context was registered");
@@ -110,6 +107,16 @@ pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
         "the Huffman stream is over u16 bytes"
     );
     out
+}
+
+/// The model-selecting context of `data[index]`: the previous byte for order 1, otherwise the
+/// start-of-stream context `0`.
+const fn context_at(data: &[u8], index: usize, order: u8) -> u8 {
+    if order == 0 || index == 0 {
+        0
+    } else {
+        data[index - 1]
+    }
 }
 
 /// Decodes a stream built by [`encode`].
@@ -207,81 +214,128 @@ impl Model {
     }
 }
 
-/// One node of the Huffman tree.
-struct Node {
-    left: Option<usize>,
-    right: Option<usize>,
-    symbol: Option<u8>,
-}
-
 /// Builds the code lengths of a canonical Huffman model from `frequencies`.
 fn lengths(frequencies: &[u32; 256]) -> Vec<(u8, u8)> {
-    let used: Vec<u8> = frequencies
-        .iter()
-        .enumerate()
-        .filter(|&(_, &frequency)| frequency != 0)
-        .map(|(symbol, _)| u8::try_from(symbol).expect("a byte symbol"))
+    let mut wide = [0u64; 256];
+    for (slot, &frequency) in wide.iter_mut().zip(frequencies) {
+        *slot = u64::from(frequency);
+    }
+    let lengths = code_lengths(
+        &wide,
+        u8::try_from(MAX_BITS).expect("MAX_BITS fits in a byte"),
+    );
+    (0..=u8::MAX)
+        .filter(|&symbol| lengths[usize::from(symbol)] > 0)
+        .map(|symbol| (symbol, lengths[usize::from(symbol)]))
+        .collect()
+}
+
+/// Length-limited canonical Huffman code lengths for a 256-symbol alphabet.
+///
+/// The tree is built at full precision; when it is deeper than `max_bits`, every frequency is
+/// halved (never below one) and the tree is rebuilt. Flattening the distribution this way
+/// bounds the depth without ever changing the prefix property. A one-symbol alphabet gets a
+/// one-bit code; an empty alphabet gets no codes.
+///
+/// # Panics
+///
+/// Panics if `max_bits` is zero, if a tree needs a code longer than 255 bits (the reported
+/// depth is a `u8`) or if the frequency scale overflows `u64`; none of these is reachable for
+/// a 256-symbol alphabet with a positive limit, whose deepest possible tree is 255 levels.
+#[must_use]
+pub fn code_lengths(frequencies: &[u64; 256], max_bits: u8) -> [u8; 256] {
+    assert!(max_bits > 0, "a codebook needs at least one bit");
+    let mut lengths = [0u8; 256];
+    let symbols: Vec<u8> = (0..=u8::MAX)
+        .filter(|&symbol| frequencies[usize::from(symbol)] > 0)
         .collect();
-    match used.len() {
-        0 => Vec::new(),
-        1 => vec![(used[0], 1)],
-        _ => {
-            let mut heap = BinaryHeap::new();
-            let mut nodes: Vec<Node> = Vec::new();
-            for &symbol in &used {
-                let frequency = u64::from(frequencies[usize::from(symbol)]);
-                nodes.push(Node {
-                    left: None,
-                    right: None,
-                    symbol: Some(symbol),
-                });
-                heap.push(Reverse((frequency, nodes.len() - 1)));
-            }
-            while heap.len() > 1 {
-                let Some(Reverse((left_frequency, left))) = heap.pop() else {
-                    break;
-                };
-                let Some(Reverse((right_frequency, right))) = heap.pop() else {
-                    break;
-                };
-                nodes.push(Node {
-                    left: Some(left),
-                    right: Some(right),
-                    symbol: None,
-                });
-                heap.push(Reverse((left_frequency + right_frequency, nodes.len() - 1)));
-            }
-            let Some(Reverse((_, root))) = heap.pop() else {
-                return Vec::new();
+    match symbols.len() {
+        0 => return lengths,
+        1 => {
+            lengths[usize::from(symbols[0])] = 1;
+            return lengths;
+        }
+        _ => {}
+    }
+
+    let mut scale = 1u64;
+    loop {
+        let mut nodes: Vec<Node> = Vec::with_capacity(symbols.len() * 2);
+        for &symbol in &symbols {
+            nodes.push(Node::leaf(symbol));
+        }
+        let mut heap: BinaryHeap<Reverse<(u64, usize)>> = symbols
+            .iter()
+            .enumerate()
+            .map(|(index, &symbol)| {
+                let weight = (frequencies[usize::from(symbol)] / scale).max(1);
+                Reverse((weight, index))
+            })
+            .collect();
+        let mut serial = nodes.len();
+        while heap.len() > 1 {
+            let Some(Reverse((left_weight, left))) = heap.pop() else {
+                break;
             };
-            let mut depths = vec![0u8; 256];
-            let mut stack = vec![(root, 0u8)];
-            while let Some((index, depth)) = stack.pop() {
-                let Some(node) = nodes.get(index) else {
-                    continue;
-                };
-                if let Some(symbol) = node.symbol {
-                    assert!(
-                        usize::from(depth) <= MAX_BITS,
-                        "Huffman depth {depth} exceeds {MAX_BITS}"
-                    );
-                    depths[usize::from(symbol)] = depth;
-                    continue;
-                }
-                if let (Some(left), Some(right)) = (node.left, node.right) {
-                    stack.push((left, depth + 1));
-                    stack.push((right, depth + 1));
-                }
+            let Some(Reverse((right_weight, right))) = heap.pop() else {
+                break;
+            };
+            nodes.push(Node::branch(left, right));
+            heap.push(Reverse((left_weight + right_weight, serial)));
+            serial += 1;
+        }
+        let Some(Reverse((_, root))) = heap.pop() else {
+            return lengths;
+        };
+        let mut max_depth = 0u16;
+        let mut stack = vec![(root, 0u16)];
+        while let Some((index, level)) = stack.pop() {
+            let Some(node) = nodes.get(index) else {
+                continue;
+            };
+            if let Some(symbol) = node.symbol {
+                lengths[usize::from(symbol)] =
+                    u8::try_from(level).expect("tree depth fits in a byte");
+                max_depth = max_depth.max(level);
+                continue;
             }
-            let mut out: Vec<(u8, u8)> = used
-                .into_iter()
-                .map(|symbol| {
-                    let depth = depths[usize::from(symbol)];
-                    (symbol, depth)
-                })
-                .collect();
-            out.sort_unstable();
-            out
+            let child = level + 1;
+            stack.push((node.left, child));
+            stack.push((node.right, child));
+        }
+        if max_depth <= u16::from(max_bits) {
+            return lengths;
+        }
+        scale = scale.checked_mul(2).expect("frequency scale fits in u64");
+    }
+}
+
+/// One node of the Huffman tree.
+struct Node {
+    /// The leaf's symbol, or `None` for a branch.
+    symbol: Option<u8>,
+    /// The left child of a branch.
+    left: usize,
+    /// The right child of a branch.
+    right: usize,
+}
+
+impl Node {
+    /// A leaf node.
+    const fn leaf(symbol: u8) -> Self {
+        Self {
+            symbol: Some(symbol),
+            left: 0,
+            right: 0,
+        }
+    }
+
+    /// A branch node.
+    const fn branch(left: usize, right: usize) -> Self {
+        Self {
+            symbol: None,
+            left,
+            right,
         }
     }
 }
@@ -309,6 +363,26 @@ pub fn canonical_codes(lengths: &[u8]) -> Vec<Code> {
         previous = len;
     }
     codes
+}
+
+/// Is `counts` a non-oversubscribed canonical codebook with `max_bits` maximum length?
+///
+/// `counts[length]` is the number of symbols with that length. A single-symbol model is valid:
+/// its one-bit code is a complete code for the one-symbol alphabet.
+#[must_use]
+pub fn valid_codebook(counts: &[u16], max_bits: u8) -> bool {
+    let max = usize::from(max_bits);
+    if max == 0 || counts.len() <= max {
+        return false;
+    }
+    let mut kraft = 0u64;
+    for length in 1..=max {
+        let Some(&count) = counts.get(length) else {
+            return false;
+        };
+        kraft += u64::from(count) << (max - length);
+    }
+    kraft <= 1u64 << max
 }
 
 /// An MSB-first bit writer.
@@ -413,12 +487,78 @@ mod tests {
     }
 
     #[test]
+    fn generated_streams_round_trip_at_both_orders() {
+        // A deterministic LCG keeps the test dependency-free while covering skewed alphabets,
+        // every context byte and payloads that cross a byte boundary.
+        let mut state = 0x9E37_79B9u32;
+        for (length, order) in [(1usize, 0u8), (7, 1), (256, 0), (4_096, 1)] {
+            let data: Vec<u8> = (0..length)
+                .map(|_| {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    // A 32-symbol alphabet keeps every context well under the u8 symbol count
+                    // while still exercising several order-1 models.
+                    u8::try_from((state >> 24) % 32).expect("a small symbol")
+                })
+                .collect();
+            let stream = encode(&data, order);
+            assert_eq!(
+                decode(&stream, data.len(), order).as_deref(),
+                Some(data.as_slice()),
+                "length {length}, order {order}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_skewed_alphabet_round_trips_in_both_orders() {
+        let mut data = vec![0u8; 2_000];
+        for (index, byte) in data.iter_mut().enumerate() {
+            *byte = match index % 9 {
+                0 => 0,
+                1 => 255,
+                other => u8::try_from(other).expect("a small value"),
+            };
+        }
+        for order in [0, 1] {
+            let stream = encode(&data, order);
+            assert_eq!(
+                decode(&stream, data.len(), order).as_deref(),
+                Some(&data[..])
+            );
+        }
+    }
+
+    #[test]
     fn truncated_streams_are_rejected() {
         let data = b"abracadabra";
         let stream = encode(data, 1);
         for length in 0..stream.len() {
             assert_eq!(decode(&stream[..length], data.len(), 1), None);
         }
+    }
+
+    #[test]
+    fn codebooks_are_validated_for_oversubscription() {
+        let mut single = [0u16; 17];
+        single[1] = 1;
+        assert!(valid_codebook(&single, 1));
+
+        let mut complete = [0u16; 17];
+        complete[1] = 1;
+        complete[2] = 2;
+        assert!(valid_codebook(&complete, 2));
+
+        let mut oversubscribed = [0u16; 17];
+        oversubscribed[1] = 3;
+        assert!(!valid_codebook(&oversubscribed, 2));
+
+        let empty = [0u16; 17];
+        assert!(
+            valid_codebook(&empty, 1),
+            "an unused model is not oversubscribed"
+        );
+        assert!(!valid_codebook(&complete, 0));
+        assert!(!valid_codebook(&[0; 2], 2), "counts must cover max_bits");
     }
 
     #[test]

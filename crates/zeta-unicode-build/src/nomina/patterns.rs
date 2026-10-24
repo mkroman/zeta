@@ -331,6 +331,8 @@ fn assert_round_trip(section: &[u8], patterns: &[Pattern]) {
 
 #[cfg(test)]
 mod tests {
+    use zeta_unicode_format::write_pattern_name;
+
     use super::*;
 
     const DERIVED: &str = include_str!("../../../zeta-unicode/data/DerivedName.txt");
@@ -390,15 +392,15 @@ mod tests {
                 "suffix {index}"
             );
             for cp in lo..=hi {
-                let mut want = prefix.clone();
-                let mut digits = [0u8; 8];
-                let used = zeta_unicode_format::write_hex(&mut digits, cp, 0);
-                want.push_str(std::str::from_utf8(&digits[..used]).expect("ASCII"));
-                want.push_str(suffix);
-                let mut got = decoded.prefixes[usize::from(prefix_id)].clone();
-                let used = zeta_unicode_format::write_hex(&mut digits, cp, 0);
-                got.push_str(std::str::from_utf8(&digits[..used]).expect("ASCII"));
-                got.push_str(&decoded.suffixes[usize::from(suffix_id)]);
+                let mut want = String::new();
+                write_pattern_name(prefix, suffix, cp, &mut want);
+                let mut got = String::new();
+                write_pattern_name(
+                    &decoded.prefixes[usize::from(prefix_id)],
+                    &decoded.suffixes[usize::from(suffix_id)],
+                    cp,
+                    &mut got,
+                );
                 assert_eq!(got, want, "pattern name for U+{cp:04X}");
             }
         }

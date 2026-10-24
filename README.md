@@ -22,7 +22,7 @@ leaf crates below both.
 | `zeta-utils` | Text shaping, duration formatting, lock recovery. |
 | `zeta-unicode` | Nomina: character names, general categories and emoji sequence names. |
 | `zeta-unicode-build` | Offline trainer and generator for the `zeta-unicode` image. |
-| `zeta-unicode-format` | Image layout and tone formatting shared by the two Unicode crates. |
+| `zeta-unicode-format` | Nomina wire layout, byte primitives, Huffman codec and emoji grammar shared by the two Unicode crates. |
 | `kagi`, `reddit`, `dendanskeordbog`, `coinmarketcap` | Standalone API client crates. |
 | `zeta-test-support` | Shared test helpers (wiremock, redaction assertions). |
 

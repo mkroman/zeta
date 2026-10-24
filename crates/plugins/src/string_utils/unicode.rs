@@ -4,6 +4,7 @@
 //! because one padded emoji sequence can exhaust a whole IRC line on its own.
 
 use std::borrow::Cow;
+use std::fmt::Write as _;
 
 use zeta_unicode::{
     MAX_EMOJI_KEY_BYTES, emoji_name, general_category, may_start_emoji_sequence, name_or_label,
@@ -12,14 +13,16 @@ use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_within_budget};
 
 use crate::prelude::*;
 
-/// The complete prefix `notice()` writes, budgeted out of the listings.
-const NOTICE_PREFIX_LEN: usize = NOTICE_PREFIX.len();
 /// The body budget of a `.uni` reply, after the notice prefix.
-const REPLY_BUDGET: usize = MAX_LISTING_LENGTH - NOTICE_PREFIX_LEN;
+const REPLY_BUDGET: usize = MAX_LISTING_LENGTH - NOTICE_PREFIX.len();
 /// The budget of one entry once the outer `SUFFIX` is reserved.
 const ENTRY_BUDGET: usize = REPLY_BUDGET - SUFFIX.len();
 /// Appended when a listing does not fit the budget.
 const SUFFIX: &str = ", …";
+/// The bytes that open an entry's codepoint list: `{` followed by the reset and bold codes.
+const ENTRY_OPEN: &str = "{\x0f\x02";
+/// The widest a code point can be spelled, used to prove an entry always fits.
+const WIDEST_POINT: &str = "U+10FFFF";
 /// Longest run of characters `.uni` probes for an emoji sequence.
 ///
 /// A stored emoji key is at most [`MAX_EMOJI_KEY_BYTES`] bytes, hence at most that many
@@ -96,31 +99,22 @@ fn append_listing(
 /// Splits `args` into character entries, grouping each run that names an emoji sequence of at
 /// least two code points into a single entry.
 fn grouped_entries(args: &str) -> Vec<Entry<'_>> {
-    let bounds: Vec<usize> = args
-        .char_indices()
-        .map(|(index, _)| index)
-        .chain(std::iter::once(args.len()))
-        .collect();
-    let last = bounds.len() - 1;
-    let mut entries = Vec::new();
+    let chars: Vec<(usize, char)> = args.char_indices().collect();
+    let mut entries = Vec::with_capacity(chars.len());
     let mut at = 0usize;
 
-    while at < last {
+    while at < chars.len() {
         // Plain text cannot start a stored key, so the admission check rejects it before
         // probing every candidate end.
-        let end_limit = last.min(at.saturating_add(MAX_GROUPING_CHARS));
-        if let Some((end, name)) = longest_sequence(args, &bounds, at, end_limit) {
+        let end_limit = chars.len().min(at.saturating_add(MAX_GROUPING_CHARS));
+        if let Some((end, name)) = longest_sequence(args, &chars, at, end_limit) {
             entries.push(Entry::Sequence {
-                text: &args[bounds[at]..bounds[end]],
+                text: &args[chars[at].0..byte_at(args, &chars, end)],
                 name,
             });
             at = end;
         } else {
-            let c = args[bounds[at]..]
-                .chars()
-                .next()
-                .expect("a boundary starts a character");
-            entries.push(Entry::Char(c));
+            entries.push(Entry::Char(chars[at].1));
             at += 1;
         }
     }
@@ -128,24 +122,35 @@ fn grouped_entries(args: &str) -> Vec<Entry<'_>> {
     entries
 }
 
+/// The byte offset of character `index`, or the end of `args` for the sentinel index.
+fn byte_at(args: &str, chars: &[(usize, char)], index: usize) -> usize {
+    chars.get(index).map_or(args.len(), |&(offset, _)| offset)
+}
+
 /// The longest run starting at character `at` that names an emoji sequence, if any.
 fn longest_sequence(
     args: &str,
-    bounds: &[usize],
+    chars: &[(usize, char)],
     at: usize,
     end_limit: usize,
 ) -> Option<(usize, Cow<'static, str>)> {
-    if !may_start_emoji_sequence(&args[bounds[at]..]) {
+    let start = chars[at].0;
+    if !may_start_emoji_sequence(&args[start..]) {
         return None;
     }
     (at + 2..=end_limit)
         .rev()
-        .find_map(|end| emoji_name(&args[bounds[at]..bounds[end]]).map(|name| (end, name)))
+        .find_map(|end| emoji_name(&args[start..byte_at(args, chars, end)]).map(|name| (end, name)))
 }
 
 /// The bytes [`render_entry`] appends after the codepoint list.
 fn entry_tail(name: &str, category: &str) -> String {
-    format!("{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})")
+    let mut tail = String::with_capacity(name.len() + category.len() + 24);
+    let _ = write!(
+        tail,
+        "{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})"
+    );
+    tail
 }
 
 /// Renders an entry: its codepoints bold inside the braces, then name and category.
@@ -156,12 +161,18 @@ fn entry_tail(name: &str, category: &str) -> String {
 /// reserved budget cannot drift from what is written.
 fn render_entry(points: &str, name: &str, category: &str) -> String {
     let tail = entry_tail(name, category);
-    let mut entry = format!("{{{RESET}{BOLD}");
+    let capacity = points
+        .len()
+        .saturating_mul(8)
+        .saturating_add(tail.len())
+        .saturating_add(ENTRY_OPEN.len());
+    let mut entry = String::with_capacity(ENTRY_BUDGET.min(capacity));
+    entry.push_str(ENTRY_OPEN);
 
     // The first codepoint is appended unconditionally, so the entry only fits while the tail
     // leaves room for the prefix and `U+10FFFF` on top of the reserved bytes.
     debug_assert!(
-        entry.len() + "U+10FFFF".len() + SUFFIX.len() + tail.len() <= ENTRY_BUDGET,
+        ENTRY_OPEN.len() + WIDEST_POINT.len() + SUFFIX.len() + tail.len() <= ENTRY_BUDGET,
         "the name {name:?} does not leave room for the codepoint list"
     );
 
@@ -330,8 +341,9 @@ mod tests {
     }
 
     #[test]
-    fn notice_prefix_matches_the_budget() {
-        assert_eq!(notice("").len(), NOTICE_PREFIX_LEN);
+    fn the_entry_opening_is_the_expected_control_code_sequence() {
+        assert_eq!(ENTRY_OPEN, format!("{{{RESET}{BOLD}"));
+        assert_eq!(notice(""), NOTICE_PREFIX);
     }
 
     #[test]
@@ -368,9 +380,9 @@ mod tests {
         assert!(reply.contains('…'), "reply was not truncated: {reply}");
         assert!(reply.ends_with(", …"));
         assert!(
-            reply.len() + NOTICE_PREFIX_LEN <= MAX_LISTING_LENGTH,
+            notice(&reply).len() <= MAX_LISTING_LENGTH,
             "{}",
-            reply.len() + NOTICE_PREFIX_LEN
+            notice(&reply).len()
         );
     }
 
@@ -383,9 +395,9 @@ mod tests {
 
         assert!(reply.contains('…'), "reply was not truncated: {reply}");
         assert!(
-            reply.len() + NOTICE_PREFIX_LEN <= MAX_LISTING_LENGTH,
+            notice(&reply).len() <= MAX_LISTING_LENGTH,
             "{}",
-            reply.len() + NOTICE_PREFIX_LEN
+            notice(&reply).len()
         );
         assert!(reply.ends_with("Other Symbol\x0310)"), "{reply}");
     }
@@ -445,14 +457,11 @@ mod tests {
         assert!(reply.ends_with(", …"), "{reply}");
         assert!(!reply.contains("U+0061"), "{reply}");
         assert!(
-            reply.len() + NOTICE_PREFIX_LEN <= MAX_LISTING_LENGTH,
+            notice(&reply).len() <= MAX_LISTING_LENGTH,
             "{}",
-            reply.len() + NOTICE_PREFIX_LEN
+            notice(&reply).len()
         );
     }
-
-    /// The bytes [`render_entry`] writes before the codepoint list.
-    const ENTRY_PREFIX_LEN: usize = "{".len() + RESET.len() + BOLD.len();
 
     #[test]
     fn every_char_entry_tail_fits_the_entry_budget() {
@@ -478,7 +487,7 @@ mod tests {
         let (max_tail_len, c, name, category) = longest.expect("the scalar range has characters");
         assert_eq!(entry_tail(&name, category).len(), max_tail_len);
         assert!(
-            ENTRY_PREFIX_LEN + "U+10FFFF".len() + SUFFIX.len() + max_tail_len <= ENTRY_BUDGET,
+            ENTRY_OPEN.len() + WIDEST_POINT.len() + SUFFIX.len() + max_tail_len <= ENTRY_BUDGET,
             "U+{:04X} ({name:?}, {category}) appends a {max_tail_len}-byte tail",
             u32::from(c)
         );
@@ -492,12 +501,12 @@ mod tests {
     fn render_entry_budgets_the_longest_codepoint_list() {
         let (name, category) = ("X", "Other Symbol");
         let tail = entry_tail(name, category);
-        // `U+10FFFF` is the widest a codepoint can be spelled.
+        // `WIDEST_POINT` is the widest a code point can be spelled.
         let point = char::MAX;
         let point_len = format!("U+{:04X}", u32::from(point)).len();
         let separator_len = ", ".len();
         let full_len = |points: usize| {
-            ENTRY_PREFIX_LEN + points * point_len + (points - 1) * separator_len + tail.len()
+            ENTRY_OPEN.len() + points * point_len + (points - 1) * separator_len + tail.len()
         };
 
         // The list is appended while the entry plus the reserved outer suffix fits; one more

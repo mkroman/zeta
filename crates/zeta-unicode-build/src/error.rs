@@ -1,10 +1,11 @@
-//! The I/O errors the trainer and manifest writer report.
+//! The errors the trainer and manifest writer report.
 
 use std::path::PathBuf;
 
 use thiserror::Error;
 
-/// Fails a training run when an input cannot be read or an artifact cannot be written.
+/// Fails a training run when an input cannot be read, an artifact cannot be written, or the
+/// manifest cannot be serialized.
 #[derive(Debug, Error)]
 pub enum Error {
     /// Reading a vendored UCD input failed.
@@ -38,4 +39,7 @@ pub enum Error {
         /// The data directory every input must live under.
         data_dir: PathBuf,
     },
+    /// Serializing the manifest as JSON failed.
+    #[error("failed to render manifest.json: {0}")]
+    Json(#[from] serde_json::Error),
 }

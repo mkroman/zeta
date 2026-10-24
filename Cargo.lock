@@ -5445,6 +5445,8 @@ name = "zeta-unicode-build"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "zeta-unicode-format",

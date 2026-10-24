@@ -15,6 +15,13 @@ command -v curl >/dev/null 2>&1 || {
 
 version=${1:?usage: hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]}
 dest=${2:?usage: hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]}
+case "$version" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *)
+        printf 'error: Unicode version must be <major>.<minor>.<patch>, got %s\n' "$version" >&2
+        exit 1
+        ;;
+esac
 emoji_version=${3:-${version%.*}}
 
 public="https://www.unicode.org/Public/$version"
@@ -59,9 +66,10 @@ do
     fi
 done
 
-# The first line of DerivedName.txt names its release, e.g. `# DerivedName-18.0.0.txt`;
-# anything else means we fetched a different Unicode version than requested.
-if ! head -n 1 "$dest/ucd/extracted/DerivedName.txt" | grep -Fq -- "# DerivedName-$version"; then
+# The first lines of DerivedName.txt name its release, e.g. `# DerivedName-18.0.0.txt`;
+# anything else means we fetched a different Unicode version than requested. A BOM or a
+# leading comment line must not make a valid download look wrong, so search the header.
+if ! grep -m1 -Fq -- "# DerivedName-$version" "$dest/ucd/extracted/DerivedName.txt"; then
     printf 'error: DerivedName.txt does not mention Unicode %s\n' "$version" >&2
     exit 1
 fi

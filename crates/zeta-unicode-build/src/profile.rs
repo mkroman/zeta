@@ -66,6 +66,14 @@ impl fmt::Display for Priority {
     }
 }
 
+impl std::str::FromStr for Priority {
+    type Err = &'static str;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::parse(text).ok_or("expected size, balanced or latency")
+    }
+}
+
 /// The parameters a training run should honour.
 ///
 /// [`Self::name_block_shift`] pins one shift; when it is `None`, training measures
@@ -190,6 +198,11 @@ mod tests {
         assert_eq!(Priority::parse("BALANCED"), Some(Priority::Balanced));
         assert_eq!(Priority::parse("Latency"), Some(Priority::Latency));
         assert_eq!(Priority::parse("fast"), None);
+        assert_eq!("size".parse::<Priority>(), Ok(Priority::Size));
+        assert_eq!(
+            "fast".parse::<Priority>(),
+            Err("expected size, balanced or latency")
+        );
         assert_eq!(Priority::Size.as_str(), "size");
         assert_eq!(Priority::default(), Priority::Balanced);
     }

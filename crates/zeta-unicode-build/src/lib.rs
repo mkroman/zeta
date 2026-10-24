@@ -35,14 +35,15 @@ pub use error::Error;
 pub use manifest::write_manifest;
 pub use nomina::emoji::EmojiStats;
 pub use nomina::gc::GcStats;
+pub use nomina::names::NameStats;
 pub use nomina::patterns::PatternStats;
 pub use profile::{
     BALANCED_MAX_SHIFT, ChosenProfile, DEFAULT_CANDIDATE_SHIFTS, DEFAULT_MAX_TABLE_BYTES,
     MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT, Priority, Profile,
 };
 pub use train::{
-    BaselineComparison, Candidate, Error as TrainError, ImageLayout, NameStats, SectionRecord,
-    TrainOutput, VERIFICATION_CHECKS, train, verify,
+    BaselineComparison, Candidate, Error as TrainError, ImageLayout, SectionRecord, TrainOutput,
+    VERIFICATION_CHECKS, train, verify,
 };
 pub use ucd::{InputError, InputPaths, Inputs, read_inputs, read_version};
 

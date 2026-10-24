@@ -30,30 +30,16 @@
 //! future range below U+1000 formats the way the trainer's verifier writes it.
 
 use bytes::Buf;
-use zeta_unicode_format::{UNICODE_END, read_varint, write_hex};
+use zeta_unicode_format::{
+    DIRECTORY_AT, DIRECTORY_ENTRY_LEN, NAME_BLOCK_SHIFT_AT, NAME_LAYOUT_AT, SECTION_COUNT_AT,
+    UNICODE_END, read_varint, write_pattern_name,
+};
 
-use super::names::{self, Layout, Names};
+use super::names::{self, NameLayout, Names};
 
-/// The image magic.
-pub const MAGIC: &[u8; 4] = b"NOM1";
-/// The number of sections in the image.
-pub const SECTION_COUNT: usize = 4;
-/// The section id of the stored names.
-pub const NAMES: usize = 0;
-/// The section id of the emoji entries.
-pub const EMOJI: usize = 1;
-/// The section id of the general category.
-pub const GC: usize = 2;
-/// The section id of the `*` patterns.
-pub const PATTERNS: usize = 3;
-/// The size of the padded image header.
-pub const HEADER_LEN: usize = 64;
-/// The general-category page shift the shipped image uses.
-pub const GC_PAGE_SHIFT: u8 = 11;
-/// The offset of the section directory in the header.
-const DIRECTORY_AT: usize = 14;
-/// The size of one `(offset, length)` directory entry.
-const DIRECTORY_ENTRY_LEN: usize = 8;
+pub use zeta_unicode_format::{
+    EMOJI, GC, GC_PAGE_SHIFT, GC_PAGE_SHIFT_AT, HEADER_LEN, MAGIC, NAMES, PATTERNS, SECTION_COUNT,
+};
 
 /// Returns the payload of section `id` from a Nomina image.
 ///
@@ -61,11 +47,11 @@ const DIRECTORY_ENTRY_LEN: usize = 8;
 /// section does not build the name decoder. Returns `None` for a foreign magic, a different
 /// section count, an unknown id or an out-of-bounds range.
 #[must_use]
-pub fn section(table: &'static [u8], id: usize) -> Option<&'static [u8]> {
+pub fn section(table: &[u8], id: usize) -> Option<&[u8]> {
     if table.len() < HEADER_LEN || table.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
         return None;
     }
-    if usize::from(*table.get(10)?) != SECTION_COUNT {
+    if usize::from(*table.get(SECTION_COUNT_AT)?) != SECTION_COUNT {
         return None;
     }
     if id >= SECTION_COUNT {
@@ -79,34 +65,34 @@ pub fn section(table: &'static [u8], id: usize) -> Option<&'static [u8]> {
 }
 
 /// A parsed Nomina image.
-pub struct Nomina {
+pub struct Nomina<'a> {
     /// The decoded name section.
-    names: Names,
+    names: Names<'a>,
     /// The `*`-pattern section.
-    patterns: Patterns,
+    patterns: Patterns<'a>,
 }
 
-impl Nomina {
+impl<'a> Nomina<'a> {
     /// Parses a Nomina image.
     ///
     /// Returns `None` when the magic, section count, header shifts, section bounds or the
     /// name section are invalid. The image must live for `'static` because every returned
     /// name borrows from it.
     #[must_use]
-    pub fn new(table: &'static [u8]) -> Option<Self> {
+    pub fn new(table: &'a [u8]) -> Option<Self> {
         if table.len() < HEADER_LEN || table.get(..4) != Some(MAGIC.as_slice()) {
             return None;
         }
-        let section_count = *table.get(10)?;
+        let section_count = *table.get(SECTION_COUNT_AT)?;
         if usize::from(section_count) != SECTION_COUNT {
             return None;
         }
-        let block_shift = *table.get(11)?;
-        let page_shift = *table.get(12)?;
+        let block_shift = *table.get(NAME_BLOCK_SHIFT_AT)?;
+        let page_shift = *table.get(GC_PAGE_SHIFT_AT)?;
         if page_shift != GC_PAGE_SHIFT {
             return None;
         }
-        let layout = Layout::from_id(*table.get(13)?)?;
+        let layout = NameLayout::from_id(*table.get(NAME_LAYOUT_AT)?)?;
 
         let mut sections = [None; SECTION_COUNT];
         for (id, slot) in sections.iter_mut().enumerate() {
@@ -145,109 +131,87 @@ impl Nomina {
 }
 
 /// The `*`-pattern section.
-struct Patterns {
-    /// Number of ranges.
-    count: usize,
-    /// Prefix strings, by dictionary id.
-    prefixes: Vec<&'static str>,
-    /// Suffix strings, by dictionary id.
-    suffixes: Vec<&'static str>,
-    /// The range records.
-    records: &'static [u8],
+struct Patterns<'a> {
+    /// The validated ranges, sorted by start code point and non-overlapping.
+    ranges: Vec<Pattern<'a>>,
 }
 
-impl Patterns {
+/// One validated `*`-pattern range.
+struct Pattern<'a> {
+    /// First code point in the range.
+    start: u32,
+    /// Last code point in the range, inclusive.
+    end: u32,
+    /// Text before the `*` placeholder.
+    prefix: &'a str,
+    /// Text after the `*` placeholder.
+    suffix: &'a str,
+}
+
+impl<'a> Patterns<'a> {
     /// Parses a pattern section; an empty section is valid and matches nothing.
-    fn new(section: &'static [u8]) -> Option<Self> {
+    fn new(section: &'a [u8]) -> Option<Self> {
         if section.is_empty() {
-            return Some(Self {
-                count: 0,
-                prefixes: Vec::new(),
-                suffixes: Vec::new(),
-                records: &[],
-            });
+            return Some(Self { ranges: Vec::new() });
         }
         let count = usize::from(*section.first()?);
         let (prefixes, at) = read_dictionary(section, 1)?;
         let (suffixes, at) = read_dictionary(section, at)?;
-        let records = section.get(at..)?;
-
-        // Validate every record now, so the lookup path can assume well-formed varints.
-        let mut cursor = 0usize;
-        let mut previous = 0u32;
+        let mut records = section.get(at..)?;
+        let mut ranges = Vec::with_capacity(count);
+        let mut previous_end = None;
+        let mut previous_start = 0u32;
         for _ in 0..count {
-            let (delta, used) = read_varint(records.get(cursor..)?)?;
-            cursor += used;
-            let (length, used) = read_varint(records.get(cursor..)?)?;
-            cursor += used;
-            let prefix = *records.get(cursor)?;
-            let suffix = *records.get(cursor + 1)?;
-            cursor += 2;
-            if length == 0
-                || usize::from(prefix) >= prefixes.len()
-                || usize::from(suffix) >= suffixes.len()
+            let (delta, used) = read_varint(records)?;
+            records = records.get(used..)?;
+            let (length, used) = read_varint(records)?;
+            records = records.get(used..)?;
+            let prefix = *prefixes.get(usize::from(*records.first()?))?;
+            let suffix = *suffixes.get(usize::from(*records.get(1)?))?;
+            records = records.get(2..)?;
+
+            let start = previous_start.checked_add(delta)?;
+            let length = length.checked_sub(1)?;
+            let end = start.checked_add(length)?;
+            if start > UNICODE_END
+                || end > UNICODE_END
+                || previous_end.is_some_and(|previous| start <= previous)
             {
                 return None;
             }
-            let start = previous.checked_add(delta)?;
-            if start > UNICODE_END || start.checked_add(length - 1)? > UNICODE_END {
-                return None;
-            }
-            previous = start;
+            ranges.push(Pattern {
+                start,
+                end,
+                prefix,
+                suffix,
+            });
+            previous_start = start;
+            previous_end = Some(end);
         }
-        if cursor != records.len() {
+        if !records.is_empty() {
             return None;
         }
-        Some(Self {
-            count,
-            prefixes,
-            suffixes,
-            records,
-        })
+        Some(Self { ranges })
     }
 
     /// Appends the pattern name of `cp` to `out`, returning `false` when no range covers it.
     fn write(&self, cp: u32, out: &mut String) -> bool {
-        self.write_pattern(cp, out).unwrap_or(false)
-    }
-
-    /// The fallible body of [`Self::write`].
-    fn write_pattern(&self, cp: u32, out: &mut String) -> Option<bool> {
-        let mut cursor = 0usize;
-        let mut previous = 0u32;
-        for _ in 0..self.count {
-            let (delta, used) = read_varint(self.records.get(cursor..)?)?;
-            cursor += used;
-            let (length, used) = read_varint(self.records.get(cursor..)?)?;
-            cursor += used;
-            let prefix = *self.prefixes.get(usize::from(*self.records.get(cursor)?))?;
-            let suffix = *self
-                .suffixes
-                .get(usize::from(*self.records.get(cursor + 1)?))?;
-            cursor += 2;
-            let start = previous.checked_add(delta)?;
-            let end = start.checked_add(length)?;
-            previous = start;
-            if cp < start {
-                return Some(false);
-            }
-            if cp < end {
-                // Both dictionaries were validated as UTF-8 in [`Self::new`], so the whole
-                // name is appended or nothing is.
-                out.push_str(prefix);
-                push_hex(out, cp);
-                out.push_str(suffix);
-                return Some(true);
-            }
+        let index = self.ranges.partition_point(|range| range.end < cp);
+        let Some(pattern) = self.ranges.get(index) else {
+            return false;
+        };
+        if cp < pattern.start {
+            return false;
         }
-        Some(false)
+        write_pattern_name(pattern.prefix, pattern.suffix, cp, out);
+        true
     }
 }
 
 /// Reads a `u8`-counted dictionary of `u8`-length UTF-8 strings, returning it and the next
 /// offset. A dictionary entry that is not valid UTF-8 rejects the section, so a lookup can
 /// push the strings it returns without a partial write.
-fn read_dictionary(section: &'static [u8], at: usize) -> Option<(Vec<&'static str>, usize)> {
+fn read_dictionary(section: &[u8], at: usize) -> Option<(Vec<&str>, usize)> {
     let count = usize::from(*section.get(at)?);
     let mut cursor = at + 1;
     let mut dictionary = Vec::with_capacity(count);
@@ -261,18 +225,9 @@ fn read_dictionary(section: &'static [u8], at: usize) -> Option<(Vec<&'static st
     Some((dictionary, cursor))
 }
 
-/// Appends the upper-case hex of `cp`, padded to at least four digits the way Unicode spells
-/// its `*` placeholder and the trainer's verifier writes it (`U+3400` is four digits,
-/// `U+18CFF` five).
-fn push_hex(out: &mut String, cp: u32) {
-    let mut digits = [0u8; 8];
-    let used = write_hex(&mut digits, cp, 4);
-    out.push_str(std::str::from_utf8(&digits[..used]).expect("hex digits are ASCII"));
-}
-
 #[cfg(test)]
 mod tests {
-    use zeta_unicode_format::write_varint;
+    use zeta_unicode_format::{NAME_PAGE_COUNT, NAME_PAGE_SHIFT, VERSION_AT, write_varint};
 
     use super::*;
 
@@ -313,12 +268,11 @@ mod tests {
 
     #[test]
     fn patterns_resolve_prefix_hex_and_suffix() {
-        let section: &'static [u8] = pattern_section(&[
+        let section = pattern_section(&[
             (0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", ""),
             (0x18CFF, 0x18CFF, "KHITAN SMALL SCRIPT CHARACTER-", "-X"),
-        ])
-        .leak();
-        let patterns = Patterns::new(section).expect("a valid pattern section");
+        ]);
+        let patterns = Patterns::new(&section).expect("a valid pattern section");
 
         let mut out = String::new();
         assert!(patterns.write(0x3400, &mut out));
@@ -344,16 +298,15 @@ mod tests {
 
     #[test]
     fn a_truncated_pattern_section_is_rejected() {
-        let section: &'static [u8] =
-            pattern_section(&[(0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", "")]).leak();
-        assert!(Patterns::new(section).is_some());
+        let section = pattern_section(&[(0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", "")]);
+        assert!(Patterns::new(&section).is_some());
         assert!(Patterns::new(&section[..section.len() - 1]).is_none());
     }
 
     #[test]
     fn every_truncation_of_a_pattern_section_is_rejected() {
-        let section: &'static [u8] = pattern_section(&[(0x41, 0x41, "A-", "")]).leak();
-        assert!(Patterns::new(section).is_some());
+        let section = pattern_section(&[(0x41, 0x41, "A-", "")]);
+        assert!(Patterns::new(&section).is_some());
         // An empty section is a valid, empty table rather than a truncated one.
         assert!(Patterns::new(&section[..0]).is_some());
         for length in 1..section.len() {
@@ -366,12 +319,11 @@ mod tests {
 
     #[test]
     fn pattern_hex_is_padded_to_four_digits() {
-        let section: &'static [u8] = pattern_section(&[
+        let section = pattern_section(&[
             (0x10, 0x12, "TEST-", ""),
             (0x18CFF, 0x18CFF, "LONGER-", "-END"),
-        ])
-        .leak();
-        let patterns = Patterns::new(section).expect("a valid pattern section");
+        ]);
+        let patterns = Patterns::new(&section).expect("a valid pattern section");
 
         let mut out = String::new();
         assert!(patterns.write(0x10, &mut out));
@@ -395,13 +347,12 @@ mod tests {
     #[test]
     fn a_pattern_section_with_non_utf8_dictionaries_is_rejected() {
         // One pattern whose prefix dictionary entry is not valid UTF-8.
-        let prefix_case: &'static [u8] = vec![1, 1, 2, 0xFF, 0xFE, 0, 0x41, 1, 0, 0].leak();
-        assert!(Patterns::new(prefix_case).is_none());
+        let prefix_case = vec![1, 1, 2, 0xFF, 0xFE, 0, 0x41, 1, 0, 0];
+        assert!(Patterns::new(&prefix_case).is_none());
 
         // The suffix dictionary is validated the same way.
-        let suffix_case: &'static [u8] =
-            vec![1, 1, 1, b'A', 1, 2, 0xFF, 0xFE, 0x41, 1, 0, 0].leak();
-        assert!(Patterns::new(suffix_case).is_none());
+        let suffix_case = vec![1, 1, 1, b'A', 1, 2, 0xFF, 0xFE, 0x41, 1, 0, 0];
+        assert!(Patterns::new(&suffix_case).is_none());
     }
 
     /// One flat model: every symbol is an eight-bit code.
@@ -415,9 +366,66 @@ mod tests {
         blob
     }
 
+    /// The maximal runs of consecutive code points in `entries`.
+    fn runs(entries: &[(u32, String)]) -> Vec<(u32, u32, u32)> {
+        let mut runs = Vec::new();
+        let mut start = 0usize;
+        for id in 1..=entries.len() {
+            if id == entries.len() || entries[id].0 != entries[id - 1].0 + 1 {
+                runs.push((
+                    entries[start].0,
+                    u32::try_from(id - start).expect("run length"),
+                    u32::try_from(start).expect("base id"),
+                ));
+                start = id;
+            }
+        }
+        runs
+    }
+
+    /// Appends the header, page directory and run records shared by both layouts.
+    fn push_index(
+        section: &mut Vec<u8>,
+        entries: &[(u32, String)],
+        block_count: usize,
+        runs: &[(u32, u32, u32)],
+    ) {
+        section.extend_from_slice(&u32::try_from(entries.len()).unwrap().to_le_bytes());
+        section.extend_from_slice(&u32::try_from(block_count).unwrap().to_le_bytes());
+        section.extend_from_slice(&u16::try_from(runs.len()).unwrap().to_le_bytes());
+        section.extend_from_slice(&u16::try_from(NAME_PAGE_COUNT).unwrap().to_le_bytes());
+        let mut index = 0usize;
+        for page in 0..NAME_PAGE_COUNT {
+            let base = u32::try_from(page).unwrap() << NAME_PAGE_SHIFT;
+            while index < runs.len() && runs[index].0 + runs[index].1 <= base {
+                index += 1;
+            }
+            section.extend_from_slice(&u16::try_from(index).unwrap().to_le_bytes());
+        }
+        for &(first, length, base) in runs {
+            section.extend_from_slice(&first.to_le_bytes());
+            section.extend_from_slice(&u16::try_from(length).unwrap().to_le_bytes());
+            section.extend_from_slice(&u16::try_from(base).unwrap().to_le_bytes());
+        }
+        while !section.len().is_multiple_of(4) {
+            section.push(0);
+        }
+    }
+
+    /// Appends a flat model area: `count` copies of `model`, each symbol eight bits wide.
+    fn push_flat_models(section: &mut Vec<u8>, context: u8, count: u16, model: &[u8]) {
+        section.extend_from_slice(&[context; 256]);
+        section.extend_from_slice(&count.to_le_bytes());
+        for slot in 0..count {
+            section.extend_from_slice(&(slot * u16::try_from(model.len()).unwrap()).to_le_bytes());
+        }
+        for _ in 0..count {
+            section.extend_from_slice(model);
+        }
+    }
+
     /// Builds a name section whose bitstream is exactly `prefix, suffix bytes, 0` per entry.
     fn name_section(entries: &[(u32, String)]) -> Vec<u8> {
-        const PAGE_COUNT: usize = 545;
         let block_size = 32usize;
         let block_count = entries.len().div_ceil(block_size);
 
@@ -440,64 +448,20 @@ mod tests {
             }
         }
 
-        let mut runs: Vec<(u32, u32, u32)> = Vec::new();
-        let mut start = 0usize;
-        for id in 1..=entries.len() {
-            if id == entries.len() || entries[id].0 != entries[id - 1].0 + 1 {
-                runs.push((
-                    entries[start].0,
-                    u32::try_from(id - start).expect("run length"),
-                    u32::try_from(start).expect("base id"),
-                ));
-                start = id;
-            }
-        }
-
+        let runs = runs(entries);
         let mut section = Vec::new();
-        section.extend_from_slice(&u32::try_from(entries.len()).unwrap().to_le_bytes());
-        section.extend_from_slice(&u32::try_from(block_count).unwrap().to_le_bytes());
-        section.extend_from_slice(&u16::try_from(runs.len()).unwrap().to_le_bytes());
-        section.extend_from_slice(&u16::try_from(PAGE_COUNT).unwrap().to_le_bytes());
-        let mut directory = Vec::with_capacity(PAGE_COUNT);
-        let mut index = 0usize;
-        for page in 0..PAGE_COUNT {
-            let base = u32::try_from(page).unwrap() << 11;
-            while index < runs.len() && runs[index].0 + runs[index].1 <= base {
-                index += 1;
-            }
-            directory.push(u16::try_from(index).unwrap());
-        }
-        for first in directory {
-            section.extend_from_slice(&first.to_le_bytes());
-        }
-        for (first, length, base) in &runs {
-            section.extend_from_slice(&first.to_le_bytes());
-            section.extend_from_slice(&u16::try_from(*length).unwrap().to_le_bytes());
-            section.extend_from_slice(&u16::try_from(*base).unwrap().to_le_bytes());
-        }
-        while !section.len().is_multiple_of(4) {
-            section.push(0);
-        }
+        push_index(&mut section, entries, block_count, &runs);
         for bit in &block_bits {
             section.extend_from_slice(&bit.to_le_bytes());
         }
-
-        // Context map: every previous byte selects model 1.
-        section.extend_from_slice(&[1u8; 256]);
-        section.extend_from_slice(&2u16.to_le_bytes());
         let model = flat_model();
-        let model_len = u16::try_from(model.len()).unwrap();
-        section.extend_from_slice(&0u16.to_le_bytes());
-        section.extend_from_slice(&model_len.to_le_bytes());
-        section.extend_from_slice(&model);
-        section.extend_from_slice(&model);
+        push_flat_models(&mut section, 1, 2, &model);
         section.extend_from_slice(&stream);
         section
     }
 
     /// Builds a global, checkpointed name section with flat eight-bit models.
     fn global_name_section(entries: &[(u32, String)]) -> Vec<u8> {
-        const PAGE_COUNT: usize = 545;
         const BLOCK_SIZE: usize = 32;
         let block_count = entries.len().div_ceil(BLOCK_SIZE);
 
@@ -540,57 +504,14 @@ mod tests {
             stream.push(0);
         }
 
-        let mut runs: Vec<(u32, u32, u32)> = Vec::new();
-        let mut start = 0usize;
-        for id in 1..=entries.len() {
-            if id == entries.len() || entries[id].0 != entries[id - 1].0 + 1 {
-                runs.push((
-                    entries[start].0,
-                    u32::try_from(id - start).unwrap(),
-                    u32::try_from(start).unwrap(),
-                ));
-                start = id;
-            }
-        }
-
+        let runs = runs(entries);
         let mut section = Vec::new();
-        section.extend_from_slice(&u32::try_from(entries.len()).unwrap().to_le_bytes());
-        section.extend_from_slice(&u32::try_from(block_count).unwrap().to_le_bytes());
-        section.extend_from_slice(&u16::try_from(runs.len()).unwrap().to_le_bytes());
-        section.extend_from_slice(&u16::try_from(PAGE_COUNT).unwrap().to_le_bytes());
-        let mut directory = Vec::with_capacity(PAGE_COUNT);
-        let mut index = 0usize;
-        for page in 0..PAGE_COUNT {
-            let base = u32::try_from(page).unwrap() << 11;
-            while index < runs.len() && runs[index].0 + runs[index].1 <= base {
-                index += 1;
-            }
-            directory.push(u16::try_from(index).unwrap());
-        }
-        for first in directory {
-            section.extend_from_slice(&first.to_le_bytes());
-        }
-        for (first, length, base) in &runs {
-            section.extend_from_slice(&first.to_le_bytes());
-            section.extend_from_slice(&u16::try_from(*length).unwrap().to_le_bytes());
-            section.extend_from_slice(&u16::try_from(*base).unwrap().to_le_bytes());
-        }
-        while !section.len().is_multiple_of(4) {
-            section.push(0);
-        }
+        push_index(&mut section, entries, block_count, &runs);
         for bit in block_bits {
             section.extend_from_slice(&bit.to_le_bytes());
         }
-
         let model = flat_model();
-        section.extend_from_slice(&[2u8; 256]);
-        section.extend_from_slice(&5u16.to_le_bytes());
-        for slot in 0..5u16 {
-            section.extend_from_slice(&(slot * u16::try_from(model.len()).unwrap()).to_le_bytes());
-        }
-        for _ in 0..5 {
-            section.extend_from_slice(&model);
-        }
+        push_flat_models(&mut section, 2, 5, &model);
         section.extend_from_slice(&stream);
         section
     }
@@ -604,20 +525,20 @@ mod tests {
     fn pack_image_layout(sections: [&[u8]; 4], layout: u8) -> Vec<u8> {
         let mut image = vec![0u8; HEADER_LEN];
         image[..4].copy_from_slice(MAGIC);
-        image[4..6].copy_from_slice(&18u16.to_le_bytes());
-        image[6..8].copy_from_slice(&0u16.to_le_bytes());
-        image[8..10].copy_from_slice(&0u16.to_le_bytes());
-        image[10] = 4;
-        image[11] = 5;
-        image[12] = 11;
-        image[13] = layout;
+        image[VERSION_AT..VERSION_AT + 2].copy_from_slice(&18u16.to_le_bytes());
+        image[VERSION_AT + 2..VERSION_AT + 4].copy_from_slice(&0u16.to_le_bytes());
+        image[VERSION_AT + 4..VERSION_AT + 6].copy_from_slice(&0u16.to_le_bytes());
+        image[SECTION_COUNT_AT] = u8::try_from(SECTION_COUNT).unwrap();
+        image[NAME_BLOCK_SHIFT_AT] = 5;
+        image[GC_PAGE_SHIFT_AT] = GC_PAGE_SHIFT;
+        image[NAME_LAYOUT_AT] = layout;
         for (id, section) in sections.iter().enumerate() {
             while !image.len().is_multiple_of(8) {
                 image.push(0);
             }
             let offset = u32::try_from(image.len()).unwrap();
             let length = u32::try_from(section.len()).unwrap();
-            let at = 14 + id * 8;
+            let at = DIRECTORY_AT + id * DIRECTORY_ENTRY_LEN;
             image[at..at + 4].copy_from_slice(&offset.to_le_bytes());
             image[at + 4..at + 8].copy_from_slice(&length.to_le_bytes());
             image.extend_from_slice(section);
@@ -643,14 +564,13 @@ mod tests {
     #[test]
     fn synthetic_image_resolves_every_name_in_any_order() {
         let entries = corpus();
-        let patterns: &'static [u8] = pattern_section(&[
+        let patterns = pattern_section(&[
             (0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", ""),
             (0x18CFF, 0x18CFF, "KHITAN SMALL SCRIPT CHARACTER-", ""),
-        ])
-        .leak();
-        let names: &'static [u8] = name_section(&entries).leak();
-        let image: &'static [u8] = pack_image([names, &[], &[], patterns]).leak();
-        let mut nomina = Nomina::new(image).expect("a valid image");
+        ]);
+        let names = name_section(&entries);
+        let image = pack_image([&names, &[], &[], &patterns]);
+        let mut nomina = Nomina::new(&image).expect("a valid image");
 
         for (cp, name) in &entries {
             let mut out = String::new();
@@ -688,9 +608,9 @@ mod tests {
     #[test]
     fn synthetic_global_image_resolves_every_name_in_any_order() {
         let entries = corpus();
-        let names: &'static [u8] = global_name_section(&entries).leak();
-        let image: &'static [u8] = pack_image_layout([names, &[], &[], &[]], 1).leak();
-        let mut nomina = Nomina::new(image).expect("a valid global image");
+        let names = global_name_section(&entries);
+        let image = pack_image_layout([&names, &[], &[], &[]], 1);
+        let mut nomina = Nomina::new(&image).expect("a valid global image");
 
         for (cp, name) in &entries {
             let mut out = String::new();
@@ -719,14 +639,13 @@ mod tests {
 
     #[test]
     fn synthetic_image_composes_hangul_and_patterns() {
-        let names: &'static [u8] = name_section(&corpus()).leak();
-        let patterns: &'static [u8] = pattern_section(&[
+        let names = name_section(&corpus());
+        let patterns = pattern_section(&[
             (0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", ""),
             (0x18CFF, 0x18CFF, "KHITAN SMALL SCRIPT CHARACTER-", "-X"),
-        ])
-        .leak();
-        let image: &'static [u8] = pack_image([names, &[], &[], patterns]).leak();
-        let mut nomina = Nomina::new(image).expect("a valid image");
+        ]);
+        let image = pack_image([&names, &[], &[], &patterns]);
+        let mut nomina = Nomina::new(&image).expect("a valid image");
 
         let mut out = String::new();
         assert!(nomina.write_name(0xAC00, &mut out));
@@ -744,15 +663,14 @@ mod tests {
 
     #[test]
     fn sections_are_returned_verbatim() {
-        let names: &'static [u8] = name_section(&corpus()).leak();
-        let patterns: &'static [u8] =
-            pattern_section(&[(0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", "")]).leak();
-        let image: &'static [u8] = pack_image([names, b"emoji", b"gc", patterns]).leak();
-        assert_eq!(section(image, NAMES), Some(names));
-        assert_eq!(section(image, EMOJI), Some(b"emoji".as_slice()));
-        assert_eq!(section(image, GC), Some(b"gc".as_slice()));
-        assert_eq!(section(image, PATTERNS), Some(patterns));
-        assert_eq!(section(image, SECTION_COUNT), None);
+        let names = name_section(&corpus());
+        let patterns = pattern_section(&[(0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", "")]);
+        let image = pack_image([&names, b"emoji", b"gc", &patterns]);
+        assert_eq!(section(&image, NAMES), Some(names.as_slice()));
+        assert_eq!(section(&image, EMOJI), Some(b"emoji".as_slice()));
+        assert_eq!(section(&image, GC), Some(b"gc".as_slice()));
+        assert_eq!(section(&image, PATTERNS), Some(patterns.as_slice()));
+        assert_eq!(section(&image, SECTION_COUNT), None);
         assert_eq!(section(b"nope", NAMES), None);
     }
 
@@ -761,35 +679,44 @@ mod tests {
         assert!(Nomina::new(&[]).is_none());
         assert!(Nomina::new(b"nope").is_none());
 
-        let names: &'static [u8] = name_section(&corpus()).leak();
-        let image: &'static [u8] = pack_image([names, &[], &[], &[]]).leak();
-        assert!(Nomina::new(image).is_some());
+        let names = name_section(&corpus());
+        let image = pack_image([&names, &[], &[], &[]]);
+        assert!(Nomina::new(&image).is_some());
 
-        let mut wrong_magic = image.to_vec();
+        let mut wrong_magic = image.clone();
         wrong_magic[0] = b'X';
-        assert!(Nomina::new(wrong_magic.leak()).is_none());
+        assert!(Nomina::new(&wrong_magic).is_none());
 
-        let mut wrong_count = image.to_vec();
-        wrong_count[10] = 3;
-        assert!(Nomina::new(wrong_count.leak()).is_none());
+        let mut wrong_count = image.clone();
+        wrong_count[SECTION_COUNT_AT] = 3;
+        assert!(Nomina::new(&wrong_count).is_none());
 
-        let mut wrong_page = image.to_vec();
-        wrong_page[12] = 10;
-        assert!(Nomina::new(wrong_page.leak()).is_none());
+        let mut wrong_page = image.clone();
+        wrong_page[GC_PAGE_SHIFT_AT] = 10;
+        assert!(Nomina::new(&wrong_page).is_none());
 
-        let mut wrong_shift = image.to_vec();
-        wrong_shift[11] = 0;
-        assert!(Nomina::new(wrong_shift.leak()).is_none());
-        let mut wrong_shift = image.to_vec();
-        wrong_shift[11] = 9;
-        assert!(Nomina::new(wrong_shift.leak()).is_none());
+        let mut wrong_shift = image.clone();
+        wrong_shift[NAME_BLOCK_SHIFT_AT] = 0;
+        assert!(Nomina::new(&wrong_shift).is_none());
+        let mut wrong_shift = image.clone();
+        wrong_shift[NAME_BLOCK_SHIFT_AT] = 9;
+        assert!(Nomina::new(&wrong_shift).is_none());
 
-        let mut wrong_layout = image.to_vec();
-        wrong_layout[13] = 2;
-        assert!(Nomina::new(wrong_layout.leak()).is_none());
+        let mut wrong_layout = image.clone();
+        wrong_layout[NAME_LAYOUT_AT] = 2;
+        assert!(Nomina::new(&wrong_layout).is_none());
 
-        let mut out_of_bounds = image.to_vec();
-        out_of_bounds[14..18].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(Nomina::new(out_of_bounds.leak()).is_none());
+        let mut out_of_bounds = image;
+        out_of_bounds[DIRECTORY_AT..DIRECTORY_AT + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(Nomina::new(&out_of_bounds).is_none());
+    }
+    #[test]
+    fn every_truncation_of_an_image_is_rejected() {
+        let names = name_section(&corpus());
+        let image = pack_image([&names, &[], &[], &[]]);
+        assert!(Nomina::new(&image).is_some());
+        for length in 0..image.len() {
+            assert!(Nomina::new(&image[..length]).is_none(), "length {length}");
+        }
     }
 }

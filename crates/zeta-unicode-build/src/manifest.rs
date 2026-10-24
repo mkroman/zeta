@@ -4,8 +4,9 @@
 //! FNV-1a 64 hash, then every packed section with its file offset and size. It carries no
 //! timestamps and no absolute paths, so the same inputs always render the same bytes.
 
-use std::fmt::Write as _;
 use std::path::{Component, Path};
+
+use serde::Serialize;
 
 use crate::train::TrainOutput;
 
@@ -13,6 +14,8 @@ use crate::train::TrainOutput;
 const FORMAT: &str = "zeta-unicode-manifest";
 /// The manifest schema version.
 const FORMAT_VERSION: u32 = 1;
+/// The generator name recorded in the manifest.
+const TOOL_NAME: &str = "zeta-unicode-build";
 
 /// The FNV-1a 64 offset basis.
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
@@ -21,33 +24,81 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// Computes the 64-bit FNV-1a hash of `bytes`.
 #[must_use]
-pub fn fnv1a64(bytes: &[u8]) -> u64 {
+fn fnv1a64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(FNV_OFFSET_BASIS, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
     })
 }
 
-/// Appends the tool name and version shared by the manifest.
-fn push_tool(out: &mut String) {
-    out.push_str("  \"tool\": {\n    \"name\": ");
-    push_json_string(out, "zeta-unicode-build");
-    out.push_str(",\n    \"version\": ");
-    push_json_string(out, env!("CARGO_PKG_VERSION"));
-    out.push_str("\n  },\n");
+/// The serializable `manifest.json` schema.
+#[derive(Serialize)]
+struct Manifest<'a> {
+    /// The schema discriminator.
+    format: &'static str,
+    /// The schema version.
+    format_version: u32,
+    /// The generator that produced the image.
+    tool: Tool,
+    /// The image format discriminator.
+    layout: &'static str,
+    /// The name section layout.
+    name_layout: &'static str,
+    /// The Unicode release the inputs advertise.
+    unicode_version: (u8, u8, u8),
+    /// The independent Emoji release of `emoji-test.txt`.
+    emoji_version: (u8, u8),
+    /// The chosen training profile.
+    profile: ProfileEntry<'a>,
+    /// The packed image sections.
+    sections: &'a [crate::train::SectionRecord],
+    /// The complete image size.
+    total_bytes: usize,
+    /// The hashed UCD inputs.
+    inputs: &'a [InputRecord],
+    /// Every measured name-block candidate.
+    candidates: &'a [crate::train::Candidate],
+    /// The checks the training run performed.
+    verification: Verification<'a>,
 }
 
-/// Appends the Unicode and Emoji versions to the manifest.
-fn push_versions(out: &mut String, inputs: &crate::ucd::Inputs) {
-    let _ = writeln!(
-        out,
-        "  \"unicode_version\": [{}, {}, {}],",
-        inputs.version.0, inputs.version.1, inputs.version.2
-    );
-    let _ = writeln!(
-        out,
-        "  \"emoji_version\": [{}, {}],",
-        inputs.emoji_version.0, inputs.emoji_version.1
-    );
+/// The generator name and version.
+#[derive(Serialize)]
+struct Tool {
+    /// The generator crate name.
+    name: &'static str,
+    /// The generator crate version.
+    version: &'static str,
+}
+
+/// The chosen profile and its parameters.
+#[derive(Serialize)]
+struct ProfileEntry<'a> {
+    /// The priority rule that selected the candidate.
+    name: &'static str,
+    /// The resolved profile parameters.
+    parameters: ProfileParameters<'a>,
+}
+
+/// The resolved profile parameters.
+#[derive(Serialize)]
+struct ProfileParameters<'a> {
+    /// The name-block shift the image was built with.
+    name_block_shift: u8,
+    /// The image budget the run was checked against.
+    max_table_bytes: usize,
+    /// The tolerated growth over a baseline.
+    max_delta_bytes: usize,
+    /// Every candidate shift the run measured.
+    candidates: &'a [u8],
+}
+
+/// The verification status and checks.
+#[derive(Serialize)]
+struct Verification<'a> {
+    /// The status written for a successful run.
+    status: &'static str,
+    /// The checks that ran.
+    checks: &'a [&'static str],
 }
 
 /// Writes `manifest.json` for one Nomina training run.
@@ -60,8 +111,9 @@ fn push_versions(out: &mut String, inputs: &crate::ucd::Inputs) {
 ///
 /// # Errors
 ///
-/// Returns [`Error`](crate::Error) when `manifest.json` cannot be written, or when an input
-/// path is not inside `data_dir`.
+/// Returns [`Error`](crate::Error) when an input cannot be read, when an input path is not
+/// inside `data_dir`, when the manifest cannot be serialized, or when `manifest.json` cannot be
+/// written.
 pub fn write_manifest(
     data_dir: &Path,
     out_dir: &Path,
@@ -70,144 +122,62 @@ pub fn write_manifest(
 ) -> Result<(), crate::Error> {
     let mut records = input_records(data_dir, inputs)?;
     records.sort();
-    let text = render_manifest(inputs, output, &records);
+    let text = render_manifest(inputs, output, &records)?;
     crate::write(out_dir.join("manifest.json"), text)
 }
 
-/// Appends a JSON array of objects, one per line, followed by a comma.
-///
-/// `key` includes the indentation and the quoted member name, e.g. `"  \"sections\": "`.
-fn push_array<T>(
-    out: &mut String,
-    key: &str,
-    items: &[T],
-    mut render: impl FnMut(&mut String, &T),
-) {
-    out.push_str(key);
-    out.push('[');
-    for (index, item) in items.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        out.push_str("\n    ");
-        render(out, item);
-    }
-    if !items.is_empty() {
-        out.push_str("\n  ");
-    }
-    out.push_str("],\n");
-}
-
 /// Renders the Nomina manifest for one training run.
-#[allow(
-    clippy::too_many_lines,
-    reason = "one linear JSON rendering pass, like the legacy manifest"
-)]
+///
+/// # Errors
+///
+/// Returns [`Error::Json`](crate::Error::Json) when the schema cannot be serialized.
 fn render_manifest(
     inputs: &crate::ucd::Inputs,
     output: &TrainOutput,
     records: &[InputRecord],
-) -> String {
-    let mut out = String::with_capacity(4_096);
-    out.push_str("{\n  \"format\": ");
-    push_json_string(&mut out, FORMAT);
-    let _ = writeln!(out, ",\n  \"format_version\": {FORMAT_VERSION},");
-    push_tool(&mut out);
-    out.push_str("  \"layout\": \"nomina\",\n");
-    out.push_str("  \"name_layout\": ");
-    push_json_string(
-        &mut out,
-        match output.names.layout {
-            crate::nomina::names::NameLayout::BlockLocal => "block-local",
-            crate::nomina::names::NameLayout::Global => "global-checkpointed",
+) -> Result<String, crate::Error> {
+    let name_layout = match output.names.layout {
+        crate::nomina::names::NameLayout::BlockLocal => "block-local",
+        crate::nomina::names::NameLayout::Global => "global-checkpointed",
+    };
+    let manifest = Manifest {
+        format: FORMAT,
+        format_version: FORMAT_VERSION,
+        tool: Tool {
+            name: TOOL_NAME,
+            version: env!("CARGO_PKG_VERSION"),
         },
-    );
-    out.push_str(",\n");
-    push_versions(&mut out, inputs);
-
-    out.push_str("  \"profile\": {\n    \"name\": ");
-    push_json_string(&mut out, output.profile.priority.as_str());
-    let _ = write!(
-        out,
-        ",\n    \"parameters\": {{\n      \"name_block_shift\": {}, ",
-        output.profile.name_block_shift
-    );
-    let _ = write!(
-        out,
-        "\"max_table_bytes\": {}, \"max_delta_bytes\": {}, ",
-        output.profile.max_table_bytes, output.profile.max_delta_bytes
-    );
-    out.push_str("\"candidates\": [");
-    for (index, shift) in output.profile.candidates.iter().enumerate() {
-        if index > 0 {
-            out.push_str(", ");
-        }
-        let _ = write!(out, "{shift}");
-    }
-    out.push_str("]\n    }\n  },\n");
-
-    push_array(
-        &mut out,
-        "  \"sections\": ",
-        &output.sections,
-        |out, section| {
-            let _ = write!(out, "{{\"id\": {}, \"name\": ", section.id);
-            push_json_string(out, section.name);
-            let _ = write!(
-                out,
-                ", \"offset\": {}, \"size\": {}}}",
-                section.offset, section.size
-            );
+        layout: "nomina",
+        name_layout,
+        unicode_version: inputs.version,
+        emoji_version: inputs.emoji_version,
+        profile: ProfileEntry {
+            name: output.profile.priority.as_str(),
+            parameters: ProfileParameters {
+                name_block_shift: output.profile.name_block_shift,
+                max_table_bytes: output.profile.max_table_bytes,
+                max_delta_bytes: output.profile.max_delta_bytes,
+                candidates: &output.profile.candidates,
+            },
         },
-    );
-
-    let _ = writeln!(out, "  \"total_bytes\": {},", output.total_bytes);
-
-    push_array(&mut out, "  \"inputs\": ", records, |out, record| {
-        out.push_str("{\"name\": ");
-        push_json_string(out, &record.name);
-        out.push_str(", \"path\": ");
-        push_json_string(out, &record.path);
-        let _ = write!(
-            out,
-            ", \"size\": {}, \"fnv1a64\": \"{:016x}\"}}",
-            record.size, record.hash
-        );
-    });
-
-    push_array(
-        &mut out,
-        "  \"candidates\": ",
-        &output.candidates,
-        |out, candidate| {
-            let _ = write!(
-                out,
-                "{{\"name_block_shift\": {}, \"name_bytes\": {}, \"total_bytes\": {}, \
-                 \"chosen\": {}}}",
-                candidate.name_block_shift,
-                candidate.name_bytes,
-                candidate.total_bytes,
-                candidate.chosen
-            );
+        sections: &output.sections,
+        total_bytes: output.total_bytes,
+        inputs: records,
+        candidates: &output.candidates,
+        verification: Verification {
+            status: "verified",
+            checks: output.verification,
         },
-    );
-
-    out.push_str("  \"verification\": {\n    \"status\": \"verified\",\n    \"checks\": [");
-    for (index, check) in output.verification.iter().enumerate() {
-        if index > 0 {
-            out.push_str(", ");
-        }
-        push_json_string(&mut out, check);
-    }
-    out.push_str("]\n  }\n}\n");
-    out
+    };
+    let mut text = serde_json::to_string_pretty(&manifest)?;
+    text.push('\n');
+    Ok(text)
 }
 
 /// Collects the input records for a Nomina run, hashing the bytes on disk.
 ///
-/// The emoji text may be normalized in memory for older files, so hashing the in-memory text
-/// would make the manifest depend on that normalization; the on-disk bytes are the actual
-/// inputs a rebuild needs.
+/// The on-disk bytes are the actual inputs a rebuild needs, so they are hashed rather than any
+/// in-memory text derived from them.
 fn input_records(
     data_dir: &Path,
     inputs: &crate::ucd::Inputs,
@@ -233,7 +203,7 @@ fn input_records(
 }
 
 /// One input file recorded in the manifest.
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Serialize)]
 struct InputRecord {
     /// The file name as written by Unicode.
     name: String,
@@ -241,29 +211,9 @@ struct InputRecord {
     path: String,
     /// The input's byte length.
     size: usize,
-    /// The input's FNV-1a 64 hash.
-    hash: u64,
-}
-
-/// Appends `value` as a JSON string literal.
-fn push_json_string(out: &mut String, value: &str) {
-    out.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            character if character < '\u{20}' => {
-                let _ = write!(out, "\\u{:04x}", u32::from(character));
-            }
-            character => out.push(character),
-        }
-    }
-    out.push('"');
+    /// The input's FNV-1a 64 hash, as sixteen lower-case hex digits.
+    #[serde(rename = "fnv1a64")]
+    hash: String,
 }
 
 /// Builds one manifest record from a resolved path and its contents.
@@ -280,7 +230,7 @@ fn record(path: &Path, bytes: &[u8], data_dir: &Path) -> Result<InputRecord, cra
         ),
         path: relative_path(path, data_dir)?,
         size: bytes.len(),
-        hash: fnv1a64(bytes),
+        hash: format!("{:016x}", fnv1a64(bytes)),
     })
 }
 
@@ -297,21 +247,20 @@ fn relative_path(path: &Path, data_dir: &Path) -> Result<String, crate::Error> {
         data_dir: data_dir.to_path_buf(),
     };
     let relative = path.strip_prefix(data_dir).map_err(|_| outside())?;
-    if relative.as_os_str().is_empty() {
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            // A root, parent or current-directory component means the path was not written
+            // relative to the data directory; a silently shortened path would lie about where
+            // a rebuild must put the input.
+            _ => return Err(outside()),
+        }
+    }
+    if parts.is_empty() {
         return Err(outside());
     }
-    let rendered = relative
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/");
-    if rendered.is_empty() {
-        return Err(outside());
-    }
-    Ok(rendered)
+    Ok(parts.join("/"))
 }
 
 #[cfg(test)]
@@ -331,6 +280,7 @@ mod tests {
             ("/other/DerivedName.txt", "/data"),
             ("/data", "/data"),
             ("/database/DerivedName.txt", "/data"),
+            ("/data/../DerivedName.txt", "/data"),
         ] {
             let error = relative_path(Path::new(path), Path::new(data_dir))
                 .expect_err("the path is not strictly inside the data dir");
@@ -339,6 +289,13 @@ mod tests {
                 "{path} under {data_dir}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn the_input_hash_has_the_published_fnv_vectors() {
+        assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(fnv1a64(b"foobar"), 0x8594_4171_f739_67e8);
     }
 
     #[test]
