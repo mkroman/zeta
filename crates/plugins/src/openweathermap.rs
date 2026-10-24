@@ -184,10 +184,8 @@ struct Clouds {
     all: u8,
 }
 
-#[async_trait]
-impl Plugin<Context> for OpenWeatherMap {
-    type Settings = Settings;
-
+#[plugin(name = "openweathermap", settings = Settings)]
+impl OpenWeatherMap {
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -206,7 +204,9 @@ impl Plugin<Context> for OpenWeatherMap {
         })
     }
 
-    async fn handle_command(
+    /// Replies to `.w` with the current weather for the requested (or default) location.
+    #[handler(command)]
+    async fn weather(
         &self,
         _ctx: &Context,
         client: &Client,
