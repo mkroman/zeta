@@ -38,22 +38,19 @@ pub struct Choices {
     settings: Settings,
 }
 
-#[async_trait]
-impl Plugin<Context> for Choices {
-    type Settings = Settings;
-
+#[plugin(name = "choices", settings = Settings, messages)]
+impl Choices {
     fn new(
         _ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.receive_message();
-
         Ok(Self {
             settings: settings.clone(),
         })
     }
 
+    #[handler(message)]
     async fn handle_message(
         &self,
         _ctx: &Context,
