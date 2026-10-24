@@ -27,18 +27,11 @@ const REVERSE: CommandSpec = CommandSpec::new(".rev", "Reverse a string");
 const UNICODE: CommandSpec = CommandSpec::new(".uni", "Show a character's Unicode properties");
 
 /// The string utilities plugin: offline text transformations for its commands.
+#[derive(Default)]
 pub struct StringUtils;
 
-impl Default for StringUtils {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl Plugin<Context> for StringUtils {
-    type Settings = NoSettings;
-
+#[plugin(name = "string_utils")]
+impl StringUtils {
     fn new(
         _ctx: &Context,
         _settings: &NoSettings,
@@ -50,9 +43,10 @@ impl Plugin<Context> for StringUtils {
             .command(ORD)
             .command(REVERSE)
             .command(UNICODE);
-        Ok(Self::new())
+        Ok(Self)
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -283,14 +277,6 @@ fn str_to_hex_string(s: &str) -> String {
     }
 
     buf
-}
-
-impl StringUtils {
-    /// Creates a new string utils plugin instance.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
 }
 
 #[cfg(test)]
