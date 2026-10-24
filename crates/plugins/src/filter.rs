@@ -517,10 +517,8 @@ impl FilterPlugin {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for FilterPlugin {
-    type Settings = NoSettings;
-
+#[plugin(name = "filter")]
+impl FilterPlugin {
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
@@ -537,12 +535,14 @@ impl Plugin<Context> for FilterPlugin {
         Ok(Self { service, admins })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
