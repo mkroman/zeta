@@ -100,10 +100,8 @@ pub enum Error {
     NotFound,
 }
 
-#[async_trait]
-impl Plugin<Context> for Trustpilot {
-    type Settings = Settings;
-
+#[plugin(name = "trustpilot", settings = Settings)]
+impl Trustpilot {
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -120,7 +118,9 @@ impl Plugin<Context> for Trustpilot {
         })
     }
 
-    async fn handle_command(
+    /// Replies to `.tp` with the business's Trustpilot score and review count.
+    #[handler(command)]
+    async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
