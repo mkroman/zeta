@@ -108,12 +108,9 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     ///
     /// The name identifies the plugin in the help system and the plugin catalog, and must match
     /// the plugin's module name. The `#[plugin]` attribute macro sets it from its `name`
-    /// argument.
-    ///
-    /// The default is a migration shim: plugins not yet written with `#[plugin]` register with
-    /// an empty catalog name until they set the name themselves. Remove it once every plugin
-    /// implements `Plugin` through the macro.
-    const NAME: &'static str = "";
+    /// argument and submits a [`PluginRegistration`](crate::PluginRegistration) under it, so the
+    /// host discovers every compiled-in plugin without a central list.
+    const NAME: &'static str;
 
     /// This plugin's deserialized `[plugins.<name>]` settings.
     ///

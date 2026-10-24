@@ -22,9 +22,12 @@ rustls = ["sqlx?/tls-rustls-aws-lc-rs"]
 arc-swap.workspace = true
 argh.workspace = true
 async-trait.workspace = true
+figment.workspace = true
 humantime-serde.workspace = true
+inventory = "0.3.24"
 irc.workspace = true
 serde.workspace = true
+serde_ignored.workspace = true
 shlex.workspace = true
 sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio"], optional = true }
 thiserror.workspace = true

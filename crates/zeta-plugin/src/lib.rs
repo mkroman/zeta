@@ -16,6 +16,7 @@ pub mod irc;
 
 mod error;
 mod plugin;
+mod registration;
 mod types;
 
 pub mod config;
@@ -33,7 +34,9 @@ pub use event::{
     NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
 };
 pub use filtering::{Filters, UrlFilter, UrlFilters};
+pub use inventory;
 pub use plugin::Plugin;
+pub use registration::{ConstructedPlugin, PluginRegistration};
 pub use registry::{
     CatalogEntry, ErasedPlugin, PluginCatalog, PluginTask, RegisteredPlugin, Registry,
 };
