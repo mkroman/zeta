@@ -5435,6 +5435,7 @@ dependencies = [
 name = "zeta-unicode"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "zeta-unicode-build",
  "zeta-unicode-format",
 ]
@@ -5443,6 +5444,7 @@ dependencies = [
 name = "zeta-unicode-build"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "tempfile",
  "thiserror 2.0.21",
  "zeta-unicode-format",

@@ -1,9 +1,9 @@
 //! Nomina general-category lookup.
 //!
 //! The section stores 4,202 contiguous runs as two Huffman streams: varint start gaps and
-//! category ids. [`Gc::parse`] decodes them once and rebuilds the incumbent two-level page
-//! table (a `u16` directory per 2,048-code-point page over packed `u16` records), so a lookup
-//! keeps the same two bounds checks and 9,494 bytes of heap as the shipped module.
+//! category ids. [`Gc::parse`] decodes them once and rebuilds a two-level page table (a `u16`
+//! directory per 2,048-code-point page over packed `u16` records), so a lookup keeps two bounds
+//! checks and 9,494 bytes of heap.
 //!
 //! # Layout
 //!
@@ -16,6 +16,7 @@
 //! A record packs the page-relative run start in the high bits and the one-based category id
 //! in the low [`GC_ID_BITS`] bits.
 
+use bytes::Buf;
 use zeta_unicode_format::{
     GC_ID_BITS, GC_ID_MASK, GC_PAGES, GC_SHIFT, GC_SHORT_NAMES, UNICODE_END,
 };
@@ -39,12 +40,13 @@ impl Gc {
     /// Returns `None` for a truncated or inconsistent section.
     #[must_use]
     pub fn parse(section: &[u8]) -> Option<Self> {
-        let runs = usize::from(u16_at(section, 0)?);
-        let starts_raw = usize::from(u16_at(section, 2)?);
-        let starts_coded = usize::from(u16_at(section, 4)?);
-        let starts_order = *section.get(6)?;
-        let cats_coded = usize::from(u16_at(section, 7)?);
-        let cats_order = *section.get(9)?;
+        let mut header = section;
+        let runs = usize::from(header.try_get_u16_le().ok()?);
+        let starts_raw = usize::from(header.try_get_u16_le().ok()?);
+        let starts_coded = usize::from(header.try_get_u16_le().ok()?);
+        let starts_order = header.try_get_u8().ok()?;
+        let cats_coded = usize::from(header.try_get_u16_le().ok()?);
+        let cats_order = header.try_get_u8().ok()?;
         if runs == 0 || starts_order > 1 || cats_order > 1 {
             return None;
         }
@@ -110,6 +112,7 @@ impl Gc {
 
     /// Returns the number of encoded runs.
     #[must_use]
+    #[cfg(test)]
     pub const fn run_count(&self) -> usize {
         self.records.len()
     }
@@ -144,86 +147,10 @@ impl Gc {
     }
 }
 
-/// Returns the one-based general-category id of `cp` in `gc`.
-#[must_use]
-pub fn general_category(gc: &Gc, cp: u32) -> Option<u8> {
-    gc.general_category(cp)
-}
-
-/// Reads a little-endian `u16`, failing rather than wrapping.
-fn u16_at(buf: &[u8], offset: usize) -> Option<u16> {
-    let bytes = buf.get(offset..offset.checked_add(2)?)?;
-    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::flat_stream;
     use super::*;
-
-    /// A minimal flat Huffman encoder for tests: every symbol gets an eight-bit code.
-    fn flat_stream(data: &[u8], order: u8) -> Vec<u8> {
-        let context_at = |index: usize| -> u8 {
-            if order == 0 || index == 0 {
-                0
-            } else {
-                data[index - 1]
-            }
-        };
-        let mut contexts: Vec<u8> = Vec::new();
-        for index in 0..data.len() {
-            let context = context_at(index);
-            if let Err(slot) = contexts.binary_search(&context) {
-                contexts.insert(slot, context);
-            }
-        }
-        let mut out = vec![u8::try_from(contexts.len()).unwrap()];
-        let mut maps: Vec<Vec<(u8, u8)>> = Vec::new();
-        for &context in &contexts {
-            let mut symbols: Vec<u8> = data
-                .iter()
-                .enumerate()
-                .filter(|&(index, _)| context_at(index) == context)
-                .map(|(_, &byte)| byte)
-                .collect();
-            symbols.sort_unstable();
-            symbols.dedup();
-            out.push(context);
-            out.push(u8::try_from(symbols.len()).unwrap());
-            let mut map = Vec::new();
-            for (code, &symbol) in symbols.iter().enumerate() {
-                out.push(symbol);
-                out.push(8);
-                map.push((symbol, u8::try_from(code).unwrap()));
-            }
-            maps.push(map);
-        }
-        let mut bits = Vec::new();
-        let mut accumulator = 0u8;
-        let mut count = 0u8;
-        for (index, &byte) in data.iter().enumerate() {
-            let context = context_at(index);
-            let slot = contexts.binary_search(&context).unwrap();
-            let code = maps[slot]
-                .iter()
-                .find(|&&(symbol, _)| symbol == byte)
-                .unwrap()
-                .1;
-            for bit in (0..8).rev() {
-                accumulator = (accumulator << 1) | ((code >> bit) & 1);
-                count += 1;
-                if count == 8 {
-                    bits.push(accumulator);
-                    accumulator = 0;
-                    count = 0;
-                }
-            }
-        }
-        if count != 0 {
-            bits.push(accumulator << (8 - count));
-        }
-        out.extend_from_slice(&bits);
-        out
-    }
 
     /// Builds a section from explicit `(start, category id)` runs.
     fn section(runs: &[(u32, u8)]) -> Vec<u8> {

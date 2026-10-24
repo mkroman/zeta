@@ -28,50 +28,18 @@
 
 use std::collections::BTreeMap;
 
+use bytes::BufMut;
+
 use zeta_unicode_format::{
-    MAX_KEY, TONE_NAMES, TONES, format_toned, is_tone, tone_phrase, tone_positions,
+    MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, RULE_CLOCK, RULE_COUNT, RULE_COUPLE, RULE_FACING,
+    RULE_FAMILY, RULE_GENDER_MAN, RULE_GENDER_WOMAN, RULE_KEYCAP, RULE_KEYCAP_10, RULE_KISS,
+    RULE_LITERAL, RULE_PAIR, RULE_TONE_COMPONENT, RULE_UCD_MASK, RULE_UCD_MASK_HYPHEN, TONE_NAMES,
+    TONES, ZWJ, clock_name, encode_cps, family_word, format_toned, is_tone, join_family,
+    keycap_word, pair_phrase, plural, swap_person, tone_phrase, tone_positions, ucd_mask_name,
+    write_varint,
 };
 
-/// The longest code a canonical Huffman model may use.
-const HUFFMAN_MAX_BITS: usize = 32;
-
-/// The most code points one stored key may have; the runtime decoder rejects more.
-const MAX_CPS: usize = 16;
-
-/// The largest rule argument the runtime's packed `(argument << 4) | rule` entry encodes.
-const MAX_RULE_ARGUMENT: u16 = 0x0FFF;
-
-/// Rule id `literal`: the name is stored in the literal-name stream.
-pub const RULE_LITERAL: u8 = 0;
-/// Rule id `ucd_mask`: select words from the lowercase UCD name.
-pub const RULE_UCD_MASK: u8 = 1;
-/// Rule id `ucd_mask_hyphen`: select words, joining the first two with a hyphen.
-pub const RULE_UCD_MASK_HYPHEN: u8 = 2;
-/// Rule id `keycap`: `KEYCAP ` plus the keycap word.
-pub const RULE_KEYCAP: u8 = 3;
-/// Rule id `gender_w`: swap `person` for `woman` in a base name.
-pub const RULE_GENDER_WOMAN: u8 = 4;
-/// Rule id `gender_m`: swap `person` for `man` in a base name.
-pub const RULE_GENDER_MAN: u8 = 5;
-/// Rule id `facing`: base name plus ` facing right`.
-pub const RULE_FACING: u8 = 6;
-/// Rule id `family`: `family: ` plus comma-joined family words.
-pub const RULE_FAMILY: u8 = 7;
-/// Rule id `couple`: `couple with heart: ` plus comma-joined family words.
-pub const RULE_COUPLE: u8 = 8;
-/// Rule id `kiss`: `kiss: ` plus comma-joined family words.
-pub const RULE_KISS: u8 = 9;
-/// Rule id `pair`: plural word plus the pair phrase.
-pub const RULE_PAIR: u8 = 10;
-/// Rule id `tone_component`: one of the five skin-tone names.
-pub const RULE_TONE_COMPONENT: u8 = 11;
-/// Rule id `clock`: the hour word plus ` o’clock`.
-pub const RULE_CLOCK: u8 = 12;
-/// Rule id `keycap10`: the literal name `keycap: 10`.
-pub const RULE_KEYCAP_10: u8 = 13;
-
-/// The number of grammar rules, literal included.
-pub const RULE_COUNT: usize = 14;
+use crate::ucd::{hex_u32, records};
 
 /// One canonical emoji entry, as it should appear in the table.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -508,22 +476,16 @@ fn encode_payload(
 /// Writes the section header, descriptors, streams and tone arrays.
 fn assemble(entries: usize, literals: usize, payload: &Payload) -> Vec<u8> {
     let mut section = Vec::new();
-    push_u16(&mut section, u16::try_from(entries).expect("entry count"));
-    push_u16(
-        &mut section,
-        u16::try_from(literals).expect("literal count"),
-    );
+    section.put_u16_le(u16::try_from(entries).expect("entry count"));
+    section.put_u16_le(u16::try_from(literals).expect("literal count"));
     for (raw, coded, order) in [
         (&payload.key_raw, &payload.key_stream, 1u8),
         (&payload.name_raw, &payload.name_stream, 0),
         (&payload.rule_raw, &payload.rule_stream, 0),
         (&payload.mask_raw, &payload.mask_stream, 0),
     ] {
-        push_u16(&mut section, u16::try_from(raw.len()).expect("raw length"));
-        push_u16(
-            &mut section,
-            u16::try_from(coded.len()).expect("coded length"),
-        );
+        section.put_u16_le(u16::try_from(raw.len()).expect("raw length"));
+        section.put_u16_le(u16::try_from(coded.len()).expect("coded length"));
         section.push(order);
     }
     section.extend_from_slice(&payload.key_stream);
@@ -851,82 +813,12 @@ fn gender_base(cps: &[u32], entries: &[EmojiEntry]) -> Option<usize> {
 
 /// The index of `cps` in the sorted entry table.
 fn find_entry(cps: &[u32], entries: &[EmojiEntry]) -> Option<usize> {
-    let key: String = cps
-        .iter()
-        .map(|&cp| char::from_u32(cp).expect("code point is a scalar value"))
-        .collect();
-    let index = entries
-        .binary_search_by(|entry| entry.key.as_str().cmp(key.as_str()))
-        .ok()?;
-    Some(index)
-}
-
-/// The `swap_person` transform from the prototype.
-fn swap_person(name: &str, gender: &str) -> String {
-    if name == "person" {
-        return gender.to_owned();
-    }
-    if let Some(rest) = name.strip_prefix("person: ") {
-        return format!("{gender}: {rest}");
-    }
-    if let Some(rest) = name.strip_prefix("person ") {
-        return format!("{gender} {rest}");
-    }
-    if let Some(head) = name.strip_suffix(" person") {
-        return format!("{head} {gender}");
-    }
-    format!("{gender} {name}")
-}
-
-/// Comma-joins the family words of `cps`, skipping `ignored`.
-fn join_family(cps: &[u32], ignored: &[u32]) -> String {
-    let mut out = String::new();
-    for &cp in cps {
-        if ignored.contains(&cp) {
-            continue;
-        }
-        if let Some(word) = family_word(cp) {
-            if !out.is_empty() {
-                out.push_str(", ");
-            }
-            out.push_str(word);
-        }
-    }
-    out
-}
-
-/// The family-member word of a code point.
-const fn family_word(cp: u32) -> Option<&'static str> {
-    Some(match cp {
-        0x1F9D1 => "adult",
-        0x1F9D2 => "child",
-        0x1F468 => "man",
-        0x1F469 => "woman",
-        0x1F466 => "boy",
-        0x1F467 => "girl",
-        _ => return None,
-    })
-}
-
-/// The plural word of a pair.
-const fn plural(left: u32, right: u32) -> Option<&'static str> {
-    Some(match (left, right) {
-        (0x1F468, 0x1F468) => "men",
-        (0x1F469, 0x1F469) => "women",
-        (0x1F9D1, 0x1F9D1) => "people",
-        (0x1F469, 0x1F468) => "woman and man",
-        _ => return None,
-    })
-}
-
-/// The phrase a pair's middle code point contributes.
-const fn pair_phrase(cp: u32) -> Option<&'static str> {
-    Some(match cp {
-        0x1F430 => "with bunny ears",
-        0x1FAEF => "wrestling",
-        0x1F91D => "holding hands",
-        _ => return None,
-    })
+    let mut buffer = [0u8; MAX_KEY];
+    let length = encode_cps(cps, &mut buffer)?;
+    let key = std::str::from_utf8(&buffer[..length]).ok()?;
+    entries
+        .binary_search_by(|entry| entry.key.as_str().cmp(key))
+        .ok()
 }
 
 /// The gender word of a role's leading code point.
@@ -935,25 +827,6 @@ const fn people_word(cp: u32) -> Option<&'static str> {
         0x1F9D1 => "person",
         0x1F468 => "man",
         0x1F469 => "woman",
-        _ => return None,
-    })
-}
-
-/// The keycap word of a base code point.
-const fn keycap_word(cp: u32) -> Option<&'static str> {
-    Some(match cp {
-        0x23 => "NUMBER SIGN",
-        0x2A => "ASTERISK",
-        0x30 => "DIGIT ZERO",
-        0x31 => "DIGIT ONE",
-        0x32 => "DIGIT TWO",
-        0x33 => "DIGIT THREE",
-        0x34 => "DIGIT FOUR",
-        0x35 => "DIGIT FIVE",
-        0x36 => "DIGIT SIX",
-        0x37 => "DIGIT SEVEN",
-        0x38 => "DIGIT EIGHT",
-        0x39 => "DIGIT NINE",
         _ => return None,
     })
 }
@@ -989,35 +862,6 @@ fn ucd_mask(ucd: &str, name: &str) -> Option<(u8, bool)> {
         }
     }
     None
-}
-
-/// The `ucd_mask` materializer: selects words and joins them, optionally hyphenating the first
-/// two.
-fn ucd_mask_name(ucd: &str, mask: u8, hyphen: bool) -> String {
-    let lower = ucd.to_ascii_lowercase();
-    let mut out = String::new();
-    let mut selected = 0usize;
-    for (index, word) in lower.split(' ').enumerate() {
-        if index >= 8 || mask >> index & 1 == 0 {
-            continue;
-        }
-        if selected > 0 {
-            out.push(if hyphen && selected == 1 { '-' } else { ' ' });
-        }
-        out.push_str(word);
-        selected += 1;
-    }
-    out
-}
-
-/// The clock rule: `CLOCK FACE <HOUR> OCLOCK` becomes `<hour> o’clock`.
-fn clock_name(ucd: &str) -> Option<String> {
-    let words: Vec<&str> = ucd.split(' ').collect();
-    if words.len() == 4 && words[0] == "CLOCK" && words[1] == "FACE" && words[3] == "OCLOCK" {
-        Some(format!("{} o’clock", words[2].to_ascii_lowercase()))
-    } else {
-        None
-    }
 }
 
 /// Parses emoji entries with the precedence named sequences (3) > fully-qualified (2) >
@@ -1128,46 +972,13 @@ fn code_points(key: &str) -> Vec<u32> {
     key.chars().map(u32::from).collect()
 }
 
-/// The non-empty, non-comment records of a UCD file, with 1-based line numbers.
-///
-/// A leading byte-order mark is ignored, so a BOM-prefixed file parses like a plain one.
-fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
-        .map(|(index, line)| (index + 1, line))
-}
-
-/// Parses one hexadecimal Unicode code point.
-fn hex_u32(text: &str) -> u32 {
-    u32::from_str_radix(text.trim(), 16)
-        .unwrap_or_else(|error| panic!("invalid hexadecimal code point {text:?}: {error}"))
-}
-
-/// Appends a LEB128 varint.
-fn write_varint(mut value: u64, out: &mut Vec<u8>) {
-    while value >= 0x80 {
-        #[allow(clippy::cast_possible_truncation, reason = "the low seven bits")]
-        out.push((value as u8 & 0x7F) | 0x80);
-        value >>= 7;
-    }
-    #[allow(clippy::cast_possible_truncation, reason = "the remaining byte")]
-    out.push(value as u8);
-}
-
-/// Appends a little-endian `u16`.
-fn push_u16(out: &mut Vec<u8>, value: u16) {
-    out.extend_from_slice(&value.to_le_bytes());
-}
-
 /// Packs `values` low `width` bits each, low bits first.
 fn pack_bits(values: impl IntoIterator<Item = u8>, width: usize) -> Vec<u8> {
     let values: Vec<u8> = values.into_iter().collect();
     let mut out = vec![0u8; (values.len() * width).div_ceil(8)];
-    for (index, value) in values.iter().enumerate() {
+    for (index, &value) in values.iter().enumerate() {
         let bit = index * width;
-        let shifted = u16::from(*value) << (bit % 8);
+        let shifted = u16::from(value) << (bit % 8);
         let [low, high] = shifted.to_le_bytes();
         out[bit / 8] |= low;
         if let Some(slot) = out.get_mut(bit / 8 + 1) {
@@ -1176,9 +987,6 @@ fn pack_bits(values: impl IntoIterator<Item = u8>, width: usize) -> Vec<u8> {
     }
     out
 }
-
-/// The `U+200D` zero-width joiner.
-const ZWJ: u32 = 0x200D;
 
 /// Hand-written canonical Huffman coding over an order-0 or order-1 byte model.
 pub mod huffman {
@@ -1396,7 +1204,6 @@ pub mod huffman {
 
     /// One node of the Huffman tree.
     struct Node {
-        frequency: u64,
         left: Option<usize>,
         right: Option<usize>,
         symbol: Option<u8>,
@@ -1419,7 +1226,6 @@ pub mod huffman {
                 for &symbol in &used {
                     let frequency = u64::from(frequencies[usize::from(symbol)]);
                     nodes.push(Node {
-                        frequency,
                         left: None,
                         right: None,
                         symbol: Some(symbol),
@@ -1434,7 +1240,6 @@ pub mod huffman {
                         break;
                     };
                     nodes.push(Node {
-                        frequency: left_frequency + right_frequency,
                         left: Some(left),
                         right: Some(right),
                         symbol: None,

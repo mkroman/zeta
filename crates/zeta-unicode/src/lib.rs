@@ -3,8 +3,8 @@
 //! The image format is called Nomina (Latin for names). The `zeta-unicode-build` crate trains
 //! one flat Nomina image from the vendored UCD files and links it into the binary with
 //! `include_bytes!`. A lookup decodes at most one front-coded block, so there is no full name
-//! arena and no heap allocation on the name path. Hangul syllables and `*`-pattern names are
-//! generated from their code point.
+//! arena; `write_name` does not allocate, while `name` returns an owned [`String`]. Hangul
+//! syllables and `*`-pattern names are generated from their code point.
 //! Emoji keys are canonicalized (`U+FE0F` is stripped) and skin-tone variants are synthesized
 //! from a 3-bit rule plus a 2-bit published-tone-count mask, so 1,944 stored keys answer for
 //! every one of the 3,972 sequences the UCD names.
@@ -14,7 +14,7 @@
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let latin = name('ß').ok_or("missing name")?;
-//!     assert_eq!(latin.as_ref(), "LATIN SMALL LETTER SHARP S");
+//!     assert_eq!(latin.as_str(), "LATIN SMALL LETTER SHARP S");
 //!     assert_eq!(general_category('ß').long_name(), "Lowercase Letter");
 //!     let rainbow = emoji_name("🏳️‍🌈").ok_or("missing emoji name")?;
 //!     assert_eq!(rainbow.as_ref(), "rainbow flag");
@@ -25,7 +25,8 @@
 //!
 //! # Panics
 //!
-//! The first lookup on a thread panics if the generated image is malformed. The build verifies
+//! The first name lookup on a thread panics if the generated image is malformed; the first
+//! emoji or general-category lookup panics process-wide for the same reason. The build verifies
 //! every section, so this is a build invariant rather than a runtime condition.
 
 use std::borrow::Cow;
@@ -86,11 +87,8 @@ fn with_nomina<R>(f: impl FnOnce(&mut Nomina) -> R) -> R {
 /// Returns the parsed emoji section, building it on first use.
 fn emoji() -> &'static Emoji {
     EMOJI.get_or_init(|| {
-        let section = with_nomina(|nomina| {
-            nomina
-                .section(image::EMOJI)
-                .expect("the Nomina image has an emoji section")
-        });
+        let section =
+            image::section(IMAGE, image::EMOJI).expect("the Nomina image has an emoji section");
         Emoji::parse(section).expect("the generated emoji section is valid")
     })
 }
@@ -98,21 +96,18 @@ fn emoji() -> &'static Emoji {
 /// Returns the parsed general-category section, building it on first use.
 fn gc() -> &'static Gc {
     GC.get_or_init(|| {
-        let section = with_nomina(|nomina| {
-            nomina
-                .section(image::GC)
-                .expect("the Nomina image has a general-category section")
-        });
+        let section = image::section(IMAGE, image::GC)
+            .expect("the Nomina image has a general-category section");
         Gc::parse(section).expect("the generated general-category section is valid")
     })
 }
 
-/// Warms this thread's name decoder and the shared emoji and category sections.
+/// Warms the process-wide emoji and general-category tables.
 ///
-/// The name decoder is per thread; the emoji and category sections are process-wide. A warm
-/// call is cheap and idempotent.
+/// The name decoder is per thread and has no shared state, so it stays lazy: a call on a
+/// throwaway thread would warm nothing a handler later uses. A warm call is cheap and
+/// idempotent.
 pub fn init() {
-    with_nomina(|_| ());
     emoji();
     gc();
 }
@@ -120,10 +115,10 @@ pub fn init() {
 /// Returns the `Name` property of `c`, a formal alias from `NameAliases.txt` when the `Name`
 /// property is empty, or the derived name Unicode defines algorithmically.
 ///
-/// Stored names are decoded from one block, so they are returned as [`Cow::Owned`]. Use
+/// Stored names are decoded from one block, so they are returned as an owned [`String`]. Use
 /// [`write_name`] for the zero-allocation path.
 #[must_use]
-pub fn name(c: char) -> Option<Cow<'static, str>> {
+pub fn name(c: char) -> Option<String> {
     with_nomina(|nomina| nomina.name(u32::from(c)))
 }
 
@@ -150,11 +145,11 @@ pub fn write_name(c: char, buf: &mut String) -> bool {
 /// `<control-0000>`; controls with a formal alias answer with the alias instead, so the control
 /// label is the fallback.
 #[must_use]
-pub fn name_or_label(c: char) -> Cow<'static, str> {
+pub fn name_or_label(c: char) -> String {
     let code_point = u32::from(c);
     let mut buffer = String::new();
     if with_nomina(|nomina| nomina.write_name(code_point, &mut buffer)) {
-        return Cow::Owned(buffer);
+        return buffer;
     }
 
     let kind = match general_category(c) {
@@ -164,7 +159,7 @@ pub fn name_or_label(c: char) -> Cow<'static, str> {
         GeneralCategory::Unassigned if is_noncharacter(code_point) => "noncharacter",
         _ => "reserved",
     };
-    Cow::Owned(format!("<{kind}-{code_point:04X}>"))
+    format!("<{kind}-{code_point:04X}>")
 }
 
 /// Returns the general category of `c`; unassigned points answer with
@@ -215,6 +210,8 @@ pub fn may_start_emoji_sequence(sequence: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+
+    use bytes::Buf;
 
     use super::*;
 
@@ -278,11 +275,15 @@ mod tests {
 
     /// Reads the version from the Nomina image header.
     fn image_version() -> (u8, u8, u8) {
-        let u16_at = |at: usize| u16::from_le_bytes([IMAGE[at], IMAGE[at + 1]]);
+        let mut image = IMAGE;
+        image.advance(4);
+        let major = image.try_get_u16_le().expect("major version");
+        let minor = image.try_get_u16_le().expect("minor version");
+        let patch = image.try_get_u16_le().expect("patch version");
         (
-            u8::try_from(u16_at(4)).expect("major version"),
-            u8::try_from(u16_at(6)).expect("minor version"),
-            u8::try_from(u16_at(8)).expect("patch version"),
+            u8::try_from(major).expect("major version"),
+            u8::try_from(minor).expect("minor version"),
+            u8::try_from(patch).expect("patch version"),
         )
     }
 
@@ -561,8 +562,8 @@ mod tests {
     #[test]
     fn name_decodes_stored_and_generated_names() {
         // Stored names are decoded from one block, so the Nomina backend returns an owned name.
-        assert!(matches!(name('A'), Some(Cow::Owned(_))));
-        assert!(matches!(name('中'), Some(Cow::Owned(_))));
+        assert_eq!(name('A').as_deref(), Some("LATIN CAPITAL LETTER A"));
+        assert_eq!(name('中').as_deref(), Some("CJK UNIFIED IDEOGRAPH-4E2D"));
         assert!(emoji_name("🦔").is_some());
         if release_at_least(14, 0) {
             assert!(matches!(emoji_name("🫶🏻"), Some(Cow::Owned(_))));
@@ -674,8 +675,8 @@ mod tests {
             }
         }
 
-        // Every third scalar value below U+3000: dense in the named ranges, and it skips the
-        // surrogates `char::from_u32` rejects.
+        // Every scalar value from U+0020 below U+3000: dense in the named ranges, and it skips
+        // the surrogates `char::from_u32` rejects.
         let points: Vec<char> = (0..SAMPLES)
             .filter_map(|i| char::from_u32(0x20 + i))
             .filter(|c| u32::from(*c) < 0x3000)
@@ -705,10 +706,9 @@ mod tests {
         let probe_count = u32::try_from(probes.len()).expect("a handful of probes");
         measure("emoji_name:", SAMPLES * probe_count, || {
             let mut sink = 0u64;
-            for i in 0..SAMPLES {
+            for _ in 0..SAMPLES {
                 for probe in probes {
                     sink += emoji_name(probe).map_or(0, |found| found.len() as u64);
-                    std::hint::black_box(i);
                 }
             }
             sink

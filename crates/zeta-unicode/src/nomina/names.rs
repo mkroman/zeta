@@ -17,6 +17,7 @@
 
 use std::str;
 
+use bytes::Buf;
 use zeta_unicode_format::{HANGUL_END, HANGUL_START, UNICODE_END};
 
 /// The number of name pages, one per 2,048 code points.
@@ -35,7 +36,7 @@ const TABLE_BITS: u32 = 6;
 /// The number of entries in one fast decode table.
 const TABLE_SIZE: usize = 1 << TABLE_BITS;
 
-/// Choongbae (leading) jamo short names, in `Jamo_Short_Name` order.
+/// Choseong (leading) jamo short names, in `Jamo_Short_Name` order.
 const JAMO_LEADING: [&str; 19] = [
     "G", "GG", "N", "D", "DD", "R", "M", "B", "BB", "S", "SS", "", "J", "JJ", "C", "K", "T", "P",
     "H",
@@ -154,24 +155,33 @@ pub struct Names {
     cache_len: usize,
 }
 
-impl Names {
-    /// Parses and validates a name section.
-    ///
-    /// `block_shift` is the flat image header's `name_block_shift` (6 for the shipped 64-name
-    /// blocks).
-    #[must_use]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "header, directory, runs, models and table validation are one parse"
-    )]
-    pub(crate) fn new(section: &'static [u8], block_shift: u8, layout: Layout) -> Option<Self> {
+/// The name section's fixed header and index.
+struct Header {
+    /// Names in the section.
+    name_count: usize,
+    /// Number of run records.
+    run_count: usize,
+    /// First run index of every 2,048-code-point page.
+    page_dir: &'static [u8],
+    /// `{ u32 first_cp, u16 length, u16 base_id }` records.
+    runs: &'static [u8],
+    /// The `u32` bit offset of every name block.
+    block_bits: &'static [u8],
+    /// Offset of the model area.
+    models_at: usize,
+}
+
+impl Header {
+    /// Parses the fixed header, page directory, runs and block offsets.
+    fn parse(section: &'static [u8], block_shift: u8) -> Option<Self> {
         if block_shift == 0 || block_shift > 8 {
             return None;
         }
-        let name_count = usize::try_from(u32_at(section, 0)?).ok()?;
-        let block_count = usize::try_from(u32_at(section, 4)?).ok()?;
-        let run_count = usize::from(u16_at(section, 8)?);
-        let page_count = usize::from(u16_at(section, 10)?);
+        let mut reader = section;
+        let name_count = usize::try_from(reader.try_get_u32_le().ok()?).ok()?;
+        let block_count = usize::try_from(reader.try_get_u32_le().ok()?).ok()?;
+        let run_count = usize::from(reader.try_get_u16_le().ok()?);
+        let page_count = usize::from(reader.try_get_u16_le().ok()?);
         if name_count == 0 || page_count != PAGE_COUNT || run_count == 0 {
             return None;
         }
@@ -180,25 +190,50 @@ impl Names {
             return None;
         }
 
-        let page_dir_at = 12;
-        let runs_at = page_dir_at + page_count * 2;
-        let runs_end = runs_at + run_count * 8;
-        let starts_at = (runs_end + 3) & !3;
-        let starts_end = starts_at + block_count * 4;
+        let page_dir_at = 12usize;
+        let runs_at = page_dir_at.checked_add(page_count.checked_mul(2)?)?;
+        let runs_end = runs_at.checked_add(run_count.checked_mul(8)?)?;
+        let starts_at = runs_end.checked_add(3)? & !3;
+        let starts_end = starts_at.checked_add(block_count.checked_mul(4)?)?;
         if starts_end > section.len() {
             return None;
         }
 
-        let block_bits = section.get(starts_at..starts_end)?;
-        let models_at = starts_end;
+        Some(Self {
+            name_count,
+            run_count,
+            page_dir: section.get(page_dir_at..runs_at)?,
+            runs: section.get(runs_at..runs_end)?,
+            block_bits: section.get(starts_at..starts_end)?,
+            models_at: starts_end,
+        })
+    }
+}
 
-        let context_map = section.get(models_at..models_at + 256)?;
-        let model_count = usize::from(u16_at(section, models_at + 256)?);
+/// The decoded context models and the bitstream they decode.
+struct ModelSet {
+    /// Previous-byte to model-id map.
+    context: [u8; 256],
+    /// The canonical models, in id order.
+    models: Vec<Model>,
+    /// Fast decode tables, one [`TABLE_SIZE`]-entry table per model.
+    tables: Vec<u16>,
+    /// The global MSB-first bitstream.
+    stream: &'static [u8],
+}
+
+impl ModelSet {
+    /// Parses the context map, model directory and model blobs, and builds the fast tables.
+    fn parse(section: &'static [u8], models_at: usize) -> Option<Self> {
+        let context_map = section.get(models_at..models_at.checked_add(256)?)?;
+        let count_at = models_at.checked_add(256)?;
+        let mut count_bytes = section.get(count_at..)?;
+        let model_count = usize::from(count_bytes.try_get_u16_le().ok()?);
         if model_count == 0 || model_count > MAX_MODELS {
             return None;
         }
-        let directory_at = models_at + 258;
-        let blobs_at = directory_at.checked_add(model_count * 2)?;
+        let directory_at = models_at.checked_add(258)?;
+        let blobs_at = directory_at.checked_add(model_count.checked_mul(2)?)?;
         if blobs_at > section.len() {
             return None;
         }
@@ -206,7 +241,9 @@ impl Names {
         let mut models = Vec::with_capacity(model_count);
         let mut expected = 0usize;
         for index in 0..model_count {
-            let relative = usize::from(u16_at(section, directory_at + index * 2)?);
+            let entry_at = directory_at.checked_add(index.checked_mul(2)?)?;
+            let mut entry = section.get(entry_at..)?;
+            let relative = usize::from(entry.try_get_u16_le().ok()?);
             if relative != expected {
                 return None;
             }
@@ -215,8 +252,8 @@ impl Names {
             if max_bits == 0 || max_bits > MAX_CODE_BITS {
                 return None;
             }
-            let counts_at = at + 1;
-            let symbols_at = counts_at.checked_add(usize::from(max_bits) * 2)?;
+            let model_counts_at = at.checked_add(1)?;
+            let symbols_at = model_counts_at.checked_add(usize::from(max_bits) * 2)?;
             let mut counts = [0u16; MAX_CODE_BITS as usize + 1];
             let mut symbol_count = 0usize;
             for (length, slot) in counts
@@ -225,7 +262,9 @@ impl Names {
                 .take(usize::from(max_bits) + 1)
                 .skip(1)
             {
-                let count = u16_at(section, counts_at + (length - 1) * 2)?;
+                let length_at = model_counts_at.checked_add((length - 1).checked_mul(2)?)?;
+                let mut length_bytes = section.get(length_at..)?;
+                let count = length_bytes.try_get_u16_le().ok()?;
                 *slot = count;
                 symbol_count += usize::from(count);
             }
@@ -239,14 +278,14 @@ impl Names {
                 counts,
                 symbols,
             });
-            expected = symbols_end - blobs_at;
+            expected = symbols_end.checked_sub(blobs_at)?;
         }
         let stream_at = blobs_at.checked_add(expected)?;
         if stream_at > section.len() {
             return None;
         }
-        let context_model: [u8; 256] = context_map.try_into().ok()?;
-        if context_model
+        let context: [u8; 256] = context_map.try_into().ok()?;
+        if context
             .iter()
             .any(|&model| usize::from(model) >= model_count)
         {
@@ -261,16 +300,34 @@ impl Names {
         }
 
         Some(Self {
-            page_dir: section.get(page_dir_at..runs_at)?,
-            runs: section.get(runs_at..runs_end)?,
-            run_count,
-            layout,
-            block_bits,
-            context_model,
+            context,
             models,
             tables,
             stream: section.get(stream_at..)?,
-            name_count,
+        })
+    }
+}
+
+impl Names {
+    /// Parses and validates a name section.
+    ///
+    /// `block_shift` is the flat image header's `name_block_shift` (6 for the shipped 64-name
+    /// blocks).
+    #[must_use]
+    pub(crate) fn new(section: &'static [u8], block_shift: u8, layout: Layout) -> Option<Self> {
+        let header = Header::parse(section, block_shift)?;
+        let models = ModelSet::parse(section, header.models_at)?;
+        Some(Self {
+            page_dir: header.page_dir,
+            runs: header.runs,
+            run_count: header.run_count,
+            layout,
+            block_bits: header.block_bits,
+            context_model: models.context,
+            models: models.models,
+            tables: models.tables,
+            stream: models.stream,
+            name_count: header.name_count,
             shift: u32::from(block_shift),
             scratch: [0; MAX_NAME_BYTES],
             suffix_scratch: [0; MAX_NAME_BYTES],
@@ -287,19 +344,22 @@ impl Names {
             return None;
         }
         let page = usize::try_from(cp >> PAGE_SHIFT).ok()?;
-        let mut run = usize::from(u16_at(self.page_dir, page * 2)?);
+        let page_at = page.checked_mul(2)?;
+        let mut page_bytes = self.page_dir.get(page_at..)?;
+        let mut run = usize::from(page_bytes.try_get_u16_le().ok()?);
         loop {
             if run >= self.run_count {
                 return None;
             }
-            let at = run * 8;
-            let first = u32_at(self.runs, at)?;
+            let at = run.checked_mul(8)?;
+            let mut record = self.runs.get(at..)?;
+            let first = record.try_get_u32_le().ok()?;
             if cp < first {
                 return None;
             }
-            let length = u32::from(u16_at(self.runs, at + 4)?);
+            let length = u32::from(record.try_get_u16_le().ok()?);
             if cp - first < length {
-                let base = u32::from(u16_at(self.runs, at + 6)?);
+                let base = u32::from(record.try_get_u16_le().ok()?);
                 return base.checked_add(cp - first);
             }
             run += 1;
@@ -307,6 +367,7 @@ impl Names {
     }
 
     /// Appends name `id` to `out`, returning `false` when the id or the section is invalid.
+    #[must_use = "the return value reports whether the id was decoded"]
     pub(crate) fn write_id(&mut self, id: u32, out: &mut String) -> bool {
         let id = usize::try_from(id).expect("a u32 fits in usize");
         if id >= self.name_count {
@@ -332,7 +393,9 @@ impl Names {
         let (first, bit) = if resume {
             (self.cache_id + 1, self.cache_bit)
         } else {
-            let bit = usize::try_from(u32_at(self.block_bits, block * 4)?).ok()?;
+            let bit_at = block.checked_mul(4)?;
+            let mut bit_bytes = self.block_bits.get(bit_at..)?;
+            let bit = usize::try_from(bit_bytes.try_get_u32_le().ok()?).ok()?;
             (block << self.shift, bit)
         };
         let mut length = if resume { self.cache_len } else { 0 };
@@ -460,6 +523,7 @@ impl Names {
 }
 
 /// Writes the Hangul name of `cp` into `out`, returning `false` outside the syllable range.
+#[must_use = "the return value reports whether `cp` has a Hangul name"]
 pub fn write_hangul(cp: u32, out: &mut String) -> bool {
     if !(HANGUL_START..=HANGUL_END).contains(&cp) {
         return false;
@@ -470,22 +534,6 @@ pub fn write_hangul(cp: u32, out: &mut String) -> bool {
     out.push_str(JAMO_VOWEL[usize::try_from((index % 588) / 28).expect("vowel index")]);
     out.push_str(JAMO_TRAILING[usize::try_from(index % 28).expect("trailing index")]);
     true
-}
-
-/// Reads a little-endian `u16`.
-#[inline]
-fn u16_at(buf: &[u8], at: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(
-        buf.get(at..at.checked_add(2)?)?.try_into().ok()?,
-    ))
-}
-
-/// Reads a little-endian `u32`.
-#[inline]
-fn u32_at(buf: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(
-        buf.get(at..at.checked_add(4)?)?.try_into().ok()?,
-    ))
 }
 
 /// An MSB-first bit reader that peeks 32 bits at a time.

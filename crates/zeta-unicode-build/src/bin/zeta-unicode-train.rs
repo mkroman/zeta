@@ -128,6 +128,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
+    if options.baseline.is_none() && options.max_delta_bytes != 0 {
+        return Err("--max-delta needs --baseline to compare against".into());
+    }
     Ok(options)
 }
 
@@ -251,12 +254,35 @@ fn print_details(output: &TrainOutput) {
         output.emoji.entries, output.emoji.ruled, output.emoji.literals, output.emoji.section_bytes
     );
     println!(
+        "  keys {} B ({} raw), names {} B ({} raw), rules {} B ({} raw), masks {} B ({} raw)",
+        output.emoji.key_stream,
+        output.emoji.key_raw,
+        output.emoji.name_stream,
+        output.emoji.name_raw,
+        output.emoji.rule_stream,
+        output.emoji.rule_raw,
+        output.emoji.mask_stream,
+        output.emoji.mask_raw
+    );
+    println!(
         "general category: {} runs, section {} B",
         output.gc.runs, output.gc.section_bytes
     );
     println!(
+        "  starts {} B ({} raw), categories {} B ({} ids), heap {} B",
+        output.gc.coded_starts,
+        output.gc.starts_raw,
+        output.gc.cats_stream,
+        output.gc.cats_raw,
+        output.gc.heap_bytes
+    );
+    println!(
         "patterns: {} ranges, section {} B",
         output.patterns.patterns, output.patterns.section_bytes
+    );
+    println!(
+        "  dictionaries {} B, records {} B",
+        output.patterns.dictionary_bytes, output.patterns.records_bytes
     );
     if let Some(baseline) = output.baseline {
         println!(

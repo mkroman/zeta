@@ -65,21 +65,32 @@ impl Entry<'_> {
 /// sequence's codepoint list is budgeted the same way.
 pub(super) fn unicode_details(args: &str) -> String {
     let entries = grouped_entries(args);
-    let total = entries.len();
     let mut message = String::with_capacity(REPLY_BUDGET);
-    let appended = append_entries_within_budget(
+    append_listing(
         &mut message,
         entries.iter().map(Entry::render),
-        ", ",
+        entries.len(),
         REPLY_BUDGET,
         SUFFIX.len(),
     );
+    message
+}
 
+/// Appends `entries` within `budget`, adding [`SUFFIX`] when the list does not fit.
+///
+/// `total` is the number of entries before budgeting; `reserved` is the space the caller still
+/// needs after the list.
+fn append_listing(
+    message: &mut String,
+    entries: impl IntoIterator<Item = String>,
+    total: usize,
+    budget: usize,
+    reserved: usize,
+) {
+    let appended = append_entries_within_budget(message, entries, ", ", budget, reserved);
     if appended < total {
         message.push_str(SUFFIX);
     }
-
-    message
 }
 
 /// Splits `args` into character entries, grouping each run that names an emoji sequence of at
@@ -95,19 +106,10 @@ fn grouped_entries(args: &str) -> Vec<Entry<'_>> {
     let mut at = 0usize;
 
     while at < last {
-        // The longest run from here that names a sequence; a single code point is not a
-        // grouping but a character entry of its own. Plain text cannot start a stored key, so
-        // reject it before probing every candidate end.
+        // Plain text cannot start a stored key, so the admission check rejects it before
+        // probing every candidate end.
         let end_limit = last.min(at.saturating_add(MAX_GROUPING_CHARS));
-        let grouped = if may_start_emoji_sequence(&args[bounds[at]..]) {
-            (at + 2..=end_limit)
-                .rev()
-                .find_map(|end| Some((end, emoji_name(&args[bounds[at]..bounds[end]])?)))
-        } else {
-            None
-        };
-
-        if let Some((end, name)) = grouped {
+        if let Some((end, name)) = longest_sequence(args, &bounds, at, end_limit) {
             entries.push(Entry::Sequence {
                 text: &args[bounds[at]..bounds[end]],
                 name,
@@ -126,6 +128,21 @@ fn grouped_entries(args: &str) -> Vec<Entry<'_>> {
     entries
 }
 
+/// The longest run starting at character `at` that names an emoji sequence, if any.
+fn longest_sequence(
+    args: &str,
+    bounds: &[usize],
+    at: usize,
+    end_limit: usize,
+) -> Option<(usize, Cow<'static, str>)> {
+    if !may_start_emoji_sequence(&args[bounds[at]..]) {
+        return None;
+    }
+    (at + 2..=end_limit)
+        .rev()
+        .find_map(|end| emoji_name(&args[bounds[at]..bounds[end]]).map(|name| (end, name)))
+}
+
 /// The bytes [`render_entry`] appends after the codepoint list.
 fn entry_tail(name: &str, category: &str) -> String {
     format!("{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})")
@@ -135,8 +152,8 @@ fn entry_tail(name: &str, category: &str) -> String {
 ///
 /// The codepoint list is a listing too: canonicalization strips every `U+FE0F`, so the input
 /// that matched can be much longer than the stored key, and the list stops with [`SUFFIX`]
-/// inside the braces. `tail` is the exact text that follows the list, so the reserved budget
-/// cannot drift from what is written.
+/// inside the braces. The computed tail is the exact text that follows the list, so the
+/// reserved budget cannot drift from what is written.
 fn render_entry(points: &str, name: &str, category: &str) -> String {
     let tail = entry_tail(name, category);
     let mut entry = format!("{{{RESET}{BOLD}");
@@ -149,16 +166,13 @@ fn render_entry(points: &str, name: &str, category: &str) -> String {
     );
 
     let total = points.chars().count();
-    let appended = append_entries_within_budget(
+    append_listing(
         &mut entry,
         points.chars().map(|c| format!("U+{:04X}", u32::from(c))),
-        ", ",
+        total,
         ENTRY_BUDGET,
         SUFFIX.len() + tail.len(),
     );
-    if appended < total {
-        entry.push_str(SUFFIX);
-    }
     entry.push_str(&tail);
 
     entry
@@ -180,12 +194,17 @@ fn sequence_entry(text: &str, name: &str) -> String {
 /// for (`AB button (blood type)`) where the character name spells its glyph (`NEGATIVE SQUARED
 /// AB`) — falling back to [`name_or_label`] for everything else.
 fn char_entry(c: char) -> String {
+    let name = character_name(c);
+    let category = general_category(c).long_name();
+    let mut encoded = [0u8; 4];
+    render_entry(c.encode_utf8(&mut encoded), &name, category)
+}
+
+/// The upper-cased name a character entry shows.
+fn character_name(c: char) -> String {
     let mut encoded = [0u8; 4];
     let text = c.encode_utf8(&mut encoded);
-    let name: Cow<'static, str> =
-        emoji_name(text).map_or_else(|| name_or_label(c), |name| Cow::Owned(name.to_uppercase()));
-    let category = general_category(c).long_name();
-    render_entry(text, &name, category)
+    emoji_name(text).map_or_else(|| name_or_label(c), |name| name.to_uppercase())
 }
 
 /// Upper-cases `name`, borrowing it unchanged when it has no lower-case characters.
@@ -313,7 +332,6 @@ mod tests {
     #[test]
     fn notice_prefix_matches_the_budget() {
         assert_eq!(notice("").len(), NOTICE_PREFIX_LEN);
-        assert_eq!(NOTICE_PREFIX_LEN, "\x0310> ".len());
     }
 
     #[test]
@@ -440,16 +458,12 @@ mod tests {
     fn every_char_entry_tail_fits_the_entry_budget() {
         let tail_base_len = entry_tail("", "").len();
         let mut longest: Option<(usize, char, String, &'static str)> = None;
-        let mut encoded = [0u8; 4];
 
         for cp in 0..=0x0010_FFFF {
             let Some(c) = char::from_u32(cp) else {
                 continue;
             };
-            // Mirror `char_entry`: an emoji name replaces the character name, and only the emoji
-            // name is upper-cased; `name.len()` after that accounts for any expansion.
-            let name: Cow<'static, str> = emoji_name(c.encode_utf8(&mut encoded))
-                .map_or_else(|| name_or_label(c), |name| Cow::Owned(name.to_uppercase()));
+            let name = character_name(c);
             let category = general_category(c).long_name();
             let tail_len = tail_base_len + name.len() + category.len();
 
@@ -457,7 +471,7 @@ mod tests {
                 .as_ref()
                 .is_none_or(|(longest_len, ..)| tail_len > *longest_len)
             {
-                longest = Some((tail_len, c, name.into_owned(), category));
+                longest = Some((tail_len, c, name, category));
             }
         }
 

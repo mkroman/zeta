@@ -27,6 +27,9 @@ const REVERSE: CommandSpec = CommandSpec::new(".rev", "Reverse a string");
 /// The `.uni` Unicode properties command.
 const UNICODE: CommandSpec = CommandSpec::new(".uni", "Show a character's Unicode properties");
 
+/// Every command this plugin registers, in usage order.
+const COMMANDS: [CommandSpec; 5] = [BYTES, LENGTH, ORD, REVERSE, UNICODE];
+
 /// Guards the one-time background warm-up of the Unicode tables.
 static UNICODE_INIT: Once = Once::new();
 
@@ -37,12 +40,9 @@ pub struct StringUtils;
 #[plugin(name = "string_utils")]
 impl StringUtils {
     fn new(subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        subscriptions
-            .command(BYTES)
-            .command(LENGTH)
-            .command(ORD)
-            .command(REVERSE)
-            .command(UNICODE);
+        for command in COMMANDS {
+            subscriptions.command(command);
+        }
         warm_unicode();
         Ok(Self)
     }
@@ -64,7 +64,7 @@ impl StringUtils {
             ORD => command
                 .args()
                 .chars()
-                .map(|x| (x as u32).to_string())
+                .map(|c| u32::from(c).to_string())
                 .collect::<Vec<_>>()
                 .join(", "),
             REVERSE => command.args().chars().rev().collect(),
@@ -115,14 +115,11 @@ fn str_to_hex_string(s: &str) -> String {
     buf
 }
 
-/// Warms the Unicode tables in the background, at most once per process.
+/// Warms the process-wide emoji and general-category tables in the background.
 ///
-/// `zeta_unicode::init` warms the calling thread's name decoder plus the process-wide emoji
-/// and general-category tables. Because this spawns it on a detached thread, only the shared
-/// emoji/GC tables are actually warmed ahead of time; the name decoder is per thread, so the
-/// plugin task still builds its own on its first name lookup. (Calling `init` on the async
-/// runtime instead would warm the right thread, at the cost of stalling a worker for the
-/// init.) A failed spawn is harmless: the first command then pays the lazy cost itself.
+/// `zeta_unicode::init` decodes those shared sections; the per-thread name decoder stays lazy
+/// and builds on the handler thread's first name lookup. A failed spawn is harmless: the first
+/// command then pays the lazy cost itself.
 fn warm_unicode() {
     UNICODE_INIT.call_once(|| {
         let _ = std::thread::Builder::new()
@@ -182,7 +179,7 @@ mod tests {
         )
         .unwrap();
 
-        for command in [BYTES, LENGTH, ORD, REVERSE, UNICODE] {
+        for command in COMMANDS {
             assert!(subscriptions.commands().contains(&command));
             assert!(
                 StringUtils::usage_line(command).is_some(),

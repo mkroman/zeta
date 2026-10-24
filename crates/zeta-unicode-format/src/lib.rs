@@ -1,9 +1,10 @@
-//! Layout constants and emoji tone formatting shared by `zeta-unicode` and `zeta-unicode-build`.
+//! Layout constants and emoji grammar shared by `zeta-unicode` and `zeta-unicode-build`.
 //!
-//! The runtime crate and the offline trainer share the general-category encoding constants,
-//! the Hangul and emoji tone tables, and the name-pattern hex formatter. The generator also has
-//! to reproduce the runtime's skin-tone wording exactly, because it selects the rule that the
-//! runtime later replays.
+//! The runtime crate and the offline trainer share the wire-format constants, the byte
+//! primitives, the general-category encoding, the Hangul and emoji tone tables, the name-pattern
+//! hex formatter and the emoji name grammar. The generator has to reproduce the runtime's
+//! wording exactly, because it selects the rule that the runtime later replays; keeping one
+//! implementation means the two can never drift.
 //!
 //! This crate is deliberately dependency-free: it is linked into the bot through
 //! `zeta-unicode` and into the build script through `zeta-unicode-build`.
@@ -27,6 +28,47 @@ const _: () = assert!(TONES.len() == TONE_NAMES.len());
 /// The runtime keeps a fixed scratch buffer of this size; the generator rejects a stored key
 /// that would not fit.
 pub const MAX_KEY: usize = 64;
+
+/// The most code points one stored emoji key may have.
+pub const MAX_CPS: usize = 16;
+
+/// The `U+200D` zero-width joiner.
+pub const ZWJ: u32 = 0x200D;
+
+/// The largest rule argument the packed `(argument << 4) | rule` entry encodes.
+pub const MAX_RULE_ARGUMENT: u16 = 0x0FFF;
+
+/// Rule id `literal`: the name is stored in the literal-name arena.
+pub const RULE_LITERAL: u8 = 0;
+/// Rule id `ucd_mask`: select words from the lowercase UCD name.
+pub const RULE_UCD_MASK: u8 = 1;
+/// Rule id `ucd_mask_hyphen`: select words, joining the first two with a hyphen.
+pub const RULE_UCD_MASK_HYPHEN: u8 = 2;
+/// Rule id `keycap`: `KEYCAP ` plus the keycap word.
+pub const RULE_KEYCAP: u8 = 3;
+/// Rule id `gender_w`: swap `person` for `woman` in a base name.
+pub const RULE_GENDER_WOMAN: u8 = 4;
+/// Rule id `gender_m`: swap `person` for `man` in a base name.
+pub const RULE_GENDER_MAN: u8 = 5;
+/// Rule id `facing`: base name plus ` facing right`.
+pub const RULE_FACING: u8 = 6;
+/// Rule id `family`: `family: ` plus comma-joined family words.
+pub const RULE_FAMILY: u8 = 7;
+/// Rule id `couple`: `couple with heart: ` plus comma-joined family words.
+pub const RULE_COUPLE: u8 = 8;
+/// Rule id `kiss`: `kiss: ` plus comma-joined family words.
+pub const RULE_KISS: u8 = 9;
+/// Rule id `pair`: plural word plus the pair phrase.
+pub const RULE_PAIR: u8 = 10;
+/// Rule id `tone_component`: one of the five skin-tone names.
+pub const RULE_TONE_COMPONENT: u8 = 11;
+/// Rule id `clock`: the hour word plus ` o’clock`.
+pub const RULE_CLOCK: u8 = 12;
+/// Rule id `keycap10`: the literal name `keycap: 10`.
+pub const RULE_KEYCAP_10: u8 = 13;
+
+/// The number of grammar rules, literal included.
+pub const RULE_COUNT: usize = 14;
 
 /// The first Hangul syllable, `HANGUL SYLLABLE GA`.
 pub const HANGUL_START: u32 = 0xAC00;
@@ -105,11 +147,6 @@ pub fn read_varint(bytes: &[u8]) -> Option<(u32, usize)> {
 /// *minimum*, the way Unicode writes the placeholder: `EGYPTIAN HIEROGLYPH-13460` needs five
 /// digits where most code points need four. The digit count is clamped to the eight bytes of
 /// `out`, so a wider `width` pads with leading zeros up to that bound instead of overflowing.
-///
-/// # Panics
-///
-/// Panics if the digit count exceeded `u32::MAX`, which the clamp to `out`'s eight bytes
-/// rules out before the shift is computed: every `width` is accepted.
 pub fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
     const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
     let mut needed = 0usize;
@@ -120,9 +157,9 @@ pub fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
     }
     // Unicode always writes at least one digit, even for zero.
     let count = needed.max(usize::from(width.min(8))).max(1);
-    let mut shift = u32::try_from(count - 1).expect("at most eight digits") * 4;
+    let mut shift = (count - 1) * 4;
     for slot in out.iter_mut().take(count) {
-        *slot = DIGITS[((cp >> shift) & 0xF) as usize];
+        *slot = DIGITS[(cp >> shift) as usize & 0xF];
         shift = shift.saturating_sub(4);
     }
     count
@@ -174,6 +211,149 @@ pub fn tone_indices(cps: impl IntoIterator<Item = u32>) -> Option<([usize; 2], u
 /// Unlike [`tone_indices`] this accepts any number of tones, at the cost of allocating.
 pub fn tone_positions(cps: impl IntoIterator<Item = u32>) -> Vec<usize> {
     cps.into_iter().filter_map(tone_index).collect()
+}
+
+/// Encodes `cps` as UTF-8 into `out`, returning how many bytes it wrote.
+///
+/// Returns `None` when a code point is not a scalar value or the encoding would overflow `out`.
+#[must_use]
+pub fn encode_cps(cps: &[u32], out: &mut [u8; MAX_KEY]) -> Option<usize> {
+    let mut used = 0usize;
+    for &cp in cps {
+        let c = char::from_u32(cp)?;
+        let end = used.checked_add(c.len_utf8())?;
+        c.encode_utf8(out.get_mut(used..end)?);
+        used = end;
+    }
+    Some(used)
+}
+
+/// `swap_person` rewrites a `person` base name to the given gender word.
+#[must_use]
+pub fn swap_person(name: &str, gender: &str) -> String {
+    if name == "person" {
+        return gender.to_owned();
+    }
+    if let Some(rest) = name.strip_prefix("person: ") {
+        return format!("{gender}: {rest}");
+    }
+    if let Some(rest) = name.strip_prefix("person ") {
+        return format!("{gender} {rest}");
+    }
+    if let Some(head) = name.strip_suffix(" person") {
+        return format!("{head} {gender}");
+    }
+    format!("{gender} {name}")
+}
+
+/// Comma-joins the family words of `cps`, skipping `ignored`.
+#[must_use]
+pub fn join_family(cps: &[u32], ignored: &[u32]) -> String {
+    let mut out = String::new();
+    for &cp in cps {
+        if ignored.contains(&cp) {
+            continue;
+        }
+        if let Some(word) = family_word(cp) {
+            if !out.is_empty() {
+                out.push_str(", ");
+            }
+            out.push_str(word);
+        }
+    }
+    out
+}
+
+/// The family-member word of a code point.
+#[must_use]
+pub const fn family_word(cp: u32) -> Option<&'static str> {
+    Some(match cp {
+        0x1F9D1 => "adult",
+        0x1F9D2 => "child",
+        0x1F468 => "man",
+        0x1F469 => "woman",
+        0x1F466 => "boy",
+        0x1F467 => "girl",
+        _ => return None,
+    })
+}
+
+/// The plural word of a pair.
+#[must_use]
+pub const fn plural(left: u32, right: u32) -> Option<&'static str> {
+    Some(match (left, right) {
+        (0x1F468, 0x1F468) => "men",
+        (0x1F469, 0x1F469) => "women",
+        (0x1F9D1, 0x1F9D1) => "people",
+        (0x1F469, 0x1F468) => "woman and man",
+        _ => return None,
+    })
+}
+
+/// The phrase a pair's middle code point contributes.
+#[must_use]
+pub const fn pair_phrase(cp: u32) -> Option<&'static str> {
+    Some(match cp {
+        0x1F430 => "with bunny ears",
+        0x1FAEF => "wrestling",
+        0x1F91D => "holding hands",
+        _ => return None,
+    })
+}
+
+/// The keycap word of a base code point.
+#[must_use]
+pub const fn keycap_word(cp: u32) -> Option<&'static str> {
+    Some(match cp {
+        0x23 => "NUMBER SIGN",
+        0x2A => "ASTERISK",
+        0x30 => "DIGIT ZERO",
+        0x31 => "DIGIT ONE",
+        0x32 => "DIGIT TWO",
+        0x33 => "DIGIT THREE",
+        0x34 => "DIGIT FOUR",
+        0x35 => "DIGIT FIVE",
+        0x36 => "DIGIT SIX",
+        0x37 => "DIGIT SEVEN",
+        0x38 => "DIGIT EIGHT",
+        0x39 => "DIGIT NINE",
+        _ => return None,
+    })
+}
+
+/// The `ucd_mask` rule: selects UCD-name words, optionally hyphenating the first two.
+#[must_use]
+pub fn ucd_mask_name(name: &str, mask: u8, hyphen: bool) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut selected = 0usize;
+    for (word_index, word) in name.split(' ').enumerate() {
+        if word_index >= 8 || mask >> word_index & 1 == 0 {
+            continue;
+        }
+        if selected > 0 {
+            out.push(if hyphen && selected == 1 { '-' } else { ' ' });
+        }
+        out.extend(word.chars().map(|c| c.to_ascii_lowercase()));
+        selected += 1;
+    }
+    out
+}
+
+/// The `clock` rule: `CLOCK FACE <HOUR> OCLOCK` becomes `<hour> o’clock`.
+#[must_use]
+pub fn clock_name(name: &str) -> Option<String> {
+    let mut words = name.split(' ');
+    let clock = words.next()?;
+    let face = words.next()?;
+    let hour = words.next()?;
+    let oclock = words.next()?;
+    if words.next().is_some() || clock != "CLOCK" || face != "FACE" || oclock != "OCLOCK" {
+        return None;
+    }
+    let mut out = String::with_capacity(hour.len() + " o’clock".len());
+    out.extend(hour.chars().map(|c| c.to_ascii_lowercase()));
+    out.push_str(" o’clock");
+    Some(out)
 }
 
 /// Renders `base` with `tones` applied, following the 3-bit rule.
@@ -335,6 +515,76 @@ mod tests {
             "light skin tone, medium-light skin tone, light skin tone"
         );
         assert_eq!(tone_phrase(2, &[0, 0]), "light skin tone, light skin tone");
+    }
+
+    #[test]
+    fn encode_cps_writes_utf8_and_rejects_invalid_scalars() {
+        let mut buffer = [0u8; MAX_KEY];
+        let used = encode_cps(&[0x64, 0x1F994], &mut buffer).expect("scalars fit");
+        assert_eq!(&buffer[..used], "d🦔".as_bytes());
+        assert_eq!(encode_cps(&[0xD800], &mut buffer), None);
+        let too_long = [0x1F994u32; MAX_CPS + 1];
+        assert_eq!(encode_cps(&too_long, &mut buffer), None);
+    }
+
+    #[test]
+    fn grammar_helpers_reproduce_the_published_names() {
+        assert_eq!(swap_person("person", "woman"), "woman");
+        assert_eq!(swap_person("person: red hair", "man"), "man: red hair");
+        assert_eq!(swap_person("person running", "woman"), "woman running");
+        assert_eq!(swap_person("running person", "man"), "running man");
+        assert_eq!(swap_person("runner", "woman"), "woman runner");
+
+        assert_eq!(family_word(0x1F469), Some("woman"));
+        assert_eq!(family_word(0x1F994), None);
+        assert_eq!(plural(0x1F469, 0x1F468), Some("woman and man"));
+        assert_eq!(plural(0x1F994, 0x1F994), None);
+        assert_eq!(pair_phrase(0x1F91D), Some("holding hands"));
+        assert_eq!(keycap_word(0x23), Some("NUMBER SIGN"));
+        assert_eq!(keycap_word(0x41), None);
+
+        assert_eq!(
+            join_family(&[0x1F469, ZWJ, 0x1F466, ZWJ, 0x1F467], &[ZWJ]),
+            "woman, boy, girl"
+        );
+        assert_eq!(
+            join_family(&[0x1F469, ZWJ, 0x2764, ZWJ, 0x1F468], &[ZWJ, 0x2764]),
+            "woman, man"
+        );
+    }
+
+    #[test]
+    fn ucd_mask_selects_words_and_hyphenates_the_first_pair() {
+        assert_eq!(
+            ucd_mask_name("COPYRIGHT SIGN", 0b11, false),
+            "copyright sign"
+        );
+        assert_eq!(
+            ucd_mask_name("COPYRIGHT SIGN", 0b11, true),
+            "copyright-sign"
+        );
+        assert_eq!(
+            ucd_mask_name("ARABIC LIGATURE SALAM", 0b101, true),
+            "arabic-salam"
+        );
+        // Bits past the eighth word are ignored.
+        assert_eq!(ucd_mask_name("A B", 0xFF, false), "a b");
+        assert_eq!(ucd_mask_name("A B", 0, false), "");
+    }
+
+    #[test]
+    fn clock_names_require_the_exact_ucd_spelling() {
+        assert_eq!(
+            clock_name("CLOCK FACE TWO OCLOCK").as_deref(),
+            Some("two o’clock")
+        );
+        assert_eq!(
+            clock_name("CLOCK FACE TWELVE OCLOCK").as_deref(),
+            Some("twelve o’clock")
+        );
+        assert_eq!(clock_name("CLOCK FACE TWO"), None);
+        assert_eq!(clock_name("CLOCK HAND TWO OCLOCK"), None);
+        assert_eq!(clock_name("CLOCK FACE TWO OCLOCK EXTRA"), None);
     }
 
     #[test]

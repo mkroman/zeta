@@ -7,7 +7,7 @@
 //!   6     2  Unicode minor
 //!   8     2  Unicode patch
 //!  10     1  section count (4)
-//!  11     1  name block shift (5 -> 32 names per block)
+//!  11     1  name block shift (5 = 32 names, 6 = 64; training picks the shipped value)
 //!  12     1  general-category page shift (11)
 //!  13     1  name layout (0 block-local, 1 global checkpointed)
 //!  14    32  4 x (payload offset u32, payload length u32)
@@ -17,8 +17,12 @@
 //!
 //! The directory starts at offset 14, exactly as the format contract states; the runtime
 //! reads the `u32`s with unaligned little-endian loads, so no alignment padding is needed
-//! before it. The header is padded to one 64-byte cache line, and only [`pack`] and the
-//! runtime's `Nomina::new` ever read it.
+//! before it. The header is padded to one 64-byte cache line, and only [`pack_with_layout`] and
+//! the runtime's `Nomina::new` ever read it.
+
+use bytes::BufMut;
+
+use super::names::NameLayout;
 
 /// The image magic.
 pub const MAGIC: &[u8; 4] = b"NOM1";
@@ -26,7 +30,7 @@ pub const MAGIC: &[u8; 4] = b"NOM1";
 /// The number of sections in a Nomina image.
 pub const SECTION_COUNT: usize = 4;
 
-/// The documented name-block shift: 32 names per block.
+/// The block shift of the unparameterized [`pack`] helper: 32 names per block.
 pub const NAME_BLOCK_SHIFT: u8 = 5;
 
 /// The documented general-category page shift.
@@ -44,9 +48,9 @@ pub const GC: usize = 2;
 /// The section id of the `*` name patterns.
 pub const PATTERNS: usize = 3;
 /// The name layout byte for the block-local front-coding layout.
-pub const LAYOUT_BLOCK_LOCAL: u8 = 0;
+pub const LAYOUT_BLOCK_LOCAL: u8 = NameLayout::BlockLocal.id();
 /// The name layout byte for the global checkpointed layout.
-pub const LAYOUT_GLOBAL: u8 = 1;
+pub const LAYOUT_GLOBAL: u8 = NameLayout::Global.id();
 
 /// Packs four sections into a flat Nomina image with the documented shifts.
 ///
@@ -73,8 +77,9 @@ pub fn pack_global(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> V
 
 /// Packs four sections with explicit header shifts.
 ///
-/// The shifts are exposed for the block-size measurements; the shipped image uses [`pack`],
-/// so a decoder that ignores the header fields still sees the documented layout.
+/// The shifts are exposed for the block-size measurements; training calls
+/// [`pack_with_layout`] with the measured shift and layout, so a decoder that ignores the
+/// header fields still sees a consistent layout.
 ///
 /// # Panics
 ///
@@ -130,9 +135,9 @@ pub fn pack_with_layout(
     );
     image.resize(HEADER_LEN, 0);
     image[..4].copy_from_slice(MAGIC);
-    image[4..6].copy_from_slice(&u16::from(version.0).to_le_bytes());
-    image[6..8].copy_from_slice(&u16::from(version.1).to_le_bytes());
-    image[8..10].copy_from_slice(&u16::from(version.2).to_le_bytes());
+    (&mut image[4..6]).put_u16_le(u16::from(version.0));
+    (&mut image[6..8]).put_u16_le(u16::from(version.1));
+    (&mut image[8..10]).put_u16_le(u16::from(version.2));
     image[10] = u8::try_from(SECTION_COUNT).expect("four sections fit in a byte");
     image[11] = name_block_shift;
     image[12] = gc_page_shift;
@@ -145,8 +150,8 @@ pub fn pack_with_layout(
         let offset = u32::try_from(image.len()).expect("image offset fits in u32");
         let length = u32::try_from(section.len()).expect("section length fits in u32");
         let directory = 14 + id * 8;
-        image[directory..directory + 4].copy_from_slice(&offset.to_le_bytes());
-        image[directory + 4..directory + 8].copy_from_slice(&length.to_le_bytes());
+        (&mut image[directory..directory + 4]).put_u32_le(offset);
+        (&mut image[directory + 4..directory + 8]).put_u32_le(length);
         image.extend_from_slice(section);
     }
     image
@@ -154,12 +159,9 @@ pub fn pack_with_layout(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use bytes::Buf;
 
-    /// Reads a little-endian `u32` at `at`.
-    fn u32_at(buf: &[u8], at: usize) -> u32 {
-        u32::from_le_bytes(buf[at..at + 4].try_into().expect("four bytes"))
-    }
+    use super::*;
 
     #[test]
     fn packs_the_documented_header_and_aligned_sections() {
@@ -180,8 +182,11 @@ mod tests {
         let mut previous_end = HEADER_LEN;
         for (id, section) in sections.iter().enumerate() {
             let directory = 14 + id * 8;
-            let offset = u32_at(&image, directory) as usize;
-            let length = u32_at(&image, directory + 4) as usize;
+            let mut entry = image
+                .get(directory..directory + 8)
+                .expect("a directory entry");
+            let offset = usize::try_from(entry.get_u32_le()).expect("an offset");
+            let length = usize::try_from(entry.get_u32_le()).expect("a length");
             assert_eq!(length, section.len());
             assert_eq!(offset % 8, 0, "section {id} is not aligned");
             assert!(

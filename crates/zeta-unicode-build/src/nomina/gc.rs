@@ -18,7 +18,10 @@
 //! Malformed vendored data is an invariant violation and panics with a message naming the
 //! offending range. This is build-time code generation: a bad byte is a build failure.
 
-use zeta_unicode_format::{GC_SHORT_NAMES, UNICODE_END};
+use bytes::BufMut;
+use zeta_unicode_format::{GC_SHORT_NAMES, UNICODE_END, write_varint};
+
+use crate::ucd::{hex_u32, records};
 
 use super::emoji::huffman;
 
@@ -121,23 +124,11 @@ pub fn general_category_section(ranges: &[GcRange]) -> (Vec<u8>, GcStats) {
     assert!(u16::try_from(ranges.len()).is_ok(), "too many runs");
 
     let mut section = Vec::new();
-    push_u16(
-        &mut section,
-        u16::try_from(ranges.len()).expect("run count"),
-    );
-    push_u16(
-        &mut section,
-        u16::try_from(start_stream.len()).expect("start stream length"),
-    );
-    push_u16(
-        &mut section,
-        u16::try_from(coded_starts.len()).expect("coded start length"),
-    );
+    section.put_u16_le(u16::try_from(ranges.len()).expect("run count"));
+    section.put_u16_le(u16::try_from(start_stream.len()).expect("start stream length"));
+    section.put_u16_le(u16::try_from(coded_starts.len()).expect("coded start length"));
     section.push(0);
-    push_u16(
-        &mut section,
-        u16::try_from(cats_stream.len()).expect("coded category length"),
-    );
+    section.put_u16_le(u16::try_from(cats_stream.len()).expect("coded category length"));
     section.push(1);
     section.extend_from_slice(&coded_starts);
     section.extend_from_slice(&cats_stream);
@@ -249,39 +240,6 @@ fn general_category_id(letter: &str) -> u8 {
         .position(|short| *short == letter)
         .unwrap_or_else(|| panic!("unknown general category: {letter}"));
     u8::try_from(index).expect("fewer than 255 categories") + 1
-}
-
-/// The non-empty, non-comment records of a UCD file, with 1-based line numbers.
-///
-/// A leading byte-order mark is ignored, so a BOM-prefixed file parses like a plain one.
-fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
-        .map(|(index, line)| (index + 1, line))
-}
-
-/// Parses one hexadecimal Unicode code point.
-fn hex_u32(text: &str) -> u32 {
-    u32::from_str_radix(text.trim(), 16)
-        .unwrap_or_else(|error| panic!("invalid hexadecimal code point {text:?}: {error}"))
-}
-
-/// Appends a LEB128 varint.
-fn write_varint(mut value: u64, out: &mut Vec<u8>) {
-    while value >= 0x80 {
-        #[allow(clippy::cast_possible_truncation, reason = "the low seven bits")]
-        out.push((value as u8 & 0x7F) | 0x80);
-        value >>= 7;
-    }
-    #[allow(clippy::cast_possible_truncation, reason = "the remaining byte")]
-    out.push(value as u8);
-}
-
-/// Appends a little-endian `u16`.
-fn push_u16(out: &mut Vec<u8>, value: u16) {
-    out.extend_from_slice(&value.to_le_bytes());
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ repository = "https://github.com/mkroman/zeta"
 publish = false
 
 [dependencies]
+bytes = { workspace = true }
 thiserror = { workspace = true }
 zeta-unicode-format = { path = "../zeta-unicode-format", version = "0.0.0" }
 

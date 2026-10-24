@@ -204,6 +204,7 @@ pub fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
 /// Panics with the offending text when it is not a hexadecimal `u32`.
 #[must_use]
 pub fn hex_u32(text: &str) -> u32 {
+    let text = text.trim();
     u32::from_str_radix(text, 16)
         .unwrap_or_else(|error| panic!("invalid hexadecimal code point {text:?}: {error}"))
 }

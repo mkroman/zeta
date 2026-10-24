@@ -74,6 +74,30 @@ pub fn write_manifest(
     crate::write(out_dir.join("manifest.json"), text)
 }
 
+/// Appends a JSON array of objects, one per line, followed by a comma.
+///
+/// `key` includes the indentation and the quoted member name, e.g. `"  \"sections\": "`.
+fn push_array<T>(
+    out: &mut String,
+    key: &str,
+    items: &[T],
+    mut render: impl FnMut(&mut String, &T),
+) {
+    out.push_str(key);
+    out.push('[');
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str("\n    ");
+        render(out, item);
+    }
+    if !items.is_empty() {
+        out.push_str("\n  ");
+    }
+    out.push_str("],\n");
+}
+
 /// Renders the Nomina manifest for one training run.
 #[allow(
     clippy::too_many_lines,
@@ -122,65 +146,51 @@ fn render_manifest(
     }
     out.push_str("]\n    }\n  },\n");
 
-    out.push_str("  \"sections\": [");
-    for (index, section) in output.sections.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        let _ = write!(out, "\n    {{\"id\": {}, \"name\": ", section.id);
-        push_json_string(&mut out, section.name);
-        let _ = write!(
-            out,
-            ", \"offset\": {}, \"size\": {}}}",
-            section.offset, section.size
-        );
-    }
-    if !output.sections.is_empty() {
-        out.push_str("\n  ");
-    }
-    out.push_str("],\n");
+    push_array(
+        &mut out,
+        "  \"sections\": ",
+        &output.sections,
+        |out, section| {
+            let _ = write!(out, "{{\"id\": {}, \"name\": ", section.id);
+            push_json_string(out, section.name);
+            let _ = write!(
+                out,
+                ", \"offset\": {}, \"size\": {}}}",
+                section.offset, section.size
+            );
+        },
+    );
 
     let _ = writeln!(out, "  \"total_bytes\": {},", output.total_bytes);
 
-    out.push_str("  \"inputs\": [");
-    for (index, record) in records.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        out.push_str("\n    {\"name\": ");
-        push_json_string(&mut out, &record.name);
+    push_array(&mut out, "  \"inputs\": ", records, |out, record| {
+        out.push_str("{\"name\": ");
+        push_json_string(out, &record.name);
         out.push_str(", \"path\": ");
-        push_json_string(&mut out, &record.path);
+        push_json_string(out, &record.path);
         let _ = write!(
             out,
             ", \"size\": {}, \"fnv1a64\": \"{:016x}\"}}",
             record.size, record.hash
         );
-    }
-    if !records.is_empty() {
-        out.push_str("\n  ");
-    }
-    out.push_str("],\n");
+    });
 
-    out.push_str("  \"candidates\": [");
-    for (index, candidate) in output.candidates.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        let _ = write!(
-            out,
-            "\n    {{\"name_block_shift\": {}, \"name_bytes\": {}, \"total_bytes\": {}, \
-             \"chosen\": {}}}",
-            candidate.name_block_shift,
-            candidate.name_bytes,
-            candidate.total_bytes,
-            candidate.chosen
-        );
-    }
-    if !output.candidates.is_empty() {
-        out.push_str("\n  ");
-    }
-    out.push_str("],\n");
+    push_array(
+        &mut out,
+        "  \"candidates\": ",
+        &output.candidates,
+        |out, candidate| {
+            let _ = write!(
+                out,
+                "{{\"name_block_shift\": {}, \"name_bytes\": {}, \"total_bytes\": {}, \
+                 \"chosen\": {}}}",
+                candidate.name_block_shift,
+                candidate.name_bytes,
+                candidate.total_bytes,
+                candidate.chosen
+            );
+        },
+    );
 
     out.push_str("  \"verification\": {\n    \"status\": ");
     push_json_string(
@@ -258,7 +268,7 @@ struct InputRecord {
     hash: u64,
 }
 
-/// Collects every file that shaped the build, hashing the bytes on disk.
+/// Appends `value` as a JSON string literal.
 fn push_json_string(out: &mut String, value: &str) {
     out.push('"');
     for character in value.chars() {

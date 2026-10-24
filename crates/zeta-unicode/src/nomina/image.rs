@@ -1,8 +1,9 @@
 //! The flat Nomina image and its four sections.
 //!
-//! [`Nomina::new`] validates the 64-byte header once and keeps a slice per section; every
-//! lookup then reads those slices directly. There is no startup decode, no `OnceLock` and no
-//! heap allocation in a name lookup.
+//! [`Nomina::new`] validates the 64-byte header once and keeps the decoded name decoder and
+//! pattern table; every lookup then reads the image slices directly. There is no startup decode
+//! and no `OnceLock` in [`Nomina`]; [`section`] reads one section without building the name
+//! decoder.
 //!
 //! Byte 13 of the header selects the name layout: 0 is the block-local front-coding layout,
 //! 1 is the global checkpointed layout. Both are decoded by [`super::names`]; the runtime
@@ -28,9 +29,8 @@
 //! `prefix + upper-case hex(cp) + suffix`, with the hex padded to at least four digits so a
 //! future range below U+1000 formats the way the trainer's verifier writes it.
 
-use std::borrow::Cow;
-
-use zeta_unicode_format::{UNICODE_END, read_varint};
+use bytes::Buf;
+use zeta_unicode_format::{UNICODE_END, read_varint, write_hex};
 
 use super::names::{self, Layout, Names};
 
@@ -50,11 +50,36 @@ pub const PATTERNS: usize = 3;
 pub const HEADER_LEN: usize = 64;
 /// The general-category page shift the shipped image uses.
 pub const GC_PAGE_SHIFT: u8 = 11;
+/// The offset of the section directory in the header.
+const DIRECTORY_AT: usize = 14;
+/// The size of one `(offset, length)` directory entry.
+const DIRECTORY_ENTRY_LEN: usize = 8;
+
+/// Returns the payload of section `id` from a Nomina image.
+///
+/// This validates only the header fields needed to locate a section, so a caller that needs one
+/// section does not build the name decoder. Returns `None` for a foreign magic, a different
+/// section count, an unknown id or an out-of-bounds range.
+#[must_use]
+pub fn section(table: &'static [u8], id: usize) -> Option<&'static [u8]> {
+    if table.len() < HEADER_LEN || table.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
+        return None;
+    }
+    if usize::from(*table.get(10)?) != SECTION_COUNT {
+        return None;
+    }
+    if id >= SECTION_COUNT {
+        return None;
+    }
+    let at = DIRECTORY_AT.checked_add(id.checked_mul(DIRECTORY_ENTRY_LEN)?)?;
+    let mut entry = table.get(at..)?;
+    let offset = usize::try_from(entry.try_get_u32_le().ok()?).ok()?;
+    let length = usize::try_from(entry.try_get_u32_le().ok()?).ok()?;
+    table.get(offset..offset.checked_add(length)?)
+}
 
 /// A parsed Nomina image.
 pub struct Nomina {
-    /// The four section payloads, in id order.
-    sections: [Option<&'static [u8]>; SECTION_COUNT],
     /// The decoded name section.
     names: Names,
     /// The `*`-pattern section.
@@ -69,7 +94,7 @@ impl Nomina {
     /// name borrows from it.
     #[must_use]
     pub fn new(table: &'static [u8]) -> Option<Self> {
-        if table.get(..4) != Some(MAGIC.as_slice()) {
+        if table.len() < HEADER_LEN || table.get(..4) != Some(MAGIC.as_slice()) {
             return None;
         }
         let section_count = *table.get(10)?;
@@ -85,26 +110,12 @@ impl Nomina {
 
         let mut sections = [None; SECTION_COUNT];
         for (id, slot) in sections.iter_mut().enumerate() {
-            let at = 14 + id * 8;
-            let offset = usize::try_from(u32_at(table, at)?).ok()?;
-            let length = usize::try_from(u32_at(table, at + 4)?).ok()?;
-            let end = offset.checked_add(length)?;
-            *slot = Some(table.get(offset..end)?);
+            *slot = Some(section(table, id)?);
         }
 
         let names = Names::new(sections[NAMES]?, block_shift, layout)?;
         let patterns = Patterns::new(sections[PATTERNS]?)?;
-        Some(Self {
-            sections,
-            names,
-            patterns,
-        })
-    }
-
-    /// Returns the payload of section `id`, or `None` when there is no such section.
-    #[must_use]
-    pub fn section(&self, id: usize) -> Option<&'static [u8]> {
-        self.sections.get(id).copied().flatten()
+        Some(Self { names, patterns })
     }
 
     /// Appends the name of `cp` to `out`, returning `false` when it has no name.
@@ -124,37 +135,12 @@ impl Nomina {
 
     /// Returns the name of `cp`, or `None` when it has none.
     ///
-    /// Stored names, Hangul names and pattern names all come back as `Cow::Owned` because
-    /// they are decoded into a temporary string. Use [`Self::write_name`] to avoid the
-    /// allocation.
+    /// Stored names, Hangul names and pattern names all come back owned because they are
+    /// decoded into a temporary string. Use [`Self::write_name`] to avoid the allocation.
     #[must_use]
-    pub fn name(&mut self, cp: u32) -> Option<Cow<'static, str>> {
+    pub fn name(&mut self, cp: u32) -> Option<String> {
         let mut out = String::new();
-        self.write_name(cp, &mut out).then_some(Cow::Owned(out))
-    }
-
-    /// Returns the name of `cp`, or the label Unicode defines for code points without one.
-    ///
-    /// Labels are `<private-use-F8FF>`, `<reserved-0378>`, `<noncharacter-FFFE>` and
-    /// `<control-0000>`, exactly as [`crate::name_or_label`] renders them. The category comes
-    /// from the same general-category table used by the production API.
-    #[must_use]
-    pub fn name_or_label(&mut self, cp: u32) -> Cow<'static, str> {
-        if let Some(name) = self.name(cp) {
-            return name;
-        }
-        let kind = match char::from_u32(cp) {
-            Some(c) => match crate::general_category(c) {
-                crate::GeneralCategory::PrivateUse => "private-use",
-                crate::GeneralCategory::Control => "control",
-                crate::GeneralCategory::Surrogate => "surrogate",
-                crate::GeneralCategory::Unassigned if crate::is_noncharacter(cp) => "noncharacter",
-                _ => "reserved",
-            },
-            None if (0xD800..=0xDFFF).contains(&cp) => "surrogate",
-            None => "reserved",
-        };
-        Cow::Owned(format!("<{kind}-{cp:04X}>"))
+        self.write_name(cp, &mut out).then_some(out)
     }
 }
 
@@ -275,25 +261,19 @@ fn read_dictionary(section: &'static [u8], at: usize) -> Option<(Vec<&'static st
     Some((dictionary, cursor))
 }
 
-/// Reads a little-endian `u32`.
-#[inline]
-fn u32_at(buf: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(
-        buf.get(at..at.checked_add(4)?)?.try_into().ok()?,
-    ))
-}
-
 /// Appends the upper-case hex of `cp`, padded to at least four digits the way Unicode spells
 /// its `*` placeholder and the trainer's verifier writes it (`U+3400` is four digits,
 /// `U+18CFF` five).
 fn push_hex(out: &mut String, cp: u32) {
     let mut digits = [0u8; 8];
-    let used = zeta_unicode_format::write_hex(&mut digits, cp, 4);
+    let used = write_hex(&mut digits, cp, 4);
     out.push_str(std::str::from_utf8(&digits[..used]).expect("hex digits are ASCII"));
 }
 
 #[cfg(test)]
 mod tests {
+    use zeta_unicode_format::write_varint;
+
     use super::*;
 
     /// Builds the pattern section format for a synthetic list.
@@ -329,15 +309,6 @@ mod tests {
             previous = lo;
         }
         section
-    }
-
-    /// Appends a LEB128 varint.
-    fn write_varint(mut value: u64, out: &mut Vec<u8>) {
-        while value >= 0x80 {
-            out.push(u8::try_from(value & 0x7F).unwrap() | 0x80);
-            value >>= 7;
-        }
-        out.push(u8::try_from(value).unwrap());
     }
 
     #[test]
@@ -747,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_image_composes_hangul_patterns_and_labels() {
+    fn synthetic_image_composes_hangul_and_patterns() {
         let names: &'static [u8] = name_section(&corpus()).leak();
         let patterns: &'static [u8] = pattern_section(&[
             (0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", ""),
@@ -769,15 +740,6 @@ mod tests {
         out.clear();
         assert!(nomina.write_name(0x18CFF, &mut out));
         assert_eq!(out, "KHITAN SMALL SCRIPT CHARACTER-18CFF-X");
-
-        assert_eq!(nomina.name_or_label(0xF8FF), "<private-use-F8FF>");
-        assert_eq!(nomina.name_or_label(0x378), "<reserved-0378>");
-        assert_eq!(nomina.name_or_label(0xFFFE), "<noncharacter-FFFE>");
-        assert_eq!(nomina.name_or_label(0x0), "<control-0000>");
-        assert_eq!(
-            nomina.name_or_label(0x100).as_ref(),
-            "TEST PREFIX 000 SUFFIX"
-        );
     }
 
     #[test]
@@ -786,12 +748,12 @@ mod tests {
         let patterns: &'static [u8] =
             pattern_section(&[(0x3400, 0x3401, "CJK UNIFIED IDEOGRAPH-", "")]).leak();
         let image: &'static [u8] = pack_image([names, b"emoji", b"gc", patterns]).leak();
-        let nomina = Nomina::new(image).expect("a valid image");
-        assert_eq!(nomina.section(NAMES), Some(names));
-        assert_eq!(nomina.section(EMOJI), Some(b"emoji".as_slice()));
-        assert_eq!(nomina.section(GC), Some(b"gc".as_slice()));
-        assert_eq!(nomina.section(PATTERNS), Some(patterns));
-        assert_eq!(nomina.section(4), None);
+        assert_eq!(section(image, NAMES), Some(names));
+        assert_eq!(section(image, EMOJI), Some(b"emoji".as_slice()));
+        assert_eq!(section(image, GC), Some(b"gc".as_slice()));
+        assert_eq!(section(image, PATTERNS), Some(patterns));
+        assert_eq!(section(image, SECTION_COUNT), None);
+        assert_eq!(section(b"nope", NAMES), None);
     }
 
     #[test]
@@ -814,6 +776,17 @@ mod tests {
         let mut wrong_page = image.to_vec();
         wrong_page[12] = 10;
         assert!(Nomina::new(wrong_page.leak()).is_none());
+
+        let mut wrong_shift = image.to_vec();
+        wrong_shift[11] = 0;
+        assert!(Nomina::new(wrong_shift.leak()).is_none());
+        let mut wrong_shift = image.to_vec();
+        wrong_shift[11] = 9;
+        assert!(Nomina::new(wrong_shift.leak()).is_none());
+
+        let mut wrong_layout = image.to_vec();
+        wrong_layout[13] = 2;
+        assert!(Nomina::new(wrong_layout.leak()).is_none());
 
         let mut out_of_bounds = image.to_vec();
         out_of_bounds[14..18].copy_from_slice(&u32::MAX.to_le_bytes());

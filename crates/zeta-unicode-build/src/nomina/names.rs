@@ -56,7 +56,8 @@
 //!
 //! # Entries
 //!
-//! A block holds at most 32 names (the shipped `name_block_shift` is 5). A block-local entry
+//! A block holds at most `2^block_shift` names (the default profile ships 64-name blocks,
+//! `name_block_shift = 6`). A block-local entry
 //! is one prefix-length symbol `p` (0..=255) followed by the bytes of the name after its first
 //! `p` bytes, followed by one zero terminator. A global entry adds a shared-suffix length
 //! symbol between the prefix and the middle, and reconstructs the suffix from the predecessor.
@@ -64,7 +65,7 @@
 //! `p == 0`; every middle byte then selects the next context. The first name of a block-local
 //! block always has `p == 0`; a global block's checkpoint supplies the predecessor.
 //!
-//! The block offsets make a lookup decode at most one 32-name block. A sequential cursor
+//! The block offsets make a lookup decode at most one block. A sequential cursor
 //! (in the runtime) additionally resumes inside a block, which is what makes `.uni`-style
 //! increasing-id walks decode every entry once.
 //!
@@ -77,7 +78,7 @@
 //! `DerivedName.txt`, the `NameAliases.txt` aliases folded in for code points without a
 //! name, and the Hangul syllables and `*` patterns excluded from the section (they stay
 //! algorithmic). That is 35,416 names in Unicode 18.0.0. Names are front-coded in code-point
-//! order; block boundaries are fixed every 32 names.
+//! order; block boundaries are fixed every `2^block_shift` names.
 //!
 //! [`encode`] and [`encode_with_block_shift`] emit the block-local layout;
 //! [`encode_global`] and [`encode_global_with_block_shift`] emit the global one. Both return
@@ -86,20 +87,13 @@
 
 use std::collections::BinaryHeap;
 
+use bytes::{Buf, BufMut};
+
 use zeta_unicode_format::{HANGUL_COUNT, HANGUL_END, HANGUL_START, UNICODE_END};
 
-/// Appends `value` little-endian.
-fn push_u16(out: &mut Vec<u8>, value: u16) {
-    out.extend_from_slice(&value.to_le_bytes());
-}
-
-/// Appends `value` little-endian.
-fn push_u32(out: &mut Vec<u8>, value: u32) {
-    out.extend_from_slice(&value.to_le_bytes());
-}
 use crate::ucd::Inputs;
 
-/// The shipped number of names per block (32).
+/// The default block shift of the unparameterized helpers (32 names).
 pub const NAME_BLOCK_SHIFT: u8 = 5;
 /// The smallest block shift a measurement may use.
 pub const MIN_BLOCK_SHIFT: u8 = 1;
@@ -155,7 +149,7 @@ pub struct Encoded {
     pub layout: NameLayout,
     /// Names in the section.
     pub name_count: usize,
-    /// 32-name blocks (or `2^block_shift` names).
+    /// Blocks of `2^block_shift` names.
     pub block_count: usize,
     /// Maximal runs of consecutive named code points.
     pub run_count: usize,
@@ -191,7 +185,7 @@ impl Encoded {
     }
 }
 
-/// Encodes the name section with the shipped 32-name blocks.
+/// Encodes the name section with the default 32-name blocks.
 ///
 /// # Panics
 ///
@@ -204,7 +198,8 @@ pub fn encode(inputs: &Inputs) -> Vec<u8> {
 
 /// Encodes the block-local name section with an explicit block shift.
 ///
-/// The block shift is the flat image header's `name_block_shift`; 5 is the shipped value.
+/// The block shift is the flat image header's `name_block_shift`; 5 is the default of this
+/// helper, while training measures the shift it ships.
 /// Shifts 1..=8 are accepted so the layout study can measure 2/32/64/128/256-name blocks.
 ///
 /// # Panics
@@ -216,7 +211,7 @@ pub fn encode_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encoded {
     encode_layout(inputs, block_shift, NameLayout::BlockLocal)
 }
 
-/// Encodes the global, checkpointed name section with the shipped 32-name blocks.
+/// Encodes the global, checkpointed name section with the default 32-name blocks.
 ///
 /// # Panics
 ///
@@ -408,35 +403,17 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     let mut bytes = Vec::with_capacity(
         12 + page_dir.len() * 2 + run_count * 8 + block_count * 12 + 6_000 + writer.out.len(),
     );
-    push_u32(
-        &mut bytes,
-        u32::try_from(entries.len()).expect("name count fits in u32"),
-    );
-    push_u32(
-        &mut bytes,
-        u32::try_from(block_count).expect("block count fits in u32"),
-    );
-    push_u16(
-        &mut bytes,
-        u16::try_from(run_count).expect("run count fits in u16"),
-    );
-    push_u16(
-        &mut bytes,
-        u16::try_from(PAGE_COUNT).expect("page count fits in u16"),
-    );
+    bytes.put_u32_le(u32::try_from(entries.len()).expect("name count fits in u32"));
+    bytes.put_u32_le(u32::try_from(block_count).expect("block count fits in u32"));
+    bytes.put_u16_le(u16::try_from(run_count).expect("run count fits in u16"));
+    bytes.put_u16_le(u16::try_from(PAGE_COUNT).expect("page count fits in u16"));
     for &first in &page_dir {
-        push_u16(&mut bytes, first);
+        bytes.put_u16_le(first);
     }
     for &(first_cp, length, base_id) in &runs {
-        push_u32(&mut bytes, first_cp);
-        push_u16(
-            &mut bytes,
-            u16::try_from(length).expect("run length fits in u16"),
-        );
-        push_u16(
-            &mut bytes,
-            u16::try_from(base_id).expect("name id fits in u16"),
-        );
+        bytes.put_u32_le(first_cp);
+        bytes.put_u16_le(u16::try_from(length).expect("run length fits in u16"));
+        bytes.put_u16_le(u16::try_from(base_id).expect("name id fits in u16"));
     }
     while !bytes.len().is_multiple_of(4) {
         bytes.push(0);
@@ -444,7 +421,7 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     let index_bytes = bytes.len();
 
     for &bit in &block_bits {
-        push_u32(&mut bytes, bit);
+        bytes.put_u32_le(bit);
     }
     let offset_bytes = block_bits.len() * 4;
 
@@ -452,10 +429,7 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     let model_start = bytes.len();
     bytes.extend_from_slice(&context_model);
     let model_count = context_books.len() + if global { 4 } else { 2 };
-    push_u16(
-        &mut bytes,
-        u16::try_from(model_count).expect("model count fits in u16"),
-    );
+    bytes.put_u16_le(u16::try_from(model_count).expect("model count fits in u16"));
     let directory_at = bytes.len();
     bytes.resize(directory_at + model_count * 2, 0);
     let blobs_at = bytes.len();
@@ -476,7 +450,7 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     }
     for (index, offset) in blob_offsets.iter().enumerate() {
         let at = directory_at + index * 2;
-        bytes[at..at + 2].copy_from_slice(&offset.to_le_bytes());
+        (&mut bytes[at..at + 2]).put_u16_le(*offset);
     }
     let model_bytes = bytes.len() - model_start;
     let model_directory_bytes = blobs_at - model_start;
@@ -656,7 +630,7 @@ impl Codebook {
     fn write(&self, out: &mut Vec<u8>) {
         out.push(self.max_bits);
         for length in 1..=usize::from(self.max_bits) {
-            push_u16(out, self.counts[length]);
+            out.put_u16_le(self.counts[length]);
         }
         out.extend_from_slice(&self.symbols);
     }
@@ -833,25 +807,12 @@ impl BitWriter {
     }
 }
 
-/// A `*`-pattern range: `prefix + hex(cp) + suffix`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Pattern {
-    /// First code point.
-    lo: u32,
-    /// Last code point, inclusive.
-    hi: u32,
-    /// Text before the `*`.
-    prefix: String,
-    /// Text after the `*`.
-    suffix: String,
-}
-
 /// The parsed name corpus.
 struct Corpus {
     /// `(code point, name)`, ascending by code point.
     entries: Vec<(u32, String)>,
     /// The `*` pattern ranges, ascending by first code point.
-    patterns: Vec<Pattern>,
+    patterns: Vec<crate::nomina::patterns::Pattern>,
     /// Every Hangul record the file spells out, in file order.
     hangul: Vec<(u32, String)>,
     /// Aliases folded in from `NameAliases.txt`.
@@ -873,7 +834,7 @@ impl Corpus {
     }
 }
 
-/// Choongbae (leading) jamo short names, in `Jamo_Short_Name` order.
+/// Choseong (leading) jamo short names, in `Jamo_Short_Name` order.
 const JAMO_LEADING: [&str; 19] = [
     "G", "GG", "N", "D", "DD", "R", "M", "B", "BB", "S", "SS", "", "J", "JJ", "C", "K", "T", "P",
     "H",
@@ -902,7 +863,6 @@ const JAMO_TRAILING: [&str; 28] = [
 /// failure.
 fn parse_corpus(inputs: &Inputs) -> Corpus {
     let mut entries: Vec<(u32, String)> = Vec::with_capacity(35_400);
-    let mut patterns: Vec<Pattern> = Vec::new();
     let mut hangul: Vec<(u32, String)> = Vec::with_capacity(HANGUL_COUNT);
 
     for (line, record) in crate::ucd::records(&inputs.names) {
@@ -915,8 +875,9 @@ fn parse_corpus(inputs: &Inputs) -> Corpus {
             .unwrap_or_else(|| panic!("{source}: no field separator"));
         let lhs = lhs.trim();
         let name = rhs.trim();
-        if let Some((lo, hi)) = lhs.split_once("..") {
-            patterns.push(pattern_from(name, lo, hi, source));
+        // Range records and the single-code-point `*` records are the pattern section's job;
+        // `patterns::parse_patterns` validates and sorts them independently.
+        if lhs.contains("..") || name.contains('*') {
             continue;
         }
         let cp = parse_cp(lhs, source);
@@ -926,10 +887,6 @@ fn parse_corpus(inputs: &Inputs) -> Corpus {
                 "{source}: unexpected Hangul name for U+{cp:04X}: {name}"
             );
             hangul.push((cp, name.to_owned()));
-            continue;
-        }
-        if name.contains('*') {
-            patterns.push(pattern_from(name, lhs, lhs, source));
             continue;
         }
         assert!(
@@ -948,25 +905,11 @@ fn parse_corpus(inputs: &Inputs) -> Corpus {
             pair[0].0
         );
     }
-    patterns.sort_by_key(|pattern| pattern.lo);
     Corpus {
         entries,
-        patterns,
+        patterns: crate::nomina::patterns::parse_patterns(&inputs.names),
         hangul,
         aliases,
-    }
-}
-
-/// Builds a pattern from one `DerivedName.txt` record.
-fn pattern_from(name: &str, lo: &str, hi: &str, source: Source<'_>) -> Pattern {
-    let (prefix, suffix) = name
-        .split_once('*')
-        .unwrap_or_else(|| panic!("{source}: pattern without '*'"));
-    Pattern {
-        lo: parse_cp(lo, source),
-        hi: parse_cp(hi, source),
-        prefix: prefix.to_owned(),
-        suffix: suffix.to_owned(),
     }
 }
 
@@ -1048,10 +991,8 @@ impl std::fmt::Display for Source<'_> {
 /// Parses one hexadecimal code point, naming its source on failure.
 fn parse_cp(text: &str, source: Source<'_>) -> u32 {
     let text = text.trim();
-    match u32::from_str_radix(text, 16) {
-        Ok(_) => crate::ucd::hex_u32(text),
-        Err(error) => panic!("{source}: bad code point {text:?}: {error}"),
-    }
+    u32::from_str_radix(text, 16)
+        .unwrap_or_else(|error| panic!("{source}: bad code point {text:?}: {error}"))
 }
 
 /// Decodes the produced name section and checks every name and every code-point mapping.
@@ -1141,7 +1082,7 @@ pub fn verify_layout(section: &[u8], inputs: &Inputs, block_shift: u8, layout: N
 }
 
 /// Builds a `*` pattern name the way the runtime does.
-fn pattern_name(pattern: &Pattern, cp: u32) -> Option<String> {
+fn pattern_name(pattern: &crate::nomina::patterns::Pattern, cp: u32) -> Option<String> {
     if cp < pattern.lo || cp > pattern.hi {
         return None;
     }
@@ -1204,12 +1145,15 @@ impl<'a> Decoded<'a> {
             (MIN_BLOCK_SHIFT..=MAX_BLOCK_SHIFT).contains(&block_shift),
             "block shift {block_shift} is outside the supported range"
         );
+        let mut header = section;
         let name_count =
-            usize::try_from(u32_at(section, 0, "name count")).expect("name count fits");
+            usize::try_from(header.try_get_u32_le().expect("name count: truncated u32"))
+                .expect("name count fits");
         let block_count =
-            usize::try_from(u32_at(section, 4, "block count")).expect("block count fits");
-        let run_count = usize::from(u16_at(section, 8, "run count"));
-        let page_count = usize::from(u16_at(section, 10, "page count"));
+            usize::try_from(header.try_get_u32_le().expect("block count: truncated u32"))
+                .expect("block count fits");
+        let run_count = usize::from(header.try_get_u16_le().expect("run count: truncated u16"));
+        let page_count = usize::from(header.try_get_u16_le().expect("page count: truncated u16"));
         assert_eq!(page_count, PAGE_COUNT, "the page directory size");
         let block_size = 1usize << block_shift;
         assert_eq!(
@@ -1235,7 +1179,13 @@ impl<'a> Decoded<'a> {
         let context_model = section
             .get(models_at..models_at + 256)
             .expect("the context map is truncated");
-        let model_count = usize::from(u16_at(section, models_at + 256, "model count"));
+        let count_at = models_at + 256;
+        let mut count_bytes = section.get(count_at..).expect("model count: truncated u16");
+        let model_count = usize::from(
+            count_bytes
+                .try_get_u16_le()
+                .expect("model count: truncated u16"),
+        );
         assert!(model_count > 0, "no models");
         let directory_at = models_at + 258;
         let blobs_at = directory_at + model_count * 2;
@@ -1247,7 +1197,15 @@ impl<'a> Decoded<'a> {
         let mut books = Vec::with_capacity(model_count);
         let mut expected = 0usize;
         for index in 0..model_count {
-            let relative = usize::from(u16_at(section, directory_at + index * 2, "model offset"));
+            let offset_at = directory_at + index * 2;
+            let mut offset_bytes = section
+                .get(offset_at..)
+                .expect("model offset: truncated u16");
+            let relative = usize::from(
+                offset_bytes
+                    .try_get_u16_le()
+                    .expect("model offset: truncated u16"),
+            );
             assert_eq!(relative, expected, "model {index} is not contiguous");
             let at = blobs_at + relative;
             let max_bits = *section.get(at).expect("a model max-bits byte");
@@ -1255,17 +1213,25 @@ impl<'a> Decoded<'a> {
                 max_bits > 0 && max_bits <= MAX_CODE_BITS,
                 "model {index} has {max_bits} maximum bits"
             );
-            let counts_at = at + 1;
-            let symbols_at = counts_at + usize::from(max_bits) * 2;
+            let model_counts_at = at + 1;
+            let symbols_at = model_counts_at + usize::from(max_bits) * 2;
             let mut symbols = 0usize;
             for length in 0..usize::from(max_bits) {
-                symbols += usize::from(u16_at(section, counts_at + length * 2, "code counts"));
+                let length_at = model_counts_at + length * 2;
+                let mut length_bytes = section
+                    .get(length_at..)
+                    .expect("code counts: truncated u16");
+                symbols += usize::from(
+                    length_bytes
+                        .try_get_u16_le()
+                        .expect("code counts: truncated u16"),
+                );
             }
             let symbols_end = symbols_at + symbols;
             assert!(symbols_end <= section.len(), "model {index} is truncated");
             books.push(Book {
                 max_bits,
-                counts: &section[counts_at..symbols_at],
+                counts: &section[model_counts_at..symbols_at],
                 symbols: &section[symbols_at..symbols_end],
             });
             expected = symbols_end - blobs_at;
@@ -1301,19 +1267,30 @@ impl<'a> Decoded<'a> {
             return None;
         }
         let page = usize::try_from(cp >> PAGE_SHIFT).expect("page fits in usize");
-        let mut run = usize::from(u16_at(self.page_dir, page * 2, "page directory"));
+        let mut page_bytes = self
+            .page_dir
+            .get(page * 2..)
+            .expect("page directory: truncated u16");
+        let mut run = usize::from(
+            page_bytes
+                .try_get_u16_le()
+                .expect("page directory: truncated u16"),
+        );
         loop {
             if run >= self.run_count {
                 return None;
             }
             let at = run * 8;
-            let first = u32_at(self.runs, at, "run first code point");
+            let mut record = self.runs.get(at..).expect("run record: truncated");
+            let first = record
+                .try_get_u32_le()
+                .expect("run first code point: truncated u32");
             if cp < first {
                 return None;
             }
-            let length = u32::from(u16_at(self.runs, at + 4, "run length"));
+            let length = u32::from(record.try_get_u16_le().expect("run length: truncated u16"));
             if cp - first < length {
-                let base = u32::from(u16_at(self.runs, at + 6, "run base id"));
+                let base = u32::from(record.try_get_u16_le().expect("run base id: truncated u16"));
                 return Some(usize::try_from(base + (cp - first)).expect("id fits"));
             }
             run += 1;
@@ -1339,11 +1316,18 @@ impl<'a> Decoded<'a> {
         let (first, bit) = if resume {
             (self.cache_id + 1, self.cache_bit)
         } else {
-            (
-                block * block_size,
-                usize::try_from(u32_at(self.block_bits, block * 4, "block bit offset"))
-                    .expect("bit offset fits in usize"),
+            let bit_at = block * 4;
+            let mut bit_bytes = self
+                .block_bits
+                .get(bit_at..)
+                .expect("block bit offset: truncated u32");
+            let bit = usize::try_from(
+                bit_bytes
+                    .try_get_u32_le()
+                    .expect("block bit offset: truncated u32"),
             )
+            .expect("bit offset fits in usize");
+            (block * block_size, bit)
         };
         let mut length = if resume { self.cache_len } else { 0 };
         let mut bits = Bits::new(self.stream, bit);
@@ -1432,7 +1416,8 @@ impl<'a> Decoded<'a> {
         for length in 1..=book.max_bits {
             code = (code << 1) | u32::from(bits.bit()?);
             let at = usize::from(length - 1) * 2;
-            let count = u32::from(u16_slice(book.counts, at)?);
+            let mut count_bytes = book.counts.get(at..)?;
+            let count = u32::from(count_bytes.try_get_u16_le().ok()?);
             if code >= first && code - first < count {
                 let offset = usize::try_from(code - first).expect("offset fits");
                 return book.symbols.get(index + offset).copied();
@@ -1442,11 +1427,6 @@ impl<'a> Decoded<'a> {
         }
         None
     }
-}
-
-/// Reads a `u16` from a model's raw counts.
-fn u16_slice(buf: &[u8], at: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(buf.get(at..at + 2)?.try_into().ok()?))
 }
 
 /// An MSB-first bit reader for the verifier.
@@ -1479,26 +1459,6 @@ impl<'a> Bits<'a> {
         self.pos += 1;
         Some(value)
     }
-}
-
-/// Reads a little-endian `u16` at `at`.
-fn u16_at(buf: &[u8], at: usize, what: &str) -> u16 {
-    buf.get(at..at + 2)
-        .and_then(|bytes| bytes.try_into().ok())
-        .map_or_else(
-            || panic!("{what}: truncated u16 at {at}"),
-            u16::from_le_bytes,
-        )
-}
-
-/// Reads a little-endian `u32` at `at`.
-fn u32_at(buf: &[u8], at: usize, what: &str) -> u32 {
-    buf.get(at..at + 4)
-        .and_then(|bytes| bytes.try_into().ok())
-        .map_or_else(
-            || panic!("{what}: truncated u32 at {at}"),
-            u32::from_le_bytes,
-        )
 }
 
 #[cfg(test)]
@@ -1747,7 +1707,7 @@ mod tests {
 
     #[test]
     fn patterns_are_computed_exactly() {
-        let pattern = Pattern {
+        let pattern = crate::nomina::patterns::Pattern {
             lo: 0x3400,
             hi: 0x3401,
             prefix: "CJK UNIFIED IDEOGRAPH-".to_owned(),

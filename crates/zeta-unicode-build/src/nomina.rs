@@ -11,7 +11,7 @@
 //!
 //! The header records the magic `NOM1`, the Unicode version as three `u16`s, the section
 //! count, the name block shift, the general-category page shift and one `(offset, length)`
-//! pair per section. [`image::pack`] writes it; the runtime's `Nomina` reads it.
+//! pair per section. [`image::pack_with_layout`] writes it; the runtime's `Nomina` reads it.
 
 #![allow(
     dead_code,

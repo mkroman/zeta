@@ -8,6 +8,11 @@
 # Unicode 10 use a separate Emoji release (for example `hack/fetch-ucd.sh 10.0.0 /tmp/ucd-10 5.0`).
 set -eu
 
+command -v curl >/dev/null 2>&1 || {
+    printf 'error: curl is required\n' >&2
+    exit 1
+}
+
 version=${1:?usage: hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]}
 dest=${2:?usage: hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]}
 emoji_version=${3:-${version%.*}}
@@ -56,7 +61,7 @@ done
 
 # The first line of DerivedName.txt names its release, e.g. `# DerivedName-18.0.0.txt`;
 # anything else means we fetched a different Unicode version than requested.
-if ! head -n 1 "$dest/ucd/extracted/DerivedName.txt" | grep -q "# DerivedName-$version"; then
+if ! head -n 1 "$dest/ucd/extracted/DerivedName.txt" | grep -Fq -- "# DerivedName-$version"; then
     printf 'error: DerivedName.txt does not mention Unicode %s\n' "$version" >&2
     exit 1
 fi

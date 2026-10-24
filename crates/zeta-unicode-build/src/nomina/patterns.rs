@@ -20,6 +20,10 @@
 
 use std::collections::BTreeSet;
 
+use zeta_unicode_format::write_varint;
+
+use crate::ucd::{hex_u32, records};
+
 /// One `*`-pattern range: `prefix + hex(cp) + suffix`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pattern {
@@ -72,6 +76,10 @@ pub fn parse_patterns(derived_names: &str) -> Vec<Pattern> {
             .unwrap_or_else(|| panic!("line {number}: {line}"));
         let rhs = rhs.trim();
         let Some((prefix, rest)) = rhs.split_once('*') else {
+            assert!(
+                !lhs.contains(".."),
+                "line {number}: a range without a '*' placeholder"
+            );
             continue;
         };
         assert!(
@@ -250,9 +258,10 @@ fn decode_section(section: &[u8]) -> DecodedSection {
         at += 2;
     }
     assert_eq!(at, section.len(), "trailing pattern-section bytes");
+    let [prefixes, suffixes] = dictionaries.try_into().expect("two dictionaries");
     DecodedSection {
-        prefixes: dictionaries.remove(0),
-        suffixes: dictionaries.remove(0),
+        prefixes,
+        suffixes,
         ranges,
     }
 }
@@ -319,31 +328,6 @@ fn assert_round_trip(section: &[u8], patterns: &[Pattern]) {
     );
 }
 
-/// The non-empty, non-comment records of a UCD file, with 1-based line numbers.
-fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
-        .map(|(index, line)| (index + 1, line))
-}
-
-/// Parses one hexadecimal Unicode code point.
-fn hex_u32(text: &str) -> u32 {
-    u32::from_str_radix(text.trim(), 16)
-        .unwrap_or_else(|error| panic!("invalid hexadecimal code point {text:?}: {error}"))
-}
-
-/// Appends a LEB128 varint.
-fn write_varint(mut value: u64, out: &mut Vec<u8>) {
-    while value >= 0x80 {
-        #[allow(clippy::cast_possible_truncation, reason = "the low seven bits")]
-        out.push((value as u8 & 0x7F) | 0x80);
-        value >>= 7;
-    }
-    #[allow(clippy::cast_possible_truncation, reason = "the remaining byte")]
-    out.push(value as u8);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,22 +358,6 @@ mod tests {
         patterns
     }
 
-    /// A decoded section: `(prefix, suffix)` dictionaries and ranges with their ids.
-    struct Decoded {
-        prefixes: Vec<String>,
-        suffixes: Vec<String>,
-        ranges: Vec<(u32, u32, u8, u8)>,
-    }
-
-    fn decode(section: &[u8]) -> Decoded {
-        let decoded = decode_section(section);
-        Decoded {
-            prefixes: decoded.prefixes,
-            suffixes: decoded.suffixes,
-            ranges: decoded.ranges,
-        }
-    }
-
     #[test]
     fn every_pattern_range_is_encoded_and_materializes() {
         let oracle = oracle_patterns();
@@ -401,7 +369,7 @@ mod tests {
             "section grew to {}",
             stats.section_bytes
         );
-        let decoded = decode(&section);
+        let decoded = decode_section(&section);
         assert_eq!(decoded.prefixes.len(), 8);
         assert_eq!(decoded.suffixes.len(), 1);
         assert_eq!(decoded.ranges.len(), oracle.len());
@@ -438,7 +406,7 @@ mod tests {
     #[test]
     fn the_placeholder_widens_past_four_digits() {
         let (section, _) = build(DERIVED);
-        let decoded = decode(&section);
+        let decoded = decode_section(&section);
         let range = decoded
             .ranges
             .iter()

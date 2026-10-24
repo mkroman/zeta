@@ -21,6 +21,7 @@ include = ["src/**", "data/**", "build.rs", "Cargo.toml", "README.md", "LICENSE-
 all-features = true
 
 [dependencies]
+bytes = { workspace = true }
 # The image layout and the tone wording are shared with the generator.
 zeta-unicode-format = { path = "../zeta-unicode-format", version = "0.0.0" }
 

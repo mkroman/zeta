@@ -5,7 +5,7 @@ use zeta_unicode_format::GC_SHORT_NAMES;
 /// A Unicode general category value.
 ///
 /// The long names are what replies print (`Lowercase Letter`), the short names (`Ll`) are what
-/// the UCD files carry. The variants are declared in generated table-id order, so a variant's
+/// the UCD files carry. The declaration order is the generated table-id order, so a variant's
 /// discriminant is also its index in `zeta_unicode_format::GC_SHORT_NAMES` and in the crate's
 /// long-name table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

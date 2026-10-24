@@ -13,6 +13,7 @@
 
 use std::fmt::Write as _;
 
+use bytes::Buf;
 use thiserror::Error;
 
 use crate::nomina::{emoji, gc, image, names, patterns};
@@ -122,10 +123,7 @@ impl ImageLayout {
             });
         }
         let name_layout = image[13];
-        if !matches!(
-            name_layout,
-            image::LAYOUT_BLOCK_LOCAL | image::LAYOUT_GLOBAL
-        ) {
+        if names::NameLayout::from_id(name_layout).is_none() {
             return Err(Error::Image {
                 reason: "the name layout byte is unknown",
             });
@@ -142,69 +140,98 @@ impl ImageLayout {
                 reason: "the general-category page shift is not eleven",
             });
         }
-        let version = (
-            u8::try_from(u16_at(image, 4)).map_err(|_| Error::Image {
-                reason: "the major version does not fit in a byte",
-            })?,
-            u8::try_from(u16_at(image, 6)).map_err(|_| Error::Image {
-                reason: "the minor version does not fit in a byte",
-            })?,
-            u8::try_from(u16_at(image, 8)).map_err(|_| Error::Image {
-                reason: "the patch version does not fit in a byte",
-            })?,
-        );
-
-        let mut sections = Vec::with_capacity(image::SECTION_COUNT);
-        let mut previous_end = image::HEADER_LEN;
-        for id in 0..image::SECTION_COUNT {
-            let at = 14 + id * 8;
-            let offset = usize::try_from(u32_at(image, at)).map_err(|_| Error::Image {
-                reason: "a section offset does not fit in usize",
-            })?;
-            let size = usize::try_from(u32_at(image, at + 4)).map_err(|_| Error::Image {
-                reason: "a section length does not fit in usize",
-            })?;
-            if !offset.is_multiple_of(8) {
-                return Err(Error::Image {
-                    reason: "a section offset is not eight-byte aligned",
-                });
-            }
-            if offset < previous_end {
-                return Err(Error::Image {
-                    reason: "section payloads overlap or are out of order",
-                });
-            }
-            let end = offset.checked_add(size).ok_or(Error::Image {
-                reason: "a section end overflows usize",
-            })?;
-            if end > image.len() {
-                return Err(Error::Image {
-                    reason: "a section lies outside the image",
-                });
-            }
-            sections.push(SectionRecord {
-                id,
-                name: section_name(id),
-                offset,
-                size,
-            });
-            previous_end = end;
-        }
-        if previous_end != image.len() {
-            return Err(Error::Image {
-                reason: "the image has trailing bytes",
-            });
-        }
 
         Ok(Self {
-            version,
+            version: parse_version(image)?,
             name_block_shift,
             name_layout,
             gc_page_shift,
-            sections,
+            sections: parse_sections(image)?,
             total_bytes: image.len(),
         })
     }
+}
+
+/// Reads the three `u16` version fields from the image header.
+fn parse_version(image: &[u8]) -> Result<(u8, u8, u8), Error> {
+    let mut version_bytes = image.get(4..10).ok_or(Error::Image {
+        reason: "the version is truncated",
+    })?;
+    let major = version_bytes.try_get_u16_le().map_err(|_| Error::Image {
+        reason: "the version is truncated",
+    })?;
+    let minor = version_bytes.try_get_u16_le().map_err(|_| Error::Image {
+        reason: "the version is truncated",
+    })?;
+    let patch = version_bytes.try_get_u16_le().map_err(|_| Error::Image {
+        reason: "the version is truncated",
+    })?;
+    Ok((
+        u8::try_from(major).map_err(|_| Error::Image {
+            reason: "the major version does not fit in a byte",
+        })?,
+        u8::try_from(minor).map_err(|_| Error::Image {
+            reason: "the minor version does not fit in a byte",
+        })?,
+        u8::try_from(patch).map_err(|_| Error::Image {
+            reason: "the patch version does not fit in a byte",
+        })?,
+    ))
+}
+
+/// Reads and validates the four section directory entries.
+fn parse_sections(image: &[u8]) -> Result<Vec<SectionRecord>, Error> {
+    let mut sections = Vec::with_capacity(image::SECTION_COUNT);
+    let mut previous_end = image::HEADER_LEN;
+    for id in 0..image::SECTION_COUNT {
+        let at = 14 + id * 8;
+        let mut entry = image.get(at..at + 8).ok_or(Error::Image {
+            reason: "a section directory entry is truncated",
+        })?;
+        let offset = usize::try_from(entry.try_get_u32_le().map_err(|_| Error::Image {
+            reason: "a section offset is truncated",
+        })?)
+        .map_err(|_| Error::Image {
+            reason: "a section offset does not fit in usize",
+        })?;
+        let size = usize::try_from(entry.try_get_u32_le().map_err(|_| Error::Image {
+            reason: "a section length is truncated",
+        })?)
+        .map_err(|_| Error::Image {
+            reason: "a section length does not fit in usize",
+        })?;
+        if !offset.is_multiple_of(8) {
+            return Err(Error::Image {
+                reason: "a section offset is not eight-byte aligned",
+            });
+        }
+        if offset < previous_end {
+            return Err(Error::Image {
+                reason: "section payloads overlap or are out of order",
+            });
+        }
+        let end = offset.checked_add(size).ok_or(Error::Image {
+            reason: "a section end overflows usize",
+        })?;
+        if end > image.len() {
+            return Err(Error::Image {
+                reason: "a section lies outside the image",
+            });
+        }
+        sections.push(SectionRecord {
+            id,
+            name: section_name(id),
+            offset,
+            size,
+        });
+        previous_end = end;
+    }
+    if previous_end != image.len() {
+        return Err(Error::Image {
+            reason: "the image has trailing bytes",
+        });
+    }
+    Ok(sections)
 }
 
 /// The statistic and size breakdown of the chosen name section.
@@ -407,9 +434,7 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
     assert_eq!(gc_stats.section_bytes, gc_section.len());
     assert_eq!(pattern_stats.section_bytes, pattern_section.len());
 
-    let mut measured: Vec<Measurement> = Vec::with_capacity(shifts.len());
-    let mut encodings: Vec<names::Encoded> = Vec::with_capacity(shifts.len());
-    let mut images: Vec<Vec<u8>> = Vec::with_capacity(shifts.len());
+    let mut builds: Vec<CandidateBuild> = Vec::with_capacity(shifts.len());
     for &shift in &shifts {
         let encoded = names::encode_global_with_block_shift(inputs, shift);
         let packed = image::pack_with_layout(
@@ -424,13 +449,13 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
             image::GC_PAGE_SHIFT,
             encoded.layout.id(),
         );
-        measured.push(Measurement {
+        builds.push(CandidateBuild {
             shift,
-            total_bytes: packed.len(),
+            encoded,
+            image: packed,
         });
-        encodings.push(encoded);
-        images.push(packed);
     }
+    let measured: Vec<Measurement> = builds.iter().map(CandidateBuild::measurement).collect();
 
     // Only candidates that fit the budget may be chosen; a pinned shift has no alternative
     // and keeps the hard error through the empty `fitting` set.
@@ -446,13 +471,13 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
                 max_bytes: profile.max_table_bytes,
             }
         })?;
-    let candidates: Vec<Candidate> = measured
+    let candidates: Vec<Candidate> = builds
         .iter()
         .enumerate()
-        .map(|(index, measurement)| Candidate {
-            name_block_shift: measurement.shift,
-            name_bytes: encodings[index].bytes.len(),
-            total_bytes: measurement.total_bytes,
+        .map(|(index, build)| Candidate {
+            name_block_shift: build.shift,
+            name_bytes: build.encoded.bytes.len(),
+            total_bytes: build.image.len(),
             chosen: index == chosen_index,
         })
         .collect();
@@ -461,24 +486,12 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
         .copied()
         .expect("the chosen index came from this candidate list");
 
-    let layout = verify(
-        images
-            .get(chosen_index)
-            .expect("the chosen index came from this image list"),
-        inputs,
-    )?;
-    let name_stats = NameStats::from_encoded(
-        encodings
-            .get(chosen_index)
-            .expect("the chosen index came from this encoding list"),
-    );
+    let CandidateBuild { encoded, image, .. } = builds.swap_remove(chosen_index);
+    let layout = verify(&image, inputs)?;
+    let name_stats = NameStats::from_encoded(&encoded);
     assert_eq!(
         name_stats.total_bytes(),
-        encodings
-            .get(chosen_index)
-            .expect("the chosen index came from this encoding list")
-            .bytes
-            .len(),
+        encoded.bytes.len(),
         "the name breakdown must sum to the section size"
     );
 
@@ -517,7 +530,6 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
         patterns: true,
         image: true,
     };
-    let image = images.swap_remove(chosen_index);
     Ok(TrainOutput {
         total_bytes: layout.total_bytes,
         image,
@@ -608,6 +620,26 @@ impl NameStats {
 struct Measurement {
     shift: u8,
     total_bytes: usize,
+}
+
+/// One measured candidate: its shift, its encoded name section and its packed image.
+struct CandidateBuild {
+    /// The name-block shift the candidate was encoded with.
+    shift: u8,
+    /// The encoded name section and its size breakdown.
+    encoded: names::Encoded,
+    /// The complete image with this candidate's name section.
+    image: Vec<u8>,
+}
+
+impl CandidateBuild {
+    /// The candidate's row in the selection table.
+    const fn measurement(&self) -> Measurement {
+        Measurement {
+            shift: self.shift,
+            total_bytes: self.image.len(),
+        }
+    }
 }
 
 /// Picks the candidate index for `priority` among the candidates that fit
@@ -708,24 +740,6 @@ const fn section_name(id: usize) -> &'static str {
         image::PATTERNS => "name_patterns",
         _ => "unknown",
     }
-}
-
-/// Reads a little-endian `u16` at `at`.
-fn u16_at(buf: &[u8], at: usize) -> u16 {
-    u16::from_le_bytes(
-        buf.get(at..at + 2)
-            .and_then(|bytes| bytes.try_into().ok())
-            .expect("the header was length-checked"),
-    )
-}
-
-/// Reads a little-endian `u32` at `at`.
-fn u32_at(buf: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes(
-        buf.get(at..at + 4)
-            .and_then(|bytes| bytes.try_into().ok())
-            .expect("the header was length-checked"),
-    )
 }
 
 #[cfg(test)]
