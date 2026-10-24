@@ -45,10 +45,6 @@ impl Default for Settings {
     }
 }
 
-/// The `.rs` command.
-const RUST_PLAYGROUND: CommandSpec =
-    CommandSpec::new(".rs", "Evaluate a Rust expression on the Rust playground");
-
 /// Plugin for evaluating Rust code.
 pub struct RustPlayground {
     client: reqwest::Client,
@@ -87,9 +83,8 @@ impl RustPlayground {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(RUST_PLAYGROUND);
         let client = http::build_client(&ctx.config.http);
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
@@ -102,11 +97,12 @@ impl RustPlayground {
     }
 
     /// Replies to `.rs` with the playground's output for the expression.
-    #[handler(command)]
+    #[command(".rs", "Evaluate a Rust expression on the Rust playground", event)]
     async fn evaluate_command(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
