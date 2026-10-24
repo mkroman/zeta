@@ -2,11 +2,11 @@
 //!
 //! The section stores the 1,944 canonical entries of the shipped table in four Huffman-coded
 //! streams. [`Emoji::parse`] decodes them once into a UTF-8 key arena with `u16` starts, a
-//! UTF-8 literal-name arena, and one packed `u16` per entry holding the rule id (low four bits)
-//! and its argument (high twelve bits). A lookup canonicalizes `U+FE0F`, binary-searches the key
-//! arena, and materializes the name: a literal is borrowed, a rule name is built. Skin-tone
-//! variants strip the tones, find the base, and replay the base's 3-bit formatting rule when the
-//! 2-bit published-tone mask allows it.
+//! cached first code point per entry, a UTF-8 literal-name arena, and one packed `u16` per entry
+//! holding the rule id (low four bits) and its argument (high twelve bits). A lookup
+//! canonicalizes `U+FE0F`, binary-searches the key arena, and materializes the name: a literal
+//! is borrowed, a rule name is built. Skin-tone variants strip the tones, find the base, and
+//! replay the base's 3-bit formatting rule when the 2-bit published-tone mask allows it.
 //!
 //! The `ucd_mask` and `clock` rules need the character name of one code point. [`NameLookup`]
 //! is the seam for that: the name layer supplies it, so this module never depends on the name
@@ -22,11 +22,8 @@ use std::cmp::Ordering;
 use bytes::Buf;
 use zeta_unicode_format::huffman;
 use zeta_unicode_format::{
-    MAX_CPS, MAX_KEY, RULE_CLOCK, RULE_COUNT, RULE_COUPLE, RULE_FACING, RULE_FAMILY,
-    RULE_GENDER_MAN, RULE_GENDER_WOMAN, RULE_KEYCAP, RULE_KEYCAP_10, RULE_KISS, RULE_LITERAL,
-    RULE_PAIR, RULE_TONE_COMPONENT, RULE_UCD_MASK, RULE_UCD_MASK_HYPHEN, TONE_NAMES, TONES, ZWJ,
-    clock_name, encode_cps, format_toned, is_tone, join_family, keycap_word, pair_phrase, plural,
-    swap_person, tone_indices, ucd_mask_name,
+    MAX_CPS, MAX_KEY, Rule, TONE_NAMES, TONES, ZWJ, clock_name, encode_cps, format_toned, is_tone,
+    join_family, keycap_word, pair_phrase, plural, swap_person, tone_indices, ucd_mask_name,
 };
 
 /// Four stream descriptors of `u16 raw_len | u16 coded_len | u8 order`.
@@ -66,6 +63,12 @@ pub struct Emoji {
     name_offsets: Vec<u16>,
     /// One packed `(argument << 4) | rule id` per entry.
     entries: Vec<u16>,
+    /// The first code point of each entry, aligned with [`Emoji::entries`].
+    ///
+    /// Four bytes per entry, about 7.8 KB for the shipped table. It saves decoding the whole
+    /// key for the rules that only look at the first code point: `ucd_mask`, keycap,
+    /// tone-component and clock.
+    first_cps: Vec<u32>,
     /// Packed 3-bit tone formatting rules.
     tone_codes: Vec<u8>,
     /// Packed 2-bit published-tone-count masks.
@@ -131,12 +134,17 @@ impl Emoji {
         }
 
         let mut first_bytes = [0u64; 4];
+        let mut first_cps = Vec::with_capacity(key_offsets.len().checked_sub(1)?);
         for pair in key_offsets.windows(2) {
             let start = usize::from(pair[0]);
             let end = usize::from(pair[1]);
             let key = keys.get(start..end)?;
             let first = *key.first()?;
             first_bytes[usize::from(first) >> 6] |= 1 << (first & 63);
+            // The arena is built from validated scalars, so this cannot fail; decoding the
+            // first character here keeps `materialize` from walking the key again.
+            let text = std::str::from_utf8(key).ok()?;
+            first_cps.push(u32::from(text.chars().next()?));
         }
 
         Some(Self {
@@ -145,6 +153,7 @@ impl Emoji {
             names,
             name_offsets,
             entries,
+            first_cps,
             tone_codes,
             tone_masks,
             first_bytes,
@@ -269,56 +278,58 @@ impl Emoji {
     }
 
     /// Materializes the name of entry `index`.
+    ///
+    /// Rules that only need the first code point read it from the parse-time cache; only the
+    /// rules that inspect the whole sequence decode it into [`Cps`].
     fn materialize<L: NameLookup>(&self, index: usize, lookup: &mut L) -> Option<Cow<'_, str>> {
         let packed = *self.entries.get(index)?;
-        let rule = u8::try_from(packed & 0xF).ok()?;
+        let rule = Rule::from_id(u8::try_from(packed & 0xF).ok()?)?;
         let argument = usize::from(packed >> 4);
-        if usize::from(rule) >= RULE_COUNT {
-            return None;
-        }
-        if rule == RULE_LITERAL {
-            return Some(Cow::Borrowed(self.literal(argument)?));
-        }
-
-        let cps = Cps::parse(std::str::from_utf8(self.key(index)?).ok()?)?;
-        let first = *cps.as_slice().first()?;
         match rule {
-            RULE_UCD_MASK | RULE_UCD_MASK_HYPHEN => {
+            Rule::Literal => Some(Cow::Borrowed(self.literal(argument)?)),
+            Rule::UcdMask | Rule::UcdMaskHyphen => {
                 let mask = u8::try_from(argument).ok()?;
-                Some(Cow::Owned(lookup_name(first, lookup, |name| {
-                    ucd_mask_name(name, mask, rule == RULE_UCD_MASK_HYPHEN)
-                })?))
+                Some(Cow::Owned(lookup_name(
+                    self.first_cp(index)?,
+                    lookup,
+                    |name| ucd_mask_name(name, mask, rule == Rule::UcdMaskHyphen),
+                )?))
             }
-            RULE_KEYCAP => Some(Cow::Owned(format!("KEYCAP {}", keycap_word(first)?))),
-            RULE_GENDER_WOMAN | RULE_GENDER_MAN => {
-                let gender = if rule == RULE_GENDER_WOMAN {
+            Rule::Keycap => Some(Cow::Owned(format!(
+                "KEYCAP {}",
+                keycap_word(self.first_cp(index)?)?
+            ))),
+            Rule::GenderWoman | Rule::GenderMan => {
+                let gender = if rule == Rule::GenderWoman {
                     "woman"
                 } else {
                     "man"
                 };
-                let base = gender_base(cps.as_slice(), self)?;
+                let base = gender_base(self.entry_cps(index)?.as_slice(), self)?;
                 let base_name = self.materialize(base, lookup)?;
                 Some(Cow::Owned(swap_person(&base_name, gender)))
             }
-            RULE_FACING => {
-                let base_cps = cps.as_slice().get(..cps.as_slice().len().checked_sub(2)?)?;
-                let base = self.find_key(base_cps)?;
+            Rule::Facing => {
+                let cps = self.entry_cps(index)?;
+                let cps = cps.as_slice();
+                let base = self.find_key(cps.get(..cps.len().checked_sub(2)?)?)?;
                 let base_name = self.materialize(base, lookup)?;
                 Some(Cow::Owned(format!("{base_name} facing right")))
             }
-            RULE_FAMILY => Some(Cow::Owned(format!(
+            Rule::Family => Some(Cow::Owned(format!(
                 "family: {}",
-                join_family(cps.as_slice(), &[ZWJ])
+                join_family(self.entry_cps(index)?.as_slice(), &[ZWJ])
             ))),
-            RULE_COUPLE => Some(Cow::Owned(format!(
+            Rule::Couple => Some(Cow::Owned(format!(
                 "couple with heart: {}",
-                join_family(cps.as_slice(), &[ZWJ, 0x2764, 0x1F48B])
+                join_family(self.entry_cps(index)?.as_slice(), &[ZWJ, 0x2764, 0x1F48B])
             ))),
-            RULE_KISS => Some(Cow::Owned(format!(
+            Rule::Kiss => Some(Cow::Owned(format!(
                 "kiss: {}",
-                join_family(cps.as_slice(), &[ZWJ, 0x2764, 0x1F48B])
+                join_family(self.entry_cps(index)?.as_slice(), &[ZWJ, 0x2764, 0x1F48B])
             ))),
-            RULE_PAIR => {
+            Rule::Pair => {
+                let cps = self.entry_cps(index)?;
                 let cps = cps.as_slice();
                 Some(Cow::Owned(format!(
                     "{} {}",
@@ -326,16 +337,26 @@ impl Emoji {
                     pair_phrase(*cps.get(2)?)?
                 )))
             }
-            RULE_TONE_COMPONENT => {
+            Rule::ToneComponent => {
+                let first = self.first_cp(index)?;
                 let tone = TONES.iter().position(|&tone| tone == first)?;
                 Some(Cow::Borrowed(TONE_NAMES[tone]))
             }
-            RULE_CLOCK => lookup_name(first, lookup, clock_name)
+            Rule::Clock => lookup_name(self.first_cp(index)?, lookup, clock_name)
                 .flatten()
                 .map(Cow::Owned),
-            RULE_KEYCAP_10 => Some(Cow::Borrowed("keycap: 10")),
-            _ => None,
+            Rule::Keycap10 => Some(Cow::Borrowed("keycap: 10")),
         }
+    }
+
+    /// Returns the cached first code point of entry `index`.
+    fn first_cp(&self, index: usize) -> Option<u32> {
+        self.first_cps.get(index).copied()
+    }
+
+    /// Decodes the full key of entry `index` into its code points.
+    fn entry_cps(&self, index: usize) -> Option<Cps> {
+        Cps::parse(std::str::from_utf8(self.key(index)?).ok()?)
     }
 
     /// Finds the entry whose canonical key is `cps`.
@@ -418,27 +439,35 @@ fn decode_entries(rules: &[u8], masks: &[u8], literal_count: usize) -> Option<(V
     let mut entries = Vec::with_capacity(rules.len());
     let mut literal = 0usize;
     let mut mask_at = 0usize;
-    for &rule in rules {
-        if usize::from(rule) >= RULE_COUNT {
-            return None;
-        }
+    for &id in rules {
+        let rule = Rule::from_id(id)?;
         let argument = match rule {
-            RULE_LITERAL => {
+            Rule::Literal => {
                 let ordinal = literal;
                 literal = literal.checked_add(1)?;
                 ordinal
             }
-            RULE_UCD_MASK | RULE_UCD_MASK_HYPHEN => {
+            Rule::UcdMask | Rule::UcdMaskHyphen => {
                 let mask = usize::from(*masks.get(mask_at)?);
                 mask_at += 1;
                 mask
             }
-            _ => 0,
+            Rule::Keycap
+            | Rule::GenderWoman
+            | Rule::GenderMan
+            | Rule::Facing
+            | Rule::Family
+            | Rule::Couple
+            | Rule::Kiss
+            | Rule::Pair
+            | Rule::ToneComponent
+            | Rule::Clock
+            | Rule::Keycap10 => 0,
         };
         if argument > 0xFFF {
             return None;
         }
-        entries.push((u16::try_from(argument).ok()? << 4) | u16::from(rule));
+        entries.push((u16::try_from(argument).ok()? << 4) | u16::from(rule.id()));
     }
     if literal != literal_count {
         return None;
@@ -583,7 +612,11 @@ mod tests {
     }
 
     /// Builds a section from explicit streams and tone arrays.
-    fn section(entries: &[(Vec<u32>, u8, u16)], literals: &[&str], tones: &[(u8, u8)]) -> Vec<u8> {
+    fn section(
+        entries: &[(Vec<u32>, Rule, u16)],
+        literals: &[&str],
+        tones: &[(u8, u8)],
+    ) -> Vec<u8> {
         let mut key_raw = Vec::new();
         let mut previous = 0u32;
         let mut rule_raw = Vec::new();
@@ -596,8 +629,8 @@ mod tests {
             for &cp in cps.iter().skip(1) {
                 zeta_unicode_format::write_varint(u64::from(cp), &mut key_raw);
             }
-            rule_raw.push(*rule);
-            if *rule == RULE_UCD_MASK || *rule == RULE_UCD_MASK_HYPHEN {
+            rule_raw.push(rule.id());
+            if matches!(*rule, Rule::UcdMask | Rule::UcdMaskHyphen) {
                 masks.push(u8::try_from(*argument).unwrap());
             }
         }
@@ -635,10 +668,10 @@ mod tests {
     #[test]
     fn rules_materialize_without_stored_names() {
         let entries = vec![
-            (vec![0x23, 0x20E3], RULE_KEYCAP, 0),
-            (vec![0xA9], RULE_UCD_MASK, 3),
-            (vec![0x1F44D], RULE_LITERAL, 0),
-            (vec![0x1F551], RULE_CLOCK, 0),
+            (vec![0x23, 0x20E3], Rule::Keycap, 0),
+            (vec![0xA9], Rule::UcdMask, 3),
+            (vec![0x1F44D], Rule::Literal, 0),
+            (vec![0x1F551], Rule::Clock, 0),
         ];
         let blob = section(&entries, &["thumbs up"], &[(0, 0), (0, 0), (0, 0), (0, 0)]);
         let emoji = Emoji::parse(&blob).expect("the section parses");
@@ -664,45 +697,45 @@ mod tests {
     #[test]
     fn every_grammar_rule_materializes() {
         // The literal bases the rules reference, plus one entry per rule.
-        let mut rows: Vec<(Vec<u32>, u8, u16, Option<&str>)> = vec![
-            (vec![0x1F3C3], RULE_LITERAL, 0, Some("person running")),
-            (vec![0x1F3C3, ZWJ, 0x27A1], RULE_FACING, 0, None),
-            (vec![0x1F3FB], RULE_TONE_COMPONENT, 0, None),
+        let mut rows: Vec<(Vec<u32>, Rule, u16, Option<&str>)> = vec![
+            (vec![0x1F3C3], Rule::Literal, 0, Some("person running")),
+            (vec![0x1F3C3, ZWJ, 0x27A1], Rule::Facing, 0, None),
+            (vec![0x1F3FB], Rule::ToneComponent, 0, None),
             (
                 vec![0x1F468, ZWJ, 0x1F469, ZWJ, 0x1F466],
-                RULE_FAMILY,
+                Rule::Family,
                 0,
                 None,
             ),
             (
                 vec![0x1F469, ZWJ, 0x2764, ZWJ, 0x1F48B, ZWJ, 0x1F468],
-                RULE_KISS,
+                Rule::Kiss,
                 0,
                 None,
             ),
             (
                 vec![0x1F469, ZWJ, 0x2764, ZWJ, 0x1F468],
-                RULE_COUPLE,
+                Rule::Couple,
                 0,
                 None,
             ),
             (
                 vec![0x1F469, ZWJ, 0x1F91D, ZWJ, 0x1F468],
-                RULE_PAIR,
+                Rule::Pair,
                 0,
                 None,
             ),
             (
                 vec![0x1F469, ZWJ, 0x1F9B0, ZWJ, 0x2640],
-                RULE_GENDER_WOMAN,
+                Rule::GenderWoman,
                 1,
                 None,
             ),
-            (vec![0x1F51F], RULE_KEYCAP_10, 0, None),
-            (vec![0x1F9D1], RULE_LITERAL, 0, Some("person")),
+            (vec![0x1F51F], Rule::Keycap10, 0, None),
+            (vec![0x1F9D1], Rule::Literal, 0, Some("person")),
             (
                 vec![0x1F9D1, ZWJ, 0x1F9B0],
-                RULE_LITERAL,
+                Rule::Literal,
                 0,
                 Some("person: red hair"),
             ),
@@ -719,13 +752,13 @@ mod tests {
                 })
                 .collect::<Vec<u8>>()
         });
-        let entries: Vec<(Vec<u32>, u8, u16)> = rows
+        let entries: Vec<(Vec<u32>, Rule, u16)> = rows
             .iter()
             .map(|(cps, rule, argument, _)| (cps.clone(), *rule, *argument))
             .collect();
         let literals: Vec<&str> = rows
             .iter()
-            .filter_map(|(_, rule, _, name)| (*rule == RULE_LITERAL).then_some(*name).flatten())
+            .filter_map(|(_, rule, _, name)| (*rule == Rule::Literal).then_some(*name).flatten())
             .collect();
         let tones = vec![(0u8, 0u8); entries.len()];
         let blob = section(&entries, &literals, &tones);
@@ -750,7 +783,7 @@ mod tests {
 
     #[test]
     fn tone_variants_use_the_published_rule_and_mask() {
-        let entries = vec![(vec![0x1F44D], RULE_LITERAL, 0)];
+        let entries = vec![(vec![0x1F44D], Rule::Literal, 0)];
         let blob = section(&entries, &["thumbs up"], &[(2, 1)]);
         let emoji = Emoji::parse(&blob).expect("the section parses");
         assert_eq!(
@@ -767,7 +800,7 @@ mod tests {
 
     #[test]
     fn canonicalization_and_negative_cases_match_the_incumbent() {
-        let entries = vec![(vec![0x1F44D], RULE_LITERAL, 0)];
+        let entries = vec![(vec![0x1F44D], Rule::Literal, 0)];
         let blob = section(&entries, &["thumbs up"], &[(2, 1)]);
         let emoji = Emoji::parse(&blob).expect("the section parses");
         assert_eq!(emoji.emoji_name(&mut Names, ""), None);
@@ -786,7 +819,7 @@ mod tests {
 
     #[test]
     fn truncated_sections_are_rejected() {
-        let entries = vec![(vec![0x1F44D], RULE_LITERAL, 0)];
+        let entries = vec![(vec![0x1F44D], Rule::Literal, 0)];
         let blob = section(&entries, &["thumbs up"], &[(0, 0)]);
         assert!(Emoji::parse(&blob).is_some());
         for length in 0..blob.len() {

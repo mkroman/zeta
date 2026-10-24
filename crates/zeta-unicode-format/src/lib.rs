@@ -40,37 +40,78 @@ pub const ZWJ: u32 = 0x200D;
 /// The largest rule argument the packed `(argument << 4) | rule` entry encodes.
 pub const MAX_RULE_ARGUMENT: u16 = 0x0FFF;
 
-/// Rule id `literal`: the name is stored in the literal-name arena.
-pub const RULE_LITERAL: u8 = 0;
-/// Rule id `ucd_mask`: select words from the lowercase UCD name.
-pub const RULE_UCD_MASK: u8 = 1;
-/// Rule id `ucd_mask_hyphen`: select words, joining the first two with a hyphen.
-pub const RULE_UCD_MASK_HYPHEN: u8 = 2;
-/// Rule id `keycap`: `KEYCAP ` plus the keycap word.
-pub const RULE_KEYCAP: u8 = 3;
-/// Rule id `gender_w`: swap `person` for `woman` in a base name.
-pub const RULE_GENDER_WOMAN: u8 = 4;
-/// Rule id `gender_m`: swap `person` for `man` in a base name.
-pub const RULE_GENDER_MAN: u8 = 5;
-/// Rule id `facing`: base name plus ` facing right`.
-pub const RULE_FACING: u8 = 6;
-/// Rule id `family`: `family: ` plus comma-joined family words.
-pub const RULE_FAMILY: u8 = 7;
-/// Rule id `couple`: `couple with heart: ` plus comma-joined family words.
-pub const RULE_COUPLE: u8 = 8;
-/// Rule id `kiss`: `kiss: ` plus comma-joined family words.
-pub const RULE_KISS: u8 = 9;
-/// Rule id `pair`: plural word plus the pair phrase.
-pub const RULE_PAIR: u8 = 10;
-/// Rule id `tone_component`: one of the five skin-tone names.
-pub const RULE_TONE_COMPONENT: u8 = 11;
-/// Rule id `clock`: the hour word plus ` o’clock`.
-pub const RULE_CLOCK: u8 = 12;
-/// Rule id `keycap10`: the literal name `keycap: 10`.
-pub const RULE_KEYCAP_10: u8 = 13;
+/// The emoji name-grammar rule packed in the low four bits of an entry.
+///
+/// The discriminants are the wire ids: the generator writes them into the rule stream and the
+/// runtime reads them back, so they must never change. [`Rule::from_id`] is the only way to turn
+/// a decoded id back into a rule.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rule {
+    /// `literal`: the name is stored in the literal-name arena.
+    Literal = 0,
+    /// `ucd_mask`: select words from the lowercase UCD name.
+    UcdMask = 1,
+    /// `ucd_mask_hyphen`: select words, joining the first two with a hyphen.
+    UcdMaskHyphen = 2,
+    /// `keycap`: `KEYCAP ` plus the keycap word.
+    Keycap = 3,
+    /// `gender_w`: swap `person` for `woman` in a base name.
+    GenderWoman = 4,
+    /// `gender_m`: swap `person` for `man` in a base name.
+    GenderMan = 5,
+    /// `facing`: base name plus ` facing right`.
+    Facing = 6,
+    /// `family`: `family: ` plus comma-joined family words.
+    Family = 7,
+    /// `couple`: `couple with heart: ` plus comma-joined family words.
+    Couple = 8,
+    /// `kiss`: `kiss: ` plus comma-joined family words.
+    Kiss = 9,
+    /// `pair`: plural word plus the pair phrase.
+    Pair = 10,
+    /// `tone_component`: one of the five skin-tone names.
+    ToneComponent = 11,
+    /// `clock`: the hour word plus ` o’clock`.
+    Clock = 12,
+    /// `keycap10`: the literal name `keycap: 10`.
+    Keycap10 = 13,
+}
 
-/// The number of grammar rules, literal included.
-pub const RULE_COUNT: usize = 14;
+impl Rule {
+    /// The number of grammar rules, literal included.
+    pub const COUNT: usize = 14;
+
+    /// The wire id of the rule, as packed into an entry.
+    #[must_use]
+    pub const fn id(self) -> u8 {
+        self as u8
+    }
+
+    /// The rule with wire id `id`, or `None` when `id` is not a rule.
+    #[must_use]
+    pub const fn from_id(id: u8) -> Option<Self> {
+        Some(match id {
+            0 => Self::Literal,
+            1 => Self::UcdMask,
+            2 => Self::UcdMaskHyphen,
+            3 => Self::Keycap,
+            4 => Self::GenderWoman,
+            5 => Self::GenderMan,
+            6 => Self::Facing,
+            7 => Self::Family,
+            8 => Self::Couple,
+            9 => Self::Kiss,
+            10 => Self::Pair,
+            11 => Self::ToneComponent,
+            12 => Self::Clock,
+            13 => Self::Keycap10,
+            _ => return None,
+        })
+    }
+}
+
+const _: () = assert!(Rule::COUNT == Rule::Keycap10.id() as usize + 1);
 
 /// The first Hangul syllable, `HANGUL SYLLABLE GA`.
 pub const HANGUL_START: u32 = 0xAC00;
@@ -587,6 +628,34 @@ mod tests {
         assert_eq!(clock_name("CLOCK FACE TWO"), None);
         assert_eq!(clock_name("CLOCK HAND TWO OCLOCK"), None);
         assert_eq!(clock_name("CLOCK FACE TWO OCLOCK EXTRA"), None);
+    }
+
+    #[test]
+    fn rule_ids_round_trip_and_reject_unknown_ids() {
+        let rules = [
+            Rule::Literal,
+            Rule::UcdMask,
+            Rule::UcdMaskHyphen,
+            Rule::Keycap,
+            Rule::GenderWoman,
+            Rule::GenderMan,
+            Rule::Facing,
+            Rule::Family,
+            Rule::Couple,
+            Rule::Kiss,
+            Rule::Pair,
+            Rule::ToneComponent,
+            Rule::Clock,
+            Rule::Keycap10,
+        ];
+        assert_eq!(rules.len(), Rule::COUNT);
+        for (index, rule) in rules.into_iter().enumerate() {
+            assert_eq!(usize::from(rule.id()), index, "{rule:?}");
+            assert_eq!(Rule::from_id(rule.id()), Some(rule), "{rule:?}");
+        }
+        let first_unknown = u8::try_from(Rule::COUNT).expect("the rule count fits in a byte");
+        assert_eq!(Rule::from_id(first_unknown), None);
+        assert_eq!(Rule::from_id(u8::MAX), None);
     }
 
     #[test]

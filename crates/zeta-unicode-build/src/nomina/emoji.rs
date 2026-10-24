@@ -31,12 +31,9 @@ use std::collections::BTreeMap;
 use bytes::BufMut;
 
 use zeta_unicode_format::{
-    MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, RULE_CLOCK, RULE_COUNT, RULE_COUPLE, RULE_FACING,
-    RULE_FAMILY, RULE_GENDER_MAN, RULE_GENDER_WOMAN, RULE_KEYCAP, RULE_KEYCAP_10, RULE_KISS,
-    RULE_LITERAL, RULE_PAIR, RULE_TONE_COMPONENT, RULE_UCD_MASK, RULE_UCD_MASK_HYPHEN, TONE_NAMES,
-    TONES, ZWJ, clock_name, encode_cps, family_word, format_toned, is_tone, join_family,
-    keycap_word, pair_phrase, plural, swap_person, tone_phrase, tone_positions, ucd_mask_name,
-    write_varint,
+    MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, TONE_NAMES, TONES, ZWJ, clock_name, encode_cps,
+    family_word, format_toned, is_tone, join_family, keycap_word, pair_phrase, plural, swap_person,
+    tone_phrase, tone_positions, ucd_mask_name, write_varint,
 };
 
 use zeta_unicode_format::huffman;
@@ -71,8 +68,8 @@ pub struct EmojiStats {
     pub literals: usize,
     /// Entries whose name a grammar rule reproduces.
     pub ruled: usize,
-    /// Entries per rule id, indexed by the `RULE_*` constants.
-    pub rule_counts: [usize; RULE_COUNT],
+    /// Entries per grammar rule, indexed by [`Rule::id`].
+    pub rule_counts: [usize; Rule::COUNT],
     /// Total encoded section size, in bytes.
     pub section_bytes: usize,
     /// Encoded key stream size.
@@ -308,7 +305,7 @@ fn assign_rules(
     all_cps: &[Vec<u32>],
     ucd: &BTreeMap<u32, String>,
     stats: &mut EmojiStats,
-) -> (Vec<(u8, u16)>, Vec<String>, Vec<u8>) {
+) -> (Vec<(Rule, u16)>, Vec<String>, Vec<u8>) {
     let by_key: BTreeMap<&str, usize> = entries
         .iter()
         .enumerate()
@@ -333,16 +330,16 @@ fn assign_rules(
             }
             let ordinal = u16::try_from(literal_names.len()).expect("fewer than 65536 literals");
             literal_names.push(entry.name.clone());
-            (RULE_LITERAL, ordinal)
+            (Rule::Literal, ordinal)
         };
-        stats.rule_counts[usize::from(rule)] += 1;
-        if rule == RULE_UCD_MASK || rule == RULE_UCD_MASK_HYPHEN {
+        stats.rule_counts[usize::from(rule.id())] += 1;
+        if matches!(rule, Rule::UcdMask | Rule::UcdMaskHyphen) {
             masks.push(u8::try_from(arg).expect("a mask fits in a byte"));
         }
         assigned.push((rule, arg));
     }
     assert_eq!(
-        stats.rule_counts[usize::from(RULE_LITERAL)],
+        stats.rule_counts[usize::from(Rule::Literal.id())],
         literal_names.len(),
         "literal rule count"
     );
@@ -371,7 +368,7 @@ struct Payload {
 fn encode_payload(
     entries: &[EmojiEntry],
     all_cps: &[Vec<u32>],
-    assigned: &[(u8, u16)],
+    assigned: &[(Rule, u16)],
     literal_names: &[String],
     masks: &[u8],
 ) -> Payload {
@@ -417,7 +414,7 @@ fn encode_payload(
         name_raw.extend_from_slice(name.as_bytes());
     }
 
-    let rule_raw: Vec<u8> = assigned.iter().map(|&(rule, _)| rule).collect();
+    let rule_raw: Vec<u8> = assigned.iter().map(|&(rule, _)| rule.id()).collect();
     let key_stream = huffman::encode(&key_raw, 1);
     let name_stream = huffman::encode(&name_raw, 0);
     let rule_stream = huffman::encode(&rule_raw, 0);
@@ -503,7 +500,7 @@ fn assemble(entries: usize, literals: usize, payload: &Payload) -> Vec<u8> {
 fn verify_streams(
     entries: &[EmojiEntry],
     all_cps: &[Vec<u32>],
-    assigned: &[(u8, u16)],
+    assigned: &[(Rule, u16)],
     decoded_keys: &[u8],
     decoded_names: &[u8],
     ucd: &BTreeMap<u32, String>,
@@ -513,7 +510,7 @@ fn verify_streams(
     for (index, entry) in entries.iter().enumerate() {
         let (cps, name, rule, arg) = &decoded_entries[index];
         assert_eq!(cps, &all_cps[index], "decoded key {index}");
-        let materialized = if *rule == RULE_LITERAL {
+        let materialized = if *rule == Rule::Literal {
             Some(name.clone())
         } else {
             generated_name(*rule, *arg, cps, entries, ucd)
@@ -529,18 +526,18 @@ fn verify_streams(
 }
 
 /// A decoded entry: `(code points, literal name, rule, argument)`.
-type DecodedEntry = (Vec<u32>, String, u8, u16);
+type DecodedEntry = (Vec<u32>, String, Rule, u16);
 
 /// Decodes the key and literal-name streams back into entries.
 fn decode_entries(
     count: usize,
-    assigned: &[(u8, u16)],
+    assigned: &[(Rule, u16)],
     keys: &[u8],
     names: &[u8],
 ) -> Option<Vec<DecodedEntry>> {
     let literal_count = assigned
         .iter()
-        .filter(|(rule, _)| *rule == RULE_LITERAL)
+        .filter(|(rule, _)| *rule == Rule::Literal)
         .count();
     let mut literals = Vec::with_capacity(literal_count);
     if literal_count > 0 {
@@ -569,7 +566,7 @@ fn decode_entries(
             at += used;
             cps.push(cp);
         }
-        let literal = if rule == RULE_LITERAL {
+        let literal = if rule == Rule::Literal {
             literals.get(usize::from(arg))?.to_string()
         } else {
             String::new()
@@ -588,7 +585,7 @@ fn rule_for(
     cps: &[u32],
     entries: &[EmojiEntry],
     ucd: &BTreeMap<u32, String>,
-) -> Option<(u8, u16)> {
+) -> Option<(Rule, u16)> {
     let name = entry.name.as_str();
     if let Some(rule) = single_code_point_rule(cps, name, ucd) {
         return Some(rule);
@@ -613,12 +610,12 @@ fn single_code_point_rule(
     cps: &[u32],
     name: &str,
     ucd: &BTreeMap<u32, String>,
-) -> Option<(u8, u16)> {
+) -> Option<(Rule, u16)> {
     if cps.len() == 2
         && cps.get(1) == Some(&0x20E3)
         && keycap_word(cps[0]).is_some_and(|word| name == format!("KEYCAP {word}"))
     {
-        return Some((RULE_KEYCAP, 0));
+        return Some((Rule::Keycap, 0));
     }
     if cps.len() != 1 {
         return None;
@@ -627,38 +624,38 @@ fn single_code_point_rule(
     if let Some(index) = TONES.iter().position(|&tone| tone == first)
         && name == TONE_NAMES[index]
     {
-        return Some((RULE_TONE_COMPONENT, 0));
+        return Some((Rule::ToneComponent, 0));
     }
     if first == 0x1F51F && name == "keycap: 10" {
-        return Some((RULE_KEYCAP_10, 0));
+        return Some((Rule::Keycap10, 0));
     }
     let ucd_name = ucd.get(&first)?;
     if let Some((mask, hyphen)) = ucd_mask(ucd_name, name) {
         return Some((
             if hyphen {
-                RULE_UCD_MASK_HYPHEN
+                Rule::UcdMaskHyphen
             } else {
-                RULE_UCD_MASK
+                Rule::UcdMask
             },
             u16::from(mask),
         ));
     }
     clock_name(ucd_name)
         .is_some_and(|clock| clock == name)
-        .then_some((RULE_CLOCK, 0))
+        .then_some((Rule::Clock, 0))
 }
 
 /// A gender swap with an explicit `ZWJ` plus `U+2640`/`U+2642` suffix.
-fn gender_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(u8, u16)> {
+fn gender_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(Rule, u16)> {
     let last = *cps.last()?;
     if cps.len() < 3 || cps[cps.len() - 2] != ZWJ || !matches!(last, 0x2640 | 0x2642) {
         return None;
     }
     let gender = if last == 0x2640 { "woman" } else { "man" };
     let rule = if last == 0x2640 {
-        RULE_GENDER_WOMAN
+        Rule::GenderWoman
     } else {
-        RULE_GENDER_MAN
+        Rule::GenderMan
     };
     if let Some(base) = find_entry(&cps[..cps.len() - 2], entries) {
         return (swap_person(&entries[base].name, gender) == name).then_some((rule, 0));
@@ -673,16 +670,16 @@ fn gender_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(u8, u
 }
 
 /// A `ZWJ` plus `U+27A1` suffix: the base name plus ` facing right`.
-fn facing_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(u8, u16)> {
+fn facing_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(Rule, u16)> {
     if cps.len() < 3 || cps[cps.len() - 2] != ZWJ || cps.last() != Some(&0x27A1) {
         return None;
     }
     let base = find_entry(&cps[..cps.len() - 2], entries)?;
-    (format!("{} facing right", entries[base].name) == name).then_some((RULE_FACING, 0))
+    (format!("{} facing right", entries[base].name) == name).then_some((Rule::Facing, 0))
 }
 
 /// A three-code-point role whose `person` base supplies the name.
-fn role_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(u8, u16)> {
+fn role_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(Rule, u16)> {
     if cps.len() != 3 || cps[1] != ZWJ || cps[0] == 0x1F9D1 {
         return None;
     }
@@ -692,33 +689,33 @@ fn role_rule(cps: &[u32], name: &str, entries: &[EmojiEntry]) -> Option<(u8, u16
     let base = find_entry(&candidate, entries)?;
     (swap_person(&entries[base].name, gender) == name).then_some((
         if cps[0] == 0x1F469 {
-            RULE_GENDER_WOMAN
+            Rule::GenderWoman
         } else {
-            RULE_GENDER_MAN
+            Rule::GenderMan
         },
         0,
     ))
 }
 
 /// Two people plus an activity: `plural word + pair phrase`.
-fn pair_rule(cps: &[u32], name: &str) -> Option<(u8, u16)> {
+fn pair_rule(cps: &[u32], name: &str) -> Option<(Rule, u16)> {
     if cps.len() != 5 || cps[1] != ZWJ || cps[3] != ZWJ {
         return None;
     }
     let word = plural(cps[0], cps[4])?;
     let phrase = pair_phrase(cps[2])?;
-    (name == format!("{word} {phrase}")).then_some((RULE_PAIR, 0))
+    (name == format!("{word} {phrase}")).then_some((Rule::Pair, 0))
 }
 
 /// Family, couple and kiss: comma-joined family words around a `U+2764`/`U+1F48B` heart.
-fn family_rule(cps: &[u32], name: &str) -> Option<(u8, u16)> {
+fn family_rule(cps: &[u32], name: &str) -> Option<(Rule, u16)> {
     if !cps.contains(&ZWJ) {
         return None;
     }
     if cps.iter().all(|&cp| cp == ZWJ || family_word(cp).is_some())
         && name == format!("family: {}", join_family(cps, &[ZWJ]))
     {
-        return Some((RULE_FAMILY, 0));
+        return Some((Rule::Family, 0));
     }
     if !cps.contains(&0x2764) {
         return None;
@@ -731,31 +728,34 @@ fn family_rule(cps: &[u32], name: &str) -> Option<(u8, u16)> {
     }
     let words = join_family(cps, &[ZWJ, 0x2764, 0x1F48B]);
     if cps.contains(&0x1F48B) {
-        return (name == format!("kiss: {words}")).then_some((RULE_KISS, 0));
+        return (name == format!("kiss: {words}")).then_some((Rule::Kiss, 0));
     }
-    (name == format!("couple with heart: {words}")).then_some((RULE_COUPLE, 0))
+    (name == format!("couple with heart: {words}")).then_some((Rule::Couple, 0))
 }
 
 /// Materialises the name a rule produces, or `None` when its base is not in the table.
+///
+/// [`Rule::Literal`] returns `None`: its name comes from the literal-name arena, not a rule.
 fn generated_name(
-    rule: u8,
+    rule: Rule,
     arg: u16,
     cps: &[u32],
     entries: &[EmojiEntry],
     ucd: &BTreeMap<u32, String>,
 ) -> Option<String> {
     match rule {
-        RULE_UCD_MASK | RULE_UCD_MASK_HYPHEN => {
+        Rule::Literal => None,
+        Rule::UcdMask | Rule::UcdMaskHyphen => {
             let name = ucd.get(cps.first()?)?;
             Some(ucd_mask_name(
                 name,
                 u8::try_from(arg).ok()?,
-                rule == RULE_UCD_MASK_HYPHEN,
+                rule == Rule::UcdMaskHyphen,
             ))
         }
-        RULE_KEYCAP => Some(format!("KEYCAP {}", keycap_word(*cps.first()?)?)),
-        RULE_GENDER_WOMAN | RULE_GENDER_MAN => {
-            let gender = if rule == RULE_GENDER_WOMAN {
+        Rule::Keycap => Some(format!("KEYCAP {}", keycap_word(*cps.first()?)?)),
+        Rule::GenderWoman | Rule::GenderMan => {
+            let gender = if rule == Rule::GenderWoman {
                 "woman"
             } else {
                 "man"
@@ -763,32 +763,31 @@ fn generated_name(
             let base = gender_base(cps, entries)?;
             Some(swap_person(&entries[base].name, gender))
         }
-        RULE_FACING => {
+        Rule::Facing => {
             let base = find_entry(&cps[..cps.len().checked_sub(2)?], entries)?;
             Some(format!("{} facing right", entries[base].name))
         }
-        RULE_FAMILY => Some(format!("family: {}", join_family(cps, &[ZWJ]))),
-        RULE_COUPLE => Some(format!(
+        Rule::Family => Some(format!("family: {}", join_family(cps, &[ZWJ]))),
+        Rule::Couple => Some(format!(
             "couple with heart: {}",
             join_family(cps, &[ZWJ, 0x2764, 0x1F48B])
         )),
-        RULE_KISS => Some(format!(
+        Rule::Kiss => Some(format!(
             "kiss: {}",
             join_family(cps, &[ZWJ, 0x2764, 0x1F48B])
         )),
-        RULE_PAIR => Some(format!(
+        Rule::Pair => Some(format!(
             "{} {}",
             plural(*cps.first()?, *cps.get(4)?)?,
             pair_phrase(*cps.get(2)?)?
         )),
-        RULE_TONE_COMPONENT => {
+        Rule::ToneComponent => {
             let first = *cps.first()?;
             let index = TONES.iter().position(|&tone| tone == first)?;
             Some(TONE_NAMES[index].to_owned())
         }
-        RULE_CLOCK => clock_name(ucd.get(cps.first()?)?),
-        RULE_KEYCAP_10 => Some("keycap: 10".to_owned()),
-        _ => None,
+        Rule::Clock => clock_name(ucd.get(cps.first()?)?),
+        Rule::Keycap10 => Some("keycap: 10".to_owned()),
     }
 }
 
@@ -1156,7 +1155,7 @@ mod tests {
     struct Decoded {
         keys: Vec<Vec<u32>>,
         names: Vec<String>,
-        rules: Vec<u8>,
+        rules: Vec<Rule>,
         arguments: Vec<u16>,
         tone_codes: Vec<u8>,
         tone_masks: Vec<u8>,
@@ -1222,14 +1221,15 @@ mod tests {
         let mut arguments = Vec::with_capacity(count);
         let mut literal = 0u16;
         let mut mask_at = 0usize;
-        for &rule in rule_raw {
+        for &id in rule_raw {
+            let rule = Rule::from_id(id).expect("the rule stream only holds rule ids");
             let argument = match rule {
-                0 => {
+                Rule::Literal => {
                     let ordinal = literal;
                     literal += 1;
                     ordinal
                 }
-                1 | 2 => {
+                Rule::UcdMask | Rule::UcdMaskHyphen => {
                     let mask = u16::from(mask_raw[mask_at]);
                     mask_at += 1;
                     mask
@@ -1288,20 +1288,20 @@ mod tests {
             stats.fallbacks, 0,
             "a grammar rule failed to reproduce a name"
         );
-        assert_eq!(stats.rule_counts[usize::from(RULE_LITERAL)], 603);
-        assert_eq!(stats.rule_counts[usize::from(RULE_UCD_MASK)], 1_099);
-        assert_eq!(stats.rule_counts[usize::from(RULE_UCD_MASK_HYPHEN)], 5);
-        assert_eq!(stats.rule_counts[usize::from(RULE_KEYCAP)], 12);
-        assert_eq!(stats.rule_counts[usize::from(RULE_GENDER_WOMAN)], 72);
-        assert_eq!(stats.rule_counts[usize::from(RULE_GENDER_MAN)], 72);
-        assert_eq!(stats.rule_counts[usize::from(RULE_FACING)], 18);
-        assert_eq!(stats.rule_counts[usize::from(RULE_FAMILY)], 29);
-        assert_eq!(stats.rule_counts[usize::from(RULE_COUPLE)], 3);
-        assert_eq!(stats.rule_counts[usize::from(RULE_KISS)], 3);
-        assert_eq!(stats.rule_counts[usize::from(RULE_PAIR)], 10);
-        assert_eq!(stats.rule_counts[usize::from(RULE_TONE_COMPONENT)], 5);
-        assert_eq!(stats.rule_counts[usize::from(RULE_CLOCK)], 12);
-        assert_eq!(stats.rule_counts[usize::from(RULE_KEYCAP_10)], 1);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Literal.id())], 603);
+        assert_eq!(stats.rule_counts[usize::from(Rule::UcdMask.id())], 1_099);
+        assert_eq!(stats.rule_counts[usize::from(Rule::UcdMaskHyphen.id())], 5);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Keycap.id())], 12);
+        assert_eq!(stats.rule_counts[usize::from(Rule::GenderWoman.id())], 72);
+        assert_eq!(stats.rule_counts[usize::from(Rule::GenderMan.id())], 72);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Facing.id())], 18);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Family.id())], 29);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Couple.id())], 3);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Kiss.id())], 3);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Pair.id())], 10);
+        assert_eq!(stats.rule_counts[usize::from(Rule::ToneComponent.id())], 5);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Clock.id())], 12);
+        assert_eq!(stats.rule_counts[usize::from(Rule::Keycap10.id())], 1);
         assert!(
             stats.section_bytes <= 15_000,
             "section grew to {}",
@@ -1326,7 +1326,7 @@ mod tests {
                 "tone mask {key:?}"
             );
             let rule = decoded.rules[index];
-            let name = if rule == RULE_LITERAL {
+            let name = if rule == Rule::Literal {
                 decoded.names[usize::from(decoded.arguments[index])].clone()
             } else {
                 generated_name(
@@ -1336,7 +1336,7 @@ mod tests {
                     &oracle,
                     &ucd,
                 )
-                .unwrap_or_else(|| panic!("rule {rule} did not materialize for {key:?}"))
+                .unwrap_or_else(|| panic!("rule {rule:?} did not materialize for {key:?}"))
             };
             assert_eq!(name, expected.name, "name for {key:?}");
         }

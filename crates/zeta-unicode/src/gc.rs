@@ -2,148 +2,88 @@
 
 use zeta_unicode_format::GC_SHORT_NAMES;
 
-/// A Unicode general category value.
+/// Declares the general-category table.
 ///
-/// The long names are what replies print (`Lowercase Letter`), the short names (`Ll`) are what
-/// the UCD files carry. The declaration order is the generated table-id order, so a variant's
-/// discriminant is also its index in `zeta_unicode_format::GC_SHORT_NAMES` and in the crate's
-/// long-name table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum GeneralCategory {
-    /// `Cc` — Control.
-    Control,
-    /// `Cf` — Format.
-    Format,
-    /// `Cn` — Unassigned.
-    Unassigned,
-    /// `Co` — Private Use.
-    PrivateUse,
-    /// `Cs` — Surrogate (never reachable through `char`).
-    Surrogate,
-    /// `Ll` — Lowercase Letter.
-    LowercaseLetter,
-    /// `Lm` — Modifier Letter.
-    ModifierLetter,
-    /// `Lo` — Other Letter.
-    OtherLetter,
-    /// `Lt` — Titlecase Letter.
-    TitlecaseLetter,
-    /// `Lu` — Uppercase Letter.
-    UppercaseLetter,
-    /// `Mc` — Spacing Mark.
-    SpacingMark,
-    /// `Me` — Enclosing Mark.
-    EnclosingMark,
-    /// `Mn` — Nonspacing Mark.
-    NonspacingMark,
-    /// `Nd` — Decimal Number.
-    DecimalNumber,
-    /// `Nl` — Letter Number.
-    LetterNumber,
-    /// `No` — Other Number.
-    OtherNumber,
-    /// `Pc` — Connector Punctuation.
-    ConnectorPunctuation,
-    /// `Pd` — Dash Punctuation.
-    DashPunctuation,
-    /// `Pe` — Close Punctuation.
-    ClosePunctuation,
-    /// `Pf` — Final Punctuation.
-    FinalPunctuation,
-    /// `Pi` — Initial Punctuation.
-    InitialPunctuation,
-    /// `Po` — Other Punctuation.
-    OtherPunctuation,
-    /// `Ps` — Open Punctuation.
-    OpenPunctuation,
-    /// `Sc` — Currency Symbol.
-    CurrencySymbol,
-    /// `Sk` — Modifier Symbol.
-    ModifierSymbol,
-    /// `Sm` — Math Symbol.
-    MathSymbol,
-    /// `So` — Other Symbol.
-    OtherSymbol,
-    /// `Zl` — Line Separator.
-    LineSeparator,
-    /// `Zp` — Paragraph Separator.
-    ParagraphSeparator,
-    /// `Zs` — Space Separator.
-    SpaceSeparator,
+/// Each row carries the variant name, its two-letter UCD abbreviation ("short name") and its
+/// long UCD name, in generated table-id order. The enum, [`ALL`] and [`LONG_NAMES`] all come
+/// from those rows, so they cannot drift apart. An optional fourth element appends a note to
+/// the variant's doc comment, before the final period.
+macro_rules! general_categories {
+    ($(($variant:ident, $short:literal, $long:literal $(, $note:literal)?)),+ $(,)?) => {
+        /// A Unicode general category value.
+        ///
+        /// The long names are what replies print (`Lowercase Letter`), the short names (`Ll`) are what
+        /// the UCD files carry. The declaration order is the generated table-id order, so a variant's
+        /// discriminant is also its index in `zeta_unicode_format::GC_SHORT_NAMES` and in the crate's
+        /// long-name table.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
+        pub enum GeneralCategory {
+            $(
+                #[doc = concat!("`", $short, "` — ", $long, general_categories!(@note $($note)?), ".")]
+                $variant,
+            )+
+        }
+
+        /// Every general category, in generated table-id order (id is the index plus one).
+        ///
+        /// The row order above, this array and the two name arrays all match
+        /// `zeta_unicode_format::GC_SHORT_NAMES`, which the build crate uses to write the ids; the
+        /// `table_order_matches_the_generated_short_names` test pins the four together.
+        const ALL: [GeneralCategory; general_categories!(@count $($variant),+)] = [
+            $(GeneralCategory::$variant,)+
+        ];
+
+        /// The long UCD names, in the same order as [`ALL`].
+        const LONG_NAMES: [&str; general_categories!(@count $($variant),+)] = [
+            $($long,)+
+        ];
+    };
+
+    (@count $($variant:ident),+) => {
+        <[()]>::len(&[$(general_categories!(@unit $variant)),+])
+    };
+    (@unit $variant:ident) => { () };
+    (@note) => { "" };
+    (@note $note:literal) => { $note };
 }
 
-/// Every general category, in generated table-id order (id is the index plus one).
-///
-/// The declaration order above, this array and the two name arrays all match
-/// `zeta_unicode_format::GC_SHORT_NAMES`, which the build crate uses to write the ids; the
-/// `table_order_matches_the_generated_short_names` test pins the four together.
-const ALL: [GeneralCategory; 30] = [
-    GeneralCategory::Control,
-    GeneralCategory::Format,
-    GeneralCategory::Unassigned,
-    GeneralCategory::PrivateUse,
-    GeneralCategory::Surrogate,
-    GeneralCategory::LowercaseLetter,
-    GeneralCategory::ModifierLetter,
-    GeneralCategory::OtherLetter,
-    GeneralCategory::TitlecaseLetter,
-    GeneralCategory::UppercaseLetter,
-    GeneralCategory::SpacingMark,
-    GeneralCategory::EnclosingMark,
-    GeneralCategory::NonspacingMark,
-    GeneralCategory::DecimalNumber,
-    GeneralCategory::LetterNumber,
-    GeneralCategory::OtherNumber,
-    GeneralCategory::ConnectorPunctuation,
-    GeneralCategory::DashPunctuation,
-    GeneralCategory::ClosePunctuation,
-    GeneralCategory::FinalPunctuation,
-    GeneralCategory::InitialPunctuation,
-    GeneralCategory::OtherPunctuation,
-    GeneralCategory::OpenPunctuation,
-    GeneralCategory::CurrencySymbol,
-    GeneralCategory::ModifierSymbol,
-    GeneralCategory::MathSymbol,
-    GeneralCategory::OtherSymbol,
-    GeneralCategory::LineSeparator,
-    GeneralCategory::ParagraphSeparator,
-    GeneralCategory::SpaceSeparator,
-];
+general_categories! {
+    (Control, "Cc", "Control"),
+    (Format, "Cf", "Format"),
+    (Unassigned, "Cn", "Unassigned"),
+    (PrivateUse, "Co", "Private Use"),
+    (Surrogate, "Cs", "Surrogate", " (never reachable through `char`)"),
+    (LowercaseLetter, "Ll", "Lowercase Letter"),
+    (ModifierLetter, "Lm", "Modifier Letter"),
+    (OtherLetter, "Lo", "Other Letter"),
+    (TitlecaseLetter, "Lt", "Titlecase Letter"),
+    (UppercaseLetter, "Lu", "Uppercase Letter"),
+    (SpacingMark, "Mc", "Spacing Mark"),
+    (EnclosingMark, "Me", "Enclosing Mark"),
+    (NonspacingMark, "Mn", "Nonspacing Mark"),
+    (DecimalNumber, "Nd", "Decimal Number"),
+    (LetterNumber, "Nl", "Letter Number"),
+    (OtherNumber, "No", "Other Number"),
+    (ConnectorPunctuation, "Pc", "Connector Punctuation"),
+    (DashPunctuation, "Pd", "Dash Punctuation"),
+    (ClosePunctuation, "Pe", "Close Punctuation"),
+    (FinalPunctuation, "Pf", "Final Punctuation"),
+    (InitialPunctuation, "Pi", "Initial Punctuation"),
+    (OtherPunctuation, "Po", "Other Punctuation"),
+    (OpenPunctuation, "Ps", "Open Punctuation"),
+    (CurrencySymbol, "Sc", "Currency Symbol"),
+    (ModifierSymbol, "Sk", "Modifier Symbol"),
+    (MathSymbol, "Sm", "Math Symbol"),
+    (OtherSymbol, "So", "Other Symbol"),
+    (LineSeparator, "Zl", "Line Separator"),
+    (ParagraphSeparator, "Zp", "Paragraph Separator"),
+    (SpaceSeparator, "Zs", "Space Separator"),
+}
 
-/// The long UCD names, in the same order as [`ALL`].
-const LONG_NAMES: [&str; 30] = [
-    "Control",
-    "Format",
-    "Unassigned",
-    "Private Use",
-    "Surrogate",
-    "Lowercase Letter",
-    "Modifier Letter",
-    "Other Letter",
-    "Titlecase Letter",
-    "Uppercase Letter",
-    "Spacing Mark",
-    "Enclosing Mark",
-    "Nonspacing Mark",
-    "Decimal Number",
-    "Letter Number",
-    "Other Number",
-    "Connector Punctuation",
-    "Dash Punctuation",
-    "Close Punctuation",
-    "Final Punctuation",
-    "Initial Punctuation",
-    "Other Punctuation",
-    "Open Punctuation",
-    "Currency Symbol",
-    "Modifier Symbol",
-    "Math Symbol",
-    "Other Symbol",
-    "Line Separator",
-    "Paragraph Separator",
-    "Space Separator",
-];
+// The generated table ids must stay in step with the shared short-name table; a change to
+// either side that drops or adds a category is a compile error rather than a misaligned lookup.
+const _: () = assert!(ALL.len() == GC_SHORT_NAMES.len());
 
 impl GeneralCategory {
     /// Maps a generated table id to its general category.
