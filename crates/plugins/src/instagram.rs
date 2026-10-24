@@ -153,17 +153,13 @@ impl From<wreq::Error> for Error {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for Instagram {
-    type Settings = Settings;
-
+#[plugin(name = "instagram", settings = Settings, urls(hosts = urls::URL_HOSTS))]
+impl Instagram {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
-
         let client = http::emulated::builder(None)?
             .redirect(Policy::limited(4))
             .timeout(ctx.config.http.timeout)
@@ -202,6 +198,7 @@ impl Plugin<Context> for Instagram {
         })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
@@ -210,6 +207,7 @@ impl Plugin<Context> for Instagram {
         Ok(())
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
