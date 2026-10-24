@@ -80,10 +80,11 @@ struct ExecuteResponse {
     stderr: String,
 }
 
-#[async_trait]
-impl Plugin<Context> for RustPlayground {
-    type Settings = Settings;
-
+#[plugin(name = "rust_playground", settings = Settings)]
+impl RustPlayground {
+    // The constructor signature is fixed by the `Plugin` trait, which returns `Result` even when
+    // initialization cannot fail.
+    #[allow(clippy::unnecessary_wraps)]
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -101,7 +102,9 @@ impl Plugin<Context> for RustPlayground {
         })
     }
 
-    async fn handle_command(
+    /// Replies to `.rs` with the playground's output for the expression.
+    #[handler(command)]
+    async fn evaluate_command(
         &self,
         _ctx: &Context,
         client: &Client,
