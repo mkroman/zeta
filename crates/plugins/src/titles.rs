@@ -370,14 +370,12 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     text
 }
 
-#[async_trait]
-impl Plugin<Context> for Titles {
-    type Settings = Settings;
-
+#[plugin(name = "titles", settings = Settings, urls(any))]
+impl Titles {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
         let client = http::emulated::builder(Some(&ctx.config.http.user_agent))?
             .redirect(Policy::limited(settings.max_redirects))
@@ -385,14 +383,13 @@ impl Plugin<Context> for Titles {
             .build()
             .map_err(|error| plugin_err(WreqError::from(error)))?;
 
-        subscriptions.urls(UrlScope::Any);
-
         Ok(Self {
             client,
             settings: settings.clone(),
         })
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         ctx: &Context,
