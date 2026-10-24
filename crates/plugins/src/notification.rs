@@ -54,28 +54,28 @@ pub struct NotificationPlugin {
     service: NotificationService,
 }
 
-#[async_trait]
-impl Plugin<Context> for NotificationPlugin {
-    type Settings = Settings;
-
+#[plugin(name = "notification", settings = Settings, messages)]
+impl NotificationPlugin {
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(NOTIFY).receive_message();
+        subscriptions.command(NOTIFY);
 
         Ok(Self {
             service: NotificationService::new(ctx.db.clone(), settings),
         })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -121,6 +121,7 @@ impl Plugin<Context> for NotificationPlugin {
         Ok(())
     }
 
+    #[handler(message)]
     async fn handle_message(
         &self,
         _ctx: &Context,
