@@ -57,15 +57,6 @@ use zeta_cache::TtlCache;
 use zeta_http::RequestError;
 use zeta_utils::utils::collapse_whitespace;
 
-const RINK: CommandSpec = CommandSpec::new(
-    ".r",
-    "Evaluate a calculation with unit and currency conversions",
-);
-
-/// The `.c` command.
-const CLASSIFY: CommandSpec =
-    CommandSpec::new(".c", "Evaluate a calculation, correcting unit casing");
-
 /// Calculator plugin using rink-rs.
 pub struct Rink {
     /// The rink context, moved into the actor task when the plugin loads.
@@ -123,10 +114,8 @@ impl Rink {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(RINK).command(CLASSIFY);
-
         let client = if settings.currency {
             Some(
                 zeta_http::builder(&ctx.config.http)
@@ -160,15 +149,42 @@ impl Rink {
         Ok(())
     }
 
-    #[handler(command)]
-    async fn handle_command(
+    /// Replies to `.r` with the evaluated calculation.
+    #[command(
+        ".r",
+        "Evaluate a calculation with unit and currency conversions",
+        event,
+        spec = RINK
+    )]
+    async fn calculate(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let classify = command.spec == CLASSIFY;
-        let message = self.eval_and_format(command.args(), classify).await?;
+        let message = self.eval_and_format(command.args(), false).await?;
+
+        client.send_privmsg(command.channel(), message)?;
+
+        Ok(())
+    }
+
+    /// Replies to `.c` with the evaluated calculation, correcting unit casing.
+    #[command(
+        ".c",
+        "Evaluate a calculation, correcting unit casing",
+        event,
+        spec = CLASSIFY
+    )]
+    async fn classify(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        _channel: &str,
+        command: &CommandEvent,
+    ) -> Result<(), ZetaError> {
+        let message = self.eval_and_format(command.args(), true).await?;
 
         client.send_privmsg(command.channel(), message)?;
 
