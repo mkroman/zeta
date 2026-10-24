@@ -22,12 +22,13 @@ pub const DEFAULT_MAX_TABLE_BYTES: usize = 200_000;
 pub const DEFAULT_CANDIDATE_SHIFTS: [u8; 4] = [5, 6, 7, 8];
 
 /// How training chooses between candidate name-block shifts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Priority {
     /// The smallest image; equal totals tie toward the lower shift.
     Size,
     /// The smallest image among shifts at or below [`BALANCED_MAX_SHIFT`], ties toward the
     /// lower shift. When every candidate is above that limit, the smallest image wins.
+    #[default]
     Balanced,
     /// The lowest shift, which decodes the least data per name lookup.
     Latency,
@@ -71,7 +72,7 @@ impl fmt::Display for Priority {
 /// [`Self::candidates`] and [`Self::priority`] chooses the winner. A baseline image compares
 /// the trained size against an existing image, allowing at most [`Self::max_delta_bytes`]
 /// bytes of growth.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Profile {
     /// The rule used to choose between candidates.
     pub priority: Priority,
@@ -190,6 +191,7 @@ mod tests {
         assert_eq!(Priority::parse("Latency"), Some(Priority::Latency));
         assert_eq!(Priority::parse("fast"), None);
         assert_eq!(Priority::Size.as_str(), "size");
+        assert_eq!(Priority::default(), Priority::Balanced);
     }
 
     #[test]

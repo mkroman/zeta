@@ -127,11 +127,17 @@ pub fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
 /// Appends `value` as a LEB128 varint.
 pub fn write_varint(mut value: u64, out: &mut Vec<u8>) {
     while value >= 0x80 {
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "the low seven bits are kept and the continuation bit is added"
+        )]
         out.push((value as u8 & 0x7F) | 0x80);
         value >>= 7;
     }
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the loop leaves a value below 0x80"
+    )]
     out.push(value as u8);
 }
 

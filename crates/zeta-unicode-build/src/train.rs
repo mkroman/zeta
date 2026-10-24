@@ -354,6 +354,21 @@ pub struct BaselineComparison {
 /// Panics on malformed vendored data, as the encoders do: a bad record is a build failure.
 /// The name verifier also panics if the chosen section does not decode back to every input
 /// name.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+///
+/// use zeta_unicode_build::{Profile, read_inputs, train};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let inputs = read_inputs(Path::new("../zeta-unicode/data"))?;
+/// let output = train(&inputs, &Profile::default())?;
+/// std::fs::write("nomina.bin", &output.image)?;
+/// # Ok(())
+/// # }
+/// ```
 #[allow(
     clippy::too_many_lines,
     reason = "the candidate loop, verification and budget checks are one linear pipeline"

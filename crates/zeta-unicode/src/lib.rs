@@ -2,9 +2,9 @@
 //!
 //! The image format is called Nomina (Latin for names). The `zeta-unicode-build` crate trains
 //! one flat Nomina image from the vendored UCD files and links it into the binary with
-//! `include_bytes!`. A lookup decodes at most one
-//! front-coded block, so there is no full name arena and no heap allocation on the
-//! name path. Hangul syllables and `*`-pattern names are generated from their code point.
+//! `include_bytes!`. A lookup decodes at most one front-coded block, so there is no full name
+//! arena and no heap allocation on the name path. Hangul syllables and `*`-pattern names are
+//! generated from their code point.
 //! Emoji keys are canonicalized (`U+FE0F` is stripped) and skin-tone variants are synthesized
 //! from a 3-bit rule plus a 2-bit published-tone-count mask, so 1,944 stored keys answer for
 //! every one of the 3,972 sequences the UCD names.
@@ -12,11 +12,21 @@
 //! ```
 //! use zeta_unicode::{emoji_name, general_category, name, name_or_label};
 //!
-//! assert_eq!(name('ß').unwrap(), "LATIN SMALL LETTER SHARP S");
-//! assert_eq!(general_category('ß').long_name(), "Lowercase Letter");
-//! assert_eq!(emoji_name("🏳️‍🌈").unwrap(), "rainbow flag");
-//! assert_eq!(name_or_label('\u{f8ff}'), "<private-use-F8FF>");
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let latin = name('ß').ok_or("missing name")?;
+//!     assert_eq!(latin.as_ref(), "LATIN SMALL LETTER SHARP S");
+//!     assert_eq!(general_category('ß').long_name(), "Lowercase Letter");
+//!     let rainbow = emoji_name("🏳️‍🌈").ok_or("missing emoji name")?;
+//!     assert_eq!(rainbow.as_ref(), "rainbow flag");
+//!     assert_eq!(name_or_label('\u{f8ff}'), "<private-use-F8FF>");
+//!     Ok(())
+//! }
 //! ```
+//!
+//! # Panics
+//!
+//! The first lookup on a thread panics if the generated image is malformed. The build verifies
+//! every section, so this is a build invariant rather than a runtime condition.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
