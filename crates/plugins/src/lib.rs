@@ -1,10 +1,10 @@
 //! The bundled plugins for the zeta IRC bot.
 //!
-//! Every plugin implements [`Plugin`](zeta_plugin::Plugin) from `zeta-plugin`: it registers the
-//! events it wants to receive in its constructor and handles them through the per-kind handler
-//! methods. The `declare_plugins!` invocation below ties the plugins together into the typed
-//! [`PluginsConfig`] configuration and the [`register_bundled_plugins`] entry point the host
-//! calls at startup.
+//! Every plugin implements [`Plugin`](zeta_plugin::Plugin) from `zeta-plugin` through the
+//! `#[plugin]` attribute macro, which also registers the plugin with the host through
+//! `inventory`. [`register_bundled_plugins`] discovers the compiled-in plugins from those
+//! registrations, resolves each one's section in [`PluginsConfig`], and registers the enabled
+//! ones with the [`Registry`](zeta_plugin::Registry).
 
 pub mod config;
 
@@ -22,201 +22,64 @@ pub(crate) mod hostmask;
 #[cfg(feature = "mirror")]
 pub(crate) mod mirror_reply;
 
-pub use config::PluginConfig;
+pub use config::{PluginConfig, PluginSection, PluginsConfig};
 
-use std::collections::HashMap;
-
-use serde::{Deserialize, Serialize};
-#[allow(unused_imports)]
-use zeta_plugin::NoSettings;
-
-/// Declares the bundled plugins and generates the configuration and registration helpers.
+/// Registers every compiled-in bundled plugin that its configuration enables.
 ///
-/// The plugin modules themselves are declared literally above this invocation so rustfmt can
-/// see them. For each entry, the macro generates:
-/// 1. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
-///    for plugins with settings, `=> NoSettings` otherwise.
-/// 2. A call to [`zeta_plugin::Registry::register`] inside [`register_bundled_plugins`], gated on
-///    the plugin's `enabled` configuration and passing the plugin's own settings through to its
-///    constructor.
+/// The host calls this once at startup, before the catalog is published. Plugins register
+/// themselves through `inventory` when their `#[plugin]` implementation is linked in, so this
+/// function only has to iterate the registrations — sorted by name for a deterministic catalog
+/// and log order.
 ///
-/// The plugin's name comes from the plugin itself: plugins written with `#[plugin]` set it in
-/// their `Plugin` implementation.
-macro_rules! declare_plugins {
-    (
-        $(
-            $(#[doc = $doc:expr])*
-            #[cfg(feature = $feature:literal)]
-            $mod_name:ident :: $struct_name:ident => $settings:ty
-        ),* $(,)?
-    ) => {
-        /// Typed, per-plugin configuration extracted from the `[plugins]` section.
-        ///
-        /// Each plugin has its own section keyed by its module name, e.g. `[plugins.dig]`.
-        /// Sections are type-checked at startup and always present; a section that is omitted
-        /// entirely takes the global [`PluginsConfig::enabled_by_default`] with default
-        /// settings. The `enabled` key is managed by the host; every other key belongs to the
-        /// plugin's settings type.
-        ///
-        /// Keys under `[plugins]` that match neither the `enabled_by_default` toggle nor a
-        /// bundled plugin name are collected in [`PluginsConfig::unknown`] so the host can warn
-        /// about likely typos. Unknown keys inside a section are ignored and reported through
-        /// [`PluginConfig::unknown_keys`](config::PluginConfig::unknown_keys), which the
-        /// host also warns about.
-        #[derive(Clone, Debug, Serialize)]
-        pub struct PluginsConfig {
-            /// Whether a plugin that does not set `enabled` explicitly — or has no section at
-            /// all — is enabled.
-            ///
-            /// `true` (the default) makes plugins opt-out: every bundled plugin is enabled
-            /// unless its section says `enabled = false`. `false` makes them opt-in: a plugin
-            /// only runs when its section says `enabled = true`.
-            pub enabled_by_default: bool,
+/// Configuration sections matching no registration are warned about as likely typos; a section
+/// for a plugin whose cargo feature is disabled matches no registration and is reported the same
+/// way. Plugins that fail to initialize are logged and skipped by the registry.
+pub fn register_bundled_plugins(
+    registry: &mut zeta_plugin::Registry,
+    ctx: &zeta_plugin::Context,
+    plugins: &PluginsConfig,
+) {
+    for name in plugins.unknown.keys() {
+        tracing::warn!(section = %name, "unknown plugin configuration section (typo?)");
+    }
 
-            $(
-                $(#[doc = $doc])*
-                #[cfg(feature = $feature)]
-                pub $mod_name: $crate::config::PluginConfig<$settings>,
-            )*
+    let mut registrations: Vec<&'static zeta_plugin::PluginRegistration> =
+        zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>
+            .into_iter()
+            .collect();
+    registrations.sort_unstable_by_key(|registration| registration.name);
 
-            /// Sections that match no bundled plugin, whether compiled in or not.
-            #[serde(flatten)]
-            pub unknown: HashMap<String, figment::value::Dict>,
+    for pair in registrations.windows(2) {
+        if pair[0].name == pair[1].name {
+            tracing::error!(
+                plugin = pair[0].name,
+                "duplicate plugin registration; the later one is not registered"
+            );
         }
+    }
 
-        impl Default for PluginsConfig {
-            fn default() -> Self {
-                Self {
-                    enabled_by_default: true,
-                    $(
-                        #[cfg(feature = $feature)]
-                        $mod_name: $crate::config::PluginConfig::default(),
-                    )*
-                    unknown: HashMap::new(),
-                }
-            }
+    for registration in registrations {
+        let (enabled, section) = plugins
+            .sections
+            .get(registration.name)
+            .map_or((plugins.enabled_by_default, None), |section| {
+                (section.enabled, Some(section.settings.clone()))
+            });
+
+        if enabled {
+            registry.register_with(registration, ctx, section);
+        } else {
+            tracing::info!(
+                plugin = registration.name,
+                "plugin is disabled by configuration"
+            );
         }
-
-        // Deserialize the `[plugins]` section one plugin at a time instead of deriving
-        // `Deserialize` for the whole struct: a derived implementation deserializes every
-        // section in a single generic visitor, which monomorphizes a large visitor over
-        // figment's deserializer (one field per plugin) and bloats the binary.
-        impl<'de> Deserialize<'de> for PluginsConfig {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                use serde::de::Error as _;
-
-                #[allow(unused_mut)]
-                let mut sections =
-                    HashMap::<String, figment::value::Value>::deserialize(deserializer)?;
-
-                // The global opt-in/opt-out toggle is pulled out first so it is not reported
-                // as an unknown section.
-                let enabled_by_default = match sections.remove("enabled_by_default") {
-                    Some(value) => bool::deserialize(&value).map_err(|error| {
-                        D::Error::custom(format!(
-                            "invalid `enabled_by_default` key: {error}"
-                        ))
-                    })?,
-                    None => true,
-                };
-                #[allow(unused_mut)]
-                let mut config = Self {
-                    enabled_by_default,
-                    ..Self::default()
-                };
-
-                $(
-                    #[cfg(feature = $feature)]
-                    if let Some(section) = sections.remove(stringify!($mod_name)) {
-                        config.$mod_name = $crate::config::PluginConfig::<$settings>::deserialize_with_default(
-                            &section,
-                            enabled_by_default,
-                        )
-                        .map_err(|error| {
-                            D::Error::custom(format!(
-                                "invalid `{}` plugin section: {error}",
-                                stringify!($mod_name)
-                            ))
-                        })?;
-                    } else {
-                        // A section that is omitted entirely follows the global default too,
-                        // so an opt-in configuration really leaves every unlisted plugin out.
-                        config.$mod_name.enabled = enabled_by_default;
-                    }
-                )*
-
-                for (name, section) in sections {
-                    let section = figment::value::Dict::deserialize(&section).map_err(|error| {
-                        D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
-                    })?;
-
-                    config.unknown.insert(name, section);
-                }
-
-                Ok(config)
-            }
-        }
-
-        /// The names of every bundled plugin, compiled in or not.
-        pub const BUNDLED_PLUGIN_NAMES: &[&str] = &[
-            $(
-                stringify!($mod_name),
-            )*
-        ];
-
-
-        /// Registers every compiled-in bundled plugin that its configuration enables.
-        ///
-        /// The host calls this once at startup, before the catalog is published; plugins that
-        /// fail to initialize are logged and skipped by the registry. Configuration sections
-        /// matching no bundled plugin are warned about as likely typos.
-        pub fn register_bundled_plugins(
-            #[allow(unused)] registry: &mut zeta_plugin::Registry,
-            #[allow(unused)] ctx: &zeta_plugin::Context,
-            plugins: &PluginsConfig,
-        ) {
-            for section in &plugins.unknown {
-                if !BUNDLED_PLUGIN_NAMES.contains(&section.0.as_str()) {
-                    ::tracing::warn!(
-                        section = %section.0,
-                        "unknown plugin configuration section (typo?)"
-                    );
-                }
-            }
-
-            $(
-                #[cfg(feature = $feature)]
-                {
-                    let section = &plugins.$mod_name;
-
-                    for key in &section.unknown_keys {
-                        ::tracing::warn!(
-                            plugin = stringify!($mod_name),
-                            key = %key,
-                            "unknown settings key (typo, or a setting removed in this version?)"
-                        );
-                    }
-
-                    if section.enabled {
-                        registry.register::<$mod_name::$struct_name>(ctx, &section.settings);
-                    } else {
-                        ::tracing::info!(
-                            plugin = stringify!($mod_name),
-                            "plugin is disabled by configuration"
-                        );
-                    }
-                }
-            )*
-        }
-    };
+    }
 }
 
-// The bundled plugin modules are declared literally, outside `declare_plugins!`, so
-// rustfmt can discover them. Rustfmt does not expand macros, so a generated `pub mod`
-// would leave every plugin file invisible to `cargo fmt`.
+// The bundled plugin modules are declared literally so rustfmt can discover them. Rustfmt does
+// not expand macros, so a generated `pub mod` would leave every plugin file invisible to
+// `cargo fmt`; the plugins register themselves through their `#[plugin]` implementations.
 #[cfg(feature = "alert")]
 pub mod alert;
 #[cfg(feature = "chaturbate")]
@@ -288,157 +151,21 @@ pub mod urban_dictionary;
 #[cfg(feature = "youtube")]
 pub mod youtube;
 
-declare_plugins! {
-  /// Channel-scoped URL and sender filters.
-  #[cfg(feature = "filter")]
-  filter::FilterPlugin => NoSettings,
-
-  /// Time-based user alerts.
-  #[cfg(feature = "alert")]
-  alert::AlertPlugin => alert::Settings,
-
-  /// Chaturbate platform integration.
-  #[cfg(feature = "chaturbate")]
-  chaturbate::Chaturbate => NoSettings,
-
-  /// Plugin that helps the user make a choice
-  #[cfg(feature = "choices")]
-  choices::Choices => choices::Settings,
-
-  /// Crypto currency quotes via CoinMarketCap
-  #[cfg(feature = "coinmarketcap")]
-  coinmarketcap::CoinMarketCap => coinmarketcap::Settings,
-
-  /// Query the danish dictionary
-  #[cfg(feature = "dendanskeordbog")]
-  dendanskeordbog::DenDanskeOrdbog => dendanskeordbog::Settings,
-
-  /// Query nameservers
-  #[cfg(feature = "dig")]
-  dig::Dig => dig::Settings,
-
-  /// Query geolocation of addresses and hostnames
-  #[cfg(feature = "geoip")]
-  geoip::GeoIp => geoip::Settings,
-
-  /// Normative affective resonance profiling, calendar-scoped
-  #[cfg(feature = "gay")]
-  gay::Gay => NoSettings,
-
-  /// GitHub integration
-  #[cfg(feature = "github")]
-  github::GitHubPlugin => github::Settings,
-
-  /// Process health information
-  #[cfg(feature = "health")]
-  health::Health => NoSettings,
-
-  /// List loaded plugins and their commands
-  #[cfg(feature = "help")]
-  help::Help => NoSettings,
-
-  /// Howlongtobeat.com integration
-  #[cfg(feature = "howlongtobeat")]
-  howlongtobeat::HowLongToBeat => NoSettings,
-
-  /// IMDb integration
-  #[cfg(feature = "imdb")]
-  imdb::Imdb => imdb::Settings,
-
-  /// Instagram integration
-  #[cfg(feature = "instagram")]
-  instagram::Instagram => instagram::Settings,
-
-  /// Is it open
-  #[cfg(feature = "isitopen")]
-  isitopen::IsItOpen => isitopen::Settings,
-
-  /// Kagi search integration
-  #[cfg(feature = "kagi")]
-  kagi::KagiPlugin => kagi::Settings,
-
-  /// User notifications
-  #[cfg(feature = "notification")]
-  notification::NotificationPlugin => notification::Settings,
-
-  /// URL history
-  #[cfg(feature = "ofn")]
-  ofn::Ofn => NoSettings,
-
-  /// Weather service integration
-  #[cfg(feature = "openweathermap")]
-  openweathermap::OpenWeatherMap => openweathermap::Settings,
-
-  /// PornHub platform integration
-  #[cfg(feature = "pornhub")]
-  pornhub::PornHub => NoSettings,
-
-  /// Reddit plugin integration
-  #[cfg(feature = "reddit")]
-  reddit::Reddit => reddit::Settings,
-
-  /// Calculator plugin based on rink
-  #[cfg(feature = "rink")]
-  rink::Rink => rink::Settings,
-
-  /// Rust Playground integration
-  #[cfg(feature = "rust-playground")]
-  rust_playground::RustPlayground => rust_playground::Settings,
-
-  /// Spotify integration
-  #[cfg(feature = "spotify")]
-  spotify::Spotify => spotify::Settings,
-
-  /// Generic string utility plugin
-  #[cfg(feature = "string-utils")]
-  string_utils::StringUtils => NoSettings,
-
-  /// Thingiverse integration
-  #[cfg(feature = "thingiverse")]
-  thingiverse::Thingiverse => thingiverse::Settings,
-
-  /// TikTok integration
-  #[cfg(feature = "tiktok")]
-  tiktok::Tiktok => tiktok::Settings,
-
-  /// URL titles and OpenGraph metadata
-  #[cfg(feature = "titles")]
-  titles::Titles => titles::Settings,
-
-  /// Trustpilot integration
-  #[cfg(feature = "trustpilot")]
-  trustpilot::Trustpilot => trustpilot::Settings,
-
-  /// TVmaze integration
-  #[cfg(feature = "tvmaze")]
-  tvmaze::Tvmaze => NoSettings,
-
-  /// Twitch integration
-  #[cfg(feature = "twitch")]
-  twitch::Twitch => twitch::Settings,
-
-  /// Urban Dictionary integration
-  #[cfg(feature = "urban-dictionary")]
-  urban_dictionary::UrbanDictionary => urban_dictionary::Settings,
-
-  /// Paywalled news links mirrored through unwall.app
-  #[cfg(feature = "unwall")]
-  unwall::Unwall => unwall::Settings,
-
-  /// YouTube integration
-  #[cfg(feature = "youtube")]
-  youtube::YouTube => youtube::Settings,
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeSet, HashSet};
 
-    use super::*;
-
+    /// Every bundled plugin self-registers through the `#[plugin]` macro, independently of any
+    /// central list. `--all-features` compiles all 35 of them.
+    #[cfg(feature = "all")]
     #[test]
-    fn bundled_plugin_names_include_all_plugins() {
-        assert_eq!(BUNDLED_PLUGIN_NAMES.len(), 35);
+    fn all_bundled_plugins_register_themselves() {
+        assert_eq!(
+            zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>
+                .into_iter()
+                .count(),
+            35
+        );
     }
 
     /// The feature named by `#[cfg(feature = "...")]`, if the attribute has that shape.
@@ -496,54 +223,71 @@ mod tests {
             .collect()
     }
 
-    /// The module of every `module::Struct => settings` entry in the `declare_plugins!`
-    /// invocation.
-    fn registered_modules(source: &str) -> BTreeSet<String> {
-        /// One `module::Struct => settings` macro entry.
-        struct Entry {
-            module: syn::Ident,
-        }
-
-        impl syn::parse::Parse for Entry {
-            fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
-                let _ = input.call(syn::Attribute::parse_outer)?;
-                let module = input.parse()?;
-                input.parse::<syn::Token![::]>()?;
-                let _ = input.parse::<syn::Ident>()?;
-                input.parse::<syn::Token![=>]>()?;
-                let _ = input.parse::<syn::Type>()?;
-                Ok(Self { module })
+    /// The plugin name declared by a `#[plugin(name = "...")]` attribute, if present.
+    fn plugin_attribute_name(attributes: &[syn::Attribute]) -> Option<String> {
+        attributes.iter().find_map(|attribute| {
+            if !attribute.path().is_ident("plugin") {
+                return None;
             }
-        }
 
-        let file = syn::parse_file(source).expect("a parsable Rust source file");
-        let invocation = file
-            .items
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Macro(item)
-                    if item.ident.is_none() && item.mac.path.is_ident("declare_plugins") =>
-                {
-                    Some(&item.mac)
+            let arguments = attribute
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .ok()?;
+
+            arguments.into_iter().find_map(|argument| {
+                let syn::Meta::NameValue(name_value) = argument else {
+                    return None;
+                };
+                if !name_value.path.is_ident("name") {
+                    return None;
                 }
-                _ => None,
+                let syn::Expr::Lit(expression) = name_value.value else {
+                    return None;
+                };
+                let syn::Lit::Str(name) = expression.lit else {
+                    return None;
+                };
+
+                Some(name.value())
             })
-            .expect("the declare_plugins! invocation");
-        invocation
-            .parse_body_with(syn::punctuated::Punctuated::<Entry, syn::Token![,]>::parse_terminated)
-            .expect("parseable declare_plugins! entries")
-            .into_iter()
-            .map(|entry| entry.module.to_string())
-            .collect()
+        })
     }
 
-    /// The literal plugin module list and the `declare_plugins!` entries are two views of the
-    /// same registry: rustfmt needs literal `pub mod` declarations, and the macro needs entries
-    /// for the configuration and registration. Keep them in step.
+    /// Every plugin module carries exactly one `#[plugin]` impl, named after the module. The
+    /// registration the macro generates from that name is what the host discovers, so a typo
+    /// would silently register the plugin under the wrong configuration section.
     #[test]
-    fn plugin_module_declarations_match_registry_entries() {
+    fn plugin_modules_declare_one_matching_plugin_impl() {
         let source = include_str!("lib.rs");
-        assert_eq!(plugin_modules(source), registered_modules(source));
+        let modules = plugin_modules(source);
+        assert_eq!(modules.len(), 35);
+
+        for name in modules {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join(format!("{name}.rs"));
+            let source = std::fs::read_to_string(&path).expect("read plugin source");
+            let file = syn::parse_file(&source).expect("a parsable plugin source file");
+
+            let declared: Vec<String> = file
+                .items
+                .into_iter()
+                .filter_map(|item| {
+                    let syn::Item::Impl(item) = item else {
+                        return None;
+                    };
+                    plugin_attribute_name(&item.attrs)
+                })
+                .collect();
+
+            assert_eq!(
+                declared,
+                [name],
+                "the module and its `#[plugin(name = ...)]` attribute must match"
+            );
+        }
     }
 
     /// Every source file under `src` must be declared as a module by its parent: an undeclared
