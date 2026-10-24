@@ -56,10 +56,8 @@ pub struct KagiPlugin {
     client: kagi::Client,
 }
 
-#[async_trait]
-impl Plugin<Context> for KagiPlugin {
-    type Settings = Settings;
-
+#[plugin(name = "kagi", settings = Settings)]
+impl KagiPlugin {
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -79,7 +77,9 @@ impl Plugin<Context> for KagiPlugin {
         Ok(Self { client })
     }
 
-    async fn handle_command(
+    /// Replies to `.g` and `.gis` with the top (image) search result for the query.
+    #[handler(command)]
+    async fn search(
         &self,
         _ctx: &Context,
         client: &Client,
