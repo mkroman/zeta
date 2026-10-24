@@ -37,7 +37,6 @@ pub struct Help;
 impl Help {
     // The constructor signature is fixed by the `Plugin` trait: `NoSettings` is a unit type the
     // constructor cannot fail over, so the by-reference parameter and the `Result` wrapper stay.
-    #[allow(clippy::trivially_copy_pass_by_ref, clippy::unnecessary_wraps)]
     fn new(
         _ctx: &Context,
         _settings: &NoSettings,

@@ -90,7 +90,6 @@ pub struct Definition {
 impl UrbanDictionary {
     // The constructor signature is fixed by the `Plugin` trait, which returns `Result` even when
     // initialization cannot fail.
-    #[allow(clippy::unnecessary_wraps)]
     fn new(
         ctx: &Context,
         settings: &Settings,

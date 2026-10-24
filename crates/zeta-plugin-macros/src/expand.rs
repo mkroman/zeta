@@ -134,7 +134,7 @@ impl HandlerKind {
 pub fn expand(args: &PluginArgs, mut inherent: syn::ItemImpl) -> TokenStream {
     match classify(args, &inherent) {
         Ok(plugin) => {
-            strip_annotations(&mut inherent);
+            strip_annotations(&plugin, &mut inherent);
 
             render(&plugin, &inherent)
         }
@@ -704,11 +704,18 @@ fn display_type(ty: &Type) -> String {
     ty.to_token_stream().to_string()
 }
 
-/// Removes the macro's own annotations from the inherent impl's methods — they are not valid
-/// attributes and would fail to compile in the emitted code — and allows the unused-async lints
-/// on the annotated methods: the generated dispatch awaits them, but a handler that never
-/// awaits would otherwise trip clippy on the user's code.
-fn strip_annotations(inherent: &mut syn::ItemImpl) {
+/// Removes the macro's own annotations from the inherent impl's methods and allows the lints
+/// the macro's plumbing provokes on the user's code:
+///
+/// - annotated command and handler methods may never await (`unused_async`), because the
+///   generated dispatch awaits them;
+/// - the recognized inherent constructor returns `Result` even when initialization cannot
+///   fail (`unnecessary_wraps`), because the `Plugin` trait fixes its signature, and takes
+///   `&NoSettings` by reference (`trivially_copy_pass_by_ref`) when the plugin has no
+///   settings.
+///
+/// Plugins therefore carry no `#[allow]`s of their own for either.
+fn strip_annotations(plugin: &Plugin, inherent: &mut syn::ItemImpl) {
     for item in &mut inherent.items {
         if let ImplItem::Fn(method) = item {
             let annotated = method.attrs.iter().any(|attribute| {
@@ -721,6 +728,10 @@ fn strip_annotations(inherent: &mut syn::ItemImpl) {
             if annotated {
                 method.attrs.push(syn::parse_quote!(
                     #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
+                ));
+            } else if plugin.constructor && method.sig.ident == "new" {
+                method.attrs.push(syn::parse_quote!(
+                    #[allow(clippy::unnecessary_wraps, clippy::trivially_copy_pass_by_ref)]
                 ));
             }
         }
