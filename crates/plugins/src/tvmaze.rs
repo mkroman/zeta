@@ -31,9 +31,6 @@ pub enum Error {
     NotFound,
 }
 
-/// The `.next` command.
-const NEXT: CommandSpec = CommandSpec::new(".next", "Show when a show's next episode airs");
-
 /// The TVmaze plugin: looks up shows and their next episodes.
 pub struct Tvmaze {
     /// HTTP client for API requests.
@@ -125,18 +122,18 @@ impl Tvmaze {
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(NEXT);
         Ok(Self::with_http_config(&ctx.config.http))
     }
 
     /// Replies to `.next` with the show's next episode, or its current status.
-    #[handler(command)]
+    #[command(".next", "Show when a show's next episode airs", event)]
     async fn next(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         self.handle_show_search(command.args(), command.channel(), client)
