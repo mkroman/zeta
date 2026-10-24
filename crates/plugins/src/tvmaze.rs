@@ -118,20 +118,23 @@ pub struct Episode {
     pub airstamp: Option<time::OffsetDateTime>,
 }
 
-#[async_trait]
-impl Plugin<Context> for Tvmaze {
-    type Settings = NoSettings;
-
+#[plugin(name = "tvmaze")]
+impl Tvmaze {
+    // The constructor signature is fixed by the `Plugin` trait: `NoSettings` is a unit type the
+    // constructor cannot fail over, so the by-reference parameter and the `Result` wrapper stay.
+    #[allow(clippy::trivially_copy_pass_by_ref, clippy::unnecessary_wraps)]
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
         subscriptions.command(NEXT);
-        Ok(Self::new(&ctx.config.http))
+        Ok(Self::with_http_config(&ctx.config.http))
     }
 
-    async fn handle_command(
+    /// Replies to `.next` with the show's next episode, or its current status.
+    #[handler(command)]
+    async fn next(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -145,7 +148,7 @@ impl Plugin<Context> for Tvmaze {
 impl Tvmaze {
     /// Creates a new TVmaze plugin instance.
     #[must_use]
-    pub fn new(config: &HttpConfig) -> Self {
+    pub fn with_http_config(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
 
         Self { client }
