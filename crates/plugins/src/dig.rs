@@ -88,9 +88,6 @@ pub enum Error {
     Resolve(#[source] NetError),
 }
 
-/// The `.dig` command.
-const DIG: CommandSpec = CommandSpec::with_args::<Opts>(".dig", "Look up DNS records for a domain");
-
 /// The dig plugin: resolves DNS records on behalf of `.dig` commands.
 pub struct Dig {
     resolver: TokioResolver,
@@ -121,41 +118,36 @@ impl Display for LookupResult {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for Dig {
-    type Settings = Settings;
-
+#[plugin(name = "dig", settings = Settings)]
+impl Dig {
+    /// Builds the resolver the plugin queries nameservers through.
     fn new(
         _ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(DIG);
         let resolver = build_resolver(&settings.nameservers).map_err(ZetaError::from)?;
 
         Ok(Self { resolver })
     }
 
-    async fn handle_command(
+    /// Looks up the requested records and replies with one `dig`-style line per record.
+    #[command(".dig", "Look up DNS records for a domain", args = Opts, label = "Dig")]
+    async fn dig(
         &self,
         _ctx: &Context,
         client: &Client,
-        command: &CommandEvent,
+        channel: &str,
+        opts: Opts,
     ) -> Result<(), ZetaError> {
-        let Some(opts) =
-            parse_args_or_usage::<Opts>(client, command, |line: &str| reply("Dig", line))?
-        else {
-            return Ok(());
-        };
-
         match self.resolve(&opts.name, opts.record_type).await {
             Ok(result) => {
                 for line in result.to_string().lines() {
-                    client.send_privmsg(command.channel(), line)?;
+                    client.send_privmsg(channel, line)?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(command.channel(), reply("Dig", err.to_string()))?;
+                client.send_privmsg(channel, reply("Dig", err.to_string()))?;
             }
         }
 
