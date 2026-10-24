@@ -62,6 +62,10 @@ impl Default for Settings {
     }
 }
 
+/// The `!imdb` command.
+const COMMAND: CommandSpec =
+    CommandSpec::with_args::<Opts>("!imdb", "Search IMDb and post the top match");
+
 /// Search IMDb for a title.
 #[derive(FromArgs, ArgsInfo, Debug)]
 struct Opts {
@@ -91,25 +95,21 @@ impl Imdb {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        _subscriptions: &mut Subscriptions,
+        subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
+        subscriptions.command(COMMAND);
+
         let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
 
         Ok(Self { client })
     }
 
     /// Replies to `!imdb` with the top title matching the query.
-    #[command(
-        "!imdb",
-        "Search IMDb and post the top match",
-        event,
-        spec = COMMAND
-    )]
+    #[handler(command)]
     async fn search(
         &self,
         _ctx: &Context,
         client: &Client,
-        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
