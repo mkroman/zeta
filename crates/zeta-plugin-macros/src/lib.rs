@@ -6,6 +6,11 @@
 //! The impl block itself — its methods and their logic — is emitted unchanged beside it, with
 //! only the macro's own annotations stripped.
 //!
+//! Besides the implementation, the macro submits a `zeta_plugin::PluginRegistration` through
+//! `inventory`, so the host discovers every compiled-in plugin at startup without a central
+//! list. Adding a plugin therefore needs only its module and cargo feature, not an entry
+//! anywhere else.
+//!
 //! ```
 //! use zeta_plugin::{Client, Context, Error, prelude::*};
 //!
