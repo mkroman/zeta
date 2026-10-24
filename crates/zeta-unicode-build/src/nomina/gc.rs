@@ -28,6 +28,7 @@ use crate::ucd::{hex_u32, records};
 pub type GcRange = (u32, u32, u8);
 
 /// The fixed section header: run count, start lengths, and two stream orders.
+#[cfg(test)]
 const HEADER: usize = 2 + 2 + 2 + 1 + 2 + 1;
 
 /// Counters and measured sizes for one general-category section build.

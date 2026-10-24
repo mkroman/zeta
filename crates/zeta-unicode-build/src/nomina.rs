@@ -13,11 +13,6 @@
 //! count, the name block shift, the general-category page shift and one `(offset, length)`
 //! pair per section. [`image::pack_with_layout`] writes it; the runtime's `Nomina` reads it.
 
-#![allow(
-    dead_code,
-    reason = "the module keeps the full encoder surface for training, measurement and tests"
-)]
-
 pub mod emoji;
 pub mod gc;
 pub mod image;

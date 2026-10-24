@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 use std::path::{Component, Path};
 
-use crate::train::{TrainOutput, Verification};
+use crate::train::TrainOutput;
 
 /// The value written as `format`.
 const FORMAT: &str = "zeta-unicode-manifest";
@@ -192,17 +192,8 @@ fn render_manifest(
         },
     );
 
-    out.push_str("  \"verification\": {\n    \"status\": ");
-    push_json_string(
-        &mut out,
-        if output.verification.verified() {
-            "verified"
-        } else {
-            "failed"
-        },
-    );
-    out.push_str(",\n    \"checks\": [");
-    for (index, check) in verification_checks(output.verification).iter().enumerate() {
+    out.push_str("  \"verification\": {\n    \"status\": \"verified\",\n    \"checks\": [");
+    for (index, check) in output.verification.iter().enumerate() {
         if index > 0 {
             out.push_str(", ");
         }
@@ -239,20 +230,6 @@ fn input_records(
         records.push(record(path, &bytes, data_dir)?);
     }
     Ok(records)
-}
-
-/// The manifest names of the round-trip checks a run performed.
-fn verification_checks(verification: Verification) -> Vec<&'static str> {
-    [
-        (verification.names, "name-stream-round-trip"),
-        (verification.emoji, "emoji-stream-round-trip"),
-        (verification.gc, "general-category-round-trip"),
-        (verification.patterns, "pattern-round-trip"),
-        (verification.image, "image-layout"),
-    ]
-    .into_iter()
-    .filter_map(|(passed, name)| passed.then_some(name))
-    .collect()
 }
 
 /// One input file recorded in the manifest.

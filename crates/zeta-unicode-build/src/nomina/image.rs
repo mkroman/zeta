@@ -31,6 +31,7 @@ pub const MAGIC: &[u8; 4] = b"NOM1";
 pub const SECTION_COUNT: usize = 4;
 
 /// The block shift of the unparameterized [`pack`] helper: 32 names per block.
+#[cfg(test)]
 pub const NAME_BLOCK_SHIFT: u8 = 5;
 
 /// The documented general-category page shift.
@@ -56,6 +57,7 @@ pub const LAYOUT_GLOBAL: u8 = NameLayout::Global.id();
 ///
 /// Sections are appended in id order, each starting on an 8-byte boundary.
 #[must_use]
+#[cfg(test)]
 pub fn pack(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> {
     pack_with(sections, version, NAME_BLOCK_SHIFT, GC_PAGE_SHIFT)
 }
@@ -65,6 +67,7 @@ pub fn pack(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> 
 /// The name layout byte is set to [`LAYOUT_GLOBAL`]; the name section must have been built by
 /// `nomina::names::encode_global`.
 #[must_use]
+#[cfg(test)]
 pub fn pack_global(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> {
     pack_with_layout(
         sections,
@@ -87,6 +90,7 @@ pub fn pack_global(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> V
 /// `gc_page_shift` is not [`GC_PAGE_SHIFT`]. The generator never produces anything near that
 /// limit, and the runtime rejects any other page shift in `Nomina::new`.
 #[must_use]
+#[cfg(test)]
 pub fn pack_with(
     sections: [&[u8]; SECTION_COUNT],
     version: (u8, u8, u8),

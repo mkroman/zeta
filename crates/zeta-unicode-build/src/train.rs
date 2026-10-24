@@ -290,40 +290,18 @@ pub struct Candidate {
     pub chosen: bool,
 }
 
-/// What each stage round-tripped.
+/// The checks every successful training run performs.
 ///
-/// Every flag is backed by a check that actually runs before a [`TrainOutput`] is returned:
-/// the builders and the name verifier `assert!` on any mismatch, so a failed round-trip
-/// aborts training with a panic rather than reporting `false`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "the five checks are independent facts reported in the manifest"
-)]
-pub struct Verification {
-    /// The chosen name section decoded back to every input name, in [`verify`].
-    pub names: bool,
-    /// The emoji streams decoded back to every entry; enforced by the emoji builder's
-    /// internal round-trip assertions.
-    pub emoji: bool,
-    /// The category streams rebuilt into every range; enforced by the general-category
-    /// builder's internal round-trip assertions.
-    pub gc: bool,
-    /// Every pattern range and dictionary entry decoded back; enforced by the pattern
-    /// builder's internal round-trip assertions.
-    pub patterns: bool,
-    /// The image header and section directory validated by [`ImageLayout::parse`] in
-    /// [`verify`].
-    pub image: bool,
-}
-
-impl Verification {
-    /// Whether every stage verified.
-    #[must_use]
-    pub const fn verified(&self) -> bool {
-        self.names && self.emoji && self.gc && self.patterns && self.image
-    }
-}
+/// Each entry is backed by an assertion that runs before a [`TrainOutput`] is returned: the
+/// builders and the name verifier abort training on any mismatch, so a returned output has
+/// necessarily passed all of them.
+pub const VERIFICATION_CHECKS: [&str; 5] = [
+    "name-stream-round-trip",
+    "emoji-stream-round-trip",
+    "general-category-round-trip",
+    "pattern-round-trip",
+    "image-layout",
+];
 
 /// The result of one successful training run.
 #[derive(Debug)]
@@ -355,7 +333,7 @@ pub struct TrainOutput {
     /// A compact, deterministic table of the candidates and the chosen profile.
     pub report: String,
     /// The round-trip checks this run performed.
-    pub verification: Verification,
+    pub verification: &'static [&'static str],
     /// The baseline comparison, when a baseline was supplied.
     pub baseline: Option<BaselineComparison>,
 }
@@ -522,16 +500,6 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
 
     let chosen_profile = profile.chosen(chosen.name_block_shift);
     let report = render_report(&chosen_profile, &candidates, &layout);
-    // Every flag is backed by a check that ran above or inside the builders: `verify`
-    // re-decoded the chosen name section and validated the layout, and the emoji,
-    // general-category and pattern builders assert their internal round-trips.
-    let verification = Verification {
-        names: true,
-        emoji: true,
-        gc: true,
-        patterns: true,
-        image: true,
-    };
     Ok(TrainOutput {
         total_bytes: layout.total_bytes,
         image,
@@ -546,7 +514,7 @@ pub fn train(inputs: &Inputs, profile: &Profile) -> Result<TrainOutput, Error> {
         candidates,
         chosen,
         report,
-        verification,
+        verification: &VERIFICATION_CHECKS,
         baseline,
     })
 }
@@ -896,7 +864,7 @@ mod tests {
             output.chosen.name_block_shift,
             output.profile.name_block_shift
         );
-        assert!(output.verification.verified());
+        assert_eq!(output.verification, VERIFICATION_CHECKS);
         assert_eq!(
             output.candidates.len(),
             crate::profile::DEFAULT_CANDIDATE_SHIFTS.len()

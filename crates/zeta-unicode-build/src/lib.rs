@@ -42,7 +42,7 @@ pub use profile::{
 };
 pub use train::{
     BaselineComparison, Candidate, Error as TrainError, ImageLayout, NameStats, SectionRecord,
-    TrainOutput, Verification, train, verify,
+    TrainOutput, VERIFICATION_CHECKS, train, verify,
 };
 pub use ucd::{InputError, InputPaths, Inputs, read_inputs, read_version};
 

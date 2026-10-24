@@ -56,6 +56,7 @@ pub struct PatternStats {
 ///
 /// Panics when a vendored line is malformed. That is a build failure, not a runtime condition.
 #[must_use]
+#[cfg(test)]
 pub fn build(derived_names: &str) -> (Vec<u8>, PatternStats) {
     let patterns = parse_patterns(derived_names);
     pattern_section(&patterns)

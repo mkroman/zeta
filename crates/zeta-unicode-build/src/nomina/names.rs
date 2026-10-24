@@ -80,10 +80,9 @@
 //! algorithmic). That is 35,416 names in Unicode 18.0.0. Names are front-coded in code-point
 //! order; block boundaries are fixed every `2^block_shift` names.
 //!
-//! [`encode`] and [`encode_with_block_shift`] emit the block-local layout;
-//! [`encode_global`] and [`encode_global_with_block_shift`] emit the global one. Both return
-//! only the bytes in the short form; the `*_with_block_shift` forms return the size breakdown
-//! the layout study reports.
+//! [`encode_with_block_shift`] and [`encode_global_with_block_shift`] are the test and
+//! measurement entry points; training calls [`encode_global_corpus`] after parsing the corpus
+//! once. The `*_with_block_shift` forms return the size breakdown the layout study reports.
 
 use std::collections::BinaryHeap;
 
@@ -94,6 +93,7 @@ use zeta_unicode_format::{HANGUL_COUNT, HANGUL_END, HANGUL_START, UNICODE_END};
 use crate::ucd::Inputs;
 
 /// The default block shift of the unparameterized helpers (32 names).
+#[cfg(test)]
 pub const NAME_BLOCK_SHIFT: u8 = 5;
 /// The smallest block shift a measurement may use.
 pub const MIN_BLOCK_SHIFT: u8 = 1;
@@ -162,6 +162,10 @@ pub struct Encoded {
     /// The checkpoint offset directory (zero for the in-stream checkpoint format).
     pub checkpoint_directory_bytes: usize,
     /// The bits spent on in-stream checkpoint names (global only).
+    #[allow(
+        dead_code,
+        reason = "reported by the layout study's tests, not read by `train`"
+    )]
     pub checkpoint_bits: usize,
     /// The rounded byte cost of [`Self::checkpoint_bits`] (global only; part of `stream_bytes`).
     pub checkpoint_bytes: usize,
@@ -180,58 +184,18 @@ pub struct Encoded {
 impl Encoded {
     /// The total section size in bytes.
     #[must_use]
+    #[cfg(test)]
     pub const fn total(&self) -> usize {
         self.index_bytes + self.offset_bytes + self.model_bytes + self.stream_bytes
     }
 }
 
-/// Encodes the name section with the default 32-name blocks.
-///
-/// # Panics
-///
-/// Panics on malformed vendored data, as the generator's other encoders do: a bad record is
-/// a build failure.
-#[must_use]
-pub fn encode(inputs: &Inputs) -> Vec<u8> {
-    encode_with_block_shift(inputs, NAME_BLOCK_SHIFT).bytes
-}
-
-/// Encodes the block-local name section with an explicit block shift.
-///
-/// The block shift is the flat image header's `name_block_shift`; 5 is the default of this
-/// helper, while training measures the shift it ships.
-/// Shifts 1..=8 are accepted so the layout study can measure 2/32/64/128/256-name blocks.
-///
-/// # Panics
-///
-/// Panics when `block_shift` is outside [`MIN_BLOCK_SHIFT`]..=[`MAX_BLOCK_SHIFT`], or on
-/// malformed vendored data.
-#[must_use]
+#[cfg(test)]
 pub fn encode_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encoded {
     encode_layout(inputs, block_shift, NameLayout::BlockLocal)
 }
 
-/// Encodes the global, checkpointed name section with the default 32-name blocks.
-///
-/// # Panics
-///
-/// Panics on malformed vendored data.
-#[must_use]
-pub fn encode_global(inputs: &Inputs) -> Vec<u8> {
-    encode_global_with_block_shift(inputs, NAME_BLOCK_SHIFT).bytes
-}
-
-/// Encodes the global, checkpointed name section with an explicit block shift.
-///
-/// Every name is front-coded against its immediate code-point predecessor (prefix and suffix
-/// sharing, like the incumbent generator) and one checkpoint per block stores the predecessor
-/// name plus its bit position, so a lookup decodes at most `2^block_shift` entries.
-///
-/// # Panics
-///
-/// Panics when `block_shift` is outside [`MIN_BLOCK_SHIFT`]..=[`MAX_BLOCK_SHIFT`], or on
-/// malformed vendored data.
-#[must_use]
+#[cfg(test)]
 pub fn encode_global_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encoded {
     encode_layout(inputs, block_shift, NameLayout::Global)
 }
@@ -253,6 +217,7 @@ pub fn encode_global_corpus(corpus: &Corpus, block_shift: u8) -> Encoded {
 }
 
 /// Parses the inputs and encodes them with `layout`.
+#[cfg(test)]
 fn encode_layout(inputs: &Inputs, block_shift: u8, layout: NameLayout) -> Encoded {
     assert!(
         (MIN_BLOCK_SHIFT..=MAX_BLOCK_SHIFT).contains(&block_shift),
@@ -832,6 +797,7 @@ pub struct Corpus {
     /// Every Hangul record the file spells out, in file order.
     hangul: Vec<(u32, String)>,
     /// Aliases folded in from `NameAliases.txt`.
+    #[allow(dead_code, reason = "used by the corpus statistics test")]
     aliases: usize,
 }
 
@@ -1030,6 +996,7 @@ fn parse_cp(text: &str, source: Source<'_>) -> u32 {
 /// # Panics
 ///
 /// Panics on the first mismatch, or when the section is malformed.
+#[cfg(test)]
 pub fn verify(section: &[u8], inputs: &Inputs) {
     verify_with_block_shift(section, inputs, NAME_BLOCK_SHIFT);
 }
@@ -1039,6 +1006,7 @@ pub fn verify(section: &[u8], inputs: &Inputs) {
 /// # Panics
 ///
 /// Panics on the first mismatch, or when the section is malformed.
+#[cfg(test)]
 pub fn verify_with_block_shift(section: &[u8], inputs: &Inputs, block_shift: u8) {
     verify_layout(section, inputs, block_shift, NameLayout::BlockLocal);
 }
@@ -1048,6 +1016,7 @@ pub fn verify_with_block_shift(section: &[u8], inputs: &Inputs, block_shift: u8)
 /// # Panics
 ///
 /// Panics on the first mismatch, or when the section is malformed.
+#[cfg(test)]
 pub fn verify_global_with_block_shift(section: &[u8], inputs: &Inputs, block_shift: u8) {
     verify_layout(section, inputs, block_shift, NameLayout::Global);
 }
@@ -1057,6 +1026,7 @@ pub fn verify_global_with_block_shift(section: &[u8], inputs: &Inputs, block_shi
 /// # Panics
 ///
 /// Panics on the first mismatch, or when the section is malformed.
+#[cfg(test)]
 pub fn verify_layout(section: &[u8], inputs: &Inputs, block_shift: u8, layout: NameLayout) {
     let corpus = parse_corpus(inputs);
     verify_corpus(section, &corpus, block_shift, layout);
