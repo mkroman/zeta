@@ -203,10 +203,11 @@ impl Default for SearchOptions {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for HowLongToBeat {
-    type Settings = NoSettings;
-
+#[plugin(name = "howlongtobeat")]
+impl HowLongToBeat {
+    // The constructor signature is fixed by the `Plugin` trait: `NoSettings` is a unit type the
+    // constructor cannot fail over, so the by-reference parameter and the `Result` wrapper stay.
+    #[allow(clippy::trivially_copy_pass_by_ref, clippy::unnecessary_wraps)]
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
@@ -221,7 +222,9 @@ impl Plugin<Context> for HowLongToBeat {
         })
     }
 
-    async fn handle_command(
+    /// Replies to `.hltb` with the top match's completion times.
+    #[handler(command)]
+    async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
