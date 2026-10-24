@@ -40,9 +40,6 @@ impl Default for Settings {
     }
 }
 
-/// The `.tp` command.
-const TRUSTPILOT: CommandSpec = CommandSpec::new(".tp", "Look up a business's Trustpilot score");
-
 /// Plugin for querying Trustpilot business scores.
 pub struct Trustpilot {
     /// HTTP client for making API requests.
@@ -105,9 +102,8 @@ impl Trustpilot {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(TRUSTPILOT);
         let api_key = resolve_secret(settings.api_key.as_deref(), "TRUSTPILOT_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -119,11 +115,12 @@ impl Trustpilot {
     }
 
     /// Replies to `.tp` with the business's Trustpilot score and review count.
-    #[handler(command)]
+    #[command(".tp", "Look up a business's Trustpilot score", event)]
     async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
