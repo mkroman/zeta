@@ -33,9 +33,6 @@ const REFERER_URL: &str = "https://howlongtobeat.com/";
 /// without triggering the rejection path.
 const AUTH_TTL: Duration = Duration::from_hours(1);
 
-/// The `.hltb` command.
-const HLTB: CommandSpec = CommandSpec::new(".hltb", "Look up a game's completion times");
-
 /// The HowLongToBeat IRC plugin.
 ///
 /// This plugin allows users to query the HowLongToBeat database
@@ -210,9 +207,8 @@ impl HowLongToBeat {
     fn new(
         ctx: &Context,
         _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(HLTB);
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self {
@@ -222,11 +218,12 @@ impl HowLongToBeat {
     }
 
     /// Replies to `.hltb` with the top match's completion times.
-    #[handler(command)]
+    #[command(".hltb", "Look up a game's completion times", event)]
     async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
