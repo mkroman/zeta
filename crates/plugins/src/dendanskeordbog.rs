@@ -96,20 +96,23 @@ impl Display for MessageFormatter<'_> {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for DenDanskeOrdbog {
-    type Settings = Settings;
-
+#[plugin(name = "dendanskeordbog", settings = Settings)]
+impl DenDanskeOrdbog {
+    // The constructor signature is fixed by the `Plugin` trait, which returns `Result` even when
+    // initialization cannot fail.
+    #[allow(clippy::unnecessary_wraps)]
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
         subscriptions.command(DDO);
-        Ok(Self::new(&ctx.config.http, settings.clone()))
+        Ok(Self::with_http_config(&ctx.config.http, settings.clone()))
     }
 
-    async fn handle_command(
+    /// Replies to `.ddo` with the dictionary entry of the queried word.
+    #[handler(command)]
+    async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -140,7 +143,7 @@ impl Plugin<Context> for DenDanskeOrdbog {
 impl DenDanskeOrdbog {
     /// Creates a new plugin instance around a client built for the given HTTP configuration.
     #[must_use]
-    pub fn new(config: &HttpConfig, settings: Settings) -> Self {
+    pub fn with_http_config(config: &HttpConfig, settings: Settings) -> Self {
         let http_client = http::build_client(config);
         let client = dendanskeordbog::Client::with_client(http_client);
 
