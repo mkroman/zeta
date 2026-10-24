@@ -105,17 +105,13 @@ struct Video {
     view_count: u64,
 }
 
-#[async_trait]
-impl Plugin<Context> for Twitch {
-    type Settings = Settings;
-
+#[plugin(name = "twitch", settings = Settings, urls(hosts = urls::URL_HOSTS))]
+impl Twitch {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
-
         let client_id = resolve_secret(settings.client_id.as_deref(), "TWITCH_CLIENT_ID")?;
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "TWITCH_CLIENT_SECRET")?;
@@ -125,6 +121,7 @@ impl Plugin<Context> for Twitch {
         Ok(Self { credentials })
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
