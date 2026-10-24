@@ -232,10 +232,8 @@ pub struct CoinMarketCap {
     max_name_typos: u16,
 }
 
-#[async_trait]
-impl Plugin<Context> for CoinMarketCap {
-    type Settings = Settings;
-
+#[plugin(name = "coinmarketcap", settings = Settings)]
+impl CoinMarketCap {
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -270,6 +268,7 @@ impl Plugin<Context> for CoinMarketCap {
         })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.ensure_coins_cached().await;
         self.ensure_fiat_cached().await;
@@ -277,6 +276,7 @@ impl Plugin<Context> for CoinMarketCap {
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
