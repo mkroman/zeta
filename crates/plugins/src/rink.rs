@@ -118,10 +118,8 @@ impl Default for Settings {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for Rink {
-    type Settings = Settings;
-
+#[plugin(name = "rink", settings = Settings)]
+impl Rink {
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -151,11 +149,8 @@ impl Plugin<Context> for Rink {
         })
     }
 
-    async fn loaded(
-        &mut self,
-        #[allow(unused)] ctx: &Context,
-        _client: &Client,
-    ) -> Result<(), ZetaError> {
+    #[handler(loaded)]
+    async fn loaded(&mut self, ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         // The coinmarketcap plugin publishes its keyed client for other plugins to reuse.
         self.cmc = ctx.shared.get::<CmcClient>();
 
@@ -165,6 +160,7 @@ impl Plugin<Context> for Rink {
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -179,6 +175,7 @@ impl Plugin<Context> for Rink {
         Ok(())
     }
 
+    #[handler(shutdown)]
     async fn shutdown(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         // The refresh task holds a handle, so it would keep the actor alive after the plugin
         // shuts down. Stopping it and dropping the last handle closes the mailbox, which ends
