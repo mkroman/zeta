@@ -11,6 +11,7 @@ members = [
     "crates/zeta-http",
     "crates/zeta-mirror",
     "crates/zeta-plugin",
+    "crates/zeta-plugin-macros",
     "crates/zeta-test-support",
     "crates/zeta-unicode",
     "crates/zeta-unicode-build",
@@ -29,6 +30,8 @@ hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
 humantime-serde = "1.1.1"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
 miette = { version = "7.2.0", default-features = false, features = ["derive", "fancy-no-backtrace"] }
+proc-macro2 = "1"
+quote = "1"
 regex = "1.12.2"
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
 scraper = "0.29.0"

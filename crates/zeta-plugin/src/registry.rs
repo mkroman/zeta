@@ -313,7 +313,7 @@ impl PluginTask {
 mod tests {
     use super::*;
     use crate::event::MessageEvent;
-    use crate::{PluginName, types::NoSettings};
+    use crate::types::NoSettings;
     use async_trait::async_trait;
 
     /// Constructs a context for the tests: a default configuration and an unreachable (lazily
@@ -352,12 +352,10 @@ mod tests {
         recording: Recording,
     }
 
-    impl PluginName for RecordingPlugin {
-        const NAME: &'static str = "recording";
-    }
-
     #[async_trait]
     impl Plugin<Context> for RecordingPlugin {
+        const NAME: &'static str = "recording";
+
         type Settings = NoSettings;
 
         fn new(ctx: &Context, _: &NoSettings, _: &mut Subscriptions) -> Result<Self, Error> {

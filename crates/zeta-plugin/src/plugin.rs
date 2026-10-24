@@ -7,15 +7,6 @@ use crate::event::{
     RawEvent, Subscriptions, UrlEvent,
 };
 
-/// Supplies the name of a plugin.
-///
-/// The name identifies the plugin in the help system and the plugin catalog, and must match the
-/// plugin's module name.
-pub trait PluginName {
-    /// The plugin's name, e.g. `alert`.
-    const NAME: &'static str;
-}
-
 /// The base trait that all plugins must implement.
 ///
 /// A plugin declares the events it wants to receive in [`Plugin::new`] by registering them on
@@ -29,6 +20,11 @@ pub trait PluginName {
 /// A plugin's configuration is declared through [`Plugin::Settings`] and deserialized from its
 /// `[plugins.<name>]` section by the host, which passes it to [`Plugin::new`].
 ///
+/// Most plugins are written with the `#[plugin]` attribute macro instead of implementing this
+/// trait by hand: it reads the container attributes and the `#[command]`/`#[handler]` method
+/// annotations off an inherent impl block and generates the implementation, including the
+/// [`Plugin::NAME`] constant and the command dispatch.
+///
 /// Each plugin runs in its own long-lived task, and the calls to a plugin's handlers are
 /// serialized. Handlers therefore must not block the task; spawn a task for work that outlives
 /// the call. Plugins that need to share state with other plugins can publish it through their
@@ -37,35 +33,33 @@ pub trait PluginName {
 ///# Examples
 ///
 /// ```
+/// use argh::{ArgsInfo, FromArgs};
 /// use irc::client::Client;
-/// use zeta_plugin::{CommandSpec, Error, Subscriptions, prelude::*};
+/// use zeta_plugin::{Error, prelude::*};
 ///
+/// /// Greets the named person.
+/// #[derive(Default)]
 /// struct Greet;
 ///
-/// impl PluginName for Greet {
-///     const NAME: &'static str = "greet";
+/// /// The greeting options.
+/// #[derive(FromArgs, ArgsInfo)]
+/// struct Opts {
+///     /// the name of the person to greet
+///     #[argh(positional)]
+///     name: String,
 /// }
 ///
-/// const HELLO: CommandSpec = CommandSpec::new(".hello", "Greet someone");
-///
-///#[async_trait]
-/// impl Plugin for Greet {
-///     type Settings = NoSettings;
-///
-///     fn new(_: &(), _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Greet, Error> {
-///         subscriptions.command(HELLO);
-///
-///         Ok(Greet)
-///     }
-///
-///     async fn handle_command(
+/// #[plugin(name = "greet")]
+/// impl Greet {
+///     #[command(".hello", "Greet someone", args = Opts)]
+///     async fn hello(
 ///         &self,
-///         _ctx: &(),
+///         _: &Context,
 ///         client: &Client,
-///         command: &CommandEvent,
+///         channel: &str,
+///         opts: Opts,
 ///     ) -> Result<(), Error> {
-///         let nick = command.args().split_whitespace().next().unwrap_or("world");
-///         client.send_privmsg(command.channel(), format!("hello, {nick}!"))?;
+///         client.send_privmsg(channel, format!("hello, {}!", opts.name))?;
 ///
 ///         Ok(())
 ///     }
@@ -76,42 +70,51 @@ pub trait PluginName {
 ///
 /// ```
 /// use irc::client::Client;
-/// use zeta_plugin::{Error, Subscriptions, prelude::*};
+/// use zeta_plugin::{Error, prelude::*};
 ///
+/// /// Watches the channel traffic.
+/// #[derive(Default)]
 /// struct Watcher;
 ///
-/// impl PluginName for Watcher {
-///     const NAME: &'static str = "watcher";
-/// }
-///
-///#[async_trait]
-/// impl Plugin for Watcher {
-///     type Settings = NoSettings;
-///
-///     fn new(_: &(), _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Watcher, Error> {
-///         subscriptions.urls(UrlScope::Any).receive_join().receive_message();
-///
-///         Ok(Watcher)
-///     }
-///
-///     async fn handle_url(&self, _: &(), _: &Client, url: &UrlEvent) -> Result<(), Error> {
+/// #[plugin(name = "watcher", urls(any), messages)]
+/// impl Watcher {
+///     #[handler(url)]
+///     async fn url(&self, _: &Context, _: &Client, url: &UrlEvent) -> Result<(), Error> {
 ///         // Every URL posted in any channel — already filtered, deduplicated, and repaired.
 ///         Ok(())
 ///     }
 ///
-///     async fn handle_join(&self, _: &(), _: &Client, join: &JoinEvent) -> Result<(), Error> {
+///     #[handler(join)]
+///     async fn join(&self, _: &Context, _: &Client, join: &JoinEvent) -> Result<(), Error> {
 ///         // Someone joined `join.channel()`.
 ///         Ok(())
 ///     }
 ///
-///     async fn handle_message(&self, _: &(), _: &Client, message: &MessageEvent) -> Result<(), Error> {
+///     #[handler(message)]
+///     async fn message(
+///         &self,
+///         _: &Context,
+///         _: &Client,
+///         message: &MessageEvent,
+///     ) -> Result<(), Error> {
 ///         // Every channel message, whether or not it matches a command.
 ///         Ok(())
 ///     }
 /// }
 /// ```
 #[async_trait]
-pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
+pub trait Plugin<C: Sync = ()>: Send + Sync {
+    /// The plugin's name, e.g. `alert`.
+    ///
+    /// The name identifies the plugin in the help system and the plugin catalog, and must match
+    /// the plugin's module name. The `#[plugin]` attribute macro sets it from its `name`
+    /// argument.
+    ///
+    /// The default is a migration shim: plugins not yet written with `#[plugin]` register with
+    /// an empty catalog name until they set the name themselves. Remove it once every plugin
+    /// implements `Plugin` through the macro.
+    const NAME: &'static str = "";
+
     /// This plugin's deserialized `[plugins.<name>]` settings.
     ///
     /// The host hands only the plugin's own settings to [`Plugin::new`]; plugins cannot access
@@ -148,42 +151,35 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     /// [`CommandSpec`](super::CommandSpec) that matched and the trailing arguments of the
     /// invocation.
     ///
-    /// Plugins handling multiple commands should dispatch on the identity of their declared
-    /// command constants (see [`CommandSpec`](super::CommandSpec)'s documentation on matching
-    /// by identity), for example:
+    /// For plugins written with the `#[plugin]` macro, the generated implementation dispatches
+    /// on the identity of each `#[command]`'s declared constant (see
+    /// [`CommandSpec`](super::CommandSpec)'s documentation on matching by identity), parses the
+    /// arguments, and calls the annotated method — one method per command:
     ///
     /// ```
-    /// # use irc::client::Client;
-    /// # use zeta_plugin::{CommandEvent, CommandSpec, Error, Subscriptions, prelude::*};
-    /// # const FOO: CommandSpec = CommandSpec::new(".foo", "Handle `.foo`");
-    /// # const BAR: CommandSpec = CommandSpec::new(".bar", "Handle `.bar`");
+    /// use irc::client::Client;
+    /// use zeta_plugin::{Error, prelude::*};
+    ///
+    /// # #[derive(Default)]
     /// # struct MyPlugin;
-    /// # impl PluginName for MyPlugin {
-    /// #     const NAME: &'static str = "my_plugin";
-    /// # }
-    /// # #[async_trait]
-    /// # impl Plugin for MyPlugin {
-    /// #     type Settings = NoSettings;
-    /// #     fn new(_: &(), _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, Error> {
-    /// #         subscriptions.command(FOO).command(BAR);
-    /// #         Ok(MyPlugin)
-    /// #     }
-    /// async fn handle_command(
-    ///     &self,
-    ///     _ctx: &(),
-    ///     client: &Client,
-    ///     command: &CommandEvent,
-    /// ) -> Result<(), Error> {
-    ///     match command.spec {
-    ///         FOO => { /* handle `.foo` */ }
-    ///         BAR => { /* handle `.bar` */ }
-    ///         _ => {}
+    /// #[plugin(name = "my_plugin")]
+    /// impl MyPlugin {
+    ///     #[command(".foo", "Handle `.foo`")]
+    ///     async fn foo(&self, _: &Context, _: &Client, _channel: &str) -> Result<(), Error> {
+    ///         // Handle `.foo`.
+    ///         Ok(())
     ///     }
     ///
-    ///     Ok(())
+    ///     #[command(".bar", "Handle `.bar`")]
+    ///     async fn bar(&self, _: &Context, _: &Client, _channel: &str) -> Result<(), Error> {
+    ///         // Handle `.bar`.
+    ///         Ok(())
+    ///     }
     /// }
-    /// # }
     /// ```
+    ///
+    /// Overriding `handle_command` by hand — for example with `#[handler(command)]` — serves
+    /// every registered command from one method instead.
     ///
     /// # Errors
     ///
@@ -355,23 +351,16 @@ pub trait Plugin<C: Sync = ()>: PluginName + Send + Sync {
     ///
     /// ```
     /// use irc::client::Client;
-    /// use zeta_plugin::{Error, Subscriptions, prelude::*};
+    /// use zeta_plugin::{Error, prelude::*};
     ///
+    /// /// Flushes pending state on shutdown.
+    /// #[derive(Default)]
     /// struct FlushPlugin;
     ///
-    /// impl PluginName for FlushPlugin {
-    ///     const NAME: &'static str = "flush";
-    /// }
-    ///
-    ///#[async_trait]
-    /// impl Plugin for FlushPlugin {
-    ///     type Settings = NoSettings;
-    ///
-    ///     fn new(_: &(), _: &NoSettings, _: &mut Subscriptions) -> Result<Self, Error> {
-    ///         Ok(FlushPlugin)
-    ///     }
-    ///
-    ///     async fn shutdown(&mut self, _: &(), _client: &Client) -> Result<(), Error> {
+    /// #[plugin(name = "flush")]
+    /// impl FlushPlugin {
+    ///     #[handler(shutdown)]
+    ///     async fn flush(&mut self, _: &Context, _client: &Client) -> Result<(), Error> {
     ///         // Flush any pending state to durable storage here.
     ///         Ok(())
     ///     }

@@ -5399,8 +5399,19 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "zeta-plugin-macros",
  "zeta-test-support",
  "zeta-utils",
+]
+
+[[package]]
+name = "zeta-plugin-macros"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "zeta-plugin",
 ]
 
 [[package]]

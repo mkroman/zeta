@@ -31,6 +31,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
+zeta-plugin-macros = { path = "../zeta-plugin-macros" }
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]

@@ -34,12 +34,14 @@ use zeta_plugin::NoSettings;
 ///
 /// The plugin modules themselves are declared literally above this invocation so rustfmt can
 /// see them. For each entry, the macro generates:
-/// 1. A [`zeta_plugin::PluginName`] implementation for the plugin's struct.
-/// 2. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
+/// 1. A field in [`PluginsConfig`] holding the plugin's settings type: `mod::Struct => mod::Settings`
 ///    for plugins with settings, `=> NoSettings` otherwise.
-/// 3. A call to [`zeta_plugin::Registry::register`] inside [`register_bundled_plugins`], gated on
+/// 2. A call to [`zeta_plugin::Registry::register`] inside [`register_bundled_plugins`], gated on
 ///    the plugin's `enabled` configuration and passing the plugin's own settings through to its
 ///    constructor.
+///
+/// The plugin's name comes from the plugin itself: plugins written with `#[plugin]` set it in
+/// their `Plugin` implementation.
 macro_rules! declare_plugins {
     (
         $(
@@ -48,14 +50,6 @@ macro_rules! declare_plugins {
             $mod_name:ident :: $struct_name:ident => $settings:ty
         ),* $(,)?
     ) => {
-        // The plugin name is the module name.
-        $(
-            #[cfg(feature = $feature)]
-            impl zeta_plugin::PluginName for $mod_name::$struct_name {
-                const NAME: &'static str = stringify!($mod_name);
-            }
-        )*
-
         /// Typed, per-plugin configuration extracted from the `[plugins]` section.
         ///
         /// Each plugin has its own section keyed by its module name, e.g. `[plugins.dig]`.
@@ -545,7 +539,7 @@ mod tests {
 
     /// The literal plugin module list and the `declare_plugins!` entries are two views of the
     /// same registry: rustfmt needs literal `pub mod` declarations, and the macro needs entries
-    /// for the `PluginName` impls, configuration and registration. Keep them in step.
+    /// for the configuration and registration. Keep them in step.
     #[test]
     fn plugin_module_declarations_match_registry_entries() {
         let source = include_str!("lib.rs");
