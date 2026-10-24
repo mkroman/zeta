@@ -17,9 +17,6 @@ use crate::prelude::*;
 use zeta_http as http;
 use zeta_plugin::config::HttpConfig;
 
-/// The `.ddo` command.
-const DDO: CommandSpec = CommandSpec::new(".ddo", "Look up a word in Den Danske Ordbog");
-
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
 /// section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -103,18 +100,18 @@ impl DenDanskeOrdbog {
     fn new(
         ctx: &Context,
         settings: &Settings,
-        subscriptions: &mut Subscriptions,
+        _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(DDO);
         Ok(Self::with_http_config(&ctx.config.http, settings.clone()))
     }
 
     /// Replies to `.ddo` with the dictionary entry of the queried word.
-    #[handler(command)]
+    #[command(".ddo", "Look up a word in Den Danske Ordbog", event)]
     async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
+        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
