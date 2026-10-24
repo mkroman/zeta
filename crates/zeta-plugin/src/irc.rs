@@ -151,4 +151,11 @@ mod tests {
         assert_eq!(notice(""), NOTICE_PREFIX);
         assert_eq!(NOTICE_PREFIX, "\x0310> ");
     }
+
+    #[test]
+    fn notice_prefix_is_the_reply_prefix_plus_a_space() {
+        // Budget math in string-utils subtracts `NOTICE_PREFIX` where reply formatting costs
+        // `REPLY_PREFIX` plus the same separator; the coupling is pinned here.
+        assert_eq!(NOTICE_PREFIX, format!("{REPLY_PREFIX} "));
+    }
 }

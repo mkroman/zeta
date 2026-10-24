@@ -117,9 +117,12 @@ fn str_to_hex_string(s: &str) -> String {
 
 /// Warms the Unicode tables in the background, at most once per process.
 ///
-/// A few milliseconds of CPU here instead of stalling the first `.uni` on the name-stream
-/// decode and emoji parse. A failed spawn is harmless: the first command then pays the lazy
-/// cost itself.
+/// `zeta_unicode::init` warms the calling thread's name decoder plus the process-wide emoji
+/// and general-category tables. Because this spawns it on a detached thread, only the shared
+/// emoji/GC tables are actually warmed ahead of time; the name decoder is per thread, so the
+/// plugin task still builds its own on its first name lookup. (Calling `init` on the async
+/// runtime instead would warm the right thread, at the cost of stalling a worker for the
+/// init.) A failed spawn is harmless: the first command then pays the lazy cost itself.
 fn warm_unicode() {
     UNICODE_INIT.call_once(|| {
         let _ = std::thread::Builder::new()
