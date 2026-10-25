@@ -1,79 +1,120 @@
-//! Thin build script: the generation itself lives in the `zeta-unicode-build` crate.
+//! Thin build script: training and generation live in the `zeta-unicode-build` crate.
 
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
-/// Budget the generated name sections (names + index + patterns) must fit into.
-const NAMES_BUDGET: usize = zeta_unicode_build::NAMES_BUDGET;
+// `DEFAULT_MAX_TABLE_BYTES` is `zeta_unicode_format::TABLE_BUDGET` re-exported: the trainer,
+// the build script and the runtime all enforce one budget, and the build script reaches it
+// without a direct dependency on the format crate.
+use zeta_unicode_build::{
+    DEFAULT_MAX_TABLE_BYTES as TABLE_BUDGET, Priority, Profile, read_inputs, train, write_manifest,
+};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=ZETA_UNICODE_STATS");
-    for file in [
-        "DerivedName.txt",
-        "DerivedGeneralCategory.txt",
-        "NameAliases.txt",
-        "NamedSequences.txt",
-        "emoji-test.txt",
-        "derived-names.rules",
+    for variable in [
+        "ZETA_UNICODE_STATS",
+        "ZETA_UNICODE_DATA_DIR",
+        "ZETA_UNICODE_PRIORITY",
+        "ZETA_UNICODE_BLOCK_SHIFT",
+        "ZETA_UNICODE_MAX_BYTES",
     ] {
-        println!("cargo:rerun-if-changed=data/{file}");
+        println!("cargo:rerun-if-env-changed={variable}");
     }
+
+    // The data root may be the flat vendored directory or an extracted release; watching the
+    // whole root covers every candidate path the trainer probes.
+    let data_dir =
+        env::var_os("ZETA_UNICODE_DATA_DIR").map_or_else(|| PathBuf::from("data"), PathBuf::from);
+    println!("cargo:rerun-if-changed={}", data_dir.display());
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by cargo"));
     let report = env::var_os("ZETA_UNICODE_STATS").is_some();
 
-    let output = zeta_unicode_build::generate(&zeta_unicode_build::Request {
-        data_dir: "data".into(),
-        rules: "data/derived-names.rules".into(),
-        out_dir,
-        table_file: "zeta_unicode_tables.bin".into(),
-        derive_file: "zeta_unicode_derive.rs".into(),
-        report,
-    })
-    .expect("failed to generate the Unicode tables");
+    let priority =
+        env::var("ZETA_UNICODE_PRIORITY")
+            .ok()
+            .as_deref()
+            .map_or(Priority::Balanced, |value| {
+                Priority::parse(value)
+                    .unwrap_or_else(|| panic!("unknown ZETA_UNICODE_PRIORITY {value:?}"))
+            });
+    // The budget is a product constraint, so the variable may only tighten it for testing; a
+    // larger image must fail this build, not a later runtime test.
+    let max_bytes = env::var("ZETA_UNICODE_MAX_BYTES")
+        .ok()
+        .map_or(TABLE_BUDGET, |value| {
+            let parsed: usize = value.parse().unwrap_or_else(|error| {
+                panic!("ZETA_UNICODE_MAX_BYTES must be a byte count, got {value:?}: {error}")
+            });
+            assert!(
+                parsed <= TABLE_BUDGET,
+                "ZETA_UNICODE_MAX_BYTES={parsed} exceeds the {TABLE_BUDGET}-byte Nomina \
+                 image budget; the budget is fixed because it is a product constraint, so \
+                 the variable can only lower it for testing"
+            );
+            parsed
+        });
+    let mut profile = Profile::new(priority, max_bytes);
+    if let Some(value) = env::var_os("ZETA_UNICODE_BLOCK_SHIFT") {
+        let value = value.to_string_lossy();
+        let shift = value.parse().unwrap_or_else(|error| {
+            panic!("ZETA_UNICODE_BLOCK_SHIFT must be a number, got {value:?}: {error}")
+        });
+        profile = profile.with_block_shift(shift);
+    }
 
+    // `unwrap_or_else` with a formatted panic keeps the error's `Display` text, which the
+    // trainer uses for actionable guidance (e.g. `MissingDerivedName`).
+    let inputs = read_inputs(&data_dir)
+        .unwrap_or_else(|error| panic!("failed to read the Unicode data: {error}"));
+    let output = train(&inputs, &profile)
+        .unwrap_or_else(|error| panic!("failed to train the Unicode image: {error}"));
+    // The hard cap is the same constant the runtime test checks; catching it here means an
+    // over-budget image is never written or embedded.
     assert!(
-        output.names.table <= NAMES_BUDGET,
-        "names + index + patterns = {} B, over the {NAMES_BUDGET} B budget",
-        output.names.table
+        output.total_bytes <= TABLE_BUDGET,
+        "the trained Nomina image is {} bytes, over the {TABLE_BUDGET}-byte budget",
+        output.total_bytes
     );
+    fs::write(out_dir.join("zeta_unicode_nomina.bin"), &output.image)
+        .unwrap_or_else(|error| panic!("failed to write the Nomina image: {error}"));
+    write_manifest(&data_dir, &out_dir, &inputs, &output)
+        .unwrap_or_else(|error| panic!("failed to write the Unicode manifest: {error}"));
+
+    let version = output.version;
+    let version_source = format!(
+        "// @generated by crates/zeta-unicode/build.rs from the UCD version headers.\n\
+         /// The Unicode version of the data this crate was built from, as \
+         `(major, minor, patch)`.\n\
+         ///\n\
+         /// Generated at build time from the version headers; the\n\
+         /// `generated_version_matches_the_table_header` test checks the image header\n\
+         /// against it, so the two cannot drift apart.\n\
+         pub const UNICODE_VERSION: (u8, u8, u8) = ({}, {}, {});\n",
+        version.0, version.1, version.2
+    );
+    fs::write(out_dir.join("zeta_unicode_version.rs"), version_source)
+        .unwrap_or_else(|error| panic!("failed to write the generated Unicode version: {error}"));
 
     if report {
-        println!(
-            "cargo:warning=zeta-unicode: {} gc ranges -> {} table bytes",
-            output.gc_ranges, output.table_bytes
-        );
-        println!(
-            "cargo:warning=zeta-unicode: emoji: {} bytes, {} entries ({} ruled bases, \
-             {} verbatim variants, {} groups with no base)",
-            output.emoji.bytes,
-            output.emoji.entries,
-            output.emoji.ruled_bases,
-            output.emoji.verbatim_variants,
-            output.emoji.missing_bases
-        );
-        for sample in &output.emoji.samples {
-            println!("cargo:warning=zeta-unicode: emoji verbatim: {sample}");
+        for line in output.report.lines() {
+            println!("cargo:warning=zeta-unicode: {line}");
         }
         println!(
-            "cargo:warning=zeta-unicode: names: {} entries ({} derived, {} stored), \
-             {} arms over {} atoms ({} B), streams {}/{}/{}, names {} + runs {} + patterns {} \
-             = {} B ({} B charging the atoms)",
-            output.names.entries,
-            output.names.derived,
-            output.names.stored,
-            output.names.arms,
-            output.names.atoms,
-            output.names.atom_bytes,
-            output.names.streams[0].compressed,
-            output.names.streams[1].compressed,
-            output.names.streams[2].compressed,
-            output.names.blob,
-            output.names.runs_section.len(),
-            output.names.pattern_section.len(),
-            output.names.table,
-            output.names.table_strict
+            "cargo:warning=zeta-unicode: {} names, {} emoji, {} GC runs, {} patterns; \
+             image {} B, manifest sections {} B",
+            output.names.name_count,
+            output.emoji.entries,
+            output.gc.runs,
+            output.patterns.patterns,
+            output.total_bytes,
+            output
+                .sections
+                .iter()
+                .map(|section| section.size)
+                .sum::<usize>(),
         );
     }
 }

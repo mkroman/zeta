@@ -25,6 +25,11 @@ pub const BOLD: &str = "\x02";
 /// The prefix shared by every reply format, bold name or not.
 pub const REPLY_PREFIX: &str = "\x0310>";
 
+/// The complete prefix [`notice`] writes before a message, including its separating space.
+///
+/// Callers that budget a reply in bytes can subtract this instead of re-deriving the format.
+pub const NOTICE_PREFIX: &str = "\x0310> ";
+
 /// Formats `message` as a reply from the plugin named `name`.
 ///
 /// The reply starts with [`REPLY_PREFIX`], followed by the bold plugin name, e.g.
@@ -46,7 +51,7 @@ pub fn reply_prefix(name: &str) -> String {
 /// Formats `message` as a plain reply without a plugin name.
 #[must_use]
 pub fn notice(message: impl fmt::Display) -> String {
-    format!("{REPLY_PREFIX} {message}")
+    format!("{NOTICE_PREFIX}{message}")
 }
 
 /// Sends the output of a failed argument parse to `channel`, one message per non-empty line.
@@ -139,5 +144,17 @@ mod tests {
     #[test]
     fn notice_prefixes_the_message_with_the_marker() {
         assert_eq!(notice("No results found"), "\x0310> No results found");
+    }
+
+    #[test]
+    fn notice_prefix_is_the_whole_marker() {
+        assert_eq!(notice(""), NOTICE_PREFIX);
+        assert_eq!(NOTICE_PREFIX, "\x0310> ");
+    }
+
+    #[test]
+    fn notice_prefix_extends_the_reply_prefix_by_one_space() {
+        assert!(NOTICE_PREFIX.starts_with(REPLY_PREFIX));
+        assert_eq!(NOTICE_PREFIX.len(), REPLY_PREFIX.len() + 1);
     }
 }

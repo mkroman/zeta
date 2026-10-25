@@ -2972,12 +2972,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
-name = "ppmd-rust"
-version = "1.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd4acc8d264ea385db64ccfdcdfd5909ee9eda0975666723d59f3bfec80b3611"
-
-[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5441,7 +5435,7 @@ dependencies = [
 name = "zeta-unicode"
 version = "0.0.0"
 dependencies = [
- "ppmd-rust",
+ "bytes",
  "zeta-unicode-build",
  "zeta-unicode-format",
 ]
@@ -5450,7 +5444,10 @@ dependencies = [
 name = "zeta-unicode-build"
 version = "0.0.0"
 dependencies = [
- "ppmd-rust",
+ "argh",
+ "bytes",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "zeta-unicode-format",

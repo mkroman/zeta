@@ -8,141 +8,129 @@
 > the size figures below — as unverified marketing until you have measured them yourself. Read
 > the code before you trust it.
 
-Unicode 18.0.0 character names, general categories and emoji sequence names for the zeta IRC
-bot, compiled from the vendored UCD files in `data/` into one packed table by
-`zeta-unicode-build`.
+## What it does
 
-```rust
-assert_eq!(zeta_unicode::name('ß').unwrap(), "LATIN SMALL LETTER SHARP S");
-assert_eq!(zeta_unicode::general_category('ß').long_name(), "Lowercase Letter");
-assert_eq!(zeta_unicode::emoji_name("🏳️‍🌈").unwrap(), "rainbow flag");
-assert_eq!(zeta_unicode::name_or_label('\u{f8ff}'), "<private-use-F8FF>");
+Runtime side of Nomina: character names, general categories and emoji names in one image
+generated at build time and linked with `include_bytes!`. There is no checked-in table and no
+runtime compression library.
+
+[`zeta-unicode-build`](../zeta-unicode-build/README.md) is the offline trainer;
+[`zeta-unicode-format`](../zeta-unicode-format/README.md) is the shared wire contract and
+codec. The trainer is only a build-dependency.
+
+## Architecture
+
+```text
+UCD files ──► zeta-unicode-build ──► image + manifest
+                    (offline)              │
+                                           ▼
+             zeta-unicode build script ──► linked runtime ──► `.uni`
 ```
 
-## The contract
+The trainer reads five UCD files, parses names plus aliases, encodes the four sections and
+tests several name-block sizes against a size budget. It verifies every section, picks the
+best layout, and writes the image plus a deterministic manifest. The build script runs the same
+pipeline and links the image and `UNICODE_VERSION` into the crate.
 
-| requirement | value | why |
+## Runtime
+
+The name decoder and pattern table are per-thread, so name lookups need no lock. Emoji and
+general-category tables are process-wide `OnceLock`s warmed by `init()`. A malformed image
+panics on first use; the build verifies it, so that is an invariant.
+
+- **Name:** code point → page → run → name id → one front-coded block. Stored names use two
+  fixed 256-byte buffers; Hangul and pattern names are generated.
+- **General category:** decode the run streams once, then binary-search one 2,048-code-point
+  page of a two-level table.
+- **Emoji:** strip `U+FE0F`, binary-search the key arena, then materialize a rule. Unknown keys
+  are retried with skin tones stripped to synthesize the base variant.
+
+`write_name` allocates nothing; `name` allocates only its result. The public API is `name`,
+`write_name`, `name_or_label`, `general_category`, `is_noncharacter`, `emoji_name`,
+`may_start_emoji_sequence`, `init`, `UNICODE_VERSION`, `TABLE_BUDGET` and
+`MAX_EMOJI_KEY_BYTES`.
+
+## Nomina format
+
+A 64-byte header holds `NOM1`, the Unicode version, section count, name-block shift, GC page
+shift, name layout and four `(offset, length)` entries; four 8-byte-aligned sections follow.
+
+| Section | Encoding | Runtime form |
 |---|---|---|
-| generated table | **≤ 100,000 bytes** | the hard budget this crate exists to meet |
-| lookup cost | O(1) table walk or a short bounded decode; **no per-lookup decompression** | `.uni` answers inside an IRC handler; a reply must not pay a codec |
-| one-time init | allowed, measured in ms and heap bytes | a lazily decoded section must not hide per-query cost |
-| Rust | safe only (`unsafe_code = forbid`), bounds-checked reads | workspace rule |
-| targets | **x86_64 and aarch64**, same structure for both | the bot ships for both; no ISA-specific tricks |
+| names | front-coded blocks with canonical Huffman models | per-thread decoder |
+| emoji | four Huffman streams plus packed tone rules | process-wide arenas |
+| general category | two Huffman streams of run starts and ids | process-wide page table |
+| patterns | prefix/suffix dictionaries plus range records | per-thread range list |
 
-### What is measured today
+- **Names:** 35,416 names in 554 blocks. The global layout front-codes against the previous
+  code point, shares prefix and suffix, and checkpoints each block after the first. The
+  block-local layout resets per block; the runtime accepts both, training emits global.
+- **Emoji:** 1,944 base entries (1,341 rule-generated, 603 literal) cover 3,972 canonical
+  sequences. Most names are replayed from 14 grammar rules instead of stored; tone variants are
+  synthesized from the base.
+- **General category:** 4,202 runs rebuild a 545-page table; lookups binary-search one page and
+  use 9,494 bytes of heap.
+- **Patterns:** 20 `*` ranges use shared prefix/suffix dictionaries and generated hex names.
 
-The names are stored as three PPMd8-I streams and decoded once; everything else is still stored
-raw, so the table is over budget on purpose until the last two pieces land. The ledger
-(`table_stays_within_the_encoder_limit`, or `ZETA_UNICODE_STATS=1` at build time):
+Unicode 18.0.0 with the default profile is 188,882 bytes: 174,091 B names, 10,548 B emoji,
+3,860 B general category, 306 B patterns and 77 B header/padding. The budget is a hard
+200,000-byte cap shared by the trainer and the runtime; the build script will not embed an
+image over it.
 
-| section | bytes | note |
-|---|---:|---|
-| names | 69,062 | `UNNM` container: three PPMd8-I streams, decoded once at first lookup |
-| name runs | 1,066 | `varint(len), varint(gap)` per run, 719 runs, code point → name id |
-| name patterns | 691 | the 20 `*` ranges |
-| **names + index** | **70,819** | **budget 73,304 — met**, or 72,717 charging the shared literals to the table |
-| general category | 9,494 | two-level page table: 545 `u16` directory entries over 4,202 packed `u16` records |
-| emoji | 45,659 | 1,944 stored keys answer for all 3,972 emoji sequences (see below) |
-| header + directory | 72 | magic, version, section count and five 12-byte directory entries |
-| **total** | **126,044** | budget 100,000 — the last two sections are still stored raw |
+| Block shift | Image | Preferred by |
+|---:|---:|---|
+| 5 (32 names) | 199,258 | `latency` |
+| 6 (64 names) | 188,882 | `balanced` (default) |
+| 7 (128 names) | 183,658 | |
+| 8 (256 names) | 181,026 | `size` |
 
-**Names.** Each name is front-coded against its code point predecessor — shared prefix length,
-shared suffix length, NUL-terminated middle — and the three streams are coded separately, because
-their statistics differ (prefix lengths are delta-8 coded, the middles are raw). The first lookup
-decodes them once into a flat `Vec<u8>` plus a `Vec<u32>` of offsets; afterwards a lookup is a
-binary search over the runs and two `u32` loads.
+## Building and training
 
-**Names as code.** 6,677 of the 35,416 names are not stored at all: `data/derived-names.rules`
-holds 5,286 rules over 324 shared literals, and `zeta-unicode-build` turns them into a balanced
-comparison tree in generated Rust (`$OUT_DIR/zeta_unicode_derive.rs`) that rebuilds each name
-from its code point. Those names keep their id but take no space in the streams, and because the
-decoder walks ids in ascending order they remain valid front-code predecessors. The tree runs
-once per name at startup and never on a lookup, so its size cannot affect lookup latency; the
-generator verifies every rule against `DerivedName.txt` and the crate's round-trip test checks
-them from the decoder side. This is where the names budget was won: the same streams without the
-rules are 78,910 B.
-
-Two ideas carry the emoji section. **Keys are canonicalized**: `U+FE0F` is stripped, so
-text-presentation input answers like emoji presentation (`🚶‍♂` → `man walking`) at no storage
-cost, and the keycap named sequences take precedence over the test file. **Skin-tone
-variants are never stored**: each of the 344 tone groups gets a 3-bit rule — insert the tone
-phrase after the first `": "` or append it, collapsing duplicate tones or not — plus a 2-bit
-mask of the tone counts the group publishes, and lookup strips the tones from the query, checks
-the published count, finds the base and renders the name. Twelve groups whose tone-stripped
-sequence is not itself an entry get their base reconstructed (by inverting the rule on one
-variant and checking it against the whole group), so **zero** tone names are stored verbatim.
-
-Measured on the current port (release, x86_64 — rerun the harness before trusting the numbers
-elsewhere): `general_category` 4.7 ns, `name` 20 ns, `emoji_name` 230 ns. The `name` figure is a
-binary search over the 719 runs plus two offset loads and a slice of text that was validated
-once while decoding; the first name lookup also materializes the ~0.9 MB name blob plus the
-codec's transient model (16 MiB for the middle stream), both released before the lookup returns.
-`emoji_name` is dominated by the tone fallback that has to render a name the table does not
-hold.
-
-### What is left to fit the budget
-
-The names are done and inside their budget. The last step is the general category and emoji
-sections, which are still stored raw: 9,494 → 7,704 for the general category, and the emoji
-section (45,659 B) under lzma-9e. The design study measured 60,890 → 21,400 for the larger
-pre-filter section, so the filtered one should compress below that; front-coding the emoji names
-the way the character names are should take it further down. Together with the name runs and
-patterns (1,757 B) that lands the whole table under 100,000 B.
-
-### How bytes are spent: code first, data second
-
-The build script may emit **Rust code**, not only bytes, and that is not a loophole — it is the
-cheapest place for anything derivable:
-
-* **Derivation rules are code.** Hangul syllables, `*` patterns (`CJK UNIFIED IDEOGRAPH-4E00`),
-  and family rules (`chr(c0 + step·(cp − start))`, hex suffixes, number words) cost *zero* table
-  bytes when they are functions, and the instructions are shared by every code point they cover.
-  A rule stored as a record costs 4–8 bytes per occurrence; as code it costs a few dozen bytes
-  once.
-* **Fragments live in `&'static str` literals.** The linker merges identical constants, so a
-  template text shared by 300 names is paid once, in `.rodata`, not once per name.
-* **Indices stay data.** A two-level table beats a generated `match` on ranges: 719 `match` arms
-  compile to a compare tree of roughly 10–20 bytes each of `.text` (and i-cache pressure) versus
-  4,320 B of data with a predictable 10-probe walk. Tables where a load and a mask beat a branch
-  are data; content that only makes sense as a procedure is code.
-* **Corpora are compressed.** Prose (names, CLDR names) is what codecs are for; it gets an
-  encoding chosen by measurement, decoded at most once.
-
-### x86_64 and aarch64
-
-Both are 64-bit with cheap loads, so the layout rules are about keeping every lookup to a couple
-of predictable memory touches:
-
-* fixed-width, **naturally aligned** records (`u16`/`u32`), never varint walks — a varint scan is
-  a loop of dependent byte loads and branches, and it decodes differently on both ISAs;
-* records do not straddle cache lines when that is free to avoid (6-byte records are acceptable
-  for a 4 KB index that stays in L1, measured 16 ns);
-* shallow branch depth: ≤ 2 branches before a probe loop, ≤ ~12 probes per lookup (measured:
-  general category 2.34 probes average, 12 max, 3.70 ns);
-* no SIMD, no `std::arch`, no assumptions about unaligned-load cost — aarch64 pays more for a
-  load that crosses a line than x86_64 does;
-* the crate ships a benchmark harness; run it on both architectures before changing a layout.
-
-## Updating the Unicode data
-
-Replace the files in `data/` from `https://www.unicode.org/Public/<version>/`, then:
+Inputs are `DerivedName.txt` (Unicode 10+), `DerivedGeneralCategory.txt`, `NameAliases.txt`,
+`NamedSequences.txt` and `emoji-test.txt`. `NamedSequences.txt` is optional before Unicode 4.1;
+the Emoji version is independent. Build settings are `ZETA_UNICODE_DATA_DIR`,
+`ZETA_UNICODE_PRIORITY`, `ZETA_UNICODE_MAX_BYTES`, `ZETA_UNICODE_BLOCK_SHIFT` and
+`ZETA_UNICODE_STATS`. `ZETA_UNICODE_MAX_BYTES` can only lower the fixed 200,000-byte budget;
+the build fails on a larger value rather than embedding an over-budget image.
 
 ```sh
-cargo test -p zeta-unicode            # round-trips every name against the new files
-ZETA_UNICODE_STATS=1 cargo build -p zeta-unicode   # prints sizes and writes expected.txt
+ZETA_UNICODE_DATA_DIR=/path/to/ucd cargo build -p zeta-unicode
+
+cargo run -p zeta-unicode-build --bin zeta-unicode-train -- \
+    --data-dir ../ucd/15.1.0 --out-dir target/nomina --report --verify
 ```
 
-`data/derived-names.rules` is the exception: its rules are mined from the UCD, not derived by
-formula, so they ship with the data they were mined from. `zeta-unicode-build` checks every rule
-against `DerivedName.txt` while it builds, and the round-trip test covers them from the other
-side.
+`hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]` fetches a release into the
+scratch directory `<dest>`. It refuses a `<dest>` that already holds any earlier candidate
+layout the trainer probes first (flat, `extracted/` or `ucd/`), because those shadow the
+fetched file; update the vendored `crates/zeta-unicode/data` by copying the five files into it
+instead. The CLI writes `nomina.bin` and `manifest.json`; `--verify` re-reads the image. The
+manifest records versions, profile, sections, candidates, input hashes and verification checks,
+with no timestamps or absolute paths. Training is deterministic.
 
-`zeta-unicode-build` parses the `# <File>-<version>.txt` headers of all five files and refuses to
-build if they disagree, so a partial update cannot ship. The stats line also reports how the
-emoji section decomposed — stored entries, ruled tone groups, verbatim variants and groups with
-no base — which is the signal to watch when a new Unicode release adds sequences.
+## Verification and testing
 
-## Data and license
+The trainer re-decodes every section and re-parses the image before accepting it. The manifest
+checks are `name-stream-round-trip`, `emoji-stream-round-trip`, `general-category-round-trip`,
+`pattern-round-trip` and `image-layout`. Bad UCD records and verification mismatches panic;
+input, profile, budget, baseline and I/O failures are errors.
 
-Tables are derived from the Unicode Character Database (© 1991–2026 Unicode, Inc.), Unicode
-License v3 — see `LICENSE-UNICODE`. The code is dual-licensed under MIT or Apache-2.0.
+Runtime tests re-read the UCD and round-trip names, aliases, categories and the emoji oracle;
+they also check `UNICODE_VERSION` and `TABLE_BUDGET`.
+
+```sh
+cargo test -p zeta-unicode --all-features
+cargo test -p zeta-unicode-build --all-features
+cargo test -p zeta-unicode-format --all-features
+cargo test -p plugins --all-features string_utils
+cargo test -p zeta-unicode --release -- --ignored --nocapture benchmarks
+```
+
+## `.uni`
+
+`string-utils` warms the shared tables, names characters, reads categories, groups emoji
+sequences and bounds probing with `MAX_EMOJI_KEY_BYTES`. The reply budgets both the listing and
+each sequence's code-point list.
+
+See [`zeta-unicode-build`](../zeta-unicode-build/README.md) and
+[`zeta-unicode-format`](../zeta-unicode-format/README.md) for the other halves.

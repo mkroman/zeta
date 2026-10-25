@@ -1,99 +1,147 @@
-//! Unicode 18.0.0 character names, general categories and emoji sequence names.
+//! Unicode character names, general categories and emoji sequence names.
 //!
-//! The `zeta-unicode-build` crate compiles the vendored UCD files in `data/` into one packed
-//! table that is linked into the binary with `include_bytes!`. A lookup walks that table
-//! directly: there is no per-lookup parsing or decompression, and stored names are borrowed.
-//! The name streams are decoded once, on the first name lookup. The general category table is a
-//! two-level page structure (a `u16` directory plus `u16` range records), and emoji keys are
-//! canonicalized — `U+FE0F` is stripped and skin-tone variants are synthesized from a 3-bit
-//! rule plus a 2-bit tone-count mask — so 1,944 stored keys answer for every one of the 3,972
-//! sequences the UCD names.
+//! The image format is called Nomina (Latin for names). The `zeta-unicode-build` crate trains
+//! one flat Nomina image from the vendored UCD files and links it into the binary with
+//! `include_bytes!`. `Nomina::new` validates the header, the name section's index and the
+//! pattern table on first use per thread; it does not decode the names. A lookup decodes at
+//! most one front-coded block, so there is no full name arena; `write_name` does not allocate,
+//! while `name` returns an owned [`String`]. Hangul syllables and `*`-pattern names are
+//! generated from their code point.
+//! Emoji keys are canonicalized (`U+FE0F` is stripped) and skin-tone variants are synthesized
+//! from a 3-bit rule plus a 2-bit published-tone-count mask, so 1,944 stored keys answer for
+//! every one of the 3,972 sequences the UCD names.
 //!
 //! ```
 //! use zeta_unicode::{emoji_name, general_category, name, name_or_label};
 //!
-//! assert_eq!(name('ß').unwrap(), "LATIN SMALL LETTER SHARP S");
-//! assert_eq!(general_category('ß').long_name(), "Lowercase Letter");
-//! assert_eq!(emoji_name("🏳️‍🌈").unwrap(), "rainbow flag");
-//! assert_eq!(name_or_label('\u{f8ff}'), "<private-use-F8FF>");
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let latin = name('ß').ok_or("missing name")?;
+//!     assert_eq!(latin.as_str(), "LATIN SMALL LETTER SHARP S");
+//!     assert_eq!(general_category('ß').long_name(), "Lowercase Letter");
+//!     let rainbow = emoji_name("🏳️‍🌈").ok_or("missing emoji name")?;
+//!     assert_eq!(rainbow.as_ref(), "rainbow flag");
+//!     assert_eq!(name_or_label('\u{f8ff}'), "<private-use-F8FF>");
+//!     Ok(())
+//! }
 //! ```
-
-mod emoji;
-mod gc;
-mod names;
-mod sections;
-mod tables;
+//!
+//! # Panics
+//!
+//! The first name lookup on a thread panics if the generated image header, name section or
+//! pattern section is malformed. The first emoji or general-category lookup panics process-wide
+//! if its section is malformed, and so does [`init`], which parses both.
+//!
+//! Sections are validated when they are parsed, so a header, run index or section layout that
+//! violates the format rejects the whole section; the name index checks that runs are ordered,
+//! disjoint and stay inside both the Unicode range and the name table. Once a section has
+//! parsed, entry data that fails only at lookup time — a bad Huffman code or non-UTF-8 name
+//! in the name stream, a rule whose base is missing — makes that one lookup return
+//! `None`/`false` rather than panic. The build verifies every section, so these are build
+//! invariants rather than runtime conditions.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::sync::OnceLock;
 
-use zeta_unicode_format::{GC_PAGES, GC_SHIFT, HANGUL_END, HANGUL_START, MAX_KEY, UNICODE_END};
+use zeta_unicode_format::{MAX_KEY, UNICODE_END};
 
-/// Returns the CLDR short name of an emoji sequence such as `🏳️‍🌈`.
-///
-/// Names come from `emoji-test.txt`, or from `NamedSequences.txt` for official names. Keys are
-/// canonicalized (`U+FE0F` is optional) and skin-tone variants are synthesized from their base,
-/// so the name is returned as published rather than cased for a reply. See [`emoji::emoji_name`]
-/// for the full contract.
-pub use emoji::emoji_name;
+use nomina::Nomina;
+use nomina::emoji::Emoji;
+use nomina::gc::Gc;
+use nomina::image;
+
+#[doc(inline)]
 pub use gc::GeneralCategory;
 
-/// The Unicode version of the data this crate was built from, as `(major, minor, patch)`.
-///
-/// `zeta-unicode-build` refuses to build when the vendored files disagree, and the table header
-/// is checked at compile time, so this cannot drift from the table.
-pub const UNICODE_VERSION: (u8, u8, u8) = (18, 0, 0);
+mod gc;
+mod nomina;
 
-/// The target size budget for the generated table, in bytes.
+include!(concat!(env!("OUT_DIR"), "/zeta_unicode_version.rs"));
+
+/// The target size budget for the Nomina image, in bytes.
 ///
-/// The current reference encoder does not meet it yet; until the compressed encoder lands the
-/// test suite holds the table to the encoder's own `ENCODER_TABLE_LIMIT` instead.
-pub const TABLE_BUDGET: usize = 100_000;
+/// Shared with the trainer and enforced by the build script; see
+/// [`zeta_unicode_format::TABLE_BUDGET`] for the rationale.
+#[doc(inline)]
+pub use zeta_unicode_format::TABLE_BUDGET;
 
 /// The longest emoji key the table stores, in bytes.
 ///
 /// `.uni` uses it to bound how far it probes for a multi-character emoji sequence.
 pub const MAX_EMOJI_KEY_BYTES: usize = MAX_KEY;
 
-/// The upper bound the current reference encoder is held to, well above [`TABLE_BUDGET`]: the
-/// compressed encoder that meets the budget has not landed yet.
-#[cfg(test)]
-const ENCODER_TABLE_LIMIT: usize = 130_000;
+/// The generated Nomina image, linked in at compile time.
+static IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zeta_unicode_nomina.bin"));
 
-/// Choongbae (leading) jamo short names, in `Jamo_Short_Name` order.
-const JAMO_LEADING: [&str; 19] = [
-    "G", "GG", "N", "D", "DD", "R", "M", "B", "BB", "S", "SS", "", "J", "JJ", "C", "K", "T", "P",
-    "H",
-];
-/// Vowel (medial) jamo short names.
-const JAMO_VOWEL: [&str; 21] = [
-    "A", "AE", "YA", "YAE", "EO", "E", "YEO", "YE", "O", "WA", "WAE", "OE", "YO", "U", "WEO", "WE",
-    "WI", "YU", "EU", "YI", "I",
-];
-/// Trailing jamo short names, index 0 being "no trailing consonant".
-const JAMO_TRAILING: [&str; 28] = [
-    "", "G", "GG", "GS", "N", "NJ", "NH", "D", "L", "LG", "LM", "LB", "LS", "LT", "LP", "LH", "M",
-    "B", "BS", "S", "SS", "NG", "J", "C", "K", "T", "P", "H",
-];
+/// The parsed emoji section, initialized on the first emoji lookup.
+static EMOJI: OnceLock<Emoji> = OnceLock::new();
+/// The parsed general-category section, initialized on the first category lookup.
+static GC: OnceLock<Gc> = OnceLock::new();
+
+thread_local! {
+    /// The per-thread name decoder. Its fixed scratch buffers are the only mutable state left
+    /// after initialization, so lookups do not allocate or share a lock.
+    static NAMES: RefCell<Option<Nomina<'static>>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with this thread's name decoder, building it on first use.
+fn with_nomina<R>(f: impl FnOnce(&mut Nomina<'static>) -> R) -> R {
+    NAMES.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let nomina = slot.get_or_insert_with(|| {
+            Nomina::new(IMAGE).expect("the generated Nomina image is valid")
+        });
+        f(nomina)
+    })
+}
+
+/// Returns the parsed emoji section, building it on first use.
+fn emoji() -> &'static Emoji {
+    EMOJI.get_or_init(|| {
+        let section =
+            image::section(IMAGE, image::EMOJI).expect("the Nomina image has an emoji section");
+        Emoji::parse(section).expect("the generated emoji section is valid")
+    })
+}
+
+/// Returns the parsed general-category section, building it on first use.
+fn gc() -> &'static Gc {
+    GC.get_or_init(|| {
+        let section = image::section(IMAGE, image::GC)
+            .expect("the Nomina image has a general-category section");
+        Gc::parse(section).expect("the generated general-category section is valid")
+    })
+}
+
+/// Warms the process-wide emoji and general-category tables.
+///
+/// The name decoder is per thread and has no shared state, so it stays lazy: a call on a
+/// throwaway thread would warm nothing a handler later uses. A warm call is cheap and
+/// idempotent.
+///
+/// # Panics
+///
+/// Panics if the generated emoji or general-category section is malformed: the same
+/// process-wide panic the first corresponding lookup raises.
+pub fn init() {
+    emoji();
+    gc();
+}
 
 /// Returns the `Name` property of `c`, a formal alias from `NameAliases.txt` when the `Name`
-/// property is empty (the control code points), or the derived name Unicode defines
-/// algorithmically.
+/// property is empty, or the derived name Unicode defines algorithmically.
 ///
-/// Stored names come back borrowed; names built from a pattern (`CJK UNIFIED IDEOGRAPH-4E00`)
-/// or from the Hangul jamo tables are allocated.
+/// Stored names are decoded from one block, so they are returned as an owned [`String`]. Use
+/// [`write_name`] for the zero-allocation path.
 #[must_use]
-pub fn name(c: char) -> Option<Cow<'static, str>> {
-    if let Some(stored) = names::name_for(u32::from(c)) {
-        return Some(Cow::Borrowed(stored));
-    }
-    let mut buf = String::new();
-    derived_name(c, &mut buf).then_some(Cow::Owned(buf))
+pub fn name(c: char) -> Option<String> {
+    with_nomina(|nomina| nomina.name(u32::from(c)))
 }
 
 /// Appends the name of `c` to `buf`, returning `false` when `c` has no name.
 ///
-/// Stored names are copied straight out of the table and Hangul or pattern names are written
-/// into `buf` without a temporary allocation.
+/// The decoder writes directly into `buf`; a stored name decodes at most one block,
+/// and Hangul or pattern names are generated without a temporary allocation.
 ///
 /// # Examples
 ///
@@ -104,41 +152,39 @@ pub fn name(c: char) -> Option<Cow<'static, str>> {
 /// ```
 #[must_use = "the return value reports whether `c` has a name"]
 pub fn write_name(c: char, buf: &mut String) -> bool {
-    if let Some(stored) = names::name_for(u32::from(c)) {
-        buf.push_str(stored);
-        return true;
-    }
-    derived_name(c, buf)
+    with_nomina(|nomina| nomina.write_name(u32::from(c), buf))
 }
 
 /// Returns the name of `c`, or the label Unicode defines for code points without one.
 ///
 /// Labels are `<private-use-F8FF>`, `<reserved-0378>`, `<noncharacter-FFFE>` and
-/// `<control-0000>`; they are rendered on the spot because storing them would cost more than
-/// the six bytes they take. Controls with a formal alias answer with the alias instead (the
-/// current data gives every `Cc` code point one), so the control label is the fallback.
+/// `<control-0000>`; controls with a formal alias answer with the alias instead, so the control
+/// label is the fallback.
 #[must_use]
-pub fn name_or_label(c: char) -> Cow<'static, str> {
-    if let Some(name) = name(c) {
-        return name;
+pub fn name_or_label(c: char) -> String {
+    let code_point = u32::from(c);
+    let mut buffer = String::new();
+    if with_nomina(|nomina| nomina.write_name(code_point, &mut buffer)) {
+        return buffer;
     }
 
-    let cp = u32::from(c);
     let kind = match general_category(c) {
         GeneralCategory::PrivateUse => "private-use",
         GeneralCategory::Control => "control",
         GeneralCategory::Surrogate => "surrogate",
-        GeneralCategory::Unassigned if is_noncharacter(cp) => "noncharacter",
+        GeneralCategory::Unassigned if is_noncharacter(code_point) => "noncharacter",
         _ => "reserved",
     };
-    Cow::Owned(format!("<{kind}-{cp:04X}>"))
+    format!("<{kind}-{code_point:04X}>")
 }
 
 /// Returns the general category of `c`; unassigned points answer with
 /// [`GeneralCategory::Unassigned`].
 #[must_use]
 pub fn general_category(c: char) -> GeneralCategory {
-    general_category_of(u32::from(c)).unwrap_or(GeneralCategory::Unassigned)
+    gc().general_category(u32::from(c))
+        .and_then(|id| GeneralCategory::from_id(usize::from(id)))
+        .unwrap_or(GeneralCategory::Unassigned)
 }
 
 /// Is `cp` one of Unicode's noncharacters (`U+FDD0..U+FDEF` or `*FFFE`/`*FFFF`)?
@@ -149,171 +195,151 @@ pub const fn is_noncharacter(cp: u32) -> bool {
     cp <= UNICODE_END && (matches!(cp, 0xFDD0..=0xFDEF) || matches!(cp & 0xFFFF, 0xFFFE | 0xFFFF))
 }
 
-/// Writes `cp` as upper-case hex digits into `out`, returning how many bytes it wrote.
+/// Returns the CLDR short name of an emoji sequence such as `🏳️‍🌈`.
 ///
-/// The shared hole filler for `*` name patterns and for the generated rule tree, so both fill a
-/// hole the same way. `width` is a *minimum*, the way Unicode writes the placeholder:
-/// `EGYPTIAN HIEROGLYPH-13460` needs five digits where most code points need four.
-fn write_hex(out: &mut [u8; 8], cp: u32, width: u8) -> usize {
-    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
-    let mut needed = 0usize;
-    let mut rest = cp;
-    while rest > 0 {
-        rest >>= 4;
-        needed += 1;
-    }
-    // Unicode always writes at least one digit, even for zero.
-    let count = needed.max(usize::from(width.min(8))).max(1);
-    let mut shift = u32::try_from(count - 1).expect("at most eight digits") * 4;
-    for slot in out.iter_mut().take(count) {
-        *slot = DIGITS[((cp >> shift) & 0xF) as usize];
-        shift = shift.saturating_sub(4);
-    }
-    count
+/// Keys are canonicalized by dropping `U+FE0F`; skin-tone variants resolve by stripping the
+/// tones and replaying the base's formatting rule. Returns `None` for non-emoji text and for
+/// sequences whose base or published tone count is unknown.
+#[must_use]
+pub fn emoji_name(sequence: &str) -> Option<Cow<'static, str>> {
+    let table = emoji();
+    with_nomina(|nomina| {
+        table.emoji_name(
+            &mut |cp: u32, out: &mut String| nomina.write_name(cp, out),
+            sequence,
+        )
+    })
 }
 
-/// Appends `cp` as upper-case hex digits to `buf`.
-fn push_hex(buf: &mut String, cp: u32, width: u8) {
-    let mut digits = [0u8; 8];
-    let used = write_hex(&mut digits, cp, width);
-    buf.push_str(std::str::from_utf8(&digits[..used]).expect("hex digits are ASCII"));
-}
-
-/// Formats a derived name (an `*` pattern or a Hangul syllable) into `buf`.
+/// Returns whether `sequence` could start a stored emoji sequence.
 ///
-/// Returns `false` when `c` has no name at all.
-fn derived_name(c: char, buf: &mut String) -> bool {
-    let cp = u32::from(c);
-
-    if (HANGUL_START..=HANGUL_END).contains(&cp) {
-        let index = cp - HANGUL_START;
-        let leading = JAMO_LEADING[(index / 588) as usize];
-        let vowel = JAMO_VOWEL[((index % 588) / 28) as usize];
-        let trailing = JAMO_TRAILING[(index % 28) as usize];
-        buf.push_str("HANGUL SYLLABLE ");
-        buf.push_str(leading);
-        buf.push_str(vowel);
-        buf.push_str(trailing);
-        return true;
-    }
-
-    pattern_name(cp, buf)
-}
-
-/// Writes the `*` pattern covering `cp` into `buf`, prefix and suffix included.
-///
-/// Records are `(start, end)` followed by the two halves of Unicode's `*` pattern, so the name
-/// is `prefix + hex(cp) + suffix`. They are stored plainly: there are twenty of them and a name
-/// miss reads them on every call.
-fn pattern_name(cp: u32, buf: &mut String) -> bool {
-    let Some(records) = tables::section(sections::NAME_PATTERNS) else {
-        return false;
-    };
-    let mut at = 0usize;
-    while at < records.len() {
-        let (Some(start), Some(end), Some(prefix_len)) = (
-            tables::u32_at(records, at),
-            tables::u32_at(records, at + 4),
-            tables::u16_at(records, at + 8),
-        ) else {
-            return false;
-        };
-        let prefix_at = at + 10;
-        let Some(prefix) = tables::bytes_at(records, prefix_at, usize::from(prefix_len)) else {
-            return false;
-        };
-        let suffix_len_at = prefix_at + usize::from(prefix_len);
-        let Some(suffix_len) = tables::u16_at(records, suffix_len_at) else {
-            return false;
-        };
-        let suffix_at = suffix_len_at + 2;
-        let Some(suffix) = tables::bytes_at(records, suffix_at, usize::from(suffix_len)) else {
-            return false;
-        };
-        at = suffix_at + usize::from(suffix_len);
-
-        if cp < start {
-            return false;
-        }
-        if cp <= end {
-            let (Ok(prefix), Ok(suffix)) =
-                (std::str::from_utf8(prefix), std::str::from_utf8(suffix))
-            else {
-                return false;
-            };
-            buf.push_str(prefix);
-            push_hex(buf, cp, 0);
-            buf.push_str(suffix);
-            return true;
-        }
-    }
-    false
-}
-
-/// Looks up the general category of `cp` in the two-level page table.
-fn general_category_of(cp: u32) -> Option<GeneralCategory> {
-    let table = tables::section(sections::GC)?;
-    let directory = tables::bytes_at(table, 0, GC_PAGES * 2)?;
-    let records = table.get(GC_PAGES * 2..).unwrap_or_default();
-
-    let page = usize::try_from(cp >> GC_SHIFT).ok()?;
-    let relative = cp & ((1 << GC_SHIFT) - 1);
-    let first = usize::from(tables::u16_at(directory, page.checked_mul(2)?)?);
-    let end = usize::from(tables::u16_at(
-        directory,
-        page.checked_mul(2)?.checked_add(2)?,
-    )?);
-
-    // Find the last run in the page whose start is at or before `cp`. When no run starts in
-    // this page (`first == end`) or `cp` falls before the page's first run, `low` stays at
-    // `first` and the carried-over run ending just before it answers instead.
-    let (mut low, mut high) = (first, end);
-    while low < high {
-        let mid = low + (high - low) / 2;
-        let start = u32::from(tables::u16_at(records, mid.checked_mul(2)?)? >> 5);
-        if start <= relative {
-            low = mid + 1;
-        } else {
-            high = mid;
-        }
-    }
-    let record = low.checked_sub(1)?;
-
-    let id = usize::from(tables::u16_at(records, record.checked_mul(2)?)? & 31);
-    GeneralCategory::from_id(id)
+/// This is an admission check, not a match: the first byte is tested against a bitmap built
+/// from every stored key. Empty input answers `false`.
+#[must_use]
+pub fn may_start_emoji_sequence(sequence: &str) -> bool {
+    sequence
+        .as_bytes()
+        .first()
+        .is_some_and(|&byte| emoji().may_start(byte))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
+
+    use bytes::Buf;
+    use zeta_unicode_format::VERSION_AT;
 
     use super::*;
 
-    const DERIVED_NAME: &str = include_str!("../data/DerivedName.txt");
-    const DERIVED_GC: &str = include_str!("../data/DerivedGeneralCategory.txt");
-    const NAME_ALIASES: &str = include_str!("../data/NameAliases.txt");
-    const EMOJI_TEST: &str = include_str!("../data/emoji-test.txt");
-    const NAMED_SEQUENCES: &str = include_str!("../data/NamedSequences.txt");
+    /// The UCD directory under test: `ZETA_UNICODE_DATA_DIR` when set, otherwise the vendored
+    /// `data/` directory. This lets the same tests run against an older or newer release.
+    fn data_dir() -> std::path::PathBuf {
+        std::env::var_os("ZETA_UNICODE_DATA_DIR").map_or_else(
+            || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data"),
+            std::path::PathBuf::from,
+        )
+    }
+
+    /// Reads one UCD text from a flat or versioned layout.
+    fn read_ucd(name: &str) -> String {
+        let dir = data_dir();
+        let mut candidates = vec![dir.join(name)];
+        for prefix in ["extracted", "ucd", "ucd/extracted"] {
+            candidates.push(dir.join(prefix).join(name));
+        }
+        if name == "emoji-test.txt" {
+            candidates.push(dir.join("emoji/emoji-test.txt"));
+            candidates.push(dir.join("ucd/emoji/emoji-test.txt"));
+        }
+        let path = candidates
+            .into_iter()
+            .find(|path| path.is_file())
+            .unwrap_or_else(|| panic!("no UCD file {name} under {}", dir.display()));
+        std::fs::read_to_string(path).expect("read the UCD file")
+    }
+
+    /// The data records of a UCD file, without its blank and comment lines.
+    fn records(text: &str) -> impl Iterator<Item = &str> {
+        text.lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    }
+
+    /// Parses one hexadecimal code point.
+    fn code_point(text: &str) -> u32 {
+        u32::from_str_radix(text.trim(), 16).expect("a hexadecimal code point")
+    }
+
+    /// Is the Unicode release under test at least `(major, minor)`?
+    ///
+    /// The sample assertions below name emoji that specific releases introduced; gating them
+    /// on the generated [`UNICODE_VERSION`] keeps the suite meaningful on the vendored data
+    /// and passing against an older `ZETA_UNICODE_DATA_DIR`.
+    fn release_at_least(major: u8, minor: u8) -> bool {
+        (major, minor, 0) <= UNICODE_VERSION
+    }
+
+    /// Parses a `start..end` range, or a single code point as a one-element range.
+    fn range(text: &str) -> (u32, u32) {
+        let text = text.trim();
+        if let Some((start, end)) = text.split_once("..") {
+            (code_point(start), code_point(end))
+        } else {
+            let cp = code_point(text);
+            (cp, cp)
+        }
+    }
+
+    /// Reads the version from the Nomina image header.
+    fn image_version() -> (u8, u8, u8) {
+        let mut image = IMAGE;
+        image.advance(VERSION_AT);
+        let major = image.try_get_u16_le().expect("major version");
+        let minor = image.try_get_u16_le().expect("minor version");
+        let patch = image.try_get_u16_le().expect("patch version");
+        (
+            u8::try_from(major).expect("major version"),
+            u8::try_from(minor).expect("minor version"),
+            u8::try_from(patch).expect("patch version"),
+        )
+    }
+
+    /// Reads the `# DerivedName-<major>.<minor>.<patch>.txt` header of the UCD data under test.
+    fn data_version() -> (u8, u8, u8) {
+        let text = read_ucd("DerivedName.txt");
+        let header = text
+            .lines()
+            .map(|line| line.strip_prefix('\u{feff}').unwrap_or(line))
+            .find_map(|line| line.strip_prefix("# DerivedName-"))
+            .expect("a DerivedName version header")
+            .strip_suffix(".txt")
+            .expect("a .txt version header");
+        let mut parts = header.split('.');
+        let (Some(major), Some(minor), Some(patch), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            panic!("a three-part version in {header:?}");
+        };
+        (
+            major.parse().expect("a major version"),
+            minor.parse().expect("a minor version"),
+            patch.parse().expect("a patch version"),
+        )
+    }
 
     #[test]
-    fn unicode_version_matches_the_vendored_data() {
-        let header = DERIVED_NAME.lines().next().expect("header line");
-        let version = header
-            .trim_start_matches("# DerivedName-")
-            .trim_end_matches(".txt");
-        let parsed: Vec<u8> = version
-            .split('.')
-            .map(|part| part.parse().expect("numeric version component"))
-            .collect();
+    fn generated_version_matches_the_table_header() {
         assert_eq!(
-            (parsed[0], parsed[1], parsed[2]),
+            image_version(),
             UNICODE_VERSION,
-            "UNICODE_VERSION is stale"
+            "the generated image was built from a different Unicode release"
         );
+        // The image header and `UNICODE_VERSION` both come from one `build.rs` run, so the
+        // assertion above cannot notice test data that disagrees with the image.
         assert_eq!(
-            tables::version(),
+            data_version(),
             UNICODE_VERSION,
-            "the generated table was built from a different Unicode release"
+            "the UCD files under test are not the release the image was built from"
         );
     }
 
@@ -321,10 +347,8 @@ mod tests {
     fn every_name_in_the_ucd_round_trips() {
         let mut checked = 0usize;
 
-        for line in DERIVED_NAME
-            .lines()
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        {
+        let derived = read_ucd("DerivedName.txt");
+        for line in records(&derived) {
             let (lhs, rhs) = line.split_once(';').expect("field separator");
             let lhs = lhs.trim();
 
@@ -332,20 +356,15 @@ mod tests {
             // point in hex", on a single-code-point line as well as on a range: U+18CFF is the
             // one that matters, since it is the only point whose line carries a `*`.
             let value = rhs.trim();
-            let pattern = value.split_once('*');
-            if let Some((prefix, _width)) = pattern {
-                let range = lhs
-                    .split_once("..")
-                    .map_or_else(|| (lhs, lhs), |(start, end)| (start, end));
-                let start = u32::from_str_radix(range.0, 16).expect("range start");
-                let end = u32::from_str_radix(range.1, 16).expect("range end");
+            if let Some((prefix, suffix)) = value.split_once('*') {
+                let (start, end) = range(lhs);
                 for cp in start..=end {
                     let Some(c) = char::from_u32(cp) else {
                         continue;
                     };
                     assert_eq!(
                         name(c).as_deref(),
-                        Some(format!("{prefix}{cp:04X}").as_str()),
+                        Some(format!("{prefix}{cp:04X}{suffix}").as_str()),
                         "pattern name for U+{cp:04X}"
                     );
                     checked += 1;
@@ -353,7 +372,7 @@ mod tests {
                 continue;
             }
 
-            let cp = u32::from_str_radix(lhs, 16).expect("code point");
+            let cp = code_point(lhs);
             let Some(c) = char::from_u32(cp) else {
                 continue;
             };
@@ -361,19 +380,16 @@ mod tests {
             checked += 1;
         }
 
-        assert!(checked > 150_000, "only checked {checked} names");
+        assert!(checked > 100_000, "only checked {checked} names");
     }
 
     #[test]
     fn alias_backed_names_are_available() {
         let mut checked = 0usize;
 
-        for line in NAME_ALIASES
-            .lines()
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        {
-            let cp = u32::from_str_radix(line.split(';').next().expect("code point"), 16)
-                .expect("code point");
+        let aliases = read_ucd("NameAliases.txt");
+        for line in records(&aliases) {
+            let cp = code_point(line.split(';').next().expect("code point"));
             let Some(c) = char::from_u32(cp) else {
                 continue;
             };
@@ -393,19 +409,11 @@ mod tests {
     fn general_categories_match_the_ucd() {
         let mut checked = 0usize;
 
-        for line in DERIVED_GC
-            .lines()
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        {
+        let derived_gc = read_ucd("DerivedGeneralCategory.txt");
+        for line in records(&derived_gc) {
             let (lhs, rest) = line.split_once(';').expect("field separator");
             let letter = rest.split('#').next().expect("category").trim();
-            let lhs = lhs.trim();
-            let (start, end) = match lhs.split_once("..") {
-                Some((start, end)) => (start, end),
-                None => (lhs, lhs),
-            };
-            let start = u32::from_str_radix(start, 16).expect("range start");
-            let end = u32::from_str_radix(end, 16).expect("range end");
+            let (start, end) = range(lhs);
 
             for cp in start..=end {
                 let Some(c) = char::from_u32(cp) else {
@@ -427,66 +435,78 @@ mod tests {
         assert_eq!(general_category('\u{378}'), GeneralCategory::Unassigned);
     }
 
-    /// Rebuilds the emoji oracle the way `zeta-unicode-build` does: canonical keys (U+FE0F removed) with
-    /// named-sequence names taking precedence over fully-qualified, then qualified over
-    /// unqualified.
+    /// Rebuilds the emoji oracle the way `zeta-unicode-build` does: canonical keys (U+FE0F
+    /// removed) with named-sequence names taking precedence over fully-qualified, then
+    /// qualified over unqualified. `non-fully-qualified` ranks with `unqualified`, as Emoji
+    /// 5.0 and 11.0 use it for sequences that later releases re-qualified.
     fn emoji_oracle() -> BTreeMap<String, String> {
-        let mut ranked: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
-
-        for line in EMOJI_TEST
-            .lines()
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        {
-            let (left, rest) = line.split_once(';').expect("field separator");
-            let (status, comment) = rest.split_once('#').expect("comment");
-            let cps: Vec<u32> = left
-                .split_whitespace()
-                .map(|cp| u32::from_str_radix(cp, 16).expect("code point"))
-                .collect();
-            let rank = match status.trim() {
-                "fully-qualified" | "component" => 2,
-                "minimally-qualified" => 1,
-                "unqualified" => 0,
-                other => panic!("unknown status {other}"),
-            };
-            let words: Vec<&str> = comment.split_whitespace().collect();
-            match ranked.get(&cps) {
-                Some((existing, _)) if *existing > rank => {}
+        /// Keeps the higher-precedence name for a canonical key; a tie keeps the later entry.
+        fn keep_best(
+            entries: &mut BTreeMap<Vec<u32>, (u8, String)>,
+            cps: Vec<u32>,
+            rank: u8,
+            name: String,
+        ) {
+            match entries.get(&cps) {
+                Some((best, _)) if *best > rank => {}
                 _ => {
-                    ranked.insert(cps, (rank, words[2..].join(" ")));
+                    entries.insert(cps, (rank, name));
                 }
             }
         }
 
-        // `NamedSequences.txt` also carries non-emoji sequences (Latin letters with combining
-        // marks); the build drops those, so the oracle must too.
-        let emoji_keys: BTreeSet<Vec<u32>> = ranked
-            .keys()
-            .map(|cps| cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect())
-            .collect();
+        /// The canonical form of a sequence: `U+FE0F` removed.
+        fn canonical(cps: &[u32]) -> Vec<u32> {
+            cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect()
+        }
 
-        for line in NAMED_SEQUENCES
-            .lines()
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        {
+        let emoji_test = read_ucd("emoji-test.txt");
+        let named_sequences = read_ucd("NamedSequences.txt");
+        let mut ranked: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
+
+        for line in records(&emoji_test) {
+            let (left, rest) = line.split_once(';').expect("field separator");
+            let (status, comment) = rest.split_once('#').expect("comment");
+            let cps: Vec<u32> = left.split_whitespace().map(code_point).collect();
+            let rank = match status.trim() {
+                "fully-qualified" | "component" => 2,
+                "minimally-qualified" => 1,
+                "unqualified" | "non-fully-qualified" => 0,
+                other => panic!("unknown status {other}"),
+            };
+            let words: Vec<&str> = comment.split_whitespace().collect();
+            assert!(words.len() >= 2, "unexpected emoji comment: {comment}");
+            // Modern files spell `# <emoji> E1.0 <name>`; older files omit the `E<version>`
+            // word. Handle both so the same test runs against old and new UCD releases.
+            let name_at = usize::from(
+                words
+                    .get(1)
+                    .is_some_and(|word| word.starts_with('E') && word.contains('.')),
+            ) + 1;
+            keep_best(
+                &mut ranked,
+                canonical(&cps),
+                rank,
+                words[name_at..].join(" "),
+            );
+        }
+
+        // `NamedSequences.txt` also carries non-emoji sequences (Latin letters with combining
+        // marks); the build drops those, so the oracle must too. The keycap names override the
+        // test file's lower-case ones.
+        for line in records(&named_sequences) {
             let (name, cps) = line.split_once(';').expect("field separator");
-            let cps: Vec<u32> = cps
-                .split_whitespace()
-                .map(|cp| u32::from_str_radix(cp, 16).expect("code point"))
-                .collect();
-            let canonical: Vec<u32> = cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect();
-            if !emoji_keys.contains(&canonical) {
+            let cps: Vec<u32> = cps.split_whitespace().map(code_point).collect();
+            let canonical = canonical(&cps);
+            if !ranked.contains_key(&canonical) {
                 continue;
             }
-            ranked.insert(cps, (3, name.trim().to_owned()));
+            keep_best(&mut ranked, canonical, 3, name.trim().to_owned());
         }
 
         let mut oracle = BTreeMap::new();
         for (cps, (_, name)) in ranked {
-            let key: String = cps
-                .iter()
-                .filter_map(|&cp| char::from_u32(cp).filter(|c| u32::from(*c) != 0xFE0F))
-                .collect();
+            let key: String = cps.iter().filter_map(|&cp| char::from_u32(cp)).collect();
             oracle.insert(key, name);
         }
         oracle
@@ -504,10 +524,17 @@ mod tests {
             );
         }
 
+        // The keycap named sequences only supply names for existing keys; every canonical
+        // key must resolve. Emoji 5.0 (Unicode 10.0), the oldest supported release, answers
+        // for about 2,600 keys, and modern releases for nearly 4,000 (5,244 emoji-test
+        // entries collapse onto 3,972 canonical keys once U+FE0F is merged away).
+        let minimum = if release_at_least(12, 0) {
+            3_000
+        } else {
+            2_500
+        };
         assert!(
-            // 5,244 emoji-test entries collapse onto 3,972 canonical keys (U+FE0F merged
-            // away); the keycap named sequences only supply names for existing keys.
-            oracle.len() > 3_900,
+            oracle.len() > minimum,
             "only checked {} sequences",
             oracle.len()
         );
@@ -517,13 +544,15 @@ mod tests {
         assert_eq!(emoji_name("🚶‍♂").as_deref(), Some("man walking"));
         // A skin-tone variant is synthesized from its base and the 3-bit rule.
         assert_eq!(
-            emoji_name("🫶🏻").as_deref(),
-            Some("heart hands: light skin tone")
-        );
-        assert_eq!(
             emoji_name("🖐🏻").as_deref(),
             Some("hand with fingers splayed: light skin tone")
         );
+        if release_at_least(14, 0) {
+            assert_eq!(
+                emoji_name("🫶🏻").as_deref(),
+                Some("heart hands: light skin tone")
+            );
+        }
         assert_eq!(emoji_name("d'être"), None);
         assert_eq!(emoji_name("🐱‍🏍"), None);
         // A non-emoji named sequence (a decomposed Latin letter) is not an emoji.
@@ -534,29 +563,36 @@ mod tests {
     fn tone_fallback_respects_published_tone_counts() {
         // Two tones on a base that only publishes one-tone variants.
         assert_eq!(emoji_name("👍🏻🏿"), None);
-        // One tone on a base that only publishes two-tone variants.
-        assert_eq!(emoji_name("🫱🏻‍🫲"), None);
-        // Published counts still resolve, and same-tone groups deduplicate the phrase.
-        assert_eq!(
-            emoji_name("👩🏻‍🤝‍👩🏻").as_deref(),
-            Some("women holding hands: light skin tone")
-        );
-        assert_eq!(
-            emoji_name("🫱🏻‍🫲🏻").as_deref(),
-            Some("handshake: light skin tone")
-        );
-        assert_eq!(
-            emoji_name("🧑🏻‍🤝‍🧑🏻").as_deref(),
-            Some("people holding hands: light skin tone")
-        );
+        if release_at_least(12, 0) {
+            // Published counts still resolve, and same-tone groups deduplicate the phrase.
+            assert_eq!(
+                emoji_name("👩🏻‍🤝‍👩🏻").as_deref(),
+                Some("women holding hands: light skin tone")
+            );
+            assert_eq!(
+                emoji_name("🧑🏻‍🤝‍🧑🏻").as_deref(),
+                Some("people holding hands: light skin tone")
+            );
+        }
+        if release_at_least(14, 0) {
+            // One tone on a base that only publishes two-tone variants.
+            assert_eq!(emoji_name("🫱🏻‍🫲"), None);
+            assert_eq!(
+                emoji_name("🫱🏻‍🫲🏻").as_deref(),
+                Some("handshake: light skin tone")
+            );
+        }
     }
 
     #[test]
     fn leading_tone_or_variation_selector_is_not_a_sequence() {
         assert_eq!(emoji_name("🏻👋"), None);
         assert_eq!(emoji_name("\u{FE0F}👍"), None);
-        // A lone skin-tone component is still an entry.
-        assert_eq!(emoji_name("🏻").as_deref(), Some("light skin tone"));
+        if release_at_least(11, 0) {
+            // A lone skin-tone component is still an entry. Emoji data only lists the
+            // components from Emoji 11.0 on; older files carry no standalone rows for them.
+            assert_eq!(emoji_name("🏻").as_deref(), Some("light skin tone"));
+        }
     }
 
     #[test]
@@ -571,11 +607,26 @@ mod tests {
     }
 
     #[test]
-    fn name_returns_borrowed_stored_names() {
-        assert!(matches!(name('A'), Some(Cow::Borrowed(_))));
-        assert!(matches!(name('中'), Some(Cow::Owned(_))));
-        assert!(matches!(emoji_name("🦔"), Some(Cow::Borrowed(_))));
-        assert!(matches!(emoji_name("🫶🏻"), Some(Cow::Owned(_))));
+    fn name_decodes_stored_and_generated_names() {
+        // Stored names are decoded from one block, so the Nomina backend returns an owned name.
+        assert_eq!(name('A').as_deref(), Some("LATIN CAPITAL LETTER A"));
+        assert_eq!(name('中').as_deref(), Some("CJK UNIFIED IDEOGRAPH-4E2D"));
+        assert!(emoji_name("🦔").is_some());
+        if release_at_least(14, 0) {
+            assert!(matches!(emoji_name("🫶🏻"), Some(Cow::Owned(_))));
+        }
+    }
+
+    #[test]
+    fn init_is_idempotent_and_lookups_are_stable() {
+        let name_before = name('A');
+        let emoji_before = emoji_name("🏳️‍🌈");
+
+        init();
+        init();
+
+        assert_eq!(name('A'), name_before);
+        assert_eq!(emoji_name("🏳️‍🌈"), emoji_before);
     }
 
     #[test]
@@ -604,47 +655,35 @@ mod tests {
     }
 
     #[test]
-    fn write_hex_handles_the_boundaries() {
-        let mut digits = [0u8; 8];
-        assert_eq!(write_hex(&mut digits, 0, 0), 1);
-        assert_eq!(&digits[..1], b"0");
-        assert_eq!(write_hex(&mut digits, 0, 4), 4);
-        assert_eq!(&digits[..4], b"0000");
-        assert_eq!(write_hex(&mut digits, 0x4E2D, 0), 4);
-        assert_eq!(&digits[..4], b"4E2D");
-        // `EGYPTIAN HIEROGLYPH-13460` needs five digits where the width asks for four.
-        assert_eq!(write_hex(&mut digits, 0x13460, 4), 5);
-        assert_eq!(&digits[..5], b"13460");
+    fn pattern_names_use_unicode_hex() {
+        let derived = read_ucd("DerivedName.txt");
+        let (start, want) = records(&derived)
+            .find_map(|line| {
+                let (lhs, rhs) = line.split_once(';')?;
+                let (prefix, suffix) = rhs.trim().split_once('*')?;
+                let start = lhs
+                    .trim()
+                    .split_once("..")
+                    .map_or_else(|| lhs.trim(), |(start, _)| start);
+                let cp = code_point(start);
+                Some((cp, format!("{prefix}{cp:04X}{suffix}")))
+            })
+            .expect("a pattern range");
+        assert_eq!(
+            name(char::from_u32(start).expect("a scalar code point")).as_deref(),
+            Some(want.as_str())
+        );
+        assert_eq!(name('中').as_deref(), Some("CJK UNIFIED IDEOGRAPH-4E2D"));
     }
 
-    /// Prints every section's size, then holds the table to the current reference encoder's
-    /// limit. [`TABLE_BUDGET`] is the target for the compressed encoder, not this encoder.
+    /// Prints the image size and holds it to the Nomina budget.
     #[test]
-    fn table_stays_within_the_encoder_limit() {
-        let measured = [
-            ("names", sections::NAMES),
-            ("name runs", sections::NAME_RUNS),
-            ("name patterns", sections::NAME_PATTERNS),
-            ("general category", sections::GC),
-            ("emoji", sections::EMOJI),
-        ];
-        for (label, id) in measured {
-            let length = tables::section(id).map_or(0, <[u8]>::len);
-            eprintln!("{label:>18}: {length:>9} bytes");
-        }
-        eprintln!(
-            "{:>18}: {:>9} bytes (budget {})",
-            "total",
-            tables::TABLE.len(),
-            TABLE_BUDGET
-        );
-
-        // The v0 reference encoder is deliberately uncompressed, so the limit it is held to is
-        // the encoder's, not the budget's.
+    fn table_stays_within_the_nomina_budget() {
+        eprintln!("Nomina image: {} bytes", IMAGE.len());
         assert!(
-            tables::TABLE.len() <= ENCODER_TABLE_LIMIT,
-            "table grew to {} bytes",
-            tables::TABLE.len()
+            IMAGE.len() <= TABLE_BUDGET,
+            "image grew to {} bytes",
+            IMAGE.len()
         );
     }
 
@@ -668,63 +707,58 @@ mod tests {
             elapsed.as_secs_f64() * 1e9 / f64::from(samples)
         }
 
-        // Every third scalar value below U+3000: dense in the named ranges, and it skips the
-        // surrogates `char::from_u32` rejects.
+        /// Runs `work` four times, printing the last round's per-lookup time; the opening
+        /// passes pay the page faults.
+        fn measure(label: &str, samples: u32, mut work: impl FnMut() -> u64) {
+            for round in 0..4 {
+                let start = Instant::now();
+                let sink = work();
+                if round == 3 {
+                    eprintln!(
+                        "{label:<17} {:>8.2} ns/lookup (sink {sink})",
+                        per_lookup(start.elapsed(), samples)
+                    );
+                }
+            }
+        }
+
+        // Every scalar value from U+0020 below U+3000: dense in the named ranges, and it skips
+        // the surrogates `char::from_u32` rejects.
         let points: Vec<char> = (0..SAMPLES)
             .filter_map(|i| char::from_u32(0x20 + i))
             .filter(|c| u32::from(*c) < 0x3000)
             .collect();
         let named = u32::try_from(points.len()).expect("fewer than u32::MAX characters");
 
-        // Three warm-up rounds first: the opening passes pay the page faults.
-        for round in 0..4 {
-            let start = Instant::now();
+        measure("name:", named, || {
             let mut sink = 0u64;
             for c in &points {
                 sink += name(*c).map_or(0, |found| found.len() as u64);
             }
-            if round == 3 {
-                eprintln!(
-                    "name:             {:>8.2} ns/lookup (sink {sink})",
-                    per_lookup(start.elapsed(), named)
-                );
-            }
-        }
+            sink
+        });
 
-        for round in 0..4 {
-            let start = Instant::now();
+        measure("general_category:", ALL_CODE_POINTS, || {
             let mut sink = 0u64;
             for cp in 0..ALL_CODE_POINTS {
                 let c = char::from_u32(cp).unwrap_or(' ');
                 sink += general_category(c).short_name().len() as u64;
             }
-            if round == 3 {
-                eprintln!(
-                    "general_category: {:>8.2} ns/lookup (sink {sink})",
-                    per_lookup(start.elapsed(), ALL_CODE_POINTS)
-                );
-            }
-        }
+            sink
+        });
 
         // The interesting emoji shapes: canonical hit, named sequence, synthesized tone
         // variant, tone fallback with two tones, a miss, and a long tag sequence.
         let probes = ["🏳️‍🌈", "2️⃣", "👨🏻‍❤️‍💋‍👨🏻", "🫶🏻", "🧑🏽‍🦰", "🐱‍🏍", "d'être", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"];
         let probe_count = u32::try_from(probes.len()).expect("a handful of probes");
-        for round in 0..4 {
-            let start = Instant::now();
+        measure("emoji_name:", SAMPLES * probe_count, || {
             let mut sink = 0u64;
-            for i in 0..SAMPLES {
+            for _ in 0..SAMPLES {
                 for probe in probes {
                     sink += emoji_name(probe).map_or(0, |found| found.len() as u64);
-                    std::hint::black_box(i);
                 }
             }
-            if round == 3 {
-                eprintln!(
-                    "emoji_name:       {:>8.2} ns/lookup (sink {sink})",
-                    per_lookup(start.elapsed(), SAMPLES * probe_count)
-                );
-            }
-        }
+            sink
+        });
     }
 }

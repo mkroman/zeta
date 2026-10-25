@@ -20,11 +20,28 @@ leaf crates below both.
 | `zeta-cache` | TTL cache and keyed cache APIs. |
 | `zeta-url` | URL extraction, path validation and redaction. |
 | `zeta-utils` | Text shaping, duration formatting, lock recovery. |
-| `zeta-unicode` | Character names, general categories and emoji sequence names. |
-| `zeta-unicode-build` | Offline generator for the `zeta-unicode` packed tables. |
-| `zeta-unicode-format` | Table layout and tone formatting shared by the two Unicode crates. |
+| `zeta-unicode` | Nomina: character names, general categories and emoji sequence names. |
+| `zeta-unicode-build` | Offline trainer and generator for the `zeta-unicode` image. |
+| `zeta-unicode-format` | Nomina wire layout, byte primitives, Huffman codec and emoji grammar shared by the two Unicode crates. |
 | `kagi`, `reddit`, `dendanskeordbog`, `coinmarketcap` | Standalone API client crates. |
 | `zeta-test-support` | Shared test helpers (wiremock, redaction assertions). |
+
+### Unicode stack
+
+`zeta-unicode` does not ship a checked-in table. `zeta-unicode-build` trains one flat Nomina
+image from the UCD files vendored under `crates/zeta-unicode/data`; the image holds character
+names, general categories, emoji sequence names and the algorithmic `*` pattern rules.
+The `zeta-unicode` build script runs the same trainer at compile time and links the verified
+image into the binary, while `zeta-unicode-format` holds the wire constants, byte primitives,
+Huffman codec and emoji grammar shared by the trainer and the runtime. Character names decode
+per thread; emoji and general-category tables are decoded once per process. The `string-utils`
+plugin uses the runtime for `.uni`.
+
+The three Unicode crates are flagged as loosely verified AI-generated code; read the warning in
+[`crates/zeta-unicode/README.md`](crates/zeta-unicode/README.md) before trusting the design
+notes. The full format and data-flow overview is there too, with the generator and shared
+format documented in [`crates/zeta-unicode-build/README.md`](crates/zeta-unicode-build/README.md)
+and [`crates/zeta-unicode-format/README.md`](crates/zeta-unicode-format/README.md).
 
 Two rules keep the graph honest:
 

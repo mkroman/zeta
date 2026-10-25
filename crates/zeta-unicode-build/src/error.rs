@@ -1,11 +1,11 @@
-//! The I/O errors [`generate`](crate::generate) reports.
+//! The errors the trainer and manifest writer report.
 
 use std::path::PathBuf;
 
 use thiserror::Error;
 
-/// Fails [`generate`](crate::generate) when an input cannot be read or an artifact cannot be
-/// written.
+/// Fails a training run when an input cannot be read, an artifact cannot be written, or the
+/// manifest cannot be serialized.
 #[derive(Debug, Error)]
 pub enum Error {
     /// Reading a vendored UCD input failed.
@@ -26,4 +26,20 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    /// An input path is not inside the data directory, so the manifest has no relative path
+    /// for it.
+    #[error(
+        "input {} is outside the data directory {}; the manifest records only relative paths",
+        .path.display(),
+        .data_dir.display()
+    )]
+    OutsideDataDir {
+        /// The input file that is not under the data directory.
+        path: PathBuf,
+        /// The data directory every input must live under.
+        data_dir: PathBuf,
+    },
+    /// Serializing the manifest as JSON failed.
+    #[error("failed to render manifest.json: {0}")]
+    Json(#[from] serde_json::Error),
 }

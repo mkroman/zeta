@@ -19,11 +19,14 @@ members = [
     "crates/zeta-url",
     "crates/zeta-utils",
 ]
+# `cargo run`, `build`, `test` and `check` without a selection flag operate on the bot.
+default-members = ["crates/zeta"]
 
 [workspace.dependencies]
 arc-swap = "1.9"
 argh = { version = "0.1.19" }
 async-trait = "0.1.89"
+bytes = "1.12.1"
 chrono = { version = "0.4.45" }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
