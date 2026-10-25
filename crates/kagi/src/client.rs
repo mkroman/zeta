@@ -340,7 +340,7 @@ fn extract_nonce(html: &str) -> Option<String> {
     html.match_indices(MARKER).find_map(|(index, marker)| {
         let tail = &html[index + marker.len()..];
         let tail = tail.trim_start().strip_prefix('=')?.trim_start();
-        let (literal, _) = quoted_string_literal(tail)?;
+        let (literal, _) = quoted_string_literal(tail, '"')?;
         let nonce: String = serde_json::from_str(literal).ok()?;
 
         (!nonce.is_empty()).then_some(nonce)

@@ -131,7 +131,7 @@ fn parse_room_dossier(html: &str) -> Result<RoomDossier, Error> {
         .strip_prefix('=')
         .ok_or(Error::DossierNotFound)?
         .trim_start();
-    let (literal, rest) = quoted_string_literal(tail).ok_or(Error::DossierNotFound)?;
+    let (literal, rest) = quoted_string_literal(tail, '"').ok_or(Error::DossierNotFound)?;
 
     if !rest.starts_with(';') {
         return Err(Error::DossierNotFound);

@@ -179,7 +179,7 @@ fn extract_lsd_token(body: &str) -> Option<&str> {
     const PREFIX: &str = r#"["LSD",[],{"token":"#;
 
     let tail = body.split_once(PREFIX)?.1.trim_start();
-    let (literal, _) = quoted_string_literal(tail)?;
+    let (literal, _) = quoted_string_literal(tail, '"')?;
     let token = literal.strip_circumfix('"', '"')?;
 
     (!token.is_empty()).then_some(token)
