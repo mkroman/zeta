@@ -2,10 +2,10 @@
 //!
 //! The `.help` command reads the plugin catalog published by the registry, so it always reflects
 //! the plugins that were successfully registered. Invoked without arguments it replies with a
-//! usage hint and an index of the registered plugins, with a plugin name it lists the plugin's
-//! commands, and with a command name it shows the command's description and usage synopsis
-//! derived from its `argh` argument type, along with descriptions of its arguments and
-//! subcommands.
+//! usage hint and an index of the registered plugins that handle commands, with a plugin name it
+//! lists the plugin's commands, and with a command name it shows the command's description and
+//! usage synopsis derived from its `argh` argument type, along with descriptions of its arguments
+//! and subcommands.
 //!
 //! Lists longer than the IRCv3 extended message length are split across continuation messages
 //! without splitting an entry.
@@ -24,9 +24,9 @@ const SEPARATOR: &str = "\x0310,\x0f ";
 
 /// Help plugin.
 ///
-/// Responds to `.help` with a usage hint and an index of every plugin, `.help <plugin>` with the
-/// plugin's commands, or `.help <command>` with the command's description, usage and arguments
-/// derived from its `argh` type.
+/// Responds to `.help` with a usage hint and an index of every plugin that handles commands,
+/// `.help <plugin>` with the plugin's commands, or `.help <command>` with the command's
+/// description, usage and arguments derived from its `argh` type.
 #[derive(Default)]
 pub struct Help;
 
@@ -66,8 +66,9 @@ impl Help {
 
 /// Returns the messages describing the plugins or commands matching `query`.
 ///
-/// An empty query shows a usage hint and an index of every plugin, a plugin name lists its
-/// commands, and a command name shows the command's description, usage and arguments.
+/// An empty query shows a usage hint and an index of every plugin that handles commands, a
+/// plugin name lists its commands, and a command name shows the command's description, usage and
+/// arguments.
 fn messages(catalog: &PluginCatalog, query: &str) -> Vec<String> {
     if query.is_empty() {
         return index_messages(catalog);

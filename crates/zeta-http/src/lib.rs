@@ -334,6 +334,28 @@ pub mod emulated {
     use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
     use zeta_plugin::{Error, prelude::plugin_err};
 
+    use crate::WreqError;
+
+    /// A failed request through the browser-emulated client.
+    ///
+    /// The transport variant wraps [`WreqError`], which redacts the request URI: these pages can
+    /// be fetched through a metadata proxy whose URL carries a credential in its query.
+    #[derive(Debug, thiserror::Error)]
+    pub enum ResponseError {
+        /// The request failed, or its body could not be read.
+        #[error("request error: {0}")]
+        Request(#[from] WreqError),
+        /// The server responded with an unsuccessful status code.
+        #[error("request failed with status {0}")]
+        Status(wreq::StatusCode),
+    }
+
+    impl From<wreq::Error> for ResponseError {
+        fn from(error: wreq::Error) -> Self {
+            Self::Request(error.into())
+        }
+    }
+
     /// Returns a `wreq` client builder emulating Firefox 142, layered with the headers the
     /// emulation must not omit.
     ///

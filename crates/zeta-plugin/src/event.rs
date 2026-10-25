@@ -588,7 +588,8 @@ macro_rules! event_kind_flags {
     ($(
         $kind:ident($receive:ident, $kind_doc:literal, $receive_doc:literal $(,)?)
     ),* $(,)?) => {
-        /// The kind of an event a plugin subscribes to with a plain flag — one per per-kind handler.
+        /// The kind of an event a plugin subscribes to with a plain flag — one per kind-specific
+        /// handler.
         ///
         /// Commands and URLs are excluded: their subscriptions carry payloads ([`CommandSpec`],
         /// [`UrlScope`]) instead of a plain flag.

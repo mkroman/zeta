@@ -24,7 +24,7 @@ mod request {
     use std::fmt;
     use std::fmt::Write as _;
 
-    #[cfg(any(feature = "request", feature = "http"))]
+    #[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
     use zeta_url::RedactedUrl;
 
     /// Renders the message a log line gets: `kind`, its source chain and its redacted URL.

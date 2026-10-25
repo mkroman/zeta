@@ -20,12 +20,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{Instrument, debug, warn};
 use url::Url;
-use wreq::StatusCode;
 use wreq::redirect::Policy;
 
 use crate::prelude::*;
 use zeta_http as http;
 use zeta_http::WreqError;
+use zeta_http::emulated::ResponseError;
 use zeta_url::{RedactedUrl, strip_www};
 use zeta_utils::text::{Truncatable, collapse_whitespace};
 
@@ -220,22 +220,17 @@ impl TokenSink for HeadSink {
 /// Errors that can occur while fetching a page.
 #[derive(Debug, Error)]
 enum Error {
-    /// The server returned an unsuccessful response.
-    #[error("{0}")]
-    Status(StatusCode),
-    /// The request failed.
-    #[error("{0}")]
-    Request(WreqError),
+    /// The page request failed or returned an unsuccessful status.
+    #[error(transparent)]
+    Response(#[from] ResponseError),
     /// The tokenizer task failed.
     #[error("could not tokenize the response")]
     Task(#[from] tokio::task::JoinError),
 }
 
 impl From<wreq::Error> for Error {
-    /// Wraps `error` in a [`WreqError`], which redacts the request URL: a logged request URL
-    /// can carry a credential in its query string.
     fn from(error: wreq::Error) -> Self {
-        Self::Request(error.into())
+        Self::Response(ResponseError::from(error))
     }
 }
 
@@ -254,7 +249,7 @@ async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMetadata
     let status = response.status();
 
     if !status.is_success() {
-        return Err(Error::Status(status));
+        return Err(ResponseError::Status(status).into());
     }
 
     // The HTML tokenizer is not `Send`, so the response body is streamed through a channel and

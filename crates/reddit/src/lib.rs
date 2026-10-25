@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use url::Url;
-use zeta_url::path_segments;
+use zeta_url::{is_identifier, path_segments};
 
 mod client;
 mod error;
@@ -29,6 +29,20 @@ pub const BASE_URL: &str = "https://www.reddit.com";
 pub const OAUTH_BASE_URL: &str = "https://oauth.reddit.com";
 /// The OAuth2 client-credentials token endpoint.
 pub const TOKEN_URL: &str = "https://www.reddit.com/api/v1/access_token";
+/// The hosts [`classify_reddit_url`] recognizes.
+///
+/// Plugins subscribe to these hosts instead of repeating the list, so a host the classifier
+/// accepts is never left unsubscribed — or subscribed without being handled.
+pub const URL_HOSTS: &[&str] = &[
+    "i.redd.it",
+    "oauth.reddit.com",
+    "old.reddit.com",
+    "preview.redd.it",
+    "redd.it",
+    "reddit.com",
+    "v.redd.it",
+    "www.reddit.com",
+];
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
 pub const USER_AGENT: &str = concat!("rust:reddit:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");
 /// The duration before a HTTP request times out.
@@ -242,7 +256,9 @@ pub struct Comment {
 #[must_use]
 pub fn classify_reddit_url(url: &Url) -> Option<Link> {
     match url.host_str() {
-        Some("v.redd.it" | "i.redd.it" | "preview.redd.it") => classify_redd_it_url(url),
+        Some("v.redd.it" | "i.redd.it" | "preview.redd.it" | "redd.it") => {
+            classify_redd_it_url(url)
+        }
         Some("reddit.com" | "www.reddit.com" | "old.reddit.com" | "oauth.reddit.com") => {
             classify_reddit_com_url(url)
         }
@@ -314,6 +330,14 @@ fn classify_redd_it_url(url: &Url) -> Option<Link> {
 
             Some(Link::Preview(request_uri))
         }
+        // `redd.it/<id>` is the short link for a submission; resolving it is the API's job, so
+        // it is classified as the comments page it redirects to.
+        Some("redd.it") => match path_segments(url)?.as_slice() {
+            [id] if is_identifier(id, "") => Some(Link::Comments {
+                id: (*id).to_string(),
+            }),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -405,6 +429,53 @@ mod tests {
                 id: "dmwUYLKTjd".to_string(),
             }),
         );
+    }
+
+    #[test]
+    fn parse_short_links() {
+        assert_classifies(
+            &["https://redd.it/1nh144u", "https://redd.it/1nh144u/"],
+            Some(&Link::Comments {
+                id: "1nh144u".to_string(),
+            }),
+        );
+
+        // A short link carries exactly one base36 id.
+        assert_classifies(
+            &[
+                "https://redd.it/",
+                "https://redd.it/1nh144u/extra",
+                "https://redd.it/not an id",
+            ],
+            None,
+        );
+    }
+
+    /// The hosts the plugin subscribes to and the classifier recognizes must stay in sync.
+    #[test]
+    fn url_hosts_cover_the_classified_hosts() {
+        let cases = [
+            ("i.redd.it", "/gvjukykex8pf1.jpeg"),
+            ("v.redd.it", "/b2l87x1pyn7h1"),
+            ("preview.redd.it", "/nry00uecp5pf1.png"),
+            ("redd.it", "/1nh144u"),
+            ("reddit.com", "/r/rust"),
+            ("www.reddit.com", "/r/rust"),
+            ("old.reddit.com", "/r/rust"),
+            ("oauth.reddit.com", "/r/rust"),
+        ];
+
+        assert_eq!(cases.len(), URL_HOSTS.len());
+
+        for (host, path) in cases {
+            assert!(URL_HOSTS.contains(&host), "{host} is not advertised");
+
+            let url = Url::parse(&format!("https://{host}{path}")).unwrap();
+            assert!(
+                classify_reddit_url(&url).is_some(),
+                "{host}{path} is advertised but does not classify"
+            );
+        }
     }
 
     #[test]

@@ -45,9 +45,9 @@ impl Health {
 
 /// Process telemetry snapshot.
 pub struct Snapshot {
-    /// The RSS memory usage, as bytes.
+    /// The RSS memory usage, in MiB.
     pub phys_mem: f64,
-    /// The VMS memory usage, as bytes.
+    /// The VMS memory usage, in MiB.
     pub virt_mem: f64,
     /// The number of tasks currently scheduled in the runtime's global queue.
     pub global_queue_depth: usize,

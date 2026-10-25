@@ -133,8 +133,8 @@ pub fn strip_www(host: &str) -> &str {
 /// per API and cannot be recognized reliably, so the query is dropped outright; the scheme,
 /// host, path and port still say which resource was asked for.
 ///
-/// The raw URL is never stored, and [`Display`] and [`Debug`] both render the redacted form, so
-/// a value of this type can be logged without a separate redaction call:
+/// The raw URL is never stored, and [`std::fmt::Display`] and [`Debug`] both render the redacted
+/// form, so a value of this type can be logged without a separate redaction call:
 ///
 /// ```
 /// # use url::Url;

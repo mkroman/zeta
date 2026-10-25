@@ -3,9 +3,9 @@
 //! The registry constructs plugins, keeps the loaded ones with the subscriptions they declared,
 //! and tracks the ones that failed to initialize. The host discovers compiled-in plugins through
 //! [`inventory`] and registers them with [`Registry::register_with`] (the
-//! `plugins` crate's `register_bundled_plugins` drives this); tests can construct a plugin type
-//! directly with [`Registry::register`]. The host then spawns each [`RegisteredPlugin`] into its
-//! own [`PluginTask`] and routes events to them through the dispatch index.
+//! `plugins` crate's `register_bundled_plugins` drives this). The host then spawns each
+//! [`RegisteredPlugin`] into its own [`PluginTask`] and routes events to them through the
+//! dispatch index.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -161,37 +161,6 @@ impl Registry {
     /// through the catalog.
     pub fn publish_catalog(&self, ctx: &Context) {
         ctx.shared.publish(Arc::new(self.catalog.clone()));
-    }
-
-    /// Registers a new plugin based on its type, for tests that construct a plugin directly.
-    ///
-    /// A fresh [`Subscriptions`] set is passed to the plugin's constructor, which registers the
-    /// events it handles on it. The subscriptions are committed — to the catalog and to the
-    /// returned plugin — only when construction succeeds.
-    ///
-    /// The host registers plugins through the self-registered
-    /// [`PluginRegistration`](crate::PluginRegistration) values instead, with
-    /// [`Registry::register_with`].
-    ///
-    /// Returns `true` if the plugin was successfully initialized and registered, `false` if
-    /// initialization failed. Failed plugins are tracked in `self.failed` and logged with their
-    /// name and error.
-    pub fn register<P: Plugin<Context> + 'static>(
-        &mut self,
-        ctx: &Context,
-        settings: &P::Settings,
-    ) -> bool {
-        let name = P::NAME.to_string();
-        let mut subscriptions = Subscriptions::new();
-
-        match P::new(ctx, settings, &mut subscriptions) {
-            Ok(plugin) => {
-                self.commit(name, Box::new(plugin), subscriptions);
-
-                true
-            }
-            Err(error) => self.fail(name, error),
-        }
     }
 
     /// Registers a plugin from its [`PluginRegistration`](crate::PluginRegistration).
@@ -462,7 +431,7 @@ mod tests {
         let ctx = test_context();
         publish_recording(&ctx);
         let mut registry = Registry::new();
-        let registration = crate::PluginRegistration::new::<RecordingPlugin>("recording");
+        let registration = crate::PluginRegistration::new::<RecordingPlugin>();
 
         assert!(registry.register_with(&registration, &ctx, None));
         assert!(

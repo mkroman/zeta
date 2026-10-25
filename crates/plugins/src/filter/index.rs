@@ -185,7 +185,7 @@ impl HostIndex {
         self.exact.is_empty() && self.wildcard.is_empty() && self.any_host.is_empty()
     }
 
-    /// All filters in the bucket, in insertion order.
+    /// All filters in the bucket, in unspecified order.
     fn filters(&self) -> impl Iterator<Item = &Filter> {
         self.exact
             .values()

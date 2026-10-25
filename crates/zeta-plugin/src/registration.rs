@@ -9,6 +9,7 @@ use figment::value::Value;
 use serde::de::DeserializeOwned;
 
 use crate::Error;
+use crate::config::deserialize_with_unknown_keys;
 use crate::context::Context;
 use crate::error::plugin_err;
 use crate::event::Subscriptions;
@@ -43,18 +44,19 @@ pub struct PluginRegistration {
 impl PluginRegistration {
     /// Constructs the registration for the plugin type `P`.
     ///
-    /// The `#[plugin]` attribute macro calls this in the [`inventory::submit!`] it generates;
-    /// plugins never call it themselves. The thunk this builds returns an error when the
-    /// plugin's settings section does not deserialize into `P::Settings`, or when
-    /// [`Plugin::new`](crate::Plugin::new) fails.
+    /// The plugin's name comes from [`Plugin::NAME`](crate::Plugin::NAME), so the registration and
+    /// the plugin can never disagree on it. The `#[plugin]` attribute macro calls this in the
+    /// [`inventory::submit!`] it generates; plugins never call it themselves. The thunk this
+    /// builds returns an error when the plugin's settings section does not deserialize into
+    /// `P::Settings`, or when [`Plugin::new`](crate::Plugin::new) fails.
     #[must_use]
-    pub const fn new<P>(name: &'static str) -> Self
+    pub const fn new<P>() -> Self
     where
         P: Plugin<Context> + 'static,
         P::Settings: Default + DeserializeOwned,
     {
         Self {
-            name,
+            name: P::NAME,
             construct: construct::<P>,
             validate: validate_settings::<P>,
         }
@@ -112,16 +114,13 @@ where
 {
     match section {
         Some(value) => {
-            let mut unknown_keys = Vec::new();
-            let settings = serde_ignored::deserialize(value, |path| {
-                unknown_keys.push(path.to_string());
-            })
-            .map_err(|error| {
-                plugin_err(std::io::Error::other(format!(
-                    "invalid settings for plugin `{}`: {error}",
-                    P::NAME
-                )))
-            })?;
+            let (settings, unknown_keys) =
+                deserialize_with_unknown_keys(value).map_err(|error| {
+                    plugin_err(std::io::Error::other(format!(
+                        "invalid settings for plugin `{}`: {error}",
+                        P::NAME
+                    )))
+                })?;
 
             Ok((settings, unknown_keys))
         }
@@ -169,7 +168,7 @@ mod tests {
     }
 
     fn registration() -> PluginRegistration {
-        PluginRegistration::new::<TestPlugin>(TestPlugin::NAME)
+        PluginRegistration::new::<TestPlugin>()
     }
 
     /// Builds the `[plugins.<name>]` section value the host hands to the registration.

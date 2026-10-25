@@ -170,7 +170,7 @@ mod tests {
     }
 
     /// Live smoke test against unwall.app, to catch contract drift that the mocked tests
-    /// cannot. Run with `cargo test -p zeta --all-features -- --ignored unwall::`.
+    /// cannot. Run with `cargo test -p plugins --all-features -- --ignored unwall::`.
     #[tokio::test]
     #[ignore = "needs network access"]
     async fn live_api_contract_smoke() {

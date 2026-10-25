@@ -105,8 +105,8 @@ pub struct IrcTlsConfig {
 pub struct IrcConfig {
     /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
     /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.
-    /// Admins are authorized to manage URL and sender filters with the `.filter` command;
-    /// with no hostmasks configured, nobody is an admin.
+    /// Admins are authorized to manage URL and sender filters with the `.filter` command and
+    /// unwall's site list with `.unwall`; with no hostmasks configured, nobody is an admin.
     #[serde(default)]
     pub admin_hostmasks: Vec<String>,
     /// Alternative nicknames for the client, if the default is taken.

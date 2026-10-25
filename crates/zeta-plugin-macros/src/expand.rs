@@ -1183,7 +1183,7 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
         // Self-register the plugin with the host: the registration is collected by `inventory`
         // when the crate is linked, so no central plugin list has to be maintained.
         ::zeta_plugin::inventory::submit! {
-            ::zeta_plugin::PluginRegistration::new::<#self_ty>(#name)
+            ::zeta_plugin::PluginRegistration::new::<#self_ty>()
         }
 
         #inherent

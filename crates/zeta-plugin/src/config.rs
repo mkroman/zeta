@@ -6,6 +6,8 @@
 
 use std::time::Duration;
 
+use figment::value::Value;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The `User-Agent` header to send when issuing HTTP requests.
@@ -50,4 +52,26 @@ pub struct HostConfig {
     /// Mirrored from the host's `[irc].admin_hostmasks` for plugins that authorize
     /// administrative commands.
     pub admin_hostmasks: Vec<String>,
+}
+
+/// Deserializes `value` into `T`, collecting the keys that `T` did not recognize.
+///
+/// Unknown keys are a warning, never an error: a configuration that still names a setting
+/// removed by a newer release must keep working. The caller reports the keys, so a typo or a
+/// stale setting is still visible in the logs.
+///
+/// # Errors
+///
+/// Returns the deserialization error, including the path to the offending value, if `value` does
+/// not deserialize into `T`.
+pub fn deserialize_with_unknown_keys<T: DeserializeOwned>(
+    value: &Value,
+) -> Result<(T, Vec<String>), Box<figment::Error>> {
+    let mut unknown_keys = Vec::new();
+    let settings = serde_ignored::deserialize(value, |path| {
+        unknown_keys.push(path.to_string());
+    })
+    .map_err(Box::new)?;
+
+    Ok((settings, unknown_keys))
 }

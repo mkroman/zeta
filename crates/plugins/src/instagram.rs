@@ -43,6 +43,7 @@ use crate::prelude::*;
 use zeta_cache::{TtlCache, TtlMap};
 use zeta_http as http;
 use zeta_http::WreqError;
+use zeta_http::emulated::ResponseError;
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_url::RedactedUrl;
 use zeta_utils::text::{Truncatable, collapse_whitespace};
@@ -508,7 +509,7 @@ impl Instagram {
 
         debug!(url.full = %RedactedUrl::from_unparsed(url), %error, "could not fetch page metadata");
 
-        if let meta::Error::Status(status) = &error
+        if let ResponseError::Status(status) = &error
             && status.is_client_error()
         {
             return Err(error);

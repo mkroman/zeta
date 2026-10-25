@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use scraper::{Html, Selector};
 use tracing::debug;
 
-use zeta_http::WreqError;
+use zeta_http::emulated::ResponseError;
 use zeta_url::RedactedUrl;
 
 /// The CSS selector for the `og:title` meta tag.
@@ -118,22 +118,8 @@ pub fn shortcode_to_media_pk(shortcode: &str) -> Option<u128> {
     Some(pk)
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    /// The request failed, or the response body could not be read.
-    #[error("request error: {0}")]
-    Request(WreqError),
-    /// The server responded with an unsuccessful status code.
-    #[error("the page request failed with status {0}")]
-    Status(wreq::StatusCode),
-}
-
-impl From<wreq::Error> for Error {
-    /// Wraps `error` in a [`WreqError`], which redacts the request URL.
-    fn from(error: wreq::Error) -> Self {
-        Self::Request(error.into())
-    }
-}
+/// The errors a page fetch can produce: a transport failure or an unsuccessful status.
+pub type Error = ResponseError;
 
 /// Fetches `url` and extracts its OpenGraph metadata.
 ///
@@ -161,7 +147,7 @@ pub async fn fetch(
     let response = request.send().await?;
 
     if !response.status().is_success() {
-        return Err(Error::Status(response.status()));
+        return Err(ResponseError::Status(response.status()));
     }
 
     let body = response.text().await?;

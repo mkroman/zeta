@@ -154,7 +154,7 @@ impl Trustpilot {
     /// failures.
     async fn search(&self, query: &str) -> Result<BusinessUnit, Error> {
         let url = format!("{API_BASE_URL}/business-units/find");
-        let params = [("name", &query.to_string())];
+        let params = [("name", query)];
 
         debug!(%url, ?params, "searching trustpilot");
 

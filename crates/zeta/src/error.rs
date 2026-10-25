@@ -8,11 +8,6 @@ pub use irc::error::Error as IrcError;
 #[cfg(feature = "database")]
 pub use sqlx::{Error as SqlxError, migrate::MigrateError as SqlxMigrateError};
 
-#[cfg(any(feature = "http", feature = "mirror"))]
-pub use zeta_http::RequestError;
-#[cfg(feature = "emulated")]
-pub use zeta_http::WreqError;
-
 /// Application errors for database, IRC, and plugin operations.
 #[derive(Error, Debug, Diagnostic)]
 pub enum Error {

@@ -7,11 +7,10 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::Error;
-use crate::Registry;
 use crate::config::Config;
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE};
 use crate::plugin::dispatch::EventIndex;
-use crate::plugin::{Context, PluginTask};
+use crate::plugin::{Context, PluginTask, Registry};
 use zeta_plugin::Filters;
 
 /// The signal that triggered a graceful shutdown.
@@ -260,7 +259,7 @@ impl Zeta {
     /// container orchestrator deletes the pod running the bot. On a signal, a `QUIT` with the
     /// configured message ([`IrcConfig::quit_message`]) is sent to the server, after which the
     /// plugin tasks drain their queued messages and run [`Plugin::shutdown`]. The plugin tasks
-    /// share a grace period of [`SHUTDOWN_GRACE`]; stragglers are aborted. A second signal during
+    /// share a grace period of `SHUTDOWN_GRACE`; stragglers are aborted. A second signal during
     /// the grace period exits the process immediately. The same drain runs when the IRC stream
     /// ends, or an error propagates.
     ///

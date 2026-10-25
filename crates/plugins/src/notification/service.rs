@@ -14,6 +14,12 @@ use super::{
 };
 use crate::database::Database;
 
+/// Pending notifications, keyed by channel and, within each channel, by the target nickname.
+///
+/// The nested maps let lookups borrow `&str` keys, so delivering a notification does not
+/// allocate the keys it looks up.
+type PendingByTarget = HashMap<String, HashMap<String, Vec<Notification>>>;
+
 /// Stores notifications in the database and caches the pending ones in memory.
 ///
 /// The cache is keyed by channel, and within each channel by the target nickname, so lookups can
@@ -22,7 +28,7 @@ pub struct NotificationService {
     /// The notification repository.
     repo: NotificationRepository,
     /// Pending notifications, keyed by channel and target nickname.
-    cache: Mutex<HashMap<String, HashMap<String, Vec<Notification>>>>,
+    cache: Mutex<PendingByTarget>,
     /// The maximum number of pending notifications a target may have in a channel.
     max_pending_per_target: usize,
 }
@@ -47,7 +53,7 @@ impl NotificationService {
     pub async fn load(&self) -> Result<(), Error> {
         trace!("loading notifications into memory");
 
-        let mut cache: HashMap<String, HashMap<String, Vec<Notification>>> = HashMap::new();
+        let mut cache: PendingByTarget = HashMap::new();
 
         for notification in self.repo.list().await? {
             trace!(?notification, "storing notification in cache");

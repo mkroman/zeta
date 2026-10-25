@@ -15,7 +15,7 @@ use tracing::debug;
 use url::form_urlencoded::Serializer;
 use wreq::header::{COOKIE, SET_COOKIE};
 
-use zeta_http::WreqError;
+use zeta_http::emulated::ResponseError;
 use zeta_utils::text::quoted_string_literal;
 
 use super::meta::{MediaDetails, shortcode_to_media_pk};
@@ -49,11 +49,8 @@ pub struct SessionTokens {
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// The request failed, or the response body could not be read.
-    #[error("request error: {0}")]
-    Request(WreqError),
-    /// The server responded with an unsuccessful status code.
-    #[error("the graphql request failed with status {0}")]
-    Status(wreq::StatusCode),
+    #[error(transparent)]
+    Response(#[from] ResponseError),
     /// The front page did not provide the LSD token the GraphQL request needs.
     #[error("the front page did not provide an lsd token")]
     MissingLsdToken,
@@ -63,9 +60,8 @@ pub enum Error {
 }
 
 impl From<wreq::Error> for Error {
-    /// Wraps `error` in a [`WreqError`], which redacts the request URL.
     fn from(error: wreq::Error) -> Self {
-        Self::Request(error.into())
+        Self::Response(ResponseError::from(error))
     }
 }
 
@@ -145,7 +141,7 @@ pub async fn fetch_session(
     let response = request.send().await?;
 
     if !response.status().is_success() {
-        return Err(Error::Status(response.status()));
+        return Err(ResponseError::Status(response.status()).into());
     }
 
     let csrf = response
@@ -236,7 +232,7 @@ async fn graphql(
     let response = request.body(body).send().await?;
 
     if !response.status().is_success() {
-        return Err(Error::Status(response.status()));
+        return Err(ResponseError::Status(response.status()).into());
     }
 
     let text = response.text().await?;

@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use figment::value::{Dict, Value};
 use serde::de::{DeserializeOwned, Error as _};
 use serde::{Deserialize, Deserializer, Serialize};
+use zeta_plugin::config::deserialize_with_unknown_keys;
 use zeta_plugin::inventory;
 
 /// An individual plugin's typed configuration: its `[plugins.<name>]` section.
@@ -56,12 +57,12 @@ where
         D: Deserializer<'de>,
     {
         // A custom implementation instead of `#[serde(flatten)]`, which would silently swallow
-        // unknown keys: `serde_ignored` reports every key the settings type ignores so the
-        // host can warn about a typo, or a setting removed by this version.
+        // unknown keys: `deserialize_with_unknown_keys` reports every key the settings type
+        // ignores so the host can warn about a typo, or a setting removed by this version.
         let section = Dict::deserialize(deserializer)?;
         let (enabled, settings) =
             split_enabled(section, default_enabled).map_err(D::Error::custom)?;
-        let (settings, unknown_keys) = settings_with_unknown_keys(&settings)
+        let (settings, unknown_keys) = deserialize_with_unknown_keys(&settings)
             .map_err(|error| D::Error::custom(format!("invalid settings: {error}")))?;
 
         Ok(Self {
@@ -87,20 +88,6 @@ fn split_enabled(
     };
 
     Ok((enabled, Value::from(section)))
-}
-
-/// Deserializes settings, collecting the keys the settings type did not recognize.
-fn settings_with_unknown_keys<S>(settings: &Value) -> Result<(S, Vec<String>), Box<figment::Error>>
-where
-    S: DeserializeOwned,
-{
-    let mut unknown_keys = Vec::new();
-    let settings = serde_ignored::deserialize(settings, |path| {
-        unknown_keys.push(path.to_string());
-    })
-    .map_err(Box::new)?;
-
-    Ok((settings, unknown_keys))
 }
 
 impl<'de, S> Deserialize<'de> for PluginConfig<S>
@@ -223,7 +210,7 @@ impl PluginsConfig {
             });
         };
 
-        let (settings, unknown_keys) = settings_with_unknown_keys(&section.settings)?;
+        let (settings, unknown_keys) = deserialize_with_unknown_keys(&section.settings)?;
 
         Ok(PluginConfig {
             enabled: section.enabled,

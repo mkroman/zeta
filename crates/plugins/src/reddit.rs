@@ -7,7 +7,7 @@
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
 //! environment variables); without it, the plugin only posts summaries.
 
-use reddit::Link;
+use reddit::{Link, URL_HOSTS};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tracing::error;
@@ -66,20 +66,7 @@ pub struct Reddit {
     mirror: Option<MirrorHandle>,
 }
 
-#[plugin(
-    name = "reddit",
-    settings = Settings,
-    urls(hosts = &[
-        "i.redd.it",
-        "oauth.reddit.com",
-        "old.reddit.com",
-        "preview.redd.it",
-        "redd.it",
-        "reddit.com",
-        "v.redd.it",
-        "www.reddit.com",
-    ])
-)]
+#[plugin(name = "reddit", settings = Settings, urls(hosts = URL_HOSTS))]
 impl Reddit {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;

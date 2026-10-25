@@ -68,84 +68,42 @@ impl Default for Settings {
 const CC: CommandSpec =
     CommandSpec::with_args::<CoinOpts>(".cc", "Quote any coin by symbol or fuzzy name");
 
-/// The `.btc` command.
-const BTC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".btc", "Quote Bitcoin (BTC) in a fiat currency");
-/// The `.eth` command.
-const ETH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".eth", "Quote Ethereum (ETH) in a fiat currency");
-/// The `.zcash` command.
-const ZCASH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".zcash", "Quote Zcash (ZEC) in a fiat currency");
-/// The `.zec` command.
-const ZEC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".zec", "Quote Zcash (ZEC) in a fiat currency");
-/// The `.ans` command (Antshares, the former name of Neo).
-const ANS: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".ans", "Quote Neo (NEO), formerly Antshares");
-/// The `.neo` command.
-const NEO: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".neo", "Quote Neo (NEO) in a fiat currency");
-/// The `.stellar` command.
-const STELLAR: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".stellar", "Quote Stellar (XLM) in a fiat currency");
-/// The `.xmr` command.
-const XMR: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".xmr", "Quote Monero (XMR) in a fiat currency");
-/// The `.xrp` command.
-const XRP: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".xrp", "Quote XRP in a fiat currency");
-/// The `.ltc` command.
-const LTC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".ltc", "Quote Litecoin (LTC) in a fiat currency");
-/// The `.etc` command.
-const ETC: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".etc", "Quote Ethereum Classic (ETC) in a fiat currency");
-/// The `.golem` command.
-const GOLEM: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".golem", "Quote Golem (GNT) in a fiat currency");
-/// The `.sia` command.
-const SIA: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".sia", "Quote Siacoin (SC) in a fiat currency");
-/// The `.doge` command.
-const DOGE: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".doge", "Quote Dogecoin (DOGE) in a fiat currency");
-/// The `.maid` command.
-const MAID: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".maid", "Quote MaidSafeCoin (MAID) in a fiat currency");
-/// The `.bcash` command.
-const BCASH: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".bcash", "Quote Bitcoin Cash (BCH) in a fiat currency");
-/// The `.trump` command.
-const TRUMP: CommandSpec =
-    CommandSpec::with_args::<QuoteOpts>(".trump", "Quote Trump (TRUMP) in a fiat currency");
+/// Defines the fixed coin commands and the [`COIN_COMMANDS`] table from one list of entries.
+///
+/// Keeping both in one place means a command cannot be registered without its symbol, or quoted
+/// without being registered.
+macro_rules! coin_commands {
+    ($($spec:ident => $trigger:literal, $symbol:literal, $description:literal;)*) => {
+        $(
+            #[doc = concat!("The `", $trigger, "` command, quoting ", $symbol, ".")]
+            const $spec: CommandSpec =
+                CommandSpec::with_args::<QuoteOpts>($trigger, $description);
+        )*
 
-/// Fixed coin commands, mapped to the symbol they quote.
-const COIN_COMMANDS: &[(CommandSpec, &str)] = &[
-    (BTC, "BTC"),
-    (ETH, "ETH"),
-    (ZCASH, "ZEC"),
-    (ZEC, "ZEC"),
-    (ANS, "NEO"),
-    (NEO, "NEO"),
-    (STELLAR, "XLM"),
-    (XMR, "XMR"),
-    (XRP, "XRP"),
-    (LTC, "LTC"),
-    (ETC, "ETC"),
-    (GOLEM, "GNT"),
-    (SIA, "SC"),
-    (DOGE, "DOGE"),
-    (MAID, "MAID"),
-    (BCASH, "BCH"),
-    (TRUMP, "TRUMP"),
-];
+        /// Fixed coin commands, mapped to the symbol they quote.
+        const COIN_COMMANDS: &[(CommandSpec, &str)] = &[$(($spec, $symbol),)*];
+    };
+}
 
-/// The commands handled by this plugin.
-const COMMANDS: &[CommandSpec] = &[
-    CC, BTC, ETH, ZCASH, ZEC, ANS, NEO, STELLAR, XMR, XRP, LTC, ETC, GOLEM, SIA, DOGE, MAID, BCASH,
-    TRUMP,
-];
+coin_commands! {
+    BTC => ".btc", "BTC", "Quote Bitcoin (BTC) in a fiat currency";
+    ETH => ".eth", "ETH", "Quote Ethereum (ETH) in a fiat currency";
+    ZCASH => ".zcash", "ZEC", "Quote Zcash (ZEC) in a fiat currency";
+    ZEC => ".zec", "ZEC", "Quote Zcash (ZEC) in a fiat currency";
+    ANS => ".ans", "NEO", "Quote Neo (NEO), formerly Antshares";
+    NEO => ".neo", "NEO", "Quote Neo (NEO) in a fiat currency";
+    STELLAR => ".stellar", "XLM", "Quote Stellar (XLM) in a fiat currency";
+    XMR => ".xmr", "XMR", "Quote Monero (XMR) in a fiat currency";
+    XRP => ".xrp", "XRP", "Quote XRP in a fiat currency";
+    LTC => ".ltc", "LTC", "Quote Litecoin (LTC) in a fiat currency";
+    ETC => ".etc", "ETC", "Quote Ethereum Classic (ETC) in a fiat currency";
+    GOLEM => ".golem", "GNT", "Quote Golem (GNT) in a fiat currency";
+    SIA => ".sia", "SC", "Quote Siacoin (SC) in a fiat currency";
+    DOGE => ".doge", "DOGE", "Quote Dogecoin (DOGE) in a fiat currency";
+    MAID => ".maid", "MAID", "Quote MaidSafeCoin (MAID) in a fiat currency";
+    BCASH => ".bcash", "BCH", "Quote Bitcoin Cash (BCH) in a fiat currency";
+    TRUMP => ".trump", "TRUMP", "Quote Trump (TRUMP) in a fiat currency";
+}
 
 /// Convert a coin price into another fiat currency.
 #[derive(FromArgs, ArgsInfo, Debug)]
@@ -255,9 +213,11 @@ impl CoinMarketCap {
         // rink plugin's live cryptocurrency units.
         ctx.shared.publish(Arc::clone(&client));
 
-        for command in COMMANDS {
+        for (command, _) in COIN_COMMANDS {
             subscriptions.command(*command);
         }
+
+        subscriptions.command(CC);
 
         Ok(Self {
             client,
@@ -759,23 +719,16 @@ mod tests {
 
     #[test]
     fn commands_are_consistent() {
-        assert!(COMMANDS.contains(&CC));
-
-        for (spec, _) in COIN_COMMANDS {
-            assert!(COMMANDS.contains(spec), "{spec:?} missing from COMMANDS");
-        }
-
-        let mut commands = COMMANDS
-            .iter()
-            .map(CommandSpec::trigger)
+        let mut triggers = std::iter::once(CC)
+            .chain(COIN_COMMANDS.iter().map(|(command, _)| *command))
+            .map(|command| command.trigger())
             .collect::<Vec<_>>();
-        commands.sort_unstable();
-        commands.dedup();
-        assert_eq!(
-            commands.len(),
-            COMMANDS.len(),
-            "duplicate command in COMMANDS"
-        );
+        let count = triggers.len();
+
+        triggers.sort_unstable();
+        triggers.dedup();
+
+        assert_eq!(count, triggers.len(), "duplicate command in the table");
     }
 
     #[test]

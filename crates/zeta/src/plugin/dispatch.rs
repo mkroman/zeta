@@ -672,6 +672,87 @@ mod tests {
         ));
     }
 
+    /// The event kind an [`Event`] carries, for the kinds a plugin subscribes to with a flag.
+    fn flagged_kind(event: &Event) -> Option<EventKind> {
+        match event {
+            Event::Message(_) => Some(EventKind::Message),
+            Event::Join(_) => Some(EventKind::Join),
+            Event::Part(_) => Some(EventKind::Part),
+            Event::Quit(_) => Some(EventKind::Quit),
+            Event::Nick(_) => Some(EventKind::Nick),
+            Event::Kick(_) => Some(EventKind::Kick),
+            Event::Ctcp(_) => Some(EventKind::Ctcp),
+            Event::Raw(_) => Some(EventKind::Raw),
+            // `Event` is non-exhaustive; commands and URLs are not flag-based kinds.
+            _ => None,
+        }
+    }
+
+    /// Every flag-based event kind must have a dispatch arm: a kind added to the subscription
+    /// table without routing would otherwise compile and never be delivered.
+    #[test]
+    fn every_event_kind_is_dispatched() {
+        let cases: &[(EventKind, Message)] = &[
+            (EventKind::Message, privmsg("hello")),
+            (EventKind::Join, message("nick!u@h", "JOIN", &["#test"])),
+            (EventKind::Part, message("nick!u@h", "PART", &["#test"])),
+            (EventKind::Quit, message("nick!u@h", "QUIT", &["bye"])),
+            (EventKind::Nick, message("nick!u@h", "NICK", &["nick_"])),
+            (
+                EventKind::Kick,
+                message("op!u@h", "KICK", &["#test", "nick", "flood"]),
+            ),
+            (EventKind::Ctcp, privmsg("\x01VERSION\x01")),
+            (
+                EventKind::Raw,
+                message("server.example", "SOMECMD", &["data"]),
+            ),
+        ];
+
+        assert_eq!(cases.len(), EventKind::ALL.len());
+
+        for (kind, message) in cases {
+            let mut index = EventIndex::default();
+            let mut mailbox = subscribe(&mut index, "sub", |subscriptions| match kind {
+                EventKind::Message => {
+                    subscriptions.receive_message();
+                }
+                EventKind::Join => {
+                    subscriptions.receive_join();
+                }
+                EventKind::Part => {
+                    subscriptions.receive_part();
+                }
+                EventKind::Quit => {
+                    subscriptions.receive_quit();
+                }
+                EventKind::Nick => {
+                    subscriptions.receive_nick();
+                }
+                EventKind::Kick => {
+                    subscriptions.receive_kick();
+                }
+                EventKind::Ctcp => {
+                    subscriptions.receive_ctcp();
+                }
+                EventKind::Raw => {
+                    subscriptions.receive_raw();
+                }
+            });
+
+            let _ = index.dispatch(&Filters::default(), message.clone());
+
+            let events = drain(&mut mailbox);
+
+            assert_eq!(events.len(), 1, "{kind:?} was not dispatched exactly once");
+            assert_eq!(
+                flagged_kind(&events[0]),
+                Some(*kind),
+                "{kind:?} was not dispatched"
+            );
+        }
+    }
+
     #[test]
     fn stopped_plugins_are_evicted() {
         let mut index = EventIndex::default();

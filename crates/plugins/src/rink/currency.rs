@@ -322,8 +322,8 @@ fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
     text
 }
 
-/// Returns whether `symbol` can be a unit definition name: at least two ASCII alphanumerics
-/// led by a letter (e.g. `ETH`, but not `1INCH`).
+/// Returns whether `symbol` can be a unit definition name: ASCII alphanumerics led by a letter
+/// (e.g. `ETH`, but not `1INCH`).
 fn valid_unit_symbol(symbol: &str) -> bool {
     let mut chars = symbol.chars();
 

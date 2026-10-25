@@ -245,7 +245,7 @@ mod tests {
     }
 
     /// Live smoke test against IMDb's GraphQL API, to catch contract drift that the recorded
-    /// fixtures cannot. Run with `cargo test -p zeta --all-features -- --ignored imdb::`.
+    /// fixtures cannot. Run with `cargo test -p plugins --all-features -- --ignored imdb::`.
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs network access"]
     async fn live_api_contract_smoke() {

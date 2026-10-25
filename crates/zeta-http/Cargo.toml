@@ -23,7 +23,7 @@ http = [
 # The transport-error wrapper alone (used by the mirror crate without the HTTP stack).
 request = ["dep:reqwest"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
-emulated = ["dep:wreq", "dep:wreq-util", "dep:zeta-plugin"]
+emulated = ["dep:thiserror", "dep:wreq", "dep:wreq-util", "dep:zeta-plugin"]
 # OAuth2 client-credentials token caching.
 oauth = ["http", "dep:tokio"]
 native-tls = ["reqwest?/native-tls"]
