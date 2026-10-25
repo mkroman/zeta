@@ -750,15 +750,19 @@ fn assert_model_limits(model_count: usize, blob_bytes: usize) {
     );
 }
 
-/// Preference order for character name aliases; the long `control` name wins.
-fn alias_rank(kind: &str) -> u8 {
+/// The preference order of the alias kinds `NameAliases.txt` defines; the long `control` name
+/// wins.
+///
+/// Returns `None` for a kind the file does not define, so a renamed or added type label fails
+/// the build instead of silently reordering which alias text becomes the stored name.
+fn alias_rank(kind: &str) -> Option<u8> {
     match kind {
-        "control" => 0,
-        "correction" => 1,
-        "alternate" => 2,
-        "figment" => 3,
-        "abbreviation" => 4,
-        _ => 5,
+        "control" => Some(0),
+        "correction" => Some(1),
+        "alternate" => Some(2),
+        "figment" => Some(3),
+        "abbreviation" => Some(4),
+        _ => None,
     }
 }
 
@@ -770,7 +774,8 @@ fn alias_rank(kind: &str) -> u8 {
 /// # Panics
 ///
 /// Panics when a selected alias is over 255 bytes, the same bound the explicit names carry:
-/// the runtime's 256-byte name buffer holds the name and its terminator.
+/// the runtime's 256-byte name buffer holds the name and its terminator. Panics too when an
+/// alias kind is not one of the five type labels the file defines.
 fn fold_aliases(entries: &mut Vec<(u32, String)>, aliases_text: &str) -> usize {
     let mut best: Vec<(u32, u8, &str, usize)> = Vec::new();
     for (line, record) in crate::ucd::records(aliases_text) {
@@ -788,7 +793,8 @@ fn fold_aliases(entries: &mut Vec<(u32, String)>, aliases_text: &str) -> usize {
             .next()
             .unwrap_or_else(|| panic!("{source}: missing alias kind"))
             .trim();
-        let rank = alias_rank(kind);
+        let rank =
+            alias_rank(kind).unwrap_or_else(|| panic!("{source}: unknown alias kind {kind:?}"));
         match best
             .iter_mut()
             .find(|(candidate, _, _, _)| *candidate == cp)
@@ -1598,6 +1604,14 @@ mod tests {
     fn alias_rank_prefers_the_long_control_name() {
         assert!(alias_rank("control") < alias_rank("abbreviation"));
         assert!(alias_rank("correction") < alias_rank("alternate"));
+    }
+
+    #[test]
+    #[should_panic(expected = "NameAliases.txt:2: unknown alias kind \"renamed\"")]
+    fn an_unknown_alias_kind_is_rejected() {
+        let aliases = "# NameAliases-18.0.0.txt\n0041; LATINA; renamed\n";
+        let mut entries = Vec::new();
+        fold_aliases(&mut entries, aliases);
     }
 
     #[test]
