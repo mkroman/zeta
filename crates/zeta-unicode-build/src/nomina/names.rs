@@ -12,7 +12,7 @@
 //!   4  u32 block_count                (ceil(name_count / 2^shift))
 //!   8  u16 run_count
 //!  10  u16 page_count                 (545)
-//!  12  u16 page_directory[page_count]  first run whose end is >= page << 11
+//!  12  u16 page_directory[page_count]  first run whose end is strictly after page << 11
 //!      run[run_count]                 { u32 first_cp, u16 length, u16 base_id }
 //!      (padding to a u32 boundary)
 //!      u32 block_bits[block_count]    MSB-first bit offset of each block
@@ -539,7 +539,11 @@ fn runs(entries: &[(u32, String)]) -> (Vec<(u32, u32, u32)>, usize) {
     (runs, count)
 }
 
-/// `page_directory[page]` is the first run whose end is at or after `page << NAME_PAGE_SHIFT`.
+/// `page_directory[page]` is the first run whose end is strictly after `page << NAME_PAGE_SHIFT`.
+///
+/// "Strictly" matters: a run ending exactly at the page base holds no code point of the page,
+/// so it must be skipped. The runtime's run scan and index validation accept exactly this
+/// directory.
 fn page_directory(runs: &[(u32, u32, u32)]) -> Vec<u16> {
     let mut directory = Vec::with_capacity(NAME_PAGE_COUNT);
     let mut index = 0usize;
