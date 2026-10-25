@@ -659,7 +659,7 @@ mod tests {
     use super::*;
     use coinmarketcap::model::FiatQuote;
     use zeta_plugin::ArgsError;
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::{plain, settings_tests};
 
     /// Builds a coin list for cache tests.
     fn test_coins() -> Vec<Coin> {
@@ -883,6 +883,9 @@ mod tests {
             parse_currency(Some("xyz"), "USD", is_valid),
             Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
         ));
+
+        // Without a fiat cache, validation is deferred to the API.
+        assert_eq!(parse_currency(Some("xyz"), "USD", |_| true).unwrap(), "XYZ");
     }
 
     #[test]
@@ -902,12 +905,6 @@ mod tests {
 
         assert!(plugin.is_valid_currency("USD"));
         assert!(!plugin.is_valid_currency("XYZ"));
-    }
-
-    #[test]
-    fn parses_currencies_without_fiat_cache() {
-        // Without a fiat cache, validation is deferred to the API.
-        assert_eq!(parse_currency(Some("xyz"), "USD", |_| true).unwrap(), "XYZ");
     }
 
     #[test]
@@ -954,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_quote_with_unknown_currency_code() {
+    fn formats_quote_without_a_sign_or_a_quote() {
         let mut quote = test_quote();
         quote.quote = HashMap::from([(
             "AUD".to_string(),
@@ -966,17 +963,12 @@ mod tests {
             },
         )]);
 
-        let formatted = format_quote(&quote, "AUD", None);
+        let unknown = plain(&format_quote(&quote, "AUD", None));
+        assert!(unknown.contains("1234.50 AUD"), "{unknown}");
+        assert!(unknown.contains("n/a"), "{unknown}");
 
-        assert!(formatted.contains("1234.50 AUD"));
-        assert!(formatted.contains("n/a"));
-    }
-
-    #[test]
-    fn formats_quote_for_missing_currency() {
-        let formatted = format_quote(&test_quote(), "DKK", None);
-
-        assert!(formatted.contains("has no quote in DKK"), "{formatted:?}");
+        let missing = plain(&format_quote(&test_quote(), "DKK", None));
+        assert!(missing.contains("has no quote in DKK"), "{missing}");
     }
 
     #[test]

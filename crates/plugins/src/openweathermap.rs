@@ -340,7 +340,7 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::{plain, settings_tests};
 
     /// Builds a weather response for formatting tests.
     fn test_response() -> WeatherResponse {
@@ -414,25 +414,33 @@ mod tests {
     }
 
     #[test]
-    fn formats_metric_weather() {
-        let formatted = format_weather(&test_response(), Units::Metric);
-
-        assert!(formatted.contains("Copenhagen, DK"), "{formatted}");
-        assert!(formatted.contains("12.5 °C"), "{formatted}");
-        assert!(formatted.contains("feels like \x0f11.0 °C"), "{formatted}");
-        assert!(
-            formatted.contains("3.0 m/s (gusts: 6.5 m/s)"),
-            "{formatted}"
-        );
-    }
-
-    #[test]
-    fn imperial_weather_swaps_the_unit_labels() {
+    fn formats_weather_in_both_unit_systems() {
         // The API converts the values itself, so formatting only swaps the labels: the same
-        // fixture numbers are rendered with the imperial unit names.
-        let formatted = format_weather(&test_response(), Units::Imperial);
+        // fixture numbers are rendered with the selected unit names.
+        let cases = [
+            (
+                "metric",
+                Units::Metric,
+                "12.5 °C",
+                "3.0 m/s (gusts: 6.5 m/s)",
+            ),
+            ("imperial", Units::Imperial, "12.5 °F", "3.0 mph"),
+        ];
 
-        assert!(formatted.contains("12.5 °F"), "{formatted}");
-        assert!(formatted.contains("3.0 mph"), "{formatted}");
+        for (case, units, temperature, wind) in cases {
+            let formatted = plain(&format_weather(&test_response(), units));
+
+            assert!(
+                formatted.contains("Right now in Copenhagen, DK"),
+                "{case}: {formatted}"
+            );
+            assert!(formatted.contains(temperature), "{case}: {formatted}");
+            assert!(formatted.contains("feels like 11.0"), "{case}: {formatted}");
+            assert!(formatted.contains(wind), "{case}: {formatted}");
+            assert!(
+                formatted.contains("with light rain. Wind:"),
+                "{case}: {formatted}"
+            );
+        }
     }
 }

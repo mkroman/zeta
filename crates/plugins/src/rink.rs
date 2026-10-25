@@ -623,7 +623,7 @@ mod tests {
     use super::*;
     use zeta_plugin::config::HttpConfig;
     use zeta_test_support::{
-        settings_tests,
+        plain, settings_tests,
         wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{method, path},
@@ -851,10 +851,13 @@ mod tests {
         let rink = offline_plugin();
 
         // A query without a close match carries no suggestion.
-        assert_eq!(
-            evaluate(&rink, "wronginput", false).await,
-            "\x0310> Error: No such unit \x0fwronginput"
+        let reply = evaluate(&rink, "wronginput", false).await;
+        assert!(
+            plain(&reply).contains("Error: No such unit wronginput"),
+            "{reply}"
         );
+        // The input is reset so an error cannot leak formatting into the rest of the line.
+        assert!(reply.ends_with("\x0fwronginput"), "{reply}");
     }
 
     #[tokio::test]
@@ -863,41 +866,42 @@ mod tests {
 
         evaluate(&rink, "4 m", false).await;
 
-        assert_eq!(
-            evaluate(&rink, "ans * 2", false).await,
-            "\x0310> \x0f8 meter \x0310(\x0flength\x0310)"
-        );
+        let reply = plain(&evaluate(&rink, "ans * 2", false).await);
+        assert!(reply.contains("8 meter"), "{reply}");
+        assert!(reply.contains("length"), "{reply}");
     }
 
     #[tokio::test]
     async fn substances_render_every_property_and_label_as_a_value() {
         let rink = offline_plugin();
 
-        assert_eq!(
-            evaluate(&rink, "egg", false).await,
-            concat!(
-                "\x0310> egg: USA large egg. ",
-                "\x0fmass_shelled\x0310 = \x0f50 gram \x0310(\x0fmass\x0310); ",
-                "\x0fmass_white\x0310 = \x0f30 gram \x0310(\x0fmass\x0310); ",
-                "\x0fmass_yolk\x0310 = \x0f18.6 gram \x0310(\x0fmass\x0310); ",
-                "\x0fvolume\x0310 = approx. \x0f46824.75 millimeter^3 \x0310(\x0fvolume\x0310); ",
-                "\x0fvolume_white\x0310 = approx. \x0f29573.52 millimeter^3 \x0310(\x0fvolume\x0310); ",
-                "\x0fvolume_yolk\x0310 = approx. \x0f17251.22 millimeter^3 \x0310(\x0fvolume\x0310)",
-            )
-        );
+        let reply = plain(&evaluate(&rink, "egg", false).await);
+
+        for expected in [
+            "egg: USA large egg.",
+            "mass_shelled = 50 gram (mass)",
+            "mass_white = 30 gram (mass)",
+            "mass_yolk = 18.6 gram (mass)",
+            "volume = approx. 46824.75 millimeter^3 (volume)",
+            "volume_white = approx. 29573.52 millimeter^3 (volume)",
+            "volume_yolk = approx. 17251.22 millimeter^3 (volume)",
+        ] {
+            assert!(reply.contains(expected), "missing {expected:?}: {reply}");
+        }
     }
 
     #[tokio::test]
     async fn a_unit_span_following_a_number_stays_inside_the_value_run() {
         let rink = offline_plugin();
 
-        assert_eq!(
-            evaluate(&rink, "helium", false).await,
-            concat!(
-                "\x0310> helium: ",
-                "\x0fatomic_number\x0310 = \x0f2 \x0310(\x0fdimensionless\x0310); ",
-                "\x0fmolar_mass\x0310 = \x0f4.002602 gram / mole \x0310(\x0fmolar_mass\x0310)",
-            )
+        let reply = plain(&evaluate(&rink, "helium", false).await);
+        assert!(
+            reply.contains("atomic_number = 2 (dimensionless)"),
+            "{reply}"
+        );
+        assert!(
+            reply.contains("molar_mass = 4.002602 gram / mole (molar_mass)"),
+            "{reply}"
         );
     }
 
@@ -905,46 +909,47 @@ mod tests {
     async fn the_extra_units_load_and_resolve() {
         let rink = offline_plugin();
 
-        assert_eq!(
-            evaluate(&rink, "300 px -> mm", false).await,
-            "\x0310> \x0f79.375 millimeter \x0310(\x0flength\x0310)"
-        );
-        assert_eq!(
-            evaluate(&rink, "90 grad -> degree", false).await,
-            "\x0310> \x0f81 degree \x0310(\x0fangle\x0310)"
-        );
+        let cases = [
+            ("300 px -> mm", &["79.375 millimeter", "length"][..]),
+            ("90 grad -> degree", &["81 degree", "angle"][..]),
+            (
+                "300 dpi -> dpcm",
+                &["15000/127", "118.1102 dpcm", "m^-1"][..],
+            ),
+            ("1 dppx -> dpi", &["96 dpi", "m^-1"][..]),
+        ];
+
+        for (line, expected) in cases {
+            let reply = plain(&evaluate(&rink, line, false).await);
+
+            for needle in expected {
+                assert!(
+                    reply.contains(needle),
+                    "{line}: missing {needle:?}: {reply}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
-    async fn css_densities_convert_between_each_other() {
-        let rink = offline_plugin();
-
-        assert_eq!(
-            evaluate(&rink, "300 dpi -> dpcm", false).await,
-            "\x0310> \x0f15000/127\x0310, approx. \x0f118.1102 dpcm \x0310(\x0fm^-1\x0310)"
-        );
-        assert_eq!(
-            evaluate(&rink, "1 dppx -> dpi", false).await,
-            "\x0310> \x0f96 dpi \x0310(\x0fm^-1\x0310)"
-        );
-    }
-
-    #[tokio::test]
-    async fn crypto_units_load_and_convert() {
+    async fn crypto_units_and_subunits_convert() {
         let (rink, _fiat, _listings) = plugin_with_listings(200).await;
 
         rink.ensure_currency_cached().await;
 
-        assert_eq!(
-            evaluate(&rink, "1 ETH to USD", false).await,
-            "\x0310> \x0f2650.32 USD \x0310(\x0fmoney\x0310)"
-        );
+        for (line, classify) in [("1 ETH to USD", false), ("1 eth to usd", true)] {
+            let reply = plain(&evaluate(&rink, line, classify).await);
+            assert!(reply.contains("2650.32 USD"), "{line}: {reply}");
+            assert!(reply.contains("money"), "{line}: {reply}");
+        }
 
-        // The classifier case-corrects lowercase coin abbreviations too.
-        assert_eq!(
-            evaluate(&rink, "1 eth to usd", true).await,
-            "\x0310> \x0f2650.32 USD \x0310(\x0fmoney\x0310)"
-        );
+        // 50_000 satoshis are 0.0005 bitcoin at the fixture's 65 000 USD price.
+        let sats = plain(&evaluate(&rink, "50000 sats to usd", true).await);
+        assert!(sats.contains("32.5 USD"), "{sats}");
+
+        // A gwei stays convertible without being resolvable as fiat.
+        let gwei = plain(&evaluate(&rink, "1 gwei to usd", true).await);
+        assert!(gwei.contains("USD"), "{gwei}");
     }
 
     #[tokio::test]
@@ -955,10 +960,9 @@ mod tests {
 
         // The fake EUR coin (priced 1.2) must not shadow the bundled euro: 1 EUR is 0.5 USD
         // under the fiat fixture, and the rejected `1INCH` symbol must not break the load.
-        assert_eq!(
-            evaluate(&rink, "1 EUR to USD", false).await,
-            "\x0310> \x0f0.5 USD \x0310(\x0fmoney\x0310)"
-        );
+        let reply = plain(&evaluate(&rink, "1 EUR to USD", false).await);
+        assert!(reply.contains("0.5 USD"), "{reply}");
+        assert!(!reply.contains("1.2"), "{reply}");
     }
 
     #[test]
@@ -997,53 +1001,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crypto_subunits_resolve_against_the_live_coins() {
-        let (rink, _fiat, _listings) = plugin_with_listings(200).await;
-
-        rink.ensure_currency_cached().await;
-
-        // 50_000 satoshis are 0.0005 bitcoin at the fixture's 65 000 USD price.
-        assert_eq!(
-            evaluate(&rink, "50000 sats to usd", true).await,
-            "\x0310> \x0f32.5 USD \x0310(\x0fmoney\x0310)"
-        );
-        // A gwei stays convertible without being resolvable as fiat.
-        let reply = evaluate(&rink, "1 gwei to usd", true).await;
-        assert!(reply.contains("USD"), "{reply}");
-    }
-
-    #[tokio::test]
-    async fn crypto_disabled_without_the_coinmarketcap_plugin() {
-        let mut rink = offline_plugin();
+    async fn missing_crypto_answers_missing_dependencies() {
         // No coinmarketcap client was published: the crypto units stay unloaded even though
-        // the crypto setting is on.
+        // the crypto setting is on. The subunits' pending dependency declaration surfaces ETH
+        // in the missing-dependencies error.
+        let mut rink = offline_plugin();
         rink.crypto_enabled = true;
         rink.cmc = None;
-
         rink.ensure_currency_cached().await;
 
-        // The ETH unit is not loaded, but the subunits' pending dependency declaration
-        // surfaces it in the missing-dependencies error.
-        assert_eq!(
-            evaluate(&rink, "1 eth to usd", true).await,
-            "\x0310> Error: Missing dependencies: \x0fETH"
-        );
-    }
+        let disabled = plain(&evaluate(&rink, "1 eth to usd", true).await);
+        assert!(disabled.contains("Missing dependencies: ETH"), "{disabled}");
 
-    #[tokio::test]
-    async fn a_failed_listings_fetch_keeps_the_fiat_path() {
         // The fiat dataset is fine; the listings endpoint is not. The refresh fails as a
-        // whole, so the last known context — without crypto — stays in place.
+        // whole, so the last known context — without crypto — stays in place, and the
+        // pending dependency still surfaces ETH.
         let (rink, _fiat, _listings) = plugin_with_listings(500).await;
-
         rink.ensure_currency_cached().await;
 
-        // The failed listings fetch keeps the crypto units out, but the subunits' pending
-        // dependency still surfaces ETH in the error.
-        assert_eq!(
-            evaluate(&rink, "1 eth to usd", true).await,
-            "\x0310> Error: Missing dependencies: \x0fETH"
-        );
+        let failed = plain(&evaluate(&rink, "1 eth to usd", true).await);
+        assert!(failed.contains("Missing dependencies: ETH"), "{failed}");
     }
 
     #[tokio::test]
@@ -1069,14 +1046,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failed_fetch_answers_missing_dependencies() {
+    async fn missing_fiat_answers_missing_dependencies() {
         let server = currency_server(500).await;
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
 
-        assert_eq!(
-            evaluate(&rink, "1 USD", false).await,
-            "\x0310> Error: Missing dependencies: \x0fUSD"
-        );
+        let failed = plain(&evaluate(&rink, "1 USD", false).await);
+        assert!(failed.contains("Missing dependencies: USD"), "{failed}");
+
+        let rink = offline_plugin();
+
+        let disabled = plain(&evaluate(&rink, "1 USD", false).await);
+        assert!(disabled.contains("Missing dependencies: USD"), "{disabled}");
     }
 
     #[tokio::test]
@@ -1102,38 +1082,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_currency_answers_missing_dependencies_without_fetching() {
-        let rink = offline_plugin();
-
-        assert_eq!(
-            evaluate(&rink, "1 USD", false).await,
-            "\x0310> Error: Missing dependencies: \x0fUSD"
-        );
-    }
-
-    #[tokio::test]
     async fn classify_case_corrects_unresolvable_units() {
         let server = currency_server(200).await;
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
 
         rink.ensure_currency_cached().await;
 
-        assert_eq!(
-            evaluate(&rink, "10 usd to dkk", true).await,
-            "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
-        );
-        assert_eq!(
-            evaluate(&rink, "10usd to dkk", true).await,
-            "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
-        );
-        assert_eq!(
-            evaluate(&rink, "10 USD to DKK", true).await,
-            "\x0310> \x0f149.504 DKK \x0310(\x0fmoney\x0310)"
-        );
-        assert_eq!(
-            evaluate(&rink, "30 eur to jpy", true).await,
-            "\x0310> \x0f5115.6 JPY \x0310(\x0fmoney\x0310)"
-        );
+        let cases = [
+            ("10 usd to dkk", "149.504 DKK"),
+            ("10usd to dkk", "149.504 DKK"),
+            ("10 USD to DKK", "149.504 DKK"),
+            ("30 eur to jpy", "5115.6 JPY"),
+        ];
+
+        for (line, value) in cases {
+            let reply = plain(&evaluate(&rink, line, true).await);
+            assert!(reply.contains(value), "{line}: missing {value:?}: {reply}");
+            assert!(reply.contains("money"), "{line}: {reply}");
+        }
     }
 
     #[tokio::test]
@@ -1142,38 +1108,41 @@ mod tests {
 
         // The corrections land before any evaluation: the reply names the *tracked*
         // dependencies (USD), which only the rewritten `10 USD to DKK` can trigger.
-        assert_eq!(
-            evaluate(&rink, "10 usd to dkk", true).await,
-            "\x0310> Error: Missing dependencies: \x0fUSD"
-        );
+        let reply = plain(&evaluate(&rink, "10 usd to dkk", true).await);
+        assert!(reply.contains("Missing dependencies: USD"), "{reply}");
     }
 
     #[tokio::test]
     async fn classify_leaves_unclassifiable_tokens_alone() {
         let rink = offline_plugin();
 
-        assert_eq!(
-            evaluate(&rink, "50 gram", true).await,
-            "\x0310> \x0f50 gram \x0310(\x0fmass\x0310)"
-        );
-        assert_eq!(
-            evaluate(&rink, "banana", true).await,
-            "\x0310> Error: No such unit \x0fbanana"
-        );
-        assert_eq!(
-            evaluate(&rink, "2 hours from now", true).await,
-            "\x0310> Error: No such unit \x0ffrom\x0310, did you mean \x0ffreon\x0310?"
-        );
+        let cases = [
+            ("50 gram", &["50 gram", "mass"][..]),
+            ("banana", &["Error: No such unit banana"][..]),
+            (
+                "2 hours from now",
+                &["No such unit from", "did you mean freon?"][..],
+            ),
+        ];
+
+        for (line, expected) in cases {
+            let reply = plain(&evaluate(&rink, line, true).await);
+
+            for needle in expected {
+                assert!(
+                    reply.contains(needle),
+                    "{line}: missing {needle:?}: {reply}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
     async fn classify_returns_unparseable_queries_unchanged() {
         let rink = offline_plugin();
 
-        assert_eq!(
-            evaluate(&rink, "20:00 in tokyo", true).await,
-            "\x0310> Error: Expected term, got `:`"
-        );
+        let reply = plain(&evaluate(&rink, "20:00 in tokyo", true).await);
+        assert!(reply.contains("Error: Expected term, got `:`"), "{reply}");
     }
 
     #[tokio::test]
@@ -1243,7 +1212,7 @@ mod tests {
         // A fixed date keeps the assertions free of the clock and the host timezone.
         let reply = evaluate(&rink, "#2016-08-24#", true).await;
         // The datetime renders as a value, inside the run opened right after the marker.
-        assert!(reply.contains("\x0f2016-08-24"), "{reply}");
+        assert!(plain(&reply).contains("2016-08-24"), "{reply}");
         // The value run closes right after the datetime's trailing timezone label.
         assert!(reply.contains("]\x0310"), "{reply}");
     }

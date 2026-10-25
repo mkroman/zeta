@@ -377,9 +377,8 @@ mod tests {
         service.load().await.unwrap();
         service.start_scheduler();
 
-        // The scheduler wakes for an alert created while its cache is empty.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
+        // The scheduler wakes through the stored notification for an alert created while its
+        // cache is empty, so no settling delay is needed here.
         let now = Utc::now();
         let first = service
             .create(new_alert(

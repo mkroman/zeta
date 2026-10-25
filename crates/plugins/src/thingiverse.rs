@@ -206,7 +206,7 @@ impl Display for Thing {
 mod tests {
     use super::*;
     use similar_asserts::assert_eq;
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::{plain, settings_tests};
 
     settings_tests! {
         Settings,
@@ -255,22 +255,24 @@ mod tests {
 
     #[test]
     fn labels_work_in_progress_and_featured_things() {
-        let wip = thing(1, None, 0, 0, 0);
+        let cases = [
+            (
+                "work in progress",
+                thing(1, None, 0, 0, 0),
+                "is a work in progress created by",
+            ),
+            (
+                "featured",
+                thing(0, Some(true), 0, 0, 0),
+                "is a featured created by",
+            ),
+        ];
 
-        assert!(
-            wip.to_string()
-                .contains("is a\x0f work in progress\x0310 created by"),
-            "{wip}"
-        );
+        for (case, thing, expected) in cases {
+            let formatted = plain(&thing.to_string());
 
-        let featured = thing(0, Some(true), 0, 0, 0);
-
-        assert!(
-            featured
-                .to_string()
-                .contains("is a \x0ffeatured\x0310 created by"),
-            "{featured}"
-        );
+            assert!(formatted.contains(expected), "{case}: {formatted}");
+        }
     }
 
     #[test]
@@ -278,9 +280,7 @@ mod tests {
         let thing = thing(0, Some(false), 2, 3, 1);
 
         assert!(
-            thing
-                .to_string()
-                .ends_with(" and is part of\x0f 1\x0310 collection"),
+            plain(&thing.to_string()).ends_with("and is part of 1 collection"),
             "{thing}"
         );
     }

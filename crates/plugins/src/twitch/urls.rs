@@ -86,10 +86,11 @@ mod tests {
     use zeta_test_support::assert_parses;
 
     #[test]
-    fn test_parse_stream_urls() {
+    fn test_parse_twitch_urls() {
         assert_parses(
             parse_twitch_url,
             &[
+                // Streams.
                 (
                     "https://twitch.tv/lirik",
                     Some(UrlKind::Stream("lirik".to_string())),
@@ -98,15 +99,16 @@ mod tests {
                     "https://www.twitch.tv/lirik/",
                     Some(UrlKind::Stream("lirik".to_string())),
                 ),
-            ],
-        );
-    }
-
-    #[test]
-    fn test_parse_video_urls() {
-        assert_parses(
-            parse_twitch_url,
-            &[
+                // Twitch usernames are 4-25 characters; both edges parse.
+                (
+                    "https://twitch.tv/abcd",
+                    Some(UrlKind::Stream("abcd".to_string())),
+                ),
+                (
+                    "https://twitch.tv/abcdefghijklmnopqrstuvwxy",
+                    Some(UrlKind::Stream("abcdefghijklmnopqrstuvwxy".to_string())),
+                ),
+                // Videos.
                 (
                     "https://twitch.tv/videos/2119948564",
                     Some(UrlKind::Video("2119948564".to_string())),
@@ -117,15 +119,7 @@ mod tests {
                 ),
                 // Video ids are numeric.
                 ("https://twitch.tv/videos/abc123", None),
-            ],
-        );
-    }
-
-    #[test]
-    fn test_parse_clip_urls() {
-        assert_parses(
-            parse_twitch_url,
-            &[
+                // Clips.
                 (
                     "https://clips.twitch.tv/AbrasiveFurryDolphGJ7K8WfDb4g",
                     Some(UrlKind::Clip("AbrasiveFurryDolphGJ7K8WfDb4g".to_string())),
@@ -140,33 +134,7 @@ mod tests {
                 ),
                 // Clip ids are alphanumeric.
                 ("https://clips.twitch.tv/ab;cd", None),
-            ],
-        );
-    }
-
-    #[test]
-    fn test_username_length_window() {
-        // Twitch usernames are 4-25 characters; both edges parse.
-        assert_parses(
-            parse_twitch_url,
-            &[
-                (
-                    "https://twitch.tv/abcd",
-                    Some(UrlKind::Stream("abcd".to_string())),
-                ),
-                (
-                    "https://twitch.tv/abcdefghijklmnopqrstuvwxy",
-                    Some(UrlKind::Stream("abcdefghijklmnopqrstuvwxy".to_string())),
-                ),
-            ],
-        );
-    }
-
-    #[test]
-    fn test_invalid_urls() {
-        assert_parses(
-            parse_twitch_url,
-            &[
+                // Invalid URLs.
                 ("https://example.com/lirik", None),
                 ("https://twitch.tv/", None),
                 ("https://twitch.tv/li;rik", None),

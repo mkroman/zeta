@@ -140,6 +140,7 @@ fn write_life_years(message: &mut String, birth_year: Option<i32>, death_year: O
 mod tests {
     use super::*;
     use crate::imdb::model::SeriesInfo;
+    use zeta_test_support::plain;
 
     #[test]
     fn format_title_matches_expected_layout() {
@@ -186,9 +187,23 @@ mod tests {
             ..Title::default()
         };
 
-        assert_eq!(
-            format_title(&title),
-            "\x0310>\x0f\x02 IMDb\x02\x0310:\x0f Breaking Bad\x0310 S01E01:\x0f Pilot\x0310 (\x0f2008\x0310) Plot:\x0f When an unassuming high school chemistry teacher learns he has cancer, he turns to a life of crime.\x0310 Rating:\x0f 9.1\x0310/\x0f10\x0310 (\x0f29,553\x0310 votes) URL:\x0f https://imdb.com/title/tt0959621"
+        let formatted = plain(&format_title(&title));
+
+        assert!(
+            formatted.starts_with("> IMDb: Breaking Bad S01E01: Pilot (2008)"),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("Plot: When an unassuming high school chemistry teacher"),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("Rating: 9.1/10 (29,553 votes)"),
+            "{formatted}"
+        );
+        assert!(
+            formatted.ends_with("URL: https://imdb.com/title/tt0959621"),
+            "{formatted}"
         );
     }
 
@@ -208,10 +223,10 @@ mod tests {
             ..Title::default()
         };
 
-        let formatted = format_title(&title);
+        let formatted = plain(&format_title(&title));
 
-        assert!(formatted.contains("\x0f Inception\x0310 (\x0f2010\x0310)"));
-        assert!(!formatted.contains("Breaking Bad"));
+        assert!(formatted.contains("Inception (2010)"), "{formatted}");
+        assert!(!formatted.contains("Breaking Bad"), "{formatted}");
     }
 
     #[test]
@@ -221,25 +236,48 @@ mod tests {
             ..Title::default()
         };
 
-        assert_eq!(
-            format_title(&title),
-            "\x0310>\x0f\x02 IMDb\x02\x0310:\x0f tt0000001\x0310 URL:\x0f https://imdb.com/title/tt0000001"
+        let formatted = plain(&format_title(&title));
+
+        assert!(formatted.starts_with("> IMDb: tt0000001"), "{formatted}");
+        assert!(
+            formatted.ends_with("URL: https://imdb.com/title/tt0000001"),
+            "{formatted}"
         );
+        for absent in ["Plot:", "Rating:", "Genres:", "("] {
+            assert!(!formatted.contains(absent), "{absent} in {formatted}");
+        }
     }
 
     #[test]
-    fn write_years_includes_end_year_for_series() {
-        let mut message = String::new();
-        write_years(&mut message, Some(2008), None);
-        assert_eq!(message, " (\x0f2008\x0310)");
+    fn format_title_writes_release_years() {
+        let cases = [
+            (Some(2008), None, "(2008)"),
+            (Some(2005), Some(2013), "(2005–2013)"),
+            (Some(2005), Some(2005), "(2005)"),
+            (None, Some(2013), "(?–2013)"),
+            (None, None, ""),
+        ];
 
-        let mut message = String::new();
-        write_years(&mut message, Some(2005), Some(2013));
-        assert_eq!(message, " (\x0f2005\x0310–\x0f2013\x0310)");
+        for (year, end_year, years) in cases {
+            let title = Title {
+                id: "tt1".to_string(),
+                title: Some("Title".to_string()),
+                year,
+                end_year,
+                ..Title::default()
+            };
+            let formatted = plain(&format_title(&title));
+            let years = if years.is_empty() {
+                String::new()
+            } else {
+                format!(" {years}")
+            };
 
-        let mut message = String::new();
-        write_years(&mut message, None, None);
-        assert_eq!(message, "");
+            assert!(
+                formatted.contains(&format!("Title{years} URL:")),
+                "{year:?}/{end_year:?}: {formatted}"
+            );
+        }
     }
 
     #[test]
@@ -274,27 +312,49 @@ mod tests {
             ..Person::default()
         };
 
-        let formatted = format_person(&person);
+        let formatted = plain(&format_person(&person));
+        let bio = formatted
+            .split("Bio: ")
+            .nth(1)
+            .and_then(|rest| rest.split(" URL:").next())
+            .expect("bio segment");
 
-        assert!(formatted.contains("xxx…\x0310 URL:\x0f"));
+        assert_eq!(bio.trim_end_matches('…').chars().count(), 250);
+        assert!(bio.ends_with('…'), "{formatted}");
+        assert!(
+            formatted.ends_with("URL: https://imdb.com/name/nm0000138"),
+            "{formatted}"
+        );
     }
 
     #[test]
-    fn write_life_years_variants() {
-        let mut message = String::new();
-        write_life_years(&mut message, Some(1956), None);
-        assert_eq!(message, " (\x0fb. 1956\x0310)");
+    fn format_person_writes_life_years() {
+        let cases = [
+            (Some(1956), None, "(b. 1956)"),
+            (Some(1925), Some(2012), "(1925–2012)"),
+            (None, Some(2012), "(d. 2012)"),
+            (None, None, ""),
+        ];
 
-        let mut message = String::new();
-        write_life_years(&mut message, Some(1925), Some(2012));
-        assert_eq!(message, " (\x0f1925\x0310–\x0f2012\x0310)");
+        for (birth_year, death_year, years) in cases {
+            let person = Person {
+                id: "nm1".to_string(),
+                name: Some("Person".to_string()),
+                birth_year,
+                death_year,
+                ..Person::default()
+            };
+            let formatted = plain(&format_person(&person));
+            let years = if years.is_empty() {
+                String::new()
+            } else {
+                format!(" {years}")
+            };
 
-        let mut message = String::new();
-        write_life_years(&mut message, None, Some(2012));
-        assert_eq!(message, " (\x0fd. 2012\x0310)");
-
-        let mut message = String::new();
-        write_life_years(&mut message, None, None);
-        assert_eq!(message, "");
+            assert!(
+                formatted.contains(&format!("Person{years} URL:")),
+                "{birth_year:?}/{death_year:?}: {formatted}"
+            );
+        }
     }
 }

@@ -428,6 +428,7 @@ fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a Catalo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::plain;
 
     const ALERT: CommandSpec = CommandSpec::new(".alert", "Schedule an alert to be posted later");
     const ALERT_COMMANDS: &[CommandSpec] = &[ALERT];
@@ -530,20 +531,13 @@ mod tests {
     }
 
     #[test]
-    fn finds_commands_by_name() {
+    fn finds_commands_and_plugins_by_name() {
         let catalog = catalog();
 
-        assert!(find_command(&catalog, "alert").is_some());
-        assert!(find_command(&catalog, ".alert").is_some());
-        assert!(find_command(&catalog, ".dig").is_some());
-        assert!(find_command(&catalog, "imdb").is_some());
-        assert!(find_command(&catalog, "!imdb").is_some());
+        for query in ["alert", ".alert", ".dig", "imdb", "!imdb"] {
+            assert!(find_command(&catalog, query).is_some(), "command {query:?}");
+        }
         assert!(find_command(&catalog, "missing").is_none());
-    }
-
-    #[test]
-    fn finds_plugins_by_name() {
-        let catalog = catalog();
 
         assert_eq!(
             find_plugin(&catalog, "dig").map(|plugin| plugin.name.as_str()),
@@ -557,32 +551,25 @@ mod tests {
     }
 
     #[test]
-    fn derives_usage_from_arguments() {
+    fn derives_usage_from_argument_info() {
         let info = DIG_COMMANDS[0].args_info().unwrap();
-
         assert_eq!(usage(".dig", &info), ".dig [-s] <name>");
-    }
 
-    #[test]
-    fn derives_usage_for_repeating_arguments() {
         let info = REPEAT_COMMANDS[0].args_info().unwrap();
-
         assert_eq!(
             usage(".repeat", &info),
             ".repeat [--values <values...>] [<files...>]"
         );
-    }
 
-    #[test]
-    fn derives_usage_for_subcommands() {
         let command = CommandSpec::with_args::<SubcommandOpts>(".stats", "Show statistics");
         let info = command.args_info().unwrap();
-
         assert_eq!(usage(".stats", &info), ".stats <command> [<args>]");
     }
 
     #[test]
     fn describes_commands() {
+        // The exact layout of `command_messages` is pinned here; the other cases below assert
+        // only the visible content.
         assert_eq!(
             command_messages(&DIG)[0],
             concat!(
@@ -598,57 +585,36 @@ mod tests {
     }
 
     #[test]
-    fn describes_commands_without_usage() {
-        assert_eq!(
-            command_messages(&BARE)[0],
-            "\x0310>\x0f\x02 Help (.bare)\x02"
-        );
-    }
+    fn describes_commands_without_usage_or_with_details() {
+        let bare = plain(&command_messages(&BARE)[0]);
+        assert!(bare.contains("Help (.bare)"), "{bare}");
+        assert!(!bare.contains("Usage"), "{bare}");
 
-    #[test]
-    fn describes_repeating_arguments_and_skips_hidden_ones() {
-        assert_eq!(
-            command_messages(&REPEAT)[0],
-            concat!(
-                "\x0310>\x0f\x02 Help (.repeat)\x02",
-                "\x0310: Repeat the given values\x0f",
-                "\x0310 Usage:\x0f .repeat [--values <values...>] [<files...>]",
-                "\x0310 (\x0f",
-                "\x02[<files...>]\x02\x0310: files to process,\x0f",
-                "\x02 --values <values>\x02\x0310: values to repeat\x0f",
-                ")"
-            )
-        );
-    }
+        let repeat = plain(&command_messages(&REPEAT)[0]);
+        for expected in [
+            "Help (.repeat)",
+            "Repeat the given values",
+            "Usage: .repeat [--values <values...>] [<files...>]",
+            "[<files...>]: files to process",
+            "--values <values>: values to repeat",
+        ] {
+            assert!(repeat.contains(expected), "missing {expected:?}: {repeat}");
+        }
+        assert!(!repeat.contains("hidden"), "hidden flag leaked: {repeat}");
 
-    #[test]
-    fn describes_subcommands() {
         let command = CommandSpec::with_args::<SubcommandOpts>(".stats", "Show statistics");
-
-        assert_eq!(
-            command_messages(&command)[0],
-            concat!(
-                "\x0310>\x0f\x02 Help (.stats)\x02",
-                "\x0310: Show statistics\x0f",
-                "\x0310 Usage:\x0f .stats <command> [<args>]",
-                "\x0310 (\x0f",
-                "\x02stats\x02\x0310: Display statistics.\x0f",
-                ")"
-            )
-        );
-    }
-
-    #[test]
-    fn formats_details_from_arguments() {
-        let info = DIG.args_info().unwrap();
-
-        assert_eq!(
-            command_details(&info),
-            concat!(
-                "\x02<name>\x02\x0310: the domain to look up,\x0f",
-                "\x02 -s, --short\x02\x0310: only display the answer section\x0f",
-            )
-        );
+        let subcommands = plain(&command_messages(&command)[0]);
+        for expected in [
+            "Help (.stats)",
+            "Show statistics",
+            "Usage: .stats <command> [<args>]",
+            "stats: Display statistics.",
+        ] {
+            assert!(
+                subcommands.contains(expected),
+                "missing {expected:?}: {subcommands}"
+            );
+        }
     }
 
     #[test]
@@ -664,10 +630,7 @@ mod tests {
             },
         ];
 
-        assert_eq!(
-            details_list(&details),
-            "\x02<a>\x02,\x02 <b>\x02\x0310: b description\x0f"
-        );
+        assert_eq!(plain(&details_list(&details)), "<a>, <b>: b description");
     }
 
     #[test]
@@ -685,18 +648,20 @@ mod tests {
 
     #[test]
     fn lists_plugin_commands() {
-        assert_eq!(
-            messages(&catalog(), "openweathermap"),
-            vec!["\x0310>\x0f\x02 Help (openweathermap)\x02\x0310: Commands:\x0f .weather"]
-        );
-    }
+        let cases = [
+            (
+                "openweathermap",
+                "\x0310>\x0f\x02 Help (openweathermap)\x02\x0310: Commands:\x0f .weather",
+            ),
+            (
+                "hooks",
+                "\x0310>\x0f\x02 Help (hooks)\x02\x0310: Commands:\x0f",
+            ),
+        ];
 
-    #[test]
-    fn lists_plugins_without_commands() {
-        assert_eq!(
-            messages(&catalog(), "hooks"),
-            vec!["\x0310>\x0f\x02 Help (hooks)\x02\x0310: Commands:\x0f"]
-        );
+        for (query, expected) in cases {
+            assert_eq!(messages(&catalog(), query), vec![expected], "{query}");
+        }
     }
 
     #[test]

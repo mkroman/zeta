@@ -614,7 +614,7 @@ fn tag_attr<'a>(tag: &'a Tag, name: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
     use zeta_plugin::CatalogEntry;
-    use zeta_test_support::{assert_empty, settings_tests};
+    use zeta_test_support::{assert_empty, plain, settings_tests};
 
     /// Tokenizes `html` in a single chunk and returns the captured metadata.
     fn parse_metadata(html: &str) -> PageMetadata {
@@ -658,14 +658,12 @@ mod tests {
         assert_eq!(metadata.og_title.as_deref(), Some("Hello"));
         assert_eq!(metadata.description.as_deref(), Some("A description"));
         assert_eq!(metadata.title.as_deref(), Some("Ignored"));
-    }
 
-    #[test]
-    fn extracts_open_graph_metadata_by_name() {
-        let metadata =
+        // The `name` attribute is accepted as an alternative to `property`.
+        let by_name =
             parse_metadata(r#"<head><meta name="og:description" content="A description"></head>"#);
 
-        assert_eq!(metadata.description.as_deref(), Some("A description"));
+        assert_eq!(by_name.description.as_deref(), Some("A description"));
     }
 
     #[test]
@@ -708,20 +706,23 @@ mod tests {
 
     #[test]
     fn stops_at_the_end_of_head() {
-        let metadata = parse_metadata(
-            "<html><head><title>Hello</title></head><body><title>Ignored</title></body></html>",
-        );
+        let cases = [
+            // A closing `</head>` stops capture.
+            (
+                "<html><head><title>Hello</title></head><body><title>Ignored</title></body></html>",
+                "after </head>",
+            ),
+            // So does a `<body>` start.
+            (
+                "<html><head><title>Hello</title><body><title>Ignored</title></body></html>",
+                "at <body>",
+            ),
+        ];
 
-        assert_eq!(metadata.title.as_deref(), Some("Hello"));
-    }
-
-    #[test]
-    fn stops_at_the_start_of_body() {
-        let metadata = parse_metadata(
-            "<html><head><title>Hello</title><body><title>Ignored</title></body></html>",
-        );
-
-        assert_eq!(metadata.title.as_deref(), Some("Hello"));
+        for (html, label) in cases {
+            let metadata = parse_metadata(html);
+            assert_eq!(metadata.title.as_deref(), Some("Hello"), "{label}");
+        }
     }
 
     #[test]
@@ -910,34 +911,36 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_og_title_and_host() {
-        let metadata = PageMetadata {
-            og_title: Some("Hello".to_string()),
-            description: Some("A description".to_string()),
-            ..PageMetadata::default()
-        };
-        let url = Url::parse("https://www.maero.dk/page").unwrap();
+    fn formats_open_graph_fallbacks() {
+        let cases = [
+            (
+                // Without a site name, the host stands in, minus `www.`.
+                PageMetadata {
+                    og_title: Some("Hello".to_string()),
+                    description: Some("A description".to_string()),
+                    ..PageMetadata::default()
+                },
+                "https://www.maero.dk/page",
+                "> maero.dk: Hello — A description",
+            ),
+            (
+                // A description-only page still renders as an OpenGraph reply.
+                PageMetadata {
+                    site_name: Some("Maero".to_string()),
+                    description: Some("A description".to_string()),
+                    ..PageMetadata::default()
+                },
+                "https://maero.dk",
+                "> Maero: A description",
+            ),
+        ];
 
-        let message = format_page(&metadata, &url, &Settings::default()).unwrap();
+        for (metadata, url, expected) in cases {
+            let url = Url::parse(url).unwrap();
+            let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
-        assert_eq!(
-            message,
-            "\x0310>\x0f\x02 maero.dk:\x02\x0310 Hello — A description"
-        );
-    }
-
-    #[test]
-    fn formats_description_only_pages() {
-        let metadata = PageMetadata {
-            site_name: Some("Maero".to_string()),
-            description: Some("A description".to_string()),
-            ..PageMetadata::default()
-        };
-        let url = Url::parse("https://maero.dk").unwrap();
-
-        let message = format_page(&metadata, &url, &Settings::default()).unwrap();
-
-        assert_eq!(message, "\x0310>\x0f\x02 Maero:\x02\x0310 A description");
+            assert_eq!(plain(&message), expected, "for {url}");
+        }
     }
 
     #[test]

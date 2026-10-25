@@ -230,24 +230,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_multi_word_queries() {
-        let opts: Opts = COMMAND.parse_args("peggle nights").unwrap();
+    fn parses_queries() {
+        let cases = [
+            ("multi-word", "peggle nights", "peggle nights"),
+            ("quoted", r#""the matrix""#, "the matrix"),
+            ("empty", "", ""),
+        ];
 
-        assert_eq!(opts.query(), "peggle nights");
-    }
+        for (case, input, expected) in cases {
+            let opts: Opts = COMMAND.parse_args(input).unwrap();
 
-    #[test]
-    fn parses_quoted_queries() {
-        let opts: Opts = COMMAND.parse_args(r#""the matrix""#).unwrap();
-
-        assert_eq!(opts.query(), "the matrix");
-    }
-
-    #[test]
-    fn parses_empty_query() {
-        let opts: Opts = COMMAND.parse_args("").unwrap();
-
-        assert_eq!(opts.query(), "");
+            assert_eq!(opts.query(), expected, "{case}");
+        }
     }
 
     /// Live smoke test against IMDb's GraphQL API, to catch contract drift that the recorded

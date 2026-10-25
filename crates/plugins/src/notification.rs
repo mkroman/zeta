@@ -221,19 +221,25 @@ mod tests {
 
     #[test]
     fn parses_target_and_message() {
-        assert_eq!(parse_args("foo hello there"), Some(("foo", "hello there")));
-    }
+        let cases = [
+            (
+                "a target and a message",
+                "foo hello there",
+                Some(("foo", "hello there")),
+            ),
+            (
+                "a message kept verbatim",
+                "foo   padded  ",
+                Some(("foo", "  padded  ")),
+            ),
+            ("empty arguments", "", None),
+            ("a target without a message", "foo", None),
+            ("a target and one space", "foo ", None),
+            ("a target and only spaces", "foo   ", None),
+        ];
 
-    #[test]
-    fn keeps_message_verbatim() {
-        assert_eq!(parse_args("foo   padded  "), Some(("foo", "  padded  ")));
-    }
-
-    #[test]
-    fn rejects_arguments_without_a_message() {
-        assert_eq!(parse_args(""), None);
-        assert_eq!(parse_args("foo"), None);
-        assert_eq!(parse_args("foo "), None);
-        assert_eq!(parse_args("foo   "), None);
+        for (case, input, expected) in cases {
+            assert_eq!(parse_args(input), expected, "for {case}: {input:?}");
+        }
     }
 }

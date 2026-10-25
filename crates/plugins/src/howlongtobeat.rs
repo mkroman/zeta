@@ -392,8 +392,23 @@ mod tests {
     }
 
     #[test]
-    fn formats_missing_completion_times_as_placeholder() {
-        assert_eq!(format_seconds(0), "--");
+    fn formats_durations() {
+        let cases = [
+            ("missing", 0, "--"),
+            ("seconds round down to minutes", 30, "0 minutes"),
+            ("minutes", 45 * 60, "45 minutes"),
+            ("whole hour", 3600, "1 hour"),
+            (
+                "hours and minutes",
+                2 * 3600 + 3 * 60,
+                "2 hours and 3 minutes",
+            ),
+            ("many hours", 100 * 3600, "100 hours"),
+        ];
+
+        for (case, seconds, expected) in cases {
+            assert_eq!(format_seconds(seconds), expected, "{case}");
+        }
     }
 
     /// Live smoke test against HowLongToBeat's search API, to catch contract drift the payload
@@ -418,18 +433,5 @@ mod tests {
         assert!(games[0].comp_main > 0);
 
         println!("{}", format_game(&games[0]));
-    }
-
-    #[test]
-    fn formats_minutes() {
-        assert_eq!(format_seconds(30), "0 minutes");
-        assert_eq!(format_seconds(45 * 60), "45 minutes");
-    }
-
-    #[test]
-    fn formats_hours_and_minutes() {
-        assert_eq!(format_seconds(3600), "1 hour");
-        assert_eq!(format_seconds(2 * 3600 + 3 * 60), "2 hours and 3 minutes");
-        assert_eq!(format_seconds(100 * 3600), "100 hours");
     }
 }

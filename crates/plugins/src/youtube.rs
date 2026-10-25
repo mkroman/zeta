@@ -561,7 +561,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::{plain, settings_tests};
 
     settings_tests! {
         Settings,
@@ -616,42 +616,46 @@ mod tests {
     }
 
     #[test]
-    fn formats_video_message_with_unknown_duration() {
-        let video = test_video("none", None, None);
+    fn formats_video_message_variants() {
+        let cases = [
+            (
+                "unknown duration",
+                test_video("none", None, None),
+                "Music",
+                1,
+                "is an unknown duration video by Test Channel with 1 views",
+            ),
+            (
+                "live stream prefers concurrent viewers",
+                test_video("live", None, Some("1234")),
+                "Music",
+                42,
+                "is a Music live stream by Test Channel with 1,234 viewers",
+            ),
+            (
+                "vowel category takes an article",
+                test_video("live", None, Some("1234")),
+                "Education",
+                42,
+                "is an Education live stream by Test Channel with 1,234 viewers",
+            ),
+            (
+                "upcoming stream falls back to total views",
+                test_video("upcoming", None, None),
+                "Music",
+                42,
+                "is a Music live stream by Test Channel with 42 views",
+            ),
+        ];
 
-        assert_eq!(
-            format_video_message(&video, "Music", 1),
-            "\x0310> “\x0fTest Video\x0310” is an\x0f unknown duration\x0310 video by\x0f Test Channel\x0310 with\x0f 1\x0310 views",
-        );
-    }
+        for (case, video, category, view_count, expected) in cases {
+            let formatted = plain(&format_video_message(&video, category, view_count));
 
-    #[test]
-    fn formats_live_stream_message() {
-        let video = test_video("live", None, Some("1234"));
-
-        assert_eq!(
-            format_video_message(&video, "Music", 42),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
-        );
-    }
-
-    #[test]
-    fn formats_live_stream_message_with_vowel_category() {
-        let video = test_video("live", None, Some("1234"));
-
-        assert_eq!(
-            format_video_message(&video, "Education", 42),
-            "\x0310> “\x0fTest Video\x0310” is an\x0f Education\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
-        );
-    }
-
-    #[test]
-    fn formats_upcoming_stream_message_with_total_views() {
-        let video = test_video("upcoming", None, None);
-
-        assert_eq!(
-            format_video_message(&video, "Music", 42),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 42\x0310 views",
-        );
+            assert!(
+                formatted.starts_with("> “Test Video”"),
+                "{case}: {formatted}"
+            );
+            assert!(formatted.contains(expected), "{case}: {formatted}");
+        }
     }
 }

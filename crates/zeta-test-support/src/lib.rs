@@ -189,6 +189,36 @@ pub fn assert_parses<T: std::fmt::Debug + PartialEq>(
     }
 }
 
+/// Removes IRC formatting control codes from `text`, leaving the visible characters.
+///
+/// Use this when a test asserts what a reply says rather than its exact escape layout: exact
+/// strings pin every color and reset code, so a harmless formatting tweak breaks unrelated
+/// assertions. Keep one exact-layout test per formatter to pin the formatting itself.
+#[must_use]
+pub fn plain(text: &str) -> String {
+    let mut visible = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        match character {
+            // A color code: `\x03` optionally followed by foreground and background numbers.
+            '\u{3}' => {
+                while characters
+                    .peek()
+                    .is_some_and(|next| next.is_ascii_digit() || *next == ',')
+                {
+                    characters.next();
+                }
+            }
+            // Bold, reset, italic, underline, strikethrough, monospace, and reverse.
+            '\u{2}' | '\u{f}' | '\u{1d}' | '\u{1f}' | '\u{1e}' | '\u{11}' | '\u{16}' => {}
+            character => visible.push(character),
+        }
+    }
+
+    visible
+}
+
 /// Generates the three settings tests shared by every plugin with a configuration section.
 ///
 /// Expands to a `default_settings` test asserting the values produced by [`Default`], a
@@ -356,5 +386,19 @@ mod tests {
             .expect("requests are tracked");
 
         assert_eq!(requests.len(), 3);
+    }
+
+    #[test]
+    fn plain_strips_irc_formatting() {
+        assert_eq!(
+            plain("\x0310>\x0f\x02 Dig:\x02\x0310 hello"),
+            "> Dig: hello"
+        );
+        assert_eq!(plain("\x0312,4red\x0f plain"), "red plain");
+        assert_eq!(
+            plain("\x02bold\x02 \x1ditalic\x1d \x1funderline\x1f"),
+            "bold italic underline"
+        );
+        assert_eq!(plain("no formatting"), "no formatting");
     }
 }
