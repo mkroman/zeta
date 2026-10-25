@@ -19,6 +19,8 @@ members = [
     "crates/zeta-url",
     "crates/zeta-utils",
 ]
+# `cargo run`, `build`, `test` and `check` without a selection flag operate on the bot.
+default-members = ["crates/zeta"]
 
 [workspace.dependencies]
 arc-swap = "1.9"

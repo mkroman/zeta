@@ -31,7 +31,7 @@ on:
         type: string
       clippy-args:
         description: "Arguments to pass on to clippy"
-        default: "--all-targets --all-features --no-deps"
+        default: "--workspace --all-targets --all-features --no-deps"
         type: string
       test-args:
         description: "Arguments to pass on to cargo test (defaults to `args` if not set)"
@@ -92,7 +92,7 @@ jobs:
           TEST_ARGS: ${{ inputs.test-args }}
           FAIL_FAST: ${{ !inputs.fail-fast && '--no-fail-fast' || '' }}
           DATABASE_URL: postgresql://user:changeme@localhost:5432/zeta
-        run: cargo test ${TEST_ARGS} ${FAIL_FAST}
+        run: cargo test --workspace ${TEST_ARGS} ${FAIL_FAST}
 
   # Clippy as its own job: it doesn't reuse cargo test's artifacts anyway.
   clippy:
