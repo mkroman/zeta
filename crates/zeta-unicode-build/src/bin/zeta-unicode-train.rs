@@ -2,88 +2,98 @@
 //!
 //! The trainer reads the vendored UCD files, measures every requested name-block shift,
 //! writes `nomina.bin` and `manifest.json` into the output directory, and prints the
-//! candidate table. Arguments are parsed by hand so the generator stays dependency-free.
+//! candidate table. Arguments are parsed with `argh`; because `argh` parses `&str`, a
+//! non-UTF-8 argument is reported as a usage error instead of panicking.
 
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use argh::FromArgs;
 use zeta_unicode_build::{
     DEFAULT_MAX_TABLE_BYTES, MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT, Priority, Profile,
     TrainOutput, read_inputs, train, verify, write_manifest,
 };
 
-/// The help text printed by `--help` and on a usage error.
-const HELP: &str = "\
-zeta-unicode-train - train a Nomina Unicode image
+/// The temporary image name `--verify` uses before publishing `nomina.bin`.
+const STAGING_NAME: &str = "nomina.bin.verifying";
 
-Usage: zeta-unicode-train [options]
-
-Options:
-  --data-dir <dir>    UCD directory (default: $ZETA_UNICODE_DATA_DIR, then
-                      ../zeta-unicode/data, crates/zeta-unicode/data or data)
-  --out-dir <dir>     output directory (default: target/nomina)
-  --block-shift <n>   fix the name block shift (3..=8) instead of searching
-  --priority <mode>   size, balanced (default) or latency
-  --max-bytes <n>     image budget in bytes (default: 200000)
-  --baseline <table>  compare the trained image against an existing image
-  --max-delta <n>     tolerated growth over the baseline in bytes (default: 0)
-  --report            print per-section and per-stream details
-  --verify            read the written nomina.bin back from disk and verify its layout
-                      and name section
-  -h, --help          print this help
-";
-
-/// The parsed command line.
+/// Trains a Nomina Unicode image from the vendored UCD files.
+#[derive(Debug, FromArgs)]
+#[argh(help_triggers("-h", "--help"))]
 struct Options {
-    /// The UCD directory, or `None` to use the platform default.
+    /// UCD directory (default: $ZETA_UNICODE_DATA_DIR, then ../zeta-unicode/data,
+    /// crates/zeta-unicode/data or data)
+    #[allow(
+        clippy::doc_markdown,
+        reason = "the doc comment is the --help text, so backticks would render literally"
+    )]
+    #[argh(option)]
     data_dir: Option<PathBuf>,
-    /// Where the image and manifest are written.
+    /// output directory (default: target/nomina)
+    #[argh(option, default = "PathBuf::from(\"target/nomina\")")]
     out_dir: PathBuf,
-    /// A fixed name-block shift, or `None` to search.
+    /// fix the name block shift (3..=8) instead of searching
+    #[argh(option, from_str_fn(parse_block_shift))]
     block_shift: Option<u8>,
-    /// How to choose between candidates.
+    /// size, balanced (default) or latency
+    #[argh(option, default = "Priority::Balanced")]
     priority: Priority,
-    /// The image budget.
+    /// image budget in bytes (default: 200000)
+    #[argh(option, default = "DEFAULT_MAX_TABLE_BYTES")]
     max_bytes: usize,
-    /// An existing image to compare against.
+    /// compare the trained image against an existing image
+    #[argh(option)]
     baseline: Option<PathBuf>,
-    /// The tolerated growth over the baseline.
+    /// tolerated growth over the baseline in bytes (default: 0)
+    #[argh(option, long = "max-delta", default = "0")]
     max_delta_bytes: usize,
-    /// Whether to print per-section details.
+    /// print per-section and per-stream details
+    #[argh(switch)]
     report: bool,
-    /// Whether to verify the image after writing it.
+    /// verify the trained image before publishing nomina.bin and manifest.json
+    #[argh(switch)]
     verify: bool,
 }
 
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            data_dir: None,
-            out_dir: PathBuf::from("target/nomina"),
-            block_shift: None,
-            priority: Priority::Balanced,
-            max_bytes: DEFAULT_MAX_TABLE_BYTES,
-            baseline: None,
-            max_delta_bytes: 0,
-            report: false,
-            verify: false,
+impl Options {
+    /// Rejects flag combinations that `argh` cannot express.
+    fn validate(&self) -> Result<(), String> {
+        if self.baseline.is_none() && self.max_delta_bytes != 0 {
+            return Err("--max-delta needs --baseline to compare against".into());
         }
+        Ok(())
     }
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print!("{HELP}");
-        return ExitCode::SUCCESS;
-    }
-    let options = match parse_args(args) {
-        Ok(options) => options,
+    let (program, args) = match utf8_args(std::env::args_os()) {
+        Ok(parts) => parts,
         Err(error) => {
-            eprintln!("error: {error}\n\n{HELP}");
+            eprintln!("error: {error}");
             return ExitCode::from(2);
         }
     };
+    let command = command_name(&program);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let options = match Options::from_args(&[command], &args) {
+        Ok(options) => options,
+        Err(early_exit) if early_exit.status.is_ok() => {
+            println!("{}", early_exit.output);
+            return ExitCode::SUCCESS;
+        }
+        Err(early_exit) => {
+            eprintln!(
+                "{}\n\nRun {command} --help for more information.",
+                early_exit.output
+            );
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(error) = options.validate() {
+        eprintln!("error: {error}\n\nRun {command} --help for more information.");
+        return ExitCode::from(2);
+    }
     match run(&options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -93,58 +103,50 @@ fn main() -> ExitCode {
     }
 }
 
-/// Parses every option, rejecting unknown flags and malformed values.
-fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
-    let mut options = Options::default();
+/// Converts the raw arguments to UTF-8 and separates the program name.
+///
+/// `argh` parses `&str`, so a non-UTF-8 value is a usage error; reporting it here keeps the
+/// CLI from panicking inside `std::env::args()`.
+fn utf8_args(args: impl IntoIterator<Item = OsString>) -> Result<(String, Vec<String>), String> {
     let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--data-dir" => options.data_dir = Some(PathBuf::from(next_value(&mut args, &arg)?)),
-            "--out-dir" => options.out_dir = PathBuf::from(next_value(&mut args, &arg)?),
-            "--block-shift" => {
-                let value = next_value(&mut args, &arg)?;
-                let shift: u8 = value
-                    .parse()
-                    .map_err(|_| format!("{arg} expects a byte, got {value:?}"))?;
-                if !(MIN_CANDIDATE_SHIFT..=MAX_CANDIDATE_SHIFT).contains(&shift) {
-                    return Err(format!(
-                        "{arg} must be between {MIN_CANDIDATE_SHIFT} and \
-                         {MAX_CANDIDATE_SHIFT}, got {shift}"
-                    ));
-                }
-                options.block_shift = Some(shift);
-            }
-            "--priority" => {
-                let value = next_value(&mut args, &arg)?;
-                options.priority = value
-                    .parse()
-                    .map_err(|expected| format!("{arg} expects {expected}, got {value:?}"))?;
-            }
-            "--max-bytes" => options.max_bytes = parse_usize(&mut args, &arg)?,
-            "--baseline" => options.baseline = Some(PathBuf::from(next_value(&mut args, &arg)?)),
-            "--max-delta" => options.max_delta_bytes = parse_usize(&mut args, &arg)?,
-            "--report" => options.report = true,
-            "--verify" => options.verify = true,
-            other => return Err(format!("unknown argument {other:?}")),
-        }
-    }
-    if options.baseline.is_none() && options.max_delta_bytes != 0 {
-        return Err("--max-delta needs --baseline to compare against".into());
-    }
-    Ok(options)
+    let program = args
+        .next()
+        .ok_or_else(|| "argv is empty".to_owned())?
+        .into_string()
+        .map_err(|arg| {
+            format!(
+                "the program name is not valid UTF-8: {:?}",
+                arg.to_string_lossy()
+            )
+        })?;
+    let values = args
+        .map(|arg| {
+            arg.into_string()
+                .map_err(|arg| format!("argument is not valid UTF-8: {:?}", arg.to_string_lossy()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((program, values))
 }
 
-/// Takes the value that follows a flag.
-fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
-    args.next().ok_or_else(|| format!("{flag} needs a value"))
+/// The program name used in help and usage messages.
+fn command_name(program: &str) -> &str {
+    Path::new(program)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or(program)
 }
 
-/// Parses the value of a byte-count flag.
-fn parse_usize(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<usize, String> {
-    let value = next_value(args, flag)?;
-    value
+/// Parses and range-checks the fixed name-block shift for `--block-shift`.
+fn parse_block_shift(value: &str) -> Result<u8, String> {
+    let shift: u8 = value
         .parse()
-        .map_err(|_| format!("{flag} expects a non-negative integer, got {value:?}"))
+        .map_err(|_| format!("expected a byte, got {value:?}"))?;
+    if !(MIN_CANDIDATE_SHIFT..=MAX_CANDIDATE_SHIFT).contains(&shift) {
+        return Err(format!(
+            "must be between {MIN_CANDIDATE_SHIFT} and {MAX_CANDIDATE_SHIFT}, got {shift}"
+        ));
+    }
+    Ok(shift)
 }
 
 /// The UCD directory used when `--data-dir` is absent.
@@ -189,21 +191,45 @@ fn run(options: &Options) -> Result<(), String> {
         )
     })?;
     let image_path = options.out_dir.join("nomina.bin");
-    std::fs::write(&image_path, &output.image)
-        .map_err(|error| format!("failed to write {}: {error}", image_path.display()))?;
-    write_manifest(&data_dir, &options.out_dir, &inputs, &output)
-        .map_err(|error| error.to_string())?;
+    let manifest_path = options.out_dir.join("manifest.json");
+    let layout = if options.verify {
+        // Stage, verify, then publish: a failed verification must not leave a `nomina.bin`
+        // next to a manifest that says "verified".
+        let staging_path = options.out_dir.join(STAGING_NAME);
+        std::fs::write(&staging_path, &output.image)
+            .map_err(|error| format!("failed to write {}: {error}", staging_path.display()))?;
+        // Verify the artifact on disk, not the in-memory buffer: the flag exists to check
+        // the bytes a rebuild would actually load.
+        let verified = std::fs::read(&staging_path)
+            .map_err(|error| format!("failed to read back {}: {error}", staging_path.display()))
+            .and_then(|written| verify(&written, &inputs).map_err(|error| error.to_string()));
+        let layout = match verified {
+            Ok(layout) => layout,
+            Err(error) => {
+                let _ = std::fs::remove_file(&staging_path);
+                return Err(error);
+            }
+        };
+        std::fs::rename(&staging_path, &image_path).map_err(|error| {
+            let _ = std::fs::remove_file(&staging_path);
+            format!("failed to publish {}: {error}", image_path.display())
+        })?;
+        write_manifest(&data_dir, &options.out_dir, &inputs, &output)
+            .map_err(|error| error.to_string())?;
+        Some(layout)
+    } else {
+        std::fs::write(&image_path, &output.image)
+            .map_err(|error| format!("failed to write {}: {error}", image_path.display()))?;
+        write_manifest(&data_dir, &options.out_dir, &inputs, &output)
+            .map_err(|error| error.to_string())?;
+        None
+    };
 
     print!("{}", output.report);
     if options.report {
         print_details(&output);
     }
-    if options.verify {
-        // Verify the artifact on disk, not the in-memory buffer: the flag exists to check
-        // the bytes a rebuild would actually load.
-        let written = std::fs::read(&image_path)
-            .map_err(|error| format!("failed to read back {}: {error}", image_path.display()))?;
-        let layout = verify(&written, &inputs).map_err(|error| error.to_string())?;
+    if let Some(layout) = layout {
         println!(
             "verified {} on disk: {} B, {} sections, Unicode {}.{}.{}, name block shift {}",
             image_path.display(),
@@ -219,7 +245,7 @@ fn run(options: &Options) -> Result<(), String> {
         "wrote {} ({} B) and {}",
         image_path.display(),
         output.total_bytes,
-        options.out_dir.join("manifest.json").display()
+        manifest_path.display()
     );
     Ok(())
 }
@@ -297,8 +323,8 @@ mod tests {
     use super::*;
 
     /// Parses a list of arguments.
-    fn parse(args: &[&str]) -> Result<Options, String> {
-        parse_args(args.iter().map(ToString::to_string))
+    fn parse(args: &[&str]) -> Result<Options, argh::EarlyExit> {
+        Options::from_args(&["zeta-unicode-train"], args)
     }
 
     #[test]
@@ -381,5 +407,57 @@ mod tests {
             assert!(parse(&args).is_err(), "{args:?} needs a value");
         }
         assert!(parse(&["--unknown"]).is_err());
+    }
+
+    #[test]
+    fn max_delta_needs_a_baseline() {
+        assert!(
+            parse(&["--max-delta", "12"])
+                .expect("the flags parse")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            parse(&["--baseline", "base.bin", "--max-delta", "12"])
+                .expect("the flags parse")
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn help_exits_early_with_a_success_status() {
+        let early_exit = parse(&["--help"]).expect_err("--help exits early");
+        assert!(early_exit.status.is_ok());
+        assert!(early_exit.output.contains("--data-dir"));
+
+        let early_exit = parse(&["-h"]).expect_err("-h exits early");
+        assert!(early_exit.status.is_ok());
+    }
+
+    #[test]
+    fn command_name_strips_the_directory() {
+        assert_eq!(
+            command_name("/tmp/bin/zeta-unicode-train"),
+            "zeta-unicode-train"
+        );
+        assert_eq!(command_name("zeta-unicode-train"), "zeta-unicode-train");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_arguments_are_reported_without_panicking() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let error = utf8_args([
+            OsString::from("zeta-unicode-train"),
+            OsString::from("--data-dir"),
+            OsString::from_vec(b"data\xFE".to_vec()),
+        ])
+        .expect_err("non-UTF-8 arguments are rejected");
+        assert!(
+            error.contains("argument is not valid UTF-8"),
+            "unexpected error: {error}"
+        );
     }
 }
