@@ -4,7 +4,6 @@ use std::{
 };
 
 use htmlize::unescape;
-use regex::Regex;
 use reqwest::header::{
     ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, HeaderValue, PRAGMA, REFERER, SET_COOKIE,
     UPGRADE_INSECURE_REQUESTS,
@@ -335,17 +334,19 @@ fn url_with_query(path: &str, params: &[(&str, &str)]) -> reqwest::Url {
 
 // Extracts the `window.sse_nonce` value from the raw HTML content.
 fn extract_nonce(html: &str) -> Option<String> {
-    nonce_regex()
-        .captures(html)
-        .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()))
-}
+    const MARKER: &str = "window.sse_nonce";
 
-/// Returns the regex matching the `window.sse_nonce` value in the page's HTML, compiled once.
-fn nonce_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
+    html.match_indices(MARKER).find_map(|(index, marker)| {
+        let tail = &html[index + marker.len()..];
+        let tail = tail.trim_start().strip_prefix('=')?.trim_start();
+        let tail = tail.strip_prefix('"')?;
+        let (nonce, _) = tail.split_once('"')?;
 
-    RE.get_or_init(|| {
-        Regex::new(r#"window\.sse_nonce\s*=\s*"([^"]+)""#).expect("the nonce pattern is valid")
+        if nonce.is_empty() {
+            None
+        } else {
+            Some(nonce.to_string())
+        }
     })
 }
 
@@ -634,6 +635,22 @@ mod tests {
         let result = extract_nonce(&html).expect("could not extract nonce");
 
         assert_eq!(result, "0123456789abcdef0123456789abcdef");
+    }
+
+    #[test]
+    fn test_extract_nonce_variants() {
+        let html = r#"
+            window.sse_nonce.other = "ignored";
+            window.sse_nonce
+                =
+                "abc123";
+        "#;
+
+        assert_eq!(extract_nonce(html).as_deref(), Some("abc123"));
+        assert_eq!(extract_nonce("no nonce here"), None);
+        assert_eq!(extract_nonce("window.sse_nonce = \"\";"), None);
+        assert_eq!(extract_nonce("window.sse_nonce = 42;"), None);
+        assert_eq!(extract_nonce("window.sse_nonce = \"unterminated;"), None);
     }
 
     #[test]
