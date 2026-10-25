@@ -220,23 +220,16 @@ fn format_time_string(s: &str) -> Option<String> {
     Some(format_time(time))
 }
 
-#[async_trait]
-impl Plugin<Context> for IsItOpen {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.receive_message();
-
+#[plugin(name = "isitopen", settings = Settings, messages)]
+impl IsItOpen {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "GOOGLE_MAPS_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self { client, api_key })
     }
 
+    #[handler(message)]
     async fn handle_message(
         &self,
         _ctx: &Context,

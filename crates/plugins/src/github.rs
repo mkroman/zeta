@@ -47,10 +47,6 @@ pub enum Error {
     Api(#[from] http::ApiError),
 }
 
-/// The `.gh` command.
-const GITHUB: CommandSpec =
-    CommandSpec::new(".gh", "Search GitHub and show the most starred match");
-
 /// Structure representing the GitHub Plugin.
 /// Holds the HTTP client to reuse connection pools.
 pub struct GitHubPlugin {
@@ -74,24 +70,19 @@ struct RepoItem {
     fork: bool,
 }
 
-#[async_trait]
-impl Plugin<Context> for GitHubPlugin {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(GITHUB);
+#[plugin(name = "github", settings = Settings)]
+impl GitHubPlugin {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         // The token is optional; it only raises the API rate limit.
         let token = resolve_secret(settings.token.as_deref(), "GITHUB_TOKEN").ok();
-        let plugin = Self::new(&ctx.config.http, token).map_err(plugin_err)?;
+        let plugin = Self::with_token(&ctx.config.http, token).map_err(plugin_err)?;
 
         Ok(plugin)
     }
 
-    async fn handle_command(
+    /// Replies to `.gh` with the most starred repository matching the query.
+    #[command(".gh", "Search GitHub and show the most starred match", event)]
+    async fn search(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -127,7 +118,7 @@ impl GitHubPlugin {
     ///
     /// Returns an error if the HTTP client could not be built, or the token is not a valid
     /// header value.
-    pub fn new(config: &HttpConfig, token: Option<String>) -> Result<Self, Error> {
+    pub fn with_token(config: &HttpConfig, token: Option<String>) -> Result<Self, Error> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -220,7 +211,8 @@ mod tests {
     #[test]
     fn invalid_tokens_are_rejected() {
         assert!(
-            GitHubPlugin::new(&HttpConfig::default(), Some("bad\ntoken".to_string())).is_err(),
+            GitHubPlugin::with_token(&HttpConfig::default(), Some("bad\ntoken".to_string()))
+                .is_err(),
             "invalid token should be rejected"
         );
     }

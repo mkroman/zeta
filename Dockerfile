@@ -32,6 +32,8 @@ COPY --parents \
     crates/zeta/src/lib.rs \
     crates/zeta-plugin/Cargo.toml \
     crates/zeta-plugin/src/lib.rs \
+    crates/zeta-plugin-macros/Cargo.toml \
+    crates/zeta-plugin-macros/src/lib.rs \
     crates/zeta-cache/Cargo.toml \
     crates/zeta-cache/src/lib.rs \
     crates/zeta-http/Cargo.toml \
@@ -84,6 +86,8 @@ COPY --parents \
     crates/zeta/src \
     crates/zeta-plugin/Cargo.toml \
     crates/zeta-plugin/src \
+    crates/zeta-plugin-macros/Cargo.toml \
+    crates/zeta-plugin-macros/src \
     crates/zeta-cache/Cargo.toml \
     crates/zeta-cache/src \
     crates/zeta-http/Cargo.toml \

@@ -13,7 +13,6 @@ use tracing::debug;
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_plugin::config::HttpConfig;
 use zeta_utils::utils::{Truncatable, collapse_whitespace};
 
 /// The usage line sent for empty `.ud` queries.
@@ -38,10 +37,6 @@ impl Default for Settings {
         }
     }
 }
-
-/// The `.ud` command.
-const URBAN_DICTIONARY: CommandSpec =
-    CommandSpec::new(".ud", "Look up the top Urban Dictionary definition");
 
 /// Urban Dictionary plugin.
 pub struct UrbanDictionary {
@@ -86,20 +81,22 @@ pub struct Definition {
     pub written_on: OffsetDateTime,
 }
 
-#[async_trait]
-impl Plugin<Context> for UrbanDictionary {
-    type Settings = Settings;
+#[plugin(name = "urban_dictionary", settings = Settings)]
+impl UrbanDictionary {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let client = http::build_client(&ctx.config.http);
 
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(URBAN_DICTIONARY);
-        Ok(Self::new(&ctx.config.http, settings.clone()))
+        Ok(Self {
+            client,
+            settings: settings.clone(),
+        })
     }
 
-    async fn handle_command(
+    /// Replies to `.ud` with the top Urban Dictionary definition of the query.
+    #[command(".ud", "Look up the top Urban Dictionary definition", event)]
+    async fn define(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -154,14 +151,6 @@ impl Display for DefinitionFormatter<'_> {
 }
 
 impl UrbanDictionary {
-    /// Creates a new plugin instance around a client built for the given HTTP configuration.
-    #[must_use]
-    pub fn new(config: &HttpConfig, settings: Settings) -> Self {
-        let client = http::build_client(config);
-
-        Self { client, settings }
-    }
-
     /// Looks up the given `term` and returns a list of definitions.
     ///
     /// The list of definitions may be empty.

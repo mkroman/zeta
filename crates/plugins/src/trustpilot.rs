@@ -40,9 +40,6 @@ impl Default for Settings {
     }
 }
 
-/// The `.tp` command.
-const TRUSTPILOT: CommandSpec = CommandSpec::new(".tp", "Look up a business's Trustpilot score");
-
 /// Plugin for querying Trustpilot business scores.
 pub struct Trustpilot {
     /// HTTP client for making API requests.
@@ -100,16 +97,9 @@ pub enum Error {
     NotFound,
 }
 
-#[async_trait]
-impl Plugin<Context> for Trustpilot {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(TRUSTPILOT);
+#[plugin(name = "trustpilot", settings = Settings)]
+impl Trustpilot {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "TRUSTPILOT_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -120,7 +110,9 @@ impl Plugin<Context> for Trustpilot {
         })
     }
 
-    async fn handle_command(
+    /// Replies to `.tp` with the business's Trustpilot score and review count.
+    #[command(".tp", "Look up a business's Trustpilot score", event)]
+    async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -209,6 +201,7 @@ fn normalized_score(trust_score: f64) -> f64 {
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -256,9 +249,9 @@ mod tests {
             number_of_reviews: NumberOfReviews { total: 1 },
         };
 
-        let formatted = format_business(&business, "www");
+        let formatted = strip_formatting(&format_business(&business, "www"));
 
-        assert!(formatted.contains("Score:\x0f 4.8\x0310"), "{formatted}");
+        assert!(formatted.contains("Score: 4.8/5.0"), "{formatted}");
         assert!(
             formatted.contains("https://www.trustpilot.com/review/coolcompany.com"),
             "{formatted}"

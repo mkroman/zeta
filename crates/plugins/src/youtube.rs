@@ -34,7 +34,6 @@ use url::Url;
 use crate::prelude::*;
 use zeta_cache::TtlCache;
 use zeta_http as http;
-use zeta_plugin::config::HttpConfig;
 use zeta_url::ExtractUrlsExt;
 use zeta_utils::duration::{format_duration, parse_iso8601_duration};
 
@@ -54,9 +53,6 @@ const CATEGORIES_TTL: Duration = Duration::from_hours(24);
 /// calls happen at most once per [`CATEGORIES_TTL`]; the shorter check interval makes a failed
 /// fetch retry within an hour instead of after a full TTL.
 const CATEGORIES_CHECK_INTERVAL: Duration = Duration::from_hours(1);
-
-/// The `.yt` command.
-const YOUTUBE: CommandSpec = CommandSpec::new(".yt", "Search YouTube and link the top video");
 
 /// The safe search filter applied to YouTube search requests.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -260,41 +256,45 @@ pub type CategoriesResponse = ApiListResponse<Category>;
 /// Response with a list of YouTube search results.
 pub type SearchListResponse = ApiListResponse<Search>;
 
-#[async_trait]
-impl Plugin<Context> for YouTube {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        // Handle YouTube URLs.
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
-
-        // Enable the `.yt` command.
-        if settings.enable_command {
-            subscriptions.command(YOUTUBE);
-        }
-
+#[plugin(name = "youtube", settings = Settings, urls(hosts = urls::URL_HOSTS))]
+impl YouTube {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
+        let client = http::build_client(&ctx.config.http);
 
-        Ok(Self::with_config(settings, api_key, &ctx.config.http))
+        Ok(Self {
+            api_key,
+            region_code: settings.region_code.clone(),
+            safe_search: settings.safe_search,
+            client,
+            video_categories: Arc::new(TtlCache::new(CATEGORIES_TTL)),
+        })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.start_categories_refresh();
 
         Ok(())
     }
 
-    async fn handle_command(
+    /// Replies to `.yt` with the top video matching the query.
+    ///
+    /// An invocation whose arguments are themselves a YouTube URL resolves it as a link below
+    /// instead of searching for it as a query, so the two event kinds do not double up.
+    #[command(
+        ".yt",
+        "Search YouTube and link the top video",
+        event,
+        register_if = settings.enable_command
+    )]
+    async fn search_video(
         &self,
         _ctx: &Context,
         client: &Client,
+        channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let channel = command.channel();
         let args = command.args();
 
         // An invocation whose arguments are a YouTube URL resolves the video below instead of
@@ -331,6 +331,7 @@ impl Plugin<Context> for YouTube {
         Ok(())
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
@@ -344,20 +345,6 @@ impl Plugin<Context> for YouTube {
 }
 
 impl YouTube {
-    /// Creates a new plugin instance for the resolved `api_key` and the settings it configures.
-    #[must_use]
-    pub fn with_config(settings: &Settings, api_key: String, config: &HttpConfig) -> Self {
-        let client = http::build_client(config);
-
-        Self {
-            api_key,
-            region_code: settings.region_code.clone(),
-            safe_search: settings.safe_search,
-            client,
-            video_categories: Arc::new(TtlCache::new(CATEGORIES_TTL)),
-        }
-    }
-
     /// Spawns the task that periodically refreshes the cached video categories.
     ///
     /// The task ticks once per [`CATEGORIES_CHECK_INTERVAL`], skipping missed ticks: a tick is
@@ -575,6 +562,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -629,42 +617,46 @@ mod tests {
     }
 
     #[test]
-    fn formats_video_message_with_unknown_duration() {
-        let video = test_video("none", None, None);
+    fn formats_video_message_variants() {
+        let cases = [
+            (
+                "unknown duration",
+                test_video("none", None, None),
+                "Music",
+                1,
+                "is an unknown duration video by Test Channel with 1 views",
+            ),
+            (
+                "live stream prefers concurrent viewers",
+                test_video("live", None, Some("1234")),
+                "Music",
+                42,
+                "is a Music live stream by Test Channel with 1,234 viewers",
+            ),
+            (
+                "vowel category takes an article",
+                test_video("live", None, Some("1234")),
+                "Education",
+                42,
+                "is an Education live stream by Test Channel with 1,234 viewers",
+            ),
+            (
+                "upcoming stream falls back to total views",
+                test_video("upcoming", None, None),
+                "Music",
+                42,
+                "is a Music live stream by Test Channel with 42 views",
+            ),
+        ];
 
-        assert_eq!(
-            format_video_message(&video, "Music", 1),
-            "\x0310> “\x0fTest Video\x0310” is an\x0f unknown duration\x0310 video by\x0f Test Channel\x0310 with\x0f 1\x0310 views",
-        );
-    }
+        for (case, video, category, view_count, expected) in cases {
+            let formatted = strip_formatting(&format_video_message(&video, category, view_count));
 
-    #[test]
-    fn formats_live_stream_message() {
-        let video = test_video("live", None, Some("1234"));
-
-        assert_eq!(
-            format_video_message(&video, "Music", 42),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
-        );
-    }
-
-    #[test]
-    fn formats_live_stream_message_with_vowel_category() {
-        let video = test_video("live", None, Some("1234"));
-
-        assert_eq!(
-            format_video_message(&video, "Education", 42),
-            "\x0310> “\x0fTest Video\x0310” is an\x0f Education\x0310 live stream by\x0f Test Channel\x0310 with\x0f 1,234\x0310 viewers",
-        );
-    }
-
-    #[test]
-    fn formats_upcoming_stream_message_with_total_views() {
-        let video = test_video("upcoming", None, None);
-
-        assert_eq!(
-            format_video_message(&video, "Music", 42),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f Music\x0310 live stream by\x0f Test Channel\x0310 with\x0f 42\x0310 views",
-        );
+            assert!(
+                formatted.starts_with("> “Test Video”"),
+                "{case}: {formatted}"
+            );
+            assert!(formatted.contains(expected), "{case}: {formatted}");
+        }
     }
 }

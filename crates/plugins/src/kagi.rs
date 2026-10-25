@@ -18,13 +18,6 @@ use tracing::warn;
 
 use crate::prelude::*;
 
-/// The `.g` command.
-const KAGI: CommandSpec = CommandSpec::new(".g", "Search with Kagi and link the top result");
-
-/// The `.gis` command.
-const IMAGES: CommandSpec =
-    CommandSpec::new(".gis", "Search Kagi Images and link the first result");
-
 /// Settings for the kagi plugin, from its `[plugins.kagi]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -56,15 +49,9 @@ pub struct KagiPlugin {
     client: kagi::Client,
 }
 
-#[async_trait]
-impl Plugin<Context> for KagiPlugin {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+#[plugin(name = "kagi", settings = Settings)]
+impl KagiPlugin {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let token = resolve_secret(settings.session_token.as_deref(), "KAGI_SESSION_TOKEN")?;
         let options = kagi::ClientOptions {
             timeout: ctx.config.http.timeout,
@@ -74,62 +61,61 @@ impl Plugin<Context> for KagiPlugin {
         };
         let client = kagi::Client::with_token_and_options(token, options).map_err(plugin_err)?;
 
-        subscriptions.command(KAGI).command(IMAGES);
-
         Ok(Self { client })
     }
 
-    async fn handle_command(
+    /// Replies to `.g` with the top search result for the query.
+    #[command(".g", "Search with Kagi and link the top result", event)]
+    async fn search(
         &self,
         _ctx: &Context,
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        match command.spec {
-            KAGI => {
-                let search = |query: String| async move {
-                    self.client.search(&query).await.map(|results| {
-                        results
-                            .into_iter()
-                            .map(|result| (result.title, result.url))
-                            .collect()
-                    })
-                };
+        let search = |query: String| async move {
+            self.client.search(&query).await.map(|results| {
+                results
+                    .into_iter()
+                    .map(|result| (result.title, result.url))
+                    .collect()
+            })
+        };
 
-                return self
-                    .handle_lookup(
-                        client,
-                        command.channel(),
-                        command.args(),
-                        "Usage: .g\x0f <query>",
-                        search,
-                    )
-                    .await;
-            }
-            IMAGES => {
-                let search = |query: String| async move {
-                    self.client.images(&query).await.map(|results| {
-                        results
-                            .into_iter()
-                            .map(|result| (result.title, result.image_url))
-                            .collect()
-                    })
-                };
+        self.handle_lookup(
+            client,
+            command.channel(),
+            command.args(),
+            "Usage: .g\x0f <query>",
+            search,
+        )
+        .await
+    }
 
-                return self
-                    .handle_lookup(
-                        client,
-                        command.channel(),
-                        command.args(),
-                        "Usage: .gis\x0f <query>",
-                        search,
-                    )
-                    .await;
-            }
-            _ => {}
-        }
+    /// Replies to `.gis` with the first image result for the query.
+    #[command(".gis", "Search Kagi Images and link the first result", event)]
+    async fn search_images(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        command: &CommandEvent,
+    ) -> Result<(), ZetaError> {
+        let search = |query: String| async move {
+            self.client.images(&query).await.map(|results| {
+                results
+                    .into_iter()
+                    .map(|result| (result.title, result.image_url))
+                    .collect()
+            })
+        };
 
-        Ok(())
+        self.handle_lookup(
+            client,
+            command.channel(),
+            command.args(),
+            "Usage: .gis\x0f <query>",
+            search,
+        )
+        .await
     }
 }
 

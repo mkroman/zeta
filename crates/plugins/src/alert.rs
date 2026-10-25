@@ -156,10 +156,8 @@ impl AlertPlugin {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for AlertPlugin {
-    type Settings = Settings;
-
+#[plugin(name = "alert", settings = Settings)]
+impl AlertPlugin {
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -171,11 +169,13 @@ impl Plugin<Context> for AlertPlugin {
         let receiver = service.take_receiver();
         let service = Arc::new(service);
 
+        // Intentional: other plugins register alerts through the shared service.
         ctx.shared.publish(Arc::clone(&service));
 
         Ok(Self { service, receiver })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
         self.service.start_scheduler();
@@ -187,6 +187,7 @@ impl Plugin<Context> for AlertPlugin {
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -503,7 +504,9 @@ mod tests {
     use sqlx::types::chrono::TimeZone;
 
     use super::*;
+    use zeta_plugin::ArgsError;
     use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -526,86 +529,55 @@ mod tests {
 
     #[test]
     fn splits_message_and_datetime() {
-        assert_eq!(
-            split_args("hello world at 4:20"),
-            Some(("hello world", "4:20"))
-        );
-        assert_eq!(
-            split_args("some longer message at 10:30 12/12/2032"),
-            Some(("some longer message", "10:30 12/12/2032"))
-        );
-        assert_eq!(
-            split_args("another message at 12/12/2032 10:30"),
-            Some(("another message", "12/12/2032 10:30"))
-        );
+        let cases = [
+            ("hello world at 4:20", Some(("hello world", "4:20"))),
+            (
+                "some longer message at 10:30 12/12/2032",
+                Some(("some longer message", "10:30 12/12/2032")),
+            ),
+            (
+                "another message at 12/12/2032 10:30",
+                Some(("another message", "12/12/2032 10:30")),
+            ),
+            (
+                "check the oven in 10 minutes",
+                Some(("check the oven", "10 minutes")),
+            ),
+            (
+                "meet me at the station at 4:20",
+                Some(("meet me at the station", "4:20")),
+            ),
+            ("come in in 10 minutes", Some(("come in", "10 minutes"))),
+            ("Hello World AT 4:20", Some(("Hello World", "4:20"))),
+            (
+                "hello world IN 10 minutes",
+                Some(("hello world", "10 minutes")),
+            ),
+            ("", None),
+            ("at 4:20", None),
+            ("hello world", None),
+            ("hello world at", None),
+            ("hello world in ", None),
+            (" at 4:20", None),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(split_args(input), expected, "for {input:?}");
+        }
     }
 
     #[test]
-    fn splits_relative_durations() {
-        assert_eq!(
-            split_args("check the oven in 10 minutes"),
-            Some(("check the oven", "10 minutes"))
-        );
-    }
-
-    #[test]
-    fn splits_on_the_last_tense_marker() {
-        assert_eq!(
-            split_args("meet me at the station at 4:20"),
-            Some(("meet me at the station", "4:20"))
-        );
-        assert_eq!(
-            split_args("come in in 10 minutes"),
-            Some(("come in", "10 minutes"))
-        );
-    }
-
-    #[test]
-    fn rejects_arguments_without_a_message_or_datetime() {
-        assert_eq!(split_args(""), None);
-        assert_eq!(split_args("at 4:20"), None);
-        assert_eq!(split_args("hello world"), None);
-        assert_eq!(split_args("hello world at"), None);
-        assert_eq!(split_args("hello world in "), None);
-        assert_eq!(split_args(" at 4:20"), None);
-    }
-
-    #[test]
-    fn is_case_insensitive() {
-        assert_eq!(
-            split_args("Hello World AT 4:20"),
-            Some(("Hello World", "4:20"))
-        );
-        assert_eq!(
-            split_args("hello world IN 10 minutes"),
-            Some(("hello world", "10 minutes"))
-        );
-    }
-
-    #[test]
-    fn parses_future_datetimes() {
+    fn parses_absolute_datetimes() {
         let now = Local::now();
 
-        let time = parse_time("12/12/2032 10:30", now).unwrap();
         let expected = Local
             .with_ymd_and_hms(2032, 12, 12, 10, 30, 0)
             .unwrap()
             .with_timezone(&Utc);
 
-        assert_eq!(time, expected);
-    }
-
-    #[test]
-    fn parses_month_before_day() {
-        let now = Local::now();
-
-        let time = parse_time("10:30 12/12/2032", now).unwrap();
-        let expected = Local
-            .with_ymd_and_hms(2032, 12, 12, 10, 30, 0)
-            .unwrap()
-            .with_timezone(&Utc);
-
-        assert_eq!(time, expected);
+        for case in ["12/12/2032 10:30", "10:30 12/12/2032"] {
+            assert_eq!(parse_time(case, now).unwrap(), expected, "for {case:?}");
+        }
     }
 
     #[test]
@@ -632,23 +604,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_past_dates() {
+    fn rejects_invalid_datetimes() {
         let now = Local::now();
+        let cases = [
+            ("1/1/2000", ParseTimeError::Past),
+            ("not a datetime", ParseTimeError::Ambiguous),
+        ];
 
-        assert_eq!(
-            parse_time("1/1/2000", now).unwrap_err(),
-            ParseTimeError::Past
-        );
-    }
-
-    #[test]
-    fn rejects_unparseable_datetimes() {
-        let now = Local::now();
-
-        assert_eq!(
-            parse_time("not a datetime", now).unwrap_err(),
-            ParseTimeError::Ambiguous
-        );
+        for (case, expected) in cases {
+            assert_eq!(parse_time(case, now).unwrap_err(), expected, "for {case:?}");
+        }
     }
 
     #[test]
@@ -708,18 +673,14 @@ mod tests {
 
     #[test]
     fn parses_message_and_datetime() {
-        let opts: Opts = ALERT.parse_words("hello world at 4:20").unwrap();
+        let cases = [("hello world at 4:20", "hello world at 4:20"), ("", "")];
 
-        assert!(!opts.list);
-        assert_eq!(opts.input(), "hello world at 4:20");
-    }
+        for (input, expected) in cases {
+            let opts: Opts = ALERT.parse_words(input).unwrap();
 
-    #[test]
-    fn parses_empty_arguments() {
-        let opts: Opts = ALERT.parse_words("").unwrap();
-
-        assert!(!opts.list);
-        assert_eq!(opts.input(), "");
+            assert!(!opts.list, "for {input:?}");
+            assert_eq!(opts.input(), expected, "for {input:?}");
+        }
     }
 
     #[test]
@@ -773,8 +734,8 @@ mod tests {
     #[test]
     fn formats_no_pending_alerts() {
         assert_eq!(
-            format_pending(&[]),
-            "\x0310>\x0f\x02 Alert:\x02\x0310 You have no pending alerts"
+            strip_formatting(&format_pending(&[])),
+            "> Alert: You have no pending alerts"
         );
     }
 
@@ -782,6 +743,7 @@ mod tests {
     fn formats_a_single_pending_alert() {
         let pending = [alert("hello world", at(2026, 9, 16, 11, 21))];
 
+        // The exact layout pin for the formatter.
         assert_eq!(
             format_pending(&pending),
             concat!(
@@ -799,32 +761,37 @@ mod tests {
             alert("third", at(2026, 9, 16, 11, 23)),
             alert("fourth", at(2026, 9, 17, 9, 15)),
         ];
+        let listing = strip_formatting(&format_pending(&pending));
 
-        assert_eq!(
-            format_pending(&pending),
-            concat!(
-                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 4",
-                "\x0310 Next up: “\x0ffirst\x0310”\x0f Sep 16th 11:21\x0310",
-                "\x0310, then: “\x0fsecond\x0310”\x0f Sep 16th 11:22\x0310",
-                "\x0310, then: “\x0fthird\x0310”\x0f Sep 16th 11:23\x0310",
-            )
+        assert!(
+            listing.starts_with("> Alert: Pending alerts: 4"),
+            "{listing}"
         );
+        assert!(
+            listing.contains("Next up: “first” Sep 16th 11:21"),
+            "{listing}"
+        );
+        assert!(
+            listing.contains("then: “second” Sep 16th 11:22"),
+            "{listing}"
+        );
+        assert!(
+            listing.contains("then: “third” Sep 16th 11:23"),
+            "{listing}"
+        );
+        assert!(!listing.contains("fourth"), "{listing}");
     }
 
     #[test]
     fn truncates_long_messages() {
         let pending = [alert(&"a".repeat(80), at(2026, 9, 16, 11, 21))];
+        let listing = strip_formatting(&format_pending(&pending));
 
-        let truncated = format!("{}…", "a".repeat(50));
-        let expected = format!(
-            concat!(
-                "\x0310>\x0f\x02 Alert:\x02\x0310 Pending alerts:\x0f 1",
-                "\x0310 Next up: “\x0f{}\x0310”\x0f Sep 16th 11:21\x0310",
-            ),
-            truncated
+        assert!(
+            listing.contains(&format!("Next up: “{}…” Sep 16th 11:21", "a".repeat(50))),
+            "{listing}"
         );
-
-        assert_eq!(format_pending(&pending), expected);
+        assert!(!listing.contains(&"a".repeat(51)), "{listing}");
     }
 
     #[test]

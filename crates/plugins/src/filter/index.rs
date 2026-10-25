@@ -102,9 +102,7 @@ impl Entry {
     fn sender_matches(&self, sender: Option<Sender<'_>>) -> bool {
         let Some(sender) = sender else {
             // A set sender criterion needs a sender to match against.
-            return self.nickname.is_none()
-                && self.username.is_none()
-                && self.hostname.is_none();
+            return self.nickname.is_none() && self.username.is_none() && self.hostname.is_none();
         };
 
         Self::field_matches(self.nickname.as_ref(), sender.nick)
@@ -367,47 +365,60 @@ mod tests {
     }
 
     #[test]
-    fn indexes_by_exact_host() {
-        let index = index_with(&[new_filter(None, Some("imdb.com"))]);
+    fn matches_hosts_by_exact_and_wildcard_patterns() {
+        let cases = [
+            ("exact host", "imdb.com", "https://imdb.com/title/tt1", true),
+            (
+                "exact host does not match a subdomain",
+                "imdb.com",
+                "https://www.imdb.com/title/tt1",
+                false,
+            ),
+            ("unrelated exact host", "imdb.com", "https://dr.dk", false),
+            (
+                "wildcard host",
+                "*.com",
+                "https://reuters.com/some-article",
+                true,
+            ),
+            (
+                "wildcard host with another tld",
+                "*.com",
+                "https://dr.dk/some-article",
+                false,
+            ),
+            (
+                "uppercase pattern",
+                "IMDB.COM",
+                "https://imdb.com/title/tt1",
+                true,
+            ),
+            (
+                "uppercase url host",
+                "imdb.com",
+                "https://IMDB.com/title/tt1",
+                true,
+            ),
+        ];
 
-        assert!(matches(&index, "#chan", "https://imdb.com/title/tt1"));
-        assert!(!matches(&index, "#chan", "https://www.imdb.com/title/tt1"));
-        assert!(!matches(&index, "#chan", "https://dr.dk"));
-    }
+        for (case, pattern, url, expected) in cases {
+            let index = index_with(&[new_filter(None, Some(pattern))]);
 
-    #[test]
-    fn indexes_wildcard_hosts() {
-        let index = index_with(&[new_filter(None, Some("*.com"))]);
-
-        assert!(matches(&index, "#chan", "https://reuters.com/some-article"));
-        assert!(!matches(&index, "#chan", "https://dr.dk/some-article"));
-    }
-
-    #[test]
-    fn host_patterns_are_case_insensitive() {
-        let upper = index_with(&[new_filter(None, Some("IMDB.COM"))]);
-
-        assert!(matches(&upper, "#chan", "https://imdb.com/title/tt1"));
-
-        let lower = index_with(&[new_filter(None, Some("imdb.com"))]);
-
-        assert!(matches(&lower, "#chan", "https://IMDB.com/title/tt1"));
+            assert_eq!(matches(&index, "#chan", url), expected, "for {case}");
+        }
     }
 
     #[test]
     fn scopes_filters_to_channels() {
-        let index = index_with(&[new_filter(Some("#foo"), Some("dr.dk"))]);
+        let scoped = index_with(&[new_filter(Some("#foo"), Some("dr.dk"))]);
 
-        assert!(matches(&index, "#FOO", "https://dr.dk"));
-        assert!(!matches(&index, "#bar", "https://dr.dk"));
-    }
+        assert!(matches(&scoped, "#FOO", "https://dr.dk"));
+        assert!(!matches(&scoped, "#bar", "https://dr.dk"));
 
-    #[test]
-    fn matches_all_channel_filters_in_any_channel() {
-        let index = index_with(&[new_filter(None, Some("dr.dk"))]);
+        let all_channels = index_with(&[new_filter(None, Some("dr.dk"))]);
 
-        assert!(matches(&index, "#foo", "https://dr.dk"));
-        assert!(matches(&index, "#bar", "https://dr.dk"));
+        assert!(matches(&all_channels, "#foo", "https://dr.dk"));
+        assert!(matches(&all_channels, "#bar", "https://dr.dk"));
     }
 
     #[test]
@@ -437,7 +448,10 @@ mod tests {
         }]);
 
         assert!(index.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
-        assert!(!index.ignores("#chan", Some(Sender::new("someone", "user", "host.example"))));
+        assert!(!index.ignores(
+            "#chan",
+            Some(Sender::new("someone", "user", "host.example"))
+        ));
         assert!(!index.ignores("#chan", None));
 
         let user = index_with(&[NewFilter {
@@ -445,7 +459,10 @@ mod tests {
             ..new_filter(None, None)
         }]);
 
-        assert!(user.ignores("#chan", Some(Sender::new("someone", "~cliother", "host.example"))));
+        assert!(user.ignores(
+            "#chan",
+            Some(Sender::new("someone", "~cliother", "host.example"))
+        ));
 
         let hostname = index_with(&[NewFilter {
             hostname: Some("*.isp.example".into()),
@@ -456,7 +473,9 @@ mod tests {
     }
 
     #[test]
-    fn filters_with_url_criteria_do_not_ignore_senders() {
+    fn filters_with_url_criteria_or_no_criteria_do_not_ignore_senders() {
+        let sender = Some(Sender::new("a_bot", "user", "host.example"));
+
         let host = index_with(&[NewFilter {
             nickname: Some("*bot".into()),
             ..new_filter(None, Some("imdb.com"))
@@ -466,9 +485,11 @@ mod tests {
             path: Some("/title/*".into()),
             ..new_filter(None, None)
         }]);
+        let no_criteria = index_with(&[new_filter(None, None)]);
 
-        assert!(!host.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
-        assert!(!path.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
+        assert!(!host.ignores("#chan", sender));
+        assert!(!path.ignores("#chan", sender));
+        assert!(!no_criteria.ignores("#chan", sender));
     }
 
     #[test]
@@ -583,13 +604,10 @@ mod tests {
 
         assert!(!matches(&index, "#chan", "https://imdb.com/title/tt1"));
         assert!(matches(&index, "#chan", "https://dr.dk"));
-    }
+        assert_eq!(index.len(), 1);
 
-    #[test]
-    fn removing_the_last_filter_empties_the_index() {
-        let mut index = index_with(&[new_filter(None, Some("imdb.com"))]);
-
-        index.remove_ids(&[1]);
+        // Removing the last filter drops the empty channel buckets too.
+        index.remove_ids(&[2]);
 
         assert!(index.is_empty());
         assert_eq!(index.len(), 0);

@@ -56,20 +56,13 @@ pub struct RoomDossier {
     pub broadcaster_gender: String,
 }
 
-#[async_trait]
-impl Plugin<Context> for Chaturbate {
-    type Settings = NoSettings;
-
-    fn new(
-        ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
-
-        Ok(Self::new(&ctx.config.http))
+#[plugin(name = "chaturbate", urls(hosts = URL_HOSTS))]
+impl Chaturbate {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
+        Ok(Self::with_http_config(&ctx.config.http))
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
@@ -97,7 +90,7 @@ impl Chaturbate {
     /// Panics if the room dossier extraction regex fails to compile, which can only happen on a
     /// programming error since the pattern is a constant.
     #[must_use]
-    pub fn new(config: &HttpConfig) -> Self {
+    pub fn with_http_config(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
         // The dossier is assigned as a JSON-encoded string literal, terminated by a semicolon
         // before the closing </script> tag.
@@ -194,42 +187,39 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_room_dossier_fiery_redhead() {
-        let html = fixture_html("fiery_redhead");
-        let plugin = Chaturbate::new(&HttpConfig::default());
-        let dossier = parse_room_dossier_with_re(&plugin.room_dossier_re, &html)
-            .expect("should parse dossier");
+    fn test_parse_room_dossier_fixtures() {
+        let cases = [
+            (
+                "fiery_redhead",
+                "fiery_redhead",
+                "start domi [12 tokens left] Prvts open :) #lush #redhead #bigbooty #natural",
+            ),
+            (
+                "milabunny_",
+                "milabunny_",
+                "GOAL: Undress me to the end 🐰💞 / Hello, my name is Mila, I want to give you my smile and fun.🐰💕 #new #blonde #bigboobs #shy #18 [1424 tokens remaining]",
+            ),
+        ];
 
-        assert_eq!(dossier.broadcaster_username, "fiery_redhead");
-        assert_eq!(dossier.room_status, "public");
-        assert_eq!(dossier.broadcaster_gender, "female");
-        assert_eq!(
-            dossier.room_title,
-            "start domi [12 tokens left] Prvts open :) #lush #redhead #bigbooty #natural"
-        );
+        for (fixture, username, title) in cases {
+            let html = fixture_html(fixture);
+            let plugin = Chaturbate::with_http_config(&HttpConfig::default());
+            let dossier = parse_room_dossier_with_re(&plugin.room_dossier_re, &html)
+                .expect("should parse dossier");
+
+            assert_eq!(dossier.broadcaster_username, username, "for {fixture}");
+            assert_eq!(dossier.room_status, "public", "for {fixture}");
+            assert_eq!(dossier.broadcaster_gender, "female", "for {fixture}");
+            assert_eq!(dossier.room_title, title, "for {fixture}");
+        }
     }
 
     #[test]
-    fn test_parse_room_dossier_milabunny() {
-        let html = fixture_html("milabunny_");
-        let plugin = Chaturbate::new(&HttpConfig::default());
-        let dossier = parse_room_dossier_with_re(&plugin.room_dossier_re, &html)
-            .expect("should parse dossier");
-
-        assert_eq!(dossier.broadcaster_username, "milabunny_");
-        assert_eq!(dossier.room_status, "public");
-        assert_eq!(dossier.broadcaster_gender, "female");
-        assert_eq!(
-            dossier.room_title,
-            "GOAL: Undress me to the end 🐰💞 / Hello, my name is Mila, I want to give you my smile and fun.🐰💕 #new #blonde #bigboobs #shy #18 [1424 tokens remaining]"
-        );
-    }
-
-    #[test]
-    fn test_extract_username_valid() {
+    fn test_extract_username() {
         assert_parses(
             extract_username,
             &[
+                // Broadcaster rooms.
                 (
                     "https://chaturbate.com/fiery_redhead/",
                     Some("fiery_redhead".to_string()),
@@ -238,25 +228,13 @@ mod tests {
                     "https://www.chaturbate.com/some_user",
                     Some("some_user".to_string()),
                 ),
-            ],
-        );
-    }
-
-    #[test]
-    fn test_extract_username_excluded_paths() {
-        assert_parses(
-            extract_username,
-            &[
+                // Well-known non-broadcaster paths.
                 ("https://chaturbate.com/auth/login/", None),
                 ("https://chaturbate.com/tags/redhead/", None),
                 ("https://chaturbate.com/search/", None),
+                // Other hosts are not handled.
+                ("https://example.com/user/", None),
             ],
         );
-    }
-
-    #[test]
-    fn test_extract_username_wrong_host() {
-        let url = Url::parse("https://example.com/user/").unwrap();
-        assert_eq!(extract_username(&url), None);
     }
 }

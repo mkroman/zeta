@@ -83,17 +83,9 @@ struct Creator {
     name: String,
 }
 
-#[async_trait]
-impl Plugin<Context> for Thingiverse {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(URL_HOSTS));
-
+#[plugin(name = "thingiverse", settings = Settings, urls(hosts = URL_HOSTS))]
+impl Thingiverse {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client(&ctx.config.http);
         // Regex to match /thing:<id>
@@ -106,6 +98,7 @@ impl Plugin<Context> for Thingiverse {
         })
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
@@ -214,6 +207,7 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -262,22 +256,24 @@ mod tests {
 
     #[test]
     fn labels_work_in_progress_and_featured_things() {
-        let wip = thing(1, None, 0, 0, 0);
+        let cases = [
+            (
+                "work in progress",
+                thing(1, None, 0, 0, 0),
+                "is a work in progress created by",
+            ),
+            (
+                "featured",
+                thing(0, Some(true), 0, 0, 0),
+                "is a featured created by",
+            ),
+        ];
 
-        assert!(
-            wip.to_string()
-                .contains("is a\x0f work in progress\x0310 created by"),
-            "{wip}"
-        );
+        for (case, thing, expected) in cases {
+            let formatted = strip_formatting(&thing.to_string());
 
-        let featured = thing(0, Some(true), 0, 0, 0);
-
-        assert!(
-            featured
-                .to_string()
-                .contains("is a \x0ffeatured\x0310 created by"),
-            "{featured}"
-        );
+            assert!(formatted.contains(expected), "{case}: {formatted}");
+        }
     }
 
     #[test]
@@ -285,9 +281,7 @@ mod tests {
         let thing = thing(0, Some(false), 2, 3, 1);
 
         assert!(
-            thing
-                .to_string()
-                .ends_with(" and is part of\x0f 1\x0310 collection"),
+            strip_formatting(&thing.to_string()).ends_with("and is part of 1 collection"),
             "{thing}"
         );
     }

@@ -38,10 +38,6 @@ pub struct Settings {
     pub api_key: Option<String>,
 }
 
-/// The `.geoip` command.
-const GEOIP: CommandSpec =
-    CommandSpec::with_args::<Opts>(".geoip", "Look up the geolocation of a domain or IP");
-
 /// The geoip plugin: geolocates addresses on behalf of `.geoip` commands.
 pub struct GeoIp {
     /// The HTTP client used for API requests.
@@ -112,16 +108,10 @@ pub struct IpInfo {
     pub is_proxy: bool,
 }
 
-#[async_trait]
-impl Plugin<Context> for GeoIp {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(GEOIP);
+#[plugin(name = "geoip", settings = Settings)]
+impl GeoIp {
+    /// Resolves the API key and builds the HTTP client the lookups go through.
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
         let client = http::builder(&ctx.config.http)
             .build()
@@ -130,28 +120,30 @@ impl Plugin<Context> for GeoIp {
         Ok(Self { client, api_key })
     }
 
-    async fn handle_command(
+    /// Looks up the requested domain or IP and replies with its geolocation details.
+    #[command(
+        ".geoip",
+        "Look up the geolocation of a domain or IP",
+        args = Opts,
+        label = "GeoIP"
+    )]
+    async fn geoip(
         &self,
         _ctx: &Context,
         client: &Client,
-        command: &CommandEvent,
+        channel: &str,
+        opts: Opts,
     ) -> Result<(), ZetaError> {
-        let Some(opts) =
-            parse_args_or_usage::<Opts>(client, command, |line: &str| reply("GeoIP", line))?
-        else {
-            return Ok(());
-        };
-
         match self.resolve(&opts.name).await {
             Ok(result) => {
                 for line in result.to_string().lines() {
-                    client.send_privmsg(command.channel(), line)?;
+                    client.send_privmsg(channel, line)?;
                 }
             }
             Err(err) => {
                 warn!(?err, name = %opts.name, "geoip lookup failed");
 
-                client.send_privmsg(command.channel(), reply("GeoIP", err))?;
+                client.send_privmsg(channel, reply("GeoIP", err))?;
             }
         }
 

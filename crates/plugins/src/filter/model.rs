@@ -93,24 +93,31 @@ impl Criteria {
     /// Whether the criteria select `filter`.
     #[must_use]
     pub fn matches(&self, filter: &Filter) -> bool {
-        Self::matches_field(self.channel.as_deref(), filter.channel.as_deref(), Case::Insensitive)
-            && Self::matches_field(self.host.as_deref(), filter.host.as_deref(), Case::Insensitive)
-            && Self::matches_field(self.path.as_deref(), filter.path.as_deref(), Case::Sensitive)
-            && Self::matches_field(
-                self.nickname.as_deref(),
-                filter.nickname.as_deref(),
-                Case::Insensitive,
-            )
-            && Self::matches_field(
-                self.username.as_deref(),
-                filter.username.as_deref(),
-                Case::Insensitive,
-            )
-            && Self::matches_field(
-                self.hostname.as_deref(),
-                filter.hostname.as_deref(),
-                Case::Insensitive,
-            )
+        Self::matches_field(
+            self.channel.as_deref(),
+            filter.channel.as_deref(),
+            Case::Insensitive,
+        ) && Self::matches_field(
+            self.host.as_deref(),
+            filter.host.as_deref(),
+            Case::Insensitive,
+        ) && Self::matches_field(
+            self.path.as_deref(),
+            filter.path.as_deref(),
+            Case::Sensitive,
+        ) && Self::matches_field(
+            self.nickname.as_deref(),
+            filter.nickname.as_deref(),
+            Case::Insensitive,
+        ) && Self::matches_field(
+            self.username.as_deref(),
+            filter.username.as_deref(),
+            Case::Insensitive,
+        ) && Self::matches_field(
+            self.hostname.as_deref(),
+            filter.hostname.as_deref(),
+            Case::Insensitive,
+        )
     }
 
     /// Whether `pattern` matches `value`, or is unset.
@@ -125,8 +132,9 @@ impl Criteria {
 
         match case {
             Case::Sensitive => wildmatch::WildMatch::new(pattern).matches(value),
-            Case::Insensitive => wildmatch::WildMatch::new(&pattern.to_lowercase())
-                .matches(&value.to_lowercase()),
+            Case::Insensitive => {
+                wildmatch::WildMatch::new(&pattern.to_lowercase()).matches(&value.to_lowercase())
+            }
         }
     }
 }
@@ -163,57 +171,65 @@ mod tests {
     }
 
     #[test]
-    fn criteria_match_selectively() {
-        let criteria = Criteria {
-            host: Some("*.com".into()),
-            ..Criteria::default()
-        };
+    fn criteria_match_selected_fields() {
+        let cases = [
+            (
+                "a matching wildcard host",
+                Criteria {
+                    host: Some("*.com".into()),
+                    ..Criteria::default()
+                },
+                filter(Some("reuters.com"), None),
+                true,
+            ),
+            (
+                "a non-matching wildcard host",
+                Criteria {
+                    host: Some("*.com".into()),
+                    ..Criteria::default()
+                },
+                filter(Some("dr.dk"), None),
+                false,
+            ),
+            (
+                "empty criteria",
+                Criteria::default(),
+                filter(None, None),
+                true,
+            ),
+            (
+                "a set host against an unset field",
+                Criteria {
+                    host: Some("dr.dk".into()),
+                    ..Criteria::default()
+                },
+                filter(None, None),
+                false,
+            ),
+        ];
 
-        assert!(criteria.matches(&filter(Some("reuters.com"), None)));
-        assert!(!criteria.matches(&filter(Some("dr.dk"), None)));
+        for (case, criteria, filter, expected) in cases {
+            assert_eq!(criteria.matches(&filter), expected, "for {case}");
+        }
     }
 
     #[test]
-    fn empty_criteria_match_everything() {
-        let criteria = Criteria::default();
-
-        assert!(criteria.matches(&filter(None, None)));
-    }
-
-    #[test]
-    fn set_criteria_do_not_match_unset_fields() {
-        let criteria = Criteria {
-            host: Some("dr.dk".into()),
-            ..Criteria::default()
-        };
-
-        assert!(!criteria.matches(&filter(None, None)));
-    }
-
-    #[test]
-    fn path_criteria_are_case_sensitive() {
-        let upper = Criteria {
+    fn criteria_matching_respects_path_case_sensitivity() {
+        let upper_path = Criteria {
             path: Some("/Title/*".into()),
             ..Criteria::default()
         };
-
-        assert!(!upper.matches(&filter(None, Some("/title/*"))));
-
-        let lower = Criteria {
+        let lower_path = Criteria {
             path: Some("/title/*".into()),
             ..Criteria::default()
         };
-
-        assert!(lower.matches(&filter(None, Some("/title/*"))));
-    }
-
-    #[test]
-    fn host_criteria_are_case_insensitive() {
-        let criteria = Criteria {
+        let upper_host = Criteria {
             host: Some("DR.DK".into()),
             ..Criteria::default()
         };
 
-        assert!(criteria.matches(&filter(Some("dr.dk"), None)));
+        assert!(!upper_path.matches(&filter(None, Some("/title/*"))));
+        assert!(lower_path.matches(&filter(None, Some("/title/*"))));
+        assert!(upper_host.matches(&filter(Some("dr.dk"), None)));
     }
 }

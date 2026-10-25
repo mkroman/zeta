@@ -219,33 +219,37 @@ mod tests {
     "#;
 
     #[test]
-    fn test_extract_media_page() {
-        let metadata = extract(MEDIA_PAGE);
+    fn test_extract() {
+        let cases = [
+            (
+                "a media page",
+                MEDIA_PAGE,
+                PageMetadata {
+                    og_title: Some("user.name on Instagram: \"Some caption & more\"".to_string()),
+                    og_description: Some(
+                        "1,234 likes, 56 comments - user.name on January 1, 2024".to_string(),
+                    ),
+                },
+            ),
+            ("the login wall", LOGIN_PAGE, PageMetadata::default()),
+            (
+                "attributes in any order",
+                r#"<meta content="the content" property="og:title" />"#,
+                PageMetadata {
+                    og_title: Some("the content".to_string()),
+                    ..PageMetadata::default()
+                },
+            ),
+            (
+                "a missing content attribute",
+                r#"<meta property="og:title" />"#,
+                PageMetadata::default(),
+            ),
+        ];
 
-        assert_eq!(
-            metadata.og_title.as_deref(),
-            Some("user.name on Instagram: \"Some caption & more\"")
-        );
-        assert_eq!(
-            metadata.og_description.as_deref(),
-            Some("1,234 likes, 56 comments - user.name on January 1, 2024")
-        );
-    }
-
-    #[test]
-    fn test_extract_login_page() {
-        assert_eq!(extract(LOGIN_PAGE), PageMetadata::default());
-    }
-
-    #[test]
-    fn test_extract_attribute_orders() {
-        // The attribute order does not matter.
-        let html = r#"<meta content="the content" property="og:title" />"#;
-        assert_eq!(extract(html).og_title.as_deref(), Some("the content"));
-
-        // Pages without a content attribute carry no metadata.
-        let html = r#"<meta property="og:title" />"#;
-        assert_eq!(extract(html), PageMetadata::default());
+        for (case, body, expected) in cases {
+            assert_eq!(extract(body), expected, "for {case}");
+        }
     }
 
     #[test]

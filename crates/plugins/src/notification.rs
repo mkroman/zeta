@@ -54,28 +54,28 @@ pub struct NotificationPlugin {
     service: NotificationService,
 }
 
-#[async_trait]
-impl Plugin<Context> for NotificationPlugin {
-    type Settings = Settings;
-
+#[plugin(name = "notification", settings = Settings, messages)]
+impl NotificationPlugin {
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions.command(NOTIFY).receive_message();
+        subscriptions.command(NOTIFY);
 
         Ok(Self {
             service: NotificationService::new(ctx.db.clone(), settings),
         })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -121,6 +121,7 @@ impl Plugin<Context> for NotificationPlugin {
         Ok(())
     }
 
+    #[handler(message)]
     async fn handle_message(
         &self,
         _ctx: &Context,
@@ -220,19 +221,25 @@ mod tests {
 
     #[test]
     fn parses_target_and_message() {
-        assert_eq!(parse_args("foo hello there"), Some(("foo", "hello there")));
-    }
+        let cases = [
+            (
+                "a target and a message",
+                "foo hello there",
+                Some(("foo", "hello there")),
+            ),
+            (
+                "a message kept verbatim",
+                "foo   padded  ",
+                Some(("foo", "  padded  ")),
+            ),
+            ("empty arguments", "", None),
+            ("a target without a message", "foo", None),
+            ("a target and one space", "foo ", None),
+            ("a target and only spaces", "foo   ", None),
+        ];
 
-    #[test]
-    fn keeps_message_verbatim() {
-        assert_eq!(parse_args("foo   padded  "), Some(("foo", "  padded  ")));
-    }
-
-    #[test]
-    fn rejects_arguments_without_a_message() {
-        assert_eq!(parse_args(""), None);
-        assert_eq!(parse_args("foo"), None);
-        assert_eq!(parse_args("foo "), None);
-        assert_eq!(parse_args("foo   "), None);
+        for (case, input, expected) in cases {
+            assert_eq!(parse_args(input), expected, "for {case}: {input:?}");
+        }
     }
 }

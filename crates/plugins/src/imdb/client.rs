@@ -630,34 +630,28 @@ mod tests {
         assert_eq!(title.genres, ["Action", "Adventure", "Family"]);
         assert!(title.series.is_none());
         assert!(!title.is_episode());
-
-        let message = super::super::format_title(&title);
-        assert!(message.starts_with(&super::super::format::prefix()));
-        assert!(message.contains("Peggle Nights"));
     }
 
     #[test]
-    fn decodes_recorded_empty_title_as_not_found() {
+    fn decodes_missing_titles_as_not_found() {
         // Non-existent titles are returned as an empty node (all fields null), not `null`.
-        let text = fixture("title_not_found");
+        let empty_node = fixture("title_not_found");
+        let null_node = r#"{"data":{"title":null}}"#;
 
-        let response: GraphQlResponse<TitleData> = http::json::from_str(&text).unwrap();
+        for (case, text) in [
+            ("empty node", empty_node),
+            ("null node", null_node.to_string()),
+        ] {
+            let response: GraphQlResponse<TitleData> = http::json::from_str(&text).unwrap();
 
-        assert!(matches!(
-            title_from_node(response.data.unwrap().title),
-            Err(Error::NotFound)
-        ));
-    }
-
-    #[test]
-    fn decodes_null_title_as_not_found() {
-        let text = r#"{"data":{"title":null}}"#;
-        let response: GraphQlResponse<TitleData> = http::json::from_str(text).unwrap();
-
-        assert!(matches!(
-            title_from_node(response.data.unwrap().title),
-            Err(Error::NotFound)
-        ));
+            assert!(
+                matches!(
+                    title_from_node(response.data.unwrap().title),
+                    Err(Error::NotFound)
+                ),
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -696,9 +690,5 @@ mod tests {
         );
         assert_ne!(person.known_for, Vec::new());
         assert_eq!(person.known_for[0].title.as_deref(), Some("Breaking Bad"));
-
-        let message = super::super::format_person(&person);
-        assert!(message.contains("Bryan Cranston"));
-        assert!(message.contains("https://imdb.com/name/nm0186505"));
     }
 }

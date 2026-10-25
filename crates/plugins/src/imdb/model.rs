@@ -100,17 +100,26 @@ mod tests {
 
     #[test]
     fn episode_marker_is_padded_and_optional() {
-        let series = SeriesInfo {
-            id: "tt0903747".to_string(),
-            title: Some("Breaking Bad".to_string()),
-            season: Some("1".to_string()),
-            number: Some("7".to_string()),
-        };
+        let cases = [
+            (Some("1"), Some("7"), Some("S01E07")),
+            (Some("2"), None, Some("S02")),
+            (None, Some("7"), Some("E07")),
+            (None, None, None),
+        ];
 
-        assert_eq!(series.episode_marker().as_deref(), Some("S01E07"));
+        for (season, number, expected) in cases {
+            let series = SeriesInfo {
+                id: "tt0903747".to_string(),
+                title: Some("Breaking Bad".to_string()),
+                season: season.map(str::to_string),
+                number: number.map(str::to_string),
+            };
 
-        let series = SeriesInfo::default();
-
-        assert_eq!(series.episode_marker(), None);
+            assert_eq!(
+                series.episode_marker().as_deref(),
+                expected,
+                "{season:?}/{number:?}"
+            );
+        }
     }
 }

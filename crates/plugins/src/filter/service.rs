@@ -163,7 +163,11 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(Some("#smoke"), Some("example.com"), Some("*other")))
+            .add(new_filter(
+                Some("#smoke"),
+                Some("example.com"),
+                Some("*other"),
+            ))
             .await
             .unwrap();
 
@@ -178,7 +182,11 @@ mod tests {
         let service = FilterService::new(db);
 
         let added = service
-            .add(new_filter(Some("#smoke"), Some("example.com"), Some("*other")))
+            .add(new_filter(
+                Some("#smoke"),
+                Some("example.com"),
+                Some("*other"),
+            ))
             .await
             .unwrap();
 
@@ -203,7 +211,10 @@ mod tests {
     async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
         let service = FilterService::new(db);
 
-        service.add(new_filter(None, Some("*.com"), None)).await.unwrap();
+        service
+            .add(new_filter(None, Some("*.com"), None))
+            .await
+            .unwrap();
 
         assert!(service.matches(
             "#anywhere",
@@ -213,51 +224,11 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn matches_urls_through_the_url_filter_trait(db: sqlx::PgPool) {
-        let service = FilterService::new(db);
-
-        service
-            .add(new_filter(None, Some("imdb.com"), Some("someuser")))
-            .await
-            .unwrap();
-
+    async fn matches_and_ignores_through_the_url_filter_trait(db: sqlx::PgPool) {
         let url: Url = "https://imdb.com/title/tt0111161".parse().unwrap();
+        let matching = Some(Sender::new("nick", "someuser", "host.example"));
+        let other = Some(Sender::new("nick", "other", "host.example"));
 
-        assert!(UrlFilter::matches(
-            &service,
-            "#chan",
-            Some(Sender::new("nick", "someuser", "host.example")),
-            &url
-        ));
-        assert!(!UrlFilter::matches(
-            &service,
-            "#chan",
-            Some(Sender::new("nick", "other", "host.example")),
-            &url
-        ));
-    }
-
-    #[sqlx::test]
-    async fn ignores_senders_through_the_url_filter_trait(db: sqlx::PgPool) {
-        let service = FilterService::new(db.clone());
-
-        service
-            .add(new_filter(None, None, Some("someuser")))
-            .await
-            .unwrap();
-
-        assert!(UrlFilter::ignores(
-            &service,
-            "#chan",
-            Some(Sender::new("nick", "someuser", "host.example"))
-        ));
-        assert!(!UrlFilter::ignores(
-            &service,
-            "#chan",
-            Some(Sender::new("nick", "other", "host.example"))
-        ));
-
-        // A filter with URL criteria filters those URLs without ignoring the sender entirely.
         let url_only = FilterService::new(db.clone());
 
         url_only
@@ -265,10 +236,19 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!UrlFilter::ignores(
-            &url_only,
-            "#chan",
-            Some(Sender::new("nick", "someuser", "host.example"))
-        ));
+        assert!(UrlFilter::matches(&url_only, "#chan", matching, &url));
+        assert!(!UrlFilter::matches(&url_only, "#chan", other, &url));
+        // A filter with URL criteria filters those URLs without ignoring the sender entirely.
+        assert!(!UrlFilter::ignores(&url_only, "#chan", matching));
+
+        let sender_only = FilterService::new(db);
+
+        sender_only
+            .add(new_filter(None, None, Some("someuser")))
+            .await
+            .unwrap();
+
+        assert!(UrlFilter::ignores(&sender_only, "#chan", matching));
+        assert!(!UrlFilter::ignores(&sender_only, "#chan", other));
     }
 }

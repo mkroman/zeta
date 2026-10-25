@@ -1942,6 +1942,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6928282826c822ad91bf1c9a1cb90a30ba1c26770749929b4656cd6be829cd7c"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ipconfig"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2880,7 +2889,6 @@ version = "0.0.0"
 dependencies = [
  "arc-swap",
  "argh",
- "async-trait",
  "base64 0.23.1",
  "chrono",
  "coinmarketcap",
@@ -2913,6 +2921,7 @@ dependencies = [
  "similar-asserts",
  "sqlx",
  "strsim 0.11.1",
+ "syn 2.0.119",
  "thiserror 2.0.21",
  "time",
  "tokio",
@@ -5389,17 +5398,32 @@ dependencies = [
  "arc-swap",
  "argh",
  "async-trait",
+ "figment",
  "humantime-serde",
+ "inventory",
  "irc",
  "serde",
+ "serde_ignored",
  "shlex 2.0.1",
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
  "url",
+ "zeta-plugin-macros",
  "zeta-test-support",
  "zeta-utils",
+]
+
+[[package]]
+name = "zeta-plugin-macros"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "zeta-plugin",
 ]
 
 [[package]]

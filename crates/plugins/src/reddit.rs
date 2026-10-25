@@ -66,26 +66,22 @@ pub struct Reddit {
     mirror: Option<MirrorHandle>,
 }
 
-#[async_trait]
-impl Plugin<Context> for Reddit {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(&[
-            "i.redd.it",
-            "oauth.reddit.com",
-            "old.reddit.com",
-            "preview.redd.it",
-            "redd.it",
-            "reddit.com",
-            "v.redd.it",
-            "www.reddit.com",
-        ]));
-
+#[plugin(
+    name = "reddit",
+    settings = Settings,
+    urls(hosts = &[
+        "i.redd.it",
+        "oauth.reddit.com",
+        "old.reddit.com",
+        "preview.redd.it",
+        "redd.it",
+        "reddit.com",
+        "v.redd.it",
+        "www.reddit.com",
+    ])
+)]
+impl Reddit {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =
             resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();
@@ -108,6 +104,7 @@ impl Plugin<Context> for Reddit {
         Ok(Self { client, mirror })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
@@ -116,6 +113,7 @@ impl Plugin<Context> for Reddit {
         Ok(())
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,

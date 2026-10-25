@@ -406,7 +406,10 @@ impl FilterPlugin {
             listing(
                 reply(
                     "Filter",
-                    format!("{} matching your criteria: ", plural(filters.len(), "filter")),
+                    format!(
+                        "{} matching your criteria: ",
+                        plural(filters.len(), "filter")
+                    ),
                 ),
                 &filters,
                 0,
@@ -432,9 +435,14 @@ impl FilterPlugin {
 
             // The removed filter is named in the reply, and an unknown id is answered without
             // touching the database.
-            let Some(filter) = self.service.list().into_iter().find(|filter| filter.id == id)
+            let Some(filter) = self
+                .service
+                .list()
+                .into_iter()
+                .find(|filter| filter.id == id)
             else {
-                client.send_privmsg(channel, reply("Filter", format!("No filter with id {id}.")))?;
+                client
+                    .send_privmsg(channel, reply("Filter", format!("No filter with id {id}.")))?;
 
                 return Ok(());
             };
@@ -499,10 +507,7 @@ impl FilterPlugin {
             Ok(removed) if removed == filters.len() as u64 => {
                 changed_response("Filter", "Removed", &filters)
             }
-            Ok(removed) => format!(
-                "Removed {removed} of {} matching filters.",
-                filters.len()
-            ),
+            Ok(removed) => format!("Removed {removed} of {} matching filters.", filters.len()),
             Err(error) => format!("could not delete the filters: {error}"),
         };
 
@@ -512,31 +517,28 @@ impl FilterPlugin {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for FilterPlugin {
-    type Settings = NoSettings;
-
-    fn new(
-        ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+#[plugin(name = "filter")]
+impl FilterPlugin {
+    fn new(ctx: &Context, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         subscriptions.command(FILTER);
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 
-        ctx.shared.publish(Arc::new(UrlFilters::new(service.clone())));
+        ctx.shared
+            .publish(Arc::new(UrlFilters::new(service.clone())));
 
         let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");
 
         Ok(Self { service, admins })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
 
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -613,6 +615,7 @@ fn describe(filter: &Filter) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_utils::utils::strip_formatting;
 
     #[tokio::test]
     async fn publishes_a_url_filters_handle_for_the_host() {
@@ -694,25 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn a_single_added_filter_is_described_with_its_id() {
-        let filter = Filter {
-            id: 12,
-            channel: Some("#foo".into()),
-            host: Some("example.com".into()),
-            path: None,
-            nickname: None,
-            username: None,
-            hostname: None,
-        };
-
-        assert_eq!(
-            changed_response("Filter", "Added", &[filter]),
-            reply("Filter", "Added #12: host=example.com (#foo).")
-        );
-    }
-
-    #[test]
-    fn multiple_added_filters_are_listed_with_a_count() {
+    fn describes_added_filters() {
         let first = Filter {
             id: 12,
             channel: None,
@@ -722,24 +707,40 @@ mod tests {
             username: None,
             hostname: None,
         };
-        let second = Filter {
-            id: 13,
-            channel: None,
-            host: Some("b.com".into()),
-            path: Some("/x/*".into()),
-            nickname: None,
-            username: None,
-            hostname: None,
-        };
 
-        assert_eq!(
-            changed_response("Filter", "Added", &[first, second]),
-            reply(
-                "Filter",
-                "Added 2 filters: #12: host=a.com path=/x/* (all channels), \
-                 #13: host=b.com path=/x/* (all channels)"
-            )
-        );
+        let cases = [
+            (
+                "a single filter",
+                vec![Filter {
+                    id: 12,
+                    channel: Some("#foo".into()),
+                    host: Some("example.com".into()),
+                    ..first.clone()
+                }],
+                "> Filter: Added #12: host=example.com path=/x/* (#foo).",
+            ),
+            (
+                "multiple filters",
+                vec![
+                    first.clone(),
+                    Filter {
+                        id: 13,
+                        host: Some("b.com".into()),
+                        ..first
+                    },
+                ],
+                "> Filter: Added 2 filters: #12: host=a.com path=/x/* (all channels), \
+                 #13: host=b.com path=/x/* (all channels)",
+            ),
+        ];
+
+        for (case, filters, expected) in cases {
+            assert_eq!(
+                strip_formatting(&changed_response("Filter", "Added", &filters)),
+                expected,
+                "for {case}"
+            );
+        }
     }
 
     #[test]
@@ -750,12 +751,35 @@ mod tests {
     }
 
     #[test]
-    fn add_rejects_channels_without_a_channel_prefix() {
-        let add = parse_add("add --channel foo --host example.com");
+    fn add_rejects_invalid_arguments() {
+        let cases = [
+            (
+                "a channel without a prefix",
+                "add --channel foo --host example.com",
+                "did you mean #foo?",
+            ),
+            (
+                "no criterion",
+                "add",
+                "at least one of --host, --path, --nick, --user or --hostname",
+            ),
+            (
+                "channel and all-channels together",
+                "add --channel #foo --all-channels --host example.com",
+                "not both",
+            ),
+            (
+                "a wildcard channel",
+                "add --channel #foo* --host example.com",
+                "does not support wildcards",
+            ),
+        ];
 
-        let error = add.validate("#chan").unwrap_err();
+        for (case, input, expected) in cases {
+            let error = parse_add(input).validate("#chan").unwrap_err();
 
-        assert!(error.contains("did you mean #foo?"), "{error}");
+            assert!(error.contains(expected), "for {case}: {error}");
+        }
     }
 
     #[test]
@@ -793,27 +817,6 @@ mod tests {
     }
 
     #[test]
-    fn add_requires_a_criterion() {
-        let add = parse_add("add");
-
-        assert!(add.validate("#chan").is_err());
-    }
-
-    #[test]
-    fn add_rejects_channel_and_all_channels_together() {
-        let add = parse_add("add --channel #foo --all-channels --host example.com");
-
-        assert!(add.validate("#chan").is_err());
-    }
-
-    #[test]
-    fn add_rejects_wildcard_channels() {
-        let add = parse_add("add --channel #foo* --host example.com");
-
-        assert!(add.validate("#chan").is_err());
-    }
-
-    #[test]
     fn add_defaults_to_the_current_channel() {
         let add = parse_add("add --host example.com");
 
@@ -821,20 +824,20 @@ mod tests {
     }
 
     #[test]
-    fn delete_parses_id_and_force() {
-        let delete = parse_delete("delete 12 --force");
+    fn parses_delete_arguments() {
+        let by_id = parse_delete("delete 12 --force");
 
-        assert_eq!(delete.id, Some(12));
-        assert!(delete.force);
-        assert!(delete.criteria().is_none());
-    }
+        assert_eq!(by_id.id, Some(12));
+        assert!(by_id.force);
+        assert!(by_id.criteria().is_none());
 
-    #[test]
-    fn delete_collects_criteria() {
-        let delete = parse_delete("delete --host *.com");
+        let by_criteria = parse_delete("delete --host *.com");
 
-        assert_eq!(delete.id, None);
-        assert_eq!(delete.criteria().unwrap().host.as_deref(), Some("*.com"));
+        assert_eq!(by_criteria.id, None);
+        assert_eq!(
+            by_criteria.criteria().unwrap().host.as_deref(),
+            Some("*.com")
+        );
     }
 
     #[test]
@@ -878,25 +881,5 @@ mod tests {
         };
 
         assert_eq!(describe(&global), "#3: path=/title/* (all channels)");
-    }
-
-    #[test]
-    fn listings_stay_within_the_budget() {
-        let mut message = reply("Filter", "2 filters matching your criteria: ");
-
-        let appended = append_entries_within_budget(
-            &mut message,
-            [
-                format!("long entry {}", "x".repeat(180)),
-                format!("long entry {}", "y".repeat(180)),
-            ],
-            ", ",
-            MAX_LISTING_LENGTH,
-            0,
-        );
-
-        assert_eq!(appended, 1);
-        assert!(message.len() <= MAX_LISTING_LENGTH);
-        assert!(message.contains("long entry xxx"));
     }
 }

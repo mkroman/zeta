@@ -232,10 +232,8 @@ pub struct CoinMarketCap {
     max_name_typos: u16,
 }
 
-#[async_trait]
-impl Plugin<Context> for CoinMarketCap {
-    type Settings = Settings;
-
+#[plugin(name = "coinmarketcap", settings = Settings)]
+impl CoinMarketCap {
     fn new(
         ctx: &Context,
         settings: &Settings,
@@ -270,6 +268,7 @@ impl Plugin<Context> for CoinMarketCap {
         })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         self.ensure_coins_cached().await;
         self.ensure_fiat_cached().await;
@@ -277,6 +276,7 @@ impl Plugin<Context> for CoinMarketCap {
         Ok(())
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -488,9 +488,9 @@ impl CoinMarketCap {
 /// Parses and validates the optional conversion currency of a command invocation.
 ///
 /// The input is sanitized before validation, so an unsupported currency can be echoed back to
-/// the channel without leaking IRC formatting control characters. Validation is delegated to
-/// `is_valid`, which accepts everything while the fiat cache has not been populated,
-/// deferring validation to the API.
+/// the channel without leaking IRC formatting codes or other control characters. Validation is
+/// delegated to `is_valid`, which accepts everything while the fiat cache has not been
+/// populated, deferring validation to the API.
 fn parse_currency(
     currency: Option<&str>,
     default_currency: &str,
@@ -658,7 +658,9 @@ fn format_price(price: f64) -> String {
 mod tests {
     use super::*;
     use coinmarketcap::model::FiatQuote;
+    use zeta_plugin::ArgsError;
     use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     /// Builds a coin list for cache tests.
     fn test_coins() -> Vec<Coin> {
@@ -882,6 +884,9 @@ mod tests {
             parse_currency(Some("xyz"), "USD", is_valid),
             Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
         ));
+
+        // Without a fiat cache, validation is deferred to the API.
+        assert_eq!(parse_currency(Some("xyz"), "USD", |_| true).unwrap(), "XYZ");
     }
 
     #[test]
@@ -904,12 +909,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_currencies_without_fiat_cache() {
-        // Without a fiat cache, validation is deferred to the API.
-        assert_eq!(parse_currency(Some("xyz"), "USD", |_| true).unwrap(), "XYZ");
-    }
-
-    #[test]
     fn sanitizes_currencies() {
         // Control characters (which include all IRC formatting bytes) must not survive into
         // the currency that is echoed back on error.
@@ -919,6 +918,16 @@ mod tests {
             parse_currency(Some("\u{2}xyz\u{f}"), "USD", is_valid),
             Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
         ));
+
+        // A color code's numeric parameters must not leak into the visible currency either.
+        assert_eq!(
+            parse_currency(Some("\u{3}10usd\u{f}"), "EUR", is_valid).unwrap(),
+            "USD"
+        );
+        assert_eq!(
+            parse_currency(Some("\u{4}FF0000usd"), "EUR", is_valid).unwrap(),
+            "USD"
+        );
     }
 
     #[test]
@@ -953,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_quote_with_unknown_currency_code() {
+    fn formats_quote_without_a_sign_or_a_quote() {
         let mut quote = test_quote();
         quote.quote = HashMap::from([(
             "AUD".to_string(),
@@ -965,17 +974,12 @@ mod tests {
             },
         )]);
 
-        let formatted = format_quote(&quote, "AUD", None);
+        let unknown = strip_formatting(&format_quote(&quote, "AUD", None));
+        assert!(unknown.contains("1234.50 AUD"), "{unknown}");
+        assert!(unknown.contains("n/a"), "{unknown}");
 
-        assert!(formatted.contains("1234.50 AUD"));
-        assert!(formatted.contains("n/a"));
-    }
-
-    #[test]
-    fn formats_quote_for_missing_currency() {
-        let formatted = format_quote(&test_quote(), "DKK", None);
-
-        assert!(formatted.contains("has no quote in DKK"), "{formatted:?}");
+        let missing = strip_formatting(&format_quote(&test_quote(), "DKK", None));
+        assert!(missing.contains("has no quote in DKK"), "{missing}");
     }
 
     #[test]

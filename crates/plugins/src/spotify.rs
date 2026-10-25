@@ -121,19 +121,14 @@ struct PlaylistTracks {
     total: u64,
 }
 
-#[async_trait]
-impl Plugin<Context> for Spotify {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions
-            .urls(UrlScope::Hosts(URL_HOSTS))
-            .receive_message();
-
+#[plugin(
+    name = "spotify",
+    settings = Settings,
+    urls(hosts = URL_HOSTS),
+    messages
+)]
+impl Spotify {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client_id = resolve_secret(settings.client_id.as_deref(), "SPOTIFY_CLIENT_ID")?;
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
@@ -148,6 +143,7 @@ impl Plugin<Context> for Spotify {
         })
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
@@ -166,6 +162,7 @@ impl Plugin<Context> for Spotify {
         Ok(())
     }
 
+    #[handler(message)]
     async fn handle_message(
         &self,
         _ctx: &Context,
@@ -412,6 +409,7 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -464,12 +462,22 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        assert_eq!(join_artists(&artists(&[])), "");
-        assert_eq!(join_artists(&artists(&["Aurora"])), "\x0fAurora\x0310");
-        assert_eq!(
-            join_artists(&artists(&["Aurora", "Sigrid"])),
-            "\x0fAurora\x0310 and \x0fSigrid\x0310"
-        );
+        let cases = [
+            ("empty", &[][..], ""),
+            ("single", &["Aurora"][..], "Aurora"),
+            ("pair", &["Aurora", "Sigrid"][..], "Aurora and Sigrid"),
+        ];
+
+        for (case, names, expected) in cases {
+            assert_eq!(
+                strip_formatting(&join_artists(&artists(names))),
+                expected,
+                "{case}"
+            );
+        }
+
+        // The comma sits between two color codes, so `strip_formatting` would swallow it; pin the exact
+        // layout for the three-name variant to keep the separator covered.
         assert_eq!(
             join_artists(&artists(&["Aurora", "Sigrid", "Agnes Obel"])),
             "\x0fAurora\x0310, \x0fSigrid\x0310 and \x0fAgnes Obel\x0310"

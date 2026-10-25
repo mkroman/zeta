@@ -1,10 +1,11 @@
 //! Plugin registry.
 //!
 //! The registry constructs plugins, keeps the loaded ones with the subscriptions they declared,
-//! and tracks the ones that failed to initialize. The host drives registration through
-//! [`Registry::register`] (or a bundled-plugin helper such as the `plugins` crate's
-//! `register_bundled_plugins`), spawns each [`RegisteredPlugin`] into its own [`PluginTask`],
-//! and routes events to them through the dispatch index.
+//! and tracks the ones that failed to initialize. The host discovers compiled-in plugins through
+//! [`inventory`] and registers them with [`Registry::register_with`] (the
+//! `plugins` crate's `register_bundled_plugins` drives this); tests can construct a plugin type
+//! directly with [`Registry::register`]. The host then spawns each [`RegisteredPlugin`] into its
+//! own [`PluginTask`] and routes events to them through the dispatch index.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -17,6 +18,7 @@ use tracing::{Instrument, debug, error, warn};
 
 use crate::command::CommandSpec;
 use crate::context::Context;
+use crate::error::plugin_err;
 use crate::event::{Event, Subscriptions, UrlScope};
 use crate::{Error, Plugin};
 
@@ -161,11 +163,15 @@ impl Registry {
         ctx.shared.publish(Arc::new(self.catalog.clone()));
     }
 
-    /// Registers a new plugin based on its type.
+    /// Registers a new plugin based on its type, for tests that construct a plugin directly.
     ///
     /// A fresh [`Subscriptions`] set is passed to the plugin's constructor, which registers the
     /// events it handles on it. The subscriptions are committed — to the catalog and to the
     /// returned plugin — only when construction succeeds.
+    ///
+    /// The host registers plugins through the self-registered
+    /// [`PluginRegistration`](crate::PluginRegistration) values instead, with
+    /// [`Registry::register_with`].
     ///
     /// Returns `true` if the plugin was successfully initialized and registered, `false` if
     /// initialization failed. Failed plugins are tracked in `self.failed` and logged with their
@@ -180,33 +186,99 @@ impl Registry {
 
         match P::new(ctx, settings, &mut subscriptions) {
             Ok(plugin) => {
-                debug!(plugin = %name, "registered plugin");
-
-                let url_hosts = match subscriptions.url_scope() {
-                    UrlScope::Hosts(hosts) => hosts.to_vec(),
-                    _ => Vec::new(),
-                };
-
-                self.catalog.entries.push(CatalogEntry {
-                    name: name.clone(),
-                    commands: subscriptions.commands().to_vec(),
-                    url_hosts,
-                });
-                self.plugins.push(RegisteredPlugin {
-                    name,
-                    plugin: Box::new(plugin),
-                    subscriptions,
-                });
+                self.commit(name, Box::new(plugin), subscriptions);
 
                 true
             }
-            Err(e) => {
-                tracing::warn!(plugin = %name, error = %e, "failed to initialize plugin");
-                self.failed.push((name, e));
-
-                false
-            }
+            Err(error) => self.fail(name, error),
         }
+    }
+
+    /// Registers a plugin from its [`PluginRegistration`](crate::PluginRegistration).
+    ///
+    /// `section` is the plugin's raw `[plugins.<name>]` configuration section, with the
+    /// host-managed `enabled` key removed; `None` when the section is omitted, in which case the
+    /// plugin's settings take their defaults. The registration's thunk deserializes the section
+    /// into the plugin's own settings type, constructs the plugin, and reports the settings keys
+    /// it did not recognize.
+    ///
+    /// Returns `true` if the plugin was successfully initialized and registered, `false` if it
+    /// failed or if another plugin with the same name is already registered (or has failed to
+    /// initialize). Failed plugins are tracked in `self.failed` and logged with their name and
+    /// error.
+    pub fn register_with(
+        &mut self,
+        registration: &crate::PluginRegistration,
+        ctx: &Context,
+        section: Option<&figment::value::Value>,
+    ) -> bool {
+        let name = registration.name.to_string();
+        let duplicate = self.plugins.iter().any(|plugin| plugin.name == name)
+            || self.failed.iter().any(|(failed, _)| *failed == name);
+
+        if duplicate {
+            let error = plugin_err(std::io::Error::other(format!(
+                "duplicate plugin registration for `{name}`"
+            )));
+            error!(plugin = %name, %error, "duplicate plugin registration");
+
+            if !self.failed.iter().any(|(failed, _)| *failed == name) {
+                self.failed.push((name, error));
+            }
+
+            return false;
+        }
+
+        match (registration.construct)(ctx, section) {
+            Ok(constructed) => {
+                for key in &constructed.unknown_keys {
+                    warn!(
+                        plugin = %registration.name,
+                        key = %key,
+                        "unknown settings key (typo, or a setting removed in this version?)"
+                    );
+                }
+
+                self.commit(name, constructed.plugin, constructed.subscriptions);
+
+                true
+            }
+            Err(error) => self.fail(name, error),
+        }
+    }
+
+    /// Records a plugin initialization failure and reports it.
+    fn fail(&mut self, name: String, error: Error) -> bool {
+        warn!(plugin = %name, %error, "failed to initialize plugin");
+        self.failed.push((name, error));
+
+        false
+    }
+
+    /// Commits a successfully constructed plugin to the catalog and the loaded-plugin list.
+    fn commit(
+        &mut self,
+        name: String,
+        plugin: Box<dyn ErasedPlugin>,
+        subscriptions: Subscriptions,
+    ) {
+        debug!(plugin = %name, "registered plugin");
+
+        let url_hosts = match subscriptions.url_scope() {
+            UrlScope::Hosts(hosts) => hosts.to_vec(),
+            _ => Vec::new(),
+        };
+
+        self.catalog.entries.push(CatalogEntry {
+            name: name.clone(),
+            commands: subscriptions.commands().to_vec(),
+            url_hosts,
+        });
+        self.plugins.push(RegisteredPlugin {
+            name,
+            plugin,
+            subscriptions,
+        });
     }
 
     /// Removes and returns all loaded plugins, leaving the registry empty.
@@ -313,7 +385,7 @@ impl PluginTask {
 mod tests {
     use super::*;
     use crate::event::MessageEvent;
-    use crate::{PluginName, types::NoSettings};
+    use crate::types::NoSettings;
     use async_trait::async_trait;
 
     /// Constructs a context for the tests: a default configuration and an unreachable (lazily
@@ -352,12 +424,10 @@ mod tests {
         recording: Recording,
     }
 
-    impl PluginName for RecordingPlugin {
-        const NAME: &'static str = "recording";
-    }
-
     #[async_trait]
     impl Plugin<Context> for RecordingPlugin {
+        const NAME: &'static str = "recording";
+
         type Settings = NoSettings;
 
         fn new(ctx: &Context, _: &NoSettings, _: &mut Subscriptions) -> Result<Self, Error> {
@@ -385,6 +455,23 @@ mod tests {
 
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn duplicate_registrations_are_rejected() {
+        let ctx = test_context();
+        publish_recording(&ctx);
+        let mut registry = Registry::new();
+        let registration = crate::PluginRegistration::new::<RecordingPlugin>("recording");
+
+        assert!(registry.register_with(&registration, &ctx, None));
+        assert!(
+            !registry.register_with(&registration, &ctx, None),
+            "a name can only be registered once"
+        );
+
+        assert_eq!(registry.plugins.len(), 1);
+        assert_eq!(registry.failed.len(), 1);
     }
 
     #[cfg(feature = "database")]

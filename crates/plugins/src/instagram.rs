@@ -153,17 +153,9 @@ impl From<wreq::Error> for Error {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for Instagram {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
-
+#[plugin(name = "instagram", settings = Settings, urls(hosts = urls::URL_HOSTS))]
+impl Instagram {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = http::emulated::builder(None)?
             .redirect(Policy::limited(4))
             .timeout(ctx.config.http.timeout)
@@ -202,6 +194,7 @@ impl Plugin<Context> for Instagram {
         })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
@@ -210,6 +203,7 @@ impl Plugin<Context> for Instagram {
         Ok(())
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,
@@ -610,6 +604,7 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -653,67 +648,76 @@ mod tests {
 
     #[test]
     fn test_format_summary() {
-        // Caption and author.
-        assert_eq!(
-            format_summary(&full_details(), "reel", 150).as_deref(),
-            Some("“\x0fSome caption & more\x0310” is an Instagram reel by\x0f user.name")
-        );
+        let cases = [
+            (
+                "a caption and an author",
+                full_details(),
+                "reel",
+                Some("“Some caption & more” is an Instagram reel by user.name".to_string()),
+            ),
+            (
+                "a long caption",
+                MediaDetails {
+                    caption: Some("a".repeat(200)),
+                    ..full_details()
+                },
+                "post",
+                Some(format!(
+                    "“{}…” is an Instagram post by user.name",
+                    "a".repeat(150)
+                )),
+            ),
+            (
+                "a caption without an author",
+                MediaDetails {
+                    author: None,
+                    caption: Some("Just a title".to_string()),
+                },
+                "post",
+                Some("“Just a title” is an Instagram post".to_string()),
+            ),
+            (
+                "an author without a caption",
+                MediaDetails {
+                    caption: None,
+                    ..full_details()
+                },
+                "story",
+                Some("Instagram story by user.name".to_string()),
+            ),
+            (
+                "neither an author nor a caption",
+                MediaDetails {
+                    author: None,
+                    caption: None,
+                },
+                "post",
+                None,
+            ),
+            (
+                // Captions carry line breaks, which an IRC message cannot contain: everything
+                // after the first one would be lost.
+                "a caption with collapsible whitespace",
+                MediaDetails {
+                    caption: Some("First line\n\nsecond\tline\r\nthird".to_string()),
+                    ..full_details()
+                },
+                "post",
+                Some(
+                    "“First line second line third” is an Instagram post by user.name".to_string(),
+                ),
+            ),
+        ];
 
-        // Long captions are truncated.
-        let long_caption = "a".repeat(200);
-        let details = MediaDetails {
-            caption: Some(long_caption),
-            ..full_details()
-        };
-        let expected = format!(
-            "“\x0f{}\x0310” is an Instagram post by\x0f user.name",
-            "a".repeat(150) + "…"
-        );
-        assert_eq!(
-            format_summary(&details, "post", 150).as_deref(),
-            Some(expected.as_str())
-        );
-
-        // A caption without an author.
-        let details = MediaDetails {
-            author: None,
-            caption: Some("Just a title".to_string()),
-        };
-        assert_eq!(
-            format_summary(&details, "post", 150).as_deref(),
-            Some("“\x0fJust a title\x0310” is an Instagram post")
-        );
-
-        // An author without a caption.
-        let details = MediaDetails {
-            caption: None,
-            ..full_details()
-        };
-        assert_eq!(
-            format_summary(&details, "story", 150).as_deref(),
-            Some("Instagram story by\x0f user.name")
-        );
-
-        // Neither an author nor a caption.
-        let details = MediaDetails {
-            author: None,
-            caption: None,
-        };
-        assert_eq!(format_summary(&details, "post", 150), None);
-    }
-
-    #[test]
-    fn format_summary_collapses_caption_whitespace() {
-        // Captions carry line breaks, which an IRC message cannot contain: everything after
-        // the first one would be lost.
-        let details = MediaDetails {
-            caption: Some("First line\n\nsecond\tline\r\nthird".to_string()),
-            ..full_details()
-        };
-        assert_eq!(
-            format_summary(&details, "post", 150).as_deref(),
-            Some("“\x0fFirst line second line third\x0310” is an Instagram post by\x0f user.name")
-        );
+        for (case, details, kind, expected) in cases {
+            assert_eq!(
+                format_summary(&details, kind, 150)
+                    .as_deref()
+                    .map(strip_formatting),
+                expected,
+                "for {case}"
+            );
+        }
     }
 
     #[test]

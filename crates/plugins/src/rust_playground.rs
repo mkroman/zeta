@@ -45,10 +45,6 @@ impl Default for Settings {
     }
 }
 
-/// The `.rs` command.
-const RUST_PLAYGROUND: CommandSpec =
-    CommandSpec::new(".rs", "Evaluate a Rust expression on the Rust playground");
-
 /// Plugin for evaluating Rust code.
 pub struct RustPlayground {
     client: reqwest::Client,
@@ -80,16 +76,11 @@ struct ExecuteResponse {
     stderr: String,
 }
 
-#[async_trait]
-impl Plugin<Context> for RustPlayground {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(RUST_PLAYGROUND);
+#[plugin(name = "rust_playground", settings = Settings)]
+impl RustPlayground {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
@@ -101,7 +92,9 @@ impl Plugin<Context> for RustPlayground {
         })
     }
 
-    async fn handle_command(
+    /// Replies to `.rs` with the playground's output for the expression.
+    #[command(".rs", "Evaluate a Rust expression on the Rust playground", event)]
+    async fn evaluate_command(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -146,23 +139,21 @@ impl RustPlayground {
         let result: ExecuteResponse =
             http::get_json(self.client.post(BASE_URL).json(&request)).await?;
 
-        if result.success {
-            let output = sanitize_output(&result.stdout);
-            Ok(output
-                .truncate_with_suffix(self.settings.max_output_length, "…")
-                .into_owned())
+        let output = if result.success {
+            sanitize_output(&result.stdout)
         } else {
             let errors = self.extract_errors(&result.stderr);
-            let output = if errors.is_empty() {
+            if errors.is_empty() {
                 // Fallback to raw stderr if no specific errors were found
                 sanitize_output(&result.stderr)
             } else {
                 format!("Compilation error(s): {}", errors.join(", "))
-            };
-            Ok(output
-                .truncate_with_suffix(self.settings.max_output_length, "…")
-                .into_owned())
-        }
+            }
+        };
+
+        Ok(output
+            .truncate_with_suffix(self.settings.max_output_length, "…")
+            .into_owned())
     }
 
     /// Extracts compiler error messages from the stderr output.
@@ -211,6 +202,9 @@ mod tests {
     fn sanitizes_playground_output() {
         // Control characters (which include newlines) are stripped...
         assert_eq!(sanitize_output("hello\nworld\r\t"), "helloworld");
+        // ...as are formatting codes and their color parameters.
+        assert_eq!(sanitize_output("\u{3}10hello\u{f}"), "hello");
+        assert_eq!(sanitize_output("\u{4}FF0000hello"), "hello");
         // ...and the result is trimmed.
         assert_eq!(
             sanitize_output("  leading and trailing  \n"),

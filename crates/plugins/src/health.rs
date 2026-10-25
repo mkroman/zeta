@@ -24,11 +24,24 @@ const HEALTH_DESCRIPTION: &str = "Show memory usage, runtime task stats, and dat
 #[cfg(not(feature = "database"))]
 const HEALTH_DESCRIPTION: &str = "Show memory usage and runtime task stats";
 
-/// The `.health` command.
-const HEALTH: CommandSpec = CommandSpec::new(".health", HEALTH_DESCRIPTION);
-
 /// The health plugin: reports process telemetry for `.health` commands.
+#[derive(Default)]
 pub struct Health;
+
+#[plugin(name = "health")]
+impl Health {
+    /// Replies to `.health` commands with a snapshot of the process telemetry.
+    #[command(".health", HEALTH_DESCRIPTION)]
+    async fn health(&self, ctx: &Context, client: &Client, channel: &str) -> Result<(), ZetaError> {
+        if let Some(mut snapshot) = Snapshot::capture() {
+            capture_pool_stats(&mut snapshot, ctx);
+
+            client.send_privmsg(channel, reply("Health", snapshot))?;
+        }
+
+        Ok(())
+    }
+}
 
 /// Process telemetry snapshot.
 pub struct Snapshot {
@@ -71,35 +84,6 @@ impl PoolStats {
             max: db.options().get_max_connections(),
             closed: db.is_closed(),
         }
-    }
-}
-
-#[async_trait]
-impl Plugin<Context> for Health {
-    type Settings = NoSettings;
-
-    fn new(
-        _ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(HEALTH);
-        Ok(Self)
-    }
-
-    async fn handle_command(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        command: &CommandEvent,
-    ) -> Result<(), ZetaError> {
-        if let Some(mut snapshot) = Snapshot::capture() {
-            capture_pool_stats(&mut snapshot, ctx);
-
-            client.send_privmsg(command.channel(), reply("Health", snapshot))?;
-        }
-
-        Ok(())
     }
 }
 
@@ -177,13 +161,13 @@ impl Display for Snapshot {
 mod tests {
     use super::*;
 
-    use irc::proto::FormattedStringExt;
     use wildmatch::WildMatch;
+    use zeta_utils::utils::strip_formatting;
 
     #[tokio::test]
     async fn it_should_format_message() {
         let snapshot = Snapshot::capture().expect("could not capture");
-        let snapshot_message = snapshot.to_string().strip_formatting();
+        let snapshot_message = strip_formatting(&snapshot.to_string());
         let wildmatcher =
             WildMatch::new("Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled)");
         assert!(wildmatcher.matches(&snapshot_message));
@@ -200,7 +184,7 @@ mod tests {
             closed: false,
         });
 
-        let snapshot_message = snapshot.to_string().strip_formatting();
+        let snapshot_message = strip_formatting(&snapshot.to_string());
         let wildmatcher = WildMatch::new(
             "Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled) DB: 3/10 (2 idle)",
         );
@@ -218,7 +202,7 @@ mod tests {
             closed: true,
         });
 
-        let snapshot_message = snapshot.to_string().strip_formatting();
+        let snapshot_message = strip_formatting(&snapshot.to_string());
         let wildmatcher = WildMatch::new(
             "Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled) DB: closed",
         );

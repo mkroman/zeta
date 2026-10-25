@@ -84,9 +84,6 @@ pub struct Settings {
     pub default_location: Option<String>,
 }
 
-/// The `.w` command.
-const WEATHER: CommandSpec = CommandSpec::new(".w", "Show current weather for a location");
-
 /// Plugin for querying weather data.
 pub struct OpenWeatherMap {
     /// HTTP client for making API requests.
@@ -184,16 +181,9 @@ struct Clouds {
     all: u8,
 }
 
-#[async_trait]
-impl Plugin<Context> for OpenWeatherMap {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(WEATHER);
+#[plugin(name = "openweathermap", settings = Settings)]
+impl OpenWeatherMap {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_id = resolve_secret(settings.app_id.as_deref(), "OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client(&ctx.config.http);
 
@@ -206,7 +196,9 @@ impl Plugin<Context> for OpenWeatherMap {
         })
     }
 
-    async fn handle_command(
+    /// Replies to `.w` with the current weather for the requested (or default) location.
+    #[command(".w", "Show current weather for a location", event)]
+    async fn weather(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -349,6 +341,7 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     /// Builds a weather response for formatting tests.
     fn test_response() -> WeatherResponse {
@@ -422,25 +415,33 @@ mod tests {
     }
 
     #[test]
-    fn formats_metric_weather() {
-        let formatted = format_weather(&test_response(), Units::Metric);
-
-        assert!(formatted.contains("Copenhagen, DK"), "{formatted}");
-        assert!(formatted.contains("12.5 °C"), "{formatted}");
-        assert!(formatted.contains("feels like \x0f11.0 °C"), "{formatted}");
-        assert!(
-            formatted.contains("3.0 m/s (gusts: 6.5 m/s)"),
-            "{formatted}"
-        );
-    }
-
-    #[test]
-    fn imperial_weather_swaps_the_unit_labels() {
+    fn formats_weather_in_both_unit_systems() {
         // The API converts the values itself, so formatting only swaps the labels: the same
-        // fixture numbers are rendered with the imperial unit names.
-        let formatted = format_weather(&test_response(), Units::Imperial);
+        // fixture numbers are rendered with the selected unit names.
+        let cases = [
+            (
+                "metric",
+                Units::Metric,
+                "12.5 °C",
+                "3.0 m/s (gusts: 6.5 m/s)",
+            ),
+            ("imperial", Units::Imperial, "12.5 °F", "3.0 mph"),
+        ];
 
-        assert!(formatted.contains("12.5 °F"), "{formatted}");
-        assert!(formatted.contains("3.0 mph"), "{formatted}");
+        for (case, units, temperature, wind) in cases {
+            let formatted = strip_formatting(&format_weather(&test_response(), units));
+
+            assert!(
+                formatted.contains("Right now in Copenhagen, DK"),
+                "{case}: {formatted}"
+            );
+            assert!(formatted.contains(temperature), "{case}: {formatted}");
+            assert!(formatted.contains("feels like 11.0"), "{case}: {formatted}");
+            assert!(formatted.contains(wind), "{case}: {formatted}");
+            assert!(
+                formatted.contains("with light rain. Wind:"),
+                "{case}: {formatted}"
+            );
+        }
     }
 }

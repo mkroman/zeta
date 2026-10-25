@@ -330,3 +330,49 @@ fn valid_unit_symbol(symbol: &str) -> bool {
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && symbol.chars().all(|c| c.is_ascii_alphanumeric())
 }
+
+#[cfg(test)]
+mod tests {
+    use coinmarketcap::model::ListingQuote;
+
+    use super::*;
+
+    /// A listing with the fields the currency synthesis reads.
+    fn listing(name: &str) -> Listing {
+        Listing {
+            id: 1,
+            name: name.to_string(),
+            symbol: "TST".to_string(),
+            slug: "tst".to_string(),
+            cmc_rank: None,
+            num_market_pairs: None,
+            circulating_supply: None,
+            total_supply: None,
+            max_supply: None,
+            infinite_supply: None,
+            date_added: None,
+            last_updated: None,
+            quote: vec![ListingQuote {
+                id: 2781,
+                symbol: "USD".to_string(),
+                price: Some(1.0),
+            }],
+        }
+    }
+
+    #[test]
+    fn synthesizes_sanitized_unit_names() {
+        let ctx = build_context(None, None).expect("the bundled context loads");
+        let text = synthesize_crypto_units(&ctx, &[listing("\u{3}10Test\nCoin")]);
+        let definition = text
+            .lines()
+            .find(|line| line.starts_with("?? "))
+            .expect("the listing should produce a unit definition");
+
+        assert!(
+            definition.starts_with("?? TestCoin (TST). Sourced from CoinMarketCap."),
+            "{definition}"
+        );
+        assert!(!definition.contains("10Test"), "{definition}");
+    }
+}

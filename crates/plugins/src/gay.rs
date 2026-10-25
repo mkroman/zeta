@@ -2010,15 +2010,9 @@ fn designation_present(client: &Client, channel: &str, designation: &str) -> boo
         .is_some_and(|users| users.iter().any(|user| user.get_nickname() == designation))
 }
 
-#[async_trait]
-impl Plugin<Context> for Gay {
-    type Settings = NoSettings;
-
-    fn new(
-        _ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+#[plugin(name = "gay")]
+impl Gay {
+    fn new(subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         subscriptions.command(GAY);
         let profile = EngineConfig::campaign_profile().map_err(plugin_err)?;
         let engine = GayEngine::assemble(profile).map_err(plugin_err)?;
@@ -2026,7 +2020,9 @@ impl Plugin<Context> for Gay {
         Ok(Self { engine })
     }
 
-    async fn handle_command(
+    /// Consults the engine about the command's subject and renders the verdict.
+    #[handler(command)]
+    async fn consult(
         &self,
         _ctx: &Context,
         client: &Client,

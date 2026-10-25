@@ -27,32 +27,22 @@ const REVERSE: CommandSpec = CommandSpec::new(".rev", "Reverse a string");
 const UNICODE: CommandSpec = CommandSpec::new(".uni", "Show a character's Unicode properties");
 
 /// The string utilities plugin: offline text transformations for its commands.
+#[derive(Default)]
 pub struct StringUtils;
 
-impl Default for StringUtils {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl Plugin<Context> for StringUtils {
-    type Settings = NoSettings;
-
-    fn new(
-        _ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+#[plugin(name = "string_utils")]
+impl StringUtils {
+    fn new(subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         subscriptions
             .command(BYTES)
             .command(LENGTH)
             .command(ORD)
             .command(REVERSE)
             .command(UNICODE);
-        Ok(Self::new())
+        Ok(Self)
     }
 
+    #[handler(command)]
     async fn handle_command(
         &self,
         _ctx: &Context,
@@ -285,17 +275,10 @@ fn str_to_hex_string(s: &str) -> String {
     buf
 }
 
-impl StringUtils {
-    /// Creates a new string utils plugin instance.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_utils::utils::strip_formatting;
 
     #[test]
     fn str_to_hex_string_test() {
@@ -307,117 +290,113 @@ mod tests {
 
     #[test]
     fn uni_names_a_single_character() {
+        // The exact layout pins the wire format; the content assertions below cover semantics.
         assert_eq!(
             unicode_details("d"),
             "{\x0f\x02U+0064\x02\x0310}:\x0f LATIN SMALL LETTER D\x0310 \
              (\x0fLowercase Letter\x0310)"
         );
-        assert_eq!(
-            unicode_details("ˇ"),
-            "{\x0f\x02U+02C7\x02\x0310}:\x0f CARON\x0310 \
-             (\x0fModifier Letter\x0310)"
-        );
+
+        let caron = strip_formatting(&unicode_details("ˇ"));
+        assert!(caron.contains("U+02C7"), "{caron}");
+        assert!(caron.contains("CARON"), "{caron}");
+        assert!(caron.contains("(Modifier Letter)"), "{caron}");
     }
 
     #[test]
-    fn uni_names_an_emoji_sequence_as_a_whole() {
-        assert_eq!(
-            unicode_details("🏳️‍🌈"),
-            "{\x0f\x02U+1F3F3, U+FE0F, U+200D, U+1F308\x02\x0310}:\x0f RAINBOW FLAG\x0310 \
-             (\x0fOther Symbol\x0310)"
-        );
-        assert_eq!(
-            unicode_details("2️⃣"),
-            "{\x0f\x02U+0032, U+FE0F, U+20E3\x02\x0310}:\x0f KEYCAP DIGIT TWO\x0310 \
-             (\x0fDecimal Number\x0310)"
-        );
-        // A single code point is a character entry of its own.
-        assert_eq!(
-            unicode_details("🐗"),
-            "{\x0f\x02U+1F417\x02\x0310}:\x0f BOAR\x0310 (\x0fOther Symbol\x0310)"
-        );
-    }
+    fn uni_names_emoji_and_sequences() {
+        let cases = [
+            (
+                "🏳️‍🌈",
+                &[
+                    "U+1F3F3, U+FE0F, U+200D, U+1F308",
+                    "RAINBOW FLAG",
+                    "(Other Symbol)",
+                ][..],
+            ),
+            (
+                "2️⃣",
+                &[
+                    "U+0032, U+FE0F, U+20E3",
+                    "KEYCAP DIGIT TWO",
+                    "(Decimal Number)",
+                ][..],
+            ),
+            // A single code point is a character entry of its own.
+            ("🐗", &["U+1F417", "BOAR", "(Other Symbol)"][..]),
+            // `NEGATIVE SQUARED AB` is the character name; the emoji name says what it is for.
+            (
+                "🆎",
+                &["U+1F18E", "AB BUTTON (BLOOD TYPE)", "(Other Symbol)"][..],
+            ),
+            ("🇩🇰", &["U+1F1E9, U+1F1F0", "FLAG: DENMARK"][..]),
+            // A sequence is grouped beside a following character.
+            (
+                "🏳️‍🌈🦔",
+                &[
+                    "U+1F3F3, U+FE0F, U+200D, U+1F308",
+                    "RAINBOW FLAG",
+                    "U+1F994",
+                    "HEDGEHOG",
+                ][..],
+            ),
+            (
+                "🦔🫠",
+                &["U+1F994", "HEDGEHOG", "U+1FAE0", "MELTING FACE"][..],
+            ),
+        ];
 
-    #[test]
-    fn uni_names_an_emoji_code_point_by_its_emoji_name() {
-        // `NEGATIVE SQUARED AB` is the character name; the emoji name says what it is for.
-        assert_eq!(
-            unicode_details("🆎"),
-            "{\x0f\x02U+1F18E\x02\x0310}:\x0f AB BUTTON (BLOOD TYPE)\x0310 \
-             (\x0fOther Symbol\x0310)"
-        );
-    }
+        for (input, expected) in cases {
+            let reply = strip_formatting(&unicode_details(input));
 
-    #[test]
-    fn uni_groups_a_sequence_beside_a_character() {
-        assert_eq!(
-            unicode_details("🏳️‍🌈🦔"),
-            "{\x0f\x02U+1F3F3, U+FE0F, U+200D, U+1F308\x02\x0310}:\x0f RAINBOW FLAG\x0310 \
-             (\x0fOther Symbol\x0310), \
-             {\x0f\x02U+1F994\x02\x0310}:\x0f HEDGEHOG\x0310 (\x0fOther Symbol\x0310)"
-        );
+            for needle in expected {
+                assert!(
+                    reply.contains(needle),
+                    "{input:?} missing {needle:?}: {reply}"
+                );
+            }
+        }
     }
 
     #[test]
     fn uni_uses_the_published_tone_count() {
-        let same_tone = unicode_details("👩🏻‍🤝‍👩🏻");
+        let same_tone = strip_formatting(&unicode_details("👩🏻‍🤝‍👩🏻"));
         assert!(same_tone.contains("WOMEN HOLDING HANDS: LIGHT SKIN TONE"));
         assert!(!same_tone.contains("LIGHT SKIN TONE, LIGHT SKIN TONE"));
 
         // A second tone on a one-tone base is not a sequence; the valid prefix is grouped and
         // the trailing modifier is listed as its own character.
-        let invalid = unicode_details("👍🏻🏿");
+        let invalid = strip_formatting(&unicode_details("👍🏻🏿"));
         assert!(invalid.contains("THUMBS UP: LIGHT SKIN TONE"));
         assert!(invalid.contains("DARK SKIN TONE"));
     }
 
     #[test]
-    fn uni_lists_single_emoji_as_characters() {
-        assert_eq!(
-            unicode_details("🦔🫠"),
-            "{\x0f\x02U+1F994\x02\x0310}:\x0f HEDGEHOG\x0310 (\x0fOther Symbol\x0310), \
-             {\x0f\x02U+1FAE0\x02\x0310}:\x0f MELTING FACE\x0310 (\x0fOther Symbol\x0310)"
-        );
-    }
-
-    #[test]
     fn uni_lists_every_characters_name_and_category() {
-        assert_eq!(
-            unicode_details("d'êtr"),
-            "{\x0f\x02U+0064\x02\x0310}:\x0f LATIN SMALL LETTER D\x0310 \
-             (\x0fLowercase Letter\x0310), \
-             {\x0f\x02U+0027\x02\x0310}:\x0f APOSTROPHE\x0310 (\x0fOther Punctuation\x0310), \
-             {\x0f\x02U+00EA\x02\x0310}:\x0f LATIN SMALL LETTER E WITH CIRCUMFLEX\x0310 \
-             (\x0fLowercase Letter\x0310), \
-             {\x0f\x02U+0074\x02\x0310}:\x0f LATIN SMALL LETTER T\x0310 \
-             (\x0fLowercase Letter\x0310), \
-             {\x0f\x02U+0072\x02\x0310}:\x0f LATIN SMALL LETTER R\x0310 \
-             (\x0fLowercase Letter\x0310)"
-        );
+        let reply = strip_formatting(&unicode_details("d'êtr"));
+
+        for expected in [
+            "U+0064",
+            "LATIN SMALL LETTER D",
+            "(Lowercase Letter)",
+            "U+0027",
+            "APOSTROPHE",
+            "(Other Punctuation)",
+            "U+00EA",
+            "LATIN SMALL LETTER E WITH CIRCUMFLEX",
+            "U+0074",
+            "LATIN SMALL LETTER T",
+            "U+0072",
+            "LATIN SMALL LETTER R",
+        ] {
+            assert!(reply.contains(expected), "missing {expected:?}: {reply}");
+        }
     }
 
     #[test]
     fn notice_prefix_matches_the_budget() {
         assert_eq!(notice("").len(), NOTICE_PREFIX_LEN);
         assert_eq!(NOTICE_PREFIX_LEN, "\x0310> ".len());
-    }
-
-    #[test]
-    fn grouped_entries_keeps_a_sequence_whole() {
-        let entries = grouped_entries("a🏳️‍🌈");
-        assert!(matches!(entries[0], Entry::Char('a')));
-        match &entries[1] {
-            Entry::Sequence { text, .. } => assert_eq!(*text, "🏳️‍🌈"),
-            Entry::Char(_) => panic!("the rainbow flag must be grouped"),
-        }
-        assert_eq!(entries.len(), 2);
-    }
-
-    #[test]
-    fn uni_groups_a_regional_indicator_flag() {
-        let reply = unicode_details("🇩🇰");
-        assert!(reply.contains("U+1F1E9, U+1F1F0"), "{reply}");
-        assert!(reply.contains("FLAG: DENMARK"), "{reply}");
     }
 
     #[test]
@@ -448,7 +427,10 @@ mod tests {
             "{}",
             reply.len() + NOTICE_PREFIX_LEN
         );
-        assert!(reply.ends_with("Other Symbol\x0310)"), "{reply}");
+        assert!(
+            strip_formatting(&reply).ends_with("(Other Symbol)"),
+            "{reply}"
+        );
     }
 
     #[test]

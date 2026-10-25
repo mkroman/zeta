@@ -83,17 +83,9 @@ pub enum Error {
     OEmbed(#[from] oembed::Error),
 }
 
-#[async_trait]
-impl Plugin<Context> for Tiktok {
-    type Settings = Settings;
-
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.urls(UrlScope::Hosts(urls::URL_HOSTS));
-
+#[plugin(name = "tiktok", settings = Settings, urls(hosts = urls::URL_HOSTS))]
+impl Tiktok {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let mirror = if settings.mirror {
             MirrorHandle::resolve(
                 ctx.shared.get::<Mirror>(),
@@ -112,6 +104,7 @@ impl Plugin<Context> for Tiktok {
         })
     }
 
+    #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         if let Some(mirror) = &self.mirror {
             mirror.start_downloads();
@@ -120,6 +113,7 @@ impl Plugin<Context> for Tiktok {
         Ok(())
     }
 
+    #[handler(url)]
     async fn handle_url(
         &self,
         _ctx: &Context,

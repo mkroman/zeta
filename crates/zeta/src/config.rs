@@ -346,7 +346,9 @@ channels = []
 
         // The sections were removed from the config and returned to the caller; the plugin
         // values themselves are asserted in the plugins crate's configuration tests.
-        assert_eq!(plugins.unknown.len(), 0);
+        assert_empty!(plugins.unknown);
+        assert!(plugins.sections.contains_key("dig"));
+        assert!(config.plugins.sections.is_empty());
     }
 
     #[test]

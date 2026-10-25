@@ -68,7 +68,11 @@ impl Handle {
     /// # Errors
     ///
     /// Returns a [`ZetaError`] when the actor task has stopped.
-    pub(super) async fn eval(&self, line: String, classify: bool) -> Result<EvalOutcome, ZetaError> {
+    pub(super) async fn eval(
+        &self,
+        line: String,
+        classify: bool,
+    ) -> Result<EvalOutcome, ZetaError> {
         let (reply, response) = oneshot::channel();
 
         self.0

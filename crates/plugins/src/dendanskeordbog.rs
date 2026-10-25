@@ -15,10 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_plugin::config::HttpConfig;
-
-/// The `.ddo` command.
-const DDO: CommandSpec = CommandSpec::new(".ddo", "Look up a word in Den Danske Ordbog");
 
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
 /// section.
@@ -96,20 +92,23 @@ impl Display for MessageFormatter<'_> {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for DenDanskeOrdbog {
-    type Settings = Settings;
+#[plugin(name = "dendanskeordbog", settings = Settings)]
+impl DenDanskeOrdbog {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
+        let http_client = http::build_client(&ctx.config.http);
+        let client = dendanskeordbog::Client::with_client(http_client);
 
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(DDO);
-        Ok(Self::new(&ctx.config.http, settings.clone()))
+        Ok(Self {
+            client,
+            settings: settings.clone(),
+        })
     }
 
-    async fn handle_command(
+    /// Replies to `.ddo` with the dictionary entry of the queried word.
+    #[command(".ddo", "Look up a word in Den Danske Ordbog", event)]
+    async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -134,17 +133,6 @@ impl Plugin<Context> for DenDanskeOrdbog {
         client.send_privmsg(channel, message)?;
 
         Ok(())
-    }
-}
-
-impl DenDanskeOrdbog {
-    /// Creates a new plugin instance around a client built for the given HTTP configuration.
-    #[must_use]
-    pub fn new(config: &HttpConfig, settings: Settings) -> Self {
-        let http_client = http::build_client(config);
-        let client = dendanskeordbog::Client::with_client(http_client);
-
-        Self { client, settings }
     }
 }
 

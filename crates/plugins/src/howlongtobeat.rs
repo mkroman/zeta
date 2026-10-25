@@ -33,9 +33,6 @@ const REFERER_URL: &str = "https://howlongtobeat.com/";
 /// without triggering the rejection path.
 const AUTH_TTL: Duration = Duration::from_hours(1);
 
-/// The `.hltb` command.
-const HLTB: CommandSpec = CommandSpec::new(".hltb", "Look up a game's completion times");
-
 /// The HowLongToBeat IRC plugin.
 ///
 /// This plugin allows users to query the HowLongToBeat database
@@ -203,16 +200,11 @@ impl Default for SearchOptions {
     }
 }
 
-#[async_trait]
-impl Plugin<Context> for HowLongToBeat {
-    type Settings = NoSettings;
-
-    fn new(
-        ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        subscriptions.command(HLTB);
+#[plugin(name = "howlongtobeat")]
+impl HowLongToBeat {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self {
@@ -221,7 +213,9 @@ impl Plugin<Context> for HowLongToBeat {
         })
     }
 
-    async fn handle_command(
+    /// Replies to `.hltb` with the top match's completion times.
+    #[command(".hltb", "Look up a game's completion times", event)]
+    async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -297,11 +291,7 @@ impl HowLongToBeat {
     }
 
     /// Executes the HTTP POST request to the API with the necessary headers and payload.
-    async fn perform_search_request(
-        &self,
-        token: &str,
-        query: &str,
-    ) -> Result<Vec<Game>, Error> {
+    async fn perform_search_request(&self, token: &str, query: &str) -> Result<Vec<Game>, Error> {
         let url = format!("{BASE_URL}/api/search/site");
         let search_terms: Vec<&str> = query.split_whitespace().collect();
 
@@ -402,8 +392,23 @@ mod tests {
     }
 
     #[test]
-    fn formats_missing_completion_times_as_placeholder() {
-        assert_eq!(format_seconds(0), "--");
+    fn formats_durations() {
+        let cases = [
+            ("missing", 0, "--"),
+            ("seconds round down to minutes", 30, "0 minutes"),
+            ("minutes", 45 * 60, "45 minutes"),
+            ("whole hour", 3600, "1 hour"),
+            (
+                "hours and minutes",
+                2 * 3600 + 3 * 60,
+                "2 hours and 3 minutes",
+            ),
+            ("many hours", 100 * 3600, "100 hours"),
+        ];
+
+        for (case, seconds, expected) in cases {
+            assert_eq!(format_seconds(seconds), expected, "{case}");
+        }
     }
 
     /// Live smoke test against HowLongToBeat's search API, to catch contract drift the payload
@@ -428,18 +433,5 @@ mod tests {
         assert!(games[0].comp_main > 0);
 
         println!("{}", format_game(&games[0]));
-    }
-
-    #[test]
-    fn formats_minutes() {
-        assert_eq!(format_seconds(30), "0 minutes");
-        assert_eq!(format_seconds(45 * 60), "45 minutes");
-    }
-
-    #[test]
-    fn formats_hours_and_minutes() {
-        assert_eq!(format_seconds(3600), "1 hour");
-        assert_eq!(format_seconds(2 * 3600 + 3 * 60), "2 hours and 3 minutes");
-        assert_eq!(format_seconds(100 * 3600), "100 hours");
     }
 }

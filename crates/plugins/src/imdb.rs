@@ -90,25 +90,23 @@ pub struct Imdb {
     client: GraphQlClient,
 }
 
-#[async_trait]
-impl Plugin<Context> for Imdb {
-    type Settings = Settings;
-
+#[plugin(name = "imdb", settings = Settings, urls(hosts = URL_HOSTS))]
+impl Imdb {
     fn new(
         ctx: &Context,
         settings: &Settings,
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        subscriptions
-            .command(COMMAND)
-            .urls(UrlScope::Hosts(URL_HOSTS));
+        subscriptions.command(COMMAND);
 
         let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
 
         Ok(Self { client })
     }
 
-    async fn handle_command(
+    /// Replies to `!imdb` with the top title matching the query.
+    #[handler(command)]
+    async fn search(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -147,7 +145,9 @@ impl Plugin<Context> for Imdb {
         Ok(())
     }
 
-    async fn handle_url(
+    /// Expands posted IMDb links with details about the title or person they point at.
+    #[handler(url)]
+    async fn expand_url(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -230,24 +230,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_multi_word_queries() {
-        let opts: Opts = COMMAND.parse_args("peggle nights").unwrap();
+    fn parses_queries() {
+        let cases = [
+            ("multi-word", "peggle nights", "peggle nights"),
+            ("quoted", r#""the matrix""#, "the matrix"),
+            ("empty", "", ""),
+        ];
 
-        assert_eq!(opts.query(), "peggle nights");
-    }
+        for (case, input, expected) in cases {
+            let opts: Opts = COMMAND.parse_args(input).unwrap();
 
-    #[test]
-    fn parses_quoted_queries() {
-        let opts: Opts = COMMAND.parse_args(r#""the matrix""#).unwrap();
-
-        assert_eq!(opts.query(), "the matrix");
-    }
-
-    #[test]
-    fn parses_empty_query() {
-        let opts: Opts = COMMAND.parse_args("").unwrap();
-
-        assert_eq!(opts.query(), "");
+            assert_eq!(opts.query(), expected, "{case}");
+        }
     }
 
     /// Live smoke test against IMDb's GraphQL API, to catch contract drift that the recorded
