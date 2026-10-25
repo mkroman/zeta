@@ -599,8 +599,8 @@ impl Codebook {
     /// Appends one model blob: max bits, length counts, then the symbols.
     fn write(&self, out: &mut Vec<u8>) {
         out.push(self.max_bits);
-        for length in 1..=usize::from(self.max_bits) {
-            out.put_u16_le(self.counts[length]);
+        for &count in &self.counts[1..=usize::from(self.max_bits)] {
+            out.put_u16_le(count);
         }
         out.extend_from_slice(&self.symbols);
     }
