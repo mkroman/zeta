@@ -63,13 +63,13 @@
 //! | `words` | With `args`, parses through `parse_words_or_usage` instead, preserving free-form text. |
 //! | `spec = NAME` | Overrides the generated `CommandSpec` constant's name; the default folds the trigger to upper case (`.dig` → `DIG`). |
 //! | `label = "Dig"` | The display label for generated usage and error replies; defaults to the plugin's name. |
-//! | `event` | The handler also receives the `&CommandEvent`. |
+//! | `event` | The handler also receives the `&CommandEvent`, and may omit the `channel` parameter. |
 //! | `register_if = expr` | Registers the command only when `expr` evaluates to `true` (e.g. `settings.enable_command`); the expression runs in the generated constructor, where `settings` is in scope. |
 //!
 //! The method's signature convention is strict: `async fn m(&self, ctx: &Context, client:
 //! &Client, channel: &str [, command: &CommandEvent] [, opts: Opts]) -> Result<(), Error>`,
-//! where the `command` parameter appears only with `event` and the `opts` parameter only with
-//! `args`.
+//! where `channel` may be omitted when `event` is set (the event then provides it), `command`
+//! appears only with `event`, and `opts` only with `args`.
 //!
 //! `#[handler(kind)]` on an inherent async method forwards one of the trait's event handlers to
 //! it verbatim, where `kind` is one of `command`, `url`, `message`, `join`, `part`, `quit`,

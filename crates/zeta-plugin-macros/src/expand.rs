@@ -39,6 +39,9 @@ struct Command {
     args: CommandArgs,
     /// The inherent method implementing the command.
     method: Ident,
+    /// Whether the method declares the optional `channel: &str` parameter, which only event
+    /// commands may omit.
+    channel: bool,
     /// The method's `#[cfg]`/`#[cfg_attr]` attributes, copied to everything generated for it.
     cfg: Vec<syn::Attribute>,
 }
@@ -270,7 +273,7 @@ fn classify(args: &PluginArgs, inherent: &syn::ItemImpl) -> syn::Result<Plugin> 
                     ));
                 }
 
-                validate_command(&args, method)?;
+                let channel = validate_command(&args, method)?;
 
                 let spec = match &args.spec {
                     Some(spec) => spec.clone(),
@@ -281,6 +284,7 @@ fn classify(args: &PluginArgs, inherent: &syn::ItemImpl) -> syn::Result<Plugin> 
                     spec,
                     args,
                     method: method.sig.ident.clone(),
+                    channel,
                     cfg: cfg_attributes(method),
                 });
             }
@@ -538,8 +542,9 @@ pub fn spec_const_name(trigger: &str, span: Span) -> syn::Result<Ident> {
 
 /// Validates the strict signature convention for `#[command]` methods:
 /// `async fn m(&self, ctx: &Context, client: &Client, channel: &str [, command: &CommandEvent]
-/// [, opts: Opts]) -> Result<(), Error>`.
-fn validate_command(args: &CommandArgs, method: &ImplItemFn) -> syn::Result<()> {
+/// [, opts: Opts]) -> Result<(), Error>`, where the channel parameter may only be omitted when
+/// `event` is set. Returns whether the method declares the channel parameter.
+fn validate_command(args: &CommandArgs, method: &ImplItemFn) -> syn::Result<bool> {
     let signature = &method.sig;
     let name = &signature.ident;
 
@@ -559,47 +564,100 @@ fn validate_command(args: &CommandArgs, method: &ImplItemFn) -> syn::Result<()> 
 
     expect_receiver(method, false)?;
     let typed = typed_parameters(method);
-
-    let mut expected: Vec<&str> = vec!["Context", "Client", "str"];
-    if args.event {
-        expected.push("CommandEvent");
-    }
-
-    let options_index = expected.len();
-    let required = options_index + usize::from(args.args.is_some());
-    if typed.len() < required {
-        let with_event = if args.event {
-            ", command: &CommandEvent"
-        } else {
-            ""
-        };
-        let with_opts = if args.args.is_some() { ", opts" } else { "" };
-
-        return Err(syn::Error::new(
+    let signature_error = || {
+        syn::Error::new(
             name.span(),
-            format!(
-                "command handlers must take `(&self, ctx: &Context, client: &Client, \
-                 channel: &str{with_event}{with_opts})`"
-            ),
-        ));
+            format!("command handlers must take `{}`", command_signature(args)),
+        )
+    };
+
+    if typed.len() < 2 {
+        return Err(signature_error());
     }
 
-    for (index, expected_type) in expected.iter().enumerate() {
-        expect_borrowed(typed[index].ty.as_ref(), expected_type, false)?;
+    expect_borrowed(typed[0].ty.as_ref(), "Context", false)?;
+    expect_borrowed(typed[1].ty.as_ref(), "Client", false)?;
+
+    let mut index = 2;
+
+    // Event commands may omit the channel and read it off the event instead. A non-event
+    // command always requires it, because that is its only source of the channel.
+    let channel = if args.event {
+        if typed
+            .get(index)
+            .is_some_and(|parameter| is_str(parameter.ty.as_ref()))
+        {
+            index += 1;
+
+            true
+        } else {
+            false
+        }
+    } else {
+        if typed.len() <= index {
+            return Err(signature_error());
+        }
+
+        expect_borrowed(typed[index].ty.as_ref(), "str", false)?;
+        index += 1;
+
+        true
+    };
+
+    if args.event {
+        if typed.len() <= index {
+            return Err(signature_error());
+        }
+
+        expect_borrowed(typed[index].ty.as_ref(), "CommandEvent", false)?;
+        index += 1;
     }
 
     if let Some(options) = &args.args {
-        validate_options(options, typed[options_index].ty.as_ref())?;
+        if typed.len() <= index {
+            return Err(signature_error());
+        }
+
+        validate_options(options, typed[index].ty.as_ref())?;
+        index += 1;
     }
 
-    if let Some(extra) = typed.get(required) {
+    if let Some(extra) = typed.get(index) {
         return Err(syn::Error::new(
             extra.ty.span(),
             "unexpected parameter in a command handler",
         ));
     }
 
-    expect_result(signature, ExpectedFirst::Unit, "command handlers")
+    expect_result(signature, ExpectedFirst::Unit, "command handlers")?;
+
+    Ok(channel)
+}
+
+/// The command signature convention for a diagnostic, with the event's optional channel and
+/// options in brackets.
+fn command_signature(args: &CommandArgs) -> String {
+    if !args.event {
+        let options = if args.args.is_some() { ", opts" } else { "" };
+
+        return format!("(&self, ctx: &Context, client: &Client, channel: &str{options})");
+    }
+
+    let options = if args.args.is_some() { " [, opts]" } else { "" };
+
+    format!(
+        "(&self, ctx: &Context, client: &Client, [channel: &str,] command: &CommandEvent{options})"
+    )
+}
+
+/// Whether `ty` is an immutable `&str`, the optional channel parameter's type.
+fn is_str(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Reference(reference)
+            if reference.mutability.is_none()
+                && matches!(reference.elem.as_ref(), Type::Path(path) if path.path.is_ident("str"))
+    )
 }
 
 /// Checks that the command's options parameter is the type declared by `args` and taken by
@@ -1119,7 +1177,8 @@ fn parameter_name(name: &str, used: bool) -> TokenStream {
 }
 
 /// The dispatch arm for one `#[command]` method: match the event's trigger, parse the arguments
-/// with the chosen helper (replying with the usage lines on failure), and call the method.
+/// with the chosen helper (replying with the usage lines on failure), and call the method with
+/// the channel only when it declares that parameter.
 ///
 /// The dispatch is by trigger rather than by matching the event's `CommandSpec` against the
 /// constant: a spec created with `with_args` holds a function pointer, and constants containing
@@ -1131,8 +1190,10 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
     let trigger = &args.trigger;
     let label = args.label.as_ref().unwrap_or(default_label);
 
-    let mut arguments: Vec<TokenStream> =
-        vec![quote!(ctx), quote!(client), quote!(command.channel())];
+    let mut arguments: Vec<TokenStream> = vec![quote!(ctx), quote!(client)];
+    if command.channel {
+        arguments.push(quote!(command.channel()));
+    }
     if args.event {
         arguments.push(quote!(command));
     }
@@ -1274,6 +1335,71 @@ mod tests {
         };
 
         assert!(validate_command(&command_args(Some(parse_quote!(Opts)), true), &method).is_ok());
+    }
+
+    #[test]
+    fn event_commands_may_omit_the_channel() {
+        let inherent: syn::ItemImpl = parse_quote! {
+            impl Plugin {
+                #[command(".test", "desc", event)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &CommandEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+        };
+
+        let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
+
+        assert!(!plugin.commands[0].channel);
+        let arm = dispatch_arm(&plugin.commands[0], &plugin.name).to_string();
+        assert!(!arm.contains("channel"), "{arm}");
+    }
+
+    #[test]
+    fn event_commands_may_declare_the_channel() {
+        let inherent: syn::ItemImpl = parse_quote! {
+            impl Plugin {
+                #[command(".test", "desc", event)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &str,
+                    _: &CommandEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+        };
+
+        let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
+
+        assert!(plugin.commands[0].channel);
+        let arm = dispatch_arm(&plugin.commands[0], &plugin.name).to_string();
+        assert!(arm.contains("channel"), "{arm}");
+    }
+
+    #[test]
+    fn non_event_commands_require_the_channel() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc")]
+                async fn test(&self, _: &Context, _: &Client) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("a non-event command needs the channel");
+
+        assert!(error.to_string().contains("channel: &str"), "{error}");
     }
 
     #[test]

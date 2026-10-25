@@ -74,7 +74,6 @@ impl KagiPlugin {
         &self,
         _ctx: &Context,
         client: &Client,
-        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let search = |query: String| async move {
@@ -102,7 +101,6 @@ impl KagiPlugin {
         &self,
         _ctx: &Context,
         client: &Client,
-        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let search = |query: String| async move {

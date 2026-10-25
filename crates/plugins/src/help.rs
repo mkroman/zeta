@@ -38,7 +38,6 @@ impl Help {
         &self,
         ctx: &Context,
         client: &Client,
-        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();

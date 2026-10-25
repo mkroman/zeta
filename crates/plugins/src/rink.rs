@@ -160,7 +160,6 @@ impl Rink {
         &self,
         _ctx: &Context,
         client: &Client,
-        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let message = self.eval_and_format(command.args(), false).await?;
@@ -181,7 +180,6 @@ impl Rink {
         &self,
         _ctx: &Context,
         client: &Client,
-        _channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let message = self.eval_and_format(command.args(), true).await?;

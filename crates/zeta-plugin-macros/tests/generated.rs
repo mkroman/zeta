@@ -113,6 +113,17 @@ impl Full {
         Ok(())
     }
 
+    #[command(".event", "An event command without the channel", args = FullOptions, event)]
+    async fn event_only(
+        &self,
+        _: &Context,
+        _: &Client,
+        _: &CommandEvent,
+        _options: FullOptions,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
     #[handler(join)]
     async fn join(&self, _: &Context, _: &Client, _: &JoinEvent) -> Result<(), Error> {
         Ok(())
