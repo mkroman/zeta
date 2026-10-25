@@ -47,10 +47,10 @@
 //!
 //! When the impl block contains `fn new(ctx: &Context, settings: &Settings, subscriptions: &mut
 //! Subscriptions) -> Result<Self, Error>`, the generated constructor registers the declarative
-//! subscriptions and then calls it. Only an associated `fn new` with exactly those three
-//! parameters is treated as the constructor; other `new` methods remain ordinary inherent
-//! methods. Otherwise the block's type must implement `Default` (unit structs:
-//! `#[derive(Default)]`), and the constructor returns it.
+//! subscriptions and then calls it. An associated `fn new` with exactly three parameters is
+//! treated as the constructor and must have that signature; a `new` with a different arity
+//! remains an ordinary inherent method. Otherwise the block's type must implement `Default`
+//! (unit structs: `#[derive(Default)]`), and the constructor returns it.
 //!
 //! # Method attributes
 //!
