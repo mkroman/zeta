@@ -32,7 +32,7 @@
 use std::path::Path;
 
 pub use error::Error;
-pub use manifest::write_manifest;
+pub use manifest::{write_manifest, write_manifest_path};
 pub use nomina::emoji::EmojiStats;
 pub use nomina::gc::GcStats;
 pub use nomina::names::NameStats;

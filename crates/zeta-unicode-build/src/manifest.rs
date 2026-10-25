@@ -120,10 +120,29 @@ pub fn write_manifest(
     inputs: &crate::ucd::Inputs,
     output: &TrainOutput,
 ) -> Result<(), crate::Error> {
+    write_manifest_path(&out_dir.join("manifest.json"), data_dir, inputs, output)
+}
+
+/// Writes the manifest for one Nomina training run to an explicit path.
+///
+/// This is [`write_manifest`] with the destination under the caller's control, so the
+/// `zeta-unicode-train` binary can stage the manifest beside the staged image and publish
+/// the pair together.
+///
+/// # Errors
+///
+/// Returns [`Error`](crate::Error) under the same conditions as [`write_manifest`], with
+/// `manifest_path` as the write destination.
+pub fn write_manifest_path(
+    manifest_path: &Path,
+    data_dir: &Path,
+    inputs: &crate::ucd::Inputs,
+    output: &TrainOutput,
+) -> Result<(), crate::Error> {
     let mut records = input_records(data_dir, inputs)?;
     records.sort();
     let text = render_manifest(inputs, output, &records)?;
-    crate::write(out_dir.join("manifest.json"), text)
+    crate::write(manifest_path, text)
 }
 
 /// Renders the Nomina manifest for one training run.

@@ -12,11 +12,13 @@ use std::process::ExitCode;
 use argh::FromArgs;
 use zeta_unicode_build::{
     DEFAULT_MAX_TABLE_BYTES, MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT, Priority, Profile,
-    TrainOutput, read_inputs, train, verify, write_manifest,
+    TrainOutput, read_inputs, train, verify, write_manifest_path,
 };
 
-/// The temporary image name `--verify` uses before publishing `nomina.bin`.
-const STAGING_NAME: &str = "nomina.bin.verifying";
+/// The temporary image name the trainer stages before publishing `nomina.bin`.
+const IMAGE_STAGING_NAME: &str = "nomina.bin.staging";
+/// The temporary manifest name, staged so both artifacts publish together.
+const MANIFEST_STAGING_NAME: &str = "manifest.json.staging";
 
 /// Trains a Nomina Unicode image from the vendored UCD files.
 #[derive(Debug, FromArgs)]
@@ -192,38 +194,53 @@ fn run(options: &Options) -> Result<(), String> {
     })?;
     let image_path = options.out_dir.join("nomina.bin");
     let manifest_path = options.out_dir.join("manifest.json");
+    let image_staging = options.out_dir.join(IMAGE_STAGING_NAME);
+    let manifest_staging = options.out_dir.join(MANIFEST_STAGING_NAME);
+
+    // Stage the image first: a failed write must not touch the published pair.
+    std::fs::write(&image_staging, &output.image)
+        .map_err(|error| format!("failed to write {}: {error}", image_staging.display()))?;
     let layout = if options.verify {
-        // Stage, verify, then publish: a failed verification must not leave a `nomina.bin`
-        // next to a manifest that says "verified".
-        let staging_path = options.out_dir.join(STAGING_NAME);
-        std::fs::write(&staging_path, &output.image)
-            .map_err(|error| format!("failed to write {}: {error}", staging_path.display()))?;
-        // Verify the artifact on disk, not the in-memory buffer: the flag exists to check
-        // the bytes a rebuild would actually load.
-        let verified = std::fs::read(&staging_path)
-            .map_err(|error| format!("failed to read back {}: {error}", staging_path.display()))
-            .and_then(|written| verify(&written, &inputs).map_err(|error| error.to_string()));
-        let layout = match verified {
-            Ok(layout) => layout,
-            Err(error) => {
-                let _ = std::fs::remove_file(&staging_path);
-                return Err(error);
-            }
-        };
-        std::fs::rename(&staging_path, &image_path).map_err(|error| {
-            let _ = std::fs::remove_file(&staging_path);
-            format!("failed to publish {}: {error}", image_path.display())
-        })?;
-        write_manifest(&data_dir, &options.out_dir, &inputs, &output)
-            .map_err(|error| error.to_string())?;
-        Some(layout)
+        // Verify the staged bytes, not the in-memory buffer: the flag exists to check the
+        // bytes a rebuild would actually load.
+        let verified = std::fs::read(&image_staging)
+            .map_err(|error| {
+                let _ = std::fs::remove_file(&image_staging);
+                format!("failed to read back {}: {error}", image_staging.display())
+            })
+            .and_then(|written| {
+                verify(&written, &inputs).map_err(|error| {
+                    let _ = std::fs::remove_file(&image_staging);
+                    error.to_string()
+                })
+            });
+        Some(verified?)
     } else {
-        std::fs::write(&image_path, &output.image)
-            .map_err(|error| format!("failed to write {}: {error}", image_path.display()))?;
-        write_manifest(&data_dir, &options.out_dir, &inputs, &output)
-            .map_err(|error| error.to_string())?;
         None
     };
+    // Stage the manifest beside the image. A failure here leaves the previous image and
+    // manifest paired, instead of publishing a new image beside a stale manifest.
+    if let Err(error) = write_manifest_path(&manifest_staging, &data_dir, &inputs, &output) {
+        let _ = std::fs::remove_file(&image_staging);
+        let _ = std::fs::remove_file(&manifest_staging);
+        return Err(error.to_string());
+    }
+    // Publish both: the renames run back to back after every fallible step has succeeded.
+    if let Err(error) = std::fs::rename(&image_staging, &image_path) {
+        let _ = std::fs::remove_file(&image_staging);
+        let _ = std::fs::remove_file(&manifest_staging);
+        return Err(format!(
+            "failed to publish {}: {error}",
+            image_path.display()
+        ));
+    }
+    if let Err(error) = std::fs::rename(&manifest_staging, &manifest_path) {
+        return Err(format!(
+            "published {} but failed to publish {}: {error}",
+            image_path.display(),
+            manifest_path.display()
+        ));
+    }
 
     print!("{}", output.report);
     if options.report {
