@@ -32,7 +32,12 @@ pub struct PluginRegistration {
     /// Called by [`Registry::register_with`](crate::Registry::register_with); plugins never call
     /// it themselves.
     #[doc(hidden)]
-    pub construct: fn(&Context, Option<Value>) -> Result<ConstructedPlugin, Error>,
+    pub construct: fn(&Context, Option<&Value>) -> Result<ConstructedPlugin, Error>,
+    /// Deserializes the plugin's settings section and reports the unrecognized keys.
+    ///
+    /// Called by the host while loading the configuration, before it decides whether the plugin
+    /// is enabled, so a malformed section fails startup even when its plugin is disabled.
+    validate: fn(Option<&Value>) -> Result<Vec<String>, Error>,
 }
 
 impl PluginRegistration {
@@ -51,7 +56,21 @@ impl PluginRegistration {
         Self {
             name,
             construct: construct::<P>,
+            validate: validate_settings::<P>,
         }
+    }
+
+    /// Deserializes `section` into the plugin's settings type without constructing the plugin.
+    ///
+    /// Returns the keys the settings type did not recognize. The host calls this while loading
+    /// the configuration so invalid settings are rejected before the enabled decision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the section does not deserialize into `P::Settings`.
+    #[doc(hidden)]
+    pub fn validate_settings(&self, section: Option<&Value>) -> Result<Vec<String>, Error> {
+        (self.validate)(section)
     }
 }
 
@@ -68,30 +87,12 @@ pub struct ConstructedPlugin {
 
 /// The constructor thunk [`PluginRegistration::new`] stores: deserialize the settings section,
 /// build the plugin, and return it with its declared subscriptions.
-fn construct<P>(ctx: &Context, section: Option<Value>) -> Result<ConstructedPlugin, Error>
+fn construct<P>(ctx: &Context, section: Option<&Value>) -> Result<ConstructedPlugin, Error>
 where
     P: Plugin<Context> + 'static,
     P::Settings: Default + DeserializeOwned,
 {
-    let (settings, unknown_keys) = match section {
-        Some(value) => {
-            let mut unknown_keys = Vec::new();
-            let settings = serde_ignored::deserialize(&value, |path| {
-                unknown_keys.push(path.to_string());
-            })
-            .map_err(|error| {
-                plugin_err(std::io::Error::other(format!(
-                    "invalid settings for plugin `{}`: {error}",
-                    P::NAME
-                )))
-            })?;
-
-            (settings, unknown_keys)
-        }
-        // No section at all: the plugin runs with its defaults. `enabled_by_default` has
-        // already decided whether it is enabled.
-        None => (P::Settings::default(), Vec::new()),
-    };
+    let (settings, unknown_keys) = deserialize_settings::<P>(section)?;
 
     let mut subscriptions = Subscriptions::new();
     let plugin = P::new(ctx, &settings, &mut subscriptions)?;
@@ -101,4 +102,40 @@ where
         subscriptions,
         unknown_keys,
     })
+}
+
+/// Deserializes a plugin's settings section, or the defaults when it is omitted.
+fn deserialize_settings<P>(section: Option<&Value>) -> Result<(P::Settings, Vec<String>), Error>
+where
+    P: Plugin<Context> + 'static,
+    P::Settings: Default + DeserializeOwned,
+{
+    match section {
+        Some(value) => {
+            let mut unknown_keys = Vec::new();
+            let settings = serde_ignored::deserialize(value, |path| {
+                unknown_keys.push(path.to_string());
+            })
+            .map_err(|error| {
+                plugin_err(std::io::Error::other(format!(
+                    "invalid settings for plugin `{}`: {error}",
+                    P::NAME
+                )))
+            })?;
+
+            Ok((settings, unknown_keys))
+        }
+        // No section at all: the plugin runs with its defaults. `enabled_by_default` has
+        // already decided whether it is enabled.
+        None => Ok((P::Settings::default(), Vec::new())),
+    }
+}
+
+/// Deserializes a plugin's settings section and returns only the unrecognized keys.
+fn validate_settings<P>(section: Option<&Value>) -> Result<Vec<String>, Error>
+where
+    P: Plugin<Context> + 'static,
+    P::Settings: Default + DeserializeOwned,
+{
+    deserialize_settings::<P>(section).map(|(_, unknown_keys)| unknown_keys)
 }

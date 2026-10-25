@@ -215,7 +215,7 @@ impl Registry {
         &mut self,
         registration: &crate::PluginRegistration,
         ctx: &Context,
-        section: Option<figment::value::Value>,
+        section: Option<&figment::value::Value>,
     ) -> bool {
         let name = registration.name.to_string();
         let duplicate = self.plugins.iter().any(|plugin| plugin.name == name)

@@ -107,7 +107,8 @@ name = "#zeta.dev"
 # one, or that have no section at all, follow the `enabled_by_default` toggle below: with the
 # default `true` they are opt-out, with `false` they are opt-in. Plugin-specific settings are
 # type-checked at startup; malformed values abort startup with a diagnostic pointing at the key.
-# Sections for plugins that are not compiled in are reported as possible typos.
+# Sections matching no bundled plugin are reported as possible typos; sections for bundled plugins
+# that are not compiled into this build are known and ignored.
 [plugins]
   # Whether plugins without an explicit `enabled` toggle are enabled (true, opt-out) or disabled
   # (false, opt-in). Defaults to true.

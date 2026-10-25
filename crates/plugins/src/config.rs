@@ -3,14 +3,16 @@
 //! Every bundled plugin registers itself through [`zeta_plugin::PluginRegistration`], so its
 //! `[plugins.<name>]` section is resolved by name instead of through a typed field per plugin:
 //! [`PluginsConfig`] keeps each section's raw settings next to the host-managed `enabled`
-//! toggle, and the plugin's own settings type is deserialized from that value when the plugin
-//! is constructed. [`PluginConfig`] is the typed view of one section.
+//! toggle; the plugin's settings type is validated when the configuration is loaded (even when
+//! the plugin is disabled) and deserialized again when the plugin is constructed.
+//! [`PluginConfig`] is the typed view of one section.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use figment::value::{Dict, Value};
 use serde::de::{DeserializeOwned, Error as _};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zeta_plugin::inventory;
 
 /// An individual plugin's typed configuration: its `[plugins.<name>]` section.
@@ -46,8 +48,7 @@ where
 {
     /// Deserializes a plugin section, resolving an omitted `enabled` key to `default_enabled`.
     ///
-    /// The [`Deserialize`] implementation calls this with `true`, the standalone default;
-    /// [`PluginsConfig::config`] passes the section's already-resolved toggle instead.
+    /// The [`Deserialize`] implementation calls this with `true`, the standalone default.
     pub(crate) fn deserialize_with_default<D>(
         deserializer: D,
         default_enabled: bool,
@@ -111,13 +112,34 @@ impl<S: Default> Default for PluginConfig<S> {
 /// The settings stay a [`figment::value::Value`] until the plugin's registration deserializes
 /// them into its own settings type; `enabled` is already resolved against the global
 /// [`PluginsConfig::enabled_by_default`] toggle.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct PluginSection {
     /// Whether the plugin should be registered, with an omitted key resolved against
     /// [`PluginsConfig::enabled_by_default`].
     pub enabled: bool,
     /// The section's settings, without the host-managed `enabled` key.
     pub settings: Value,
+}
+
+impl Serialize for PluginSection {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("enabled", &self.enabled)?;
+        match &self.settings {
+            Value::Dict(_, settings) => {
+                for (key, value) in settings {
+                    map.serialize_entry(key, value)?;
+                }
+            }
+            // `PluginSection::parse` always produces a dictionary; keep a non-dictionary value
+            // addressable if a caller constructs one directly.
+            settings => map.serialize_entry("settings", settings)?,
+        }
+        map.end()
+    }
 }
 
 impl PluginSection {
@@ -146,14 +168,15 @@ impl PluginSection {
 ///
 /// Sections are keyed by plugin name, e.g. `[plugins.dig]`, and resolved against the plugins
 /// that registered themselves through [`zeta_plugin::PluginRegistration`]. Sections whose name
-/// matches no registered plugin — including plugins compiled out by their cargo feature — are
-/// collected in [`PluginsConfig::unknown`] so the host can warn about likely typos.
+/// matches no bundled plugin are collected in [`PluginsConfig::unknown`] so the host can warn
+/// about likely typos; a section for a bundled plugin compiled out by its cargo feature is not
+/// a typo and stays out of that map.
 ///
 /// A section that is omitted entirely follows the global [`PluginsConfig::enabled_by_default`]
 /// and gives the plugin its default settings. The `enabled` key is managed by the host; every
 /// other key belongs to the plugin's settings type, deserialized through
 /// [`PluginsConfig::config`] or, at startup, by the plugin's registration.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct PluginsConfig {
     /// Whether a plugin that does not set `enabled` explicitly — or has no section at all — is
     /// enabled.
@@ -164,15 +187,30 @@ pub struct PluginsConfig {
     pub enabled_by_default: bool,
     /// The configuration sections, keyed by plugin name.
     ///
-    /// Holds every section in the table, whether or not a plugin registration matches it; the
-    /// unmatched ones are also mirrored in [`PluginsConfig::unknown`].
+    /// Holds every section in the table, whether or not a plugin registration matches it.
+    /// Sections whose name is not a bundled plugin are also mirrored in
+    /// [`PluginsConfig::unknown`].
     pub sections: HashMap<String, PluginSection>,
-    /// Sections that match no registered plugin, whether compiled in or not.
+    /// Sections that match no bundled plugin name.
     ///
-    /// Collected during deserialization so the host can warn about them; a section for a
-    /// plugin that was compiled out by its cargo feature is reported here too.
-    #[serde(flatten)]
+    /// Collected during deserialization so the host can warn about likely typos. Compiled-out
+    /// bundled plugins are not included: their sections are known, even though no registration
+    /// consumed them.
     pub unknown: HashMap<String, Dict>,
+}
+
+impl Serialize for PluginsConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("enabled_by_default", &self.enabled_by_default)?;
+        for (name, section) in &self.sections {
+            map.serialize_entry(name, section)?;
+        }
+        map.end()
+    }
 }
 
 impl PluginsConfig {
@@ -240,12 +278,13 @@ impl<'de> Deserialize<'de> for PluginsConfig {
             None => true,
         };
 
-        // A section belongs to a plugin only if that plugin registered itself; a section for a
-        // feature-disabled plugin therefore becomes unknown, which the host warns about.
-        let registered: HashSet<&'static str> = inventory::iter::<zeta_plugin::PluginRegistration>
-            .into_iter()
-            .map(|registration| registration.name)
-            .collect();
+        // Validate the settings of every plugin that is compiled in, whether it is enabled or
+        // not: a malformed section is a configuration error, not a reason to skip the plugin.
+        let registrations: HashMap<&'static str, &zeta_plugin::PluginRegistration> =
+            inventory::iter::<zeta_plugin::PluginRegistration>
+                .into_iter()
+                .map(|registration| (registration.name, registration))
+                .collect();
 
         let mut sections = HashMap::with_capacity(values.len());
         let mut unknown = HashMap::new();
@@ -256,7 +295,15 @@ impl<'de> Deserialize<'de> for PluginsConfig {
                     D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
                 })?;
 
-            if !registered.contains(name.as_str()) {
+            if let Some(registration) = registrations.get(name.as_str()) {
+                registration
+                    .validate_settings(Some(&section.settings))
+                    .map_err(|error| {
+                        D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
+                    })?;
+            } else if !crate::BUNDLED_PLUGIN_NAMES.contains(&name.as_str()) {
+                // A bundled plugin that was compiled out is not a typo; its section is simply
+                // not consumed in this build.
                 unknown.insert(name.clone(), dict);
             }
 
@@ -456,35 +503,34 @@ enabled = false
 
     #[test]
     fn invalid_settings_type_is_rejected() {
-        let plugins = extract("[plugins.dig]\nnameservers = \"1.1.1.1\"\n")
-            .expect("the raw section should parse");
+        let error = extract("[plugins.dig]\nnameservers = \"1.1.1.1\"\n")
+            .expect_err("invalid nameservers type should be rejected");
 
-        assert!(
-            plugins.config::<crate::dig::Settings>("dig").is_err(),
-            "invalid nameservers type should be rejected"
-        );
+        assert!(error.to_string().contains("dig"), "{error}");
     }
 
     #[test]
     fn invalid_ip_address_is_rejected() {
-        let plugins = extract("[plugins.dig]\nnameservers = [\"not-an-ip\"]\n")
-            .expect("the raw section should parse");
+        let error = extract("[plugins.dig]\nnameservers = [\"not-an-ip\"]\n")
+            .expect_err("invalid IP address should be rejected");
 
-        assert!(
-            plugins.config::<crate::dig::Settings>("dig").is_err(),
-            "invalid IP address should be rejected"
-        );
+        assert!(error.to_string().contains("dig"), "{error}");
     }
 
     #[test]
     fn empty_nameservers_are_rejected() {
-        let plugins =
-            extract("[plugins.dig]\nnameservers = []\n").expect("the raw section should parse");
+        let error = extract("[plugins.dig]\nnameservers = []\n")
+            .expect_err("empty nameservers should be rejected");
 
-        assert!(
-            plugins.config::<crate::dig::Settings>("dig").is_err(),
-            "empty nameservers should be rejected"
-        );
+        assert!(error.to_string().contains("dig"), "{error}");
+    }
+
+    #[test]
+    fn invalid_settings_are_rejected_for_disabled_plugins() {
+        let error = extract("[plugins.dig]\nenabled = false\nnameservers = \"1.1.1.1\"\n")
+            .expect_err("invalid settings should be rejected even when the plugin is disabled");
+
+        assert!(error.to_string().contains("dig"), "{error}");
     }
 
     #[test]
@@ -502,6 +548,28 @@ enabled = false
         let round_tripped: PluginConfig<crate::dig::Settings> =
             serde_json::from_value(json).expect("could not deserialize");
         assert_eq!(round_tripped.settings.nameservers, dig.settings.nameservers);
+    }
+
+    #[test]
+    fn plugins_config_round_trips() {
+        let plugins = extract("[plugins.dig]\nnameservers = [\"1.1.1.1\"]\n")
+            .expect("could not parse configuration");
+
+        let json = serde_json::to_value(&plugins).expect("could not serialize");
+        assert_eq!(json["enabled_by_default"], serde_json::json!(true));
+        assert_eq!(json["dig"]["enabled"], serde_json::json!(true));
+        assert_eq!(json["dig"]["nameservers"], serde_json::json!(["1.1.1.1"]));
+        assert!(
+            json.get("sections").is_none(),
+            "the serialized shape must stay flat: {json}"
+        );
+
+        let round_tripped: PluginsConfig =
+            serde_json::from_value(json).expect("could not deserialize");
+        assert_eq!(
+            round_tripped.sections["dig"].settings,
+            plugins.sections["dig"].settings
+        );
     }
 
     #[test]

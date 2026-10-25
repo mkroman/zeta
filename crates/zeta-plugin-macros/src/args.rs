@@ -119,7 +119,9 @@ pub struct CommandArgs {
     pub description: Expr,
     /// The `argh` options type, from `args = Opts`.
     pub args: Option<Type>,
-    /// Whether the arguments are free-form text, from `words`.
+    /// Whether the arguments are parsed with `parse_words_or_usage`, from `words`.
+    ///
+    /// Requires `args`.
     pub words: bool,
     /// The explicit `CommandSpec` constant name, from `spec = NAME`.
     pub spec: Option<Ident>,

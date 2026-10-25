@@ -47,8 +47,10 @@
 //!
 //! When the impl block contains `fn new(ctx: &Context, settings: &Settings, subscriptions: &mut
 //! Subscriptions) -> Result<Self, Error>`, the generated constructor registers the declarative
-//! subscriptions and then calls it. Otherwise the block's type must implement `Default` (unit
-//! structs: `#[derive(Default)]`), and the constructor returns it.
+//! subscriptions and then calls it. Only an associated `fn new` with exactly those three
+//! parameters is treated as the constructor; other `new` methods remain ordinary inherent
+//! methods. Otherwise the block's type must implement `Default` (unit structs:
+//! `#[derive(Default)]`), and the constructor returns it.
 //!
 //! # Method attributes
 //!
@@ -58,7 +60,7 @@
 //! | option | meaning |
 //! |---|---|
 //! | `args = Opts` | Parses the arguments into `Opts` (an `argh::FromArgs + argh::ArgsInfo` type) through `parse_args_or_usage`. |
-//! | `words` | Parses through `parse_words_or_usage` instead, preserving free-form text. |
+//! | `words` | With `args`, parses through `parse_words_or_usage` instead, preserving free-form text. |
 //! | `spec = NAME` | Overrides the generated `CommandSpec` constant's name; the default folds the trigger to upper case (`.dig` → `DIG`). |
 //! | `label = "Dig"` | The display label for generated usage and error replies; defaults to the plugin's name. |
 //! | `event` | The handler also receives the `&CommandEvent`. |
@@ -73,6 +75,10 @@
 //! it verbatim, where `kind` is one of `command`, `url`, `message`, `join`, `part`, `quit`,
 //! `nick`, `kick`, `ctcp`, `raw`, `loaded`, or `shutdown`. Kinds the block does not annotate
 //! keep the trait's default implementation.
+//!
+//! A `#[cfg]` or `#[cfg_attr]` on a `#[command]` or `#[handler]` method is copied to the
+//! generated constant, registration, dispatch arm, and forwarding method, so feature-gated
+//! methods can be declared in the same impl block.
 
 use proc_macro::TokenStream;
 use syn::parse_macro_input;

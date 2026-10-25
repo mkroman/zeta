@@ -73,11 +73,20 @@ use crate::event::{
 /// use zeta_plugin::{Error, prelude::*};
 ///
 /// /// Watches the channel traffic.
-/// #[derive(Default)]
 /// struct Watcher;
 ///
 /// #[plugin(name = "watcher", urls(any), messages)]
 /// impl Watcher {
+///     fn new(
+///         _: &Context,
+///         _: &NoSettings,
+///         subscriptions: &mut Subscriptions,
+///     ) -> Result<Self, Error> {
+///         // `urls` and `messages` cover their kinds; join events need an explicit registration.
+///         subscriptions.receive_join();
+///         Ok(Self)
+///     }
+///
 ///     #[handler(url)]
 ///     async fn url(&self, _: &Context, _: &Client, url: &UrlEvent) -> Result<(), Error> {
 ///         // Every URL posted in any channel — already filtered, deduplicated, and repaired.
@@ -148,10 +157,11 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// [`CommandSpec`](super::CommandSpec) that matched and the trailing arguments of the
     /// invocation.
     ///
-    /// For plugins written with the `#[plugin]` macro, the generated implementation dispatches
-    /// on the identity of each `#[command]`'s declared constant (see
-    /// [`CommandSpec`](super::CommandSpec)'s documentation on matching by identity), parses the
-    /// arguments, and calls the annotated method — one method per command:
+    /// For plugins written with the `#[plugin]` macro, the generated implementation matches the
+    /// event's trigger against each `#[command]`'s trigger, parses the arguments, and calls the
+    /// annotated method — one method per command. Hand-written plugins that register several
+    /// commands can instead dispatch on the identity of their declared constants (see
+    /// [`CommandSpec`](super::CommandSpec)'s documentation on matching by identity):
     ///
     /// ```
     /// use irc::client::Client;

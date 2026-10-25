@@ -24,6 +24,49 @@ pub(crate) mod mirror_reply;
 
 pub use config::{PluginConfig, PluginSection, PluginsConfig};
 
+/// The names of every bundled plugin, whether or not its cargo feature is enabled.
+///
+/// Configuration sections for these names describe a plugin that was compiled out, not a typo,
+/// so the host can report the two cases differently. Kept in sync with the module declarations
+/// by the `bundled_plugin_names_match_the_declared_modules` test.
+pub const BUNDLED_PLUGIN_NAMES: &[&str] = &[
+    "alert",
+    "chaturbate",
+    "choices",
+    "coinmarketcap",
+    "dendanskeordbog",
+    "dig",
+    "filter",
+    "gay",
+    "geoip",
+    "github",
+    "health",
+    "help",
+    "howlongtobeat",
+    "imdb",
+    "instagram",
+    "isitopen",
+    "kagi",
+    "notification",
+    "ofn",
+    "openweathermap",
+    "pornhub",
+    "reddit",
+    "rink",
+    "rust_playground",
+    "spotify",
+    "string_utils",
+    "thingiverse",
+    "tiktok",
+    "titles",
+    "trustpilot",
+    "tvmaze",
+    "twitch",
+    "unwall",
+    "urban_dictionary",
+    "youtube",
+];
+
 /// Registers every compiled-in bundled plugin that its configuration enables.
 ///
 /// The host calls this once at startup, before the catalog is published. Plugins register
@@ -31,15 +74,17 @@ pub use config::{PluginConfig, PluginSection, PluginsConfig};
 /// function only has to iterate the registrations — sorted by name for a deterministic catalog
 /// and log order.
 ///
-/// Configuration sections matching no registration are warned about as likely typos; a section
-/// for a plugin whose cargo feature is disabled matches no registration and is reported the same
-/// way. Plugins that fail to initialize are logged and skipped by the registry.
+/// Configuration sections matching no bundled plugin are warned about as likely typos; a section
+/// for a bundled plugin whose cargo feature is disabled is known, but has no registration.
+/// Plugins that fail to initialize are logged and skipped by the registry.
 pub fn register_bundled_plugins(
     registry: &mut zeta_plugin::Registry,
     ctx: &zeta_plugin::Context,
     plugins: &PluginsConfig,
 ) {
-    for name in plugins.unknown.keys() {
+    let mut unknown: Vec<&String> = plugins.unknown.keys().collect();
+    unknown.sort_unstable();
+    for name in unknown {
         tracing::warn!(section = %name, "unknown plugin configuration section (typo?)");
     }
 
@@ -63,7 +108,7 @@ pub fn register_bundled_plugins(
             .sections
             .get(registration.name)
             .map_or((plugins.enabled_by_default, None), |section| {
-                (section.enabled, Some(section.settings.clone()))
+                (section.enabled, Some(&section.settings))
             });
 
         if enabled {
@@ -288,6 +333,17 @@ mod tests {
                 "the module and its `#[plugin(name = ...)]` attribute must match"
             );
         }
+    }
+
+    /// The warning list of bundled names must cover every module, including plugins whose
+    /// cargo feature is disabled in this build.
+    #[test]
+    fn bundled_plugin_names_match_the_declared_modules() {
+        let modules = plugin_modules(include_str!("lib.rs"));
+        let declared: BTreeSet<&str> = modules.iter().map(String::as_str).collect();
+        let bundled: BTreeSet<&str> = crate::BUNDLED_PLUGIN_NAMES.iter().copied().collect();
+
+        assert_eq!(bundled, declared);
     }
 
     /// Every source file under `src` must be declared as a module by its parent: an undeclared
