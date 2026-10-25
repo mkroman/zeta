@@ -22,6 +22,8 @@ pub trait Truncatable: AsRef<str> {
 
     /// Truncates the text so that it is at most `len` characters *including* `suffix`, which is
     /// appended when truncation happens.
+    ///
+    /// A suffix longer than `len` is kept whole, so the result can exceed `len` in that case.
     fn truncate_within(&self, len: usize, suffix: &str) -> String {
         let text = self.as_ref();
 
@@ -29,7 +31,8 @@ pub trait Truncatable: AsRef<str> {
             return text.to_string();
         }
 
-        let mut truncated: String = text.chars().take(len.saturating_sub(1)).collect();
+        let text_len = len.saturating_sub(suffix.chars().count());
+        let mut truncated: String = text.chars().take(text_len).collect();
         truncated.push_str(suffix);
         truncated
     }
@@ -157,7 +160,19 @@ pub fn quoted_string_literal(input: &str, quote: char) -> Option<(&str, &str)> {
 /// cannot render: a line break terminates the message, and everything after it is lost.
 #[must_use]
 pub fn collapse_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut collapsed = String::with_capacity(value.len());
+    let mut first = true;
+
+    for word in value.split_whitespace() {
+        if !first {
+            collapsed.push(' ');
+        }
+
+        collapsed.push_str(word);
+        first = false;
+    }
+
+    collapsed
 }
 
 #[cfg(test)]
@@ -243,6 +258,12 @@ mod tests {
         assert_eq!(s.truncate_within(10, "…"), "this is a…");
         assert_eq!(s.truncate_within(30, "…"), "this is a very long string");
         assert_eq!("hæłlo".truncate_within(4, "…"), "hæł…");
+
+        // The suffix is budgeted by its character count, and an empty suffix truncates to
+        // exactly the requested length.
+        assert_eq!("hello".truncate_within(4, "..."), "h...");
+        assert_eq!("hello".truncate_within(3, ""), "hel");
+        assert_eq!("hello".truncate_within(5, ""), "hello");
     }
 
     #[test]

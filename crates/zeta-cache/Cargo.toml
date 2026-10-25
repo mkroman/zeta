@@ -11,7 +11,7 @@ arc-swap.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { path = "../zeta-test-support", default-features = false }
 
 [lints]
 workspace = true

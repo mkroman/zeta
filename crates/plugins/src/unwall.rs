@@ -333,7 +333,7 @@ impl Unwall {
             let reserved = " (999 more)".len();
             let appended = append_entries_within_budget(
                 &mut message,
-                sites.iter().map(|site| site.host.clone()),
+                sites.iter().map(|site| site.host.as_str()),
                 &format!("{COLOR}, {RESET}"),
                 MAX_LISTING_LENGTH,
                 reserved,

@@ -21,8 +21,10 @@ static MIGRATOR: Migrator = sqlx::migrate!("../plugins/migrations");
 /// If unable to establish connection to the database, `Err(Error::OpenDatabase)` is returned.
 pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Database, Error> {
     let pool = PgPoolOptions::new()
+        .min_connections(config.min_connections)
         .max_connections(config.max_connections)
         .idle_timeout(config.idle_timeout)
+        .max_lifetime(config.max_lifetime)
         .connect(url)
         .await
         .map_err(Error::OpenDatabase)?;
@@ -34,11 +36,10 @@ pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Data
 ///
 /// # Errors
 ///
-/// If a connection cannot be acquired from the connection pool, `Error::AcquireDatabaseConnection`
-/// is returned.
+/// If a connection cannot be acquired from the connection pool, `Error::DatabasePool` is returned.
 ///
 /// If an error occurs during migration, `Error::DatabaseMigration` is returned.
-pub async fn migrate(pool: Database) -> Result<(), Error> {
+pub async fn migrate(pool: &Database) -> Result<(), Error> {
     let mut conn = pool.acquire().await.map_err(Error::DatabasePool)?;
 
     MIGRATOR

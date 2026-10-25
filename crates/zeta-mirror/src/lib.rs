@@ -106,11 +106,26 @@ impl Default for MirrorConfig {
     }
 }
 
+/// The media currently being mirrored, keyed by `(prefix, id)`.
+type InFlight = Mutex<HashSet<(String, String)>>;
+
+/// Maps the mirror configuration's S3 fields onto the S3 client configuration.
+impl From<&MirrorConfig> for s3::S3Config {
+    fn from(config: &MirrorConfig) -> Self {
+        Self {
+            access_key_id: config.s3_access_key_id.clone(),
+            secret_access_key: config.s3_secret_access_key.clone(),
+            bucket: config.s3_bucket_name.clone(),
+            region: config.s3_region.clone(),
+            endpoint: config.s3_endpoint.clone(),
+        }
+    }
+}
+
 /// Mirrors media: downloads it with `yt-dlp` and uploads it to S3.
 ///
 /// A single instance is shared by all plugins; it is created from [`MirrorConfig`] at startup and
 /// published to the context's shared state.
-#[derive(Clone)]
 pub struct Mirror {
     /// The S3 client used for checking whether media is already mirrored.
     s3: S3,
@@ -121,7 +136,7 @@ pub struct Mirror {
     /// The maximum number of downloads that run concurrently.
     max_concurrent: usize,
     /// The set of media that is currently being mirrored, by (prefix, id).
-    in_flight: Arc<Mutex<HashSet<(String, String)>>>,
+    in_flight: Arc<InFlight>,
     /// The download manager, started by [`Mirror::start_downloads`]; `None` when the download
     /// directory could not be created, disabling mirroring.
     manager: OnceLock<Option<DownloadManager>>,
@@ -139,13 +154,7 @@ impl Mirror {
             max_filesize: config.max_filesize.clone(),
             download_timeout: config.download_timeout,
         });
-        let s3 = S3::new(s3::S3Config {
-            access_key_id: config.s3_access_key_id.clone(),
-            secret_access_key: config.s3_secret_access_key.clone(),
-            bucket: config.s3_bucket_name.clone(),
-            region: config.s3_region.clone(),
-            endpoint: config.s3_endpoint.clone(),
-        })?;
+        let s3 = S3::new(&s3::S3Config::from(config))?;
 
         Ok(Self::new(
             s3,
@@ -243,9 +252,9 @@ impl Mirror {
         zeta_utils::sync::lock(&self.in_flight).insert((prefix.to_string(), id.to_string()))
     }
 
-    /// Removes media from the in-flight set.
-    fn clear_in_flight(&self, prefix: &str, id: &str) {
-        zeta_utils::sync::lock(&self.in_flight).remove(&(prefix.to_string(), id.to_string()));
+    /// Removes media from an in-flight set.
+    fn clear_in_flight(in_flight: &InFlight, prefix: &str, id: &str) {
+        zeta_utils::sync::lock(in_flight).remove(&(prefix.to_string(), id.to_string()));
     }
 
     /// Mirrors the media at `url` unless it has already been mirrored or a mirror of it is
@@ -293,12 +302,12 @@ impl Mirror {
 
         let Some(manager) = self.manager.get().and_then(Option::as_ref) else {
             warn!(%id, "download manager is not running");
-            self.clear_in_flight(prefix, id);
+            Self::clear_in_flight(&self.in_flight, prefix, id);
 
             return Ok(None);
         };
 
-        let mirror = self.clone();
+        let in_flight = Arc::clone(&self.in_flight);
         let url = url.to_string();
         let id = id.to_string();
         let prefix = prefix.to_string();
@@ -312,7 +321,7 @@ impl Mirror {
             on_finish: Box::new(move |result| {
                 // The in-flight mark is always cleared, also on failure, so that a later link
                 // triggers a new attempt. Errors are logged by the download manager.
-                mirror.clear_in_flight(&prefix, &id);
+                Self::clear_in_flight(&in_flight, &prefix, &id);
 
                 if let Ok(link) = result {
                     on_mirrored(link);
@@ -326,7 +335,7 @@ impl Mirror {
                 "could not submit the download, the manager is not running"
             );
 
-            self.clear_in_flight(&request.prefix, &request.id);
+            Self::clear_in_flight(&self.in_flight, &request.prefix, &request.id);
         }
 
         Ok(None)
@@ -664,14 +673,7 @@ mod tests {
 
     /// Returns a mirror that never talks to S3 and has no manager running.
     fn mirror_for_test() -> Mirror {
-        Mirror {
-            s3: S3::for_test(),
-            ytdlp: YtDlp::with_command("yt-dlp"),
-            download_dir: None,
-            max_concurrent: 2,
-            in_flight: Arc::default(),
-            manager: OnceLock::new(),
-        }
+        Mirror::new(S3::for_test(), YtDlp::with_command("yt-dlp"), None, 2)
     }
 
     #[test]
@@ -685,38 +687,21 @@ mod tests {
         // The same id under a different prefix is a different piece of media.
         assert!(mirror.mark_in_flight("tiktok", "456"));
 
-        mirror.clear_in_flight("reddit", "123");
+        Mirror::clear_in_flight(&mirror.in_flight, "reddit", "123");
         assert!(mirror.mark_in_flight("reddit", "123"));
     }
 
-    /// Runs a minimal S3 server that answers every request with a 404, so that the fast-path
-    /// check finds no mirror. Returns the mirror pointed at the server and a handle for the
-    /// server thread.
-    fn mirror_with_missing_objects() -> (Mirror, std::thread::JoinHandle<()>) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-
-        let server = std::thread::spawn(move || {
-            use std::io::{Read, Write};
-
-            let (mut stream, _) = listener.accept().unwrap();
-
-            let mut buffer = [0; 1024];
-            let _ = stream.read(&mut buffer);
-
-            stream
-                .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
-                .unwrap();
-        });
-
-        let mirror = Mirror {
-            s3: S3::with_endpoint(&format!("http://{address}")),
-            ytdlp: YtDlp::with_command("yt-dlp"),
-            download_dir: None,
-            max_concurrent: 2,
-            in_flight: Arc::default(),
-            manager: OnceLock::new(),
-        };
+    /// Returns a mirror whose S3 endpoint answers every request with a 404, so that the
+    /// fast-path check finds no mirror, together with the server that must outlive it.
+    async fn mirror_with_missing_objects() -> (Mirror, zeta_test_support::wiremock::MockServer) {
+        let server = zeta_test_support::not_found_server().await;
+        let endpoint = format!("http://{}", server.address());
+        let mirror = Mirror::new(
+            S3::with_endpoint(&endpoint),
+            YtDlp::with_command("yt-dlp"),
+            None,
+            2,
+        );
 
         (mirror, server)
     }
@@ -745,7 +730,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_mirrored_without_manager_clears_in_flight() {
-        let (mirror, server) = mirror_with_missing_objects();
+        let (mirror, _server) = mirror_with_missing_objects().await;
         let base = Url::parse("https://pub.rwx.im/reddit").unwrap();
 
         let result = mirror
@@ -756,7 +741,5 @@ mod tests {
         assert!(result.is_none());
         // The media must not remain marked as in-flight, so a later mirror can be requested.
         assert!(mirror.mark_in_flight("reddit", "123"));
-
-        server.join().unwrap();
     }
 }

@@ -187,8 +187,6 @@ struct ActiveDownload {
     request: DownloadRequest,
     /// The temporary directory the media is downloaded into, removed when the download finishes.
     tempdir: tempfile::TempDir,
-    /// The most recent progress update of the download.
-    last_progress: Option<Progress>,
 }
 
 impl Manager {
@@ -293,23 +291,14 @@ impl Manager {
             .instrument(span),
         );
 
-        self.active.insert(
-            id,
-            ActiveDownload {
-                request,
-                tempdir,
-                last_progress: None,
-            },
-        );
+        self.active.insert(id, ActiveDownload { request, tempdir });
     }
 
     /// Handles a status update reported by a download task.
     async fn on_status(&mut self, status: DownloadStatus) {
         let (id, result) = match status {
             DownloadStatus::Progress { id, progress } => {
-                if let Some(active) = self.active.get_mut(&id) {
-                    active.last_progress = Some(progress);
-
+                if let Some(active) = self.active.get(&id) {
                     debug!(
                         media_id = %active.request.id,
                         percent = ?progress.fraction().map(|fraction| format!("{:.0}%", fraction * 100.0)),

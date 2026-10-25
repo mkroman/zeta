@@ -180,20 +180,12 @@ impl Tiktok {
             let _ = client.send_privmsg(channel, notice(&summary));
         }
 
-        self.mirror_video(&url, video_id, channel, client).await;
-
-        Ok(())
-    }
-
-    /// Starts mirroring of the given video, replying with a link to the mirrored file.
-    ///
-    /// If the video has already been mirrored, the existing link is sent immediately; otherwise
-    /// the download and upload happens in a background task that replies with the link.
-    async fn mirror_video(&self, url: &str, video_id: &str, channel: &str, client: &Client) {
         if let Some(mirror) = &self.mirror {
-            crate::mirror_reply::ensure_mirrored_and_reply(mirror, url, video_id, channel, client)
+            crate::mirror_reply::ensure_mirrored_and_reply(mirror, &url, video_id, channel, client)
                 .await;
         }
+
+        Ok(())
     }
 
     /// Requests the redirect with the given id and returns the location it redirects to.

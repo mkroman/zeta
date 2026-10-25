@@ -9,17 +9,44 @@ use tracing::{debug, info, warn};
 use crate::Error;
 use crate::Registry;
 use crate::config::Config;
-use crate::consts::SHUTDOWN_GRACE;
+use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE};
 use crate::plugin::dispatch::EventIndex;
 use crate::plugin::{Context, PluginTask};
 use zeta_plugin::Filters;
 
-/// Returns the name of the first shutdown signal received by the process.
+/// The signal that triggered a graceful shutdown.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShutdownSignal {
+    /// `SIGINT`, sent by `Ctrl-C`.
+    Interrupt,
+    /// `SIGTERM`, sent by a service manager or container orchestrator.
+    Terminate,
+}
+
+impl ShutdownSignal {
+    /// Returns the signal's conventional name, for logs.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Interrupt => "SIGINT",
+            Self::Terminate => "SIGTERM",
+        }
+    }
+
+    /// Returns the process exit code conventionally associated with the signal.
+    const fn exit_code(self) -> i32 {
+        match self {
+            Self::Interrupt => 130,
+            Self::Terminate => 143,
+        }
+    }
+}
+
+/// Returns the first shutdown signal received by the process.
 ///
 /// `SIGINT` (`Ctrl-C`) and, on unix, `SIGTERM` — e.g. sent by a container orchestrator deleting
 /// the pod — both trigger shutdown. The `SIGTERM` listener is best-effort: when it cannot be
 /// installed, only `SIGINT` triggers shutdown.
-async fn shutdown_signal() -> &'static str {
+async fn shutdown_signal() -> ShutdownSignal {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -30,8 +57,8 @@ async fn shutdown_signal() -> &'static str {
             tokio::pin!(sigterm);
 
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => return "SIGINT",
-                _ = &mut sigterm => return "SIGTERM",
+                _ = tokio::signal::ctrl_c() => return ShutdownSignal::Interrupt,
+                _ = &mut sigterm => return ShutdownSignal::Terminate,
             }
         }
     }
@@ -40,7 +67,7 @@ async fn shutdown_signal() -> &'static str {
         warn!("failed to install the SIGINT listener; shutting down anyway");
     }
 
-    "SIGINT"
+    ShutdownSignal::Interrupt
 }
 
 /// Waits for the plugin tasks to drain their queued messages and run their shutdown hooks.
@@ -48,16 +75,13 @@ async fn shutdown_signal() -> &'static str {
 /// The tasks share a deadline `grace` seconds from now; any task still running when the deadline
 /// passes is aborted. The tasks are awaited concurrently, so a hanging task cannot consume the
 /// grace that is owed to the other plugins.
-async fn drain_plugin_handles(handles: Vec<(String, JoinHandle<()>)>, grace: Duration) {
+async fn drain_plugin_handles(mut handles: Vec<(String, JoinHandle<()>)>, grace: Duration) {
     let deadline = tokio::time::Instant::now() + grace;
-
-    let mut handles = handles;
 
     let outcomes = futures::future::join_all(
         handles
             .iter_mut()
-            .map(|(_, handle)| async move { tokio::time::timeout_at(deadline, handle).await })
-            .collect::<Vec<_>>(),
+            .map(|(_, handle)| async move { tokio::time::timeout_at(deadline, handle).await }),
     )
     .await;
 
@@ -140,16 +164,12 @@ async fn dispatch_messages(
 ///
 /// `send_quit` only queues the message on an unbounded channel, written to the socket by the
 /// task spawned by [`drive_outgoing`]; the stream has already ended, so nothing is read back.
-async fn flush_quit(client: &Client, quitting: bool, quit_message: &str) {
-    if !quitting {
-        return;
-    }
-
+async fn flush_quit(client: &Client, quit_message: &str) {
     if let Err(error) = client.send_quit(quit_message) {
         warn!(%error, "failed to send the QUIT message");
     }
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(QUIT_FLUSH_DELAY).await;
 }
 
 /// Exits the process immediately when a second shutdown signal arrives.
@@ -159,11 +179,13 @@ async fn flush_quit(client: &Client, quitting: bool, quit_message: &str) {
 fn exit_on_second_signal() {
     tokio::spawn(async move {
         let signal = shutdown_signal().await;
-        let code = if signal == "SIGTERM" { 143 } else { 130 };
 
-        warn!(signal = %signal, "received a second shutdown signal; exiting now");
+        warn!(
+            signal = signal.name(),
+            "received a second shutdown signal; exiting now"
+        );
 
-        std::process::exit(code);
+        std::process::exit(signal.exit_code());
     });
 }
 
@@ -279,7 +301,7 @@ impl Zeta {
         // until the stream ends or a shutdown signal arrives.
         let dispatch = dispatch_messages(&self.context, &mut stream, &mut index);
 
-        let mut quitting = false;
+        let mut shutting_down = false;
         let mut dispatch_error = None;
 
         tokio::select! {
@@ -289,8 +311,8 @@ impl Zeta {
                 }
             }
             signal = shutdown_signal() => {
-                info!(signal = %signal, "shutting down");
-                quitting = true;
+                info!(signal = signal.name(), "shutting down");
+                shutting_down = true;
 
                 // Another signal during the grace period forces an immediate exit.
                 exit_on_second_signal();
@@ -302,7 +324,9 @@ impl Zeta {
         // `select!` above does not drop it — without this the tasks sit out the grace period.
         drop(index);
 
-        flush_quit(&client, quitting, &quit_message).await;
+        if shutting_down {
+            flush_quit(&client, &quit_message).await;
+        }
 
         let handles = plugins
             .into_iter()
@@ -389,6 +413,6 @@ mod tests {
 
         let received = signal.await;
 
-        assert_eq!(received, "SIGTERM");
+        assert_eq!(received, ShutdownSignal::Terminate);
     }
 }

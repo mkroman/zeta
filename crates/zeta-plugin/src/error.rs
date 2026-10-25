@@ -30,21 +30,19 @@ pub fn plugin_err<E: StdError + Send + Sync + 'static>(e: E) -> Error {
 /// Resolves a secret from an optional configured value, falling back to an environment variable.
 ///
 /// The configured value takes precedence when it is set and non-empty; otherwise the value of the
-/// `name` environment variable is used. This lets users keep secrets out of `config.toml` (for
-/// example through a secret manager) while still allowing them to be configured directly.
+/// `name` environment variable is used. Empty values count as unset on both sides, so a blank
+/// configured value or environment variable never becomes the secret. This lets users keep
+/// secrets out of `config.toml` (for example through a secret manager) while still allowing them
+/// to be configured directly.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Plugin`] if neither the configured value nor the environment variable is set.
 /// The error message includes the variable name.
 pub fn resolve_secret(value: Option<&str>, name: &str) -> Result<String, Error> {
-    if let Some(value) = value.filter(|value| !value.is_empty()) {
-        return Ok(value.to_string());
-    }
-
-    std::env::var(name).map_err(|e| {
+    zeta_utils::settings::resolve_optional_setting(value, name).ok_or_else(|| {
         Error::Plugin(Box::new(std::io::Error::other(format!(
-            "neither the plugin setting nor environment variable `{name}` is set: {e}"
+            "neither the plugin setting nor environment variable `{name}` is set"
         ))))
     })
 }

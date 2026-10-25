@@ -6,7 +6,7 @@
 //!
 //! Alongside the plugin vocabulary, this crate carries the machinery shared by the host and the
 //! bundled plugins: the plugin [`Context`], the plugin-facing configuration, the [`Registry`],
-//! the shared URL [`Filters`], and the database helpers plugins persist their state through.
+//! the shared URL [`Filters`], and the database pool plugins persist their state through.
 //! Further shared infrastructure lives in dedicated crates: `zeta-cache`, `zeta-http`,
 //! `zeta-mirror` and `zeta-utils`.
 

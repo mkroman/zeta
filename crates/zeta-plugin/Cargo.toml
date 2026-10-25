@@ -38,7 +38,7 @@ zeta-plugin-macros = { path = "../zeta-plugin-macros" }
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { path = "../zeta-test-support", default-features = false }
 
 [lints]
 workspace = true

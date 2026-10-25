@@ -1,3 +1,5 @@
+//! Tracing and OpenTelemetry initialization.
+
 use std::env;
 
 use miette::{IntoDiagnostic, WrapErr};
@@ -14,7 +16,7 @@ use opentelemetry_semantic_conventions::SCHEMA_URL;
 use opentelemetry_semantic_conventions::resource::SERVICE_VERSION;
 use tracing::info;
 
-use crate::config;
+use zeta::config;
 
 /// Returns a list of resource detectors to use to enrich OpenTelemetry attributes.
 fn otel_resource_detectors() -> Vec<Box<dyn ResourceDetector>> {

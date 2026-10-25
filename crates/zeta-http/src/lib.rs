@@ -17,8 +17,10 @@ pub use error::WreqError;
 
 #[cfg(feature = "http")]
 use serde::de::DeserializeOwned;
+#[cfg(any(feature = "request", feature = "http"))]
+use tracing::error;
 #[cfg(feature = "http")]
-use tracing::{Span, debug, error, instrument};
+use tracing::{Span, debug, instrument};
 #[cfg(feature = "http")]
 use zeta_plugin::config::HttpConfig;
 #[cfg(feature = "http")]
@@ -110,7 +112,7 @@ fn body_error(error: reqwest::Error) -> ApiError {
 /// # Errors
 ///
 /// Returns the [`RequestError`] of the failed send, with its URL redacted.
-#[cfg(feature = "http")]
+#[cfg(any(feature = "request", feature = "http"))]
 pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response, RequestError> {
     request.send().await.map_err(|error| {
         let error = RequestError::from(error);
@@ -145,7 +147,7 @@ pub async fn text(response: reqwest::Response) -> Result<String, RequestError> {
 }
 
 /// Logs a failed request or body read once, with its redacted URL and error type.
-#[cfg(feature = "http")]
+#[cfg(any(feature = "request", feature = "http"))]
 fn log_request_error(error: &RequestError, url: &str, message: &str) {
     error!(url.full = %url, error.type = error.error_type(), error = %error.full(), "{message}");
 }

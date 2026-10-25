@@ -35,8 +35,7 @@ impl Subscriber {
     /// Queues `event` for the plugin, recording the plugin in `stopped` when its mailbox is
     /// closed (i.e. the plugin's task has stopped).
     fn send(&self, event: Event, stopped: &mut Vec<String>) {
-        if let Err(error) = self.mailbox.send(event) {
-            warn!(plugin = %self.name, %error, "plugin task has stopped");
+        if self.mailbox.send(event).is_err() {
             stopped.push(self.name.to_string());
         }
     }
@@ -171,6 +170,11 @@ impl EventIndex {
             _ => {}
         }
 
+        // A stopped plugin can match several of the message's events (and several commands or
+        // URLs); report it once so the caller logs and evicts it once.
+        stopped.sort_unstable();
+        stopped.dedup();
+
         stopped
     }
 
@@ -199,9 +203,7 @@ impl EventIndex {
 
     /// Returns the subscriber list of a plain-interest event kind, if any are registered.
     fn subscribers(&self, kind: EventKind) -> Option<&[Subscriber]> {
-        let subscribers = self.kinds.get(&kind)?;
-
-        (!subscribers.is_empty()).then_some(subscribers.as_slice())
+        self.kinds.get(&kind).map(Vec::as_slice)
     }
 
     /// Delivers an optional event to the subscribers of `kind`, if any are registered.
@@ -689,5 +691,24 @@ mod tests {
         let stopped = index.dispatch(&Filters::default(), message("n!u@h", "JOIN", &["#test"]));
 
         assert_empty!(stopped);
+    }
+
+    #[test]
+    fn stopped_plugins_are_reported_once_per_message() {
+        let mut index = EventIndex::default();
+        let dig = subscribe(&mut index, "dig", |subscriptions| {
+            subscriptions
+                .command(CommandSpec::new(".dig", "dig"))
+                .urls(UrlScope::Any)
+                .receive_message();
+        });
+
+        drop(dig);
+
+        // The message matches the command, the message subscription, and the URL
+        // subscription; the stopped plugin is still reported only once.
+        let stopped = index.dispatch(&Filters::default(), privmsg(".dig https://example.com/x"));
+
+        assert_eq!(stopped, ["dig"]);
     }
 }

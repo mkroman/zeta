@@ -177,20 +177,33 @@ pub fn parse_iso8601_duration(input: &str) -> Option<Duration> {
 #[must_use]
 pub fn format_duration(duration: Duration) -> String {
     // Seconds per day, hour, minute, and second, in descending order.
-    const UNITS: &[(i64, &str)] = &[(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")];
+    const UNITS: &[(i64, &str)] = &[
+        (SECONDS_PER_DAY, "d"),
+        (SECONDS_PER_HOUR, "h"),
+        (SECONDS_PER_MINUTE, "m"),
+        (SECONDS_PER_SECOND, "s"),
+    ];
 
     // A duration of more than `i64::MAX` seconds would outlive the universe several times over;
     // saturate rather than wrap.
     let total_seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
+    let parts = split_into_units(total_seconds, UNITS);
 
-    match split_into_units(total_seconds, UNITS).as_slice() {
-        [] => "0s".to_string(),
-        parts => parts
-            .iter()
-            .map(|(count, suffix)| format!("{count}{suffix}"))
-            .collect::<Vec<_>>()
-            .join(" "),
+    if parts.is_empty() {
+        return "0s".to_string();
     }
+
+    let mut formatted = String::with_capacity(8 * parts.len());
+
+    for (index, (count, suffix)) in parts.iter().enumerate() {
+        if index > 0 {
+            formatted.push(' ');
+        }
+
+        let _ = write!(formatted, "{count}{suffix}");
+    }
+
+    formatted
 }
 
 #[cfg(test)]

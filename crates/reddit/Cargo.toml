@@ -28,7 +28,7 @@ url.workspace = true
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["http"] }
 
 [lints]
 workspace = true

@@ -27,10 +27,7 @@ pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'
 /// code cannot leak its digits into the visible text.
 #[must_use]
 pub fn strip_control_chars(text: &str) -> String {
-    strip_formatting(text)
-        .chars()
-        .filter(|character| !character.is_control())
-        .collect()
+    strip_formatting_where(text, |character| !character.is_control())
 }
 
 /// Removes the IRC formatting characters from `text`, leaving the visible characters.
@@ -46,6 +43,12 @@ pub fn strip_control_chars(text: &str) -> String {
 /// [`strip_control_chars`] instead.
 #[must_use]
 pub fn strip_formatting(text: &str) -> String {
+    strip_formatting_where(text, |_| true)
+}
+
+/// The shared implementation of [`strip_control_chars`] and [`strip_formatting`]: formatting
+/// codes are consumed, and the remaining characters are kept only when `keep` returns `true`.
+fn strip_formatting_where(text: &str, keep: impl Fn(char) -> bool) -> String {
     let mut visible = String::with_capacity(text.len());
     let mut characters = text.chars().peekable();
 
@@ -56,7 +59,8 @@ pub fn strip_formatting(text: &str) -> String {
             // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
             // underline) and the reset code.
             '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
-            character => visible.push(character),
+            character if keep(character) => visible.push(character),
+            _ => {}
         }
     }
 
@@ -143,10 +147,10 @@ pub const MAX_LISTING_LENGTH: usize = 400;
 /// Returns the number of entries appended.
 ///
 /// Callers that trail a fixed `suffix` after the listing pass its length as `reserved` and
-/// append it themselves.
-pub fn append_entries_within_budget(
+/// append it themselves. Entries may be owned or borrowed strings.
+pub fn append_entries_within_budget<S: AsRef<str>>(
     message: &mut String,
-    entries: impl IntoIterator<Item = String>,
+    entries: impl IntoIterator<Item = S>,
     separator: &str,
     budget: usize,
     reserved: usize,
@@ -155,6 +159,7 @@ pub fn append_entries_within_budget(
     let mut first = true;
 
     for entry in entries {
+        let entry = entry.as_ref();
         let prefix = if first { "" } else { separator };
 
         if !first && message.len() + prefix.len() + entry.len() + reserved > budget {
@@ -162,7 +167,7 @@ pub fn append_entries_within_budget(
         }
 
         message.push_str(prefix);
-        message.push_str(&entry);
+        message.push_str(entry);
         first = false;
         appended += 1;
     }
@@ -178,8 +183,7 @@ mod tests {
     fn appends_entries_within_the_budget() {
         let mut message = String::from("header: ");
 
-        let appended =
-            append_entries_within_budget(&mut message, ["a", "b"].map(String::from), ", ", 30, 0);
+        let appended = append_entries_within_budget(&mut message, ["a", "b"], ", ", 30, 0);
 
         assert_eq!(appended, 2);
         assert_eq!(message, "header: a, b");
@@ -189,13 +193,8 @@ mod tests {
     fn always_appends_the_first_entry_and_keeps_prefixes() {
         let mut message = String::from("header: ");
 
-        let appended = append_entries_within_budget(
-            &mut message,
-            ["first", "second", "third"].map(String::from),
-            ", ",
-            20,
-            0,
-        );
+        let appended =
+            append_entries_within_budget(&mut message, ["first", "second", "third"], ", ", 20, 0);
 
         // The first entry is unconditional; "header: first, second" is 21 bytes and would
         // exceed the 20-byte budget, so the loop stops after the first entry.
@@ -207,13 +206,7 @@ mod tests {
     fn reserves_room_for_a_suffix() {
         let mut message = String::new();
 
-        let appended = append_entries_within_budget(
-            &mut message,
-            ["first", "second"].map(String::from),
-            ", ",
-            10,
-            8,
-        );
+        let appended = append_entries_within_budget(&mut message, ["first", "second"], ", ", 10, 8);
 
         // "first" is unconditional; "second" (6 bytes) plus the separator and the 8 reserved
         // bytes exceeds the budget.

@@ -11,10 +11,12 @@
 //! re-exported for everything else.
 
 use std::net::SocketAddr;
+#[cfg(feature = "http")]
 use std::time::Duration;
 
 use url::Url;
 
+#[cfg(feature = "http")]
 pub use wiremock;
 
 /// Constructs a plugin [`Context`](zeta_plugin::Context) for tests: a default configuration
@@ -24,6 +26,7 @@ pub use wiremock;
 ///
 /// Panics if the lazy database pool cannot be constructed, which only happens with a
 /// misconfigured sqlx build.
+#[cfg(feature = "context")]
 #[must_use]
 pub fn test_context() -> zeta_plugin::Context {
     zeta_plugin::Context::new(
@@ -40,9 +43,11 @@ pub fn test_context() -> zeta_plugin::Context {
 
 /// How long the wiremock server behind [`timeout_error`] waits before answering: long enough
 /// that a client with [`TIMEOUT_CLIENT`] cannot possibly get a response.
+#[cfg(feature = "http")]
 const LATE_RESPONSE: Duration = Duration::from_secs(5);
 
 /// The client timeout [`timeout_error`] requests with: the response cannot arrive within it.
+#[cfg(feature = "http")]
 const TIMEOUT_CLIENT: Duration = Duration::from_millis(50);
 
 /// Returns the address of a just-dropped local listener.
@@ -70,6 +75,7 @@ pub fn refused_address() -> SocketAddr {
 ///
 /// Panics if the request does not fail, or if reqwest does not attach the request URL to the
 /// error.
+#[cfg(feature = "http")]
 pub async fn refused_get(query: &str) -> (reqwest::Error, SocketAddr) {
     let address = refused_address();
 
@@ -91,6 +97,7 @@ pub async fn refused_get(query: &str) -> (reqwest::Error, SocketAddr) {
 /// # Panics
 ///
 /// Panics if the request fails with anything but a timeout.
+#[cfg(feature = "http")]
 pub async fn timeout_error() -> (reqwest::Error, SocketAddr) {
     let server = wiremock::MockServer::start().await;
 
@@ -160,6 +167,7 @@ pub fn assert_timeout_redactions(message: &str, full: &str, debug: &str, address
 ///
 /// An S3-compatible endpoint where the object check reports the object as absent and the upload
 /// then fails with the non-retryable status.
+#[cfg(feature = "http")]
 pub async fn not_found_server() -> wiremock::MockServer {
     let server = wiremock::MockServer::start().await;
 
@@ -266,6 +274,7 @@ macro_rules! assert_empty {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "http")]
     use super::*;
 
     #[test]
@@ -299,6 +308,7 @@ mod tests {
         assert!(message.contains("#zeta must have no strays"), "{message}");
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn refused_get_fails_to_connect_with_the_query_attached() {
         let (error, address) = refused_get("login_token=secret").await;
@@ -316,6 +326,7 @@ mod tests {
         assert_eq!(address.ip().to_string(), "127.0.0.1");
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn timeout_error_times_out_with_the_query_attached() {
         let (error, address) = timeout_error().await;
@@ -325,6 +336,7 @@ mod tests {
         assert_eq!(address.ip().to_string(), "127.0.0.1");
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn not_found_server_answers_every_request_with_a_404() {
         let server = not_found_server().await;
