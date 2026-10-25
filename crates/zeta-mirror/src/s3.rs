@@ -58,7 +58,8 @@ pub struct S3Config {
     pub region: Option<String>,
     /// The endpoint URL for S3-compatible services.
     ///
-    /// Falls back to the `S3_ENDPOINT` environment variable when unset.
+    /// Falls back to the `S3_ENDPOINT` environment variable when unset. Empty values count as
+    /// unset, so a blank endpoint does not override the environment or the AWS default.
     pub endpoint: Option<String>,
 }
 

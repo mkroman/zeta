@@ -69,7 +69,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_secret_falls_back_to_the_environment() {
+    fn empty_secret_without_environment_is_an_error() {
         let error = resolve_secret(Some(""), UNSET).expect_err("missing secret");
 
         assert!(error.to_string().contains(UNSET), "{error}");

@@ -85,7 +85,8 @@ pub struct MirrorConfig {
     pub s3_region: Option<String>,
     /// The endpoint URL for S3-compatible services.
     ///
-    /// Falls back to the `S3_ENDPOINT` environment variable when unset.
+    /// Falls back to the `S3_ENDPOINT` environment variable when unset. Empty values count as
+    /// unset, so a blank endpoint does not override the environment or the AWS default.
     pub s3_endpoint: Option<String>,
 }
 
