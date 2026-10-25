@@ -623,12 +623,13 @@ mod tests {
     use super::*;
     use zeta_plugin::config::HttpConfig;
     use zeta_test_support::{
-        plain, settings_tests,
+        settings_tests,
         wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{method, path},
         },
     };
+    use zeta_utils::utils::strip_formatting;
 
     /// Evaluates `line` through the actor, panicking if it has stopped.
     async fn evaluate(rink: &Rink, line: &str, classify: bool) -> String {
@@ -853,7 +854,7 @@ mod tests {
         // A query without a close match carries no suggestion.
         let reply = evaluate(&rink, "wronginput", false).await;
         assert!(
-            plain(&reply).contains("Error: No such unit wronginput"),
+            strip_formatting(&reply).contains("Error: No such unit wronginput"),
             "{reply}"
         );
         // The input is reset so an error cannot leak formatting into the rest of the line.
@@ -866,7 +867,7 @@ mod tests {
 
         evaluate(&rink, "4 m", false).await;
 
-        let reply = plain(&evaluate(&rink, "ans * 2", false).await);
+        let reply = strip_formatting(&evaluate(&rink, "ans * 2", false).await);
         assert!(reply.contains("8 meter"), "{reply}");
         assert!(reply.contains("length"), "{reply}");
     }
@@ -875,7 +876,7 @@ mod tests {
     async fn substances_render_every_property_and_label_as_a_value() {
         let rink = offline_plugin();
 
-        let reply = plain(&evaluate(&rink, "egg", false).await);
+        let reply = strip_formatting(&evaluate(&rink, "egg", false).await);
 
         for expected in [
             "egg: USA large egg.",
@@ -894,7 +895,7 @@ mod tests {
     async fn a_unit_span_following_a_number_stays_inside_the_value_run() {
         let rink = offline_plugin();
 
-        let reply = plain(&evaluate(&rink, "helium", false).await);
+        let reply = strip_formatting(&evaluate(&rink, "helium", false).await);
         assert!(
             reply.contains("atomic_number = 2 (dimensionless)"),
             "{reply}"
@@ -920,7 +921,7 @@ mod tests {
         ];
 
         for (line, expected) in cases {
-            let reply = plain(&evaluate(&rink, line, false).await);
+            let reply = strip_formatting(&evaluate(&rink, line, false).await);
 
             for needle in expected {
                 assert!(
@@ -938,17 +939,17 @@ mod tests {
         rink.ensure_currency_cached().await;
 
         for (line, classify) in [("1 ETH to USD", false), ("1 eth to usd", true)] {
-            let reply = plain(&evaluate(&rink, line, classify).await);
+            let reply = strip_formatting(&evaluate(&rink, line, classify).await);
             assert!(reply.contains("2650.32 USD"), "{line}: {reply}");
             assert!(reply.contains("money"), "{line}: {reply}");
         }
 
         // 50_000 satoshis are 0.0005 bitcoin at the fixture's 65 000 USD price.
-        let sats = plain(&evaluate(&rink, "50000 sats to usd", true).await);
+        let sats = strip_formatting(&evaluate(&rink, "50000 sats to usd", true).await);
         assert!(sats.contains("32.5 USD"), "{sats}");
 
         // A gwei stays convertible without being resolvable as fiat.
-        let gwei = plain(&evaluate(&rink, "1 gwei to usd", true).await);
+        let gwei = strip_formatting(&evaluate(&rink, "1 gwei to usd", true).await);
         assert!(gwei.contains("USD"), "{gwei}");
     }
 
@@ -960,7 +961,7 @@ mod tests {
 
         // The fake EUR coin (priced 1.2) must not shadow the bundled euro: 1 EUR is 0.5 USD
         // under the fiat fixture, and the rejected `1INCH` symbol must not break the load.
-        let reply = plain(&evaluate(&rink, "1 EUR to USD", false).await);
+        let reply = strip_formatting(&evaluate(&rink, "1 EUR to USD", false).await);
         assert!(reply.contains("0.5 USD"), "{reply}");
         assert!(!reply.contains("1.2"), "{reply}");
     }
@@ -1010,7 +1011,7 @@ mod tests {
         rink.cmc = None;
         rink.ensure_currency_cached().await;
 
-        let disabled = plain(&evaluate(&rink, "1 eth to usd", true).await);
+        let disabled = strip_formatting(&evaluate(&rink, "1 eth to usd", true).await);
         assert!(disabled.contains("Missing dependencies: ETH"), "{disabled}");
 
         // The fiat dataset is fine; the listings endpoint is not. The refresh fails as a
@@ -1019,7 +1020,7 @@ mod tests {
         let (rink, _fiat, _listings) = plugin_with_listings(500).await;
         rink.ensure_currency_cached().await;
 
-        let failed = plain(&evaluate(&rink, "1 eth to usd", true).await);
+        let failed = strip_formatting(&evaluate(&rink, "1 eth to usd", true).await);
         assert!(failed.contains("Missing dependencies: ETH"), "{failed}");
     }
 
@@ -1050,12 +1051,12 @@ mod tests {
         let server = currency_server(500).await;
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
 
-        let failed = plain(&evaluate(&rink, "1 USD", false).await);
+        let failed = strip_formatting(&evaluate(&rink, "1 USD", false).await);
         assert!(failed.contains("Missing dependencies: USD"), "{failed}");
 
         let rink = offline_plugin();
 
-        let disabled = plain(&evaluate(&rink, "1 USD", false).await);
+        let disabled = strip_formatting(&evaluate(&rink, "1 USD", false).await);
         assert!(disabled.contains("Missing dependencies: USD"), "{disabled}");
     }
 
@@ -1096,7 +1097,7 @@ mod tests {
         ];
 
         for (line, value) in cases {
-            let reply = plain(&evaluate(&rink, line, true).await);
+            let reply = strip_formatting(&evaluate(&rink, line, true).await);
             assert!(reply.contains(value), "{line}: missing {value:?}: {reply}");
             assert!(reply.contains("money"), "{line}: {reply}");
         }
@@ -1108,7 +1109,7 @@ mod tests {
 
         // The corrections land before any evaluation: the reply names the *tracked*
         // dependencies (USD), which only the rewritten `10 USD to DKK` can trigger.
-        let reply = plain(&evaluate(&rink, "10 usd to dkk", true).await);
+        let reply = strip_formatting(&evaluate(&rink, "10 usd to dkk", true).await);
         assert!(reply.contains("Missing dependencies: USD"), "{reply}");
     }
 
@@ -1126,7 +1127,7 @@ mod tests {
         ];
 
         for (line, expected) in cases {
-            let reply = plain(&evaluate(&rink, line, true).await);
+            let reply = strip_formatting(&evaluate(&rink, line, true).await);
 
             for needle in expected {
                 assert!(
@@ -1141,7 +1142,7 @@ mod tests {
     async fn classify_returns_unparseable_queries_unchanged() {
         let rink = offline_plugin();
 
-        let reply = plain(&evaluate(&rink, "20:00 in tokyo", true).await);
+        let reply = strip_formatting(&evaluate(&rink, "20:00 in tokyo", true).await);
         assert!(reply.contains("Error: Expected term, got `:`"), "{reply}");
     }
 
@@ -1212,7 +1213,7 @@ mod tests {
         // A fixed date keeps the assertions free of the clock and the host timezone.
         let reply = evaluate(&rink, "#2016-08-24#", true).await;
         // The datetime renders as a value, inside the run opened right after the marker.
-        assert!(plain(&reply).contains("2016-08-24"), "{reply}");
+        assert!(strip_formatting(&reply).contains("2016-08-24"), "{reply}");
         // The value run closes right after the datetime's trailing timezone label.
         assert!(reply.contains("]\x0310"), "{reply}");
     }

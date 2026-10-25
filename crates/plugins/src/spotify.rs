@@ -408,7 +408,8 @@ fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
 mod tests {
     use super::*;
     use similar_asserts::assert_eq;
-    use zeta_test_support::{plain, settings_tests};
+    use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -468,10 +469,14 @@ mod tests {
         ];
 
         for (case, names, expected) in cases {
-            assert_eq!(plain(&join_artists(&artists(names))), expected, "{case}");
+            assert_eq!(
+                strip_formatting(&join_artists(&artists(names))),
+                expected,
+                "{case}"
+            );
         }
 
-        // The comma sits between two color codes, so `plain` would swallow it; pin the exact
+        // The comma sits between two color codes, so `strip_formatting` would swallow it; pin the exact
         // layout for the three-name variant to keep the separator covered.
         assert_eq!(
             join_artists(&artists(&["Aurora", "Sigrid", "Agnes Obel"])),

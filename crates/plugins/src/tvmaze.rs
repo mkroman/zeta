@@ -254,7 +254,7 @@ impl Tvmaze {
 mod tests {
     use super::*;
     use similar_asserts::assert_eq;
-    use zeta_test_support::plain;
+    use zeta_utils::utils::strip_formatting;
 
     /// Decodes a recorded search response for a running show with a scheduled next episode.
     fn show_with_next_episode() -> Show {
@@ -326,7 +326,7 @@ mod tests {
         let show = show_with_next_episode();
 
         // The fixture's airstamp is in the past, so the time-until-air clamps to zero minutes.
-        let message = plain(&Tvmaze::format_show_message(&show));
+        let message = strip_formatting(&Tvmaze::format_show_message(&show));
 
         assert!(
             message.contains("Next episode “The Next One” (2x07) airs in 0 minutes"),
@@ -341,7 +341,7 @@ mod tests {
         let mut show = show_with_next_episode();
         show.embedded = None;
 
-        let message = plain(&Tvmaze::format_show_message(&show));
+        let message = strip_formatting(&Tvmaze::format_show_message(&show));
 
         assert!(
             message.contains("A Show is currently marked as Running and there is no next episode"),

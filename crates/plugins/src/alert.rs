@@ -505,7 +505,8 @@ mod tests {
 
     use super::*;
     use zeta_plugin::ArgsError;
-    use zeta_test_support::{plain, settings_tests};
+    use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -733,7 +734,7 @@ mod tests {
     #[test]
     fn formats_no_pending_alerts() {
         assert_eq!(
-            plain(&format_pending(&[])),
+            strip_formatting(&format_pending(&[])),
             "> Alert: You have no pending alerts"
         );
     }
@@ -760,7 +761,7 @@ mod tests {
             alert("third", at(2026, 9, 16, 11, 23)),
             alert("fourth", at(2026, 9, 17, 9, 15)),
         ];
-        let listing = plain(&format_pending(&pending));
+        let listing = strip_formatting(&format_pending(&pending));
 
         assert!(
             listing.starts_with("> Alert: Pending alerts: 4"),
@@ -784,7 +785,7 @@ mod tests {
     #[test]
     fn truncates_long_messages() {
         let pending = [alert(&"a".repeat(80), at(2026, 9, 16, 11, 21))];
-        let listing = plain(&format_pending(&pending));
+        let listing = strip_formatting(&format_pending(&pending));
 
         assert!(
             listing.contains(&format!("Next up: “{}…” Sep 16th 11:21", "a".repeat(50))),

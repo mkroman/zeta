@@ -561,7 +561,8 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::{plain, settings_tests};
+    use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -649,7 +650,7 @@ mod tests {
         ];
 
         for (case, video, category, view_count, expected) in cases {
-            let formatted = plain(&format_video_message(&video, category, view_count));
+            let formatted = strip_formatting(&format_video_message(&video, category, view_count));
 
             assert!(
                 formatted.starts_with("> “Test Video”"),

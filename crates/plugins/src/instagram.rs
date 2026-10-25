@@ -603,7 +603,8 @@ fn format_summary(details: &MediaDetails, kind: &str, title_length: usize) -> Op
 mod tests {
     use super::*;
     use similar_asserts::assert_eq;
-    use zeta_test_support::{plain, settings_tests};
+    use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -710,7 +711,9 @@ mod tests {
 
         for (case, details, kind, expected) in cases {
             assert_eq!(
-                format_summary(&details, kind, 150).as_deref().map(plain),
+                format_summary(&details, kind, 150)
+                    .as_deref()
+                    .map(strip_formatting),
                 expected,
                 "for {case}"
             );

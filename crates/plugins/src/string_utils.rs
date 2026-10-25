@@ -278,7 +278,7 @@ fn str_to_hex_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::plain;
+    use zeta_utils::utils::strip_formatting;
 
     #[test]
     fn str_to_hex_string_test() {
@@ -297,7 +297,7 @@ mod tests {
              (\x0fLowercase Letter\x0310)"
         );
 
-        let caron = plain(&unicode_details("ˇ"));
+        let caron = strip_formatting(&unicode_details("ˇ"));
         assert!(caron.contains("U+02C7"), "{caron}");
         assert!(caron.contains("CARON"), "{caron}");
         assert!(caron.contains("(Modifier Letter)"), "{caron}");
@@ -347,7 +347,7 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            let reply = plain(&unicode_details(input));
+            let reply = strip_formatting(&unicode_details(input));
 
             for needle in expected {
                 assert!(
@@ -360,20 +360,20 @@ mod tests {
 
     #[test]
     fn uni_uses_the_published_tone_count() {
-        let same_tone = plain(&unicode_details("👩🏻‍🤝‍👩🏻"));
+        let same_tone = strip_formatting(&unicode_details("👩🏻‍🤝‍👩🏻"));
         assert!(same_tone.contains("WOMEN HOLDING HANDS: LIGHT SKIN TONE"));
         assert!(!same_tone.contains("LIGHT SKIN TONE, LIGHT SKIN TONE"));
 
         // A second tone on a one-tone base is not a sequence; the valid prefix is grouped and
         // the trailing modifier is listed as its own character.
-        let invalid = plain(&unicode_details("👍🏻🏿"));
+        let invalid = strip_formatting(&unicode_details("👍🏻🏿"));
         assert!(invalid.contains("THUMBS UP: LIGHT SKIN TONE"));
         assert!(invalid.contains("DARK SKIN TONE"));
     }
 
     #[test]
     fn uni_lists_every_characters_name_and_category() {
-        let reply = plain(&unicode_details("d'êtr"));
+        let reply = strip_formatting(&unicode_details("d'êtr"));
 
         for expected in [
             "U+0064",
@@ -427,7 +427,10 @@ mod tests {
             "{}",
             reply.len() + NOTICE_PREFIX_LEN
         );
-        assert!(plain(&reply).ends_with("(Other Symbol)"), "{reply}");
+        assert!(
+            strip_formatting(&reply).ends_with("(Other Symbol)"),
+            "{reply}"
+        );
     }
 
     #[test]

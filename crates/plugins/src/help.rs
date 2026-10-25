@@ -428,7 +428,7 @@ fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a Catalo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::plain;
+    use zeta_utils::utils::strip_formatting;
 
     const ALERT: CommandSpec = CommandSpec::new(".alert", "Schedule an alert to be posted later");
     const ALERT_COMMANDS: &[CommandSpec] = &[ALERT];
@@ -586,11 +586,11 @@ mod tests {
 
     #[test]
     fn describes_commands_without_usage_or_with_details() {
-        let bare = plain(&command_messages(&BARE)[0]);
+        let bare = strip_formatting(&command_messages(&BARE)[0]);
         assert!(bare.contains("Help (.bare)"), "{bare}");
         assert!(!bare.contains("Usage"), "{bare}");
 
-        let repeat = plain(&command_messages(&REPEAT)[0]);
+        let repeat = strip_formatting(&command_messages(&REPEAT)[0]);
         for expected in [
             "Help (.repeat)",
             "Repeat the given values",
@@ -603,7 +603,7 @@ mod tests {
         assert!(!repeat.contains("hidden"), "hidden flag leaked: {repeat}");
 
         let command = CommandSpec::with_args::<SubcommandOpts>(".stats", "Show statistics");
-        let subcommands = plain(&command_messages(&command)[0]);
+        let subcommands = strip_formatting(&command_messages(&command)[0]);
         for expected in [
             "Help (.stats)",
             "Show statistics",
@@ -630,7 +630,10 @@ mod tests {
             },
         ];
 
-        assert_eq!(plain(&details_list(&details)), "<a>, <b>: b description");
+        assert_eq!(
+            strip_formatting(&details_list(&details)),
+            "<a>, <b>: b description"
+        );
     }
 
     #[test]

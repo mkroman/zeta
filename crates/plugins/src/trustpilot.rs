@@ -200,7 +200,8 @@ fn normalized_score(trust_score: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::{plain, settings_tests};
+    use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -248,7 +249,7 @@ mod tests {
             number_of_reviews: NumberOfReviews { total: 1 },
         };
 
-        let formatted = plain(&format_business(&business, "www"));
+        let formatted = strip_formatting(&format_business(&business, "www"));
 
         assert!(formatted.contains("Score: 4.8/5.0"), "{formatted}");
         assert!(

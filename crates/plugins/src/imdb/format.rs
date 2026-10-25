@@ -140,7 +140,7 @@ fn write_life_years(message: &mut String, birth_year: Option<i32>, death_year: O
 mod tests {
     use super::*;
     use crate::imdb::model::SeriesInfo;
-    use zeta_test_support::plain;
+    use zeta_utils::utils::strip_formatting;
 
     #[test]
     fn format_title_matches_expected_layout() {
@@ -187,7 +187,7 @@ mod tests {
             ..Title::default()
         };
 
-        let formatted = plain(&format_title(&title));
+        let formatted = strip_formatting(&format_title(&title));
 
         assert!(
             formatted.starts_with("> IMDb: Breaking Bad S01E01: Pilot (2008)"),
@@ -223,7 +223,7 @@ mod tests {
             ..Title::default()
         };
 
-        let formatted = plain(&format_title(&title));
+        let formatted = strip_formatting(&format_title(&title));
 
         assert!(formatted.contains("Inception (2010)"), "{formatted}");
         assert!(!formatted.contains("Breaking Bad"), "{formatted}");
@@ -236,7 +236,7 @@ mod tests {
             ..Title::default()
         };
 
-        let formatted = plain(&format_title(&title));
+        let formatted = strip_formatting(&format_title(&title));
 
         assert!(formatted.starts_with("> IMDb: tt0000001"), "{formatted}");
         assert!(
@@ -266,7 +266,7 @@ mod tests {
                 end_year,
                 ..Title::default()
             };
-            let formatted = plain(&format_title(&title));
+            let formatted = strip_formatting(&format_title(&title));
             let years = if years.is_empty() {
                 String::new()
             } else {
@@ -312,7 +312,7 @@ mod tests {
             ..Person::default()
         };
 
-        let formatted = plain(&format_person(&person));
+        let formatted = strip_formatting(&format_person(&person));
         let bio = formatted
             .split("Bio: ")
             .nth(1)
@@ -344,7 +344,7 @@ mod tests {
                 death_year,
                 ..Person::default()
             };
-            let formatted = plain(&format_person(&person));
+            let formatted = strip_formatting(&format_person(&person));
             let years = if years.is_empty() {
                 String::new()
             } else {

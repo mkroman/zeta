@@ -614,7 +614,8 @@ fn tag_attr<'a>(tag: &'a Tag, name: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
     use zeta_plugin::CatalogEntry;
-    use zeta_test_support::{assert_empty, plain, settings_tests};
+    use zeta_test_support::{assert_empty, settings_tests};
+    use zeta_utils::utils::strip_formatting;
 
     /// Tokenizes `html` in a single chunk and returns the captured metadata.
     fn parse_metadata(html: &str) -> PageMetadata {
@@ -939,7 +940,7 @@ mod tests {
             let url = Url::parse(url).unwrap();
             let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
-            assert_eq!(plain(&message), expected, "for {url}");
+            assert_eq!(strip_formatting(&message), expected, "for {url}");
         }
     }
 

@@ -340,7 +340,8 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::{plain, settings_tests};
+    use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     /// Builds a weather response for formatting tests.
     fn test_response() -> WeatherResponse {
@@ -428,7 +429,7 @@ mod tests {
         ];
 
         for (case, units, temperature, wind) in cases {
-            let formatted = plain(&format_weather(&test_response(), units));
+            let formatted = strip_formatting(&format_weather(&test_response(), units));
 
             assert!(
                 formatted.contains("Right now in Copenhagen, DK"),

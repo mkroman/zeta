@@ -206,7 +206,8 @@ impl Display for Thing {
 mod tests {
     use super::*;
     use similar_asserts::assert_eq;
-    use zeta_test_support::{plain, settings_tests};
+    use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -269,7 +270,7 @@ mod tests {
         ];
 
         for (case, thing, expected) in cases {
-            let formatted = plain(&thing.to_string());
+            let formatted = strip_formatting(&thing.to_string());
 
             assert!(formatted.contains(expected), "{case}: {formatted}");
         }
@@ -280,7 +281,7 @@ mod tests {
         let thing = thing(0, Some(false), 2, 3, 1);
 
         assert!(
-            plain(&thing.to_string()).ends_with("and is part of 1 collection"),
+            strip_formatting(&thing.to_string()).ends_with("and is part of 1 collection"),
             "{thing}"
         );
     }

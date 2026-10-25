@@ -202,6 +202,9 @@ mod tests {
     fn sanitizes_playground_output() {
         // Control characters (which include newlines) are stripped...
         assert_eq!(sanitize_output("hello\nworld\r\t"), "helloworld");
+        // ...as are formatting codes and their color parameters.
+        assert_eq!(sanitize_output("\u{3}10hello\u{f}"), "hello");
+        assert_eq!(sanitize_output("\u{4}FF0000hello"), "hello");
         // ...and the result is trimmed.
         assert_eq!(
             sanitize_output("  leading and trailing  \n"),

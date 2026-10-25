@@ -488,9 +488,9 @@ impl CoinMarketCap {
 /// Parses and validates the optional conversion currency of a command invocation.
 ///
 /// The input is sanitized before validation, so an unsupported currency can be echoed back to
-/// the channel without leaking IRC formatting control characters. Validation is delegated to
-/// `is_valid`, which accepts everything while the fiat cache has not been populated,
-/// deferring validation to the API.
+/// the channel without leaking IRC formatting codes or other control characters. Validation is
+/// delegated to `is_valid`, which accepts everything while the fiat cache has not been
+/// populated, deferring validation to the API.
 fn parse_currency(
     currency: Option<&str>,
     default_currency: &str,
@@ -659,7 +659,8 @@ mod tests {
     use super::*;
     use coinmarketcap::model::FiatQuote;
     use zeta_plugin::ArgsError;
-    use zeta_test_support::{plain, settings_tests};
+    use zeta_test_support::settings_tests;
+    use zeta_utils::utils::strip_formatting;
 
     /// Builds a coin list for cache tests.
     fn test_coins() -> Vec<Coin> {
@@ -917,6 +918,16 @@ mod tests {
             parse_currency(Some("\u{2}xyz\u{f}"), "USD", is_valid),
             Err(Error::InvalidCurrency(currency)) if currency == "XYZ"
         ));
+
+        // A color code's numeric parameters must not leak into the visible currency either.
+        assert_eq!(
+            parse_currency(Some("\u{3}10usd\u{f}"), "EUR", is_valid).unwrap(),
+            "USD"
+        );
+        assert_eq!(
+            parse_currency(Some("\u{4}FF0000usd"), "EUR", is_valid).unwrap(),
+            "USD"
+        );
     }
 
     #[test]
@@ -963,11 +974,11 @@ mod tests {
             },
         )]);
 
-        let unknown = plain(&format_quote(&quote, "AUD", None));
+        let unknown = strip_formatting(&format_quote(&quote, "AUD", None));
         assert!(unknown.contains("1234.50 AUD"), "{unknown}");
         assert!(unknown.contains("n/a"), "{unknown}");
 
-        let missing = plain(&format_quote(&test_quote(), "DKK", None));
+        let missing = strip_formatting(&format_quote(&test_quote(), "DKK", None));
         assert!(missing.contains("has no quote in DKK"), "{missing}");
     }
 

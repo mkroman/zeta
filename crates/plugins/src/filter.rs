@@ -615,7 +615,7 @@ fn describe(filter: &Filter) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::plain;
+    use zeta_utils::utils::strip_formatting;
 
     #[tokio::test]
     async fn publishes_a_url_filters_handle_for_the_host() {
@@ -736,7 +736,7 @@ mod tests {
 
         for (case, filters, expected) in cases {
             assert_eq!(
-                plain(&changed_response("Filter", "Added", &filters)),
+                strip_formatting(&changed_response("Filter", "Added", &filters)),
                 expected,
                 "for {case}"
             );

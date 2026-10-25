@@ -1,6 +1,8 @@
 //! Shared utilities.
 
 use std::borrow::Cow;
+use std::iter::Peekable;
+use std::str::Chars;
 
 /// Helpers for truncating text.
 pub trait Truncatable: AsRef<str> {
@@ -61,13 +63,115 @@ pub fn collapse_whitespace(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Removes every control character from `text`.
+/// Removes every control character from `text`, including IRC formatting codes and their color
+/// parameters.
 ///
-/// Control characters include all IRC formatting bytes, so text that is echoed back to a
-/// channel must be stripped before it is formatted or replied with.
+/// Text that is echoed back to a channel must be stripped before it is formatted or replied
+/// with: a line break would terminate the message, and formatting bytes would restyle it.
+/// [`strip_formatting`] consumes the parameters that belong to a formatting code, so a color
+/// code cannot leak its digits into the visible text.
 #[must_use]
 pub fn strip_control_chars(text: &str) -> String {
-    text.chars().filter(|c| !c.is_control()).collect()
+    strip_formatting(text)
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect()
+}
+
+/// Removes the IRC formatting characters from `text`, leaving the visible characters.
+///
+/// Implements every code in [the formatting specification](https://modern.ircdocs.horse/formatting):
+/// bold, italics, underline, strikethrough, monospace, mIRC color, hex color, reverse color, and
+/// reset. Color parameters follow the specification exactly: two digits are read when available,
+/// and a trailing comma is only consumed when a background color follows it, so a comma meant as
+/// text survives.
+///
+/// Unlike [`strip_control_chars`], this leaves non-formatting control characters such as line
+/// breaks alone. Callers that echo untrusted text into a single IRC line want
+/// [`strip_control_chars`] instead.
+#[must_use]
+pub fn strip_formatting(text: &str) -> String {
+    let mut visible = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        match character {
+            '\u{3}' => strip_mirc_color(&mut characters),
+            '\u{4}' => strip_hex_color(&mut characters),
+            // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
+            // underline) and the reset code.
+            '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
+            character => visible.push(character),
+        }
+    }
+
+    visible
+}
+
+/// The number of hex digits in one hex-color component.
+const HEX_COLOR_DIGITS: usize = 6;
+
+/// Consumes an mIRC color's parameters, leaving a comma that introduces text.
+fn strip_mirc_color(characters: &mut Peekable<Chars<'_>>) {
+    if !characters.peek().is_some_and(char::is_ascii_digit) {
+        return;
+    }
+
+    consume_color_digits(characters);
+
+    let mut lookahead = characters.clone();
+    if lookahead.next() == Some(',') && lookahead.peek().is_some_and(char::is_ascii_digit) {
+        characters.next();
+        consume_color_digits(characters);
+    }
+}
+
+/// Consumes the one or two digits of an mIRC color component.
+fn consume_color_digits(characters: &mut Peekable<Chars<'_>>) {
+    for _ in 0..2 {
+        if characters.peek().is_some_and(char::is_ascii_digit) {
+            characters.next();
+        } else {
+            break;
+        }
+    }
+}
+
+/// Consumes a hex color's parameters, leaving a comma that introduces text.
+fn strip_hex_color(characters: &mut Peekable<Chars<'_>>) {
+    if !has_hex_color(characters) {
+        return;
+    }
+
+    consume_hex_color(characters);
+
+    let mut lookahead = characters.clone();
+    if lookahead.peek() == Some(&',') {
+        lookahead.next();
+        if has_hex_color(&lookahead) {
+            characters.next();
+            consume_hex_color(characters);
+        }
+    }
+}
+
+/// Whether the next [`HEX_COLOR_DIGITS`] characters are hex digits.
+fn has_hex_color(characters: &Peekable<Chars<'_>>) -> bool {
+    let mut lookahead = characters.clone();
+
+    (0..HEX_COLOR_DIGITS).all(|_| {
+        let is_hex = lookahead.peek().is_some_and(char::is_ascii_hexdigit);
+        lookahead.next();
+
+        is_hex
+    })
+}
+
+/// Consumes one hex-color component.
+fn consume_hex_color(characters: &mut Peekable<Chars<'_>>) {
+    for _ in 0..HEX_COLOR_DIGITS {
+        characters.next();
+    }
 }
 
 /// Resolves a string setting: the configured value wins, then the `env` environment variable,
@@ -248,5 +352,56 @@ mod tests {
         assert_eq!(strip_control_chars("a\u{2}b\u{f}c"), "abc");
         assert_eq!(strip_control_chars("line\nbreak"), "linebreak");
         assert_eq!(strip_control_chars("plain"), "plain");
+        // The color parameters are not control characters themselves, but they belong to the
+        // code and must not leak into the visible text.
+        assert_eq!(strip_control_chars("\u{3}10USD"), "USD");
+        assert_eq!(strip_control_chars("\u{4}FF0000red"), "red");
+    }
+
+    #[test]
+    fn strips_every_formatting_toggle() {
+        assert_eq!(
+            strip_formatting(
+                "\u{2}bold\u{2} \u{1d}italic\u{1d} \u{1f}underline\u{1f} \
+                 \u{1e}strike\u{1e} \u{11}mono\u{11} \u{16}reverse\u{16} \u{f}reset"
+            ),
+            "bold italic underline strike mono reverse reset"
+        );
+    }
+
+    #[test]
+    fn strips_mirc_colors_and_consumes_their_parameters() {
+        // Foreground only, foreground and background, and one/two digits.
+        assert_eq!(strip_formatting("\u{3}10> hello"), "> hello");
+        assert_eq!(strip_formatting("\u{3}01,02hello"), "hello");
+        assert_eq!(strip_formatting("\u{3}1,2hello"), "hello");
+
+        // A comma is text unless a background color follows it.
+        assert_eq!(strip_formatting("\u{3},hello"), ",hello");
+        assert_eq!(strip_formatting("\u{3}10,hello"), ",hello");
+        assert_eq!(strip_formatting("\u{3},5hello"), ",5hello");
+    }
+
+    #[test]
+    fn strips_hex_colors_and_consumes_their_parameters() {
+        assert_eq!(strip_formatting("\u{4}FF0000red"), "red");
+        assert_eq!(strip_formatting("\u{4}ff0000,00FF00green"), "green");
+
+        // A comma is text unless a background color follows it, and fewer than six hex digits
+        // are not a color code.
+        assert_eq!(strip_formatting("\u{4}FF0000,green"), ",green");
+        assert_eq!(strip_formatting("\u{4},red"), ",red");
+        assert_eq!(strip_formatting("\u{4}FF00red"), "FF00red");
+    }
+
+    #[test]
+    fn strip_formatting_matches_the_specification_example() {
+        // https://modern.ircdocs.horse/formatting#examples
+        assert_eq!(
+            strip_formatting(
+                "Rules: Don't spam 5\u{3}13,8,6\u{3},7,8, and especially not \u{2}9\u{2}\u{1d}!"
+            ),
+            "Rules: Don't spam 5,6,7,8, and especially not 9!"
+        );
     }
 }
