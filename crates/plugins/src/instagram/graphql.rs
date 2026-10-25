@@ -16,6 +16,7 @@ use url::form_urlencoded::Serializer;
 use wreq::header::{COOKIE, SET_COOKIE};
 
 use zeta_http::WreqError;
+use zeta_utils::text::quoted_string_literal;
 
 use super::meta::{MediaDetails, shortcode_to_media_pk};
 
@@ -175,13 +176,13 @@ fn extract_csrftoken(cookie: &str) -> Option<String> {
 /// Returns the LSD token embedded in the scripts of the front page, if present.
 #[must_use]
 fn extract_lsd_token(body: &str) -> Option<&str> {
-    const PREFIX: &str = r#"["LSD",[],{"token":""#;
+    const PREFIX: &str = r#"["LSD",[],{"token":"#;
 
-    let start = body.find(PREFIX)? + PREFIX.len();
-    let rest = &body[start..];
-    let end = rest.find('"')?;
+    let tail = body.split_once(PREFIX)?.1.trim_start();
+    let (literal, _) = quoted_string_literal(tail)?;
+    let token = literal.strip_circumfix('"', '"')?;
 
-    (!rest[..end].is_empty()).then(|| &rest[..end])
+    (!token.is_empty()).then_some(token)
 }
 
 /// POSTs the logged-out media query for the given numeric media id.
@@ -283,6 +284,12 @@ mod tests {
         // The shape of the assignment found in the front page's scripts.
         let body = r#"some prefix ["LSD",[],{"token":"AVqe9xXyZ0"} other stuff"#;
         assert_eq!(extract_lsd_token(body), Some("AVqe9xXyZ0"));
+
+        // JSON allows whitespace after the colon.
+        assert_eq!(
+            extract_lsd_token(r#"["LSD",[],{"token": "AVqe9xXyZ0"}"#),
+            Some("AVqe9xXyZ0")
+        );
 
         // Missing or empty tokens produce nothing.
         assert_eq!(extract_lsd_token("no token here"), None);

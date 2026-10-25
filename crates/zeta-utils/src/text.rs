@@ -103,6 +103,43 @@ fn chars_eq_ignore_case(left: char, right: char) -> bool {
     left.to_lowercase().eq(right.to_lowercase())
 }
 
+/// Splits a leading double-quoted JavaScript/JSON string literal from `input`.
+///
+/// Returns the literal including its surrounding quotes and the input following it. The literal
+/// ends at the first unescaped double quote, so backslash escapes such as `\"` are skipped.
+///
+/// The returned literal can be passed to `serde_json::from_str` when the escaped contents are
+/// needed; this helper only locates the literal.
+///
+/// # Examples
+///
+/// ```
+/// # use zeta_utils::text::quoted_string_literal;
+/// assert_eq!(
+///     quoted_string_literal(r#""nonce" rest"#),
+///     Some((r#""nonce""#, " rest"))
+/// );
+/// ```
+#[must_use]
+pub fn quoted_string_literal(input: &str) -> Option<(&str, &str)> {
+    let body = input.strip_prefix('"')?;
+    let mut escaped = false;
+
+    for (index, character) in body.char_indices() {
+        match (escaped, character) {
+            (true, _) => escaped = false,
+            (false, '\\') => escaped = true,
+            (false, '"') => {
+                let end = index + 2;
+                return Some((&input[..end], &input[end..]));
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 /// Collapses runs of whitespace in `value` into single spaces, trimming the result.
 ///
 /// Text assembled from web pages carries line breaks and repeated spaces that an IRC message
@@ -148,6 +185,33 @@ mod tests {
     fn strip_helpers_preserve_character_boundaries() {
         assert_eq!(strip_prefix_ignore_case("æøåÆØÅ", "æøå"), Some("ÆØÅ"));
         assert_eq!(strip_suffix_ignore_case("æøåÆØÅ", "ÆØÅ"), Some("æøå"));
+    }
+
+    #[test]
+    fn splits_quoted_string_literals() {
+        // The literal includes its quotes, and the remainder follows it.
+        assert_eq!(
+            quoted_string_literal(r#""abc" rest"#),
+            Some((r#""abc""#, " rest"))
+        );
+        assert_eq!(quoted_string_literal(r#""""#), Some((r#""""#, "")));
+
+        // Escaped quotes do not terminate the literal.
+        assert_eq!(
+            quoted_string_literal(r#""a\"b" rest"#),
+            Some((r#""a\"b""#, " rest"))
+        );
+
+        // An escaped backslash does not escape the closing quote.
+        assert_eq!(
+            quoted_string_literal(r#""a\\" rest"#),
+            Some((r#""a\\""#, " rest"))
+        );
+
+        assert_eq!(quoted_string_literal("abc"), None);
+        assert_eq!(quoted_string_literal(""), None);
+        assert_eq!(quoted_string_literal(r#""abc"#), None);
+        assert_eq!(quoted_string_literal(r#""a\"#), None);
     }
 
     #[test]

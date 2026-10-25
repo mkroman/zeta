@@ -14,6 +14,7 @@ use zeta_http as http;
 use zeta_http::RequestError;
 use zeta_plugin::config::HttpConfig;
 use zeta_url::{is_identifier, path_segments};
+use zeta_utils::text::quoted_string_literal;
 
 /// The Chaturbate hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["chaturbate.com", "www.chaturbate.com"];
@@ -120,43 +121,25 @@ impl Chaturbate {
 }
 
 fn parse_room_dossier(html: &str) -> Result<RoomDossier, Error> {
-    let literal = room_dossier_literal(html).ok_or(Error::DossierNotFound)?;
-    let outer: String = serde_json::from_str(literal)?;
-
-    Ok(serde_json::from_str(&outer)?)
-}
-
-/// Returns the quoted `window.initialRoomDossier` value, if present.
-///
-/// The value is a JSON-encoded string literal, so the closing quote is the first unescaped one;
-/// `serde_json` does the actual unescaping when the literal is parsed.
-fn room_dossier_literal(html: &str) -> Option<&str> {
     const MARKER: &str = "window.initialRoomDossier";
 
     // The dossier is assigned as a JSON-encoded string literal, terminated by a semicolon
     // before the closing </script> tag.
-    let tail = html.split_once(MARKER)?.1;
-    let tail = tail.trim_start().strip_prefix('=')?.trim_start();
+    let tail = html.split_once(MARKER).ok_or(Error::DossierNotFound)?.1;
+    let tail = tail
+        .trim_start()
+        .strip_prefix('=')
+        .ok_or(Error::DossierNotFound)?
+        .trim_start();
+    let (literal, rest) = quoted_string_literal(tail).ok_or(Error::DossierNotFound)?;
 
-    let mut characters = tail.char_indices();
-    if characters.next()?.1 != '"' {
-        return None;
+    if !rest.starts_with(';') {
+        return Err(Error::DossierNotFound);
     }
 
-    let mut escaped = false;
+    let outer: String = serde_json::from_str(literal)?;
 
-    for (index, character) in characters {
-        match (escaped, character) {
-            (true, _) => escaped = false,
-            (false, '\\') => escaped = true,
-            (false, '"') => {
-                return tail[index + 1..].starts_with(';').then(|| &tail[..=index]);
-            }
-            _ => {}
-        }
-    }
-
-    None
+    Ok(serde_json::from_str(&outer)?)
 }
 
 /// Path segments that name site resources rather than broadcaster rooms.

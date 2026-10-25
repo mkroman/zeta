@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
+use zeta_utils::text::quoted_string_literal;
 
 use super::{BASE_URL, ClientOptions, Error, ImageResult, RequestError, SearchResult};
 
@@ -339,14 +340,10 @@ fn extract_nonce(html: &str) -> Option<String> {
     html.match_indices(MARKER).find_map(|(index, marker)| {
         let tail = &html[index + marker.len()..];
         let tail = tail.trim_start().strip_prefix('=')?.trim_start();
-        let tail = tail.strip_prefix('"')?;
-        let (nonce, _) = tail.split_once('"')?;
+        let (literal, _) = quoted_string_literal(tail)?;
+        let nonce: String = serde_json::from_str(literal).ok()?;
 
-        if nonce.is_empty() {
-            None
-        } else {
-            Some(nonce.to_string())
-        }
+        (!nonce.is_empty()).then_some(nonce)
     })
 }
 
