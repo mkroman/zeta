@@ -161,13 +161,13 @@ impl Display for Snapshot {
 mod tests {
     use super::*;
 
-    use irc::proto::FormattedStringExt;
     use wildmatch::WildMatch;
+    use zeta_utils::utils::strip_formatting;
 
     #[tokio::test]
     async fn it_should_format_message() {
         let snapshot = Snapshot::capture().expect("could not capture");
-        let snapshot_message = snapshot.to_string().strip_formatting();
+        let snapshot_message = strip_formatting(&snapshot.to_string());
         let wildmatcher =
             WildMatch::new("Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled)");
         assert!(wildmatcher.matches(&snapshot_message));
@@ -184,7 +184,7 @@ mod tests {
             closed: false,
         });
 
-        let snapshot_message = snapshot.to_string().strip_formatting();
+        let snapshot_message = strip_formatting(&snapshot.to_string());
         let wildmatcher = WildMatch::new(
             "Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled) DB: 3/10 (2 idle)",
         );
@@ -202,7 +202,7 @@ mod tests {
             closed: true,
         });
 
-        let snapshot_message = snapshot.to_string().strip_formatting();
+        let snapshot_message = strip_formatting(&snapshot.to_string());
         let wildmatcher = WildMatch::new(
             "Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled) DB: closed",
         );
