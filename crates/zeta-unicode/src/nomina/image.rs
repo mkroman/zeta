@@ -1,9 +1,8 @@
 //! The flat Nomina image and its four sections.
 //!
-//! [`Nomina::new`] validates the 64-byte header once and keeps the decoded name decoder and
-//! pattern table; every lookup then reads the image slices directly. There is no startup decode
-//! and no `OnceLock` in [`Nomina`]; [`section`] reads one section without building the name
-//! decoder.
+//! [`Nomina::new`] validates the 64-byte header, the name section's index and the pattern table
+//! once; every lookup then reads the image slices directly. There is no startup decode and no
+//! `OnceLock` in [`Nomina`]; [`section`] reads one section without building the name decoder.
 //!
 //! Byte 13 of the header selects the name layout: 0 is the block-local front-coding layout,
 //! 1 is the global checkpointed layout. Both are decoded by [`super::names`]; the runtime
@@ -75,9 +74,12 @@ pub struct Nomina<'a> {
 impl<'a> Nomina<'a> {
     /// Parses a Nomina image.
     ///
-    /// Returns `None` when the magic, section count, header shifts, section bounds or the
-    /// name section are invalid. The image must outlive the returned [`Nomina`] because every
-    /// returned name borrows from it.
+    /// Returns `None` when the magic, section count, header shifts, section bounds, the name
+    /// section or the pattern section are invalid. The name section's index is validated too:
+    /// runs must be ordered, disjoint and in range, their base ids must tile the name ids, and
+    /// the page directory must be a non-decreasing list of run indices.
+    ///
+    /// The image must outlive the returned [`Nomina`] because the decoder reads it in place.
     #[must_use]
     pub fn new(table: &'a [u8]) -> Option<Self> {
         if table.len() < HEADER_LEN || table.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
@@ -106,8 +108,8 @@ impl<'a> Nomina<'a> {
 
     /// Appends the name of `cp` to `out`, returning `false` when it has no name.
     ///
-    /// This is the zero-allocation path: the only buffer is the name section's fixed
-    /// 256-byte scratch array. A stored name decodes at most one block.
+    /// This is the zero-allocation path: the only buffers are the name section's fixed 256-byte
+    /// scratch arrays. A stored name decodes at most one block.
     #[must_use = "the return value reports whether the code point has a name"]
     pub fn write_name(&mut self, cp: u32, out: &mut String) -> bool {
         if let Some(id) = self.names.id_of(cp) {

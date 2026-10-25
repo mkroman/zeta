@@ -88,10 +88,10 @@ use bytes::{Buf, BufMut};
 
 use zeta_unicode_format::huffman::{BitWriter, Code, canonical_codes, code_lengths};
 use zeta_unicode_format::{
-    HANGUL_COUNT, HANGUL_END, HANGUL_START, MAX_CODE_BITS, MAX_NAME_BYTES, NAME_CONTEXT_MAP_LEN,
-    NAME_INDEX_HEADER_LEN, NAME_MODEL_COUNT_LEN, NAME_MODEL_DIRECTORY_ENTRY_LEN, NAME_PAGE_COUNT,
-    NAME_PAGE_DIRECTORY_ENTRY_LEN, NAME_PAGE_SHIFT, NAME_RUN_LEN, UNICODE_END, write_hangul,
-    write_pattern_name,
+    HANGUL_COUNT, HANGUL_END, HANGUL_START, MAX_CODE_BITS, MAX_NAME_BYTES, MAX_NAME_MODELS,
+    NAME_CONTEXT_MAP_LEN, NAME_INDEX_HEADER_LEN, NAME_MODEL_COUNT_LEN,
+    NAME_MODEL_DIRECTORY_ENTRY_LEN, NAME_PAGE_COUNT, NAME_PAGE_DIRECTORY_ENTRY_LEN,
+    NAME_PAGE_SHIFT, NAME_RUN_LEN, UNICODE_END, write_hangul, write_pattern_name,
 };
 
 use crate::ucd::Inputs;
@@ -178,7 +178,8 @@ pub fn encode_global_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encod
 ///
 /// # Panics
 ///
-/// Panics when `block_shift` is outside [`MIN_BLOCK_SHIFT`]..=[`MAX_BLOCK_SHIFT`].
+/// Panics when `block_shift` is outside [`MIN_BLOCK_SHIFT`]..=[`MAX_BLOCK_SHIFT`], or when the
+/// corpus exceeds the format's name-id or model-table limits.
 #[must_use]
 pub fn encode_global_corpus(corpus: &Corpus, block_shift: u8) -> Encoded {
     assert!(
@@ -386,17 +387,6 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     let offset_bytes = block_bits.len() * 4;
 
     // Model area: context map, directory, then blobs.
-    let model_start = bytes.len();
-    bytes.extend_from_slice(&context_model);
-    let model_count = context_books.len() + if global { 4 } else { 2 };
-    bytes.put_u16_le(u16::try_from(model_count).expect("model count fits in u16"));
-    let directory_at = bytes.len();
-    bytes.resize(
-        directory_at + model_count * NAME_MODEL_DIRECTORY_ENTRY_LEN,
-        0,
-    );
-    let blobs_at = bytes.len();
-    let mut blob_offsets = Vec::with_capacity(model_count);
     let mut books: Vec<&Codebook> = vec![&prefix_book];
     if global {
         books.push(&suffix_book);
@@ -406,6 +396,21 @@ fn encode_corpus(corpus: &Corpus, block_shift: u8, layout: NameLayout) -> Encode
     if global {
         books.push(&checkpoint_book);
     }
+    let model_count = books.len();
+    assert_model_limits(
+        model_count,
+        books.iter().map(|book| book.encoded_len()).sum(),
+    );
+    let model_start = bytes.len();
+    bytes.extend_from_slice(&context_model);
+    bytes.put_u16_le(u16::try_from(model_count).expect("model count fits in u16"));
+    let directory_at = bytes.len();
+    bytes.resize(
+        directory_at + model_count * NAME_MODEL_DIRECTORY_ENTRY_LEN,
+        0,
+    );
+    let blobs_at = bytes.len();
+    let mut blob_offsets = Vec::with_capacity(model_count);
     for book in &books {
         let relative = bytes.len() - blobs_at;
         blob_offsets.push(u16::try_from(relative).expect("model offset fits in u16"));
@@ -595,6 +600,11 @@ impl Codebook {
         }
         out.extend_from_slice(&self.symbols);
     }
+
+    /// The number of bytes [`Self::write`] appends.
+    fn encoded_len(&self) -> usize {
+        1 + 2 * usize::from(self.max_bits) + self.symbols.len()
+    }
 }
 
 /// Appends `symbol`'s canonical code to `writer`.
@@ -639,8 +649,9 @@ impl Corpus {
 ///
 /// # Panics
 ///
-/// Panics with the file and line when a record is malformed, when a name is longer than
-/// 255 bytes, or when a code point appears twice. Malformed vendored data is a build
+/// Panics with the file and line when a record is malformed or a name is longer than
+/// 255 bytes, when a code point appears twice, or when the corpus has more names than the
+/// format's `u16` name ids can address. Malformed or oversized vendored data is a build
 /// failure.
 pub fn parse_corpus(inputs: &Inputs) -> Corpus {
     let mut entries: Vec<(u32, String)> = Vec::with_capacity(35_400);
@@ -686,12 +697,53 @@ pub fn parse_corpus(inputs: &Inputs) -> Corpus {
             pair[0].0
         );
     }
+    assert_name_count(entries.len());
     Corpus {
         entries,
         patterns: crate::nomina::patterns::parse_patterns(&inputs.names),
         hangul,
         aliases,
     }
+}
+
+/// Asserts the corpus fits the format's `u16` name ids.
+///
+/// Run records store a `u16` base id, so the runtime cannot address a name whose id is over
+/// `u16::MAX`. A larger corpus fails here with the observed count instead of the opaque
+/// `expect` that serializing a run record would otherwise hit.
+///
+/// # Panics
+///
+/// Panics when `name_count` is over `u16::MAX`.
+fn assert_name_count(name_count: usize) {
+    assert!(
+        u16::try_from(name_count).is_ok(),
+        "the name corpus has {name_count} names; run records store u16 name ids, so the \
+         format allows at most {}",
+        u16::MAX
+    );
+}
+
+/// Asserts the model table fits the format's model-id and `u16` offset fields.
+///
+/// The runtime rejects more than [`MAX_NAME_MODELS`] models and reads every model-directory
+/// offset as a `u16` from the start of the model blobs.
+///
+/// # Panics
+///
+/// Panics with the observed count or size when either limit is exceeded.
+fn assert_model_limits(model_count: usize, blob_bytes: usize) {
+    assert!(
+        model_count <= MAX_NAME_MODELS,
+        "the name section needs {model_count} Huffman models; the format allows at most \
+         {MAX_NAME_MODELS}"
+    );
+    assert!(
+        u16::try_from(blob_bytes).is_ok(),
+        "the model blobs are {blob_bytes} B; the format's u16 model offsets allow at most \
+         {} B",
+        u16::MAX
+    );
 }
 
 /// Preference order for character name aliases; the long `control` name wins.
@@ -710,8 +762,13 @@ fn alias_rank(kind: &str) -> u8 {
 ///
 /// Returns how many were added. Same tie-break as the current generator: aliases of the
 /// same kind keep the first row in file order, so U+0009 answers `CHARACTER TABULATION`.
+///
+/// # Panics
+///
+/// Panics when a selected alias is over 255 bytes, the same bound the explicit names carry:
+/// the runtime's 256-byte name buffer holds the name and its terminator.
 fn fold_aliases(entries: &mut Vec<(u32, String)>, aliases_text: &str) -> usize {
-    let mut best: Vec<(u32, u8, &str)> = Vec::new();
+    let mut best: Vec<(u32, u8, &str, usize)> = Vec::new();
     for (line, record) in crate::ucd::records(aliases_text) {
         let source = Source {
             file: "NameAliases.txt",
@@ -728,26 +785,34 @@ fn fold_aliases(entries: &mut Vec<(u32, String)>, aliases_text: &str) -> usize {
             .unwrap_or_else(|| panic!("{source}: missing alias kind"))
             .trim();
         let rank = alias_rank(kind);
-        match best.iter_mut().find(|(candidate, _, _)| *candidate == cp) {
+        match best
+            .iter_mut()
+            .find(|(candidate, _, _, _)| *candidate == cp)
+        {
             Some(slot) if rank < slot.1 => {
                 slot.1 = rank;
                 slot.2 = alias;
+                slot.3 = line;
             }
             Some(_) => {}
-            None => best.push((cp, rank, alias)),
+            None => best.push((cp, rank, alias, line)),
         }
     }
-    best.sort_by_key(|(cp, _, _)| *cp);
+    best.sort_by_key(|(cp, _, _, _)| *cp);
 
     let mut added = 0usize;
     let mut cursor = 0usize;
-    for (cp, _, alias) in best {
+    for (cp, _, alias, line) in best {
         while cursor < entries.len() && entries[cursor].0 < cp {
             cursor += 1;
         }
         if cursor < entries.len() && entries[cursor].0 == cp {
             continue;
         }
+        assert!(
+            alias.len() <= 255,
+            "NameAliases.txt:{line}: alias for U+{cp:04X} exceeds 255 bytes"
+        );
         entries.insert(cursor, (cp, alias.to_owned()));
         added += 1;
     }
@@ -1529,5 +1594,50 @@ mod tests {
     fn alias_rank_prefers_the_long_control_name() {
         assert!(alias_rank("control") < alias_rank("abbreviation"));
         assert!(alias_rank("correction") < alias_rank("alternate"));
+    }
+
+    #[test]
+    #[should_panic(expected = "NameAliases.txt:2: alias for U+0041 exceeds 255 bytes")]
+    fn an_alias_over_255_bytes_is_rejected() {
+        let name = "A".repeat(256);
+        let aliases = format!("# NameAliases-18.0.0.txt\n0041; {name}; correction\n");
+        let mut entries = Vec::new();
+        fold_aliases(&mut entries, &aliases);
+    }
+
+    #[test]
+    fn the_format_limits_accept_the_largest_encodable_values() {
+        assert_name_count(usize::from(u16::MAX));
+        assert_model_limits(MAX_NAME_MODELS, usize::from(u16::MAX));
+    }
+
+    #[test]
+    #[should_panic(expected = "the name corpus has 65536 names")]
+    fn too_many_names_are_rejected() {
+        assert_name_count(usize::from(u16::MAX) + 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "the name section needs 256 Huffman models")]
+    fn too_many_models_are_rejected() {
+        assert_model_limits(MAX_NAME_MODELS + 1, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "the model blobs are 65536 B")]
+    fn model_blobs_that_overflow_u16_offsets_are_rejected() {
+        assert_model_limits(1, usize::from(u16::MAX) + 1);
+    }
+
+    #[test]
+    fn the_measured_codebook_length_matches_its_serialization() {
+        let mut frequencies = [0u64; 256];
+        for (symbol, slot) in frequencies.iter_mut().enumerate() {
+            *slot = u64::try_from(symbol + 1).expect("symbol fits in u64");
+        }
+        let book = Codebook::new(&frequencies);
+        let mut blob = Vec::new();
+        book.write(&mut blob);
+        assert_eq!(book.encoded_len(), blob.len());
     }
 }

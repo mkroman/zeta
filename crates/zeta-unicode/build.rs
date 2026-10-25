@@ -4,8 +4,11 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+// `DEFAULT_MAX_TABLE_BYTES` is `zeta_unicode_format::TABLE_BUDGET` re-exported: the trainer,
+// the build script and the runtime all enforce one budget, and the build script reaches it
+// without a direct dependency on the format crate.
 use zeta_unicode_build::{
-    DEFAULT_MAX_TABLE_BYTES, Priority, Profile, read_inputs, train, write_manifest,
+    DEFAULT_MAX_TABLE_BYTES as TABLE_BUDGET, Priority, Profile, read_inputs, train, write_manifest,
 };
 
 fn main() {
@@ -37,14 +40,22 @@ fn main() {
                 Priority::parse(value)
                     .unwrap_or_else(|| panic!("unknown ZETA_UNICODE_PRIORITY {value:?}"))
             });
-    let max_bytes =
-        env::var("ZETA_UNICODE_MAX_BYTES")
-            .ok()
-            .map_or(DEFAULT_MAX_TABLE_BYTES, |value| {
-                value.parse().unwrap_or_else(|error| {
-                    panic!("ZETA_UNICODE_MAX_BYTES must be a byte count, got {value:?}: {error}")
-                })
+    // The budget is a product constraint, so the variable may only tighten it for testing; a
+    // larger image must fail this build, not a later runtime test.
+    let max_bytes = env::var("ZETA_UNICODE_MAX_BYTES")
+        .ok()
+        .map_or(TABLE_BUDGET, |value| {
+            let parsed: usize = value.parse().unwrap_or_else(|error| {
+                panic!("ZETA_UNICODE_MAX_BYTES must be a byte count, got {value:?}: {error}")
             });
+            assert!(
+                parsed <= TABLE_BUDGET,
+                "ZETA_UNICODE_MAX_BYTES={parsed} exceeds the {TABLE_BUDGET}-byte Nomina \
+                 image budget; the budget is fixed because it is a product constraint, so \
+                 the variable can only lower it for testing"
+            );
+            parsed
+        });
     let mut profile = Profile::new(priority, max_bytes);
     if let Some(value) = env::var_os("ZETA_UNICODE_BLOCK_SHIFT") {
         let value = value.to_string_lossy();
@@ -54,12 +65,23 @@ fn main() {
         profile = profile.with_block_shift(shift);
     }
 
-    let inputs = read_inputs(&data_dir).expect("failed to read the Unicode data");
-    let output = train(&inputs, &profile).expect("failed to train the Unicode image");
+    // `unwrap_or_else` with a formatted panic keeps the error's `Display` text, which the
+    // trainer uses for actionable guidance (e.g. `MissingDerivedName`).
+    let inputs = read_inputs(&data_dir)
+        .unwrap_or_else(|error| panic!("failed to read the Unicode data: {error}"));
+    let output = train(&inputs, &profile)
+        .unwrap_or_else(|error| panic!("failed to train the Unicode image: {error}"));
+    // The hard cap is the same constant the runtime test checks; catching it here means an
+    // over-budget image is never written or embedded.
+    assert!(
+        output.total_bytes <= TABLE_BUDGET,
+        "the trained Nomina image is {} bytes, over the {TABLE_BUDGET}-byte budget",
+        output.total_bytes
+    );
     fs::write(out_dir.join("zeta_unicode_nomina.bin"), &output.image)
-        .expect("failed to write the Nomina image");
+        .unwrap_or_else(|error| panic!("failed to write the Nomina image: {error}"));
     write_manifest(&data_dir, &out_dir, &inputs, &output)
-        .expect("failed to write the Unicode manifest");
+        .unwrap_or_else(|error| panic!("failed to write the Unicode manifest: {error}"));
 
     let version = output.version;
     let version_source = format!(
@@ -74,7 +96,7 @@ fn main() {
         version.0, version.1, version.2
     );
     fs::write(out_dir.join("zeta_unicode_version.rs"), version_source)
-        .expect("failed to write the generated Unicode version");
+        .unwrap_or_else(|error| panic!("failed to write the generated Unicode version: {error}"));
 
     if report {
         for line in output.report.lines() {

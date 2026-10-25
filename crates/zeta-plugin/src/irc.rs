@@ -151,4 +151,10 @@ mod tests {
         assert_eq!(notice(""), NOTICE_PREFIX);
         assert_eq!(NOTICE_PREFIX, "\x0310> ");
     }
+
+    #[test]
+    fn notice_prefix_extends_the_reply_prefix_by_one_space() {
+        assert!(NOTICE_PREFIX.starts_with(REPLY_PREFIX));
+        assert_eq!(NOTICE_PREFIX.len(), REPLY_PREFIX.len() + 1);
+    }
 }

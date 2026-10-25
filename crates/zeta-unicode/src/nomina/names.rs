@@ -12,8 +12,9 @@
 //! name, decoded with a dedicated order-0 model. The flat image header's name-layout byte
 //! selects the decoder path.
 //!
-//! No heap allocation happens in `Names::write_id` or `Names::id_of`: the only scratch is
-//! the fixed 256-byte name buffer inside `Names`.
+//! `Names::new` validates the run records and the page directory before a lookup can use them.
+//! No heap allocation happens in `Names::write_id` or `Names::id_of`: the only scratch is the
+//! two fixed 256-byte name buffers inside `Names` (the current name and a saved shared suffix).
 
 use std::str;
 
@@ -156,15 +157,66 @@ impl<'a> Header<'a> {
             return None;
         }
 
+        let page_dir = section.get(page_dir_at..runs_at)?;
+        let runs = section.get(runs_at..runs_end)?;
+        validate_index(page_dir, runs, run_count, name_count)?;
+
         Some(Self {
             name_count,
             run_count,
-            page_dir: section.get(page_dir_at..runs_at)?,
-            runs: section.get(runs_at..runs_end)?,
+            page_dir,
+            runs,
             block_bits: section.get(starts_at..starts_end)?,
             models_at: starts_end,
         })
     }
+}
+
+/// Checks the run records and page directory the encoder writes.
+///
+/// A run must start after the previous one ends (so the runs are strictly ordered and
+/// disjoint), end inside the Unicode range and continue the name-id sequence at exactly
+/// `base_id`; together the runs must cover all `name_count` ids. The page directory must be a
+/// non-decreasing list of run indices at most `run_count`. Every image the encoder produces
+/// satisfies these, and a section that does not is rejected before `id_of` can index outside
+/// the run array or the name table or resolve to another run's name.
+fn validate_index(page_dir: &[u8], runs: &[u8], run_count: usize, name_count: usize) -> Option<()> {
+    let mut previous_end = None;
+    let mut expected_base = 0usize;
+    for record in runs.as_chunks::<NAME_RUN_LEN>().0 {
+        let mut record = record.as_slice();
+        let first = record.try_get_u32_le().ok()?;
+        let length = u32::from(record.try_get_u16_le().ok()?);
+        let base = usize::from(record.try_get_u16_le().ok()?);
+        if length == 0 {
+            return None;
+        }
+        let end = first.checked_add(length - 1)?;
+        let length = usize::try_from(length).ok()?;
+        if previous_end.is_some_and(|previous| first <= previous)
+            || end > UNICODE_END
+            || base != expected_base
+            || base.checked_add(length)? > name_count
+        {
+            return None;
+        }
+        previous_end = Some(end);
+        expected_base = expected_base.checked_add(length)?;
+    }
+    if expected_base != name_count {
+        return None;
+    }
+
+    let mut previous_run = 0usize;
+    for entry in page_dir.as_chunks::<NAME_PAGE_DIRECTORY_ENTRY_LEN>().0 {
+        let mut entry = entry.as_slice();
+        let run = usize::from(entry.try_get_u16_le().ok()?);
+        if run < previous_run || run > run_count {
+            return None;
+        }
+        previous_run = run;
+    }
+    Some(())
 }
 
 /// The decoded context models and the bitstream they decode.
@@ -429,13 +481,18 @@ impl<'a> Names<'a> {
         Some(new_length)
     }
 
-    /// Pushes the cached name into `out`.
-    fn push_cached(&self, out: &mut String) -> bool {
-        let Ok(text) = str::from_utf8(&self.scratch[..self.cache_len]) else {
-            return false;
-        };
-        out.push_str(text);
-        true
+    /// Pushes the cached name into `out`, dropping the cursor when it is not valid UTF-8.
+    ///
+    /// A failed push must invalidate: `decode_id` has already recorded this id as the
+    /// sequential predecessor, so a later lookup in the same block would otherwise resume from
+    /// bytes that cannot be part of the output.
+    fn push_cached(&mut self, out: &mut String) -> bool {
+        if let Ok(text) = str::from_utf8(&self.scratch[..self.cache_len]) {
+            out.push_str(text);
+            return true;
+        }
+        self.invalidate();
+        false
     }
 
     /// Drops the sequential cursor after a failed decode.
@@ -579,6 +636,154 @@ mod tests {
         out.clear();
         assert!(write_hangul(0xD7A3, &mut out));
         assert_eq!(out, "HANGUL SYLLABLE HIH");
+    }
+
+    /// Builds a name-section index. `Header::parse` does not read the model area.
+    fn index_section(
+        name_count: usize,
+        block_shift: u8,
+        runs: &[(u32, u16, u16)],
+        page_dir: &[u16],
+    ) -> Vec<u8> {
+        let block_count = name_count.div_ceil(1usize << block_shift);
+        let mut section = Vec::new();
+        section.extend_from_slice(&u32::try_from(name_count).unwrap().to_le_bytes());
+        section.extend_from_slice(&u32::try_from(block_count).unwrap().to_le_bytes());
+        section.extend_from_slice(&u16::try_from(runs.len()).unwrap().to_le_bytes());
+        section.extend_from_slice(&u16::try_from(NAME_PAGE_COUNT).unwrap().to_le_bytes());
+        for &entry in page_dir {
+            section.extend_from_slice(&entry.to_le_bytes());
+        }
+        for &(first, length, base) in runs {
+            section.extend_from_slice(&first.to_le_bytes());
+            section.extend_from_slice(&length.to_le_bytes());
+            section.extend_from_slice(&base.to_le_bytes());
+        }
+        while !section.len().is_multiple_of(4) {
+            section.push(0);
+        }
+        section.resize(section.len() + block_count * 4, 0);
+        section
+    }
+
+    /// The page directory the encoder writes for `runs`.
+    fn page_directory(runs: &[(u32, u16, u16)]) -> Vec<u16> {
+        (0..NAME_PAGE_COUNT)
+            .map(|page| {
+                let base = u32::try_from(page).unwrap() << NAME_PAGE_SHIFT;
+                let first = runs
+                    .iter()
+                    .position(|&(start, length, _)| start + u32::from(length) > base)
+                    .unwrap_or(runs.len());
+                u16::try_from(first).unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn name_index_records_are_validated() {
+        let runs = [(0x41u32, 2u16, 0u16), (0x100, 1, 2)];
+        let page_dir = page_directory(&runs);
+        let valid = index_section(3, 1, &runs, &page_dir);
+        assert!(Header::parse(&valid, 1).is_some());
+
+        // Runs must start after their predecessor.
+        let duplicate = [(0x41, 1, 0), (0x41, 1, 1)];
+        assert!(Header::parse(&index_section(2, 1, &duplicate, &page_dir), 1).is_none());
+        let out_of_order = [(0x100, 1, 2), (0x41, 2, 0)];
+        assert!(Header::parse(&index_section(3, 1, &out_of_order, &page_dir), 1).is_none());
+
+        // A run must cover at least one code point and end inside the Unicode range.
+        let empty_run = [(0x41, 0, 0), (0x100, 1, 0)];
+        assert!(Header::parse(&index_section(1, 1, &empty_run, &page_dir), 1).is_none());
+        let past_end = [(0x10_FFFF, 2, 0)];
+        assert!(
+            Header::parse(
+                &index_section(1, 1, &past_end, &page_directory(&past_end)),
+                1
+            )
+            .is_none()
+        );
+
+        // A run must not map past the last name id.
+        let past_names = [(0x41, 1, 3)];
+        assert!(
+            Header::parse(
+                &index_section(3, 1, &past_names, &page_directory(&past_names)),
+                1
+            )
+            .is_none()
+        );
+
+        // A corrupt base id must not point at another run's names.
+        let wrong_base = [(0x41, 1, 1)];
+        assert!(
+            Header::parse(
+                &index_section(2, 1, &wrong_base, &page_directory(&wrong_base)),
+                1
+            )
+            .is_none()
+        );
+        // Overlapping runs would shadow the later run's names.
+        let overlapping = [(0x41, 2, 0), (0x42, 1, 2)];
+        assert!(
+            Header::parse(
+                &index_section(3, 1, &overlapping, &page_directory(&overlapping)),
+                1
+            )
+            .is_none()
+        );
+
+        // The page directory must be non-decreasing and stay inside the run array.
+        let mut decreasing = page_dir.clone();
+        *decreasing.last_mut().unwrap() = 0;
+        assert!(Header::parse(&index_section(3, 1, &runs, &decreasing), 1).is_none());
+        let mut too_far = page_dir;
+        too_far[0] = 3;
+        assert!(Header::parse(&index_section(3, 1, &runs, &too_far), 1).is_none());
+    }
+
+    /// A `Names` with a preset cache entry and no stream, for the push path.
+    fn cached_name(scratch: &[u8], cache_id: usize) -> Names<'static> {
+        let mut buffer = [0u8; MAX_NAME_BYTES];
+        buffer[..scratch.len()].copy_from_slice(scratch);
+        Names {
+            page_dir: &[],
+            runs: &[],
+            run_count: 0,
+            layout: NameLayout::BlockLocal,
+            block_bits: &[],
+            context_model: [0; 256],
+            models: Vec::new(),
+            tables: Vec::new(),
+            stream: &[],
+            name_count: 1,
+            shift: 1,
+            scratch: buffer,
+            suffix_scratch: [0; MAX_NAME_BYTES],
+            cache_id,
+            cache_bit: 0,
+            cache_len: scratch.len(),
+        }
+    }
+
+    #[test]
+    fn an_invalid_utf8_cached_name_drops_the_cursor() {
+        // A cache hit goes straight to `push_cached`; a non-UTF-8 entry must not leave the
+        // sequential cursor pointing at bytes a later lookup would resume from.
+        let mut names = cached_name(&[0xFF], 0);
+        let mut out = String::from("unchanged");
+        assert!(!names.write_id(0, &mut out));
+        assert_eq!(out, "unchanged");
+        assert_eq!(names.cache_id, usize::MAX);
+        assert_eq!(names.cache_len, 0);
+
+        // A valid cached entry still answers and keeps its cursor.
+        let mut names = cached_name(b"LATIN CAPITAL LETTER A", 0);
+        let mut out = String::new();
+        assert!(names.write_id(0, &mut out));
+        assert_eq!(out, "LATIN CAPITAL LETTER A");
+        assert_eq!(names.cache_id, 0);
     }
 
     #[test]

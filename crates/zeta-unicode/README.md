@@ -72,8 +72,10 @@ shift, name layout and four `(offset, length)` entries; four 8-byte-aligned sect
   use 9,494 bytes of heap.
 - **Patterns:** 20 `*` ranges use shared prefix/suffix dictionaries and generated hex names.
 
-Unicode 18.0.0 with the default profile is 188,882 bytes: 174,091 names, 10,548 emoji, 3,860
-general category, 306 patterns and 77 header/padding. The budget is 200,000 bytes.
+Unicode 18.0.0 with the default profile is 188,882 bytes: 174,091 B names, 10,548 B emoji,
+3,860 B general category, 306 B patterns and 77 B header/padding. The budget is a hard
+200,000-byte cap shared by the trainer and the runtime; the build script will not embed an
+image over it.
 
 | Block shift | Image | Preferred by |
 |---:|---:|---|
@@ -88,7 +90,8 @@ Inputs are `DerivedName.txt` (Unicode 10+), `DerivedGeneralCategory.txt`, `NameA
 `NamedSequences.txt` and `emoji-test.txt`. `NamedSequences.txt` is optional before Unicode 4.1;
 the Emoji version is independent. Build settings are `ZETA_UNICODE_DATA_DIR`,
 `ZETA_UNICODE_PRIORITY`, `ZETA_UNICODE_MAX_BYTES`, `ZETA_UNICODE_BLOCK_SHIFT` and
-`ZETA_UNICODE_STATS`.
+`ZETA_UNICODE_STATS`. `ZETA_UNICODE_MAX_BYTES` can only lower the fixed 200,000-byte budget;
+the build fails on a larger value rather than embedding an over-budget image.
 
 ```sh
 ZETA_UNICODE_DATA_DIR=/path/to/ucd cargo build -p zeta-unicode
@@ -97,10 +100,13 @@ cargo run -p zeta-unicode-build --bin zeta-unicode-train -- \
     --data-dir ../ucd/15.1.0 --out-dir target/nomina --report --verify
 ```
 
-`hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]` fetches a release. The CLI writes
-`nomina.bin` and `manifest.json`; `--verify` re-reads the image. The manifest records versions,
-profile, sections, candidates, input hashes and verification checks, with no timestamps or
-absolute paths. Training is deterministic.
+`hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]` fetches a release into the
+scratch directory `<dest>`. It refuses a `<dest>` that already holds any earlier candidate
+layout the trainer probes first (flat, `extracted/` or `ucd/`), because those shadow the
+fetched file; update the vendored `crates/zeta-unicode/data` by copying the five files into it
+instead. The CLI writes `nomina.bin` and `manifest.json`; `--verify` re-reads the image. The
+manifest records versions, profile, sections, candidates, input hashes and verification checks,
+with no timestamps or absolute paths. Training is deterministic.
 
 ## Verification and testing
 

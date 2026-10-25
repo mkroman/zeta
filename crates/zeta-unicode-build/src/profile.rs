@@ -16,8 +16,9 @@ pub const MIN_CANDIDATE_SHIFT: u8 = 3;
 pub const MAX_CANDIDATE_SHIFT: u8 = 8;
 /// The largest shift [`Priority::Balanced`] prefers before falling back to the smallest image.
 pub const BALANCED_MAX_SHIFT: u8 = 6;
-/// The default image budget, in bytes.
-pub const DEFAULT_MAX_TABLE_BYTES: usize = 200_000;
+/// The default image budget, in bytes; the shared
+/// [`zeta_unicode_format::TABLE_BUDGET`].
+pub use zeta_unicode_format::TABLE_BUDGET as DEFAULT_MAX_TABLE_BYTES;
 /// The default candidate shifts: 32, 64, 128 and 256 names per block.
 pub const DEFAULT_CANDIDATE_SHIFTS: [u8; 4] = [5, 6, 7, 8];
 

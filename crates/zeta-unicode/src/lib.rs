@@ -2,9 +2,11 @@
 //!
 //! The image format is called Nomina (Latin for names). The `zeta-unicode-build` crate trains
 //! one flat Nomina image from the vendored UCD files and links it into the binary with
-//! `include_bytes!`. A lookup decodes at most one front-coded block, so there is no full name
-//! arena; `write_name` does not allocate, while `name` returns an owned [`String`]. Hangul
-//! syllables and `*`-pattern names are generated from their code point.
+//! `include_bytes!`. `Nomina::new` validates the header, the name section's index and the
+//! pattern table on first use per thread; it does not decode the names. A lookup decodes at
+//! most one front-coded block, so there is no full name arena; `write_name` does not allocate,
+//! while `name` returns an owned [`String`]. Hangul syllables and `*`-pattern names are
+//! generated from their code point.
 //! Emoji keys are canonicalized (`U+FE0F` is stripped) and skin-tone variants are synthesized
 //! from a 3-bit rule plus a 2-bit published-tone-count mask, so 1,944 stored keys answer for
 //! every one of the 3,972 sequences the UCD names.
@@ -25,11 +27,17 @@
 //!
 //! # Panics
 //!
-//! The first name lookup on a thread panics if the generated image header is malformed; the
-//! first emoji or general-category lookup panics process-wide for the same reason. A corrupt
-//! entry inside an otherwise valid section makes that one lookup return `None`/`false` rather
-//! than panic. The build verifies every section, so both are build invariants rather than
-//! runtime conditions.
+//! The first name lookup on a thread panics if the generated image header, name section or
+//! pattern section is malformed. The first emoji or general-category lookup panics process-wide
+//! if its section is malformed, and so does [`init`], which parses both.
+//!
+//! Sections are validated when they are parsed, so a header, run index or section layout that
+//! violates the format rejects the whole section; the name index checks that runs are ordered,
+//! disjoint and stay inside both the Unicode range and the name table. Once a section has
+//! parsed, entry data that fails only at lookup time — a bad Huffman code or non-UTF-8 name
+//! in the name stream, a rule whose base is missing — makes that one lookup return
+//! `None`/`false` rather than panic. The build verifies every section, so these are build
+//! invariants rather than runtime conditions.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -52,9 +60,10 @@ include!(concat!(env!("OUT_DIR"), "/zeta_unicode_version.rs"));
 
 /// The target size budget for the Nomina image, in bytes.
 ///
-/// This is the measured random-access budget, not the smaller full-decode budget: the Nomina
-/// image trades table bytes for a tiny decoder and a sub-100 KB heap.
-pub const TABLE_BUDGET: usize = 200_000;
+/// Shared with the trainer and enforced by the build script; see
+/// [`zeta_unicode_format::TABLE_BUDGET`] for the rationale.
+#[doc(inline)]
+pub use zeta_unicode_format::TABLE_BUDGET;
 
 /// The longest emoji key the table stores, in bytes.
 ///
@@ -70,7 +79,7 @@ static EMOJI: OnceLock<Emoji> = OnceLock::new();
 static GC: OnceLock<Gc> = OnceLock::new();
 
 thread_local! {
-    /// The per-thread name decoder. Its fixed scratch buffer is the only mutable state left
+    /// The per-thread name decoder. Its fixed scratch buffers are the only mutable state left
     /// after initialization, so lookups do not allocate or share a lock.
     static NAMES: RefCell<Option<Nomina<'static>>> = const { RefCell::new(None) };
 }
@@ -109,6 +118,11 @@ fn gc() -> &'static Gc {
 /// The name decoder is per thread and has no shared state, so it stays lazy: a call on a
 /// throwaway thread would warm nothing a handler later uses. A warm call is cheap and
 /// idempotent.
+///
+/// # Panics
+///
+/// Panics if the generated emoji or general-category section is malformed: the same
+/// process-wide panic the first corresponding lookup raises.
 pub fn init() {
     emoji();
     gc();
@@ -290,12 +304,42 @@ mod tests {
         )
     }
 
+    /// Reads the `# DerivedName-<major>.<minor>.<patch>.txt` header of the UCD data under test.
+    fn data_version() -> (u8, u8, u8) {
+        let text = read_ucd("DerivedName.txt");
+        let header = text
+            .lines()
+            .map(|line| line.strip_prefix('\u{feff}').unwrap_or(line))
+            .find_map(|line| line.strip_prefix("# DerivedName-"))
+            .expect("a DerivedName version header")
+            .strip_suffix(".txt")
+            .expect("a .txt version header");
+        let mut parts = header.split('.');
+        let (Some(major), Some(minor), Some(patch), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            panic!("a three-part version in {header:?}");
+        };
+        (
+            major.parse().expect("a major version"),
+            minor.parse().expect("a minor version"),
+            patch.parse().expect("a patch version"),
+        )
+    }
+
     #[test]
     fn generated_version_matches_the_table_header() {
         assert_eq!(
             image_version(),
             UNICODE_VERSION,
             "the generated image was built from a different Unicode release"
+        );
+        // The image header and `UNICODE_VERSION` both come from one `build.rs` run, so the
+        // assertion above cannot notice test data that disagrees with the image.
+        assert_eq!(
+            data_version(),
+            UNICODE_VERSION,
+            "the UCD files under test are not the release the image was built from"
         );
     }
 

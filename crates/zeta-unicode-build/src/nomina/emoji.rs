@@ -92,7 +92,8 @@ pub struct EmojiStats {
     pub rule_raw: usize,
     /// Raw mask stream size.
     pub mask_raw: usize,
-    /// Decoded runtime heap: key arena, offsets, names, args and tone bytes.
+    /// Decoded runtime heap: key arena, offsets, names, entries, first code points, the
+    /// first-byte bit set and tone bytes.
     pub heap_bytes: usize,
 }
 
@@ -294,6 +295,10 @@ pub fn emoji_section(entries: &[EmojiEntry], ucd: &BTreeMap<u32, String>) -> (Ve
         + payload.literal_bytes
         + (literal_names.len() + 1) * 2
         + entries.len() * 2
+        // The runtime also keeps one u32 first code point per entry and a [u64; 4]
+        // first-byte admission set; both are part of the decoded footprint.
+        + entries.len() * 4
+        + 32
         + stats.tone_bytes;
     (section, stats)
 }
@@ -1334,8 +1339,11 @@ mod tests {
         for name in &decoded.names {
             assert!(seen.insert(name.clone()), "duplicate literal {name:?}");
         }
+        // The decoded table measures 38,489 B on Unicode 18.0.0. That includes the runtime's
+        // 4 B/entry `first_cps` vector (7,776 B) and its 32 B `first_bytes` admission set,
+        // which the earlier 32,000 B bound omitted.
         assert!(
-            stats.heap_bytes <= 32_000,
+            stats.heap_bytes <= 39_000,
             "heap grew to {}",
             stats.heap_bytes
         );

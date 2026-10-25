@@ -28,10 +28,12 @@ pub struct Code {
 ///
 /// # Panics
 ///
-/// Panics when `order` is greater than one, when one context uses all 256 byte symbols (the
-/// stream counts symbols in a `u8`), or when the codebook or payload does not fit the section's
-/// `u16` lengths. Vendored Unicode data never does; a malformed call is a build invariant
-/// violation.
+/// Panics when `order` is greater than one, when an order-1 corpus needs all 256 contexts (the
+/// stream counts contexts in a `u8`, so 255 is the format's maximum; supporting 256 requires a
+/// format change), when one context uses all 256 byte symbols (the stream counts symbols per
+/// context in a `u8`, so 255 is the maximum), or when the codebook or payload does not fit the
+/// section's `u16` lengths. Vendored Unicode data never does; a malformed call is a build
+/// invariant violation.
 #[must_use]
 pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
     assert!(order <= 1, "only order-0 and order-1 models exist");
@@ -58,10 +60,10 @@ pub fn encode(data: &[u8], order: u8) -> Vec<u8> {
 
     let mut out = Vec::new();
     assert!(
-        contexts.len() <= 256,
-        "an order-1 model has at most 256 contexts"
+        contexts.len() <= 255,
+        "an order-1 model has at most 255 contexts: the stream counts them in a u8"
     );
-    out.push(u8::try_from(contexts.len()).expect("at most 256 contexts"));
+    out.push(u8::try_from(contexts.len()).expect("at most 255 contexts"));
     for (slot, &context) in contexts.iter().enumerate() {
         let model = &models[slot];
         assert!(
@@ -121,15 +123,19 @@ const fn context_at(data: &[u8], index: usize, order: u8) -> u8 {
 
 /// Decodes a stream built by [`encode`].
 ///
-/// Returns `None` for a truncated codebook, an invalid code, or a payload shorter than
-/// `raw_len`.
+/// Returns `None` for an order above one, a `raw_len` larger than the stream could encode (every
+/// symbol consumes at least one bit), a truncated codebook, an invalid or oversubscribed model,
+/// or a payload shorter than `raw_len`.
 #[must_use]
 pub fn decode(stream: &[u8], raw_len: usize, order: u8) -> Option<Vec<u8>> {
-    if raw_len == 0 {
-        return Some(Vec::new());
-    }
     if order > 1 {
         return None;
+    }
+    if raw_len > stream.len().saturating_mul(8) {
+        return None;
+    }
+    if raw_len == 0 {
+        return Some(Vec::new());
     }
     let mut at = 0usize;
     let context_count = usize::from(*stream.get(at)?);
@@ -179,12 +185,19 @@ struct Model {
 
 impl Model {
     /// Builds the decoder model from `(symbol, length)` pairs.
+    ///
+    /// Returns `None` for a length outside the codec's limit or a codebook that is empty or
+    /// oversubscribed. The runtime's general-category and emoji parsers decode streams without
+    /// a separate codebook check, so validation has to happen here.
     fn new(pairs: Vec<(u8, usize)>) -> Option<Self> {
         let mut counts = [0u16; MAX_BITS + 1];
         let mut max_bits = 0usize;
         for &(_, length) in &pairs {
             *counts.get_mut(length)? += 1;
             max_bits = max_bits.max(length);
+        }
+        if !valid_codebook(&counts, u8::try_from(max_bits).ok()?) {
+            return None;
         }
         let mut ordered = pairs;
         ordered.sort_unstable_by_key(|&(symbol, length)| (length, symbol));
@@ -239,9 +252,11 @@ fn lengths(frequencies: &[u32; 256]) -> Vec<(u8, u8)> {
 ///
 /// # Panics
 ///
-/// Panics if `max_bits` is zero, if a tree needs a code longer than 255 bits (the reported
-/// depth is a `u8`) or if the frequency scale overflows `u64`; none of these is reachable for
-/// a 256-symbol alphabet with a positive limit, whose deepest possible tree is 255 levels.
+/// Panics if `max_bits` is zero, if the alphabet is wider than `1 << max_bits` (no
+/// length-limited code can represent it), if a tree needs a code longer than 255 bits (the
+/// reported depth is a `u8`) or if the frequency scale overflows `u64`; once the alphabet fits
+/// the code space, flattening to unit weights bounds the depth, so the last two are
+/// unreachable.
 #[must_use]
 pub fn code_lengths(frequencies: &[u64; 256], max_bits: u8) -> [u8; 256] {
     assert!(max_bits > 0, "a codebook needs at least one bit");
@@ -249,6 +264,15 @@ pub fn code_lengths(frequencies: &[u64; 256], max_bits: u8) -> [u8; 256] {
     let symbols: Vec<u8> = (0..=u8::MAX)
         .filter(|&symbol| frequencies[usize::from(symbol)] > 0)
         .collect();
+    // Doubling `scale` can never flatten an alphabet wider than the code space, so reject it
+    // before the retry loop misdiagnoses it as a `u64` overflow.
+    let capacity = 1u64.checked_shl(u32::from(max_bits)).unwrap_or(u64::MAX);
+    let symbol_count = u64::try_from(symbols.len()).expect("at most 256 symbols");
+    assert!(
+        symbol_count <= capacity,
+        "cannot fit {} symbols into codes of at most {max_bits} bits",
+        symbols.len()
+    );
     match symbols.len() {
         0 => return lengths,
         1 => {
@@ -342,10 +366,21 @@ impl Node {
 
 /// Assigns canonical codes to a set of code lengths.
 ///
-/// `lengths[symbol]` is the code length of that symbol; zero marks an absent symbol. The
+/// `lengths[symbol]` is the code length of that symbol; zero marks an absent symbol. Lengths are
+/// limited to the codec's 32-bit maximum so the canonical increment cannot overflow `u64`. The
 /// returned table is indexed by symbol, with zeroed entries for absent symbols.
+///
+/// # Panics
+///
+/// Panics if a nonzero length exceeds 32 bits.
 #[must_use]
 pub fn canonical_codes(lengths: &[u8]) -> Vec<Code> {
+    assert!(
+        lengths
+            .iter()
+            .all(|&length| usize::from(length) <= MAX_BITS),
+        "a canonical code is at most {MAX_BITS} bits long"
+    );
     let mut ordered: Vec<(u8, usize)> = lengths
         .iter()
         .enumerate()
@@ -368,9 +403,18 @@ pub fn canonical_codes(lengths: &[u8]) -> Vec<Code> {
 /// Is `counts` a non-oversubscribed canonical codebook with `max_bits` maximum length?
 ///
 /// `counts[length]` is the number of symbols with that length. A single-symbol model is valid:
-/// its one-bit code is a complete code for the one-symbol alphabet.
+/// its one-bit code is a complete code for the one-symbol alphabet. `max_bits` is limited to
+/// the codec's 32-bit maximum so the Kraft sum cannot overflow.
+///
+/// # Panics
+///
+/// Panics if `max_bits` is greater than 32.
 #[must_use]
 pub fn valid_codebook(counts: &[u16], max_bits: u8) -> bool {
+    assert!(
+        usize::from(max_bits) <= MAX_BITS,
+        "a codebook has at most {MAX_BITS} bits"
+    );
     let max = usize::from(max_bits);
     if max == 0 || counts.len() <= max {
         return false;
@@ -529,12 +573,41 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "an order-1 model has at most 255 contexts")]
+    fn a_corpus_needing_256_contexts_is_rejected() {
+        // `0..=255` twice gives the first byte the start context and every later byte its
+        // predecessor as context, so all 256 byte values become contexts.
+        let data: Vec<u8> = (0..=255u8).chain(0..=255).collect();
+        let _ = encode(&data, 1);
+    }
+
+    #[test]
     fn truncated_streams_are_rejected() {
         let data = b"abracadabra";
         let stream = encode(data, 1);
         for length in 0..stream.len() {
             assert_eq!(decode(&stream[..length], data.len(), 1), None);
         }
+    }
+
+    #[test]
+    fn decode_rejects_an_unknown_order_before_the_empty_shortcut() {
+        assert_eq!(decode(&[], 0, 2), None);
+    }
+
+    #[test]
+    fn decode_rejects_an_impossible_raw_len_without_allocating() {
+        // Every symbol consumes at least one bit, so a one-byte stream cannot hold nine bytes.
+        assert_eq!(decode(&[0], 9, 0), None);
+        assert_eq!(decode(&[0], usize::MAX, 0), None);
+    }
+
+    #[test]
+    fn decode_rejects_an_oversubscribed_codebook() {
+        // Three one-bit codes in one context: 3/2 > 1, so the old decoder silently returned
+        // "aaaa" from the zero payload.
+        let stream = [1, 0, 3, b'a', 1, b'b', 1, b'c', 1, 0b0000_0000];
+        assert_eq!(decode(&stream, 4, 0), None);
     }
 
     #[test]
@@ -559,6 +632,24 @@ mod tests {
         );
         assert!(!valid_codebook(&complete, 0));
         assert!(!valid_codebook(&[0; 2], 2), "counts must cover max_bits");
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot fit 256 symbols")]
+    fn code_lengths_rejects_an_alphabet_wider_than_the_code_space() {
+        let _ = code_lengths(&[1; 256], 7);
+    }
+
+    #[test]
+    #[should_panic(expected = "a canonical code is at most 32 bits long")]
+    fn canonical_codes_rejects_codes_beyond_the_codec_limit() {
+        let _ = canonical_codes(&[33]);
+    }
+
+    #[test]
+    #[should_panic(expected = "a codebook has at most 32 bits")]
+    fn valid_codebook_rejects_an_out_of_range_limit() {
+        let _ = valid_codebook(&[0; 17], 33);
     }
 
     #[test]

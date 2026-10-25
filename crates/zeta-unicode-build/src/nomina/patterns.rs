@@ -20,7 +20,7 @@
 
 use std::collections::BTreeSet;
 
-use zeta_unicode_format::write_varint;
+use zeta_unicode_format::{UNICODE_END, write_varint};
 
 use crate::ucd::{hex_u32, records};
 
@@ -66,8 +66,8 @@ pub fn build(derived_names: &str) -> (Vec<u8>, PatternStats) {
 ///
 /// # Panics
 ///
-/// Panics when a line carries more than one placeholder or a reversed range. That is a build
-/// failure, not a runtime condition.
+/// Panics when a line carries more than one placeholder, a reversed range, or a range past
+/// [`UNICODE_END`]. That is a build failure, not a runtime condition.
 #[must_use]
 pub fn parse_patterns(derived_names: &str) -> Vec<Pattern> {
     let mut patterns = Vec::new();
@@ -94,6 +94,10 @@ pub fn parse_patterns(derived_names: &str) -> Vec<Pattern> {
             (cp, cp)
         };
         assert!(lo <= hi, "line {number}: reversed pattern range");
+        assert!(
+            hi <= UNICODE_END,
+            "line {number}: pattern range U+{lo:04X}..U+{hi:04X} exceeds U+{UNICODE_END:04X}"
+        );
         patterns.push(Pattern {
             lo,
             hi,
@@ -118,7 +122,8 @@ pub fn parse_patterns(derived_names: &str) -> Vec<Pattern> {
 /// Encodes a sorted pattern list.
 ///
 /// The section is decoded back and every range and dictionary entry is asserted to round-trip
-/// exactly before it is returned.
+/// exactly before it is returned. An empty list encodes the valid count-zero section
+/// (`[0, 0, 0]`), which the runtime treats as matching nothing.
 ///
 /// # Panics
 ///
@@ -154,10 +159,6 @@ pub fn pattern_section(patterns: &[Pattern]) -> (Vec<u8>, PatternStats) {
         "too many pattern suffixes"
     );
 
-    assert!(
-        !patterns.is_empty(),
-        "an empty pattern list is not a section"
-    );
     let mut section = Vec::new();
     section.push(u8::try_from(patterns.len()).expect("pattern count"));
     let mut dictionary_bytes = 0usize;
@@ -443,5 +444,30 @@ mod tests {
         assert_eq!(patterns[0].hi, 0x3401);
         assert_eq!(patterns[0].prefix, "TEST-");
         assert_eq!(patterns[0].suffix, "");
+    }
+
+    #[test]
+    fn an_empty_pattern_list_is_the_count_zero_section() {
+        let (section, stats) = pattern_section(&[]);
+        assert_eq!(section, [0, 0, 0]);
+        assert_eq!(stats.patterns, 0);
+        assert_eq!(stats.section_bytes, 3);
+        assert_eq!(stats.dictionary_bytes, 0);
+        assert_eq!(stats.records_bytes, 0);
+
+        let decoded = decode_section(&section);
+        assert_eq!(decoded.prefixes, Vec::<String>::new());
+        assert_eq!(decoded.suffixes, Vec::<String>::new());
+        assert_eq!(decoded.ranges, Vec::new());
+    }
+
+    #[test]
+    #[should_panic(expected = "line 2: pattern range U+10FFFF..U+110001 exceeds U+10FFFF")]
+    fn a_pattern_range_past_unicode_is_rejected() {
+        let text = "\
+0041; LATIN CAPITAL LETTER A
+10FFFF..110001; TEST-*
+";
+        let _ = parse_patterns(text);
     }
 }

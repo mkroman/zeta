@@ -34,6 +34,15 @@ frequencies when the tree is too deep. `valid_codebook` checks the Kraft inequal
 rejects truncated codebooks, invalid codes and short payloads. The runtime adds a 6-bit fast
 table per name model.
 
+## Limits
+
+Both stream counts are `u8`, so a stream carries at most 255 contexts and at most 255 of the
+256 byte symbols in one context; a corpus that needs all 256 contexts or all 256 symbols in one
+context requires a format change. Codes are at most 32 bits. `decode` rejects a `raw_len` larger
+than eight times the stream length, because every symbol consumes at least one bit. `encode`
+and the codebook helpers panic outside these limits rather than emitting a stream the decoder
+cannot trust.
+
 ## Emoji grammar
 
 Most names are rules, not stored strings. The trainer keeps a rule only when replay reproduces

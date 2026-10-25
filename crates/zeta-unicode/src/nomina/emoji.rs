@@ -30,6 +30,13 @@ use zeta_unicode_format::{
 /// Four stream descriptors of `u16 raw_len | u16 coded_len | u8 order`.
 const STREAM_COUNT: usize = 4;
 
+/// The longest chain of rule expansions a name may take.
+///
+/// Valid tables nest only a few levels deep (a gender sign can resolve through a role, which
+/// resolves through a person base), so this only stops a corrupt self-referential rule before
+/// it overflows the stack.
+const MAX_MATERIALIZE_DEPTH: u8 = 8;
+
 /// Supplies the Unicode character name of one code point to the emoji grammar.
 ///
 /// The name must be the `Name` property as `DerivedName.txt` spells it (for example
@@ -206,7 +213,7 @@ impl Emoji {
         let mut buffer = [0u8; MAX_KEY];
         let needle = canonical_key(sequence.as_bytes(), &mut buffer)?;
         if let Some(index) = self.find(needle) {
-            return self.materialize(index, lookup);
+            return self.materialize(index, lookup, 0);
         }
 
         let mut scratch = [0u8; MAX_KEY];
@@ -265,7 +272,7 @@ impl Emoji {
         if mask & (1 << (tone_count - 1)) == 0 {
             return None;
         }
-        let base_name = self.materialize(index, lookup)?;
+        let base_name = self.materialize(index, lookup, 0)?;
         Some(Cow::Owned(format_toned(
             code,
             &base_name,
@@ -286,8 +293,18 @@ impl Emoji {
     /// Materializes the name of entry `index`.
     ///
     /// Rules that only need the first code point read it from the parse-time cache; only the
-    /// rules that inspect the whole sequence decode it into [`Cps`].
-    fn materialize<L: NameLookup>(&self, index: usize, lookup: &mut L) -> Option<Cow<'_, str>> {
+    /// rules that inspect the whole sequence decode it into [`Cps`]. `depth` counts the rule
+    /// expansions already taken: a corrupt rule whose base resolves back to itself stops at
+    /// [`MAX_MATERIALIZE_DEPTH`] with `None` instead of overflowing the stack.
+    fn materialize<L: NameLookup>(
+        &self,
+        index: usize,
+        lookup: &mut L,
+        depth: u8,
+    ) -> Option<Cow<'_, str>> {
+        if depth >= MAX_MATERIALIZE_DEPTH {
+            return None;
+        }
         let packed = *self.entries.get(index)?;
         let (rule, argument) = Rule::unpack(packed)?;
         let argument = usize::from(argument);
@@ -312,14 +329,14 @@ impl Emoji {
                     "man"
                 };
                 let base = gender_base(self.entry_cps(index)?.as_slice(), self)?;
-                let base_name = self.materialize(base, lookup)?;
+                let base_name = self.materialize(base, lookup, depth + 1)?;
                 Some(Cow::Owned(swap_person(&base_name, gender)))
             }
             Rule::Facing => {
                 let cps = self.entry_cps(index)?;
                 let cps = cps.as_slice();
                 let base = self.find_key(cps.get(..cps.len().checked_sub(2)?)?)?;
-                let base_name = self.materialize(base, lookup)?;
+                let base_name = self.materialize(base, lookup, depth + 1)?;
                 Some(Cow::Owned(format!("{base_name} facing right")))
             }
             Rule::Family => Some(Cow::Owned(format!(
@@ -759,6 +776,17 @@ mod tests {
                 "{key:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_self_referential_gender_rule_stops_at_the_depth_cap() {
+        // `gender_base` rewrites a three-code-point role's head to U+1F9D1. When the
+        // replacement is the entry itself, materializing would recurse until the stack
+        // overflows; the depth cap turns that into a miss.
+        let entries = vec![(vec![0x1F9D1, ZWJ, 0x1F9B0], Rule::GenderWoman, 0)];
+        let blob = section(&entries, &[], &[(0, 0)]);
+        let emoji = Emoji::parse(&blob).expect("the section parses");
+        assert_eq!(emoji.emoji_name(&mut Names, "🧑‍🦰"), None);
     }
 
     #[test]

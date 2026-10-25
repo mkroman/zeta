@@ -43,3 +43,12 @@ pub use layout::{
 pub use primitives::{
     encode_cps, pack_bits, read_varint, unpack_bits, write_hex, write_pattern_name, write_varint,
 };
+
+/// The Nomina image size budget, in bytes.
+///
+/// This is the measured random-access budget, not the smaller full-decode budget: the Nomina
+/// image trades table bytes for a tiny decoder and a sub-100 KB heap. It is a product
+/// constraint rather than a tuning knob, so the trainer and the runtime share this one value:
+/// the trainer defaults to it, the build script refuses to embed an image over it, and the
+/// runtime tests the linked image against it.
+pub const TABLE_BUDGET: usize = 200_000;

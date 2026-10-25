@@ -79,8 +79,13 @@ impl StringUtils {
         for command in &COMMANDS {
             subscriptions.command(command.spec);
         }
-        warm_unicode();
         Ok(Self)
+    }
+
+    #[handler(loaded)]
+    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+        warm_unicode();
+        Ok(())
     }
 
     #[handler(command)]

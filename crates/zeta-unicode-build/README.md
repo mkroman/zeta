@@ -40,9 +40,10 @@ name plus aliases for unnamed code points; Hangul and `*` patterns are generated
 
 ## Profiles and output
 
-Defaults are `balanced`, shifts `[5, 6, 7, 8]` and a 200,000-byte budget. `size` picks the
-smallest fitting image, `latency` the lowest fitting shift, and `balanced` the smallest image
-at shift ≤6 or the smallest fallback. Ties go to the lower shift.
+Defaults are `balanced`, shifts `[5, 6, 7, 8]` and the fixed 200,000-byte image budget shared
+by the trainer and the runtime. `size` picks the smallest fitting image, `latency` the lowest
+fitting shift, and `balanced` the smallest image at shift ≤6 or the smallest fallback. Ties go to
+the lower shift.
 
 | Shift | Image | Preferred by |
 |---:|---:|---|
@@ -51,9 +52,11 @@ at shift ≤6 or the smallest fallback. Ties go to the lower shift.
 | 7 | 183,658 | |
 | 8 | 181,026 | `size` |
 
-Output is `nomina.bin` plus `manifest.json`: versions, profile, candidates, section sizes,
-input hashes and verification checks, with no timestamps or absolute paths. The build script
-writes both to `OUT_DIR`; the CLI writes to `--out-dir`.
+Output is `nomina.bin` plus `manifest.json` from the CLI, or `zeta_unicode_nomina.bin` plus
+`manifest.json` from the build script: versions, profile, candidates, section sizes, input
+hashes and verification checks, with no timestamps or absolute paths. The build script writes
+to `OUT_DIR`; the CLI writes to `--out-dir`, and with `--verify` it publishes both only after
+the staged image has been verified.
 
 ## Command line
 
@@ -65,12 +68,18 @@ cargo run -p zeta-unicode-build --bin zeta-unicode-train -- \
 Options: `--data-dir`, `--out-dir`, `--block-shift` (3..=8), `--priority`, `--max-bytes`,
 `--baseline`/`--max-delta`, `--report`, `--verify`.
 
+The 200,000-byte cap binds only the image the build script embeds: `ZETA_UNICODE_MAX_BYTES` can
+lower it, and a larger value fails the build. The CLI's `--max-bytes` has no such cap — it
+writes to `--out-dir` and embeds nothing — so an experiment may raise it above 200,000.
+
 ## Verification and failure model
 
 Every section round-trips through its decoder; the chosen names are re-decoded by an
 independent build-time verifier and the image layout is re-parsed. The manifest checks are
 `name-stream-round-trip`, `emoji-stream-round-trip`, `general-category-round-trip`,
-`pattern-round-trip` and `image-layout`.
+`pattern-round-trip` and `image-layout`. With `--verify`, the CLI stages `nomina.bin`,
+verifies it on disk, and only then renames it into place and writes `manifest.json`, so a
+failed verification never leaves a manifest that claims success.
 
 Bad inputs, profiles, budgets, baselines and I/O are errors. Malformed UCD records and
 verification mismatches panic, so a returned `TrainOutput` is always verified.
