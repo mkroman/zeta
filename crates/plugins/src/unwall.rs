@@ -54,7 +54,7 @@ use zeta_http as http;
 use zeta_url::redact_url;
 use zeta_utils::{
     duration::TimeInWords,
-    irc::{MAX_LISTING_LENGTH, append_entries_within_budget},
+    irc::{MAX_LISTING_LENGTH, append_entries_with_more},
 };
 
 use client::UnwallClient;
@@ -331,17 +331,15 @@ impl Unwall {
             );
 
             let reserved = " (999 more)".len();
-            let appended = append_entries_within_budget(
+            append_entries_with_more(
                 &mut message,
                 sites.iter().map(|site| site.host.as_str()),
+                sites.len(),
                 &format!("{COLOR}, {RESET}"),
                 MAX_LISTING_LENGTH,
                 reserved,
+                |dropped| format!("{COLOR} ({dropped} more)"),
             );
-
-            if appended < sites.len() {
-                let _ = write!(message, "{COLOR} ({} more)", sites.len() - appended);
-            }
 
             message
         };

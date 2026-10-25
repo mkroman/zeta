@@ -7,7 +7,7 @@ use super::{
     error::Error,
     model::{CachedUrl, HostStatistics, NewFetch, Site, Statistics},
 };
-use crate::database::Database;
+use crate::database::{Database, namespace};
 
 /// Repository for storing and retrieving unwalled URLs, sites, and fetches.
 #[derive(Debug, Clone)]
@@ -34,7 +34,7 @@ impl UnwallRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "SELECT",
             db.collection.name = "unwall_urls",
             db.query.summary = "SELECT unwall_urls",
@@ -66,7 +66,7 @@ impl UnwallRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "INSERT",
             db.collection.name = "unwall_urls",
             db.query.summary = "INSERT unwall_urls",
@@ -101,7 +101,7 @@ impl UnwallRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "INSERT",
             db.collection.name = "unwall_fetches",
             db.query.summary = "INSERT unwall_fetches",
@@ -146,7 +146,7 @@ impl UnwallRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "SELECT",
             db.collection.name = "unwall_sites",
             db.query.summary = "SELECT unwall_sites",
@@ -176,7 +176,7 @@ impl UnwallRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "INSERT",
             db.collection.name = "unwall_sites",
             db.query.summary = "INSERT unwall_sites",
@@ -210,7 +210,7 @@ impl UnwallRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "DELETE",
             db.collection.name = "unwall_sites",
             db.query.summary = "DELETE unwall_sites",
@@ -241,7 +241,7 @@ impl UnwallRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "SELECT",
             db.collection.name = "unwall_urls",
             db.query.summary = "SELECT unwall statistics",
@@ -292,7 +292,7 @@ impl UnwallRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "SELECT",
             db.collection.name = "unwall_urls",
             db.query.summary = "SELECT unwall host statistics",

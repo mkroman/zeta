@@ -7,6 +7,15 @@
 /// Database connection pool.
 pub type Database = sqlx::PgPool;
 
+/// Returns the name of the database the pool connects to, for `db.namespace` span fields.
+#[must_use]
+pub fn namespace(db: &Database) -> String {
+    db.connect_options()
+        .get_database()
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// Deletes the rows with the given `ids` from `table`, returning the number of deleted rows.
 ///
 /// `table` must be a table known at compile time; it is never sourced from user input.

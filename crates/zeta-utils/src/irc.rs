@@ -175,6 +175,31 @@ pub fn append_entries_within_budget<S: AsRef<str>>(
     appended
 }
 
+/// Appends `entries` to `message` like [`append_entries_within_budget`], adding the suffix
+/// produced by `more` when not every entry fits.
+///
+/// `total` is the number of entries before budgeting, and `more` receives the number that were
+/// left out. `reserved` must already include room for the suffix, as with
+/// [`append_entries_within_budget`]. Returns the number of entries appended.
+pub fn append_entries_with_more<S: AsRef<str>>(
+    message: &mut String,
+    entries: impl IntoIterator<Item = S>,
+    total: usize,
+    separator: &str,
+    budget: usize,
+    reserved: usize,
+    more: impl FnOnce(usize) -> String,
+) -> usize {
+    let appended = append_entries_within_budget(message, entries, separator, budget, reserved);
+    let dropped = total.saturating_sub(appended);
+
+    if dropped > 0 {
+        message.push_str(&more(dropped));
+    }
+
+    appended
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,6 +237,37 @@ mod tests {
         // bytes exceeds the budget.
         assert_eq!(appended, 1);
         assert_eq!(message, "first");
+    }
+
+    #[test]
+    fn appends_a_suffix_for_the_entries_that_did_not_fit() {
+        let mut message = String::new();
+
+        let appended = append_entries_with_more(
+            &mut message,
+            ["first", "second", "third"],
+            3,
+            ", ",
+            25,
+            " (+1 more)".len(),
+            |dropped| format!(" (+{dropped} more)"),
+        );
+
+        assert_eq!(appended, 2);
+        assert_eq!(message, "first, second (+1 more)");
+    }
+
+    #[test]
+    fn does_not_append_the_suffix_when_every_entry_fits() {
+        let mut message = String::new();
+
+        let appended =
+            append_entries_with_more(&mut message, ["first", "second"], 2, ", ", 40, 0, |_| {
+                panic!("every entry fits")
+            });
+
+        assert_eq!(appended, 2);
+        assert_eq!(message, "first, second");
     }
 
     #[test]

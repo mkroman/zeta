@@ -346,7 +346,6 @@ impl Manager {
                     ..
                 },
             tempdir,
-            ..
         } = active;
 
         let result = match result {

@@ -65,22 +65,19 @@ impl Units {
 /// Settings for the openweathermap plugin, from its `[plugins.openweathermap]` configuration
 /// section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The OpenWeatherMap API key (the "app id").
     ///
     /// Falls back to the `OPENWEATHERMAP_APP_ID` environment variable when unset.
-    #[serde(default)]
     pub app_id: Option<String>,
     /// The unit system used for temperatures and wind speeds.
-    #[serde(default)]
     pub units: Units,
     /// The language used for weather condition descriptions.
     ///
     /// Defaults to the API's own default (English) when unset.
-    #[serde(default)]
     pub language: Option<String>,
     /// The location used when the `.w` command is invoked without arguments.
-    #[serde(default)]
     pub default_location: Option<String>,
 }
 

@@ -34,7 +34,6 @@ pub struct Settings {
     /// The ip2location.io API key.
     ///
     /// Falls back to the `GEOIP_API_KEY` environment variable when unset.
-    #[serde(default)]
     pub api_key: Option<String>,
 }
 
@@ -153,27 +152,17 @@ impl GeoIp {
 
 impl Display for IpInfo {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut parts = Vec::new();
-
-        if !self.asn_name.is_empty() {
-            parts.push(format!("AS:{RESET} {}", self.asn_name));
-        }
-
-        if !self.asn.is_empty() {
-            parts.push(format!("ASN:{RESET} {}", self.asn));
-        }
-
-        if !self.country_name.is_empty() {
-            parts.push(format!("Country:{RESET} {}", self.country_name));
-        }
-
-        if !self.region_name.is_empty() {
-            parts.push(format!("Region:{RESET} {}", self.region_name));
-        }
-
-        if !self.city_name.is_empty() {
-            parts.push(format!("City:{RESET} {}", self.city_name));
-        }
+        let parts = [
+            ("AS", self.asn_name.as_str()),
+            ("ASN", self.asn.as_str()),
+            ("Country", self.country_name.as_str()),
+            ("Region", self.region_name.as_str()),
+            ("City", self.city_name.as_str()),
+        ]
+        .into_iter()
+        .filter(|(_, value)| !value.is_empty())
+        .map(|(label, value)| format!("{label}:{RESET} {value}"))
+        .collect::<Vec<_>>();
 
         if parts.is_empty() {
             write!(fmt, "No location data available")

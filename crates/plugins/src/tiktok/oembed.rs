@@ -4,6 +4,7 @@ use serde::Deserialize;
 use tracing::debug;
 
 use zeta_http as http;
+use zeta_url::redact_url_str;
 
 /// The URL to the oEmbed endpoint.
 const TIKTOK_OEMBED_API: &str = "https://www.tiktok.com/oembed";
@@ -56,7 +57,7 @@ pub type Error = http::ApiError;
 ///
 /// Returns an error if the request fails or TikTok returns an invalid response.
 pub async fn fetch(http_client: &reqwest::Client, url: &str) -> Result<OEmbed, Error> {
-    debug!(%url, "fetching oembed data");
+    debug!(url.full = %redact_url_str(url), "fetching oembed data");
 
     http::get_json(http_client.get(TIKTOK_OEMBED_API).query(&[("url", url)])).await
 }

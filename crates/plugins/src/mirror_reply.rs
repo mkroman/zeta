@@ -10,6 +10,32 @@ use tracing::error;
 use crate::prelude::*;
 use zeta_mirror::MirrorHandle;
 
+/// Starts the shared download manager when the plugin has a mirror configured.
+///
+/// Plugins call this from their `loaded` hook; without a configured mirror it is a no-op.
+pub fn start_downloads(mirror: Option<&MirrorHandle>) {
+    if let Some(mirror) = mirror {
+        mirror.start_downloads();
+    }
+}
+
+/// Mirrors the media at `url` and replies with the mirrored file's link, when the plugin has a
+/// mirror configured.
+///
+/// Without a configured mirror this is a no-op, leaving the plugin to its non-mirroring
+/// behavior.
+pub async fn ensure_mirrored_if_configured(
+    mirror: Option<&MirrorHandle>,
+    url: &str,
+    id: &str,
+    channel: &str,
+    client: &Client,
+) {
+    if let Some(mirror) = mirror {
+        ensure_mirrored_and_reply(mirror, url, id, channel, client).await;
+    }
+}
+
 /// Mirrors the media at `url` with the given `id`, replying with the mirrored file's link to
 /// `channel` through `client`.
 ///

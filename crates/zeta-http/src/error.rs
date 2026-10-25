@@ -96,14 +96,10 @@ mod request {
         }
     }
 
-    /// A `reqwest::Error` whose URL has been redacted and whose message is rendered once.
-    ///
-    /// The URL is stripped from the wrapped error — which is dropped — and kept here in its
-    /// redacted form, so [`Display`](std::fmt::Display), [`Debug`](std::fmt::Debug) and the
-    /// source chain are all free of the query string by construction.
-    #[cfg(any(feature = "request", feature = "http"))]
+    /// The state shared by both transport-error wrappers: the rendered messages, the redacted
+    /// URL and host, and the failure classification.
     #[derive(Debug)]
-    pub struct RequestError {
+    struct Rendered {
         /// The transport error's own message, with its URL stripped ("error sending request").
         kind: String,
         /// [`kind`] with the source chain and the redacted URL appended — what a log line gets.
@@ -116,66 +112,18 @@ mod request {
         timeout: bool,
         /// Whether the request failed before it could be sent.
         connect: bool,
-        /// Whether the failure happened while sending the request rather than while reading
-        /// its response.
-        request: bool,
     }
 
-    #[cfg(any(feature = "request", feature = "http"))]
-    impl RequestError {
-        /// Returns the request URL without its query string or userinfo, if the error carries
-        /// one.
-        #[must_use]
-        pub fn url(&self) -> Option<&str> {
-            self.url.as_deref()
-        }
-
-        /// Returns the full rendering — error kind, source chain and redacted URL — for a log
-        /// line, where naming the request that failed matters more than staying short.
-        #[must_use]
-        pub fn full(&self) -> &str {
-            &self.detail
-        }
-
-        /// Returns the [`error.type`] value for this failure, for a span or log field.
-        ///
-        /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
-        #[must_use]
-        pub const fn error_type(&self) -> &'static str {
-            classify(self.timeout, self.connect)
-        }
-
-        /// Returns whether the request timed out.
-        #[must_use]
-        pub const fn is_timeout(&self) -> bool {
-            self.timeout
-        }
-
-        /// Returns whether the request failed before it could be sent, e.g. because the
-        /// connection was refused or the host could not be resolved.
-        #[must_use]
-        pub const fn is_connect(&self) -> bool {
-            self.connect
-        }
-
-        /// Returns whether the failure happened while sending the request rather than while
-        /// reading its response.
-        #[must_use]
-        pub const fn is_request(&self) -> bool {
-            self.request
-        }
-    }
-
-    #[cfg(any(feature = "request", feature = "http"))]
-    impl From<reqwest::Error> for RequestError {
-        fn from(error: reqwest::Error) -> Self {
+    impl Rendered {
+        /// Renders a `reqwest::Error`, stripping its URL before anything can format it.
+        #[cfg(any(feature = "request", feature = "http"))]
+        fn from_reqwest(error: reqwest::Error) -> Self {
             let url = error.url().map(redact_url);
             let host = error
                 .url()
                 .and_then(|url| url.host_str().map(str::to_string));
             let timeout = error.is_timeout();
             let connect = error.is_connect();
-            let request = error.is_request();
 
             let error = error.without_url();
             let kind = error.to_string();
@@ -188,89 +136,12 @@ mod request {
                 host,
                 timeout,
                 connect,
-                request,
             }
         }
-    }
 
-    #[cfg(any(feature = "request", feature = "http"))]
-    impl fmt::Display for RequestError {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write_short(
-                f,
-                &self.kind,
-                self.host.as_deref(),
-                self.timeout,
-                self.connect,
-            )
-        }
-    }
-
-    #[cfg(any(feature = "request", feature = "http"))]
-    impl StdError for RequestError {}
-
-    /// A `wreq::Error` whose URI has been redacted and whose message is rendered once.
-    ///
-    /// The same contract as [`RequestError`]: the browser-emulated client prints its request URI
-    /// in `Display` and `Debug`, and the metadata proxy instagram falls back to can carry a
-    /// credential in its query.
-    #[cfg(feature = "emulated")]
-    #[derive(Debug)]
-    pub struct WreqError {
-        /// The transport error's own message, with its URI stripped.
-        kind: String,
-        /// [`kind`] with the source chain and the redacted URI appended — what a log line gets.
-        detail: String,
-        /// The request URI without its query string or userinfo.
-        url: Option<String>,
-        /// The host the request went to, for the short rendering.
-        host: Option<String>,
-        /// Whether the request timed out.
-        timeout: bool,
-        /// Whether the request failed before it could be sent.
-        connect: bool,
-    }
-
-    #[cfg(feature = "emulated")]
-    impl WreqError {
-        /// Returns the request URI without its query string or userinfo, if the error carries
-        /// one. An origin-form URI (no scheme or authority) is returned as its path alone.
-        #[must_use]
-        pub fn url(&self) -> Option<&str> {
-            self.url.as_deref()
-        }
-
-        /// Returns the full rendering — error kind, source chain and redacted URI — for a log
-        /// line, where naming the request that failed matters more than staying short.
-        #[must_use]
-        pub fn full(&self) -> &str {
-            &self.detail
-        }
-
-        /// Returns the [`error.type`] value for this failure, for a span or log field.
-        ///
-        /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
-        #[must_use]
-        pub const fn error_type(&self) -> &'static str {
-            classify(self.timeout, self.connect)
-        }
-
-        /// Returns whether the request timed out.
-        #[must_use]
-        pub const fn is_timeout(&self) -> bool {
-            self.timeout
-        }
-
-        /// Returns whether the request failed before it could be sent.
-        #[must_use]
-        pub const fn is_connect(&self) -> bool {
-            self.connect
-        }
-    }
-
-    #[cfg(feature = "emulated")]
-    impl From<wreq::Error> for WreqError {
-        fn from(error: wreq::Error) -> Self {
+        /// Renders a `wreq::Error`, stripping its URI before anything can format it.
+        #[cfg(feature = "emulated")]
+        fn from_wreq(error: wreq::Error) -> Self {
             let url = error.uri().map(redact_uri);
             let host = error.uri().and_then(|uri| uri.host().map(str::to_string));
             let timeout = error.is_timeout();
@@ -290,10 +161,39 @@ mod request {
                 connect,
             }
         }
+
+        /// Returns the request URL without its query string or userinfo, if the error carries
+        /// one.
+        fn url(&self) -> Option<&str> {
+            self.url.as_deref()
+        }
+
+        /// Returns the full rendering — error kind, source chain and redacted URL — for a log
+        /// line, where naming the request that failed matters more than staying short.
+        fn full(&self) -> &str {
+            &self.detail
+        }
+
+        /// Returns the [`error.type`] value for this failure, for a span or log field.
+        ///
+        /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
+        const fn error_type(&self) -> &'static str {
+            classify(self.timeout, self.connect)
+        }
+
+        /// Returns whether the request timed out.
+        const fn is_timeout(&self) -> bool {
+            self.timeout
+        }
+
+        /// Returns whether the request failed before it could be sent, e.g. because the
+        /// connection was refused or the host could not be resolved.
+        const fn is_connect(&self) -> bool {
+            self.connect
+        }
     }
 
-    #[cfg(feature = "emulated")]
-    impl fmt::Display for WreqError {
+    impl fmt::Display for Rendered {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write_short(
                 f,
@@ -302,6 +202,151 @@ mod request {
                 self.timeout,
                 self.connect,
             )
+        }
+    }
+
+    /// A `reqwest::Error` whose URL has been redacted and whose message is rendered once.
+    ///
+    /// The URL is stripped from the wrapped error — which is dropped — and kept here in its
+    /// redacted form, so [`Display`](std::fmt::Display), [`Debug`](std::fmt::Debug) and the
+    /// source chain are all free of the query string by construction.
+    #[cfg(any(feature = "request", feature = "http"))]
+    #[derive(Debug)]
+    pub struct RequestError {
+        /// The rendered failure shared with [`WreqError`].
+        rendered: Rendered,
+        /// Whether the failure happened while sending the request rather than while reading
+        /// its response.
+        request: bool,
+    }
+
+    #[cfg(any(feature = "request", feature = "http"))]
+    impl RequestError {
+        /// Returns the request URL without its query string or userinfo, if the error carries
+        /// one.
+        #[must_use]
+        pub fn url(&self) -> Option<&str> {
+            self.rendered.url()
+        }
+
+        /// Returns the full rendering — error kind, source chain and redacted URL — for a log
+        /// line, where naming the request that failed matters more than staying short.
+        #[must_use]
+        pub fn full(&self) -> &str {
+            self.rendered.full()
+        }
+
+        /// Returns the [`error.type`] value for this failure, for a span or log field.
+        ///
+        /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
+        #[must_use]
+        pub const fn error_type(&self) -> &'static str {
+            self.rendered.error_type()
+        }
+
+        /// Returns whether the request timed out.
+        #[must_use]
+        pub const fn is_timeout(&self) -> bool {
+            self.rendered.is_timeout()
+        }
+
+        /// Returns whether the request failed before it could be sent, e.g. because the
+        /// connection was refused or the host could not be resolved.
+        #[must_use]
+        pub const fn is_connect(&self) -> bool {
+            self.rendered.is_connect()
+        }
+
+        /// Returns whether the failure happened while sending the request rather than while
+        /// reading its response.
+        #[must_use]
+        pub const fn is_request(&self) -> bool {
+            self.request
+        }
+    }
+
+    #[cfg(any(feature = "request", feature = "http"))]
+    impl From<reqwest::Error> for RequestError {
+        fn from(error: reqwest::Error) -> Self {
+            Self {
+                request: error.is_request(),
+                rendered: Rendered::from_reqwest(error),
+            }
+        }
+    }
+
+    #[cfg(any(feature = "request", feature = "http"))]
+    impl fmt::Display for RequestError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Display::fmt(&self.rendered, f)
+        }
+    }
+
+    #[cfg(any(feature = "request", feature = "http"))]
+    impl StdError for RequestError {}
+
+    /// A `wreq::Error` whose URI has been redacted and whose message is rendered once.
+    ///
+    /// The same contract as [`RequestError`]: the browser-emulated client prints its request URI
+    /// in `Display` and `Debug`, and the metadata proxy instagram falls back to can carry a
+    /// credential in its query.
+    #[cfg(feature = "emulated")]
+    #[derive(Debug)]
+    pub struct WreqError {
+        /// The rendered failure shared with [`RequestError`].
+        rendered: Rendered,
+    }
+
+    #[cfg(feature = "emulated")]
+    impl WreqError {
+        /// Returns the request URI without its query string or userinfo, if the error carries
+        /// one. An origin-form URI (no scheme or authority) is returned as its path alone.
+        #[must_use]
+        pub fn url(&self) -> Option<&str> {
+            self.rendered.url()
+        }
+
+        /// Returns the full rendering — error kind, source chain and redacted URI — for a log
+        /// line, where naming the request that failed matters more than staying short.
+        #[must_use]
+        pub fn full(&self) -> &str {
+            self.rendered.full()
+        }
+
+        /// Returns the [`error.type`] value for this failure, for a span or log field.
+        ///
+        /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
+        #[must_use]
+        pub const fn error_type(&self) -> &'static str {
+            self.rendered.error_type()
+        }
+
+        /// Returns whether the request timed out.
+        #[must_use]
+        pub const fn is_timeout(&self) -> bool {
+            self.rendered.is_timeout()
+        }
+
+        /// Returns whether the request failed before it could be sent.
+        #[must_use]
+        pub const fn is_connect(&self) -> bool {
+            self.rendered.is_connect()
+        }
+    }
+
+    #[cfg(feature = "emulated")]
+    impl From<wreq::Error> for WreqError {
+        fn from(error: wreq::Error) -> Self {
+            Self {
+                rendered: Rendered::from_wreq(error),
+            }
+        }
+    }
+
+    #[cfg(feature = "emulated")]
+    impl fmt::Display for WreqError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Display::fmt(&self.rendered, f)
         }
     }
 

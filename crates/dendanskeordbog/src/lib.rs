@@ -60,6 +60,8 @@ pub use error::Error;
 /// Re-export of the redacted request error type for convenient access.
 #[cfg(feature = "client")]
 pub use error::RequestError;
+use std::sync::LazyLock;
+
 use scraper::{ElementRef, Selector};
 /// Re-export of the top-level `DictionaryDocument` struct.
 pub use types::DictionaryDocument;
@@ -155,5 +157,17 @@ impl Default for Selectors {
     /// Creates a default `Selectors` instance by calling [`Selectors::new`].
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The selectors shared by every parse: the selector strings are fixed, so compiling them once
+/// avoids rebuilding the same 14 selectors for each response.
+static SHARED_SELECTORS: LazyLock<Selectors> = LazyLock::new(Selectors::new);
+
+impl Selectors {
+    /// Returns the process-wide compiled selector set.
+    #[must_use]
+    pub fn shared() -> &'static Self {
+        &SHARED_SELECTORS
     }
 }

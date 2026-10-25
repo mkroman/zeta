@@ -30,7 +30,6 @@ pub struct Settings {
     /// The Google Maps API key.
     ///
     /// Falls back to the `GOOGLE_MAPS_API_KEY` environment variable when unset.
-    #[serde(default)]
     pub api_key: Option<String>,
 }
 
@@ -171,6 +170,20 @@ impl PlaceDetails {
             .close
             .as_ref()
             .and_then(|close| format_time_string(&close.time))
+    }
+
+    /// Formats the opening time for the date's day of the week, or a Danish placeholder when
+    /// the API did not record one.
+    fn opening_time_or_unknown(&self, date: OffsetDateTime) -> String {
+        self.opening_time(date)
+            .unwrap_or_else(|| "ukendt tid".to_string())
+    }
+
+    /// Formats the closing time for the date's day of the week, or a Danish placeholder when
+    /// the API did not record one.
+    fn closing_time_or_unknown(&self, date: OffsetDateTime) -> String {
+        self.closing_time(date)
+            .unwrap_or_else(|| "ukendt tid".to_string())
     }
 
     /// Returns (Open Time, Close Time) as `Time` objects for the requested date.
@@ -327,12 +340,8 @@ impl IsItOpen {
         if place.is_always_open() {
             format!("{nick}: \x02{name}\x02 har døgnåbent")
         } else if place.is_open_now() {
-            let closing = place
-                .closing_time(now)
-                .unwrap_or_else(|| "ukendt tid".to_string());
-            let opening = place
-                .opening_time(now)
-                .unwrap_or_else(|| "ukendt tid".to_string());
+            let closing = place.closing_time_or_unknown(now);
+            let opening = place.opening_time_or_unknown(now);
             format!(
                 "{nick}: \x02{name}\x02 lukker kl. \x02{closing}\x02 - de åbnede kl. \x02{opening}\x02"
             )
@@ -364,9 +373,7 @@ impl IsItOpen {
         if place.is_always_open() {
             format!("{nick}: ja, \x02{name}\x02 har døgnåbent")
         } else if place.is_open_now() {
-            let opening = place
-                .opening_time(now)
-                .unwrap_or_else(|| "ukendt tid".to_string());
+            let opening = place.opening_time_or_unknown(now);
             format!("{nick}: ja, \x02{name}\x02 åbnede kl. \x02{opening}\x02 i dag")
         } else {
             let (open_time, close_time) = place.open_and_close_time(now);
@@ -395,12 +402,8 @@ impl IsItOpen {
         if place.is_always_open() {
             format!("{nick}: nej, \x02{name}\x02 har døgnåbent")
         } else if place.is_open_now() {
-            let opening = place
-                .opening_time(now)
-                .unwrap_or_else(|| "ukendt tid".to_string());
-            let closing = place
-                .closing_time(now)
-                .unwrap_or_else(|| "ukendt tid".to_string());
+            let opening = place.opening_time_or_unknown(now);
+            let closing = place.closing_time_or_unknown(now);
             format!(
                 "{nick}: nej, \x02{name}\x02 åbnede kl. \x02{opening}\x02 og lukker kl. \x02{closing}\x02 i dag"
             )

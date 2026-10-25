@@ -14,18 +14,18 @@ pub type Database = sqlx::PgPool;
 /// The plugins' database migrations, applied at startup.
 static MIGRATOR: Migrator = sqlx::migrate!("../plugins/migrations");
 
-/// Connects to the database using the provided url and configuration.
+/// Connects to the database using `config`'s url and pool bounds.
 ///
 /// # Errors
 ///
 /// If unable to establish connection to the database, `Err(Error::OpenDatabase)` is returned.
-pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Database, Error> {
+pub async fn connect(config: &crate::config::DbConfig) -> Result<Database, Error> {
     let pool = PgPoolOptions::new()
         .min_connections(config.min_connections)
         .max_connections(config.max_connections)
         .idle_timeout(config.idle_timeout)
         .max_lifetime(config.max_lifetime)
-        .connect(url)
+        .connect(&config.url)
         .await
         .map_err(Error::OpenDatabase)?;
 

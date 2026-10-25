@@ -14,6 +14,7 @@ use wildmatch::WildMatch;
 
 use super::model::Filter;
 use zeta_plugin::Sender;
+use zeta_url::redact_url;
 
 /// Whether `pattern` contains wildcards.
 pub(super) fn is_wildcard(pattern: &str) -> bool {
@@ -288,7 +289,7 @@ impl FilterIndex {
             .buckets(channel)
             .any(|bucket| bucket.matches(host.as_deref(), sender, url))
         {
-            trace!(%channel, %url, "message matches a filter");
+            trace!(%channel, url.full = %redact_url(url), "message matches a filter");
 
             true
         } else {

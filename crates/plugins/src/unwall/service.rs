@@ -17,6 +17,7 @@ use super::{
 };
 use crate::database::Database;
 use zeta_cache::TtlMap;
+use zeta_url::redact_url_str;
 
 /// How long a submitted article stays in the in-flight cache, collapsing a burst of the same
 /// article into a single submission.
@@ -130,7 +131,11 @@ impl UnwallService {
                 // The fetch was triggered either way; a failed attribution is logged, never
                 // fatal to the submission.
                 if let Err(error) = self.repo.record_fetch(&fetch).await {
-                    warn!(url.full = %fetch.url, %error, "could not record the unwall fetch");
+                    warn!(
+                        url.full = %redact_url_str(&fetch.url),
+                        %error,
+                        "could not record the unwall fetch"
+                    );
                 }
 
                 submitted?;

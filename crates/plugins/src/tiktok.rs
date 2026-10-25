@@ -106,9 +106,7 @@ impl Tiktok {
 
     #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        if let Some(mirror) = &self.mirror {
-            mirror.start_downloads();
-        }
+        crate::mirror_reply::start_downloads(self.mirror.as_ref());
 
         Ok(())
     }
@@ -180,10 +178,14 @@ impl Tiktok {
             let _ = client.send_privmsg(channel, notice(&summary));
         }
 
-        if let Some(mirror) = &self.mirror {
-            crate::mirror_reply::ensure_mirrored_and_reply(mirror, &url, video_id, channel, client)
-                .await;
-        }
+        crate::mirror_reply::ensure_mirrored_if_configured(
+            self.mirror.as_ref(),
+            &url,
+            video_id,
+            channel,
+            client,
+        )
+        .await;
 
         Ok(())
     }

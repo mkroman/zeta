@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use zeta_url::{is_identifier, is_numeric_segment, path_segments, query_param};
+use zeta_url::{is_identifier, is_numeric_segment, path_segments, query_param, strip_www};
 
 /// The standard hostname.
 const INSTAGRAM_COM: &str = "instagram.com";
@@ -124,7 +124,7 @@ pub fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
 
     // `instagr.am` serves the same path structure as the standard hosts, but links that don't
     // parse as known resources are share links that have to be resolved through a redirect.
-    let host = host.strip_prefix("www.").unwrap_or(host);
+    let host = strip_www(host);
 
     match host {
         INSTAGRAM_COM | M_INSTAGRAM_COM => parse_instagram_com_url(url),

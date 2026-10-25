@@ -32,7 +32,6 @@ pub struct Settings {
     /// The Thingiverse app token.
     ///
     /// Falls back to the `THINGIVERSE_APP_TOKEN` environment variable when unset.
-    #[serde(default)]
     pub api_key: Option<String>,
 }
 

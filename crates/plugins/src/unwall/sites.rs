@@ -48,9 +48,7 @@ pub(super) fn normalize_site(input: &str) -> Option<String> {
 pub(super) fn matches_site(candidate: &str, site: &str) -> bool {
     let Some(domain) = site.strip_prefix("*.") else {
         return candidate.eq_ignore_ascii_case(site)
-            || candidate
-                .strip_prefix("www.")
-                .is_some_and(|host| host.eq_ignore_ascii_case(site));
+            || zeta_url::strip_www(candidate).eq_ignore_ascii_case(site);
     };
 
     candidate

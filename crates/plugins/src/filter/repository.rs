@@ -6,7 +6,7 @@ use super::{
     error::Error,
     model::{Filter, NewFilter},
 };
-use crate::database::Database;
+use crate::database::{Database, namespace};
 
 /// Repository for storing and retrieving filters in the database.
 #[derive(Debug, Clone)]
@@ -33,7 +33,7 @@ impl FilterRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "INSERT",
             db.collection.name = "filters",
             db.query.summary = "INSERT filters",
@@ -72,7 +72,7 @@ impl FilterRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "SELECT",
             db.collection.name = "filters",
             db.query.summary = "SELECT filters",
@@ -102,7 +102,7 @@ impl FilterRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "DELETE",
             db.collection.name = "filters",
             db.query.summary = "DELETE filters",

@@ -39,12 +39,10 @@ pub struct Settings {
     /// The Spotify application client id.
     ///
     /// Falls back to the `SPOTIFY_CLIENT_ID` environment variable when unset.
-    #[serde(default)]
     pub client_id: Option<String>,
     /// The Spotify application client secret.
     ///
     /// Falls back to the `SPOTIFY_CLIENT_SECRET` environment variable when unset.
-    #[serde(default)]
     pub client_secret: Option<String>,
 }
 
@@ -236,6 +234,32 @@ impl Spotify {
         http::get_json(request).await
     }
 
+    /// Fetches a resource, formats it, and replies with the message.
+    ///
+    /// `render` receives the fetched details and whether the reply should include the external
+    /// URL. Fetch errors are reported through [`handle_error`].
+    async fn send_details<T, F>(
+        &self,
+        path: &str,
+        channel: &str,
+        include_url: bool,
+        client: &Client,
+        render: F,
+    ) -> Result<(), ZetaError>
+    where
+        T: for<'de> Deserialize<'de>,
+        F: FnOnce(&T, bool) -> String,
+    {
+        match self.fetch::<T>(path).await {
+            Ok(details) => {
+                client.send_privmsg(channel, reply("Spotify", render(&details, include_url)))?;
+            }
+            Err(error) => handle_error(channel, client, &error)?,
+        }
+
+        Ok(())
+    }
+
     async fn send_track_details(
         &self,
         channel: &str,
@@ -243,11 +267,15 @@ impl Spotify {
         include_url: bool,
         client: &Client,
     ) -> Result<(), ZetaError> {
-        match self.fetch::<Track>(&format!("tracks/{id}")).await {
-            Ok(track) => {
-                let name = track.name;
+        self.send_details(
+            &format!("tracks/{id}"),
+            channel,
+            include_url,
+            client,
+            |track: &Track, include_url| {
+                let name = &track.name;
                 let artists = join_artists(&track.artists);
-                let album = track.album.name;
+                let album = &track.album.name;
 
                 let mut msg = format!("\x0f{name}\x0310 is a track by {artists}\x0310");
                 let _ = write!(msg, " from the album \x0f{album}\x0310");
@@ -256,11 +284,10 @@ impl Spotify {
                     let _ = write!(msg, " - {}", track.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, reply("Spotify", &msg))?;
-            }
-            Err(e) => handle_error(channel, client, &e)?,
-        }
-        Ok(())
+                msg
+            },
+        )
+        .await
     }
 
     async fn send_album_details(
@@ -270,9 +297,13 @@ impl Spotify {
         include_url: bool,
         client: &Client,
     ) -> Result<(), ZetaError> {
-        match self.fetch::<Album>(&format!("albums/{id}")).await {
-            Ok(album) => {
-                let name = album.name;
+        self.send_details(
+            &format!("albums/{id}"),
+            channel,
+            include_url,
+            client,
+            |album: &Album, include_url| {
+                let name = &album.name;
                 let artists = join_artists(&album.artists);
 
                 let mut msg = format!("\x0f{name}\x0310 is an album by {artists}");
@@ -281,11 +312,10 @@ impl Spotify {
                     let _ = write!(msg, " - {}", album.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, reply("Spotify", &msg))?;
-            }
-            Err(e) => handle_error(channel, client, &e)?,
-        }
-        Ok(())
+                msg
+            },
+        )
+        .await
     }
 
     async fn send_artist_details(
@@ -295,9 +325,13 @@ impl Spotify {
         include_url: bool,
         client: &Client,
     ) -> Result<(), ZetaError> {
-        match self.fetch::<Artist>(&format!("artists/{id}")).await {
-            Ok(artist) => {
-                let name = artist.name;
+        self.send_details(
+            &format!("artists/{id}"),
+            channel,
+            include_url,
+            client,
+            |artist: &Artist, include_url| {
+                let name = &artist.name;
                 let genres = to_sentence(&artist.genres);
                 let followers = artist.followers.total.to_formatted_string(&Locale::en);
 
@@ -314,11 +348,10 @@ impl Spotify {
                     let _ = write!(msg, " - {}", artist.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, reply("Spotify", &msg))?;
-            }
-            Err(e) => handle_error(channel, client, &e)?,
-        }
-        Ok(())
+                msg
+            },
+        )
+        .await
     }
 
     async fn send_playlist_details(
@@ -328,11 +361,19 @@ impl Spotify {
         include_url: bool,
         client: &Client,
     ) -> Result<(), ZetaError> {
-        match self.fetch::<Playlist>(&format!("playlists/{id}")).await {
-            Ok(playlist) => {
-                let name = playlist.name;
+        self.send_details(
+            &format!("playlists/{id}"),
+            channel,
+            include_url,
+            client,
+            |playlist: &Playlist, include_url| {
+                let name = &playlist.name;
                 let total_tracks = playlist.tracks.total;
-                let owner = playlist.owner.display_name.unwrap_or(playlist.owner.id);
+                let owner = playlist
+                    .owner
+                    .display_name
+                    .as_deref()
+                    .unwrap_or(&playlist.owner.id);
                 let followers = playlist.followers.total;
 
                 let mut msg = format!(
@@ -348,11 +389,10 @@ impl Spotify {
                     let _ = write!(msg, " - {}", playlist.external_urls.spotify);
                 }
 
-                client.send_privmsg(channel, reply("Spotify", &msg))?;
-            }
-            Err(e) => handle_error(channel, client, &e)?,
-        }
-        Ok(())
+                msg
+            },
+        )
+        .await
     }
 }
 

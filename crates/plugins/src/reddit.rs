@@ -106,9 +106,7 @@ impl Reddit {
 
     #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        if let Some(mirror) = &self.mirror {
-            mirror.start_downloads();
-        }
+        crate::mirror_reply::start_downloads(self.mirror.as_ref());
 
         Ok(())
     }
@@ -234,32 +232,20 @@ impl Reddit {
 
         client.send_privmsg(channel, notice(format!("{title} : {subreddit}")))?;
 
-        self.mirror_video(&submission, &id, channel, client).await;
-
-        Ok(())
-    }
-
-    /// Starts mirroring of the hosted video of the submission, replying with a link to the
-    /// mirrored file.
-    ///
-    /// If the video has already been mirrored, the existing link is sent immediately; otherwise
-    /// the download and upload happens in a background task that replies with the link.
-    async fn mirror_video(
-        &self,
-        submission: &Submission,
-        id: &str,
-        channel: &str,
-        client: &Client,
-    ) {
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
-        let Some(url) = submission.video_url() else {
-            return;
-        };
-
-        if let Some(mirror) = &self.mirror {
-            crate::mirror_reply::ensure_mirrored_and_reply(mirror, url, id, channel, client).await;
+        if let Some(url) = submission.video_url() {
+            crate::mirror_reply::ensure_mirrored_if_configured(
+                self.mirror.as_ref(),
+                url,
+                &id,
+                channel,
+                client,
+            )
+            .await;
         }
+
+        Ok(())
     }
 }
 

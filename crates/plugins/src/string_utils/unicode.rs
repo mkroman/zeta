@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use zeta_unicode::{
     MAX_EMOJI_KEY_BYTES, emoji_name, general_category, may_start_emoji_sequence, name_or_label,
 };
-use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_within_budget};
+use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_with_more};
 
 use crate::prelude::*;
 
@@ -90,10 +90,9 @@ fn append_listing(
     budget: usize,
     reserved: usize,
 ) {
-    let appended = append_entries_within_budget(message, entries, ", ", budget, reserved);
-    if appended < total {
-        message.push_str(SUFFIX);
-    }
+    append_entries_with_more(message, entries, total, ", ", budget, reserved, |_| {
+        SUFFIX.to_string()
+    });
 }
 
 /// Splits `args` into character entries, grouping each run that names an emoji sequence of at

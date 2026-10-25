@@ -39,6 +39,16 @@ struct Entry<T> {
     expires_at: Instant,
 }
 
+impl<T> Entry<T> {
+    /// Wraps `value` with an expiry `ttl` from now.
+    fn new(value: T, ttl: Duration) -> Self {
+        Self {
+            value,
+            expires_at: Instant::now() + ttl,
+        }
+    }
+}
+
 impl<T> TtlCache<T> {
     /// Creates an empty cache where cached values expire after `ttl`.
     #[must_use]
@@ -53,14 +63,11 @@ impl<T> TtlCache<T> {
     /// Creates a cache pre-populated with `value`, expiring after `ttl`.
     #[must_use]
     pub fn with_value(value: T, ttl: Duration) -> Self {
-        Self {
-            entry: ArcSwapOption::from(Some(Arc::new(Entry {
-                value,
-                expires_at: Instant::now() + ttl,
-            }))),
-            ttl,
-            refreshing: tokio::sync::Mutex::const_new(()),
-        }
+        let cache = Self::new(ttl);
+
+        cache.replace(Entry::new(value, ttl));
+
+        cache
     }
 
     /// Runs `read` with the cached value if one exists, fresh or stale.
@@ -128,12 +135,8 @@ impl<T> TtlCache<T> {
         }
 
         let value = refresh().await?;
-        let expires_at = Instant::now() + self.ttl;
 
-        self.replace(Entry {
-            value: value.clone(),
-            expires_at,
-        });
+        self.replace(Entry::new(value.clone(), self.ttl));
 
         Ok(value)
     }
@@ -166,10 +169,7 @@ impl<T> TtlCache<T> {
         }
 
         let value = refresh().await?;
-        self.replace(Entry {
-            value,
-            expires_at: Instant::now() + self.ttl,
-        });
+        self.replace(Entry::new(value, self.ttl));
 
         Ok(())
     }
@@ -193,10 +193,7 @@ impl<T> TtlCache<T> {
         let _flight = self.refreshing.lock().await;
 
         let value = refresh().await?;
-        self.replace(Entry {
-            value: value.clone(),
-            expires_at: Instant::now() + self.ttl,
-        });
+        self.replace(Entry::new(value.clone(), self.ttl));
 
         Ok(value)
     }

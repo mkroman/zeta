@@ -29,7 +29,6 @@ pub struct Settings {
     /// A GitHub API token, used to raise the rate limit for requests.
     ///
     /// Falls back to the `GITHUB_TOKEN` environment variable when unset.
-    #[serde(default)]
     pub token: Option<String>,
 }
 

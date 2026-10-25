@@ -7,7 +7,7 @@ use super::{
     error::Error,
     model::{Alert, NewAlert},
 };
-use crate::database::Database;
+use crate::database::{Database, namespace};
 
 /// Repository for storing and retrieving alerts in the database.
 #[derive(Debug, Clone)]
@@ -34,7 +34,7 @@ impl AlertRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "INSERT",
             db.collection.name = "alerts",
             db.query.summary = "INSERT alerts",
@@ -72,7 +72,7 @@ impl AlertRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "SELECT",
             db.collection.name = "alerts",
             db.query.summary = "SELECT alerts",
@@ -104,7 +104,7 @@ impl AlertRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "SELECT",
             db.collection.name = "alerts",
             db.query.summary = "SELECT alerts",
@@ -137,7 +137,7 @@ impl AlertRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "DELETE",
             db.collection.name = "alerts",
             db.query.summary = "DELETE alerts",

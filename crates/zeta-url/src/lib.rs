@@ -48,15 +48,9 @@ pub trait ExtractUrlsExt<'a> {
     fn urls(&'a self) -> ExtractUrls<'a>;
 }
 
-impl<'a> ExtractUrlsExt<'a> for String {
+impl<'a, T: AsRef<str> + ?Sized> ExtractUrlsExt<'a> for T {
     fn urls(&'a self) -> ExtractUrls<'a> {
-        ExtractUrls::new(self)
-    }
-}
-
-impl<'a> ExtractUrlsExt<'a> for str {
-    fn urls(&'a self) -> ExtractUrls<'a> {
-        ExtractUrls::new(self)
+        ExtractUrls::new(self.as_ref())
     }
 }
 
@@ -118,6 +112,15 @@ pub fn query_param(url: &Url, name: &str) -> Option<String> {
     url.query_pairs()
         .find(|(key, _)| key == name)
         .map(|(_, value)| value.into_owned())
+}
+
+/// Returns `host` without its leading `www.` label, if it has one.
+///
+/// Hosts are compared case-insensitively elsewhere; this only normalizes the conventional
+/// `www.` alias that links routinely carry.
+#[must_use]
+pub fn strip_www(host: &str) -> &str {
+    host.strip_prefix("www.").unwrap_or(host)
 }
 
 /// Returns `url` as it may be logged: without its query string or userinfo.
@@ -263,6 +266,14 @@ mod tests {
     }
 
     #[test]
+    fn strip_www_should_remove_only_the_leading_www_label() {
+        assert_eq!(strip_www("www.example.com"), "example.com");
+        assert_eq!(strip_www("example.com"), "example.com");
+        assert_eq!(strip_www("www."), "");
+        assert_eq!(strip_www("wwwx.example.com"), "wwwx.example.com");
+    }
+
+    #[test]
     fn redact_url_should_drop_the_query_string() {
         let url = Url::parse("https://api.example.com/v1/weather?q=horsens&appid=secret").unwrap();
 
@@ -321,14 +332,6 @@ mod tests {
         assert!(!is_prefixed_numeric_id("nmbuster", "nm"));
     }
 
-    /// Scheme map with the broken `ttp`/`ttps` variants, as used by the titles plugin.
-    const TTP_SCHEMES: SchemeMap = &[
-        ("http", None),
-        ("https", None),
-        ("ttp", Some("http")),
-        ("ttps", Some("https")),
-    ];
-
     const TEST_STRING: &str = r#"> Hetzner on X: "We've spun up an exploratory platform where you can find an experimental open-weight LLM inference API. Free, no SLAs. Test your own use cases and tell us what works and what doesn't 🫡No promises this becomes a permanent product: https://t.co/CE6YWbrTHz https://t.co/0j6aNULi86" / X"#;
 
     #[test]
@@ -348,7 +351,7 @@ mod tests {
     #[test]
     fn should_repair_broken_schemes() {
         let urls: Vec<ExtractedUrl> =
-            ExtractUrls::with_schemes("ttps://maero.dk ttp://example.com", TTP_SCHEMES).collect();
+            ExtractUrls::with_schemes("ttps://maero.dk ttp://example.com", HTTP_SCHEMES).collect();
 
         assert_eq!(urls.len(), 2);
         assert_eq!(urls[0].url.as_str(), "https://maero.dk/");
@@ -360,7 +363,8 @@ mod tests {
     #[test]
     fn should_not_repair_canonical_schemes() {
         let urls: Vec<ExtractedUrl> =
-            ExtractUrls::with_schemes("https://maero.dk http://example.com", TTP_SCHEMES).collect();
+            ExtractUrls::with_schemes("https://maero.dk http://example.com", HTTP_SCHEMES)
+                .collect();
 
         assert_eq!(urls.len(), 2);
         assert!(
@@ -390,7 +394,7 @@ mod tests {
         // "http" is a prefix of "https" — the longest matching scheme should win so that the URL
         // is not misreported as repaired.
         let urls: Vec<ExtractedUrl> =
-            ExtractUrls::with_schemes("https://maero.dk", TTP_SCHEMES).collect();
+            ExtractUrls::with_schemes("https://maero.dk", HTTP_SCHEMES).collect();
 
         assert_eq!(urls.len(), 1);
         assert_eq!(urls[0].repaired_from, None);

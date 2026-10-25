@@ -32,7 +32,6 @@ pub use error::Error;
 pub use model::{Criteria, Filter, NewFilter};
 pub use service::FilterService;
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use argh::{ArgsInfo, FromArgs};
@@ -40,7 +39,7 @@ use tracing::debug;
 
 use crate::hostmask::Hostmasks;
 use crate::prelude::*;
-use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_within_budget};
+use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_with_more};
 
 /// The `.filter` command.
 const FILTER: CommandSpec =
@@ -265,32 +264,26 @@ fn expand(values: &[String]) -> Vec<Option<String>> {
     }
 }
 
-/// Builds `Criteria` from the pattern options `list` and `delete` share.
-impl From<&List> for Criteria {
-    fn from(list: &List) -> Self {
-        Self {
-            channel: list.channel.clone(),
-            host: list.host.clone(),
-            path: list.path.clone(),
-            nickname: list.nick.clone(),
-            username: list.user.clone(),
-            hostname: list.hostname.clone(),
+/// Builds `Criteria` from the pattern fields `List` and `Delete` share.
+macro_rules! criteria_from {
+    ($pattern:ty) => {
+        impl From<&$pattern> for Criteria {
+            fn from(pattern: &$pattern) -> Self {
+                Self {
+                    channel: pattern.channel.clone(),
+                    host: pattern.host.clone(),
+                    path: pattern.path.clone(),
+                    nickname: pattern.nick.clone(),
+                    username: pattern.user.clone(),
+                    hostname: pattern.hostname.clone(),
+                }
+            }
         }
-    }
+    };
 }
 
-impl From<&Delete> for Criteria {
-    fn from(delete: &Delete) -> Self {
-        Self {
-            channel: delete.channel.clone(),
-            host: delete.host.clone(),
-            path: delete.path.clone(),
-            nickname: delete.nick.clone(),
-            username: delete.user.clone(),
-            hostname: delete.hostname.clone(),
-        }
-    }
-}
+criteria_from!(List);
+criteria_from!(Delete);
 
 impl Delete {
     /// Returns the deletion criteria, or `None` if no criterion was given.
@@ -576,19 +569,15 @@ impl FilterPlugin {
 fn listing(header: String, filters: &[Filter], reserved: usize) -> String {
     let mut listing = header;
 
-    let appended = append_entries_within_budget(
+    append_entries_with_more(
         &mut listing,
         filters.iter().map(describe),
+        filters.len(),
         ", ",
         MAX_LISTING_LENGTH,
         reserved + MORE_SUFFIX_RESERVE,
+        |dropped| format!(" (+{dropped} more)"),
     );
-
-    let dropped = filters.len() - appended;
-
-    if dropped > 0 {
-        let _ = write!(listing, " (+{dropped} more)");
-    }
 
     listing
 }

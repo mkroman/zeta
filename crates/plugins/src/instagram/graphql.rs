@@ -87,9 +87,7 @@ struct PolarisMedia {
 
 #[derive(Debug, Default, Deserialize)]
 struct MediaItem {
-    #[serde(default)]
     caption: Option<Caption>,
-    #[serde(default)]
     user: Option<User>,
 }
 

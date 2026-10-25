@@ -37,7 +37,7 @@ async fn main() -> miette::Result<()> {
         use tracing::debug;
 
         debug!("connecting to database");
-        let db = database::connect(config.database.url.as_str(), &config.database).await?;
+        let db = database::connect(&config.database).await?;
         debug!("connected to database");
 
         debug!("running database migrations");

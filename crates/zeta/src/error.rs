@@ -25,7 +25,7 @@ pub enum Error {
     IrcClient(#[source] IrcError),
     /// Failed to register with the IRC server.
     #[error("Could not send registration details for IRC")]
-    IrcRegistration(#[source] irc::error::Error),
+    IrcRegistration(#[source] IrcError),
     /// Failed to acquire a database connection from the connection pool.
     #[error("Could not acquire a connection from the connection pool")]
     #[cfg(feature = "database")]

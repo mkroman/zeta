@@ -27,6 +27,9 @@ const COIN_MAP_LIMIT: u32 = 1000;
 /// size, so all supported currencies are fetched in a single request.
 const FIAT_MAP_LIMIT: u32 = 5000;
 
+/// The maximum number of characters of an unparseable response body that reaches the logs.
+const LOGGED_BODY_LENGTH: usize = 512;
+
 /// Configuration for the CoinMarketCap client.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -268,7 +271,9 @@ fn decode<T: DeserializeOwned>(text: &str) -> Result<T, ParseError> {
     let deserializer = &mut serde_json::Deserializer::from_str(text);
 
     serde_path_to_error::deserialize(deserializer).inspect_err(|error| {
-        tracing::error!(?error, body = %text, "could not deserialize json response");
+        let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
+
+        tracing::error!(?error, body = %body, "could not deserialize json response");
     })
 }
 

@@ -6,7 +6,7 @@ use super::{
     error::Error,
     model::{NewNotification, Notification},
 };
-use crate::database::Database;
+use crate::database::{Database, namespace};
 
 /// Repository for storing and retrieving notifications in the database.
 #[derive(Debug, Clone)]
@@ -33,7 +33,7 @@ impl NotificationRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "SELECT",
             db.collection.name = "notifications",
             db.query.summary = "SELECT notifications",
@@ -62,7 +62,7 @@ impl NotificationRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "INSERT",
             db.collection.name = "notifications",
             db.query.summary = "INSERT notifications",
@@ -100,7 +100,7 @@ impl NotificationRepository {
         err,
         fields(
             db.system.name = "postgresql",
-            db.namespace = %self.db.connect_options().get_database().unwrap_or_default(),
+            db.namespace = %namespace(&self.db),
             db.operation.name = "DELETE",
             db.collection.name = "notifications",
             db.query.summary = "DELETE notifications",

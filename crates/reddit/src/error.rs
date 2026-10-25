@@ -3,7 +3,6 @@ use std::fmt;
 use std::fmt::Write as _;
 use std::str::Utf8Error;
 
-use reqwest::header::ToStrError;
 use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
 use url::ParseError;
@@ -150,9 +149,6 @@ pub enum Error {
     /// A request could not be sent, or its body could not be read.
     #[error("request error: {0}")]
     Reqwest(#[source] RequestError),
-    /// The comments listing could not be parsed.
-    #[error("could not deserialize comments json: {0}")]
-    DeserializeComments(#[source] ErrorWithSerdePath<JsonError>),
     /// The submission response could not be parsed.
     #[error("could not deserialize submission json: {0}")]
     DeserializeSubmission(#[source] ErrorWithSerdePath<JsonError>),
@@ -171,12 +167,6 @@ pub enum Error {
     /// The response body is in an unexpected format.
     #[error("could not deserialize response as it is in unexpected format")]
     InvalidResponse,
-    /// The shortened link did not return a usable redirect url.
-    #[error("the shortened link did not return a usable redirect url")]
-    InvalidRedirect,
-    /// The redirect url uses an invalid encoding.
-    #[error("the response redirect url is using an invalid encoding: {0}")]
-    RedirectUrlEncoding(#[source] ToStrError),
     /// The short link did not redirect to a submission or comment.
     #[error("expected the short link to redirect to a submission or comment")]
     RedirectRedditLink,

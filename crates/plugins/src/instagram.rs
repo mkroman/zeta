@@ -44,7 +44,7 @@ use zeta_cache::{TtlCache, TtlMap};
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_mirror::{Mirror, MirrorHandle};
-use zeta_url::redact_url_str;
+use zeta_url::{redact_url, redact_url_str};
 use zeta_utils::text::{Truncatable, collapse_whitespace};
 
 use self::meta::MediaDetails;
@@ -196,9 +196,7 @@ impl Instagram {
 
     #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        if let Some(mirror) = &self.mirror {
-            mirror.start_downloads();
-        }
+        crate::mirror_reply::start_downloads(self.mirror.as_ref());
 
         Ok(())
     }
@@ -232,7 +230,7 @@ impl Instagram {
                 self.process_story(&username, &id, channel, client).await?;
             }
             Some(InstagramLink::Shortened(url)) => {
-                debug!(%url, "resolving share link");
+                debug!(url.full = %redact_url(&url), "resolving share link");
 
                 self.throttle().await;
 
@@ -336,7 +334,14 @@ impl Instagram {
             let _ = client.send_privmsg(channel, notice(&summary));
         }
 
-        self.mirror_video(url, id, channel, client).await;
+        crate::mirror_reply::ensure_mirrored_if_configured(
+            self.mirror.as_ref(),
+            url,
+            id,
+            channel,
+            client,
+        )
+        .await;
 
         Ok(())
     }
@@ -520,7 +525,7 @@ impl Instagram {
 
     /// Requests the given share link and returns the URL it resolves to.
     async fn resolve_url(&self, url: &Url) -> Result<Url, Error> {
-        debug!(%url, "resolving share url");
+        debug!(url.full = %redact_url(url), "resolving share url");
 
         let response = self.client.get(url.as_str()).send().await?;
 
@@ -528,7 +533,7 @@ impl Instagram {
         let location = response.uri().to_string();
         let url = Url::parse(&location).map_err(|_| Error::InvalidRedirect)?;
 
-        debug!(%url, "resolved share url");
+        debug!(url.full = %redact_url(&url), "resolved share url");
 
         Ok(url)
     }
@@ -545,16 +550,6 @@ impl Instagram {
         }
 
         *last_request = Some(Instant::now());
-    }
-
-    /// Starts mirroring of the given media, replying with a link to the mirrored file.
-    ///
-    /// If the media has already been mirrored, the existing link is sent immediately; otherwise
-    /// the download and upload happens in a background task that replies with the link.
-    async fn mirror_video(&self, url: &str, id: &str, channel: &str, client: &Client) {
-        if let Some(mirror) = &self.mirror {
-            crate::mirror_reply::ensure_mirrored_and_reply(mirror, url, id, channel, client).await;
-        }
     }
 }
 

@@ -20,7 +20,7 @@ use zeta_plugin::event::{
 use zeta_plugin::{CommandSpec, Event, EventKind, UrlScope};
 
 use zeta_plugin::Filters;
-use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES};
+use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, redact_url};
 
 /// A delivery endpoint for events: the mailbox of one plugin's task.
 #[derive(Clone, Debug)]
@@ -131,11 +131,7 @@ impl EventIndex {
             Command::PRIVMSG(..) => self.dispatch_privmsg(filters, &message, &mut stopped),
             // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
             // ordinary notices are not an event kind.
-            Command::NOTICE(..) => self.deliver_kind(
-                EventKind::Ctcp,
-                CtcpEvent::new(Arc::clone(&message)).map(Event::Ctcp),
-                &mut stopped,
-            ),
+            Command::NOTICE(..) => self.deliver_ctcp(&message, &mut stopped),
             Command::JOIN(..) => self.deliver_kind(
                 EventKind::Join,
                 Some(Event::Join(JoinEvent::new(Arc::clone(&message)))),
@@ -206,6 +202,15 @@ impl EventIndex {
         self.kinds.get(&kind).map(Vec::as_slice)
     }
 
+    /// Delivers a `message` as a CTCP event to its subscribers.
+    fn deliver_ctcp(&self, message: &Arc<Message>, stopped: &mut Vec<String>) {
+        self.deliver_kind(
+            EventKind::Ctcp,
+            CtcpEvent::new(Arc::clone(message)).map(Event::Ctcp),
+            stopped,
+        );
+    }
+
     /// Delivers an optional event to the subscribers of `kind`, if any are registered.
     fn deliver_kind(&self, kind: EventKind, event: Option<Event>, stopped: &mut Vec<String>) {
         if let Some(event) = event
@@ -235,11 +240,7 @@ impl EventIndex {
 
         // CTCP messages are their own event kind and are routed to nothing else.
         if text.starts_with('\x01') {
-            self.deliver_kind(
-                EventKind::Ctcp,
-                CtcpEvent::new(Arc::clone(message)).map(Event::Ctcp),
-                stopped,
-            );
+            self.deliver_ctcp(message, stopped);
 
             return;
         }
@@ -287,7 +288,7 @@ impl EventIndex {
             }
 
             if filters.is_filtered(target, sender, &url) {
-                debug!(%url, "skipping filtered url");
+                debug!(url.full = %redact_url(&url), "skipping filtered url");
 
                 continue;
             }

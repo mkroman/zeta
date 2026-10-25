@@ -26,7 +26,7 @@ use wreq::redirect::Policy;
 use crate::prelude::*;
 use zeta_http as http;
 use zeta_http::WreqError;
-use zeta_url::redact_url;
+use zeta_url::{redact_url, strip_www};
 use zeta_utils::text::{Truncatable, collapse_whitespace};
 
 /// The default maximum size of a response before we stop processing it.
@@ -421,7 +421,7 @@ impl Titles {
         catalog: Option<&PluginCatalog>,
     ) {
         if let Some(scheme) = repaired_from {
-            debug!(%scheme, %url, "posting repaired url");
+            debug!(%scheme, url.full = %redact_url(&url), "posting repaired url");
 
             if let Err(error) = client.send_privmsg(channel, notice(&url)) {
                 warn!(%error, "could not send repaired url");
@@ -430,13 +430,19 @@ impl Titles {
 
         if is_ignored_host(&url, &self.settings.ignored_hosts) || is_catalog_handled(&url, catalog)
         {
-            debug!(%url, "skipping url handled by another plugin");
+            debug!(
+                url.full = %redact_url(&url),
+                "skipping url handled by another plugin"
+            );
 
             return;
         }
 
         if is_binary_url(&url) {
-            debug!(%url, "skipping url that looks like binary content");
+            debug!(
+                url.full = %redact_url(&url),
+                "skipping url that looks like binary content"
+            );
 
             return;
         }
@@ -597,8 +603,7 @@ const fn has_open_graph(metadata: &PageMetadata) -> bool {
 #[must_use]
 fn host_name(url: &Url) -> String {
     url.host_str()
-        .map_or_default(|host| host.strip_prefix("www.").unwrap_or(host))
-        .to_string()
+        .map_or_default(|host| strip_www(host).to_string())
 }
 
 /// Returns the value of the named attribute of a tag.

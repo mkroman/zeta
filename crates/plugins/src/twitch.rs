@@ -36,12 +36,10 @@ pub struct Settings {
     /// The Twitch application client id.
     ///
     /// Falls back to the `TWITCH_CLIENT_ID` environment variable when unset.
-    #[serde(default)]
     pub client_id: Option<String>,
     /// The Twitch application client secret.
     ///
     /// Falls back to the `TWITCH_CLIENT_SECRET` environment variable when unset.
-    #[serde(default)]
     pub client_secret: Option<String>,
 }
 
@@ -204,6 +202,27 @@ impl Twitch {
         Ok(())
     }
 
+    /// Fetches the first result of an endpoint and replies with its formatted description.
+    async fn handle_first<T: for<'de> Deserialize<'de>>(
+        &self,
+        endpoint: &str,
+        query: &[(&str, &str)],
+        channel: &str,
+        client: &Client,
+        render: impl FnOnce(&T) -> String,
+    ) -> Result<(), Error> {
+        let response: Response<T> = self.get(endpoint, query).await?;
+
+        let message = response.data.first().map_or_else(
+            || reply("Twitch", "No results"),
+            |item| reply("Twitch", render(item)),
+        );
+
+        client.send_privmsg(channel, message)?;
+
+        Ok(())
+    }
+
     /// Fetches clip information and sends a message to the channel.
     async fn handle_clip(
         &self,
@@ -211,22 +230,17 @@ impl Twitch {
         clip_id: &str,
         client: &Client,
     ) -> Result<(), Error> {
-        let response: Response<Clip> = self.get("clips", &[("id", clip_id)]).await?;
-
-        if let Some(clip) = response.data.first() {
+        self.handle_first("clips", &[("id", clip_id)], channel, client, |clip: &Clip| {
             let title = &clip.title;
             let broadcaster = &clip.broadcaster_name;
             let creator = &clip.creator_name;
             let views = clip.view_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, reply("Twitch", format!(
+            format!(
                 "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 views"
-            )))?;
-        } else {
-            client.send_privmsg(channel, reply("Twitch", "No results"))?;
-        }
-
-        Ok(())
+            )
+        })
+        .await
     }
 
     /// Fetches video information and sends a message to the channel.
@@ -236,21 +250,16 @@ impl Twitch {
         video_id: &str,
         client: &Client,
     ) -> Result<(), Error> {
-        let response: Response<Video> = self.get("videos", &[("id", video_id)]).await?;
-
-        if let Some(video) = response.data.first() {
+        self.handle_first("videos", &[("id", video_id)], channel, client, |video: &Video| {
             let title = &video.title;
             let user = &video.user_name;
             let views = video.view_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, reply("Twitch", format!(
+            format!(
                 "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 views"
-            )))?;
-        } else {
-            client.send_privmsg(channel, reply("Twitch", "No results"))?;
-        }
-
-        Ok(())
+            )
+        })
+        .await
     }
 }
 

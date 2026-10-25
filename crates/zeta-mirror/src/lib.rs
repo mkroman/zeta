@@ -464,7 +464,8 @@ pub(crate) fn tempdir_builder() -> tempfile::Builder<'static, 'static> {
     use std::os::unix::fs::PermissionsExt;
 
     #[cfg_attr(not(unix), allow(unused_mut))]
-    let mut builder = tempfile::Builder::new().prefix(TEMP_DIR_PREFIX).clone();
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(TEMP_DIR_PREFIX);
 
     #[cfg(unix)]
     builder.permissions(std::fs::Permissions::from_mode(0o700));

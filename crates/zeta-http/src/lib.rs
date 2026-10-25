@@ -37,13 +37,16 @@ use zeta_url::redact_url;
 pub mod json {
     use serde::de::DeserializeOwned;
     use tracing::error;
+    use zeta_utils::text::Truncatable;
+
+    use super::LOGGED_BODY_LENGTH;
 
     /// The error returned when a JSON body fails to parse.
     pub type Error = serde_path_to_error::Error<serde_json::Error>;
 
     /// Deserializes a value of type `T` from a JSON string.
     ///
-    /// The offending body is logged if parsing fails.
+    /// The offending body is logged, truncated to a bounded length, if parsing fails.
     ///
     /// # Errors
     ///
@@ -53,7 +56,9 @@ pub mod json {
         let deserializer = &mut serde_json::Deserializer::from_str(text);
 
         serde_path_to_error::deserialize(deserializer).inspect_err(|error| {
-            error!(?error, body = %text, "could not deserialize json response");
+            let body = text.truncate_within(LOGGED_BODY_LENGTH, "…");
+
+            error!(?error, body = %body, "could not deserialize json response");
         })
     }
 }
@@ -80,7 +85,7 @@ pub enum ApiError {
     },
     /// The response body could not be parsed as JSON.
     #[error("could not deserialize response: {0}")]
-    Deserialize(json::Error),
+    Deserialize(#[source] json::Error),
 }
 
 /// The number of characters of an error response body that reaches the logs: enough to read
@@ -152,6 +157,25 @@ fn log_request_error(error: &RequestError, url: &str, message: &str) {
     error!(url.full = %url, error.type = error.error_type(), error = %error.full(), "{message}");
 }
 
+/// Logs the status of a non-success response, with the already-truncated body when it could be
+/// read. `record_error_type` is false when the body read already recorded the transport failure
+/// on the span — overwriting it with the status code would lose the classification.
+#[cfg(feature = "http")]
+fn log_status(status: reqwest::StatusCode, body: Option<&str>, record_error_type: bool) {
+    let not_found = status == reqwest::StatusCode::NOT_FOUND;
+
+    if !not_found && record_error_type {
+        Span::current().record("error.type", status.as_u16().to_string().as_str());
+    }
+
+    match (not_found, body) {
+        (true, Some(body)) => debug!(body = %body, "http response not found"),
+        (true, None) => debug!("http response not found"),
+        (false, Some(body)) => error!(body = %body, "http response carries an error status"),
+        (false, None) => error!("http response carries an error status"),
+    }
+}
+
 /// Parses the response's JSON body into `T`.
 ///
 /// Non-success statuses are reported as [`ApiError::Status`], carrying the response body; the
@@ -190,31 +214,19 @@ pub async fn parse_response<T: DeserializeOwned>(
     let status = response.status();
 
     if !status.is_success() {
-        let not_found = status == reqwest::StatusCode::NOT_FOUND;
-
         // Report the status even when its body cannot be read: the status is known before the
         // read, and without this line the response would reach the logs only as span
         // attributes. `body_error` records `error.type` first, so the event carries it too.
         let body = response.text().await.map_err(|error| {
             let error = body_error(error);
 
-            if not_found {
-                debug!("http response not found");
-            } else {
-                error!("http response carries an error status");
-            }
+            log_status(status, None, false);
 
             error
         })?;
         let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
 
-        if not_found {
-            debug!(body = %logged, "http response not found");
-        } else {
-            let error_type = status.as_u16().to_string();
-            Span::current().record("error.type", error_type.as_str());
-            error!(body = %logged, "http response carries an error status");
-        }
+        log_status(status, Some(&logged), true);
 
         return Err(ApiError::Status { status, body });
     }

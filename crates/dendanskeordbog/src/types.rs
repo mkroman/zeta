@@ -141,9 +141,9 @@ impl DictionaryDocument {
     /// missing entries by returning an empty list.
     pub fn from_html<S: AsRef<str>>(html: S) -> Result<Self, Error> {
         let html = html.as_ref();
-        let selectors = Selectors::default();
+        let selectors = Selectors::shared();
         let document = Html::parse_document(html);
-        let entries = Self::parse_entries(&document, &selectors)?;
+        let entries = Self::parse_entries(&document, selectors)?;
 
         Ok(Self { entries })
     }

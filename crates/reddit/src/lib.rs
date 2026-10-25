@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use url::Url;
+use zeta_url::path_segments;
 
 mod client;
 mod error;
@@ -32,6 +33,9 @@ pub const TOKEN_URL: &str = "https://www.reddit.com/api/v1/access_token";
 pub const USER_AGENT: &str = concat!("rust:reddit:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");
 /// The duration before a HTTP request times out.
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The maximum number of characters of an unparseable response body that reaches the logs.
+const LOGGED_BODY_LENGTH: usize = 512;
 
 /// A link to a Reddit resource.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -248,41 +252,38 @@ pub fn classify_reddit_url(url: &Url) -> Option<Link> {
 
 /// Parses reddit.com URLs
 fn classify_reddit_com_url(url: &Url) -> Option<Link> {
-    let segments: Vec<&str> = url.path_segments()?.collect();
-
-    match segments.as_slice() {
+    match path_segments(url)?.as_slice() {
         // Direct link to a subreddit
         //
         // Parameters: `/r/<subreddit>`
         // Example: `/r/worldnews`
-        ["r", subreddit] | ["r", subreddit, ""] => Some(Link::Subreddit((*subreddit).to_string())),
+        ["r", subreddit] => Some(Link::Subreddit((*subreddit).to_string())),
         // Direct link link to a submission page (i.e. full thread and comments)
         //
         // Parameters: `/r/<subreddit>/comments/<id>/[title_slug][/]`
         // Example: `/r/nottheonion/comments/1u7eqe9/microsofts_new_outlook_takes_10_seconds_to_do/`
-        ["r", subreddit, "comments", id]
-        | ["r", subreddit, "comments", id, _]
-        | ["r", subreddit, "comments", id, _, ""] => Some(Link::Submission {
-            id: (*id).to_string(),
-            subreddit: (*subreddit).to_string(),
-        }),
+        ["r", subreddit, "comments", id] | ["r", subreddit, "comments", id, _] => {
+            Some(Link::Submission {
+                id: (*id).to_string(),
+                subreddit: (*subreddit).to_string(),
+            })
+        }
         // Direct link to a comment and its children for a submission
         //
         // Parameters: `/r/<subreddit>/comments/<id>/[title_slug]/<comment_id>[/]`
         // Example: `/r/AskElectronics/comments/1u7evrr/what_is_the_best_course_of_action_for_wrong_width/orzo90y/`
-        ["r", subreddit, "comments", submission_id, _, comment_id]
-        | ["r", subreddit, "comments", submission_id, _, comment_id, ""] => Some(Link::Comment {
+        ["r", subreddit, "comments", submission_id, _, comment_id] => Some(Link::Comment {
             id: (*comment_id).to_string(),
             submission: (*submission_id).to_string(),
             subreddit: (*subreddit).to_string(),
         }),
         // /r/<subreddit>/s/<id>[/]
-        ["r", subreddit, "s", id] | ["r", subreddit, "s", id, ""] => Some(Link::Shortened {
+        ["r", subreddit, "s", id] => Some(Link::Shortened {
             id: (*id).to_string(),
             subreddit: (*subreddit).to_string(),
         }),
         // /comments/<id>[/]
-        ["comments", id] | ["comments", id, ""] => Some(Link::Comments {
+        ["comments", id] => Some(Link::Comments {
             id: (*id).to_string(),
         }),
         // /gallery/<id>
@@ -290,7 +291,7 @@ fn classify_reddit_com_url(url: &Url) -> Option<Link> {
         // /video/<id>
         ["video", id] => Some(Link::Video((*id).to_string())),
         // /user/<name>[/]
-        ["user", username] | ["user", username, ""] => Some(Link::User((*username).to_string())),
+        ["user", username] => Some(Link::User((*username).to_string())),
         _ => None,
     }
 }
@@ -390,7 +391,10 @@ mod tests {
         );
 
         assert_classifies(
-            &["https://www.reddit.com/gallery/1nj9601"],
+            &[
+                "https://www.reddit.com/gallery/1nj9601",
+                "https://www.reddit.com/gallery/1nj9601/",
+            ],
             Some(&Link::Gallery("1nj9601".to_string())),
         );
 
@@ -418,6 +422,7 @@ mod tests {
         assert_classifies(
             &[
                 "https://www.reddit.com/video/b2l87x1pyn7h1",
+                "https://www.reddit.com/video/b2l87x1pyn7h1/",
                 "https://v.redd.it/b2l87x1pyn7h1",
                 "https://v.redd.it/b2l87x1pyn7h1/",
             ],
@@ -432,8 +437,12 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/comments/1niz1ru.json");
         let text = std::fs::read_to_string(path).unwrap();
         let jd = &mut serde_json::Deserializer::from_str(&text);
-        let (item1, item2): (Item, Item) = serde_path_to_error::deserialize(jd)
-            .inspect_err(|err| error!(?err, %text, "could not parse comments response"))?;
+        let (item1, item2): (Item, Item) =
+            serde_path_to_error::deserialize(jd).inspect_err(|err| {
+                let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
+
+                error!(?err, body = %body, "could not parse comments response");
+            })?;
 
         // The response is the submission listing followed by the comment listing.
         let Item::Listing(submission_listing) = &item1 else {
