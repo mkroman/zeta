@@ -316,17 +316,16 @@ mod tests {
     use super::*;
     use crate::PluginsConfig;
 
-    #[cfg(all(feature = "dig", feature = "health"))]
+    #[cfg(feature = "dig")]
     use std::net::IpAddr;
 
-    #[cfg(feature = "health")]
     use zeta_plugin::NoSettings;
 
-    #[cfg(all(feature = "dig", feature = "health"))]
+    #[cfg(feature = "dig")]
     use zeta_test_support::assert_empty;
 
     /// The base configuration the full-config tests start from.
-    #[cfg(all(feature = "dig", feature = "health"))]
+    #[cfg(feature = "dig")]
     const FULL_BASE: &str = r#"
 [database]
 url = "postgresql://localhost/zeta_test"
@@ -350,7 +349,7 @@ channels = []
             .map_err(Box::new)
     }
 
-    #[cfg(all(feature = "dig", feature = "health"))]
+    #[cfg(feature = "dig")]
     #[test]
     fn parses_plugin_sections() {
         let plugins = extract(
@@ -384,7 +383,7 @@ enabled = false
         assert_empty!(plugins.unknown);
     }
 
-    #[cfg(all(feature = "dig", feature = "health"))]
+    #[cfg(feature = "dig")]
     #[test]
     fn missing_plugins_section_defaults_to_enabled() {
         let plugins = extract("").expect("could not parse configuration");
@@ -406,7 +405,6 @@ enabled = false
         assert!(health.enabled);
     }
 
-    #[cfg(feature = "health")]
     #[test]
     fn omitted_enabled_defaults_to_true() {
         let plugins = extract("[plugins.health]\n").expect("could not parse configuration");
@@ -419,7 +417,7 @@ enabled = false
         assert!(health.enabled);
     }
 
-    #[cfg(all(feature = "dig", feature = "health"))]
+    #[cfg(feature = "dig")]
     #[test]
     fn enabled_by_default_false_opts_plugins_in() {
         let plugins = extract(
@@ -452,7 +450,6 @@ enabled = true
         assert_empty!(plugins.unknown);
     }
 
-    #[cfg(feature = "health")]
     #[test]
     fn explicit_enabled_overrides_the_global_default() {
         let plugins = extract(
@@ -601,7 +598,6 @@ enabled = false
         );
     }
 
-    #[cfg(feature = "health")]
     #[test]
     fn unknown_settings_keys_are_ignored_for_plugins_without_settings() {
         let plugins = extract("[plugins.health]\nenabled = true\nwhatever = 1\n")
@@ -623,7 +619,7 @@ enabled = false
 
     /// The plugin sections of the repository `config.toml` must keep parsing and hold the
     /// values the documentation quotes.
-    #[cfg(all(feature = "dig", feature = "health"))]
+    #[cfg(feature = "dig")]
     #[test]
     fn repository_plugin_sections_parse() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config.toml");
@@ -655,7 +651,7 @@ enabled = false
         assert_empty!(config.unknown);
     }
 
-    #[cfg(all(feature = "dig", feature = "health"))]
+    #[cfg(feature = "dig")]
     #[test]
     fn full_config_without_plugins_section_parses() {
         let config = Figment::new()

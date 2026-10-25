@@ -84,10 +84,12 @@
 //! | `event` | The handler also receives the `&CommandEvent`, and may omit the `channel` parameter. |
 //! | `register_if = expr` | Registers the command only when `expr` evaluates to `true` (e.g. `settings.enable_command`); the expression runs in the generated constructor, where `settings` is in scope. |
 //!
-//! The method's signature convention is strict: `async fn m(&self, ctx: &Context, client:
-//! &Client, channel: &str [, command: &CommandEvent] [, opts: Opts]) -> Result<(), Error>`,
-//! where `channel` may be omitted when `event` is set (the event then provides it), `command`
-//! appears only with `event`, and `opts` only with `args`.
+//! The method's signature convention is strict. Without `event` it is `async fn m(&self, ctx:
+//! &Context, client: &Client, channel: &str [, opts: Opts]) -> Result<(), Error>`; with `event`
+//! it is `async fn m(&self, ctx: &Context, client: &Client, [channel: &str,] command:
+//! &CommandEvent [, opts: Opts]) -> Result<(), Error>` — the event provides the channel, so the
+//! `channel` parameter may be omitted. `command` appears only with `event`, and `opts` only with
+//! `args`.
 //!
 //! `#[handler(kind)]` on an inherent async method forwards one of the trait's event handlers to
 //! it verbatim, where `kind` is one of `command`, `url`, `message`, `join`, `part`, `quit`,

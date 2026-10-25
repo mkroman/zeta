@@ -701,15 +701,24 @@ fn validate_command(args: &CommandArgs, method: &ImplItemFn) -> syn::Result<bool
             index += 1;
 
             true
+        } else if typed
+            .get(index)
+            .is_some_and(|parameter| !is_reference_to(parameter.ty.as_ref(), "CommandEvent"))
+        {
+            // The parameter is neither the optional channel nor the event itself, so the
+            // signature is missing a parameter or the channel has the wrong type.
+            return Err(signature_error());
         } else {
             false
         }
     } else {
-        if typed.len() <= index {
+        if !typed
+            .get(index)
+            .is_some_and(|parameter| is_str(parameter.ty.as_ref()))
+        {
             return Err(signature_error());
         }
 
-        expect_borrowed(typed[index].ty.as_ref(), "str", false)?;
         index += 1;
 
         true
@@ -768,6 +777,18 @@ fn is_str(ty: &Type) -> bool {
         Type::Reference(reference)
             if reference.mutability.is_none()
                 && matches!(reference.elem.as_ref(), Type::Path(path) if path.path.is_ident("str"))
+    )
+}
+
+/// Whether `ty` is an immutable reference to a type whose last path segment is `expected`.
+///
+/// Looks through nested references, like [`expect_borrowed`].
+fn is_reference_to(ty: &Type, expected: &str) -> bool {
+    matches!(
+        ty,
+        Type::Reference(reference)
+            if reference.mutability.is_none()
+                && last_path_ident(&reference.elem).is_some_and(|ident| ident == expected)
     )
 }
 
@@ -1504,6 +1525,79 @@ mod tests {
         )
         .err()
         .expect("a non-event command needs the channel");
+
+        assert!(error.to_string().contains("channel: &str"), "{error}");
+    }
+
+    #[test]
+    fn command_options_require_the_channel() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc", args = Opts)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: Opts,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("a non-event command with options still needs the channel");
+
+        assert!(error.to_string().contains("channel: &str"), "{error}");
+    }
+
+    #[test]
+    fn event_commands_require_the_event() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc", event)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &str,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("an event command needs the event parameter");
+
+        assert!(
+            error.to_string().contains("command: &CommandEvent"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn event_channels_must_be_str() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc", event)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &String,
+                    _: &CommandEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("the channel must be `&str`, not a reference to another type");
 
         assert!(error.to_string().contains("channel: &str"), "{error}");
     }

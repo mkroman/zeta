@@ -153,7 +153,6 @@ mod tests {
     struct TestSettings {
         /// Deserialized only: the tests assert on the registration's diagnostics.
         #[allow(dead_code)]
-        #[serde(default)]
         value: Option<u32>,
     }
 
@@ -216,6 +215,8 @@ mod tests {
             .validate_settings(Some(&section(&[("value", Value::from("not a number"))])))
             .expect_err("a string is not a number");
 
-        assert!(error.to_string().contains(TestPlugin::NAME), "{error}");
+        let message = error.to_string();
+        assert!(message.contains("invalid settings"), "{message}");
+        assert!(message.contains(TestPlugin::NAME), "{message}");
     }
 }
