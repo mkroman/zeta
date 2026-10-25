@@ -72,83 +72,142 @@ enum HandlerKind {
     Shutdown,
 }
 
+/// The static description of one [`HandlerKind`].
+///
+/// Keeping the keyword, the forwarded trait method, and the event parameter together means a new
+/// event kind is a single match arm, and the parser and the diagnostics read the same keyword.
+struct KindSpec {
+    /// The kind as written in `#[handler(kind)]`.
+    keyword: &'static str,
+    /// The trait method the handler is forwarded through.
+    trait_method: &'static str,
+    /// The trait method's event parameter: its name and the event type at the `zeta_plugin`
+    /// root. `None` for `loaded` and `shutdown`, which take no event.
+    event: Option<(&'static str, &'static str)>,
+}
+
 impl HandlerKind {
+    /// Every kind, in the order diagnostics list them.
+    const ALL: &[Self] = &[
+        Self::Command,
+        Self::Url,
+        Self::Message,
+        Self::Join,
+        Self::Part,
+        Self::Quit,
+        Self::Nick,
+        Self::Kick,
+        Self::Ctcp,
+        Self::Raw,
+        Self::Loaded,
+        Self::Shutdown,
+    ];
+
+    /// The kind's keyword, trait method, and event parameter.
+    const fn spec(self) -> KindSpec {
+        match self {
+            Self::Command => KindSpec {
+                keyword: "command",
+                trait_method: "handle_command",
+                event: Some(("command", "CommandEvent")),
+            },
+            Self::Url => KindSpec {
+                keyword: "url",
+                trait_method: "handle_url",
+                event: Some(("url", "UrlEvent")),
+            },
+            Self::Message => KindSpec {
+                keyword: "message",
+                trait_method: "handle_message",
+                event: Some(("message", "MessageEvent")),
+            },
+            Self::Join => KindSpec {
+                keyword: "join",
+                trait_method: "handle_join",
+                event: Some(("join", "JoinEvent")),
+            },
+            Self::Part => KindSpec {
+                keyword: "part",
+                trait_method: "handle_part",
+                event: Some(("part", "PartEvent")),
+            },
+            Self::Quit => KindSpec {
+                keyword: "quit",
+                trait_method: "handle_quit",
+                event: Some(("quit", "QuitEvent")),
+            },
+            Self::Nick => KindSpec {
+                keyword: "nick",
+                trait_method: "handle_nick",
+                event: Some(("nick", "NickEvent")),
+            },
+            Self::Kick => KindSpec {
+                keyword: "kick",
+                trait_method: "handle_kick",
+                event: Some(("kick", "KickEvent")),
+            },
+            Self::Ctcp => KindSpec {
+                keyword: "ctcp",
+                trait_method: "handle_ctcp",
+                event: Some(("ctcp", "CtcpEvent")),
+            },
+            Self::Raw => KindSpec {
+                keyword: "raw",
+                trait_method: "handle_raw",
+                event: Some(("raw", "RawEvent")),
+            },
+            Self::Loaded => KindSpec {
+                keyword: "loaded",
+                trait_method: "loaded",
+                event: None,
+            },
+            Self::Shutdown => KindSpec {
+                keyword: "shutdown",
+                trait_method: "shutdown",
+                event: None,
+            },
+        }
+    }
+
     /// Parses the `kind` argument of `#[handler(kind)]`.
     fn from_ident(ident: &Ident) -> Option<Self> {
-        Some(match ident.to_string().as_str() {
-            "command" => Self::Command,
-            "url" => Self::Url,
-            "message" => Self::Message,
-            "join" => Self::Join,
-            "part" => Self::Part,
-            "quit" => Self::Quit,
-            "nick" => Self::Nick,
-            "kick" => Self::Kick,
-            "ctcp" => Self::Ctcp,
-            "raw" => Self::Raw,
-            "loaded" => Self::Loaded,
-            "shutdown" => Self::Shutdown,
-            _ => return None,
-        })
+        Self::ALL.iter().copied().find(|kind| ident == kind.name())
+    }
+
+    /// The error for an unrecognized `kind`, listing the accepted ones.
+    fn unknown_kind(ident: &Ident) -> syn::Error {
+        let expected = Self::ALL
+            .iter()
+            .map(|kind| format!("`{}`", kind.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        syn::Error::new(
+            ident.span(),
+            format!("unknown event kind `{ident}`; expected one of {expected}"),
+        )
     }
 
     /// The kind as written in `#[handler(kind)]`, for diagnostics.
     const fn name(self) -> &'static str {
-        match self {
-            Self::Command => "command",
-            Self::Url => "url",
-            Self::Message => "message",
-            Self::Join => "join",
-            Self::Part => "part",
-            Self::Quit => "quit",
-            Self::Nick => "nick",
-            Self::Kick => "kick",
-            Self::Ctcp => "ctcp",
-            Self::Raw => "raw",
-            Self::Loaded => "loaded",
-            Self::Shutdown => "shutdown",
-        }
+        self.spec().keyword
     }
 
     /// The trait method the handler is forwarded through.
     const fn trait_method(self) -> &'static str {
-        match self {
-            Self::Command => "handle_command",
-            Self::Url => "handle_url",
-            Self::Message => "handle_message",
-            Self::Join => "handle_join",
-            Self::Part => "handle_part",
-            Self::Quit => "handle_quit",
-            Self::Nick => "handle_nick",
-            Self::Kick => "handle_kick",
-            Self::Ctcp => "handle_ctcp",
-            Self::Raw => "handle_raw",
-            Self::Loaded => "loaded",
-            Self::Shutdown => "shutdown",
-        }
+        self.spec().trait_method
     }
 
-    /// The trait method's event parameter: its name and the event type at the `zeta_plugin`
-    /// root. `None` for `loaded` and `shutdown`, which take no event.
+    /// The trait method's event parameter, or `None` for `loaded` and `shutdown`.
     const fn event_parameter(self) -> Option<(&'static str, &'static str)> {
-        match self {
-            Self::Command => Some(("command", "CommandEvent")),
-            Self::Url => Some(("url", "UrlEvent")),
-            Self::Message => Some(("message", "MessageEvent")),
-            Self::Join => Some(("join", "JoinEvent")),
-            Self::Part => Some(("part", "PartEvent")),
-            Self::Quit => Some(("quit", "QuitEvent")),
-            Self::Nick => Some(("nick", "NickEvent")),
-            Self::Kick => Some(("kick", "KickEvent")),
-            Self::Ctcp => Some(("ctcp", "CtcpEvent")),
-            Self::Raw => Some(("raw", "RawEvent")),
-            Self::Loaded | Self::Shutdown => None,
-        }
+        self.spec().event
     }
 
     /// Whether the trait handler takes `&mut self`.
+    ///
+    /// Only the eventless lifecycle hooks do; every event handler takes `&self`.
     const fn mutable_receiver(self) -> bool {
-        matches!(self, Self::Loaded | Self::Shutdown)
+        self.spec().event.is_none()
     }
 }
 
@@ -199,43 +258,7 @@ fn classify(args: &PluginArgs, inherent: &syn::ItemImpl) -> syn::Result<Plugin> 
             continue;
         };
 
-        let mut command: Option<(CommandArgs, Span)> = None;
-        let mut handler: Option<(HandlerKind, Span)> = None;
-
-        for attribute in &method.attrs {
-            if attribute.path().is_ident("command") {
-                if let Some((_, _)) = &command {
-                    return Err(syn::Error::new(
-                        attribute.span(),
-                        "duplicate `#[command]` attribute",
-                    ));
-                }
-
-                command = Some((
-                    attribute.parse_args_with(<CommandArgs as Parse>::parse)?,
-                    attribute.span(),
-                ));
-            } else if attribute.path().is_ident("handler") {
-                if handler.is_some() {
-                    return Err(syn::Error::new(
-                        attribute.span(),
-                        "duplicate `#[handler]` attribute",
-                    ));
-                }
-
-                let kind: Ident = attribute
-                    .parse_args_with(|input: syn::parse::ParseStream<'_>| input.parse::<Ident>())?;
-                let kind = HandlerKind::from_ident(&kind).ok_or_else(|| {
-                    syn::Error::new(
-                        kind.span(),
-                        "unknown event kind; expected one of `command`, `url`, `message`, `join`, \
-                         `part`, `quit`, `nick`, `kick`, `ctcp`, `raw`, `loaded`, `shutdown`",
-                    )
-                })?;
-
-                handler = Some((kind, attribute.span()));
-            }
-        }
+        let (command, handler) = method_annotations(method)?;
 
         match command {
             Some((args, span)) => {
@@ -284,6 +307,50 @@ fn classify(args: &PluginArgs, inherent: &syn::ItemImpl) -> syn::Result<Plugin> 
     })
 }
 
+/// One method's parsed `#[command]` annotation and the span of its attribute.
+type CommandAnnotation = Option<(CommandArgs, Span)>;
+
+/// One method's parsed `#[handler(kind)]` annotation and the span of its attribute.
+type HandlerAnnotation = Option<(HandlerKind, Span)>;
+
+/// Reads one method's `#[command]` and `#[handler]` annotations, rejecting duplicates.
+fn method_annotations(method: &ImplItemFn) -> syn::Result<(CommandAnnotation, HandlerAnnotation)> {
+    let mut command: CommandAnnotation = None;
+    let mut handler: HandlerAnnotation = None;
+
+    for attribute in &method.attrs {
+        if attribute.path().is_ident("command") {
+            if command.is_some() {
+                return Err(syn::Error::new(
+                    attribute.span(),
+                    "duplicate `#[command]` attribute",
+                ));
+            }
+
+            command = Some((
+                attribute.parse_args_with(<CommandArgs as Parse>::parse)?,
+                attribute.span(),
+            ));
+        } else if attribute.path().is_ident("handler") {
+            if handler.is_some() {
+                return Err(syn::Error::new(
+                    attribute.span(),
+                    "duplicate `#[handler]` attribute",
+                ));
+            }
+
+            let kind_ident: Ident = attribute
+                .parse_args_with(|input: syn::parse::ParseStream<'_>| input.parse::<Ident>())?;
+            let kind = HandlerKind::from_ident(&kind_ident)
+                .ok_or_else(|| HandlerKind::unknown_kind(&kind_ident))?;
+
+            handler = Some((kind, attribute.span()));
+        }
+    }
+
+    Ok((command, handler))
+}
+
 /// Validates one `#[handler(kind)]` method and appends it to `handlers`.
 fn classify_handler(
     handlers: &mut Vec<Handler>,
@@ -316,7 +383,7 @@ fn classify_handler(
 
 /// Validates the inherent constructor when `method` is the three-parameter `fn new`.
 fn classify_constructor(method: &ImplItemFn, constructor: &mut bool) -> syn::Result<()> {
-    if !is_constructor(method) {
+    if !is_constructor(method)? {
         return Ok(());
     }
 
@@ -328,7 +395,6 @@ fn classify_constructor(method: &ImplItemFn, constructor: &mut bool) -> syn::Res
         ));
     }
 
-    validate_constructor(method)?;
     *constructor = true;
 
     Ok(())
@@ -346,19 +412,26 @@ fn cfg_attributes(method: &ImplItemFn) -> Vec<syn::Attribute> {
         .collect()
 }
 
-/// Whether the method is the inherent plugin constructor.
+/// Whether the method is the inherent plugin constructor: an associated `fn new` with exactly
+/// three typed parameters and the trait's signature.
 ///
-/// Only an associated `fn new` with exactly three typed parameters is recognized. Other `new`
-/// methods are ordinary inherent methods, so helper constructors (e.g. `fn new() -> Self`) can
-/// live beside the plugin impl.
-fn is_constructor(method: &ImplItemFn) -> bool {
-    method.sig.ident == "new"
-        && !method
+/// Other `new` methods are ordinary inherent methods, so helper constructors (e.g. `fn new() ->
+/// Self`) can live beside the plugin impl.
+fn is_constructor(method: &ImplItemFn) -> syn::Result<bool> {
+    if method.sig.ident != "new"
+        || method
             .sig
             .inputs
             .iter()
             .any(|input| matches!(input, syn::FnArg::Receiver(_)))
-        && typed_parameters(method).len() == 3
+        || typed_parameters(method).len() != 3
+    {
+        return Ok(false);
+    }
+
+    validate_constructor(method)?;
+
+    Ok(true)
 }
 
 /// Checks that no two commands share a trigger or a `CommandSpec` constant name.
@@ -506,26 +579,7 @@ fn validate_command(args: &CommandArgs, method: &ImplItemFn) -> syn::Result<()> 
     }
 
     if let Some(options) = &args.args {
-        let actual = typed[options_index].ty.as_ref();
-        if matches!(actual, Type::Reference(_)) {
-            return Err(syn::Error::new(
-                actual.span(),
-                format!(
-                    "command options are taken by value: `{}`",
-                    display_type(options)
-                ),
-            ));
-        }
-
-        if last_path_ident(options) != last_path_ident(actual) {
-            return Err(syn::Error::new(
-                actual.span(),
-                format!(
-                    "the command options parameter must have type `{}`",
-                    display_type(options)
-                ),
-            ));
-        }
+        validate_options(options, typed[options_index].ty.as_ref())?;
     }
 
     if let Some(extra) = typed.get(required) {
@@ -536,6 +590,32 @@ fn validate_command(args: &CommandArgs, method: &ImplItemFn) -> syn::Result<()> 
     }
 
     expect_result(signature, ExpectedFirst::Unit, "command handlers")
+}
+
+/// Checks that the command's options parameter is the type declared by `args` and taken by
+/// value, not by reference.
+fn validate_options(declared: &Type, actual: &Type) -> syn::Result<()> {
+    if matches!(actual, Type::Reference(_)) {
+        return Err(syn::Error::new(
+            actual.span(),
+            format!(
+                "command options are taken by value: `{}`",
+                display_type(declared)
+            ),
+        ));
+    }
+
+    if last_path_ident(declared) != last_path_ident(actual) {
+        return Err(syn::Error::new(
+            actual.span(),
+            format!(
+                "the command options parameter must have type `{}`",
+                display_type(declared)
+            ),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Validates the strict signature convention for `#[handler(kind)]` methods — the trait
@@ -592,6 +672,9 @@ fn validate_handler(kind: HandlerKind, method: &ImplItemFn) -> syn::Result<()> {
 /// Validates the exact trait signature of the inherent constructor:
 /// `fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) ->
 /// Result<Self, Error>`.
+///
+/// `is_constructor` has already checked the name, the absence of a receiver, and the parameter
+/// count; this validates the three parameter types and the return type.
 fn validate_constructor(method: &ImplItemFn) -> syn::Result<()> {
     let signature = &method.sig;
     let name = &signature.ident;
@@ -603,25 +686,7 @@ fn validate_constructor(method: &ImplItemFn) -> syn::Result<()> {
         ));
     }
 
-    if signature
-        .inputs
-        .first()
-        .is_some_and(|input| matches!(input, syn::FnArg::Receiver(_)))
-    {
-        return Err(syn::Error::new(
-            name.span(),
-            "the plugin constructor is an associated function and must not take `self`",
-        ));
-    }
-
     let typed = typed_parameters(method);
-    if typed.len() != 3 {
-        return Err(syn::Error::new(
-            name.span(),
-            "the plugin constructor must take `(ctx: &Context, settings: &Settings, \
-             subscriptions: &mut Subscriptions)`",
-        ));
-    }
 
     expect_borrowed(typed[0].ty.as_ref(), "Context", false)?;
     // The settings type is named by the plugin author; only its borrowing is checked.
@@ -646,16 +711,23 @@ enum ExpectedFirst {
     Self_,
 }
 
+impl ExpectedFirst {
+    /// The first `Result` generic argument, as written in the diagnostics.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unit => "()",
+            Self::Self_ => "Self",
+        }
+    }
+}
+
 /// Checks that a signature returns `Result<first, _>`.
 fn expect_result(
     signature: &syn::Signature,
     first: ExpectedFirst,
     subject: &str,
 ) -> syn::Result<()> {
-    let expected = match first {
-        ExpectedFirst::Unit => "()",
-        ExpectedFirst::Self_ => "Self",
-    };
+    let expected = first.as_str();
 
     let syn::ReturnType::Type(_, output) = &signature.output else {
         return Err(syn::Error::new(
@@ -665,16 +737,16 @@ fn expect_result(
     };
 
     let Type::Path(path) = output.as_ref() else {
-        return Err(unexpected_return_type(output.span(), subject, expected));
+        return Err(unexpected_return_type(output.span(), subject, first));
     };
     let Some(segment) = path.path.segments.last() else {
-        return Err(unexpected_return_type(output.span(), subject, expected));
+        return Err(unexpected_return_type(output.span(), subject, first));
     };
     if segment.ident != "Result" {
-        return Err(unexpected_return_type(output.span(), subject, expected));
+        return Err(unexpected_return_type(output.span(), subject, first));
     }
     let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-        return Err(unexpected_return_type(output.span(), subject, expected));
+        return Err(unexpected_return_type(output.span(), subject, first));
     };
 
     let mut arguments = arguments.args.iter();
@@ -693,12 +765,14 @@ fn expect_result(
                 ))
             }
         }
-        _ => Err(unexpected_return_type(output.span(), subject, expected)),
+        _ => Err(unexpected_return_type(output.span(), subject, first)),
     }
 }
 
 /// The "must return `Result<…>`" error for an unexpected return type.
-fn unexpected_return_type(span: Span, subject: &str, expected: &str) -> syn::Error {
+fn unexpected_return_type(span: Span, subject: &str, first: ExpectedFirst) -> syn::Error {
+    let expected = first.as_str();
+
     syn::Error::new(
         span,
         format!("{subject} must return `Result<{expected}, Error>`"),
@@ -856,24 +930,7 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
         |settings| quote!(#settings),
     );
 
-    let constants = plugin.commands.iter().map(|command| {
-        let spec = &command.spec;
-        let cfg = &command.cfg;
-        let trigger = &command.args.trigger;
-        let description = &command.args.description;
-        let constructor = command.args.args.as_ref().map_or_else(
-            || quote!(::zeta_plugin::CommandSpec::new(#trigger, #description)),
-            |options| {
-                quote!(::zeta_plugin::CommandSpec::with_args::<#options>(#trigger, #description))
-            },
-        );
-
-        quote! {
-            #(#cfg)*
-            const #spec: ::zeta_plugin::CommandSpec = #constructor;
-        }
-    });
-
+    let constants = command_constants(plugin);
     let registrations = registrations(plugin);
     let constructor_tail = if plugin.constructor {
         quote!(Self::new(ctx, settings, subscriptions))
@@ -885,30 +942,7 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
     let (context_parameter, settings_parameter, subscriptions_parameter) =
         constructor_parameters(plugin, !registrations.is_empty());
 
-    let handle_command = (!plugin.commands.is_empty()).then(|| {
-        let arms = plugin
-            .commands
-            .iter()
-            .map(|command| dispatch_arm(command, &plugin.name));
-
-        quote! {
-            #[allow(unused_variables)]
-            async fn handle_command(
-                &self,
-                ctx: &::zeta_plugin::Context,
-                client: &::zeta_plugin::Client,
-                command: &::zeta_plugin::CommandEvent,
-            ) -> ::core::result::Result<(), ::zeta_plugin::Error> {
-                match command.spec.trigger() {
-                    #(#arms)*
-                    _ => {}
-                }
-
-                ::core::result::Result::Ok(())
-            }
-        }
-    });
-
+    let handle_command = handle_command_impl(plugin);
     let handlers = plugin.handlers.iter().map(handler_impl);
 
     quote! {
@@ -943,6 +977,56 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
 
         #inherent
     }
+}
+
+/// The module-level `CommandSpec` constants, one per `#[command]` method.
+fn command_constants(plugin: &Plugin) -> impl Iterator<Item = TokenStream> + '_ {
+    plugin.commands.iter().map(|command| {
+        let spec = &command.spec;
+        let cfg = &command.cfg;
+        let trigger = &command.args.trigger;
+        let description = &command.args.description;
+        let constructor = command.args.args.as_ref().map_or_else(
+            || quote!(::zeta_plugin::CommandSpec::new(#trigger, #description)),
+            |options| {
+                quote!(::zeta_plugin::CommandSpec::with_args::<#options>(#trigger, #description))
+            },
+        );
+
+        quote! {
+            #(#cfg)*
+            const #spec: ::zeta_plugin::CommandSpec = #constructor;
+        }
+    })
+}
+
+/// The generated `handle_command`, or `None` for a plugin with no `#[command]` methods.
+fn handle_command_impl(plugin: &Plugin) -> Option<TokenStream> {
+    if plugin.commands.is_empty() {
+        return None;
+    }
+
+    let arms = plugin
+        .commands
+        .iter()
+        .map(|command| dispatch_arm(command, &plugin.name));
+
+    Some(quote! {
+        #[allow(unused_variables)]
+        async fn handle_command(
+            &self,
+            ctx: &::zeta_plugin::Context,
+            client: &::zeta_plugin::Client,
+            command: &::zeta_plugin::CommandEvent,
+        ) -> ::core::result::Result<(), ::zeta_plugin::Error> {
+            match command.spec.trigger() {
+                #(#arms)*
+                _ => {}
+            }
+
+            ::core::result::Result::Ok(())
+        }
+    })
 }
 
 /// The declarative registration statements, in registration order: `urls`, `messages`, then the
@@ -995,7 +1079,7 @@ fn registrations(plugin: &Plugin) -> Vec<TokenStream> {
 /// `subscriptions`.
 fn constructor_parameters(
     plugin: &Plugin,
-    uses_subscriptions: bool,
+    has_registrations: bool,
 ) -> (TokenStream, TokenStream, TokenStream) {
     let uses_context = plugin.constructor;
     let uses_settings = plugin.constructor
@@ -1003,7 +1087,7 @@ fn constructor_parameters(
             .commands
             .iter()
             .any(|command| command.args.register_if.is_some());
-    let uses_subscriptions = plugin.constructor || uses_subscriptions;
+    let uses_subscriptions = plugin.constructor || has_registrations;
 
     (
         parameter_name("ctx", uses_context),
@@ -1040,25 +1124,17 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
         arguments.push(quote!(command));
     }
 
-    let Some(options) = &args.args else {
-        return quote! {
-            #(#cfg)*
-            #trigger => {
-                self.#method(#(#arguments),*).await?;
-            }
+    // With `args`, parse the options first and reply with the usage lines when they are
+    // malformed; the parsed value is the method's last argument.
+    let parse = args.args.as_ref().map_or_else(TokenStream::new, |options| {
+        let parse = if args.words {
+            quote!(parse_words_or_usage)
+        } else {
+            quote!(parse_args_or_usage)
         };
-    };
+        arguments.push(quote!(opts));
 
-    let parse = if args.words {
-        quote!(parse_words_or_usage)
-    } else {
-        quote!(parse_args_or_usage)
-    };
-    arguments.push(quote!(opts));
-
-    quote! {
-        #(#cfg)*
-        #trigger => {
+        quote! {
             let Some(opts) = ::zeta_plugin::#parse::<#options>(
                 client,
                 command,
@@ -1066,7 +1142,13 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
             )? else {
                 return ::core::result::Result::Ok(());
             };
+        }
+    });
 
+    quote! {
+        #(#cfg)*
+        #trigger => {
+            #parse
             self.#method(#(#arguments),*).await?;
         }
     }
@@ -1084,31 +1166,29 @@ fn handler_impl(handler: &Handler) -> TokenStream {
         quote!(&self)
     };
 
-    let Some((parameter, event)) = kind.event_parameter() else {
-        return quote! {
-            #(#cfg)*
-            async fn #trait_method(
-                #receiver,
-                ctx: &::zeta_plugin::Context,
-                client: &::zeta_plugin::Client,
-            ) -> ::core::result::Result<(), ::zeta_plugin::Error> {
-                self.#method(ctx, client).await
-            }
-        };
-    };
+    // Event handlers declare the event parameter; the lifecycle hooks take none.
+    let (event_parameter, event_arguments) = kind.event_parameter().map_or_else(
+        || (TokenStream::new(), TokenStream::new()),
+        |(parameter, event)| {
+            let parameter = format_ident!("{parameter}");
+            let event = format_ident!("{event}");
 
-    let parameter = format_ident!("{parameter}");
-    let event = format_ident!("{event}");
+            (
+                quote!(, #parameter: &::zeta_plugin::#event),
+                quote!(, #parameter),
+            )
+        },
+    );
 
     quote! {
         #(#cfg)*
         async fn #trait_method(
             #receiver,
             ctx: &::zeta_plugin::Context,
-            client: &::zeta_plugin::Client,
-            #parameter: &::zeta_plugin::#event,
+            client: &::zeta_plugin::Client
+            #event_parameter,
         ) -> ::core::result::Result<(), ::zeta_plugin::Error> {
-            self.#method(ctx, client, #parameter).await
+            self.#method(ctx, client #event_arguments).await
         }
     }
 }
@@ -1261,5 +1341,343 @@ mod tests {
             .expect("two methods cannot handle the same event kind");
 
         assert!(error.to_string().contains("duplicate"), "{error}");
+    }
+
+    /// Classifies a parsed `impl` block with the default plugin arguments.
+    fn classify_source(source: &str) -> syn::Result<Plugin> {
+        let inherent: syn::ItemImpl = syn::parse_str(source).expect("a parsable impl block");
+
+        classify(&plugin_args(), &inherent)
+    }
+
+    #[test]
+    fn trait_impls_are_rejected() {
+        let error = classify_source("impl Plugin for Thing { fn helper() {} }")
+            .err()
+            .expect("a trait implementation must be rejected");
+
+        assert!(
+            error.to_string().contains("trait implementation"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn generic_impls_are_rejected() {
+        let error = classify_source("impl<T> Plugin<T> { fn helper(&self) {} }")
+            .err()
+            .expect("a generic impl block must be rejected");
+
+        assert!(error.to_string().contains("generic impl"), "{error}");
+    }
+
+    #[test]
+    fn duplicate_command_triggers_are_rejected() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "one")]
+                async fn one(&self, _: &Context, _: &Client, _: &str) -> Result<(), Error> {
+                    Ok(())
+                }
+
+                #[command(".test", "two")]
+                async fn two(&self, _: &Context, _: &Client, _: &str) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("two commands cannot share a trigger");
+
+        assert!(
+            error.to_string().contains("duplicate command trigger"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn duplicate_command_constants_are_rejected() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".one", "one", spec = SHARED)]
+                async fn one(&self, _: &Context, _: &Client, _: &str) -> Result<(), Error> {
+                    Ok(())
+                }
+
+                #[command(".two", "two", spec = SHARED)]
+                async fn two(&self, _: &Context, _: &Client, _: &str) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("two commands cannot share a constant name");
+
+        assert!(
+            error.to_string().contains("duplicate command constant"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn commands_cannot_be_combined_with_a_command_handler() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc")]
+                async fn test(&self, _: &Context, _: &Client, _: &str) -> Result<(), Error> {
+                    Ok(())
+                }
+
+                #[handler(command)]
+                async fn handler(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &CommandEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("both would implement `handle_command`");
+
+        assert!(error.to_string().contains("cannot combine"), "{error}");
+    }
+
+    #[test]
+    fn commands_must_be_async() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc")]
+                fn test(&self, _: &Context, _: &Client, _: &str) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("a synchronous command handler must be rejected");
+
+        assert!(error.to_string().contains("must be `async`"), "{error}");
+    }
+
+    #[test]
+    fn command_options_must_be_taken_by_value() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc", args = Opts)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &str,
+                    _: &Opts,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("options behind a reference must be rejected");
+
+        assert!(error.to_string().contains("by value"), "{error}");
+    }
+
+    #[test]
+    fn command_options_must_be_the_declared_type() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc", args = Opts)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &str,
+                    _: OtherOpts,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("a different options type must be rejected");
+
+        assert!(error.to_string().contains("must have type"), "{error}");
+    }
+
+    #[test]
+    fn handler_events_must_match_the_kind() {
+        let error = classify_source(
+            r"
+            impl Plugin {
+                #[handler(url)]
+                async fn url(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &MessageEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            ",
+        )
+        .err()
+        .expect("a mismatched event type must be rejected");
+
+        assert!(error.to_string().contains("`&UrlEvent`"), "{error}");
+    }
+
+    #[test]
+    fn lifecycle_handlers_take_a_mutable_receiver() {
+        let error = classify_source(
+            r"
+            impl Plugin {
+                #[handler(loaded)]
+                async fn loaded(&self, _: &Context, _: &Client) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            ",
+        )
+        .err()
+        .expect("the trait's lifecycle hooks take `&mut self`");
+
+        assert!(error.to_string().contains("`&mut self`"), "{error}");
+    }
+
+    #[test]
+    fn unknown_handler_kinds_are_reported() {
+        let error = classify_source(
+            r"
+            impl Plugin {
+                #[handler(up)]
+                async fn up(&self, _: &Context, _: &Client) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            ",
+        )
+        .err()
+        .expect("an unknown kind must be rejected");
+
+        assert!(
+            error.to_string().contains("unknown event kind `up`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn constructors_must_not_be_async() {
+        let error = classify_source(
+            r"
+            impl Plugin {
+                async fn new(
+                    _: &Context,
+                    _: &Settings,
+                    _: &mut Subscriptions,
+                ) -> Result<Self, Error> {
+                    todo!()
+                }
+            }
+            ",
+        )
+        .err()
+        .expect("an async constructor must be rejected");
+
+        assert!(error.to_string().contains("must not be `async`"), "{error}");
+    }
+
+    #[test]
+    fn constructor_settings_are_shared() {
+        let error = classify_source(
+            r"
+            impl Plugin {
+                fn new(
+                    _: &Context,
+                    _: &mut Settings,
+                    _: &mut Subscriptions,
+                ) -> Result<Self, Error> {
+                    todo!()
+                }
+            }
+            ",
+        )
+        .err()
+        .expect("mutable settings must be rejected");
+
+        assert!(error.to_string().contains("immutable reference"), "{error}");
+    }
+
+    #[test]
+    fn annotations_are_stripped_and_lints_allowed() {
+        let mut inherent: syn::ItemImpl = parse_quote! {
+            impl Plugin {
+                #[command(".test", "desc")]
+                async fn test(&self, _: &Context, _: &Client, _: &str) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+        };
+        let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
+
+        strip_annotations(&plugin, &mut inherent);
+
+        let ImplItem::Fn(method) = &inherent.items[0] else {
+            panic!("the impl should still hold the method");
+        };
+        assert!(
+            !method
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("command"))
+        );
+        assert!(
+            method
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("allow"))
+        );
+    }
+
+    #[test]
+    fn generated_paths_are_absolute() {
+        let inherent: syn::ItemImpl = parse_quote! {
+            impl Plugin {
+                #[command(".test", "desc", args = Opts)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &str,
+                    _: Opts,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+        };
+        let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
+
+        let rendered = render(&plugin, &inherent).to_string();
+
+        assert!(rendered.contains("inventory"), "{rendered}");
+        for (index, _) in rendered.match_indices("zeta_plugin") {
+            assert!(
+                rendered[..index].ends_with(":: "),
+                "`zeta_plugin` must only be referenced through an absolute path: {rendered}"
+            );
+        }
     }
 }

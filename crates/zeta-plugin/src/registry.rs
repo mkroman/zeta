@@ -190,12 +190,7 @@ impl Registry {
 
                 true
             }
-            Err(e) => {
-                tracing::warn!(plugin = %name, error = %e, "failed to initialize plugin");
-                self.failed.push((name, e));
-
-                false
-            }
+            Err(error) => self.fail(name, error),
         }
     }
 
@@ -248,13 +243,16 @@ impl Registry {
 
                 true
             }
-            Err(error) => {
-                tracing::warn!(plugin = %name, error = %error, "failed to initialize plugin");
-                self.failed.push((name, error));
-
-                false
-            }
+            Err(error) => self.fail(name, error),
         }
+    }
+
+    /// Records a plugin initialization failure and reports it.
+    fn fail(&mut self, name: String, error: Error) -> bool {
+        warn!(plugin = %name, %error, "failed to initialize plugin");
+        self.failed.push((name, error));
+
+        false
     }
 
     /// Commits a successfully constructed plugin to the catalog and the loaded-plugin list.
@@ -457,6 +455,23 @@ mod tests {
 
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn duplicate_registrations_are_rejected() {
+        let ctx = test_context();
+        publish_recording(&ctx);
+        let mut registry = Registry::new();
+        let registration = crate::PluginRegistration::new::<RecordingPlugin>("recording");
+
+        assert!(registry.register_with(&registration, &ctx, None));
+        assert!(
+            !registry.register_with(&registration, &ctx, None),
+            "a name can only be registered once"
+        );
+
+        assert_eq!(registry.plugins.len(), 1);
+        assert_eq!(registry.failed.len(), 1);
     }
 
     #[cfg(feature = "database")]

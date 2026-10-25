@@ -13,7 +13,6 @@ use tracing::{debug, instrument};
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_plugin::config::HttpConfig;
 use zeta_url::redact_url;
 use zeta_utils::duration::TimeInWords;
 
@@ -124,7 +123,9 @@ impl Tvmaze {
         _settings: &NoSettings,
         _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        Ok(Self::with_http_config(&ctx.config.http))
+        let client = http::build_client(&ctx.config.http);
+
+        Ok(Self { client })
     }
 
     /// Replies to `.next` with the show's next episode, or its current status.
@@ -142,14 +143,6 @@ impl Tvmaze {
 }
 
 impl Tvmaze {
-    /// Creates a new TVmaze plugin instance.
-    #[must_use]
-    pub fn with_http_config(config: &HttpConfig) -> Self {
-        let client = http::build_client(config);
-
-        Self { client }
-    }
-
     /// Searches for a single show using the TVmaze API.
     ///
     /// # Arguments

@@ -69,7 +69,81 @@ impl Words {
     }
 }
 
+/// Options for the full command.
+#[derive(ArgsInfo, FromArgs)]
+struct FullOptions {
+    /// the value to echo
+    #[argh(positional)]
+    #[allow(dead_code)]
+    value: String,
+}
+
+/// The hosts the full plugin handles URLs for.
+const FULL_HOSTS: &[&str] = &["example.com"];
+
+/// A plugin exercising every generated shape: a recognized constructor, URL hosts, messages,
+/// a command with options and the event, and both lifecycle handlers.
+struct Full;
+
+#[plugin(name = "full", urls(hosts = FULL_HOSTS), messages)]
+impl Full {
+    fn new(_: &Context, _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, Error> {
+        subscriptions.receive_join();
+
+        Ok(Self)
+    }
+
+    #[command(
+        ".full",
+        "A full command",
+        args = FullOptions,
+        event,
+        label = "Full",
+        spec = FULL,
+        register_if = true
+    )]
+    async fn full(
+        &self,
+        _: &Context,
+        _: &Client,
+        _: &str,
+        _: &CommandEvent,
+        _options: FullOptions,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(join)]
+    async fn join(&self, _: &Context, _: &Client, _: &JoinEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(loaded)]
+    async fn loaded(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(shutdown)]
+    async fn shutdown(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
 #[test]
 fn helper_constructor_remains_callable() {
     let _ = Helper::new();
+}
+
+#[test]
+fn every_plugin_shape_registers_itself() {
+    let names: Vec<&str> = zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>()
+        .map(|registration| registration.name)
+        .collect();
+
+    for expected in ["full", "gated", "helper", "words"] {
+        assert!(
+            names.contains(&expected),
+            "{expected} missing from {names:?}"
+        );
+    }
 }

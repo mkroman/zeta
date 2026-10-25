@@ -29,13 +29,8 @@ use crate::youtube::{self, UrlKind};
 use model::{InsertUrlRecord, UrlRecord};
 
 /// The ofn plugin: records posted URLs and reports reposts.
+#[derive(Default)]
 pub struct Ofn;
-
-impl Default for Ofn {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// The result of recording one URL in the database.
 // The enum only lives for the duration of one URL's processing; boxing the full row in
@@ -51,12 +46,6 @@ enum Recorded {
 }
 
 impl Ofn {
-    /// Creates a new ofn plugin instance.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-
     /// Records `url` in the database: finding the already-known record for it, or inserting
     /// a new one — YouTube video links are tracked by video id in the dedicated table,
     /// everything else in the url records table.
@@ -424,7 +413,7 @@ impl Ofn {
         client: &Client,
         event: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        // Command invocations are handled in `run_stats_command` and are not recorded as history.
+        // Command invocations are handled in `run_stats` and are not recorded as history.
         if OFN.parse(event.text()).is_some() {
             return Ok(());
         }
@@ -452,7 +441,7 @@ impl Ofn {
         args = Opts,
         label = "OFN"
     )]
-    async fn run_stats_command(
+    async fn run_stats(
         &self,
         ctx: &Context,
         client: &Client,

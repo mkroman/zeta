@@ -7,12 +7,11 @@
 //! the plugin is disabled) and deserialized again when the plugin is constructed.
 //! [`PluginConfig`] is the typed view of one section.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use figment::value::{Dict, Value};
 use serde::de::{DeserializeOwned, Error as _};
-use serde::ser::SerializeMap;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use zeta_plugin::inventory;
 
 /// An individual plugin's typed configuration: its `[plugins.<name>]` section.
@@ -56,24 +55,14 @@ where
     where
         D: Deserializer<'de>,
     {
-        use serde::de::Error as _;
-
         // A custom implementation instead of `#[serde(flatten)]`, which would silently swallow
         // unknown keys: `serde_ignored` reports every key the settings type ignores so the
         // host can warn about a typo, or a setting removed by this version.
-        let mut section = Dict::deserialize(deserializer)?;
-        let enabled = match section.remove("enabled") {
-            Some(value) => bool::deserialize(&value)
-                .map_err(|error| D::Error::custom(format!("invalid `enabled` key: {error}")))?,
-            None => default_enabled,
-        };
-
-        let mut unknown_keys = Vec::new();
-        let value = Value::from(section);
-        let settings = serde_ignored::deserialize(&value, |path| {
-            unknown_keys.push(path.to_string());
-        })
-        .map_err(|error| D::Error::custom(format!("invalid settings: {error}")))?;
+        let section = Dict::deserialize(deserializer)?;
+        let (enabled, settings) =
+            split_enabled(section, default_enabled).map_err(D::Error::custom)?;
+        let (settings, unknown_keys) = settings_with_unknown_keys(&settings)
+            .map_err(|error| D::Error::custom(format!("invalid settings: {error}")))?;
 
         Ok(Self {
             enabled,
@@ -81,6 +70,39 @@ where
             unknown_keys,
         })
     }
+}
+
+/// Splits one raw section into its resolved `enabled` toggle and its settings.
+fn split_enabled(
+    mut section: Dict,
+    enabled_by_default: bool,
+) -> Result<(bool, Value), Box<figment::Error>> {
+    let enabled = match section.remove("enabled") {
+        Some(value) => bool::deserialize(&value).map_err(|error| {
+            Box::new(figment::Error::custom(format!(
+                "invalid `enabled` key: {error}"
+            )))
+        })?,
+        None => enabled_by_default,
+    };
+
+    Ok((enabled, Value::from(section)))
+}
+
+/// Deserializes settings, collecting the keys the settings type did not recognize.
+fn settings_with_unknown_keys<'de, S>(
+    settings: &Value,
+) -> Result<(S, Vec<String>), Box<figment::Error>>
+where
+    S: Deserialize<'de>,
+{
+    let mut unknown_keys = Vec::new();
+    let settings = serde_ignored::deserialize(settings, |path| {
+        unknown_keys.push(path.to_string());
+    })
+    .map_err(Box::new)?;
+
+    Ok((settings, unknown_keys))
 }
 
 impl<'de, S> Deserialize<'de> for PluginConfig<S>
@@ -112,55 +134,32 @@ impl<S: Default> Default for PluginConfig<S> {
 /// The settings stay a [`figment::value::Value`] until the plugin's registration deserializes
 /// them into its own settings type; `enabled` is already resolved against the global
 /// [`PluginsConfig::enabled_by_default`] toggle.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PluginSection {
     /// Whether the plugin should be registered, with an omitted key resolved against
     /// [`PluginsConfig::enabled_by_default`].
     pub enabled: bool,
     /// The section's settings, without the host-managed `enabled` key.
+    ///
+    /// Always a [`Value::Dict`] in practice, because [`PluginsConfig`] deserializes the section
+    /// from a table. Flattened so the section serializes back to its flat `[plugins.<name>]`
+    /// shape.
+    #[serde(flatten)]
     pub settings: Value,
-}
-
-impl Serialize for PluginSection {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("enabled", &self.enabled)?;
-        match &self.settings {
-            Value::Dict(_, settings) => {
-                for (key, value) in settings {
-                    map.serialize_entry(key, value)?;
-                }
-            }
-            // `PluginSection::parse` always produces a dictionary; keep a non-dictionary value
-            // addressable if a caller constructs one directly.
-            settings => map.serialize_entry("settings", settings)?,
-        }
-        map.end()
-    }
 }
 
 impl PluginSection {
     /// Splits one raw section value into its resolved `enabled` toggle and settings.
     ///
-    /// Returns the settings as a [`Dict`] alongside the parsed section, so
-    /// [`PluginsConfig`] can record unrecognized sections without parsing them twice.
-    fn parse(value: &Value, enabled_by_default: bool) -> Result<(Self, Dict), Box<figment::Error>> {
-        let mut section = Dict::deserialize(value).map_err(Box::new)?;
-        let enabled = match section.remove("enabled") {
-            Some(value) => bool::deserialize(&value).map_err(|error| {
-                Box::new(figment::Error::custom(format!(
-                    "invalid `enabled` key: {error}"
-                )))
-            })?,
-            None => enabled_by_default,
-        };
+    /// # Errors
+    ///
+    /// Returns an error when the section is not a TOML table, or when `enabled` is not a
+    /// boolean.
+    fn parse(value: &Value, enabled_by_default: bool) -> Result<Self, Box<figment::Error>> {
+        let section = Dict::deserialize(value).map_err(Box::new)?;
+        let (enabled, settings) = split_enabled(section, enabled_by_default)?;
 
-        let settings = Value::from(section.clone());
-
-        Ok((Self { enabled, settings }, section))
+        Ok(Self { enabled, settings })
     }
 }
 
@@ -176,7 +175,7 @@ impl PluginSection {
 /// and gives the plugin its default settings. The `enabled` key is managed by the host; every
 /// other key belongs to the plugin's settings type, deserialized through
 /// [`PluginsConfig::config`] or, at startup, by the plugin's registration.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PluginsConfig {
     /// Whether a plugin that does not set `enabled` explicitly — or has no section at all — is
     /// enabled.
@@ -188,29 +187,19 @@ pub struct PluginsConfig {
     /// The configuration sections, keyed by plugin name.
     ///
     /// Holds every section in the table, whether or not a plugin registration matches it.
-    /// Sections whose name is not a bundled plugin are also mirrored in
-    /// [`PluginsConfig::unknown`].
-    pub sections: HashMap<String, PluginSection>,
+    /// Sections whose name is not a bundled plugin are also listed in
+    /// [`PluginsConfig::unknown`]. Flattened so the table serializes back to its flat
+    /// `[plugins.<name>]` shape.
+    #[serde(flatten)]
+    pub sections: BTreeMap<String, PluginSection>,
     /// Sections that match no bundled plugin name.
     ///
     /// Collected during deserialization so the host can warn about likely typos. Compiled-out
     /// bundled plugins are not included: their sections are known, even though no registration
-    /// consumed them.
-    pub unknown: HashMap<String, Dict>,
-}
-
-impl Serialize for PluginsConfig {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("enabled_by_default", &self.enabled_by_default)?;
-        for (name, section) in &self.sections {
-            map.serialize_entry(name, section)?;
-        }
-        map.end()
-    }
+    /// consumed them. Not part of the serialized shape: those sections already live in
+    /// [`PluginsConfig::sections`].
+    #[serde(skip)]
+    pub unknown: BTreeSet<String>,
 }
 
 impl PluginsConfig {
@@ -236,11 +225,7 @@ impl PluginsConfig {
             });
         };
 
-        let mut unknown_keys = Vec::new();
-        let settings = serde_ignored::deserialize(&section.settings, |path| {
-            unknown_keys.push(path.to_string());
-        })
-        .map_err(Box::new)?;
+        let (settings, unknown_keys) = settings_with_unknown_keys(&section.settings)?;
 
         Ok(PluginConfig {
             enabled: section.enabled,
@@ -254,8 +239,8 @@ impl Default for PluginsConfig {
     fn default() -> Self {
         Self {
             enabled_by_default: true,
-            sections: HashMap::new(),
-            unknown: HashMap::new(),
+            sections: BTreeMap::new(),
+            unknown: BTreeSet::new(),
         }
     }
 }
@@ -267,7 +252,7 @@ impl<'de> Deserialize<'de> for PluginsConfig {
     {
         use serde::de::Error as _;
 
-        let mut values = HashMap::<String, Value>::deserialize(deserializer)?;
+        let mut values = BTreeMap::<String, Value>::deserialize(deserializer)?;
 
         // The global opt-in/opt-out toggle is pulled out first so it is not reported as an
         // unknown section.
@@ -280,31 +265,27 @@ impl<'de> Deserialize<'de> for PluginsConfig {
 
         // Validate the settings of every plugin that is compiled in, whether it is enabled or
         // not: a malformed section is a configuration error, not a reason to skip the plugin.
-        let registrations: HashMap<&'static str, &zeta_plugin::PluginRegistration> =
-            inventory::iter::<zeta_plugin::PluginRegistration>
-                .into_iter()
+        let registrations: BTreeMap<&'static str, &zeta_plugin::PluginRegistration> =
+            inventory::iter::<zeta_plugin::PluginRegistration>()
                 .map(|registration| (registration.name, registration))
                 .collect();
 
-        let mut sections = HashMap::with_capacity(values.len());
-        let mut unknown = HashMap::new();
+        let mut sections = BTreeMap::new();
+        let mut unknown = BTreeSet::new();
 
         for (name, value) in values {
-            let (section, dict) =
-                PluginSection::parse(&value, enabled_by_default).map_err(|error| {
-                    D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
-                })?;
+            let section = PluginSection::parse(&value, enabled_by_default).map_err(|error| {
+                D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
+            })?;
 
             if let Some(registration) = registrations.get(name.as_str()) {
                 registration
                     .validate_settings(Some(&section.settings))
-                    .map_err(|error| {
-                        D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
-                    })?;
-            } else if !crate::BUNDLED_PLUGIN_NAMES.contains(&name.as_str()) {
+                    .map_err(D::Error::custom)?;
+            } else if is_unknown_section(&name) {
                 // A bundled plugin that was compiled out is not a typo; its section is simply
                 // not consumed in this build.
-                unknown.insert(name.clone(), dict);
+                unknown.insert(name.clone());
             }
 
             sections.insert(name, section);
@@ -316,6 +297,15 @@ impl<'de> Deserialize<'de> for PluginsConfig {
             unknown,
         })
     }
+}
+
+/// Whether a section name belongs to no bundled plugin at all, and is therefore a likely typo.
+///
+/// A bundled plugin whose cargo feature is disabled has no registration in this build, so it
+/// reaches this check; its name is in [`BUNDLED_PLUGIN_NAMES`](crate::BUNDLED_PLUGIN_NAMES) and
+/// the section is left out of [`PluginsConfig::unknown`].
+fn is_unknown_section(name: &str) -> bool {
+    !crate::BUNDLED_PLUGIN_NAMES.contains(&name)
 }
 
 #[cfg(all(test, feature = "dig", feature = "health"))]
@@ -489,8 +479,17 @@ enabled = false
         let plugins =
             extract("[plugins.digg]\nenabled = false\n").expect("could not parse configuration");
 
-        assert!(plugins.unknown.contains_key("digg"));
+        assert!(plugins.unknown.contains("digg"));
         assert!(plugins.sections.contains_key("digg"));
+    }
+
+    #[test]
+    fn bundled_plugins_without_a_registration_are_known() {
+        // The feature-gated plugin modules are declared whether or not their cargo feature is
+        // enabled, so their sections are only unknown when the name itself is misspelled.
+        assert!(!is_unknown_section("youtube"));
+        assert!(!is_unknown_section("urban_dictionary"));
+        assert!(is_unknown_section("youtub"));
     }
 
     #[test]

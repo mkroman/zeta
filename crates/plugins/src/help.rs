@@ -27,20 +27,11 @@ const SEPARATOR: &str = "\x0310,\x0f ";
 /// Responds to `.help` with a usage hint and an index of every plugin, `.help <plugin>` with the
 /// plugin's commands, or `.help <command>` with the command's description, usage and arguments
 /// derived from its `argh` type.
+#[derive(Default)]
 pub struct Help;
 
 #[plugin(name = "help")]
 impl Help {
-    // The constructor signature is fixed by the `Plugin` trait: `NoSettings` is a unit type the
-    // constructor cannot fail over, so the by-reference parameter and the `Result` wrapper stay.
-    const fn new(
-        _ctx: &Context,
-        _settings: &NoSettings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
-        Ok(Self)
-    }
-
     /// Replies with a usage hint and plugin index, a plugin's commands, or a command's usage.
     #[command(".help", "List plugins and commands, or show usage for one", event)]
     async fn help(

@@ -5,8 +5,61 @@
 //! cannot represent.
 
 use syn::parse::{Parse, ParseStream};
-use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Token, Type};
+
+/// The options `#[plugin(...)]` accepts, for the unknown-option diagnostic.
+const PLUGIN_OPTIONS: &[&str] = &["name", "settings", "urls", "messages"];
+
+/// The options `#[command(...)]` accepts, for the unknown-option diagnostic.
+const COMMAND_OPTIONS: &[&str] = &["args", "words", "spec", "label", "event", "register_if"];
+
+/// Parses the `= value` following an option name.
+fn parse_value<T: Parse>(input: ParseStream<'_>) -> syn::Result<T> {
+    input.parse::<Token![=]>()?;
+    input.parse()
+}
+
+/// Stores `value` in `slot`, rejecting a repeated option.
+fn set_once<T>(slot: &mut Option<T>, value: T, ident: &Ident) -> syn::Result<()> {
+    if slot.is_some() {
+        return Err(syn::Error::new(
+            ident.span(),
+            format!("duplicate `{ident}` argument"),
+        ));
+    }
+
+    *slot = Some(value);
+
+    Ok(())
+}
+
+/// Sets a boolean flag, rejecting a repetition.
+fn set_flag(slot: &mut bool, ident: &Ident) -> syn::Result<()> {
+    if *slot {
+        return Err(syn::Error::new(
+            ident.span(),
+            format!("duplicate `{ident}` flag"),
+        ));
+    }
+
+    *slot = true;
+
+    Ok(())
+}
+
+/// The error for an option the attribute does not accept.
+fn unknown_option(ident: &Ident, noun: &str, expected: &[&str]) -> syn::Error {
+    let expected = expected
+        .iter()
+        .map(|option| format!("`{option}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    syn::Error::new(
+        ident.span(),
+        format!("unknown {noun} `{ident}`; expected {expected}"),
+    )
+}
 
 /// The arguments of the `#[plugin(...)]` container attribute.
 pub struct PluginArgs {
@@ -40,23 +93,12 @@ impl Parse for PluginArgs {
             let ident: Ident = input.parse()?;
             match ident.to_string().as_str() {
                 "name" => {
-                    input.parse::<Token![=]>()?;
-                    let value: LitStr = input.parse()?;
-                    if name.is_some() {
-                        return Err(syn::Error::new(value.span(), "duplicate `name` argument"));
-                    }
-                    name = Some(value);
+                    let value: LitStr = parse_value(input)?;
+                    set_once(&mut name, value, &ident)?;
                 }
                 "settings" => {
-                    input.parse::<Token![=]>()?;
-                    let value: Type = input.parse()?;
-                    if settings.is_some() {
-                        return Err(syn::Error::new(
-                            value.span(),
-                            "duplicate `settings` argument",
-                        ));
-                    }
-                    settings = Some(value);
+                    let value: Type = parse_value(input)?;
+                    set_once(&mut settings, value, &ident)?;
                 }
                 "urls" => {
                     let content;
@@ -75,21 +117,10 @@ impl Parse for PluginArgs {
                             ));
                         }
                     };
-                    if urls.is_some() {
-                        return Err(syn::Error::new(kind.span(), "duplicate `urls` argument"));
-                    }
-                    urls = Some(value);
+                    set_once(&mut urls, value, &ident)?;
                 }
-                "messages" => messages = true,
-                other => {
-                    return Err(syn::Error::new(
-                        ident.span(),
-                        format!(
-                            "unknown plugin attribute `{other}`; expected `name`, `settings`, \
-                             `urls`, or `messages`"
-                        ),
-                    ));
-                }
+                "messages" => set_flag(&mut messages, &ident)?,
+                _ => return Err(unknown_option(&ident, "plugin attribute", PLUGIN_OPTIONS)),
             }
 
             if !input.is_empty() {
@@ -159,54 +190,146 @@ impl Parse for CommandArgs {
             let ident: Ident = input.parse()?;
             match ident.to_string().as_str() {
                 "args" => {
-                    input.parse::<Token![=]>()?;
-                    let value: Type = input.parse()?;
-                    if this.args.is_some() {
-                        return Err(syn::Error::new(value.span(), "duplicate `args` option"));
-                    }
-                    this.args = Some(value);
+                    let value: Type = parse_value(input)?;
+                    set_once(&mut this.args, value, &ident)?;
                 }
-                "words" => this.words = true,
+                "words" => set_flag(&mut this.words, &ident)?,
                 "spec" => {
-                    input.parse::<Token![=]>()?;
-                    let value: Ident = input.parse()?;
-                    if this.spec.is_some() {
-                        return Err(syn::Error::new(value.span(), "duplicate `spec` option"));
-                    }
-                    this.spec = Some(value);
+                    let value: Ident = parse_value(input)?;
+                    set_once(&mut this.spec, value, &ident)?;
                 }
                 "label" => {
-                    input.parse::<Token![=]>()?;
-                    let value: LitStr = input.parse()?;
-                    if this.label.is_some() {
-                        return Err(syn::Error::new(value.span(), "duplicate `label` option"));
-                    }
-                    this.label = Some(value);
+                    let value: LitStr = parse_value(input)?;
+                    set_once(&mut this.label, value, &ident)?;
                 }
-                "event" => this.event = true,
+                "event" => set_flag(&mut this.event, &ident)?,
                 "register_if" => {
-                    input.parse::<Token![=]>()?;
-                    let value: Expr = input.parse()?;
-                    if this.register_if.is_some() {
-                        return Err(syn::Error::new(
-                            value.span(),
-                            "duplicate `register_if` option",
-                        ));
-                    }
-                    this.register_if = Some(value);
+                    let value: Expr = parse_value(input)?;
+                    set_once(&mut this.register_if, value, &ident)?;
                 }
-                other => {
-                    return Err(syn::Error::new(
-                        ident.span(),
-                        format!(
-                            "unknown command option `{other}`; expected `args`, `words`, `spec`, \
-                             `label`, `event`, or `register_if`"
-                        ),
-                    ));
-                }
+                _ => return Err(unknown_option(&ident, "command option", COMMAND_OPTIONS)),
             }
         }
 
         Ok(this)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_every_plugin_argument() {
+        let args: PluginArgs =
+            syn::parse_str("name = \"dig\", settings = Settings, urls(hosts = HOSTS), messages")
+                .expect("the arguments should parse");
+
+        assert_eq!(args.name.value(), "dig");
+        assert!(args.settings.is_some());
+        assert!(matches!(args.urls, Some(UrlsArgs::Hosts(_))));
+        assert!(args.messages);
+    }
+
+    #[test]
+    fn parses_urls_any() {
+        let args: PluginArgs =
+            syn::parse_str("name = \"dig\", urls(any)").expect("the arguments should parse");
+
+        assert!(matches!(args.urls, Some(UrlsArgs::Any)));
+    }
+
+    #[test]
+    fn requires_the_plugin_name() {
+        let error = syn::parse_str::<PluginArgs>("settings = Settings")
+            .err()
+            .expect("the name is required");
+
+        assert!(error.to_string().contains("name"), "{error}");
+    }
+
+    #[test]
+    fn rejects_duplicate_plugin_arguments() {
+        for arguments in [
+            "name = \"a\", name = \"b\"",
+            "name = \"a\", settings = A, settings = B",
+            "name = \"a\", urls(any), urls(any)",
+            "name = \"a\", messages, messages",
+        ] {
+            let error = syn::parse_str::<PluginArgs>(arguments)
+                .err()
+                .unwrap_or_else(|| panic!("`{arguments}` should be rejected"));
+
+            assert!(error.to_string().contains("duplicate"), "{error}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_plugin_arguments() {
+        let error = syn::parse_str::<PluginArgs>("name = \"a\", commands(.x)")
+            .err()
+            .expect("an unknown argument should be rejected");
+
+        assert!(
+            error.to_string().contains("unknown plugin attribute"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn parses_every_command_option() {
+        let args: CommandArgs = syn::parse_str(
+            "\".test\", \"A test\", args = Opts, words, spec = TEST, label = \"Test\", event, \
+             register_if = settings.enabled",
+        )
+        .expect("the arguments should parse");
+
+        assert_eq!(args.trigger.value(), ".test");
+        assert!(args.args.is_some());
+        assert!(args.words);
+        assert_eq!(args.spec.expect("spec should be set").to_string(), "TEST");
+        assert_eq!(args.label.expect("label should be set").value(), "Test");
+        assert!(args.event);
+        assert!(args.register_if.is_some());
+    }
+
+    #[test]
+    fn parses_a_command_without_options() {
+        let args: CommandArgs =
+            syn::parse_str("\".test\", \"A test\"").expect("the arguments should parse");
+
+        assert!(args.args.is_none());
+        assert!(!args.words);
+        assert!(!args.event);
+    }
+
+    #[test]
+    fn rejects_duplicate_command_options() {
+        for arguments in [
+            "\".test\", \"A test\", args = A, args = B",
+            "\".test\", \"A test\", words, words",
+            "\".test\", \"A test\", spec = A, spec = B",
+            "\".test\", \"A test\", label = \"a\", label = \"b\"",
+            "\".test\", \"A test\", event, event",
+            "\".test\", \"A test\", register_if = a, register_if = b",
+        ] {
+            let error = syn::parse_str::<CommandArgs>(arguments)
+                .err()
+                .unwrap_or_else(|| panic!("`{arguments}` should be rejected"));
+
+            assert!(error.to_string().contains("duplicate"), "{error}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_command_options() {
+        let error = syn::parse_str::<CommandArgs>("\".test\", \"A test\", description = \"x\"")
+            .err()
+            .expect("an unknown option should be rejected");
+
+        assert!(
+            error.to_string().contains("unknown command option"),
+            "{error}"
+        );
     }
 }

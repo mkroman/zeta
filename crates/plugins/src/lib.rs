@@ -29,7 +29,7 @@ pub use config::{PluginConfig, PluginSection, PluginsConfig};
 /// Configuration sections for these names describe a plugin that was compiled out, not a typo,
 /// so the host can report the two cases differently. Kept in sync with the module declarations
 /// by the `bundled_plugin_names_match_the_declared_modules` test.
-pub const BUNDLED_PLUGIN_NAMES: &[&str] = &[
+pub(crate) const BUNDLED_PLUGIN_NAMES: &[&str] = &[
     "alert",
     "chaturbate",
     "choices",
@@ -82,26 +82,15 @@ pub fn register_bundled_plugins(
     ctx: &zeta_plugin::Context,
     plugins: &PluginsConfig,
 ) {
-    let mut unknown: Vec<&String> = plugins.unknown.keys().collect();
-    unknown.sort_unstable();
-    for name in unknown {
+    for name in &plugins.unknown {
         tracing::warn!(section = %name, "unknown plugin configuration section (typo?)");
     }
 
+    // Sorted by name for a deterministic catalog and log order. The registry reports duplicate
+    // registrations itself, so repeated names are not filtered here.
     let mut registrations: Vec<&'static zeta_plugin::PluginRegistration> =
-        zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>
-            .into_iter()
-            .collect();
+        zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().collect();
     registrations.sort_unstable_by_key(|registration| registration.name);
-
-    for pair in registrations.windows(2) {
-        if pair[0].name == pair[1].name {
-            tracing::error!(
-                plugin = pair[0].name,
-                "duplicate plugin registration; the later one is not registered"
-            );
-        }
-    }
 
     for registration in registrations {
         let (enabled, section) = plugins
@@ -206,9 +195,7 @@ mod tests {
     #[test]
     fn all_bundled_plugins_register_themselves() {
         assert_eq!(
-            zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>
-                .into_iter()
-                .count(),
+            zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().count(),
             35
         );
     }

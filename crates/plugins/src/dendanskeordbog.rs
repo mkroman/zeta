@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_plugin::config::HttpConfig;
 
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
 /// section.
@@ -102,7 +101,13 @@ impl DenDanskeOrdbog {
         settings: &Settings,
         _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        Ok(Self::with_http_config(&ctx.config.http, settings.clone()))
+        let http_client = http::build_client(&ctx.config.http);
+        let client = dendanskeordbog::Client::with_client(http_client);
+
+        Ok(Self {
+            client,
+            settings: settings.clone(),
+        })
     }
 
     /// Replies to `.ddo` with the dictionary entry of the queried word.
@@ -133,17 +138,6 @@ impl DenDanskeOrdbog {
         client.send_privmsg(channel, message)?;
 
         Ok(())
-    }
-}
-
-impl DenDanskeOrdbog {
-    /// Creates a new plugin instance around a client built for the given HTTP configuration.
-    #[must_use]
-    pub fn with_http_config(config: &HttpConfig, settings: Settings) -> Self {
-        let http_client = http::build_client(config);
-        let client = dendanskeordbog::Client::with_client(http_client);
-
-        Self { client, settings }
     }
 }
 

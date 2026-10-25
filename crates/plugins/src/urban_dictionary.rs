@@ -13,7 +13,6 @@ use tracing::debug;
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_plugin::config::HttpConfig;
 use zeta_utils::utils::{Truncatable, collapse_whitespace};
 
 /// The usage line sent for empty `.ud` queries.
@@ -91,7 +90,12 @@ impl UrbanDictionary {
         settings: &Settings,
         _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
-        Ok(Self::with_http_config(&ctx.config.http, settings.clone()))
+        let client = http::build_client(&ctx.config.http);
+
+        Ok(Self {
+            client,
+            settings: settings.clone(),
+        })
     }
 
     /// Replies to `.ud` with the top Urban Dictionary definition of the query.
@@ -152,14 +156,6 @@ impl Display for DefinitionFormatter<'_> {
 }
 
 impl UrbanDictionary {
-    /// Creates a new plugin instance around a client built for the given HTTP configuration.
-    #[must_use]
-    pub fn with_http_config(config: &HttpConfig, settings: Settings) -> Self {
-        let client = http::build_client(config);
-
-        Self { client, settings }
-    }
-
     /// Looks up the given `term` and returns a list of definitions.
     ///
     /// The list of definitions may be empty.

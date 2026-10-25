@@ -34,7 +34,6 @@ use url::Url;
 use crate::prelude::*;
 use zeta_cache::TtlCache;
 use zeta_http as http;
-use zeta_plugin::config::HttpConfig;
 use zeta_url::ExtractUrlsExt;
 use zeta_utils::duration::{format_duration, parse_iso8601_duration};
 
@@ -265,8 +264,15 @@ impl YouTube {
         _subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
+        let client = http::build_client(&ctx.config.http);
 
-        Ok(Self::with_config(settings, api_key, &ctx.config.http))
+        Ok(Self {
+            api_key,
+            region_code: settings.region_code.clone(),
+            safe_search: settings.safe_search,
+            client,
+            video_categories: Arc::new(TtlCache::new(CATEGORIES_TTL)),
+        })
     }
 
     #[handler(loaded)]
@@ -286,7 +292,7 @@ impl YouTube {
         event,
         register_if = settings.enable_command
     )]
-    async fn handle_command(
+    async fn search_video(
         &self,
         _ctx: &Context,
         client: &Client,
@@ -343,20 +349,6 @@ impl YouTube {
 }
 
 impl YouTube {
-    /// Creates a new plugin instance for the resolved `api_key` and the settings it configures.
-    #[must_use]
-    pub fn with_config(settings: &Settings, api_key: String, config: &HttpConfig) -> Self {
-        let client = http::build_client(config);
-
-        Self {
-            api_key,
-            region_code: settings.region_code.clone(),
-            safe_search: settings.safe_search,
-            client,
-            video_categories: Arc::new(TtlCache::new(CATEGORIES_TTL)),
-        }
-    }
-
     /// Spawns the task that periodically refreshes the cached video categories.
     ///
     /// The task ticks once per [`CATEGORIES_CHECK_INTERVAL`], skipping missed ticks: a tick is
