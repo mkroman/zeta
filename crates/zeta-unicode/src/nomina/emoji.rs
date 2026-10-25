@@ -32,9 +32,10 @@ const STREAM_COUNT: usize = 4;
 
 /// The longest chain of rule expansions a name may take.
 ///
-/// Valid tables nest only a few levels deep (a gender sign can resolve through a role, which
-/// resolves through a person base), so this only stops a corrupt self-referential rule before
-/// it overflows the stack.
+/// The gender rules recurse into a base entry, but the [`gendered_head`] guard bounds what
+/// the shipped table produces to a couple of levels. This cap only stops a corrupt
+/// self-referential rule — a gender rule whose base resolves back to itself — before it
+/// overflows the stack.
 const MAX_MATERIALIZE_DEPTH: u8 = 8;
 
 /// Supplies the Unicode character name of one code point to the emoji grammar.
@@ -565,6 +566,16 @@ impl Cps {
     }
 }
 
+/// The head code points a gender rule may rewrite to the `person` base.
+///
+/// The trainer only assigns a gender rule when its own rewrite check passed for a man or
+/// woman head (`gender_rule`/`role_rule` reject every other head), so the runtime mirrors
+/// that guard: a corrupt table then answers `None` instead of synthesizing a base the
+/// trainer never verified.
+const fn gendered_head(cp: u32) -> bool {
+    matches!(cp, 0x1F468 | 0x1F469)
+}
+
 /// The first existing base a gender rule applies to.
 fn gender_base(cps: &[u32], emoji: &Emoji) -> Option<usize> {
     let suffix = cps.len() >= 3
@@ -574,11 +585,17 @@ fn gender_base(cps: &[u32], emoji: &Emoji) -> Option<usize> {
         if let Some(base) = emoji.find_key(cps.get(..cps.len() - 2)?) {
             return Some(base);
         }
+        if !cps.first().is_some_and(|&head| gendered_head(head)) {
+            return None;
+        }
         let mut candidate = vec![0x1F9D1];
         candidate.extend_from_slice(cps.get(1..cps.len() - 2)?);
         return emoji.find_key(&candidate);
     }
-    if cps.len() == 3 && cps.get(1) == Some(&ZWJ) {
+    if cps.len() == 3
+        && cps.get(1) == Some(&ZWJ)
+        && cps.first().is_some_and(|&head| gendered_head(head))
+    {
         let mut candidate = vec![0x1F9D1];
         candidate.extend_from_slice(cps.get(1..)?);
         return emoji.find_key(&candidate);
@@ -779,14 +796,35 @@ mod tests {
     }
 
     #[test]
-    fn a_self_referential_gender_rule_stops_at_the_depth_cap() {
-        // `gender_base` rewrites a three-code-point role's head to U+1F9D1. When the
-        // replacement is the entry itself, materializing would recurse until the stack
-        // overflows; the depth cap turns that into a miss.
+    fn an_adult_headed_gender_rule_does_not_rewrite_its_base() {
+        // The trainer never assigns a gender rule to a `person` head, so the runtime's head
+        // guard answers `None` for this corrupt entry instead of rewriting it to itself.
         let entries = vec![(vec![0x1F9D1, ZWJ, 0x1F9B0], Rule::GenderWoman, 0)];
         let blob = section(&entries, &[], &[(0, 0)]);
         let emoji = Emoji::parse(&blob).expect("the section parses");
         assert_eq!(emoji.emoji_name(&mut Names, "🧑‍🦰"), None);
+    }
+
+    #[test]
+    fn a_gender_rule_rewrites_a_man_or_woman_head_to_the_person_base() {
+        // Both roles resolve through the person base one level down; an adult head carrying
+        // the rule instead is rejected by the head guard
+        // (`an_adult_headed_gender_rule_does_not_rewrite_its_base`).
+        let entries = vec![
+            (vec![0x1F468, ZWJ, 0x1F9B0], Rule::GenderMan, 0),
+            (vec![0x1F469, ZWJ, 0x1F9B0], Rule::GenderWoman, 0),
+            (vec![0x1F9D1, ZWJ, 0x1F9B0], Rule::Literal, 0),
+        ];
+        let blob = section(&entries, &["person: red hair"], &[(0, 0), (0, 0), (0, 0)]);
+        let emoji = Emoji::parse(&blob).expect("the section parses");
+        assert_eq!(
+            emoji.emoji_name(&mut Names, "👨‍🦰").as_deref(),
+            Some("man: red hair")
+        );
+        assert_eq!(
+            emoji.emoji_name(&mut Names, "👩‍🦰").as_deref(),
+            Some("woman: red hair")
+        );
     }
 
     #[test]
