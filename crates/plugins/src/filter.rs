@@ -40,7 +40,7 @@ use tracing::debug;
 
 use crate::hostmask::Hostmasks;
 use crate::prelude::*;
-use zeta_utils::utils::{MAX_LISTING_LENGTH, append_entries_within_budget};
+use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_within_budget};
 
 /// The `.filter` command.
 const FILTER: CommandSpec =
@@ -615,7 +615,7 @@ fn describe(filter: &Filter) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     #[tokio::test]
     async fn publishes_a_url_filters_handle_for_the_host() {

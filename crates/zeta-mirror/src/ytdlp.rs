@@ -180,7 +180,7 @@ impl YtDlp {
     #[must_use]
     pub fn new(options: YtDlpOptions) -> Self {
         Self {
-            command: zeta_utils::utils::resolve_setting(
+            command: zeta_utils::settings::resolve_setting(
                 options.command.as_deref(),
                 COMMAND_ENV,
                 DEFAULT_COMMAND,

@@ -562,7 +562,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,

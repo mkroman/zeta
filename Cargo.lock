@@ -2909,7 +2909,6 @@ dependencies = [
  "rand 0.10.3",
  "rand_mt",
  "reddit",
- "regex",
  "reqwest",
  "rink-core",
  "scraper",

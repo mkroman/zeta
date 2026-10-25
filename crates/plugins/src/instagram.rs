@@ -45,7 +45,7 @@ use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_url::redact_url_str;
-use zeta_utils::utils::{Truncatable, collapse_whitespace};
+use zeta_utils::text::{Truncatable, collapse_whitespace};
 
 use self::meta::MediaDetails;
 use self::urls::{InstagramLink, MediaKind, media_url, parse_instagram_url, story_url};
@@ -169,11 +169,11 @@ impl Instagram {
             settings.public_url_base.as_deref(),
         );
 
-        let session_cookie = zeta_utils::utils::resolve_optional_setting(
+        let session_cookie = zeta_utils::settings::resolve_optional_setting(
             settings.session_cookie.as_deref(),
             "INSTAGRAM_SESSION_COOKIE",
         );
-        let metadata_proxy = zeta_utils::utils::resolve_optional_setting(
+        let metadata_proxy = zeta_utils::settings::resolve_optional_setting(
             settings.metadata_proxy.as_deref(),
             "INSTAGRAM_METADATA_PROXY",
         );
@@ -604,7 +604,7 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,

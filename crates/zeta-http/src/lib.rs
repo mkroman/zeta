@@ -22,7 +22,7 @@ use tracing::{Span, debug, error, instrument};
 #[cfg(feature = "http")]
 use zeta_plugin::config::HttpConfig;
 #[cfg(feature = "http")]
-use zeta_utils::utils::Truncatable;
+use zeta_utils::text::Truncatable;
 
 #[cfg(feature = "http")]
 use zeta_url::redact_url;

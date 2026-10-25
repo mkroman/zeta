@@ -9,7 +9,7 @@ use num_format::{Locale, ToFormattedString};
 use zeta_plugin::prelude::{BOLD, COLOR, REPLY_PREFIX, RESET};
 
 use super::model::{Person, Title};
-use zeta_utils::utils::Truncatable;
+use zeta_utils::text::Truncatable;
 
 /// Returns the prefix all IMDb replies start with: the reply marker, a bold `IMDb` label and a
 /// cyan colon.
@@ -140,7 +140,7 @@ fn write_life_years(message: &mut String, birth_year: Option<i32>, death_year: O
 mod tests {
     use super::*;
     use crate::imdb::model::SeriesInfo;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     #[test]
     fn format_title_matches_expected_layout() {

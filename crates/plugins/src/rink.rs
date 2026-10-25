@@ -55,7 +55,7 @@ use crate::prelude::*;
 use coinmarketcap::Client as CmcClient;
 use zeta_cache::TtlCache;
 use zeta_http::RequestError;
-use zeta_utils::utils::collapse_whitespace;
+use zeta_utils::text::collapse_whitespace;
 
 /// Calculator plugin using rink-rs.
 pub struct Rink {
@@ -629,7 +629,7 @@ mod tests {
             matchers::{method, path},
         },
     };
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     /// Evaluates `line` through the actor, panicking if it has stopped.
     async fn evaluate(rink: &Rink, line: &str, classify: bool) -> String {

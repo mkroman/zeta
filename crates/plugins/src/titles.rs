@@ -27,7 +27,7 @@ use crate::prelude::*;
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_url::redact_url;
-use zeta_utils::utils::{Truncatable, collapse_whitespace};
+use zeta_utils::text::{Truncatable, collapse_whitespace};
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
@@ -615,7 +615,7 @@ mod tests {
     use super::*;
     use zeta_plugin::CatalogEntry;
     use zeta_test_support::{assert_empty, settings_tests};
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     /// Tokenizes `html` in a single chunk and returns the captured metadata.
     fn parse_metadata(html: &str) -> PageMetadata {

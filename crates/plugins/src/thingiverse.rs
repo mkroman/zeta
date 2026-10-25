@@ -12,7 +12,6 @@
 use std::fmt::{self, Display};
 
 use num_format::{Locale, ToFormattedString};
-use regex::Regex;
 use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -20,6 +19,7 @@ use url::Url;
 
 use crate::prelude::*;
 use zeta_http as http;
+use zeta_url::{is_numeric_segment, path_segments};
 
 /// The Thingiverse hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
@@ -42,8 +42,6 @@ pub struct Thingiverse {
     client: reqwest::Client,
     /// Thingiverse App Token.
     app_token: String,
-    /// Regex for parsing thing IDs from URL paths.
-    path_regex: Regex,
 }
 
 /// Errors that can occur during plugin execution.
@@ -88,14 +86,8 @@ impl Thingiverse {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client(&ctx.config.http);
-        // Regex to match /thing:<id>
-        let path_regex = Regex::new(r"^/thing:(?P<id>\d+)/?$").expect("invalid regex");
 
-        Ok(Self {
-            client,
-            app_token,
-            path_regex,
-        })
+        Ok(Self { client, app_token })
     }
 
     #[handler(url)]
@@ -123,10 +115,7 @@ impl Thingiverse {
         client: &Client,
     ) -> Result<(), ZetaError> {
         // Extract ID from path
-        if let Some(captures) = self.path_regex.captures(url.path())
-            && let Some(id_match) = captures.name("id")
-        {
-            let thing_id = id_match.as_str();
+        if let Some(thing_id) = thing_id(url) {
             debug!(%thing_id, "fetching thingiverse thing");
 
             let message = match self.fetch_thing(thing_id).await {
@@ -154,6 +143,17 @@ impl Thingiverse {
             .header(AUTHORIZATION, format!("Bearer {}", self.app_token));
         http::get_json_or_404(request, Error::NotFound).await
     }
+}
+
+/// Returns the numeric thing ID from a `/thing:<id>` URL, if present.
+fn thing_id(url: &Url) -> Option<&str> {
+    let segments = path_segments(url)?;
+    let [segment] = segments.as_slice() else {
+        return None;
+    };
+
+    let id = segment.strip_prefix("thing:")?;
+    is_numeric_segment(id).then_some(id)
 }
 
 impl Display for Thing {
@@ -207,7 +207,7 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -241,6 +241,28 @@ mod tests {
             download_count,
             collect_count,
         }
+    }
+
+    #[test]
+    fn parses_thing_ids_from_paths() {
+        fn parse(url: &str) -> Option<String> {
+            thing_id(&Url::parse(url).unwrap()).map(str::to_owned)
+        }
+
+        assert_eq!(
+            parse("https://www.thingiverse.com/thing:12345"),
+            Some("12345".to_string())
+        );
+        assert_eq!(
+            parse("https://www.thingiverse.com/thing:12345/"),
+            Some("12345".to_string())
+        );
+
+        assert_eq!(parse("https://www.thingiverse.com/thing:abc"), None);
+        assert_eq!(parse("https://www.thingiverse.com/thing:"), None);
+        assert_eq!(parse("https://www.thingiverse.com/foo/thing:12345"), None);
+        assert_eq!(parse("https://www.thingiverse.com/thing:12345/extra"), None);
+        assert_eq!(parse("https://www.thingiverse.com/thing:%31"), None);
     }
 
     #[test]

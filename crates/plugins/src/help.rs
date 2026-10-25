@@ -13,7 +13,7 @@
 use argh::{CommandInfoWithArgs, FlagInfo, FlagInfoKind, Optionality, PositionalInfo};
 
 use crate::prelude::*;
-use zeta_utils::utils::append_entries_within_budget;
+use zeta_utils::irc::append_entries_within_budget;
 
 /// The maximum length of a help message, assuming the IRCv3 extended line length of 8191 bytes
 /// and leaving room for the sender prefix, `PRIVMSG` framing and line ending overhead.
@@ -428,7 +428,7 @@ fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a Catalo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     const ALERT: CommandSpec = CommandSpec::new(".alert", "Schedule an alert to be posted later");
     const ALERT_COMMANDS: &[CommandSpec] = &[ALERT];

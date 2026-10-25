@@ -11,9 +11,6 @@
 //! `GOOGLE_MAPS_API_KEY` environment variable; a missing key fails plugin initialization and
 //! the plugin is skipped at startup.
 
-use std::sync::LazyLock;
-
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use time::{
     Duration, OffsetDateTime, Time, format_description::FormatItem, macros::format_description,
@@ -22,7 +19,8 @@ use tracing::{debug, warn};
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_utils::utils::strip_nick_prefix;
+use zeta_utils::irc::strip_nick_prefix;
+use zeta_utils::text::{strip_prefix_ignore_case, strip_suffix_ignore_case};
 
 const API_BASE_URL: &str = "https://maps.googleapis.com";
 
@@ -35,19 +33,6 @@ pub struct Settings {
     #[serde(default)]
     pub api_key: Option<String>,
 }
-
-static RE_OPENING_TIME: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(?:hvornår|hvad tid) åbner (?P<place>.*?)\?$").expect("invalid regex")
-});
-static RE_CLOSING_TIME: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(?:hvornår|hvad tid) lukker (?P<place>.*?)\?$").expect("invalid regex")
-});
-static RE_IS_OPEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(?:har|er) (?P<place>.*?) (?:åbent|åben)\?$").expect("invalid regex")
-});
-static RE_IS_CLOSED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(?:har|er) (?P<place>.*?) lukket\?$").expect("invalid regex")
-});
 
 /// Plugin that allows users to query opening hours for places using the Google Maps API.
 ///
@@ -259,42 +244,25 @@ impl IsItOpen {
         query: &str,
         client: &Client,
     ) -> Result<(), ZetaError> {
-        let mut place_name = None;
-        let mut action = QueryAction::None;
+        let Some((action, place_name)) = parse_query(query) else {
+            return Ok(());
+        };
 
-        // Determine intent based on regex matches
-        if let Some(caps) = RE_OPENING_TIME.captures(query) {
-            place_name = Some(caps["place"].to_string());
-            action = QueryAction::OpeningTime;
-        } else if let Some(caps) = RE_CLOSING_TIME.captures(query) {
-            place_name = Some(caps["place"].to_string());
-            action = QueryAction::ClosingTime;
-        } else if let Some(caps) = RE_IS_OPEN.captures(query) {
-            place_name = Some(caps["place"].to_string());
-            action = QueryAction::IsOpen;
-        } else if let Some(caps) = RE_IS_CLOSED.captures(query) {
-            place_name = Some(caps["place"].to_string());
-            action = QueryAction::IsClosed;
-        }
+        let message = match self.find_place(place_name).await {
+            Ok(place) => match action {
+                QueryAction::OpeningTime => Self::format_opening_time(&place, nick),
+                QueryAction::ClosingTime => Self::format_closing_time(&place, nick),
+                QueryAction::IsOpen => Self::format_is_open(&place, nick),
+                QueryAction::IsClosed => Self::format_is_closed(&place, nick),
+            },
+            Err(Error::NotFound) => notice("place not found"),
+            Err(e) => {
+                warn!(?e, "isitopen error");
+                notice(e)
+            }
+        };
 
-        if let Some(place_name) = place_name {
-            let message = match self.find_place(&place_name).await {
-                Ok(place) => match action {
-                    QueryAction::OpeningTime => Self::format_opening_time(&place, nick),
-                    QueryAction::ClosingTime => Self::format_closing_time(&place, nick),
-                    QueryAction::IsOpen => Self::format_is_open(&place, nick),
-                    QueryAction::IsClosed => Self::format_is_closed(&place, nick),
-                    QueryAction::None => return Ok(()),
-                },
-                Err(Error::NotFound) => notice("place not found"),
-                Err(e) => {
-                    warn!(?e, "isitopen error");
-                    notice(e)
-                }
-            };
-
-            client.send_privmsg(channel, message)?;
-        }
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }
@@ -455,9 +423,42 @@ impl IsItOpen {
     }
 }
 
-/// Helper enum to map regex matches to actions.
+/// Parses a Danish natural-language question about a place's opening hours.
+fn parse_query(query: &str) -> Option<(QueryAction, &str)> {
+    let query = query.strip_suffix('?')?;
+
+    for prefix in ["hvornår åbner ", "hvad tid åbner "] {
+        if let Some(place) = strip_prefix_ignore_case(query, prefix) {
+            return Some((QueryAction::OpeningTime, place));
+        }
+    }
+
+    for prefix in ["hvornår lukker ", "hvad tid lukker "] {
+        if let Some(place) = strip_prefix_ignore_case(query, prefix) {
+            return Some((QueryAction::ClosingTime, place));
+        }
+    }
+
+    for prefix in ["har ", "er "] {
+        if let Some(rest) = strip_prefix_ignore_case(query, prefix) {
+            for suffix in [" åbent", " åben"] {
+                if let Some(place) = strip_suffix_ignore_case(rest, suffix) {
+                    return Some((QueryAction::IsOpen, place));
+                }
+            }
+
+            if let Some(place) = strip_suffix_ignore_case(rest, " lukket") {
+                return Some((QueryAction::IsClosed, place));
+            }
+        }
+    }
+
+    None
+}
+
+/// The question intent parsed from a message.
+#[derive(Debug, PartialEq, Eq)]
 enum QueryAction {
-    None,
     OpeningTime,
     ClosingTime,
     IsOpen,
@@ -479,6 +480,55 @@ mod tests {
             "api_key": "secret",
         } assert: {
             assert_eq!(settings.api_key.as_deref(), Some("secret"));
+        }
+    }
+
+    #[test]
+    fn parses_danish_opening_hour_questions() {
+        let cases = [
+            (
+                "hvornår åbner Netto?",
+                Some((QueryAction::OpeningTime, "Netto")),
+            ),
+            (
+                "HVAD TID ÅBNER Café?",
+                Some((QueryAction::OpeningTime, "Café")),
+            ),
+            (
+                "hvornår lukker Netto?",
+                Some((QueryAction::ClosingTime, "Netto")),
+            ),
+            (
+                "hvad tid lukker Netto?",
+                Some((QueryAction::ClosingTime, "Netto")),
+            ),
+            ("har Netto åbent?", Some((QueryAction::IsOpen, "Netto"))),
+            ("er Netto åben?", Some((QueryAction::IsOpen, "Netto"))),
+            ("er Netto lukket?", Some((QueryAction::IsClosed, "Netto"))),
+            ("er  åbent?", Some((QueryAction::IsOpen, ""))),
+            ("er  lukket?", Some((QueryAction::IsClosed, ""))),
+            (
+                "hvornår åbner Netto??",
+                Some((QueryAction::OpeningTime, "Netto?")),
+            ),
+        ];
+
+        for (query, expected) in cases {
+            assert_eq!(parse_query(query), expected, "{query}");
+        }
+    }
+
+    #[test]
+    fn rejects_unmatched_opening_hour_questions() {
+        for query in [
+            "hvornår åbner Netto",
+            "hvornår åbner Netto? ",
+            "er Netto åben",
+            "hvor er Netto?",
+            "",
+            "?",
+        ] {
+            assert_eq!(parse_query(query), None, "{query}");
         }
     }
 

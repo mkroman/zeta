@@ -12,7 +12,7 @@ use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 
 use crate::prelude::*;
-use zeta_utils::utils::strip_nick_prefix;
+use zeta_utils::irc::strip_nick_prefix;
 
 /// Settings for the choices plugin, from its `[plugins.choices]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]

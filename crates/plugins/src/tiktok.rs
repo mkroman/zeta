@@ -19,7 +19,7 @@ use crate::prelude::*;
 use zeta_http as http;
 use zeta_http::RequestError;
 use zeta_mirror::{Mirror, MirrorHandle};
-use zeta_utils::utils::Truncatable;
+use zeta_utils::text::Truncatable;
 
 use self::oembed::OEmbed;
 use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};

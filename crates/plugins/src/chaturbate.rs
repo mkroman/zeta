@@ -5,7 +5,6 @@
 //! is not public. The details are scraped from the room page's `window.initialRoomDossier`
 //! JSON blob rather than an API; the plugin has no settings.
 
-use regex::Regex;
 use serde::Deserialize;
 use tracing::debug;
 use url::Url;
@@ -22,7 +21,6 @@ const URL_HOSTS: &[&str] = &["chaturbate.com", "www.chaturbate.com"];
 /// Plugin for handling Chaturbate URLs and fetching broadcaster room info.
 pub struct Chaturbate {
     client: reqwest::Client,
-    room_dossier_re: Regex,
 }
 
 /// Errors that can occur when fetching or parsing a Chaturbate room.
@@ -84,24 +82,11 @@ impl Chaturbate {
 
 impl Chaturbate {
     /// Creates a new [`Chaturbate`] plugin instance.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the room dossier extraction regex fails to compile, which can only happen on a
-    /// programming error since the pattern is a constant.
     #[must_use]
     pub fn with_http_config(config: &HttpConfig) -> Self {
         let client = http::build_client(config);
-        // The dossier is assigned as a JSON-encoded string literal, terminated by a semicolon
-        // before the closing </script> tag.
-        let room_dossier_re =
-            Regex::new(r#"window\.initialRoomDossier\s*=\s*("(?:[^"\\]|\\.)*");"#)
-                .expect("the room dossier regex is valid");
 
-        Self {
-            client,
-            room_dossier_re,
-        }
+        Self { client }
     }
 
     async fn process_broadcaster(
@@ -116,7 +101,7 @@ impl Chaturbate {
         let response = http::send(self.client.get(&url)).await?;
         let html = http::text(response).await?;
 
-        let dossier = parse_room_dossier_with_re(&self.room_dossier_re, &html)?;
+        let dossier = parse_room_dossier(&html)?;
         debug!(?dossier, "parsed room dossier");
 
         let msg = if dossier.room_status == "offline" {
@@ -134,14 +119,44 @@ impl Chaturbate {
     }
 }
 
-fn parse_room_dossier_with_re(re: &Regex, html: &str) -> Result<RoomDossier, Error> {
-    let caps = re.captures(html).ok_or(Error::DossierNotFound)?;
-    // The captured group is the outer JSON string, e.g. `"{ ... }"`.
-    let outer: String = serde_json::from_str(&caps[1])?;
-    // The inner value is the actual JSON object.
-    let dossier: RoomDossier = serde_json::from_str(&outer)?;
+fn parse_room_dossier(html: &str) -> Result<RoomDossier, Error> {
+    let literal = room_dossier_literal(html).ok_or(Error::DossierNotFound)?;
+    let outer: String = serde_json::from_str(literal)?;
 
-    Ok(dossier)
+    Ok(serde_json::from_str(&outer)?)
+}
+
+/// Returns the quoted `window.initialRoomDossier` value, if present.
+///
+/// The value is a JSON-encoded string literal, so the closing quote is the first unescaped one;
+/// `serde_json` does the actual unescaping when the literal is parsed.
+fn room_dossier_literal(html: &str) -> Option<&str> {
+    const MARKER: &str = "window.initialRoomDossier";
+
+    // The dossier is assigned as a JSON-encoded string literal, terminated by a semicolon
+    // before the closing </script> tag.
+    let tail = html.split_once(MARKER)?.1;
+    let tail = tail.trim_start().strip_prefix('=')?.trim_start();
+
+    let mut characters = tail.char_indices();
+    if characters.next()?.1 != '"' {
+        return None;
+    }
+
+    let mut escaped = false;
+
+    for (index, character) in characters {
+        match (escaped, character) {
+            (true, _) => escaped = false,
+            (false, '\\') => escaped = true,
+            (false, '"') => {
+                return tail[index + 1..].starts_with(';').then(|| &tail[..=index]);
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 /// Path segments that name site resources rather than broadcaster rooms.
@@ -203,15 +218,56 @@ mod tests {
 
         for (fixture, username, title) in cases {
             let html = fixture_html(fixture);
-            let plugin = Chaturbate::with_http_config(&HttpConfig::default());
-            let dossier = parse_room_dossier_with_re(&plugin.room_dossier_re, &html)
-                .expect("should parse dossier");
+            let dossier = parse_room_dossier(&html).expect("should parse dossier");
 
             assert_eq!(dossier.broadcaster_username, username, "for {fixture}");
             assert_eq!(dossier.room_status, "public", "for {fixture}");
             assert_eq!(dossier.broadcaster_gender, "female", "for {fixture}");
             assert_eq!(dossier.room_title, title, "for {fixture}");
         }
+    }
+
+    #[test]
+    fn parses_room_dossier_escapes_and_whitespace() {
+        let html = r#"<script>
+window.initialRoomDossier
+
+    =
+
+    "{\"broadcaster_username\":\"alice\",\"room_status\":\"public\",\"room_title\":\"say \\\"hi\\\"\",\"broadcaster_gender\":\"female\"}";
+</script>"#;
+
+        let dossier = parse_room_dossier(html).expect("should parse dossier");
+
+        assert_eq!(dossier.broadcaster_username, "alice");
+        assert_eq!(dossier.room_status, "public");
+        assert_eq!(dossier.room_title, r#"say "hi""#);
+        assert_eq!(dossier.broadcaster_gender, "female");
+    }
+
+    #[test]
+    fn rejects_room_dossiers_without_a_quoted_literal() {
+        for html in [
+            "no dossier here",
+            r#"window.initialRoomDossier "{\"room_status\":\"public\"}";"#,
+            r"window.initialRoomDossier = 42;",
+            r#"window.initialRoomDossier = "{\"room_status\":\"public\"}""#,
+        ] {
+            assert!(
+                matches!(parse_room_dossier(html), Err(Error::DossierNotFound)),
+                "{html}"
+            );
+        }
+    }
+
+    #[test]
+    fn reports_deserialization_errors_after_the_literal() {
+        let html = r#"window.initialRoomDossier = "not json";"#;
+
+        assert!(matches!(
+            parse_room_dossier(html),
+            Err(Error::Deserialize(_))
+        ));
     }
 
     #[test]

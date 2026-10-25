@@ -13,7 +13,7 @@ use tracing::debug;
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_utils::utils::{Truncatable, collapse_whitespace};
+use zeta_utils::text::{Truncatable, collapse_whitespace};
 
 /// The usage line sent for empty `.ud` queries.
 pub const USAGE: &str = "Usage: .ud\x0f <query>";

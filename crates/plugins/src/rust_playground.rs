@@ -9,13 +9,13 @@
 //! The playground channel (`stable`), build mode (`debug`), edition (`2024`), and output limit
 //! are set in `[plugins.rust_playground]`.
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_utils::utils::{Truncatable, strip_control_chars};
+use zeta_utils::irc::strip_control_chars;
+use zeta_utils::text::Truncatable;
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
 
@@ -48,7 +48,6 @@ impl Default for Settings {
 /// Plugin for evaluating Rust code.
 pub struct RustPlayground {
     client: reqwest::Client,
-    error_regex: Regex,
     settings: Settings,
 }
 
@@ -82,12 +81,9 @@ impl RustPlayground {
     // cannot fail.
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
-        // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
-        let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");
 
         Ok(Self {
             client,
-            error_regex,
             settings: settings.clone(),
         })
     }
@@ -142,7 +138,7 @@ impl RustPlayground {
         let output = if result.success {
             sanitize_output(&result.stdout)
         } else {
-            let errors = self.extract_errors(&result.stderr);
+            let errors = extract_errors(&result.stderr);
             if errors.is_empty() {
                 // Fallback to raw stderr if no specific errors were found
                 sanitize_output(&result.stderr)
@@ -155,14 +151,29 @@ impl RustPlayground {
             .truncate_with_suffix(self.settings.max_output_length, "…")
             .into_owned())
     }
+}
 
-    /// Extracts compiler error messages from the stderr output.
-    fn extract_errors(&self, stderr: &str) -> Vec<String> {
-        self.error_regex
-            .captures_iter(stderr)
-            .map(|cap| cap[1].to_string())
-            .collect()
-    }
+/// Extracts compiler error messages from the stderr output.
+fn extract_errors(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("error")?;
+
+            let rest = if let Some(rest) = rest.strip_prefix('[') {
+                let (code, rest) = rest.split_once(']')?;
+                let digits = code.strip_prefix('E')?;
+                if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                rest
+            } else {
+                rest
+            };
+
+            rest.strip_prefix(": ").map(str::to_owned)
+        })
+        .collect()
 }
 
 /// Sanitizes the playground output for IRC: control characters (which include newlines) are
@@ -195,6 +206,33 @@ mod tests {
             assert_eq!(settings.mode, "release");
             assert_eq!(settings.edition, "2021");
             assert_eq!(settings.max_output_length, 100);
+        }
+    }
+
+    #[test]
+    fn extracts_compiler_errors() {
+        let stderr = "\
+error[E0425]: cannot find value `x` in this scope
+  --> src/main.rs:1:20
+error: expected one of `!`, `(`, `::`, `;`, or `=`, found `}`
+warning: unused variable: `y`
+errors: not a compiler error
+error[E]: also not a compiler error
+";
+
+        assert_eq!(
+            extract_errors(stderr),
+            [
+                "cannot find value `x` in this scope",
+                "expected one of `!`, `(`, `::`, `;`, or `=`, found `}`",
+            ]
+        );
+    }
+
+    #[test]
+    fn extracts_no_errors_from_other_output() {
+        for stderr in ["", "warning: unused variable: `x`", "error", "error[E123]"] {
+            assert_eq!(extract_errors(stderr), Vec::<String>::new(), "{stderr}");
         }
     }
 
