@@ -167,7 +167,7 @@ zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
 similar-asserts = "=2.0.0"
-syn = { version = "2", default-features = false, features = ["derive", "full", "parsing"] }
+syn = { version = "=2.0.119", default-features = false, features = ["derive", "full", "parsing"] }
 wildmatch = "=2.7.0"
 zeta-test-support = { path = "../zeta-test-support" }
 
