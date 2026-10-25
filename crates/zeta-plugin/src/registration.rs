@@ -139,3 +139,83 @@ where
 {
     deserialize_settings::<P>(section).map(|(_, unknown_keys)| unknown_keys)
 }
+
+#[cfg(test)]
+mod tests {
+    use figment::value::Dict;
+    use serde::Deserialize;
+    use zeta_test_support::assert_empty;
+
+    use super::*;
+
+    /// A settings type with one optional key, so a typo is distinguishable from a bad value.
+    #[derive(Debug, Default, Deserialize)]
+    struct TestSettings {
+        /// Deserialized only: the tests assert on the registration's diagnostics.
+        #[allow(dead_code)]
+        #[serde(default)]
+        value: Option<u32>,
+    }
+
+    /// A plugin whose construction cannot fail, so only the settings decide the outcome.
+    struct TestPlugin;
+
+    impl Plugin<Context> for TestPlugin {
+        const NAME: &'static str = "test_plugin";
+        type Settings = TestSettings;
+
+        fn new(_: &Context, _: &Self::Settings, _: &mut Subscriptions) -> Result<Self, Error> {
+            Ok(Self)
+        }
+    }
+
+    fn registration() -> PluginRegistration {
+        PluginRegistration::new::<TestPlugin>(TestPlugin::NAME)
+    }
+
+    /// Builds the `[plugins.<name>]` section value the host hands to the registration.
+    fn section(entries: &[(&str, Value)]) -> Value {
+        let mut dict = Dict::new();
+        for (key, value) in entries {
+            dict.insert((*key).to_owned(), value.clone());
+        }
+
+        Value::from(dict)
+    }
+
+    #[test]
+    fn omitted_section_has_no_unknown_keys() {
+        let unknown = registration()
+            .validate_settings(None)
+            .expect("the defaults should validate");
+
+        assert_empty!(unknown);
+    }
+
+    #[test]
+    fn recognized_keys_have_no_unknown_keys() {
+        let unknown = registration()
+            .validate_settings(Some(&section(&[("value", Value::from(42_u32))])))
+            .expect("recognized settings should validate");
+
+        assert_empty!(unknown);
+    }
+
+    #[test]
+    fn typo_is_reported_as_an_unknown_key() {
+        let unknown = registration()
+            .validate_settings(Some(&section(&[("valuee", Value::from(42_u32))])))
+            .expect("unknown keys should not fail validation");
+
+        assert_eq!(unknown, ["valuee"]);
+    }
+
+    #[test]
+    fn invalid_value_type_names_the_plugin() {
+        let error = registration()
+            .validate_settings(Some(&section(&[("value", Value::from("not a number"))])))
+            .expect_err("a string is not a number");
+
+        assert!(error.to_string().contains(TestPlugin::NAME), "{error}");
+    }
+}
