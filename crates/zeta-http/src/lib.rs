@@ -26,8 +26,8 @@ use zeta_plugin::config::HttpConfig;
 #[cfg(feature = "http")]
 use zeta_utils::text::Truncatable;
 
-#[cfg(feature = "http")]
-use zeta_url::redact_url;
+#[cfg(any(feature = "request", feature = "http"))]
+use zeta_url::RedactedUrl;
 
 /// JSON response parsing shared by the API client plugins.
 ///
@@ -108,7 +108,8 @@ fn body_error(error: reqwest::Error) -> ApiError {
 
 /// Sends `request` and returns the response.
 ///
-/// A failed send is logged once with `url.full` — the request URL without its query — its
+/// A failed send is logged once with `url.full` — the request URL without its query, fragment,
+/// or userinfo — its
 /// `error.type`, and the error's full rendering, before the error comes back as a
 /// [`RequestError`]: these APIs carry their key in the query string, and the error reaches
 /// `Display` (and `Debug`) in plugin and dispatcher logs, while a log line still needs to say
@@ -132,7 +133,8 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
 
 /// Reads the body of `response` as a string.
 ///
-/// A failed read is logged once with `url.full` — the response URL without its query — the
+/// A failed read is logged once with `url.full` — the response URL without its query, fragment,
+/// or userinfo — the
 /// way [`send`] logs a failed request, so no caller has to hand-roll that log line.
 ///
 /// # Errors
@@ -140,7 +142,7 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
 /// Returns the [`RequestError`] of the failed read, with its URL redacted.
 #[cfg(feature = "http")]
 pub async fn text(response: reqwest::Response) -> Result<String, RequestError> {
-    let url = redact_url(response.url());
+    let url = RedactedUrl::from_url(response.url());
 
     response.text().await.map_err(|error| {
         let error = RequestError::from(error);
@@ -153,7 +155,7 @@ pub async fn text(response: reqwest::Response) -> Result<String, RequestError> {
 
 /// Logs a failed request or body read once, with its redacted URL and error type.
 #[cfg(any(feature = "request", feature = "http"))]
-fn log_request_error(error: &RequestError, url: &str, message: &str) {
+fn log_request_error(error: &RequestError, url: &RedactedUrl, message: &str) {
     error!(url.full = %url, error.type = error.error_type(), error = %error.full(), "{message}");
 }
 
@@ -183,7 +185,7 @@ fn log_status(status: reqwest::StatusCode, body: Option<&str>, record_error_type
 ///
 /// Everything the OpenTelemetry HTTP conventions define for an outbound request is recorded on
 /// the span this opens — <https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client-span>
-/// — rather than repeated per response: `url.full` (through [`redact_url`], since these APIs
+/// — rather than repeated per response: `url.full` (through [`RedactedUrl`], since these APIs
 /// carry their key in the query string), `server.address`, `server.port` and
 /// `http.response.status_code`, plus `error.type` when something goes wrong.
 /// `http.request.method` is missing on purpose — a `reqwest::Response` no longer exposes the
@@ -201,7 +203,7 @@ fn log_status(status: reqwest::StatusCode, body: Option<&str>, record_error_type
 #[instrument(
     skip(response),
     fields(
-        url.full = %redact_url(response.url()),
+        url.full = %RedactedUrl::from_url(response.url()),
         server.address = %response.url().host_str().unwrap_or_default(),
         server.port = response.url().port_or_known_default(),
         http.response.status_code = response.status().as_u16(),

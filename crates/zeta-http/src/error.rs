@@ -25,7 +25,7 @@ mod request {
     use std::fmt::Write as _;
 
     #[cfg(any(feature = "request", feature = "http"))]
-    use zeta_url::redact_url;
+    use zeta_url::RedactedUrl;
 
     /// Renders the message a log line gets: `kind`, its source chain and its redacted URL.
     ///
@@ -104,8 +104,8 @@ mod request {
         kind: String,
         /// [`kind`] with the source chain and the redacted URL appended — what a log line gets.
         detail: String,
-        /// The request URL without its query string or userinfo.
-        url: Option<String>,
+        /// The request URL without its query string, fragment, or userinfo.
+        url: Option<RedactedUrl>,
         /// The host the request went to, for the short rendering.
         host: Option<String>,
         /// Whether the request timed out.
@@ -118,7 +118,7 @@ mod request {
         /// Renders a `reqwest::Error`, stripping its URL before anything can format it.
         #[cfg(any(feature = "request", feature = "http"))]
         fn from_reqwest(error: reqwest::Error) -> Self {
-            let url = error.url().map(redact_url);
+            let url = error.url().map(RedactedUrl::from_url);
             let host = error
                 .url()
                 .and_then(|url| url.host_str().map(str::to_string));
@@ -127,7 +127,7 @@ mod request {
 
             let error = error.without_url();
             let kind = error.to_string();
-            let detail = detail(&kind, &error, 0, url.as_deref());
+            let detail = detail(&kind, &error, 0, url.as_ref().map(RedactedUrl::as_str));
 
             Self {
                 kind,
@@ -142,7 +142,9 @@ mod request {
         /// Renders a `wreq::Error`, stripping its URI before anything can format it.
         #[cfg(feature = "emulated")]
         fn from_wreq(error: wreq::Error) -> Self {
-            let url = error.uri().map(redact_uri);
+            let url = error
+                .uri()
+                .map(|uri| RedactedUrl::from_unparsed(&uri.to_string()));
             let host = error.uri().and_then(|uri| uri.host().map(str::to_string));
             let timeout = error.is_timeout();
             let connect = error.is_connect();
@@ -150,7 +152,7 @@ mod request {
             let error = error.without_uri();
             let kind = error.to_string();
             // `wreq::Error` renders its own first source, so the chain starts one link deeper.
-            let detail = detail(&kind, &error, 1, url.as_deref());
+            let detail = detail(&kind, &error, 1, url.as_ref().map(RedactedUrl::as_str));
 
             Self {
                 kind,
@@ -162,10 +164,10 @@ mod request {
             }
         }
 
-        /// Returns the request URL without its query string or userinfo, if the error carries
-        /// one.
-        fn url(&self) -> Option<&str> {
-            self.url.as_deref()
+        /// Returns the request URL without its query string, fragment, or userinfo, if the
+        /// error carries one.
+        const fn url(&self) -> Option<&RedactedUrl> {
+            self.url.as_ref()
         }
 
         /// Returns the full rendering — error kind, source chain and redacted URL — for a log
@@ -222,10 +224,10 @@ mod request {
 
     #[cfg(any(feature = "request", feature = "http"))]
     impl RequestError {
-        /// Returns the request URL without its query string or userinfo, if the error carries
-        /// one.
+        /// Returns the request URL without its query string, fragment, or userinfo, if the
+        /// error carries one.
         #[must_use]
-        pub fn url(&self) -> Option<&str> {
+        pub const fn url(&self) -> Option<&RedactedUrl> {
             self.rendered.url()
         }
 
@@ -299,10 +301,11 @@ mod request {
 
     #[cfg(feature = "emulated")]
     impl WreqError {
-        /// Returns the request URI without its query string or userinfo, if the error carries
-        /// one. An origin-form URI (no scheme or authority) is returned as its path alone.
+        /// Returns the request URI without its query string, fragment, or userinfo, if the
+        /// error carries one. An origin-form URI (no scheme or authority) is returned as its
+        /// path alone.
         #[must_use]
-        pub fn url(&self) -> Option<&str> {
+        pub const fn url(&self) -> Option<&RedactedUrl> {
             self.rendered.url()
         }
 
@@ -352,33 +355,6 @@ mod request {
 
     #[cfg(feature = "emulated")]
     impl StdError for WreqError {}
-
-    /// Returns `uri` without its query string or userinfo.
-    ///
-    /// `wreq` hands out a [`wreq::Uri`], which has no redaction of its own: `path()` already
-    /// drops the query, and the authority keeps only what follows the last `@`.
-    #[cfg(feature = "emulated")]
-    fn redact_uri(uri: &wreq::Uri) -> String {
-        let mut redacted = String::new();
-
-        if let Some(scheme) = uri.scheme_str() {
-            redacted.push_str(scheme);
-            redacted.push_str("://");
-        }
-
-        if let Some(authority) = uri.authority() {
-            let authority = authority.as_str();
-            let userinfo = authority
-                .rfind('@')
-                .map_or(authority, |at| &authority[at + 1..]);
-
-            redacted.push_str(userinfo);
-        }
-
-        redacted.push_str(uri.path());
-
-        redacted
-    }
 }
 
 #[cfg(any(feature = "request", feature = "http"))]

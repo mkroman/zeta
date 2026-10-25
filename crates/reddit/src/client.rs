@@ -10,6 +10,7 @@ use serde_path_to_error::Error as ErrorWithSerdePath;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, trace};
 use url::Url;
+use zeta_url::RedactedUrl;
 
 use crate::{BASE_URL, HTTP_TIMEOUT, LOGGED_BODY_LENGTH, OAUTH_BASE_URL, TOKEN_URL, USER_AGENT};
 use crate::{Error, Item, Link, RequestError, Submission, Subreddit};
@@ -343,7 +344,7 @@ impl Client {
 
     async fn get_redirect_location(&self, url: &str) -> Result<Url, Error> {
         debug!(
-            url.full = %zeta_url::redact_url_str(url),
+            url.full = %RedactedUrl::from_unparsed(url),
             "fetching redirect location"
         );
         let request = self.client.head(url);

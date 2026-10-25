@@ -13,7 +13,7 @@ use tracing::{debug, instrument};
 
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_url::redact_url;
+use zeta_url::RedactedUrl;
 use zeta_utils::duration::TimeInWords;
 
 /// Base URL for the TVmaze API.
@@ -152,7 +152,7 @@ impl Tvmaze {
     pub async fn single_search(&self, name: &str) -> Result<Show, Error> {
         let url = Self::build_search_url(name);
         debug!(
-            url.full = %redact_url(&url),
+            url.full = %RedactedUrl::from_url(&url),
             "requesting single search for show: {name}"
         );
 

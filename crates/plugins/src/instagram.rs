@@ -44,7 +44,7 @@ use zeta_cache::{TtlCache, TtlMap};
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_mirror::{Mirror, MirrorHandle};
-use zeta_url::{redact_url, redact_url_str};
+use zeta_url::RedactedUrl;
 use zeta_utils::text::{Truncatable, collapse_whitespace};
 
 use self::meta::MediaDetails;
@@ -230,7 +230,7 @@ impl Instagram {
                 self.process_story(&username, &id, channel, client).await?;
             }
             Some(InstagramLink::Shortened(url)) => {
-                debug!(url.full = %redact_url(&url), "resolving share link");
+                debug!(url.full = %RedactedUrl::from_url(&url), "resolving share link");
 
                 self.throttle().await;
 
@@ -391,7 +391,7 @@ impl Instagram {
             && let Some(proxy) = &self.metadata_proxy
         {
             let url = proxy_media_url(proxy, kind, id);
-            debug!(url.full = %redact_url_str(&url), "falling back to the metadata proxy");
+            debug!(url.full = %RedactedUrl::from_unparsed(&url), "falling back to the metadata proxy");
 
             self.try_source(
                 id,
@@ -484,7 +484,7 @@ impl Instagram {
         let details = MediaDetails::from_og(&self.fetch_page_metadata(url, session_cookie).await?);
 
         if details.is_none() {
-            debug!(url.full = %redact_url_str(url), "the page carried no media details");
+            debug!(url.full = %RedactedUrl::from_unparsed(url), "the page carried no media details");
         }
 
         Ok(details)
@@ -506,7 +506,7 @@ impl Instagram {
             Err(error) => error,
         };
 
-        debug!(url.full = %redact_url_str(url), %error, "could not fetch page metadata");
+        debug!(url.full = %RedactedUrl::from_unparsed(url), %error, "could not fetch page metadata");
 
         if let meta::Error::Status(status) = &error
             && status.is_client_error()
@@ -520,12 +520,12 @@ impl Instagram {
 
         meta::fetch(&self.client, url, session_cookie)
             .await
-            .inspect_err(|error| debug!(url.full = %redact_url_str(url), %error, "the page request failed again"))
+            .inspect_err(|error| debug!(url.full = %RedactedUrl::from_unparsed(url), %error, "the page request failed again"))
     }
 
     /// Requests the given share link and returns the URL it resolves to.
     async fn resolve_url(&self, url: &Url) -> Result<Url, Error> {
-        debug!(url.full = %redact_url(url), "resolving share url");
+        debug!(url.full = %RedactedUrl::from_url(url), "resolving share url");
 
         let response = self.client.get(url.as_str()).send().await?;
 
@@ -533,7 +533,7 @@ impl Instagram {
         let location = response.uri().to_string();
         let url = Url::parse(&location).map_err(|_| Error::InvalidRedirect)?;
 
-        debug!(url.full = %redact_url(&url), "resolved share url");
+        debug!(url.full = %RedactedUrl::from_url(&url), "resolved share url");
 
         Ok(url)
     }

@@ -20,7 +20,7 @@ use zeta_plugin::event::{
 use zeta_plugin::{CommandSpec, Event, EventKind, UrlScope};
 
 use zeta_plugin::Filters;
-use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, redact_url};
+use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrl};
 
 /// A delivery endpoint for events: the mailbox of one plugin's task.
 #[derive(Clone, Debug)]
@@ -288,7 +288,7 @@ impl EventIndex {
             }
 
             if filters.is_filtered(target, sender, &url) {
-                debug!(url.full = %redact_url(&url), "skipping filtered url");
+                debug!(url.full = %RedactedUrl::from_url(&url), "skipping filtered url");
 
                 continue;
             }

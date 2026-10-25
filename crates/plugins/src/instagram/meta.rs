@@ -10,7 +10,7 @@ use scraper::{Html, Selector};
 use tracing::debug;
 
 use zeta_http::WreqError;
-use zeta_url::redact_url_str;
+use zeta_url::RedactedUrl;
 
 /// The CSS selector for the `og:title` meta tag.
 fn og_title_selector() -> &'static Selector {
@@ -150,7 +150,7 @@ pub async fn fetch(
     url: &str,
     session_cookie: Option<&str>,
 ) -> Result<PageMetadata, Error> {
-    debug!(url.full = %redact_url_str(url), "fetching page metadata");
+    debug!(url.full = %RedactedUrl::from_unparsed(url), "fetching page metadata");
 
     let mut request = client.get(url);
 

@@ -26,7 +26,7 @@ use wreq::redirect::Policy;
 use crate::prelude::*;
 use zeta_http as http;
 use zeta_http::WreqError;
-use zeta_url::{redact_url, strip_www};
+use zeta_url::{RedactedUrl, strip_www};
 use zeta_utils::text::{Truncatable, collapse_whitespace};
 
 /// The default maximum size of a response before we stop processing it.
@@ -318,7 +318,7 @@ async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMetadata
     // The reader finishes once the tokenizer stops reading from the channel, aborting the rest of
     // the response.
     if let Err(error) = reader.await {
-        warn!(url.full = %redact_url(url), %error, "reader task failed");
+        warn!(url.full = %RedactedUrl::from_url(url), %error, "reader task failed");
     }
 
     Ok(metadata)
@@ -421,7 +421,7 @@ impl Titles {
         catalog: Option<&PluginCatalog>,
     ) {
         if let Some(scheme) = repaired_from {
-            debug!(%scheme, url.full = %redact_url(&url), "posting repaired url");
+            debug!(%scheme, url.full = %RedactedUrl::from_url(&url), "posting repaired url");
 
             if let Err(error) = client.send_privmsg(channel, notice(&url)) {
                 warn!(%error, "could not send repaired url");
@@ -431,7 +431,7 @@ impl Titles {
         if is_ignored_host(&url, &self.settings.ignored_hosts) || is_catalog_handled(&url, catalog)
         {
             debug!(
-                url.full = %redact_url(&url),
+                url.full = %RedactedUrl::from_url(&url),
                 "skipping url handled by another plugin"
             );
 
@@ -440,7 +440,7 @@ impl Titles {
 
         if is_binary_url(&url) {
             debug!(
-                url.full = %redact_url(&url),
+                url.full = %RedactedUrl::from_url(&url),
                 "skipping url that looks like binary content"
             );
 
@@ -454,7 +454,8 @@ impl Titles {
 
         // The span carries the redacted URL: without it, this task's logs would only ever
         // reach stdout.
-        let span = tracing::info_span!("fetch_page_metadata", url.full = %redact_url(&url));
+        let span =
+            tracing::info_span!("fetch_page_metadata", url.full = %RedactedUrl::from_url(&url));
 
         tokio::spawn(
             async move {
@@ -462,7 +463,7 @@ impl Titles {
                     Ok(metadata) => metadata,
                     Err(error) => {
                         warn!(
-                            url.full = %redact_url(&url),
+                            url.full = %RedactedUrl::from_url(&url),
                             %error,
                             "could not fetch page metadata"
                         );

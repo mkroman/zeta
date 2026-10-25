@@ -20,7 +20,7 @@ use tokio::{
 use tracing::{debug, warn};
 
 use futures::future::BoxFuture;
-use zeta_url::redact_url_str;
+use zeta_url::RedactedUrl;
 
 /// The default command used to run `yt-dlp`.
 const DEFAULT_COMMAND: &str = "yt-dlp";
@@ -220,7 +220,7 @@ impl YtDlp {
             .kill_on_drop(true);
 
         debug!(
-            url.full = %redact_url_str(url),
+            url.full = %RedactedUrl::from_unparsed(url),
             command = %self.command,
             "downloading video with yt-dlp"
         );

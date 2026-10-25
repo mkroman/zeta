@@ -22,7 +22,7 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::prelude::*;
-use zeta_url::redact_url;
+use zeta_url::RedactedUrl;
 use zeta_utils::duration::TimeInWords;
 
 use crate::ofn::model::{InsertYouTubeRecord, YouTubeRecord};
@@ -88,7 +88,7 @@ impl Ofn {
 
         match self.insert_url(ctx, origin, url).await {
             Ok(_) => {
-                debug!(?origin, url.full = %redact_url(url), "inserted url record");
+                debug!(?origin, url.full = %RedactedUrl::from_url(url), "inserted url record");
 
                 Ok(Recorded::Inserted)
             }
@@ -107,7 +107,7 @@ impl Ofn {
     #[tracing::instrument(
         skip_all,
         err,
-        fields(url.full = %redact_url(url))
+        fields(url.full = %RedactedUrl::from_url(url))
     )]
     async fn find_url(
         &self,
@@ -173,7 +173,7 @@ impl Ofn {
     #[tracing::instrument(
         skip_all,
         err,
-        fields(url.full = %redact_url(url))
+        fields(url.full = %RedactedUrl::from_url(url))
     )]
     async fn insert_url(
         &self,
@@ -386,7 +386,7 @@ impl Ofn {
 
         for url in urls {
             if filters.is_filtered(origin.channel, Some(sender), url) {
-                debug!(url.full = %redact_url(url), "skipping filtered url");
+                debug!(url.full = %RedactedUrl::from_url(url), "skipping filtered url");
 
                 continue;
             }

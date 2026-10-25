@@ -6,6 +6,7 @@ use std::str::Utf8Error;
 use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
 use url::ParseError;
+use zeta_url::RedactedUrl;
 
 /// A `reqwest::Error` whose URL has been redacted and whose message is rendered once.
 ///
@@ -24,8 +25,8 @@ pub struct RequestError {
     kind: String,
     /// [`kind`] with the source chain and the redacted URL appended — what a log line gets.
     detail: String,
-    /// The request URL without its query string or userinfo.
-    url: Option<String>,
+    /// The request URL without its query string, fragment, or userinfo.
+    url: Option<RedactedUrl>,
     /// The host the request went to, for the short rendering.
     host: Option<String>,
     /// Whether the request timed out.
@@ -35,10 +36,11 @@ pub struct RequestError {
 }
 
 impl RequestError {
-    /// Returns the request URL without its query string or userinfo, if the error carries one.
+    /// Returns the request URL without its query string, fragment, or userinfo, if the error
+    /// carries one.
     #[must_use]
     pub fn url(&self) -> Option<&str> {
-        self.url.as_deref()
+        self.url.as_ref().map(RedactedUrl::as_str)
     }
 
     /// Returns the full rendering — error kind, source chain and redacted URL — for a log line,
@@ -59,7 +61,7 @@ impl RequestError {
 
 impl From<reqwest::Error> for RequestError {
     fn from(error: reqwest::Error) -> Self {
-        let url = error.url().map(redact_url);
+        let url = error.url().map(RedactedUrl::from_url);
         let host = error
             .url()
             .and_then(|url| url.host_str().map(str::to_string));
@@ -68,7 +70,7 @@ impl From<reqwest::Error> for RequestError {
 
         let error = error.without_url();
         let kind = error.to_string();
-        let detail = detail(&kind, &error, url.as_deref());
+        let detail = detail(&kind, &error, url.as_ref().map(RedactedUrl::as_str));
 
         Self {
             kind,
@@ -98,8 +100,6 @@ impl fmt::Display for RequestError {
 }
 
 impl StdError for RequestError {}
-
-use zeta_url::redact_url;
 
 /// Renders the message a log line gets: `kind`, its source chain and its redacted URL.
 ///

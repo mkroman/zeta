@@ -51,7 +51,7 @@ use tracing::{Instrument, debug, warn};
 use crate::hostmask::Hostmasks;
 use crate::prelude::*;
 use zeta_http as http;
-use zeta_url::redact_url;
+use zeta_url::RedactedUrl;
 use zeta_utils::{
     duration::TimeInWords,
     irc::{MAX_LISTING_LENGTH, append_entries_with_more},
@@ -442,7 +442,8 @@ impl Unwall {
 
         // The span carries the redacted URL: without it, this task's logs would only ever
         // reach stdout.
-        let span = tracing::info_span!("unwall_article", url.full = %redact_url(&article));
+        let span =
+            tracing::info_span!("unwall_article", url.full = %RedactedUrl::from_url(&article));
 
         tokio::spawn(
             async move {
@@ -456,7 +457,7 @@ impl Unwall {
                     }
                     Err(error) => {
                         warn!(
-                            url.full = %redact_url(&article),
+                            url.full = %RedactedUrl::from_url(&article),
                             %error,
                             "could not unwall the article"
                         );
