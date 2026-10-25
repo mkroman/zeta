@@ -333,17 +333,21 @@ fn url_with_query(path: &str, params: &[(&str, &str)]) -> reqwest::Url {
         .expect("the static base url always produces a valid url")
 }
 
-// Extracts the `window.sse_nonce` value from the raw HTML content.
+/// Extracts the `window.sse_nonce` value from the raw HTML content.
 fn extract_nonce(html: &str) -> Option<String> {
     const MARKER: &str = "window.sse_nonce";
 
-    html.match_indices(MARKER).find_map(|(index, marker)| {
-        let tail = &html[index + marker.len()..];
+    html.match_indices(MARKER).find_map(|(index, _)| {
+        let tail = &html[index + MARKER.len()..];
         let tail = tail.trim_start().strip_prefix('=')?.trim_start();
         let (literal, _) = quoted_string_literal(tail, '"')?;
-        let nonce: String = serde_json::from_str(literal).ok()?;
+        let nonce = literal.strip_circumfix('"', '"')?;
 
-        (!nonce.is_empty()).then_some(nonce)
+        if nonce.is_empty() {
+            None
+        } else {
+            Some(nonce.to_owned())
+        }
     })
 }
 
