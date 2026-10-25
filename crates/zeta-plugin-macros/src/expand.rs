@@ -338,7 +338,7 @@ fn classify(args: &PluginArgs, inherent: &syn::ItemImpl) -> syn::Result<Plugin> 
                 Some((kind, span)) => {
                     classify_handler(&mut handlers, kind, span, method)?;
                 }
-                None => classify_constructor(method, &mut constructor)?,
+                None => classify_constructor(method, args, &mut constructor)?,
             },
         }
     }
@@ -434,9 +434,10 @@ fn classify_handler(
 /// Classifies the inherent constructor when `method` is a candidate `fn new`.
 fn classify_constructor(
     method: &ImplItemFn,
+    args: &PluginArgs,
     constructor: &mut Option<Constructor>,
 ) -> syn::Result<()> {
-    let Some(recognized) = is_constructor(method)? else {
+    let Some(recognized) = is_constructor(method, args)? else {
         return Ok(());
     };
 
@@ -478,11 +479,14 @@ fn cfg_attributes(method: &ImplItemFn) -> Vec<syn::Attribute> {
 /// ordinary helper.
 ///
 /// An associated `fn new` taking one to three typed parameters is the constructor when every
-/// parameter is `&Context`, an immutable reference to the plugin's settings, or `&mut
-/// Subscriptions`, in any order. A `new` whose parameters are all unrecognized stays a helper, so
-/// zero-parameter helpers keep working; mixing recognized and unrecognized parameters is an
-/// error, because it is almost always a typo in one of them.
-fn is_constructor(method: &ImplItemFn) -> syn::Result<Option<Vec<ConstructorParameter>>> {
+/// parameter is `&Context`, an immutable reference to the plugin's declared settings type, or
+/// `&mut Subscriptions`, in any order. A `new` with more than three parameters, or with none of
+/// those types, stays a helper; a one-to-three-parameter `new` that mixes recognized and
+/// unrecognized types is an error, because it is almost always a typo in one of them.
+fn is_constructor(
+    method: &ImplItemFn,
+    args: &PluginArgs,
+) -> syn::Result<Option<Vec<ConstructorParameter>>> {
     if method.sig.ident != "new"
         || method
             .sig
@@ -498,9 +502,10 @@ fn is_constructor(method: &ImplItemFn) -> syn::Result<Option<Vec<ConstructorPara
         return Ok(None);
     }
 
+    let settings = settings_type_name(args);
     let classified: Vec<Option<ConstructorParameter>> = typed
         .iter()
-        .map(|parameter| constructor_parameter(parameter.ty.as_ref()))
+        .map(|parameter| constructor_parameter(parameter.ty.as_ref(), &settings))
         .collect();
     let parameters: Vec<ConstructorParameter> = classified.iter().flatten().copied().collect();
 
@@ -512,8 +517,8 @@ fn is_constructor(method: &ImplItemFn) -> syn::Result<Option<Vec<ConstructorPara
         return Err(syn::Error::new(
             typed[index].ty.span(),
             format!(
-                "unrecognized plugin constructor parameter; expected `&Context`, an immutable \
-                 reference to the plugin's settings, or `&mut Subscriptions`, found `{}`",
+                "unrecognized plugin constructor parameter; expected `&Context`, `&{settings}`, \
+                 or `&mut Subscriptions`, found `{}`",
                 display_type(typed[index].ty.as_ref())
             ),
         ));
@@ -536,8 +541,16 @@ fn is_constructor(method: &ImplItemFn) -> syn::Result<Option<Vec<ConstructorPara
     Ok(Some(parameters))
 }
 
+/// The last path segment of the plugin's declared settings type, or `NoSettings`.
+fn settings_type_name(args: &PluginArgs) -> String {
+    args.settings
+        .as_ref()
+        .and_then(last_path_ident)
+        .map_or_else(|| "NoSettings".to_owned(), ToString::to_string)
+}
+
 /// Recognizes one plugin constructor parameter by its type.
-fn constructor_parameter(ty: &Type) -> Option<ConstructorParameter> {
+fn constructor_parameter(ty: &Type, settings: &str) -> Option<ConstructorParameter> {
     let Type::Reference(reference) = ty else {
         return None;
     };
@@ -550,8 +563,7 @@ fn constructor_parameter(ty: &Type) -> Option<ConstructorParameter> {
         (Some(ident), true) if ident == "Subscriptions" => {
             Some(ConstructorParameter::Subscriptions)
         }
-        // The settings type is named by the plugin author; only its borrowing is checked.
-        (Some(_), false) => Some(ConstructorParameter::Settings),
+        (Some(ident), false) if ident == settings => Some(ConstructorParameter::Settings),
         _ => None,
     }
 }
@@ -771,12 +783,23 @@ fn command_signature(args: &CommandArgs) -> String {
 }
 
 /// Whether `ty` is an immutable `&str`, the optional channel parameter's type.
+///
+/// Accepts qualified paths such as `&std::primitive::str` but not `&&str`: the generated call
+/// passes a `&str`.
 fn is_str(ty: &Type) -> bool {
     matches!(
         ty,
         Type::Reference(reference)
             if reference.mutability.is_none()
-                && matches!(reference.elem.as_ref(), Type::Path(path) if path.path.is_ident("str"))
+                && matches!(
+                    reference.elem.as_ref(),
+                    Type::Path(path)
+                        if path
+                            .path
+                            .segments
+                            .last()
+                            .is_some_and(|segment| segment.ident == "str")
+                )
     )
 }
 
@@ -1408,6 +1431,14 @@ mod tests {
         }
     }
 
+    /// Plugin arguments with a declared settings type, for constructor tests.
+    fn plugin_args_with_settings(settings: Type) -> PluginArgs {
+        PluginArgs {
+            settings: Some(settings),
+            ..plugin_args()
+        }
+    }
+
     fn command_args(options: Option<Type>, words: bool) -> CommandArgs {
         CommandArgs {
             trigger: parse_quote!(".test"),
@@ -1553,7 +1584,55 @@ mod tests {
     }
 
     #[test]
+    fn qualified_str_channel_is_accepted() {
+        let plugin = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc")]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &std::primitive::str,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .unwrap_or_else(|error| panic!("`&std::primitive::str` is `&str`: {error}"));
+
+        assert!(plugin.commands[0].channel);
+    }
+
+    #[test]
     fn event_commands_require_the_event() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc", args = Opts, event)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: Opts,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("an event command needs the event parameter");
+
+        assert!(
+            error.to_string().contains("command: &CommandEvent"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn event_commands_require_the_event_after_the_channel() {
         let error = classify_source(
             r#"
             impl Plugin {
@@ -1570,7 +1649,7 @@ mod tests {
             "#,
         )
         .err()
-        .expect("an event command needs the event parameter");
+        .expect("an event command needs the event parameter after the channel");
 
         assert!(
             error.to_string().contains("command: &CommandEvent"),
@@ -1625,6 +1704,54 @@ mod tests {
         let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
 
         assert!(plugin.constructor.is_none());
+    }
+
+    #[test]
+    fn reference_helper_new_is_not_the_plugin_constructor() {
+        let inherent: syn::ItemImpl = parse_quote! {
+            impl Plugin {
+                fn new(name: &str) -> Self {
+                    let _ = name;
+                    Self
+                }
+
+                #[command(".test", "desc")]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &str,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+        };
+
+        let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
+
+        assert!(plugin.constructor.is_none());
+    }
+
+    #[test]
+    fn constructor_parameters_must_match_the_settings_type() {
+        let error = classify_source(
+            r"
+            impl Plugin {
+                fn new(_: &Context, _: &NotTheSettings) -> Result<Self, Error> {
+                    todo!()
+                }
+            }
+            ",
+        )
+        .err()
+        .expect("a reference to an unrelated type is not the settings parameter");
+
+        assert!(
+            error
+                .to_string()
+                .contains("unrecognized plugin constructor parameter"),
+            "{error}"
+        );
     }
 
     /// The recognized parameters of the impl block's constructor.
@@ -2062,8 +2189,7 @@ mod tests {
 
     #[test]
     fn constructors_must_not_be_async() {
-        let error = classify_source(
-            r"
+        let inherent: syn::ItemImpl = parse_quote! {
             impl Plugin {
                 async fn new(
                     _: &Context,
@@ -2073,7 +2199,10 @@ mod tests {
                     todo!()
                 }
             }
-            ",
+        };
+        let error = classify(
+            &plugin_args_with_settings(parse_quote!(Settings)),
+            &inherent,
         )
         .err()
         .expect("an async constructor must be rejected");
@@ -2104,8 +2233,7 @@ mod tests {
 
     #[test]
     fn constructor_settings_are_shared() {
-        let error = classify_source(
-            r"
+        let inherent: syn::ItemImpl = parse_quote! {
             impl Plugin {
                 fn new(
                     _: &Context,
@@ -2115,12 +2243,15 @@ mod tests {
                     todo!()
                 }
             }
-            ",
+        };
+        let error = classify(
+            &plugin_args_with_settings(parse_quote!(Settings)),
+            &inherent,
         )
         .err()
         .expect("mutable settings must be rejected");
 
-        assert!(error.to_string().contains("immutable reference"), "{error}");
+        assert!(error.to_string().contains("`&Settings`"), "{error}");
     }
 
     #[test]

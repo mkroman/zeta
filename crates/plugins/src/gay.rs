@@ -2012,8 +2012,6 @@ fn designation_present(client: &Client, channel: &str, designation: &str) -> boo
 
 #[plugin(name = "gay")]
 impl Gay {
-    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
-    // cannot fail.
     fn new(subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         subscriptions.command(GAY);
         let profile = EngineConfig::campaign_profile().map_err(plugin_err)?;

@@ -46,9 +46,10 @@
 //! # Inherent constructor
 //!
 //! When the impl block contains an associated `fn new` whose parameters are drawn from
-//! `&Context`, an immutable reference to the plugin's settings type, and `&mut Subscriptions` —
-//! any subset of the three, in any order — the generated constructor registers the declarative
-//! subscriptions and then calls it with those parameters in the declared order:
+//! `&Context`, an immutable reference to the type named by the `settings` attribute (or
+//! `&NoSettings`), and `&mut Subscriptions` — any subset of the three, in any order — the
+//! generated constructor registers the declarative subscriptions and then calls it with those
+//! parameters in the declared order:
 //!
 //! ```
 //! use zeta_plugin::prelude::*;
@@ -65,10 +66,11 @@
 //! }
 //! ```
 //!
-//! A `new` with no recognized parameters remains an ordinary inherent method, so zero-parameter
-//! helpers keep working; mixing recognized and unrecognized parameter types is an error, because
-//! it is almost always a typo. Otherwise the block's type must implement `Default` (unit structs:
-//! `#[derive(Default)]`), and the constructor returns it.
+//! A `new` with more than three parameters, or with none of those types, remains an ordinary
+//! inherent method, so zero-parameter helpers keep working; a one-to-three-parameter `new` that
+//! mixes recognized and unrecognized types is an error, because it is almost always a typo.
+//! Otherwise the block's type must implement `Default` (unit structs: `#[derive(Default)]`), and
+//! the constructor returns it.
 //!
 //! # Method attributes
 //!
