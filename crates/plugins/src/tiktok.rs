@@ -85,11 +85,7 @@ pub enum Error {
 
 #[plugin(name = "tiktok", settings = Settings, urls(hosts = urls::URL_HOSTS))]
 impl Tiktok {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let mirror = if settings.mirror {
             MirrorHandle::resolve(
                 ctx.shared.get::<Mirror>(),

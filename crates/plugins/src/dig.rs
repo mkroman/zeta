@@ -121,11 +121,7 @@ impl Display for LookupResult {
 #[plugin(name = "dig", settings = Settings)]
 impl Dig {
     /// Builds the resolver the plugin queries nameservers through.
-    fn new(
-        _ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(settings: &Settings) -> Result<Self, ZetaError> {
         let resolver = build_resolver(&settings.nameservers).map_err(ZetaError::from)?;
 
         Ok(Self { resolver })

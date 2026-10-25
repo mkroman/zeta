@@ -83,13 +83,9 @@ pub struct Definition {
 
 #[plugin(name = "urban_dictionary", settings = Settings)]
 impl UrbanDictionary {
-    // The constructor signature is fixed by the `Plugin` trait, which returns `Result` even when
-    // initialization cannot fail.
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self {

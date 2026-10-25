@@ -94,13 +94,9 @@ impl Display for MessageFormatter<'_> {
 
 #[plugin(name = "dendanskeordbog", settings = Settings)]
 impl DenDanskeOrdbog {
-    // The constructor signature is fixed by the `Plugin` trait, which returns `Result` even when
-    // initialization cannot fail.
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let http_client = http::build_client(&ctx.config.http);
         let client = dendanskeordbog::Client::with_client(http_client);
 

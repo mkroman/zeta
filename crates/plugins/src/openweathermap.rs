@@ -183,11 +183,7 @@ struct Clouds {
 
 #[plugin(name = "openweathermap", settings = Settings)]
 impl OpenWeatherMap {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_id = resolve_secret(settings.app_id.as_deref(), "OPENWEATHERMAP_APP_ID")?;
         let client = http::build_client(&ctx.config.http);
 

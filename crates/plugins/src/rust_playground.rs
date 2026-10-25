@@ -78,13 +78,9 @@ struct ExecuteResponse {
 
 #[plugin(name = "rust_playground", settings = Settings)]
 impl RustPlayground {
-    // The constructor signature is fixed by the `Plugin` trait, which returns `Result` even when
-    // initialization cannot fail.
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
         // Regex to extract error messages from stderr (e.g. "error[E0425]: cannot find value...")
         let error_regex = Regex::new(r"(?m)^error(?:\[E\d+\])?: (.*?)$").expect("invalid regex");

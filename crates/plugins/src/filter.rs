@@ -519,11 +519,7 @@ impl FilterPlugin {
 
 #[plugin(name = "filter")]
 impl FilterPlugin {
-    fn new(
-        ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         subscriptions.command(FILTER);
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 

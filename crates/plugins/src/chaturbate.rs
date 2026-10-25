@@ -58,11 +58,7 @@ pub struct RoomDossier {
 
 #[plugin(name = "chaturbate", urls(hosts = URL_HOSTS))]
 impl Chaturbate {
-    fn new(
-        ctx: &Context,
-        _settings: &NoSettings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         Ok(Self::with_http_config(&ctx.config.http))
     }
 

@@ -81,11 +81,7 @@ pub struct Reddit {
     ])
 )]
 impl Reddit {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =
             resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();

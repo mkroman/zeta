@@ -136,11 +136,7 @@ pub struct Category {
 #[plugin(name = "pornhub", urls(hosts = &[PORNHUB_HOST]))]
 impl PornHub {
     /// Creates a new instance of the PornHub plugin.
-    fn new(
-        ctx: &Context,
-        _settings: &NoSettings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self { client })

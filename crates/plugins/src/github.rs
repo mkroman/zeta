@@ -72,11 +72,7 @@ struct RepoItem {
 
 #[plugin(name = "github", settings = Settings)]
 impl GitHubPlugin {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         // The token is optional; it only raises the API rate limit.
         let token = resolve_secret(settings.token.as_deref(), "GITHUB_TOKEN").ok();
         let plugin = Self::with_token(&ctx.config.http, token).map_err(plugin_err)?;

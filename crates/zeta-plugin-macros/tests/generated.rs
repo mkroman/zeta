@@ -87,7 +87,7 @@ struct Full;
 
 #[plugin(name = "full", urls(hosts = FULL_HOSTS), messages)]
 impl Full {
-    fn new(_: &Context, _: &NoSettings, subscriptions: &mut Subscriptions) -> Result<Self, Error> {
+    fn new(_: &Context, subscriptions: &mut Subscriptions) -> Result<Self, Error> {
         subscriptions.receive_join();
 
         Ok(Self)
@@ -145,13 +145,26 @@ fn helper_constructor_remains_callable() {
     let _ = Helper::new();
 }
 
+/// A plugin whose recognized constructor takes only a subset of the trait's parameters, in a
+/// non-trait order.
+struct Partial;
+
+#[plugin(name = "partial", urls(any))]
+impl Partial {
+    fn new(subscriptions: &mut Subscriptions, _: &Context) -> Result<Self, Error> {
+        subscriptions.receive_join();
+
+        Ok(Self)
+    }
+}
+
 #[test]
 fn every_plugin_shape_registers_itself() {
     let names: Vec<&str> = zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>()
         .map(|registration| registration.name)
         .collect();
 
-    for expected in ["full", "gated", "helper", "words"] {
+    for expected in ["full", "gated", "helper", "partial", "words"] {
         assert!(
             names.contains(&expected),
             "{expected} missing from {names:?}"

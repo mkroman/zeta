@@ -372,11 +372,7 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 
 #[plugin(name = "titles", settings = Settings, urls(any))]
 impl Titles {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = http::emulated::builder(Some(&ctx.config.http.user_agent))?
             .redirect(Policy::limited(settings.max_redirects))
             .timeout(ctx.config.http.timeout)

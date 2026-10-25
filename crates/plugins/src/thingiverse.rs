@@ -85,11 +85,7 @@ struct Creator {
 
 #[plugin(name = "thingiverse", settings = Settings, urls(hosts = URL_HOSTS))]
 impl Thingiverse {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
         let client = http::build_client(&ctx.config.http);
         // Regex to match /thing:<id>

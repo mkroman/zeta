@@ -40,11 +40,7 @@ pub struct Choices {
 
 #[plugin(name = "choices", settings = Settings, messages)]
 impl Choices {
-    fn new(
-        _ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(settings: &Settings) -> Result<Self, ZetaError> {
         Ok(Self {
             settings: settings.clone(),
         })

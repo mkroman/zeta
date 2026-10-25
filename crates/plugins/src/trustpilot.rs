@@ -99,11 +99,7 @@ pub enum Error {
 
 #[plugin(name = "trustpilot", settings = Settings)]
 impl Trustpilot {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "TRUSTPILOT_API_KEY")?;
         let client = http::build_client(&ctx.config.http);
 

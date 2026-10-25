@@ -51,11 +51,7 @@ pub struct KagiPlugin {
 
 #[plugin(name = "kagi", settings = Settings)]
 impl KagiPlugin {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let token = resolve_secret(settings.session_token.as_deref(), "KAGI_SESSION_TOKEN")?;
         let options = kagi::ClientOptions {
             timeout: ctx.config.http.timeout,

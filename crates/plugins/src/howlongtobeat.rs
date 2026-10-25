@@ -202,13 +202,9 @@ impl Default for SearchOptions {
 
 #[plugin(name = "howlongtobeat")]
 impl HowLongToBeat {
-    // The constructor signature is fixed by the `Plugin` trait: `NoSettings` is a unit type the
-    // constructor cannot fail over, so the by-reference parameter and the `Result` wrapper stay.
-    fn new(
-        ctx: &Context,
-        _settings: &NoSettings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(ctx: &Context) -> Result<Self, ZetaError> {
         let client = http::build_client(&ctx.config.http);
 
         Ok(Self {

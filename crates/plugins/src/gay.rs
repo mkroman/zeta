@@ -2012,13 +2012,9 @@ fn designation_present(client: &Client, channel: &str, designation: &str) -> boo
 
 #[plugin(name = "gay")]
 impl Gay {
-    // The constructor signature is fixed by the `Plugin` trait: `NoSettings` is a unit type the
-    // constructor cannot fail over, so the by-reference parameter and the `Result` wrapper stay.
-    fn new(
-        _ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    // The `Plugin` trait requires the constructor to return `Result`, even when initialization
+    // cannot fail.
+    fn new(subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         subscriptions.command(GAY);
         let profile = EngineConfig::campaign_profile().map_err(plugin_err)?;
         let engine = GayEngine::assemble(profile).map_err(plugin_err)?;

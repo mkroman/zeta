@@ -32,11 +32,7 @@ pub struct StringUtils;
 
 #[plugin(name = "string_utils")]
 impl StringUtils {
-    fn new(
-        _ctx: &Context,
-        _settings: &NoSettings,
-        subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         subscriptions
             .command(BYTES)
             .command(LENGTH)

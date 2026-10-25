@@ -111,11 +111,7 @@ impl Default for Settings {
 
 #[plugin(name = "rink", settings = Settings)]
 impl Rink {
-    fn new(
-        ctx: &Context,
-        settings: &Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, ZetaError> {
+    fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let client = if settings.currency {
             Some(
                 zeta_http::builder(&ctx.config.http)
