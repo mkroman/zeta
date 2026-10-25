@@ -1,111 +1,130 @@
 # zeta-unicode
 
-Unicode character names, general categories and emoji sequence names, trained at build time
-into one flat Nomina image and linked into the binary with `include_bytes!`. Nomina is Latin
-for names.
+> [!WARNING]
+> **AI slop — loosely verified.** This crate (the encoder, build script, data handling and this
+> README) was written almost entirely by an AI and reviewed only lightly by a human. The
+> generated table *is* checked at build time against the vendored UCD files, and the crate's
+> tests round-trip every name, but treat the rest — the design notes, the performance claims and
+> the size figures below — as unverified marketing until you have measured them yourself. Read
+> the code before you trust it.
 
-The image is generated from the vendored UCD files by `zeta-unicode-build`. There is no
-checked-in derivation-rules file and no runtime compression library:
+## What it does
 
-- character names are front-coded against their code-point predecessor and coded with
-  canonical order-1 Huffman models; the global layout checkpoints each block in the stream so
-  a lookup decodes one checkpoint and at most one block;
-- Hangul syllables and `*`-pattern names are generated from the code point;
-- emoji names are generated from the lowercase UCD name where a verified grammar rule
-  reproduces the published CLDR name, with literal fallback;
-- general-category runs are delta-varint and Huffman streams, decoded once and rebuilt into
-  the existing two-level page table lazily on first use;
-- emoji keys, names and tone rules are compact Huffman/bit-packed streams.
+Runtime side of Nomina: character names, general categories and emoji names in one image
+generated at build time and linked with `include_bytes!`. There is no checked-in table and no
+runtime compression library.
 
-The runtime keeps one name decoder per thread (fixed 256-byte scratch; `write_name` fills a
-caller-provided buffer with zero allocations, while `name()` returns an owned `String`) and
-one process-wide emoji and general-category table.
+[`zeta-unicode-build`](../zeta-unicode-build/README.md) is the offline trainer;
+[`zeta-unicode-format`](../zeta-unicode-format/README.md) is the shared wire contract and
+codec. The trainer is only a build-dependency.
 
-## Layout
-
-| Section | Content |
-|---|---|
-| 0 | character names: page directory, runs, block offsets/checkpoints, Huffman models and stream |
-| 1 | emoji: canonical keys, literal names, grammar rules, packed tone codes and masks |
-| 2 | general category: run-start and category-id streams |
-| 3 | `*`-pattern ranges and prefix/suffix dictionaries |
-
-Measured with Unicode 18.0.0 and the default balanced profile:
-
-| | bytes |
-|---|---:|
-| names | 174,091 |
-| emoji | 10,548 |
-| general category | 3,860 |
-| patterns | 306 |
-| **image (with header/padding)** | **188,882** |
-
-The image budget is 200,000 bytes. `ZETA_UNICODE_PRIORITY=latency` selects 32-name blocks
-(199,258 bytes, ~1.2 µs random name lookup); `size` selects 256-name blocks (181,026 bytes,
-~7.7 µs); `balanced` is the default at 64-name blocks (~2.3 µs).
-
-## Training from a UCD release
-
-Fetch a release with `hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]`, or point
-the trainer at an existing UCD directory. It accepts both a flat vendored directory and an
-extracted release root:
-
-```sh
-cargo run -p zeta-unicode-build --bin zeta-unicode-train -- \
-    --data-dir ../ucd/15.1.0 \
-    --out-dir target/nomina-15.1 \
-    --priority balanced \
-    --report --verify
-```
-
-It writes `nomina.bin`, `manifest.json` (versions, relative input paths, sizes, FNV-1a
-hashes, section sizes, candidate table, chosen profile and verification status) and prints the
-candidate table. Inputs may be laid out as either
+## Architecture
 
 ```text
-<data>/{DerivedName,DerivedGeneralCategory,NameAliases,NamedSequences,emoji-test}.txt
-<data>/ucd/extracted/DerivedName.txt
-<data>/ucd/extracted/DerivedGeneralCategory.txt
-<data>/ucd/NameAliases.txt
-<data>/ucd/NamedSequences.txt
-<data>/emoji/emoji-test.txt
+UCD files ──► zeta-unicode-build ──► image + manifest
+                    (offline)              │
+                                           ▼
+             zeta-unicode build script ──► linked runtime ──► `.uni`
 ```
 
-`zeta-unicode` itself builds through its build script, which uses the same trainer:
+The trainer reads five UCD files, parses names plus aliases, encodes the four sections and
+tests several name-block sizes against a size budget. It verifies every section, picks the
+best layout, and writes the image plus a deterministic manifest. The build script runs the same
+pipeline and links the image and `UNICODE_VERSION` into the crate.
+
+## Runtime
+
+The name decoder and pattern table are per-thread, so name lookups need no lock. Emoji and
+general-category tables are process-wide `OnceLock`s warmed by `init()`. A malformed image
+panics on first use; the build verifies it, so that is an invariant.
+
+- **Name:** code point → page → run → name id → one front-coded block. Stored names use two
+  fixed 256-byte buffers; Hangul and pattern names are generated.
+- **General category:** decode the run streams once, then binary-search one 2,048-code-point
+  page of a two-level table.
+- **Emoji:** strip `U+FE0F`, binary-search the key arena, then materialize a rule. Unknown keys
+  are retried with skin tones stripped to synthesize the base variant.
+
+`write_name` allocates nothing; `name` allocates only its result. The public API is `name`,
+`write_name`, `name_or_label`, `general_category`, `is_noncharacter`, `emoji_name`,
+`may_start_emoji_sequence`, `init`, `UNICODE_VERSION`, `TABLE_BUDGET` and
+`MAX_EMOJI_KEY_BYTES`.
+
+## Nomina format
+
+A 64-byte header holds `NOM1`, the Unicode version, section count, name-block shift, GC page
+shift, name layout and four `(offset, length)` entries; four 8-byte-aligned sections follow.
+
+| Section | Encoding | Runtime form |
+|---|---|---|
+| names | front-coded blocks with canonical Huffman models | per-thread decoder |
+| emoji | four Huffman streams plus packed tone rules | process-wide arenas |
+| general category | two Huffman streams of run starts and ids | process-wide page table |
+| patterns | prefix/suffix dictionaries plus range records | per-thread range list |
+
+- **Names:** 35,416 names in 554 blocks. The global layout front-codes against the previous
+  code point, shares prefix and suffix, and checkpoints each block after the first. The
+  block-local layout resets per block; the runtime accepts both, training emits global.
+- **Emoji:** 1,944 base entries (1,341 rule-generated, 603 literal) cover 3,972 canonical
+  sequences. Most names are replayed from 14 grammar rules instead of stored; tone variants are
+  synthesized from the base.
+- **General category:** 4,202 runs rebuild a 545-page table; lookups binary-search one page and
+  use 9,494 bytes of heap.
+- **Patterns:** 20 `*` ranges use shared prefix/suffix dictionaries and generated hex names.
+
+Unicode 18.0.0 with the default profile is 188,882 bytes: 174,091 names, 10,548 emoji, 3,860
+general category, 306 patterns and 77 header/padding. The budget is 200,000 bytes.
+
+| Block shift | Image | Preferred by |
+|---:|---:|---|
+| 5 (32 names) | 199,258 | `latency` |
+| 6 (64 names) | 188,882 | `balanced` (default) |
+| 7 (128 names) | 183,658 | |
+| 8 (256 names) | 181,026 | `size` |
+
+## Building and training
+
+Inputs are `DerivedName.txt` (Unicode 10+), `DerivedGeneralCategory.txt`, `NameAliases.txt`,
+`NamedSequences.txt` and `emoji-test.txt`. `NamedSequences.txt` is optional before Unicode 4.1;
+the Emoji version is independent. Build settings are `ZETA_UNICODE_DATA_DIR`,
+`ZETA_UNICODE_PRIORITY`, `ZETA_UNICODE_MAX_BYTES`, `ZETA_UNICODE_BLOCK_SHIFT` and
+`ZETA_UNICODE_STATS`.
 
 ```sh
-ZETA_UNICODE_DATA_DIR=/path/to/ucd \
-ZETA_UNICODE_PRIORITY=balanced \
-ZETA_UNICODE_MAX_BYTES=200000 \
-cargo build -p zeta-unicode
+ZETA_UNICODE_DATA_DIR=/path/to/ucd cargo build -p zeta-unicode
+
+cargo run -p zeta-unicode-build --bin zeta-unicode-train -- \
+    --data-dir ../ucd/15.1.0 --out-dir target/nomina --report --verify
 ```
 
-`ZETA_UNICODE_BLOCK_SHIFT` pins a block shift (3..=8) instead of searching.
-`ZETA_UNICODE_STATS=1` prints the candidate and section report.
+`hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]` fetches a release. The CLI writes
+`nomina.bin` and `manifest.json`; `--verify` re-reads the image. The manifest records versions,
+profile, sections, candidates, input hashes and verification checks, with no timestamps or
+absolute paths. Training is deterministic.
 
-## Supported Unicode versions
+## Verification and testing
 
-`DerivedName.txt` exists from Unicode 10.0 onward; older releases fail with a clear
-`MissingDerivedName` error rather than silently generating incomplete names. The version
-headers of the UCD inputs are validated against `DerivedName.txt`; `emoji-test.txt` is
-checked only for a well-formed header, because the Emoji release version is independent and
-does not track the UCD version. `emoji-test.txt` may use the older comment shape
-(`# 😀 name`) or the modern one (`# 😀 E5.0 name`).
+The trainer re-decodes every section and re-parses the image before accepting it. The manifest
+checks are `name-stream-round-trip`, `emoji-stream-round-trip`, `general-category-round-trip`,
+`pattern-round-trip` and `image-layout`. Bad UCD records and verification mismatches panic;
+input, profile, budget, baseline and I/O failures are errors.
 
-The runtime tests read the same `ZETA_UNICODE_DATA_DIR` when it is set, so the full name,
-emoji, general-category and pattern verification can be run against an older release:
+Runtime tests re-read the UCD and round-trip names, aliases, categories and the emoji oracle;
+they also check `UNICODE_VERSION` and `TABLE_BUDGET`.
 
 ```sh
-ZETA_UNICODE_DATA_DIR=/path/to/ucd-15.1 cargo test -p zeta-unicode --all-features
+cargo test -p zeta-unicode --all-features
+cargo test -p zeta-unicode-build --all-features
+cargo test -p zeta-unicode-format --all-features
+cargo test -p plugins --all-features string_utils
+cargo test -p zeta-unicode --release -- --ignored --nocapture benchmarks
 ```
 
-## Verification
+## `.uni`
 
-Training verifies every stage before the image is accepted: the emoji, general-category and
-pattern builders decode their own sections back and assert every entry round-trips, the
-chosen name section is re-decoded against all explicit names (Hangul syllables and pattern
-code points included), and the packed image header and section directory are re-parsed. A
-mismatch aborts the build with a panic rather than a bad image. `--verify` additionally reads
-the written `nomina.bin` back from disk and re-validates its layout and name section, so the
-flag checks the actual artifact. The build also pins the image budget and `UNICODE_VERSION`
-against the image header.
+`string-utils` warms the shared tables, names characters, reads categories, groups emoji
+sequences and bounds probing with `MAX_EMOJI_KEY_BYTES`. The reply budgets both the listing and
+each sequence's code-point list.
+
+See [`zeta-unicode-build`](../zeta-unicode-build/README.md) and
+[`zeta-unicode-format`](../zeta-unicode-format/README.md) for the other halves.
