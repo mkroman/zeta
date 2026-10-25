@@ -34,7 +34,7 @@ rustls = [
 ]
 
 alert = ["database", "dep:chrono", "dep:humantime-serde", "dep:interim", "dep:rand"]
-chaturbate = ["http", "dep:regex"]
+chaturbate = ["http"]
 choices = ["dep:rand"]
 coinmarketcap = ["http", "dep:coinmarketcap", "dep:strsim", "dep:humantime-serde"]
 dendanskeordbog = ["http", "dep:dendanskeordbog"]
@@ -48,7 +48,7 @@ help = []
 howlongtobeat = ["http"]
 imdb = ["http", "dep:num-format"]
 instagram = ["mirror", "emulated", "dep:scraper"]
-isitopen = ["http", "dep:regex", "time"]
+isitopen = ["http", "time"]
 kagi = ["dep:kagi", "dep:humantime-serde"]
 notification = ["database", "dep:chrono"]
 ofn = ["database", "http", "youtube", "dep:num-format"]
@@ -56,17 +56,10 @@ openweathermap = ["http"]
 pornhub = ["http", "dep:num-format"]
 reddit = ["mirror", "dep:reddit", "dep:secrecy"]
 rink = ["dep:coinmarketcap", "dep:rink-core", "http", "dep:humantime-serde"]
-rust-playground = ["http", "dep:regex"]
-spotify = [
-    "http",
-    "zeta-http/oauth",
-    "dep:base64",
-    "dep:indefinite",
-    "dep:num-format",
-    "dep:regex",
-]
+rust-playground = ["http"]
+spotify = ["http", "zeta-http/oauth", "dep:base64", "dep:indefinite", "dep:num-format"]
 string-utils = ["dep:zeta-unicode"]
-thingiverse = ["http", "dep:num-format", "dep:regex"]
+thingiverse = ["http", "dep:num-format"]
 tiktok = ["mirror", "http"]
 titles = ["emulated", "dep:futures", "dep:html5ever"]
 trustpilot = ["http", "dep:num-format"]
@@ -148,7 +141,6 @@ num-format = { version = "0.4.4", optional = true }
 rand = { version = "0.10.1", optional = true }
 rand_mt = { version = "6", optional = true }
 reddit = { path = "../reddit", optional = true }
-regex = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"], optional = true }
 rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "61be392a0d605ea6c4192934134683d63fbe7f7d", features = ["bundle-files", "serde_json"], optional = true }
 scraper = { version = "0.29.0", optional = true }

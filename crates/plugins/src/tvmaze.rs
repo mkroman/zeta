@@ -254,7 +254,7 @@ impl Tvmaze {
 mod tests {
     use super::*;
     use similar_asserts::assert_eq;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     /// Decodes a recorded search response for a running show with a scheduled next episode.
     fn show_with_next_episode() -> Show {

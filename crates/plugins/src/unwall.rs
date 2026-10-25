@@ -54,7 +54,7 @@ use zeta_http as http;
 use zeta_url::redact_url;
 use zeta_utils::{
     duration::TimeInWords,
-    utils::{MAX_LISTING_LENGTH, append_entries_within_budget},
+    irc::{MAX_LISTING_LENGTH, append_entries_within_budget},
 };
 
 use client::UnwallClient;

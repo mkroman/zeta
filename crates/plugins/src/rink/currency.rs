@@ -20,7 +20,7 @@ use rink_core::types::DateTime;
 use std::collections::HashSet;
 use std::fmt::Write;
 use tracing::warn;
-use zeta_utils::utils::strip_control_chars;
+use zeta_utils::irc::strip_control_chars;
 
 /// The URL of rink's live currency dataset.
 ///

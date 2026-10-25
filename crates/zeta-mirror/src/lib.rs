@@ -380,8 +380,11 @@ impl MirrorHandle {
             &format!("{uppercase}_PUBLIC_URL_BASE"),
             &format!("https://pub.rwx.im/{plugin}"),
         )?;
-        let prefix =
-            zeta_utils::utils::resolve_setting(prefix, &format!("{uppercase}_S3_PREFIX"), plugin);
+        let prefix = zeta_utils::settings::resolve_setting(
+            prefix,
+            &format!("{uppercase}_S3_PREFIX"),
+            plugin,
+        );
         let mirror = mirror?;
 
         Some(Self::new(mirror, prefix, public_url_base))
@@ -419,7 +422,7 @@ impl MirrorHandle {
 /// logs a warning when the resolved value is not a valid URL.
 #[must_use]
 pub fn resolve_public_url_base(setting: Option<&str>, env: &str, default: &str) -> Option<Url> {
-    let value = zeta_utils::utils::resolve_setting(setting, env, default);
+    let value = zeta_utils::settings::resolve_setting(setting, env, default);
 
     match Url::parse(&value) {
         Ok(url) => Some(url),

@@ -37,7 +37,8 @@ use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, trace};
 
 use crate::prelude::*;
-use zeta_utils::utils::{MAX_LISTING_LENGTH, Truncatable, append_entries_within_budget};
+use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_within_budget};
+use zeta_utils::text::Truncatable;
 
 /// The `.alert` command.
 const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
@@ -506,7 +507,7 @@ mod tests {
     use super::*;
     use zeta_plugin::ArgsError;
     use zeta_test_support::settings_tests;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,

@@ -17,7 +17,6 @@ use std::fmt::Write;
 use base64::prelude::*;
 use indefinite::indefinite_article_only;
 use num_format::{Locale, ToFormattedString};
-use regex::Regex;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -52,7 +51,6 @@ pub struct Settings {
 /// Spotify integration plugin.
 pub struct Spotify {
     credentials: Credentials,
-    uri_regex: Regex,
 }
 
 /// Errors that can occur while talking to the Spotify API.
@@ -134,13 +132,8 @@ impl Spotify {
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
         let client = http::build_client(&ctx.config.http);
         let credentials = Credentials::new(client, AUTH_URL, client_id, client_secret);
-        let uri_regex = Regex::new(r"spotify:(?P<type>[a-zA-Z]+):(?P<id>[a-zA-Z0-9]+)")
-            .expect("spotify uri regex");
 
-        Ok(Self {
-            credentials,
-            uri_regex,
-        })
+        Ok(Self { credentials })
     }
 
     #[handler(url)]
@@ -172,9 +165,7 @@ impl Spotify {
         let channel = event.channel();
 
         // Handle bare Spotify URIs (spotify:type:id) posted as text.
-        for cap in self.uri_regex.captures_iter(event.text()) {
-            let type_str = &cap["type"];
-            let id_str = &cap["id"];
+        for (type_str, id_str) in parse_spotify_uris(event.text()) {
             // Include the external URL for URI matches.
             self.handle_spotify_resource(channel, type_str, id_str, true, client)
                 .await?;
@@ -396,6 +387,33 @@ fn to_sentence(words: &[String]) -> String {
     }
 }
 
+/// Returns the bare `spotify:type:id` URIs found in `text`, in order.
+fn parse_spotify_uris(text: &str) -> Vec<(&str, &str)> {
+    const PREFIX: &str = "spotify:";
+
+    let mut uris = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(offset) = text[cursor..].find(PREFIX) {
+        let start = cursor + offset;
+        let rest = &text[start + PREFIX.len()..];
+        let Some(colon) = rest.find(':') else { break };
+
+        let kind = &rest[..colon];
+        let tail = &rest[colon + 1..];
+        let id_len = tail.bytes().take_while(u8::is_ascii_alphanumeric).count();
+
+        if !kind.is_empty() && kind.bytes().all(|byte| byte.is_ascii_alphabetic()) && id_len > 0 {
+            uris.push((kind, &tail[..id_len]));
+            cursor = start + PREFIX.len() + colon + 1 + id_len;
+        } else {
+            cursor = start + PREFIX.len();
+        }
+    }
+
+    uris
+}
+
 fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
     // path segments: ["track", "4uLU6hMCjMI75M1A2tKUQC"]
     match path_segments(url)?.as_slice() {
@@ -409,7 +427,7 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -425,6 +443,47 @@ mod tests {
             assert_eq!(settings.client_id.as_deref(), Some("id"));
             assert_eq!(settings.client_secret.as_deref(), Some("secret"));
         }
+    }
+
+    #[test]
+    fn parses_bare_spotify_uris() {
+        assert_eq!(
+            parse_spotify_uris(
+                "listen to spotify:track:4uLU6hMCjMI75M1A2tKUQC and \
+                 spotify:album:1DFixLWuPkv3KT3TnV35m3"
+            ),
+            [
+                ("track", "4uLU6hMCjMI75M1A2tKUQC"),
+                ("album", "1DFixLWuPkv3KT3TnV35m3"),
+            ]
+        );
+
+        // Each component must be present and use the URI alphabet.
+        for text in [
+            "spotify::id",
+            "spotify:track:",
+            "spotify:tr4ck:id",
+            // Plain links are handled by `parse_spotify_url`, not the URI parser.
+            "https://open.spotify.com/track/id",
+        ] {
+            assert_eq!(
+                parse_spotify_uris(text),
+                Vec::<(&str, &str)>::new(),
+                "{text}"
+            );
+        }
+
+        // The id ends at the first character outside the alphabet.
+        assert_eq!(
+            parse_spotify_uris("spotify:track:abc! rest"),
+            [("track", "abc")]
+        );
+
+        // Matches are non-overlapping.
+        assert_eq!(
+            parse_spotify_uris("spotify:spotify:track:id"),
+            [("spotify", "track")]
+        );
     }
 
     #[test]

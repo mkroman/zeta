@@ -14,7 +14,7 @@ use tracing::error;
 
 use crate::prelude::*;
 use zeta_mirror::{Mirror, MirrorHandle};
-use zeta_utils::utils::Truncatable;
+use zeta_utils::text::Truncatable;
 
 /// The reddit API submission model.
 use reddit::Submission;

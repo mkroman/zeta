@@ -162,7 +162,7 @@ mod tests {
     use super::*;
 
     use wildmatch::WildMatch;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     #[tokio::test]
     async fn it_should_format_message() {

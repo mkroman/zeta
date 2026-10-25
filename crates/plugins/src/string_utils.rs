@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::fmt::Write;
 
 use zeta_unicode::{emoji_name, general_category, name_or_label};
-use zeta_utils::utils::{MAX_LISTING_LENGTH, append_entries_within_budget};
+use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_within_budget};
 
 use crate::prelude::*;
 
@@ -278,7 +278,7 @@ fn str_to_hex_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     #[test]
     fn str_to_hex_string_test() {

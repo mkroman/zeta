@@ -29,7 +29,7 @@ use tracing::{debug, warn};
 
 use crate::prelude::*;
 use zeta_cache::TtlCache;
-use zeta_utils::utils::strip_control_chars;
+use zeta_utils::irc::strip_control_chars;
 
 use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat, QuoteData};
 use coinmarketcap::{Client as CmcClient, Config, Error};
@@ -660,7 +660,7 @@ mod tests {
     use coinmarketcap::model::FiatQuote;
     use zeta_plugin::ArgsError;
     use zeta_test_support::settings_tests;
-    use zeta_utils::utils::strip_formatting;
+    use zeta_utils::irc::strip_formatting;
 
     /// Builds a coin list for cache tests.
     fn test_coins() -> Vec<Coin> {

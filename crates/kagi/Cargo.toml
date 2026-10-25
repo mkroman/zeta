@@ -32,7 +32,6 @@ zstd = ["reqwest/zstd"]
 
 [dependencies]
 htmlize = { version = "1.1.0", features = ["unescape"] }
-regex.workspace = true
 reqwest = { workspace = true, features = ["cookies"] }
 scraper.workspace = true
 secrecy.workspace = true
@@ -43,6 +42,7 @@ tokio.workspace = true
 tracing.workspace = true
 
 zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
 zeta-test-support = { path = "../zeta-test-support" }

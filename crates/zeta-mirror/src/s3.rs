@@ -176,7 +176,7 @@ impl S3 {
             resolve_secret(config.secret_access_key.as_deref(), "S3_SECRET_ACCESS_KEY")?;
         let bucket = resolve_secret(config.bucket.as_deref(), "S3_BUCKET_NAME")?;
         let region =
-            zeta_utils::utils::resolve_setting(config.region.as_deref(), "S3_REGION", "auto");
+            zeta_utils::settings::resolve_setting(config.region.as_deref(), "S3_REGION", "auto");
 
         let endpoint = config
             .endpoint

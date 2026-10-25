@@ -1,43 +1,7 @@
-//! Shared utilities.
+//! Helpers for IRC message formatting, addressing, and line budgets.
 
-use std::borrow::Cow;
 use std::iter::Peekable;
 use std::str::Chars;
-
-/// Helpers for truncating text.
-pub trait Truncatable: AsRef<str> {
-    /// Truncates the text to at most `len` characters, appending `suffix` when truncation
-    /// happens (the result may then exceed `len` by the suffix's length).
-    fn truncate_with_suffix(&self, len: usize, suffix: &str) -> Cow<'_, str> {
-        let text = self.as_ref();
-
-        match text.char_indices().nth(len) {
-            Some((byte_idx, _)) => {
-                let mut truncated = String::with_capacity(byte_idx + suffix.len());
-                truncated.push_str(&text[..byte_idx]);
-                truncated.push_str(suffix);
-                Cow::Owned(truncated)
-            }
-            None => Cow::Borrowed(text),
-        }
-    }
-
-    /// Truncates the text so that it is at most `len` characters *including* `suffix`, which is
-    /// appended when truncation happens.
-    fn truncate_within(&self, len: usize, suffix: &str) -> String {
-        let text = self.as_ref();
-
-        if text.chars().count() <= len {
-            return text.to_string();
-        }
-
-        let mut truncated: String = text.chars().take(len.saturating_sub(1)).collect();
-        truncated.push_str(suffix);
-        truncated
-    }
-}
-
-impl<T: ?Sized + AsRef<str>> Truncatable for T {}
 
 /// Strips a nickname mention (`<nick>, ...` or `<nick>: ...`) from the start of `s`.
 ///
@@ -52,15 +16,6 @@ pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'
             None
         }
     })
-}
-
-/// Collapses runs of whitespace in `value` into single spaces, trimming the result.
-///
-/// Text assembled from web pages carries line breaks and repeated spaces that an IRC message
-/// cannot render: a line break terminates the message, and everything after it is lost.
-#[must_use]
-pub fn collapse_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Removes every control character from `text`, including IRC formatting codes and their color
@@ -174,29 +129,6 @@ fn consume_hex_color(characters: &mut Peekable<Chars<'_>>) {
     }
 }
 
-/// Resolves a string setting: the configured value wins, then the `env` environment variable,
-/// then the default.
-#[must_use]
-pub fn resolve_setting(setting: Option<&str>, env: &str, default: &str) -> String {
-    setting
-        .map(str::to_string)
-        .or_else(|| std::env::var(env).ok())
-        .unwrap_or_else(|| default.to_string())
-}
-
-/// Resolves an optional string setting: the configured value wins over the `env` environment
-/// variable.
-///
-/// Empty values count as unset, so a blank configured value or environment variable does not
-/// configure the setting.
-#[must_use]
-pub fn resolve_optional_setting(setting: Option<&str>, env: &str) -> Option<String> {
-    setting
-        .map(str::to_string)
-        .or_else(|| std::env::var(env).ok())
-        .filter(|value| !value.trim().is_empty())
-}
-
 /// The maximum length of a listing, leaving room for the sender prefix, `PRIVMSG` framing and
 /// line ending overhead within the classic 512-byte IRC line limit.
 pub const MAX_LISTING_LENGTH: usize = 400;
@@ -243,26 +175,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolves_settings_in_priority_order() {
-        assert_eq!(
-            resolve_setting(Some("~meta"), "UNUSED_X_PREFIX", "reddit"),
-            "~meta"
-        );
-        assert_eq!(resolve_setting(None, "UNUSED_X_PREFIX", "reddit"), "reddit");
-    }
-
-    #[test]
-    fn resolves_optional_settings_in_priority_order() {
-        assert_eq!(
-            resolve_optional_setting(Some("value"), "UNUSED_ENV_VAR"),
-            Some("value".to_string())
-        );
-        assert_eq!(resolve_optional_setting(Some(""), "UNUSED_ENV"), None);
-        assert_eq!(resolve_optional_setting(None, "UNUSED_ENV"), None);
-        assert_eq!(resolve_optional_setting(Some("  "), "UNUSED_ENV"), None);
-    }
-
-    #[test]
     fn appends_entries_within_the_budget() {
         let mut message = String::from("header: ");
 
@@ -307,42 +219,6 @@ mod tests {
         // bytes exceeds the budget.
         assert_eq!(appended, 1);
         assert_eq!(message, "first");
-    }
-
-    #[test]
-    fn truncate_within_budget_including_suffix() {
-        let s: &str = "this is a very long string";
-
-        assert_eq!(s.truncate_within(10, "…"), "this is a…");
-        assert_eq!(s.truncate_within(30, "…"), "this is a very long string");
-        assert_eq!("hæłlo".truncate_within(4, "…"), "hæł…");
-    }
-
-    #[test]
-    fn truncate_str_with_suffix() {
-        let s: &str = "this is a very long string";
-
-        assert_eq!(s.truncate_with_suffix(10, "…"), "this is a …");
-        assert_eq!(
-            s.truncate_with_suffix(250, "…"),
-            "this is a very long string"
-        );
-        // should not copy when length exceeds str
-        assert!(matches!(s.truncate_with_suffix(250, "…"), Cow::Borrowed(_)));
-        // should copy when truncating
-        assert!(matches!(s.truncate_with_suffix(10, "…"), Cow::Owned(_)));
-    }
-
-    #[test]
-    fn collapses_whitespace_runs_into_single_spaces() {
-        // A line break terminates an IRC message, so text from web pages is collapsed.
-        assert_eq!(
-            collapse_whitespace("first\nsecond\nthird"),
-            "first second third"
-        );
-        assert_eq!(collapse_whitespace("  a   b\t\tc  "), "a b c");
-        assert_eq!(collapse_whitespace("plain"), "plain");
-        assert_eq!(collapse_whitespace("   "), "");
     }
 
     #[test]
