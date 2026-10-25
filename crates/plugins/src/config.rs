@@ -41,14 +41,14 @@ pub struct PluginConfig<S> {
     pub unknown_keys: Vec<String>,
 }
 
-impl<'de, S> PluginConfig<S>
+impl<S> PluginConfig<S>
 where
-    S: Deserialize<'de>,
+    S: DeserializeOwned,
 {
     /// Deserializes a plugin section, resolving an omitted `enabled` key to `default_enabled`.
     ///
     /// The [`Deserialize`] implementation calls this with `true`, the standalone default.
-    pub(crate) fn deserialize_with_default<D>(
+    pub(crate) fn deserialize_with_default<'de, D>(
         deserializer: D,
         default_enabled: bool,
     ) -> Result<Self, D::Error>
@@ -90,11 +90,9 @@ fn split_enabled(
 }
 
 /// Deserializes settings, collecting the keys the settings type did not recognize.
-fn settings_with_unknown_keys<'de, S>(
-    settings: &Value,
-) -> Result<(S, Vec<String>), Box<figment::Error>>
+fn settings_with_unknown_keys<S>(settings: &Value) -> Result<(S, Vec<String>), Box<figment::Error>>
 where
-    S: Deserialize<'de>,
+    S: DeserializeOwned,
 {
     let mut unknown_keys = Vec::new();
     let settings = serde_ignored::deserialize(settings, |path| {
@@ -107,7 +105,7 @@ where
 
 impl<'de, S> Deserialize<'de> for PluginConfig<S>
 where
-    S: Deserialize<'de>,
+    S: DeserializeOwned,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

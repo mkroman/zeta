@@ -2889,7 +2889,6 @@ version = "0.0.0"
 dependencies = [
  "arc-swap",
  "argh",
- "async-trait",
  "base64 0.23.1",
  "chrono",
  "coinmarketcap",

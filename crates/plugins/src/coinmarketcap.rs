@@ -658,6 +658,7 @@ fn format_price(price: f64) -> String {
 mod tests {
     use super::*;
     use coinmarketcap::model::FiatQuote;
+    use zeta_plugin::ArgsError;
     use zeta_test_support::settings_tests;
 
     /// Builds a coin list for cache tests.

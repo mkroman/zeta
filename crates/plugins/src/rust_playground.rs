@@ -144,23 +144,21 @@ impl RustPlayground {
         let result: ExecuteResponse =
             http::get_json(self.client.post(BASE_URL).json(&request)).await?;
 
-        if result.success {
-            let output = sanitize_output(&result.stdout);
-            Ok(output
-                .truncate_with_suffix(self.settings.max_output_length, "…")
-                .into_owned())
+        let output = if result.success {
+            sanitize_output(&result.stdout)
         } else {
             let errors = self.extract_errors(&result.stderr);
-            let output = if errors.is_empty() {
+            if errors.is_empty() {
                 // Fallback to raw stderr if no specific errors were found
                 sanitize_output(&result.stderr)
             } else {
                 format!("Compilation error(s): {}", errors.join(", "))
-            };
-            Ok(output
-                .truncate_with_suffix(self.settings.max_output_length, "…")
-                .into_owned())
-        }
+            }
+        };
+
+        Ok(output
+            .truncate_with_suffix(self.settings.max_output_length, "…")
+            .into_owned())
     }
 
     /// Extracts compiler error messages from the stderr output.

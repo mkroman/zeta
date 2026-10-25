@@ -86,13 +86,24 @@ pub fn register_bundled_plugins(
         tracing::warn!(section = %name, "unknown plugin configuration section (typo?)");
     }
 
-    // Sorted by name for a deterministic catalog and log order. The registry reports duplicate
-    // registrations itself, so repeated names are not filtered here.
+    // Sorted by name for a deterministic catalog and log order. Duplicate names are a build
+    // error and are reported here regardless of whether the plugin is enabled; the registry
+    // rejects them again for callers that bypass this function.
     let mut registrations: Vec<&'static zeta_plugin::PluginRegistration> =
         zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().collect();
     registrations.sort_unstable_by_key(|registration| registration.name);
 
+    let mut previous: Option<&'static str> = None;
     for registration in registrations {
+        if previous == Some(registration.name) {
+            tracing::error!(
+                plugin = registration.name,
+                "duplicate plugin registration; the later one is ignored"
+            );
+            continue;
+        }
+        previous = Some(registration.name);
+
         let (enabled, section) = plugins
             .sections
             .get(registration.name)

@@ -128,7 +128,6 @@ wreq-util = { version = "0.2.0", optional = true }
 [dependencies]
 arc-swap.workspace = true
 argh.workspace = true
-async-trait.workspace = true
 base64 = { version = "0.23.0", optional = true }
 chrono = { workspace = true, optional = true }
 coinmarketcap = { path = "../coinmarketcap", default-features = false, optional = true }

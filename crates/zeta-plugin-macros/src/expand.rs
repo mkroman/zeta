@@ -387,7 +387,14 @@ fn classify_constructor(method: &ImplItemFn, constructor: &mut bool) -> syn::Res
         return Ok(());
     }
 
-    if !cfg_attributes(method).is_empty() {
+    // Only a `#[cfg]` removes the method from the build; a `cfg_attr` that does not expand to
+    // `cfg` leaves the generated call valid, so common forms like `cfg_attr(test, allow(..))`
+    // stay usable.
+    if method
+        .attrs
+        .iter()
+        .any(|attribute| attribute.path().is_ident("cfg"))
+    {
         return Err(syn::Error::new(
             method.sig.ident.span(),
             "the plugin constructor cannot be gated with `#[cfg]`; the generated `Plugin::new` \
@@ -412,11 +419,11 @@ fn cfg_attributes(method: &ImplItemFn) -> Vec<syn::Attribute> {
         .collect()
 }
 
-/// Whether the method is the inherent plugin constructor: an associated `fn new` with exactly
-/// three typed parameters and the trait's signature.
+/// Whether the method is the inherent plugin constructor.
 ///
-/// Other `new` methods are ordinary inherent methods, so helper constructors (e.g. `fn new() ->
-/// Self`) can live beside the plugin impl.
+/// An associated `fn new` with exactly three typed parameters is the constructor and must match
+/// the trait's signature; a `new` with a different arity (or with a receiver) stays an ordinary
+/// inherent method.
 fn is_constructor(method: &ImplItemFn) -> syn::Result<bool> {
     if method.sig.ident != "new"
         || method
@@ -435,6 +442,9 @@ fn is_constructor(method: &ImplItemFn) -> syn::Result<bool> {
 }
 
 /// Checks that no two commands share a trigger or a `CommandSpec` constant name.
+///
+/// Commands are compared regardless of their `#[cfg]` attributes: the macro cannot evaluate
+/// them, so mutually exclusive variants need distinct triggers.
 fn validate_duplicates(commands: &[Command]) -> syn::Result<()> {
     for (index, command) in commands.iter().enumerate() {
         for previous in &commands[..index] {
@@ -672,9 +682,6 @@ fn validate_handler(kind: HandlerKind, method: &ImplItemFn) -> syn::Result<()> {
 /// Validates the exact trait signature of the inherent constructor:
 /// `fn new(ctx: &Context, settings: &Settings, subscriptions: &mut Subscriptions) ->
 /// Result<Self, Error>`.
-///
-/// `is_constructor` has already checked the name, the absence of a receiver, and the parameter
-/// count; this validates the three parameter types and the return type.
 fn validate_constructor(method: &ImplItemFn) -> syn::Result<()> {
     let signature = &method.sig;
     let name = &signature.ident;
@@ -687,17 +694,23 @@ fn validate_constructor(method: &ImplItemFn) -> syn::Result<()> {
     }
 
     let typed = typed_parameters(method);
+    let [context, settings, subscriptions] = typed.as_slice() else {
+        return Err(syn::Error::new(
+            name.span(),
+            "the plugin constructor must take exactly three parameters",
+        ));
+    };
 
-    expect_borrowed(typed[0].ty.as_ref(), "Context", false)?;
+    expect_borrowed(context.ty.as_ref(), "Context", false)?;
     // The settings type is named by the plugin author; only its borrowing is checked.
-    if !matches!(typed[1].ty.as_ref(), Type::Reference(reference) if reference.mutability.is_none())
+    if !matches!(settings.ty.as_ref(), Type::Reference(reference) if reference.mutability.is_none())
     {
         return Err(syn::Error::new(
-            typed[1].ty.span(),
+            settings.ty.span(),
             "expected an immutable reference to the plugin's settings",
         ));
     }
-    expect_borrowed(typed[2].ty.as_ref(), "Subscriptions", true)?;
+    expect_borrowed(subscriptions.ty.as_ref(), "Subscriptions", true)?;
 
     expect_result(signature, ExpectedFirst::Self_, "the plugin constructor")
 }
@@ -1598,6 +1611,27 @@ mod tests {
         .expect("an async constructor must be rejected");
 
         assert!(error.to_string().contains("must not be `async`"), "{error}");
+    }
+
+    #[test]
+    fn cfg_attr_on_the_constructor_is_allowed() {
+        let plugin = classify_source(
+            r"
+            impl Plugin {
+                #[cfg_attr(test, allow(dead_code))]
+                fn new(
+                    _: &Context,
+                    _: &NoSettings,
+                    _: &mut Subscriptions,
+                ) -> Result<Self, Error> {
+                    Ok(Self)
+                }
+            }
+            ",
+        )
+        .unwrap_or_else(|error| panic!("a non-gating `cfg_attr` should be allowed: {error}"));
+
+        assert!(plugin.constructor);
     }
 
     #[test]
