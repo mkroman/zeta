@@ -1,4 +1,10 @@
-//! Helpers shared by the crate's test modules.
+//! Test-only helpers shared by the crate's test modules.
+//!
+//! Unit-test helpers have to live under `src` to reach the crate's private items. The module is
+//! declared under `#[cfg(test)]` in `lib.rs`, and the file-level gate below keeps it out of
+//! production builds on its own.
+
+#![cfg(test)]
 
 use std::sync::Arc;
 use std::time::Duration;
