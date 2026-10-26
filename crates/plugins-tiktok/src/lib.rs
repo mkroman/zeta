@@ -19,6 +19,7 @@ use zeta_http as http;
 use zeta_http::RequestError;
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
+use zeta_url::RedactedUrl;
 use zeta_utils::text::Truncatable;
 
 use self::oembed::OEmbed;
@@ -202,7 +203,7 @@ impl Tiktok {
             .ok_or(Error::InvalidRedirect)?;
 
         let url = Url::parse(location).map_err(|_| Error::InvalidRedirect)?;
-        debug!(%url, "fetched redirect url");
+        debug!(url.full = %RedactedUrl::from_url(&url), "fetched redirect url");
         debug_assert_eq!(url.host_str(), Some("www.tiktok.com"));
 
         Ok(url)

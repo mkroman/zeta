@@ -36,25 +36,12 @@ pub struct ExtractedUrl {
     pub repaired_from: Option<&'static str>,
 }
 
-/// This trait implements a `urls()` function on stringy values that returns a [`ExtractUrls`]
-/// iterator.
-pub trait ExtractUrlsExt<'a> {
-    /// Returns a [`ExtractUrls`] iterator.
-    fn urls(&'a self) -> ExtractUrls<'a>;
-}
-
-impl<'a, T: AsRef<str> + ?Sized> ExtractUrlsExt<'a> for T {
-    fn urls(&'a self) -> ExtractUrls<'a> {
-        ExtractUrls::new(self.as_ref())
-    }
-}
-
 /// Iterates over a list of URLs in a string.
 ///
 /// Words are matched against a configurable set of scheme prefixes (see [`SchemeMap`]), so that
 /// URLs posted with broken schemes — e.g. `ttps://example.com` — can be extracted and repaired.
 pub struct ExtractUrls<'a> {
-    iter: std::str::Split<'a, char>,
+    iter: std::str::SplitWhitespace<'a>,
     schemes: SchemeMap,
     /// The length of the shortest accepted scheme, used to reject words quickly.
     min_scheme_len: usize,
@@ -79,7 +66,7 @@ impl<'a> ExtractUrls<'a> {
             .unwrap_or(usize::MAX);
 
         ExtractUrls {
-            iter: s.split(' '),
+            iter: s.split_whitespace(),
             schemes,
             min_scheme_len,
         }
@@ -149,8 +136,6 @@ mod tests {
     #[test]
     fn extract_urls_from_iterators_str_and_string_all_yield_the_same_urls() {
         assert_eq!(ExtractUrls::new(TEST_STRING).count(), 2);
-        assert_eq!(TEST_STRING.urls().count(), 2);
-        assert_eq!(String::from(TEST_STRING).urls().count(), 2);
     }
 
     #[test]
@@ -210,6 +195,14 @@ mod tests {
 
         assert_eq!(urls.len(), 1);
         assert_eq!(urls[0].repaired_from, None);
+    }
+
+    #[test]
+    fn splits_on_any_whitespace() {
+        let urls: Vec<ExtractedUrl> = ExtractUrls::new("first\thttps://maero.dk\nsecond").collect();
+
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0].url.as_str(), "https://maero.dk/");
     }
 
     #[test]

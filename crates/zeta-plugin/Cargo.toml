@@ -6,9 +6,6 @@ description = "The plugin API for the zeta IRC bot."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mkroman/zeta"
 
-[package.metadata.cargo-machete]
-ignored = ["humantime-serde"]
-
 [features]
 default = []
 # Database-backed plugins: the context carries a connection pool and plugins persist their
@@ -23,7 +20,6 @@ arc-swap.workspace = true
 argh.workspace = true
 async-trait.workspace = true
 figment.workspace = true
-humantime-serde.workspace = true
 inventory = "0.3.24"
 irc.workspace = true
 serde.workspace = true
@@ -34,6 +30,7 @@ thiserror.workspace = true
 tracing.workspace = true
 url.workspace = true
 wildmatch.workspace = true
+zeta-http = { path = "../zeta-http", default-features = false }
 zeta-plugin-macros = { path = "../zeta-plugin-macros" }
 zeta-utils = { path = "../zeta-utils" }
 

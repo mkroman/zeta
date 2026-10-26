@@ -2,6 +2,9 @@
 
 /// Resolves a string setting: the configured value wins, then the `env` environment variable,
 /// then the default.
+///
+/// Unlike [`resolve_optional_setting`], a blank configured value counts as set and is returned;
+/// this keeps a deliberately empty setting empty instead of silently restoring a default.
 #[must_use]
 pub fn resolve_setting(setting: Option<&str>, env: &str, default: &str) -> String {
     setting

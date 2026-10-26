@@ -158,7 +158,8 @@ impl From<wreq::Error> for Error {
 #[plugin(name = "instagram", settings = Settings, urls(hosts = urls::URL_HOSTS))]
 impl Instagram {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
-        let client = http::emulated::builder(None)?
+        let client = http::emulated::builder(None)
+            .map_err(plugin_err)?
             .redirect(Policy::limited(4))
             .timeout(ctx.config.http.timeout)
             .build()

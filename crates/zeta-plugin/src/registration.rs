@@ -50,7 +50,7 @@ impl PluginRegistration {
     #[must_use]
     pub const fn new<P>() -> Self
     where
-        P: Plugin<Context> + 'static,
+        P: Plugin + 'static,
         P::Settings: Default + DeserializeOwned,
     {
         Self {
@@ -74,40 +74,41 @@ impl PluginRegistration {
     }
 }
 
-/// A plugin constructed from its registration, with the subscriptions and configuration
-/// diagnostics the registry needs before committing it.
+/// A plugin constructed from its registration, with the subscriptions the registry needs
+/// before committing it.
 pub struct ConstructedPlugin {
+    /// The plugin's name, taken from [`Plugin::NAME`](crate::Plugin::NAME) so it can never
+    /// disagree with the registration.
+    pub name: &'static str,
     /// The constructed plugin, with its settings type erased.
     pub plugin: Box<dyn ErasedPlugin>,
     /// The events the plugin registered interest in during construction.
     pub subscriptions: Subscriptions,
-    /// Keys in the plugin's configuration section that its settings type did not recognize.
-    pub unknown_keys: Vec<String>,
 }
 
 /// The constructor thunk [`PluginRegistration::new`] stores: deserialize the settings section,
 /// build the plugin, and return it with its declared subscriptions.
 fn construct<P>(ctx: &Context, section: Option<&Value>) -> Result<ConstructedPlugin, Error>
 where
-    P: Plugin<Context> + 'static,
+    P: Plugin + 'static,
     P::Settings: Default + DeserializeOwned,
 {
-    let (settings, unknown_keys) = deserialize_settings::<P>(section)?;
+    let (settings, _) = deserialize_settings::<P>(section)?;
 
     let mut subscriptions = Subscriptions::new();
     let plugin = P::new(ctx, &settings, &mut subscriptions)?;
 
     Ok(ConstructedPlugin {
+        name: P::NAME,
         plugin: Box::new(plugin),
         subscriptions,
-        unknown_keys,
     })
 }
 
 /// Deserializes a plugin's settings section, or the defaults when it is omitted.
 fn deserialize_settings<P>(section: Option<&Value>) -> Result<(P::Settings, Vec<String>), Error>
 where
-    P: Plugin<Context> + 'static,
+    P: Plugin + 'static,
     P::Settings: Default + DeserializeOwned,
 {
     match section {
@@ -131,7 +132,7 @@ where
 /// Deserializes a plugin's settings section and returns only the unrecognized keys.
 fn validate_settings<P>(section: Option<&Value>) -> Result<Vec<String>, Error>
 where
-    P: Plugin<Context> + 'static,
+    P: Plugin + 'static,
     P::Settings: Default + DeserializeOwned,
 {
     deserialize_settings::<P>(section).map(|(_, unknown_keys)| unknown_keys)
@@ -156,7 +157,7 @@ mod tests {
     /// A plugin whose construction cannot fail, so only the settings decide the outcome.
     struct TestPlugin;
 
-    impl Plugin<Context> for TestPlugin {
+    impl Plugin for TestPlugin {
         const NAME: &'static str = "test_plugin";
         type Settings = TestSettings;
 

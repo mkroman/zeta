@@ -4,8 +4,7 @@
 //! them regardless of headers. Built behind the `emulated` feature, which the anti-bot-protected
 //! plugins enable.
 
-use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
-use zeta_plugin::{Error, prelude::plugin_err};
+use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, InvalidHeaderValue, USER_AGENT};
 
 use crate::WreqError;
 
@@ -45,7 +44,7 @@ impl From<wreq::Error> for ResponseError {
 /// # Errors
 ///
 /// Returns an error if `user_agent` cannot be used as a header value.
-pub fn builder(user_agent: Option<&str>) -> Result<wreq::ClientBuilder, Error> {
+pub fn builder(user_agent: Option<&str>) -> Result<wreq::ClientBuilder, InvalidHeaderValue> {
     let mut headers = HeaderMap::new();
 
     headers.insert(
@@ -54,7 +53,7 @@ pub fn builder(user_agent: Option<&str>) -> Result<wreq::ClientBuilder, Error> {
     );
 
     if let Some(user_agent) = user_agent {
-        let value = HeaderValue::from_str(user_agent).map_err(plugin_err)?;
+        let value = HeaderValue::from_str(user_agent)?;
 
         headers.insert(USER_AGENT, value);
     }

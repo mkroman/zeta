@@ -234,7 +234,7 @@ impl UnwallService {
 mod tests {
     use super::*;
     use zeta_http as http;
-    use zeta_plugin::config::HttpConfig;
+    use zeta_http::HttpConfig;
     use zeta_test_support::assert_empty;
     use zeta_test_support::wiremock::{
         Mock, MockServer, ResponseTemplate,

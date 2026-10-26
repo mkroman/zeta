@@ -19,7 +19,7 @@ use zeta_plugin::{Context, ErasedPlugin, Event};
 /// drain its queued events, run the shutdown hook and exit.
 pub struct PluginTask {
     /// The name of the plugin, used for logging.
-    pub name: String,
+    pub name: &'static str,
     /// The handle of the spawned plugin task.
     handle: JoinHandle<()>,
 }
@@ -30,13 +30,13 @@ impl PluginTask {
     /// If the plugin fails to load, the error is logged and the task exits. When the channel
     /// closes, the plugin's shutdown hook runs before the task exits.
     pub fn spawn(
-        name: String,
+        name: &'static str,
         mut plugin: Box<dyn ErasedPlugin>,
         ctx: Arc<Context>,
         client: Arc<Client>,
         mut receiver: mpsc::UnboundedReceiver<Event>,
     ) -> Self {
-        let task_name = name.clone();
+        let task_name = name;
 
         let handle = tokio::spawn(async move {
             debug!(plugin = %task_name, "plugin task started");
@@ -95,7 +95,7 @@ impl PluginTask {
     /// returned handle — bounded by a deadline — waits for the plugin to drain its queue and
     /// run its shutdown hook.
     #[must_use]
-    pub fn into_handle(self) -> (String, JoinHandle<()>) {
+    pub fn into_handle(self) -> (&'static str, JoinHandle<()>) {
         (self.name, self.handle)
     }
 }
@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl Plugin<Context> for RecordingPlugin {
+    impl Plugin for RecordingPlugin {
         const NAME: &'static str = "recording";
 
         type Settings = NoSettings;
@@ -180,7 +180,7 @@ mod tests {
 
         let (sender, receiver) = mpsc::unbounded_channel();
         let task = PluginTask::spawn(
-            "recording".to_string(),
+            "recording",
             Box::new(RecordingPlugin {
                 recording: Arc::clone(&recording),
             }),

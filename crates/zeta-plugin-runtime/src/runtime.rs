@@ -1,0 +1,159 @@
+//! The runtime that owns the running plugins.
+//!
+//! [`Registry`](crate::Registry) constructs plugins; [`PluginRuntime`] takes the constructed
+//! ones, spawns each into its own long-lived task, routes events to them, and drains them on
+//! shutdown. Keeping the index and the task handles together makes the shutdown protocol — drop
+//! the index to close every mailbox, then await the tasks — an implementation detail instead of
+//! a sequence the host has to reproduce.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use irc::client::Client;
+use irc::proto::Message;
+use tokio::task::JoinHandle;
+use tracing::warn;
+
+use zeta_plugin::{Context, Filters};
+
+use crate::dispatch::EventIndex;
+use crate::registry::RegisteredPlugin;
+use crate::task::PluginTask;
+
+/// The running plugins: their dispatch index and their tasks.
+pub struct PluginRuntime {
+    /// Routes incoming messages to the plugins that registered interest.
+    index: EventIndex,
+    /// The long-lived task of every running plugin.
+    tasks: Vec<PluginTask>,
+    /// The context shared with every plugin task, consulted for the current filters.
+    context: Arc<Context>,
+}
+
+impl PluginRuntime {
+    /// Spawns every plugin into its own long-lived task and indexes its subscriptions.
+    ///
+    /// Each task gets an unbounded mailbox, so a slow or failing plugin cannot block the IRC
+    /// connection or the other plugins.
+    #[must_use]
+    pub fn start(plugins: Vec<RegisteredPlugin>, ctx: Arc<Context>, client: &Arc<Client>) -> Self {
+        let mut index = EventIndex::default();
+        let mut tasks = Vec::with_capacity(plugins.len());
+
+        for RegisteredPlugin {
+            name,
+            plugin,
+            subscriptions,
+        } in plugins
+        {
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+
+            tasks.push(PluginTask::spawn(
+                name,
+                plugin,
+                Arc::clone(&ctx),
+                Arc::clone(client),
+                receiver,
+            ));
+            index.add(name, &subscriptions, sender);
+        }
+
+        Self {
+            index,
+            tasks,
+            context: ctx,
+        }
+    }
+
+    /// Routes `message` to the plugins that subscribed to the events it matches.
+    ///
+    /// A plugin whose task has stopped is logged and removed from the index.
+    pub fn dispatch(&mut self, message: Message) {
+        let filters = Filters::from_context(&self.context);
+
+        for stopped in self.index.dispatch(&filters, message) {
+            warn!(plugin = %stopped, "plugin task has stopped");
+        }
+    }
+
+    /// Closes every plugin mailbox and waits for the tasks to drain and stop.
+    ///
+    /// The tasks drain their queued events and run their shutdown hooks, sharing a deadline
+    /// `grace` from now; any task still running when the deadline passes is aborted.
+    pub async fn shutdown(self, grace: Duration) {
+        let Self {
+            index,
+            tasks,
+            context: _,
+        } = self;
+
+        // Dropping the index closes every plugin mailbox: the tasks drain their queued events
+        // and run `Plugin::shutdown`.
+        drop(index);
+
+        let handles = tasks
+            .into_iter()
+            .map(PluginTask::into_handle)
+            .collect::<Vec<_>>();
+
+        drain_tasks(handles, grace).await;
+    }
+}
+
+/// Waits for the plugin tasks to drain their queued messages and run their shutdown hooks.
+///
+/// The tasks share a deadline `grace` from now; any task still running when the deadline passes
+/// is aborted. The tasks are awaited concurrently, so a hanging task cannot consume the grace
+/// that is owed to the other plugins.
+async fn drain_tasks(mut handles: Vec<(&'static str, JoinHandle<()>)>, grace: Duration) {
+    let deadline = tokio::time::Instant::now() + grace;
+
+    let outcomes = futures::future::join_all(
+        handles
+            .iter_mut()
+            .map(|(_, handle)| async move { tokio::time::timeout_at(deadline, handle).await }),
+    )
+    .await;
+
+    for ((name, handle), outcome) in handles.into_iter().zip(outcomes) {
+        match outcome {
+            Ok(Ok(())) => {}
+            // The task was cancelled by its own runtime (or this function, below).
+            Ok(Err(error)) if error.is_cancelled() => {}
+            Ok(Err(error)) => {
+                warn!(plugin = %name, %error, "plugin task panicked while shutting down");
+            }
+            Err(_) => {
+                warn!(plugin = %name, "plugin task did not shut down in time; aborting");
+
+                handle.abort();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn drain_tasks_aborts_stragglers() {
+        let finished = Arc::new(tokio::sync::Mutex::new(false));
+        let flag = Arc::clone(&finished);
+
+        let fast = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+
+            *flag.lock().await = true;
+        });
+        let hung = tokio::spawn(futures::future::pending::<()>());
+
+        drain_tasks(
+            vec![("fast", fast), ("hung", hung)],
+            Duration::from_millis(200),
+        )
+        .await;
+
+        assert!(*finished.lock().await);
+    }
+}

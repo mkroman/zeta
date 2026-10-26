@@ -40,7 +40,7 @@ pub use event::{
     CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
     NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
 };
-pub use filtering::{Filters, UrlFilter, UrlFilters};
+pub use filtering::{Filters, UrlFilter};
 pub use hostmask::Hostmasks;
 pub use inventory;
 pub use plugin::Plugin;
@@ -67,11 +67,11 @@ pub mod prelude {
         CommandEvent, CtcpEvent, CtcpKind, Event, JoinEvent, KickEvent, MessageEvent, NickEvent,
         PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
     };
-    pub use super::filtering::{Filters, UrlFilter, UrlFilters};
+    pub use super::filtering::{Filters, UrlFilter};
     pub use super::hostmask::Hostmasks;
     pub use super::irc::{
         BOLD, COLOR, NOTICE_PREFIX, REPLY_PREFIX, RESET, notice, parse_args_or_usage,
-        parse_words_or_usage, reply, reply_prefix, reply_usage_lines,
+        parse_words_or_usage, reply, reply_prefix,
     };
     pub use super::types::NoSettings;
     pub use super::{Context, Error, Plugin};

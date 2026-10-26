@@ -36,7 +36,7 @@ use plugins_shared::urls::youtube::URL_HOSTS;
 use zeta_cache::TtlCache;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
-use zeta_url::ExtractUrlsExt;
+use zeta_url::ExtractUrls;
 use zeta_utils::duration::{format_duration, parse_iso8601_duration};
 
 pub use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
@@ -299,7 +299,7 @@ impl YouTube {
 
         // An invocation whose arguments are a YouTube URL resolves the video below instead of
         // searching for the URL as a query.
-        if args.urls().next().is_some() {
+        if ExtractUrls::new(args).next().is_some() {
             return Ok(());
         }
 

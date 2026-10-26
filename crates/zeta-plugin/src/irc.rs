@@ -27,7 +27,7 @@ pub use zeta_utils::irc::{
 /// # Errors
 ///
 /// Returns any error produced while sending the messages.
-pub fn reply_usage_lines(
+fn reply_usage_lines(
     client: &Client,
     channel: &str,
     error: &ArgsError,

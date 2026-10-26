@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use irc::client::Client;
 
 use crate::Error;
+use crate::context::Context;
 use crate::event::{
     CommandEvent, CtcpEvent, JoinEvent, KickEvent, MessageEvent, NickEvent, PartEvent, QuitEvent,
     RawEvent, Subscriptions, UrlEvent,
@@ -112,7 +113,7 @@ use crate::event::{
 /// }
 /// ```
 #[async_trait]
-pub trait Plugin<C: Sync = ()>: Send + Sync {
+pub trait Plugin: Send + Sync {
     /// The plugin's name, e.g. `alert`.
     ///
     /// The name identifies the plugin in the help system and the plugin catalog, and must match
@@ -143,7 +144,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// variables, failed HTTP client creation). The registry will log the error and skip
     /// loading the plugin.
     fn new(
-        _ctx: &C,
+        _ctx: &Context,
         _settings: &Self::Settings,
         _subscriptions: &mut Subscriptions,
     ) -> Result<Self, Error>
@@ -194,7 +195,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// propagated to the other plugins.
     async fn handle_command(
         &self,
-        _ctx: &C,
+        _ctx: &Context,
         _client: &Client,
         _command: &CommandEvent,
     ) -> Result<(), Error> {
@@ -210,7 +211,12 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if handling the URL failed; the error is logged and never propagated.
-    async fn handle_url(&self, _ctx: &C, _client: &Client, _url: &UrlEvent) -> Result<(), Error> {
+    async fn handle_url(
+        &self,
+        _ctx: &Context,
+        _client: &Client,
+        _url: &UrlEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -230,7 +236,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// propagated.
     async fn handle_message(
         &self,
-        _ctx: &C,
+        _ctx: &Context,
         _client: &Client,
         _message: &MessageEvent,
     ) -> Result<(), Error> {
@@ -244,7 +250,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// Returns an error if handling the event failed; the error is logged and never propagated.
     async fn handle_join(
         &self,
-        _ctx: &C,
+        _ctx: &Context,
         _client: &Client,
         _join: &JoinEvent,
     ) -> Result<(), Error> {
@@ -258,7 +264,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// Returns an error if handling the event failed; the error is logged and never propagated.
     async fn handle_part(
         &self,
-        _ctx: &C,
+        _ctx: &Context,
         _client: &Client,
         _part: &PartEvent,
     ) -> Result<(), Error> {
@@ -272,7 +278,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// Returns an error if handling the event failed; the error is logged and never propagated.
     async fn handle_quit(
         &self,
-        _ctx: &C,
+        _ctx: &Context,
         _client: &Client,
         _quit: &QuitEvent,
     ) -> Result<(), Error> {
@@ -286,7 +292,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// Returns an error if handling the event failed; the error is logged and never propagated.
     async fn handle_nick(
         &self,
-        _ctx: &C,
+        _ctx: &Context,
         _client: &Client,
         _nick: &NickEvent,
     ) -> Result<(), Error> {
@@ -300,7 +306,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// Returns an error if handling the event failed; the error is logged and never propagated.
     async fn handle_kick(
         &self,
-        _ctx: &C,
+        _ctx: &Context,
         _client: &Client,
         _kick: &KickEvent,
     ) -> Result<(), Error> {
@@ -314,7 +320,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// Returns an error if handling the event failed; the error is logged and never propagated.
     async fn handle_ctcp(
         &self,
-        _ctx: &C,
+        _ctx: &Context,
         _client: &Client,
         _ctcp: &CtcpEvent,
     ) -> Result<(), Error> {
@@ -328,19 +334,26 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_raw(&self, _ctx: &C, _client: &Client, _raw: &RawEvent) -> Result<(), Error> {
+    async fn handle_raw(
+        &self,
+        _ctx: &Context,
+        _client: &Client,
+        _raw: &RawEvent,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
-    /// Called when all plugins are loaded and the client has connected to the network.
+    /// Called once when the plugin's task starts, after the client has connected to the network.
     ///
-    /// This is useful for setting up plugins with async state.
+    /// Each plugin's hook runs in its own task, so it is a per-plugin startup hook rather than a
+    /// barrier that waits for every plugin to load. This is useful for setting up plugins with
+    /// async state.
     ///
     /// # Errors
     ///
     /// Returns an error if the plugin failed to load; the error is logged and the plugin task
     /// exits without processing any events.
-    async fn loaded(&mut self, _ctx: &C, _client: &Client) -> Result<(), Error> {
+    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), Error> {
         Ok(())
     }
 
@@ -377,7 +390,7 @@ pub trait Plugin<C: Sync = ()>: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if flushing failed; the error is logged and the shutdown continues.
-    async fn shutdown(&mut self, _ctx: &C, _client: &Client) -> Result<(), Error> {
+    async fn shutdown(&mut self, _ctx: &Context, _client: &Client) -> Result<(), Error> {
         Ok(())
     }
 }

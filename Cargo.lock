@@ -5929,6 +5929,7 @@ dependencies = [
 name = "zeta-http"
 version = "0.0.0"
 dependencies = [
+ "humantime-serde",
  "reqwest",
  "serde",
  "serde_json",
@@ -5939,7 +5940,6 @@ dependencies = [
  "tracing-subscriber",
  "wreq",
  "wreq-util",
- "zeta-plugin",
  "zeta-test-support",
  "zeta-url",
  "zeta-utils",
@@ -5978,7 +5978,6 @@ dependencies = [
  "argh",
  "async-trait",
  "figment",
- "humantime-serde",
  "inventory",
  "irc",
  "serde",
@@ -5989,6 +5988,7 @@ dependencies = [
  "tracing",
  "url",
  "wildmatch",
+ "zeta-http",
  "zeta-plugin-macros",
  "zeta-test-support",
  "zeta-utils",
@@ -6011,6 +6011,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "figment",
+ "futures",
  "irc",
  "tokio",
  "tracing",

@@ -229,7 +229,7 @@ fn details_list(details: &[Detail]) -> String {
 /// Lists longer than [`MAX_MESSAGE_LENGTH`] are split at entry boundaries; the continuation
 /// messages carry the remaining entries without the header. The header counts against the
 /// budget of the first message.
-fn with_list(header: &str, entries: &[String]) -> Vec<String> {
+fn with_list<S: AsRef<str>>(header: &str, entries: &[S]) -> Vec<String> {
     let budget = MAX_MESSAGE_LENGTH.saturating_sub(header.len() + 1);
     let lists = pack(entries, budget);
 
@@ -244,7 +244,7 @@ fn with_list(header: &str, entries: &[String]) -> Vec<String> {
 
 /// Packs `entries` into as few messages as possible without exceeding `max_length` or splitting
 /// an entry.
-fn pack(entries: &[String], max_length: usize) -> Vec<String> {
+fn pack<S: AsRef<str>>(entries: &[S], max_length: usize) -> Vec<String> {
     let mut messages = Vec::new();
     let mut remaining = entries;
 
@@ -498,29 +498,29 @@ mod tests {
         PluginCatalog {
             entries: vec![
                 CatalogEntry {
-                    name: "alert".into(),
+                    name: "alert".to_owned(),
                     commands: ALERT_COMMANDS.to_vec(),
-                    url_hosts: Vec::new(),
+                    url_scope: UrlScope::None,
                 },
                 CatalogEntry {
-                    name: "dig".into(),
+                    name: "dig".to_owned(),
                     commands: DIG_COMMANDS.to_vec(),
-                    url_hosts: Vec::new(),
+                    url_scope: UrlScope::None,
                 },
                 CatalogEntry {
-                    name: "imdb".into(),
+                    name: "imdb".to_owned(),
                     commands: IMDB_COMMANDS.to_vec(),
-                    url_hosts: Vec::new(),
+                    url_scope: UrlScope::None,
                 },
                 CatalogEntry {
-                    name: "openweathermap".into(),
+                    name: "openweathermap".to_owned(),
                     commands: WEATHER_COMMANDS.to_vec(),
-                    url_hosts: Vec::new(),
+                    url_scope: UrlScope::None,
                 },
                 CatalogEntry {
-                    name: "hooks".into(),
+                    name: "hooks".to_owned(),
                     commands: Vec::new(),
-                    url_hosts: Vec::new(),
+                    url_scope: UrlScope::None,
                 },
             ],
         }
@@ -696,7 +696,7 @@ mod tests {
                 .map(|index| CatalogEntry {
                     name: format!("plugin-{index:03}{}", "x".repeat(90)),
                     commands: vec![HELP],
-                    url_hosts: Vec::new(),
+                    url_scope: UrlScope::None,
                 })
                 .collect(),
         };

@@ -19,7 +19,7 @@ use zeta_plugin::{Sender, UrlFilter};
 ///
 /// The database is the source of truth; the index is rebuilt from it on [`load`](Self::load) and
 /// kept in sync by [`add`](Self::add) and [`delete_ids`](Self::delete_ids). The hot lookup path
-/// ([`matches`](Self::matches)) only touches the index and never the database, so filters are
+/// ([`is_filtered`](Self::is_filtered)) only touches the index and never the database, so filters are
 /// loaded once at launch and the service is shared through `SharedState`.
 pub struct FilterService {
     /// The filter repository.
@@ -114,7 +114,7 @@ impl FilterService {
 
     /// Whether `url`, posted by `sender` in `channel`, matches any filter.
     #[must_use]
-    pub fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
+    pub fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
         self.index.load().matches(channel, sender, url)
     }
 
@@ -127,12 +127,11 @@ impl FilterService {
 }
 
 /// Exposes the service as the shared URL filter: the plugin publishes it wrapped in
-/// [`UrlFilters`](zeta_plugin::UrlFilters) at construction, and the host consults it through
-/// the [`Filters`](zeta_plugin::Filters) facade before delivering URL events and messages
-/// from ignored senders.
+/// [`Filters`](zeta_plugin::Filters) at construction, and the host consults it through the
+/// same facade before delivering URL events and messages from ignored senders.
 impl UrlFilter for FilterService {
-    fn matches(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        self.matches(channel, sender, url)
+    fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
+        self.is_filtered(channel, sender, url)
     }
 
     fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
@@ -194,7 +193,7 @@ mod tests {
 
         assert_eq!(removed, 1);
 
-        assert!(!service.matches(
+        assert!(!service.is_filtered(
             "#smoke",
             Some(Sender::new("someone", "~cliother", "host.example")),
             &"https://example.com/page".parse().unwrap()
@@ -216,7 +215,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(service.matches(
+        assert!(service.is_filtered(
             "#anywhere",
             Some(Sender::new("nick", "user", "host.example")),
             &"https://reuters.com/article".parse().unwrap()
@@ -236,8 +235,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(UrlFilter::matches(&url_only, "#chan", matching, &url));
-        assert!(!UrlFilter::matches(&url_only, "#chan", other, &url));
+        assert!(UrlFilter::is_filtered(&url_only, "#chan", matching, &url));
+        assert!(!UrlFilter::is_filtered(&url_only, "#chan", other, &url));
         // A filter with URL criteria filters those URLs without ignoring the sender entirely.
         assert!(!UrlFilter::ignores(&url_only, "#chan", matching));
 

@@ -1,16 +1,14 @@
 //! The main process for communicating over IRC and managing state.
 use std::sync::Arc;
-use std::time::Duration;
 
 use irc::client::prelude::Client;
-use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::Error;
 use crate::config::Config;
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE};
-use zeta_plugin::{Context, Filters};
-use zeta_plugin_runtime::{EventIndex, PluginTask, Registry};
+use zeta_plugin::Context;
+use zeta_plugin_runtime::{PluginRuntime, Registry};
 
 /// The signal that triggered a graceful shutdown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,38 +66,6 @@ async fn shutdown_signal() -> ShutdownSignal {
     ShutdownSignal::Interrupt
 }
 
-/// Waits for the plugin tasks to drain their queued messages and run their shutdown hooks.
-///
-/// The tasks share a deadline `grace` seconds from now; any task still running when the deadline
-/// passes is aborted. The tasks are awaited concurrently, so a hanging task cannot consume the
-/// grace that is owed to the other plugins.
-async fn drain_plugin_handles(mut handles: Vec<(String, JoinHandle<()>)>, grace: Duration) {
-    let deadline = tokio::time::Instant::now() + grace;
-
-    let outcomes = futures::future::join_all(
-        handles
-            .iter_mut()
-            .map(|(_, handle)| async move { tokio::time::timeout_at(deadline, handle).await }),
-    )
-    .await;
-
-    for ((name, handle), outcome) in handles.into_iter().zip(outcomes) {
-        match outcome {
-            Ok(Ok(())) => {}
-            // The task was cancelled by its own runtime (or this function, below).
-            Ok(Err(error)) if error.is_cancelled() => {}
-            Ok(Err(error)) => {
-                warn!(plugin = %name, %error, "plugin task panicked while shutting down");
-            }
-            Err(_) => {
-                warn!(plugin = %name, "plugin task did not shut down in time; aborting");
-
-                handle.abort();
-            }
-        }
-    }
-}
-
 /// Drives the client's outgoing sink independently of the dispatch loop.
 ///
 /// The sink is normally driven by the `ClientStream`'s polling, which would leave a queued
@@ -129,9 +95,8 @@ fn drive_outgoing(client: &mut Client) {
 ///
 /// Returns any IRC protocol error that ends the stream.
 async fn dispatch_messages(
-    context: &Context,
     stream: &mut irc::client::ClientStream,
-    index: &mut EventIndex,
+    runtime: &mut PluginRuntime,
 ) -> Result<(), Error> {
     use futures::stream::StreamExt;
 
@@ -145,13 +110,7 @@ async fn dispatch_messages(
 
         debug!(payload = %message, "processing irc message");
 
-        let filters = Filters::from_context(context);
-
-        for stopped in index.dispatch(&filters, message) {
-            warn!(plugin = %stopped, "plugin task has stopped");
-
-            index.evict(&stopped);
-        }
+        runtime.dispatch(message);
     }
 
     Ok(())
@@ -293,11 +252,15 @@ impl Zeta {
 
         // Each plugin gets its own long-lived task with an unbounded mailbox, so a slow or
         // failing plugin cannot block the IRC connection or the other plugins.
-        let (mut index, plugins) = self.spawn_plugin_tasks(&client);
+        let mut runtime = PluginRuntime::start(
+            self.registry.take_plugins(),
+            Arc::clone(&self.context),
+            &client,
+        );
 
         // Dispatching incoming IRC messages as events to the plugins that registered interest,
         // until the stream ends or a shutdown signal arrives.
-        let dispatch = dispatch_messages(&self.context, &mut stream, &mut index);
+        let dispatch = dispatch_messages(&mut stream, &mut runtime);
 
         let mut shutting_down = false;
         let mut dispatch_error = None;
@@ -317,76 +280,26 @@ impl Zeta {
             }
         }
 
-        // Dropping the index closes every plugin mailbox: the tasks drain their queued events
-        // and run `Plugin::shutdown`. The dispatch future only borrows the index, so ending the
-        // `select!` above does not drop it — without this the tasks sit out the grace period.
-        drop(index);
+        // Closing the plugin mailboxes makes the tasks drain their queued events and run
+        // `Plugin::shutdown`; awaiting the shutdown joins them within the grace period. The
+        // dispatch future only borrows the runtime, so ending the `select!` above does not
+        // close the mailboxes on its own.
+        let shutdown = runtime.shutdown(SHUTDOWN_GRACE);
 
         if shutting_down {
-            flush_quit(&client, &quit_message).await;
+            // The QUIT is written while the plugins drain, so it does not delay their grace.
+            tokio::join!(flush_quit(&client, &quit_message), shutdown);
+        } else {
+            shutdown.await;
         }
-
-        let handles = plugins
-            .into_iter()
-            .map(PluginTask::into_handle)
-            .collect::<Vec<_>>();
-
-        drain_plugin_handles(handles, SHUTDOWN_GRACE).await;
 
         dispatch_error.map_or_else(|| Ok(()), Err)
-    }
-
-    /// Spawns a long-lived task per registered plugin and indexes its subscriptions.
-    ///
-    /// Returns the dispatch index — which holds the mailboxes' sending ends, so dropping it
-    /// closes every mailbox at once, making the plugins drain and run their shutdown hooks —
-    /// together with the spawned tasks.
-    fn spawn_plugin_tasks(&mut self, client: &Arc<Client>) -> (EventIndex, Vec<PluginTask>) {
-        let mut index = EventIndex::default();
-        let mut plugins = Vec::new();
-
-        for registered in self.registry.take_plugins() {
-            let name = registered.name;
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-
-            plugins.push(PluginTask::spawn(
-                name.clone(),
-                registered.plugin,
-                Arc::clone(&self.context),
-                Arc::clone(client),
-                receiver,
-            ));
-            index.add(&name, &registered.subscriptions, sender);
-        }
-
-        (index, plugins)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn drain_plugin_handles_aborts_stragglers() {
-        let finished = Arc::new(tokio::sync::Mutex::new(false));
-        let flag = Arc::clone(&finished);
-
-        let fast = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-
-            *flag.lock().await = true;
-        });
-        let hung = tokio::spawn(futures::future::pending::<()>());
-
-        drain_plugin_handles(
-            vec![("fast".to_string(), fast), ("hung".to_string(), hung)],
-            Duration::from_millis(200),
-        )
-        .await;
-
-        assert!(*finished.lock().await);
-    }
 
     #[cfg(unix)]
     #[tokio::test]

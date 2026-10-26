@@ -4,7 +4,9 @@
 //! `[plugins.<name>]` section is resolved by name instead of through a typed field per plugin:
 //! [`PluginsConfig`] keeps each section's raw settings next to the host-managed `enabled`
 //! toggle; the plugin's settings type is validated when the configuration is loaded (even when
-//! the plugin is disabled) and deserialized again when the plugin is constructed.
+//! the plugin is disabled) and deserialized again when the plugin is constructed. Unrecognized
+//! settings keys are collected rather than logged here, so the host can report them once its
+//! logging is initialized.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -101,6 +103,12 @@ pub struct PluginsConfig {
     /// [`PluginsConfig::sections`].
     #[serde(skip)]
     pub unknown: BTreeSet<String>,
+    /// Settings keys that no plugin's settings type recognized, as `(plugin, key)` pairs.
+    ///
+    /// Collected during deserialization so the host can report them once its logging is
+    /// initialized, including for plugins that are disabled. Not part of the serialized shape.
+    #[serde(skip)]
+    pub unknown_setting_keys: Vec<(String, String)>,
 }
 
 impl Default for PluginsConfig {
@@ -109,6 +117,7 @@ impl Default for PluginsConfig {
             enabled_by_default: true,
             sections: BTreeMap::new(),
             unknown: BTreeSet::new(),
+            unknown_setting_keys: Vec::new(),
         }
     }
 }
@@ -138,6 +147,7 @@ impl<'de> Deserialize<'de> for PluginsConfig {
 
         let mut sections = BTreeMap::new();
         let mut unknown = BTreeSet::new();
+        let mut unknown_setting_keys = Vec::new();
 
         for (name, value) in values {
             let section = PluginSection::parse(&value, enabled_by_default).map_err(|error| {
@@ -145,9 +155,12 @@ impl<'de> Deserialize<'de> for PluginsConfig {
             })?;
 
             if let Some(registration) = registrations.get(name.as_str()) {
-                registration
+                let unknown_keys = registration
                     .validate_settings(Some(&section.settings))
                     .map_err(D::Error::custom)?;
+
+                unknown_setting_keys
+                    .extend(unknown_keys.into_iter().map(|key| (name.clone(), key)));
             } else if is_unknown_section(&name) {
                 // A bundled plugin that was compiled out is not a typo; its section is simply
                 // not consumed in this build.
@@ -161,6 +174,7 @@ impl<'de> Deserialize<'de> for PluginsConfig {
             enabled_by_default,
             sections,
             unknown,
+            unknown_setting_keys,
         })
     }
 }
@@ -438,6 +452,10 @@ enabled = false
             dig.nameservers,
             plugins_dig::Settings::default().nameservers
         );
+        assert_eq!(
+            plugins.unknown_setting_keys,
+            [("dig".to_owned(), "nameserverss".to_owned())]
+        );
     }
 
     #[test]
@@ -481,6 +499,7 @@ enabled = false
             ]
         );
         assert_empty!(config.unknown);
+        assert_empty!(config.unknown_setting_keys);
     }
 
     #[cfg(feature = "dig")]

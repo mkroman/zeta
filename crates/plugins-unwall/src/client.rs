@@ -93,7 +93,7 @@ impl UnwallClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_plugin::config::HttpConfig;
+    use zeta_http::HttpConfig;
 
     /// The submit timeout handed to the client under test.
     const SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);

@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use zeta_http as http;
+use zeta_http::HttpConfig;
 use zeta_http::RequestError;
-use zeta_plugin::config::HttpConfig;
 use zeta_plugin::prelude::*;
 use zeta_utils::settings::resolve_optional_setting;
 

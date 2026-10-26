@@ -1,6 +1,6 @@
 //! Metadata about the plugins registered with the bot.
 
-use crate::CommandSpec;
+use crate::{CommandSpec, UrlScope};
 
 /// Metadata about a registered plugin.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -9,8 +9,25 @@ pub struct CatalogEntry {
     pub name: String,
     /// The commands handled by the plugin.
     pub commands: Vec<CommandSpec>,
-    /// The URL hosts whose links the plugin handles itself.
-    pub url_hosts: Vec<&'static str>,
+    /// The scope of URLs the plugin registered interest in.
+    pub url_scope: UrlScope,
+}
+
+impl CatalogEntry {
+    /// Whether the plugin declares that it handles links posted on `host`.
+    ///
+    /// Only exact host registrations count: a plugin registered for every URL
+    /// ([`UrlScope::Any`]) advertises no specific hosts and is therefore not a reason for a
+    /// generic handler to skip a link.
+    #[must_use]
+    pub fn handles_host(&self, host: &str) -> bool {
+        match self.url_scope {
+            UrlScope::Hosts(hosts) => hosts
+                .iter()
+                .any(|handled| handled.eq_ignore_ascii_case(host)),
+            UrlScope::None | UrlScope::Any => false,
+        }
+    }
 }
 
 /// Snapshot of the plugins registered with the bot and the events they handle.

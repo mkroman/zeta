@@ -156,6 +156,14 @@ pub fn register_bundled_plugins(
         tracing::warn!(section = %name, "unknown plugin configuration section (typo?)");
     }
 
+    for (plugin, key) in &plugins.unknown_setting_keys {
+        tracing::warn!(
+            plugin = %plugin,
+            key = %key,
+            "unknown settings key (typo, or a setting removed in this version?)"
+        );
+    }
+
     // Sorted by name for a deterministic catalog and log order. Duplicate names are a build
     // error and are reported here regardless of whether the plugin is enabled; the registry
     // rejects them again for callers that bypass this function.

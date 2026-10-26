@@ -1160,7 +1160,7 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
         #(#constants)*
 
         #[::zeta_plugin::async_trait::async_trait]
-        impl ::zeta_plugin::Plugin<::zeta_plugin::Context> for #self_ty {
+        impl ::zeta_plugin::Plugin for #self_ty {
             const NAME: &'static str = #name;
             type Settings = #settings;
 

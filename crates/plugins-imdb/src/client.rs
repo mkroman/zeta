@@ -10,8 +10,8 @@ use super::Settings;
 use super::error::Error;
 use super::model::{Person, SearchResult, SeriesInfo, Title};
 use zeta_http as http;
+use zeta_http::HttpConfig;
 use zeta_http::RequestError;
-use zeta_plugin::config::HttpConfig;
 
 /// GraphQL endpoint of IMDb's internal API.
 pub const GRAPHQL_URL: &str = "https://api.graphql.imdb.com/";
@@ -584,10 +584,7 @@ mod tests {
 
     /// Reads a recorded GraphQL response fixture.
     fn fixture(name: &str) -> String {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/imdb")
-            .join(format!("{name}.json"));
-        std::fs::read_to_string(path).expect("fixture file not found")
+        zeta_test_support::fixture!(format!("imdb/{name}.json"))
     }
 
     #[test]

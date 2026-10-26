@@ -10,9 +10,8 @@ use tracing::debug;
 use url::Url;
 
 use zeta_http as http;
-use zeta_http::RequestError;
 use zeta_plugin::prelude::*;
-use zeta_url::{is_identifier, path_segments};
+use zeta_url::{RedactedUrl, is_identifier, path_segments};
 use zeta_utils::text::quoted_string_literal;
 
 /// The Chaturbate hosts whose links this plugin handles.
@@ -26,9 +25,9 @@ pub struct Chaturbate {
 /// Errors that can occur when fetching or parsing a Chaturbate room.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Sending the HTTP request failed.
+    /// The request failed or returned an error status.
     #[error("request error: {0}")]
-    Request(#[from] RequestError),
+    Request(#[from] http::ApiError),
     /// The room page did not contain a room dossier.
     #[error("room dossier not found in page")]
     DossierNotFound,
@@ -90,10 +89,9 @@ impl Chaturbate {
         client: &Client,
     ) -> Result<(), Error> {
         let url = format!("https://chaturbate.com/{username}/");
-        debug!(%url, "fetching chaturbate page");
+        debug!(url.full = %RedactedUrl::from_unparsed(&url), "fetching chaturbate page");
 
-        let response = http::send(self.client.get(&url)).await?;
-        let html = http::text(response).await?;
+        let html = http::get_text(self.client.get(&url)).await?;
 
         let dossier = parse_room_dossier(&html)?;
         debug!(?dossier, "parsed room dossier");
@@ -172,9 +170,7 @@ mod tests {
     use zeta_test_support::assert_parses;
 
     fn fixture_html(name: &str) -> String {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/chaturbate/{name}.html"));
-        std::fs::read_to_string(path).expect("fixture file not found")
+        zeta_test_support::fixture!(format!("chaturbate/{name}.html"))
     }
 
     #[test]

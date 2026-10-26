@@ -229,7 +229,7 @@ mod tests {
     async fn commands_are_registered() {
         let mut subscriptions = Subscriptions::new();
 
-        <StringUtils as Plugin<Context>>::new(
+        <StringUtils as Plugin>::new(
             &zeta_test_support::test_context(),
             &NoSettings {},
             &mut subscriptions,

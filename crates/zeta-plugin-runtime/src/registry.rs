@@ -13,14 +13,14 @@ use tracing::{debug, error, warn};
 
 use zeta_plugin::prelude::plugin_err;
 use zeta_plugin::{
-    CatalogEntry, Context, ErasedPlugin, Error, PluginCatalog, PluginRegistration, Subscriptions,
-    UrlScope,
+    CatalogEntry, ConstructedPlugin, Context, ErasedPlugin, Error, PluginCatalog,
+    PluginRegistration, Subscriptions,
 };
 
 /// A plugin registered with the bot, together with the subscriptions it declared.
 pub struct RegisteredPlugin {
     /// The name of the plugin.
-    pub name: String,
+    pub name: &'static str,
     /// The plugin itself.
     pub plugin: Box<dyn ErasedPlugin>,
     /// The events the plugin registered interest in during initialization.
@@ -30,12 +30,12 @@ pub struct RegisteredPlugin {
 /// Plugin registry.
 #[derive(Default)]
 pub struct Registry {
-    /// List of loaded plugins.
-    pub plugins: Vec<RegisteredPlugin>,
+    /// The loaded plugins, in registration order.
+    plugins: Vec<RegisteredPlugin>,
     /// Catalog of the registered plugins, published to the context's shared state.
     catalog: PluginCatalog,
-    /// List of plugins that failed to initialize.
-    pub failed: Vec<(String, Error)>,
+    /// Plugins that failed to initialize, with the error that stopped them.
+    failed: Vec<(&'static str, Error)>,
 }
 
 impl Registry {
@@ -62,8 +62,8 @@ impl Registry {
     /// `section` is the plugin's raw `[plugins.<name>]` configuration section, with the
     /// host-managed `enabled` key removed; `None` when the section is omitted, in which case the
     /// plugin's settings take their defaults. The registration's thunk deserializes the section
-    /// into the plugin's own settings type, constructs the plugin, and reports the settings keys
-    /// it did not recognize.
+    /// into the plugin's own settings type and constructs the plugin; unrecognized settings keys
+    /// are reported once when the configuration is loaded.
     ///
     /// Returns `true` if the plugin was successfully initialized and registered, `false` if it
     /// failed or if another plugin with the same name is already registered (or has failed to
@@ -75,7 +75,7 @@ impl Registry {
         ctx: &Context,
         section: Option<&Value>,
     ) -> bool {
-        let name = registration.name.to_string();
+        let name = registration.name;
         let duplicate = self.plugins.iter().any(|plugin| plugin.name == name)
             || self.failed.iter().any(|(failed, _)| *failed == name);
 
@@ -94,15 +94,12 @@ impl Registry {
 
         match (registration.construct)(ctx, section) {
             Ok(constructed) => {
-                for key in &constructed.unknown_keys {
-                    warn!(
-                        plugin = %registration.name,
-                        key = %key,
-                        "unknown settings key (typo, or a setting removed in this version?)"
-                    );
-                }
+                debug_assert_eq!(
+                    constructed.name, name,
+                    "the registration and the plugin disagree on the name"
+                );
 
-                self.commit(name, constructed.plugin, constructed.subscriptions);
+                self.commit(constructed);
 
                 true
             }
@@ -111,7 +108,7 @@ impl Registry {
     }
 
     /// Records a plugin initialization failure and reports it.
-    fn fail(&mut self, name: String, error: Error) -> bool {
+    fn fail(&mut self, name: &'static str, error: Error) -> bool {
         warn!(plugin = %name, %error, "failed to initialize plugin");
         self.failed.push((name, error));
 
@@ -119,23 +116,19 @@ impl Registry {
     }
 
     /// Commits a successfully constructed plugin to the catalog and the loaded-plugin list.
-    fn commit(
-        &mut self,
-        name: String,
-        plugin: Box<dyn ErasedPlugin>,
-        subscriptions: Subscriptions,
-    ) {
+    fn commit(&mut self, constructed: ConstructedPlugin) {
+        let ConstructedPlugin {
+            name,
+            plugin,
+            subscriptions,
+        } = constructed;
+
         debug!(plugin = %name, "registered plugin");
 
-        let url_hosts = match subscriptions.url_scope() {
-            UrlScope::Hosts(hosts) => hosts.to_vec(),
-            _ => Vec::new(),
-        };
-
         self.catalog.entries.push(CatalogEntry {
-            name: name.clone(),
+            name: name.to_string(),
             commands: subscriptions.commands().to_vec(),
-            url_hosts,
+            url_scope: subscriptions.url_scope(),
         });
         self.plugins.push(RegisteredPlugin {
             name,
@@ -178,7 +171,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl Plugin<Context> for RecordingPlugin {
+    impl Plugin for RecordingPlugin {
         const NAME: &'static str = "recording";
 
         type Settings = NoSettings;

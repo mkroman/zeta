@@ -154,6 +154,43 @@ pub fn quoted_string_literal(input: &str, quote: char) -> Option<(&str, &str)> {
     None
 }
 
+/// Joins `items` into a sentence: all but the last are separated by `", "`, and the last by
+/// `" and "`, e.g. `"rock, pop and jazz"`.
+///
+/// An empty slice yields an empty string.
+#[must_use]
+pub fn join_with_and<S: AsRef<str>>(items: &[S]) -> String {
+    let Some((last, rest)) = items.split_last() else {
+        return String::new();
+    };
+
+    let mut joined = String::new();
+
+    for (index, item) in rest.iter().enumerate() {
+        if index > 0 {
+            joined.push_str(", ");
+        }
+
+        joined.push_str(item.as_ref());
+    }
+
+    if !rest.is_empty() {
+        joined.push_str(" and ");
+    }
+
+    joined.push_str(last.as_ref());
+    joined
+}
+
+/// Formats `count` with `noun`, pluralized by a trailing `s` unless `count` is one — e.g.
+/// `"1 filter"` or `"3 filters"`.
+#[must_use]
+pub fn pluralize(count: usize, noun: &str) -> String {
+    let suffix = if count == 1 { "" } else { "s" };
+
+    format!("{count} {noun}{suffix}")
+}
+
 /// Collapses runs of whitespace in `value` into single spaces, trimming the result.
 ///
 /// Text assembled from web pages carries line breaks and repeated spaces that an IRC message
@@ -279,6 +316,22 @@ mod tests {
         assert!(matches!(s.truncate_with_suffix(250, "…"), Cow::Borrowed(_)));
         // should copy when truncating
         assert!(matches!(s.truncate_with_suffix(10, "…"), Cow::Owned(_)));
+    }
+
+    #[test]
+    fn joins_items_with_a_final_conjunction() {
+        assert_eq!(join_with_and::<&str>(&[]), "");
+        assert_eq!(join_with_and(&["a"]), "a");
+        assert_eq!(join_with_and(&["a", "b"]), "a and b");
+        assert_eq!(join_with_and(&["a", "b", "c"]), "a, b and c");
+        assert_eq!(join_with_and(&["a".to_owned(), "b".to_owned()]), "a and b");
+    }
+
+    #[test]
+    fn pluralizes_by_count() {
+        assert_eq!(pluralize(0, "filter"), "0 filters");
+        assert_eq!(pluralize(1, "filter"), "1 filter");
+        assert_eq!(pluralize(2, "filter"), "2 filters");
     }
 
     #[test]

@@ -621,7 +621,7 @@ fn render_spans(out: &mut String, style: &mut Style, error: bool, spans: &[Span<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_plugin::config::HttpConfig;
+    use zeta_http::HttpConfig;
     use zeta_test_support::{
         settings_tests,
         wiremock::{
@@ -1301,7 +1301,7 @@ mod tests {
     async fn the_plugin_registers_its_commands() {
         let mut subscriptions = Subscriptions::new();
 
-        <Rink as Plugin<Context>>::new(
+        <Rink as Plugin>::new(
             &zeta_test_support::test_context(),
             &Settings::default(),
             &mut subscriptions,

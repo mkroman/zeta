@@ -368,7 +368,8 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 #[plugin(name = "titles", settings = Settings, urls(any))]
 impl Titles {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
-        let client = http::emulated::builder(Some(&ctx.config.http.user_agent))?
+        let client = http::emulated::builder(Some(&ctx.config.http.user_agent))
+            .map_err(plugin_err)?
             .redirect(Policy::limited(settings.max_redirects))
             .timeout(ctx.config.http.timeout)
             .build()
@@ -527,7 +528,7 @@ fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
     catalog
         .entries
         .iter()
-        .any(|plugin| plugin.url_hosts.contains(&host))
+        .any(|plugin| plugin.handles_host(host))
 }
 
 /// Whether the path of `url` looks like binary content.
@@ -765,9 +766,7 @@ mod tests {
 
     #[test]
     fn parses_the_fixture() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/titles/page.html");
-        let html = std::fs::read_to_string(path).expect("could not read fixture");
+        let html = zeta_test_support::fixture!("titles/page.html");
 
         let metadata = parse_metadata(&html);
 
@@ -839,9 +838,9 @@ mod tests {
     fn ignores_hosts_declared_in_the_catalog() {
         let catalog = PluginCatalog {
             entries: vec![CatalogEntry {
-                name: "imdb".into(),
+                name: "imdb".to_owned(),
                 commands: Vec::new(),
-                url_hosts: vec!["imdb.com", "www.imdb.com"],
+                url_scope: UrlScope::Hosts(&["imdb.com", "www.imdb.com"]),
             }],
         };
 

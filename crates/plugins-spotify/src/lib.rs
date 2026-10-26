@@ -26,6 +26,7 @@ use zeta_http as http;
 use zeta_http::oauth::Credentials;
 use zeta_plugin::prelude::*;
 use zeta_url::path_segments;
+use zeta_utils::text::join_with_and;
 
 /// The Spotify hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["open.spotify.com", "play.spotify.com"];
@@ -332,7 +333,7 @@ impl Spotify {
             client,
             |artist: &Artist, include_url| {
                 let name = &artist.name;
-                let genres = to_sentence(&artist.genres);
+                let genres = join_with_and(&artist.genres);
                 let followers = artist.followers.total.to_formatted_string(&Locale::en);
 
                 let mut msg = format!("\x0f{name}\x0310 is");
@@ -415,16 +416,7 @@ fn join_artists(artists: &[ArtistSimple]) -> String {
         .iter()
         .map(|a| format!("\x0f{}\x0310", a.name))
         .collect();
-    to_sentence(&names)
-}
-
-fn to_sentence(words: &[String]) -> String {
-    match words.split_last() {
-        None => String::new(),
-        Some((last, [])) => last.clone(),
-        Some((last, [first])) => format!("{first} and {last}"),
-        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-    }
+    join_with_and(&names)
 }
 
 /// Returns the bare `spotify:type:id` URIs found in `text`, in order.

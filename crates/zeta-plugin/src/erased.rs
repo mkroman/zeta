@@ -10,7 +10,7 @@ use crate::error::Error;
 use crate::event::Event;
 use crate::plugin::Plugin;
 
-/// Object-safe view of [`Plugin`], implemented automatically for every `Plugin<Context>`.
+/// Object-safe view of [`Plugin`], implemented automatically for every plugin.
 ///
 /// [`Plugin`] declares an associated [`Settings`](Plugin::Settings) type and therefore cannot be
 /// used directly as a trait object. The registry stores plugins with different settings types
@@ -33,7 +33,7 @@ pub trait ErasedPlugin: Send + Sync {
         event: &'a Event,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 
-    /// Called when all plugins are loaded and the client has connected to the network.
+    /// Called once when the plugin's task starts, after the client has connected.
     fn loaded<'a>(
         &'a mut self,
         ctx: &'a Context,
@@ -49,7 +49,7 @@ pub trait ErasedPlugin: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
 }
 
-impl<P: Plugin<Context>> ErasedPlugin for P {
+impl<P: Plugin> ErasedPlugin for P {
     fn handle_event<'a>(
         &'a self,
         ctx: &'a Context,

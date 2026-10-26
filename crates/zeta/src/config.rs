@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::consts;
 
+pub use zeta_http::HttpConfig;
 #[cfg(feature = "mirror")]
 pub use zeta_mirror::MirrorConfig;
-pub use zeta_plugin::config::HttpConfig;
 
 /// The plugin-visible subset of the configuration, as carried on the plugins' context.
 impl From<&Config> for zeta_plugin::config::HostConfig {

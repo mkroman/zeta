@@ -15,7 +15,7 @@
 //! The command is restricted to admins through `[irc] admin_hostmasks`, using the plugin API's
 //! shared [`Hostmasks`] matcher (also used by `.unwall`).
 //!
-//! The filter service is published to [`Context::shared`] as a type-erased [`UrlFilters`] handle
+//! The filter service is published to [`Context::shared`] as a type-erased [`Filters`] handle
 //! when the plugin is constructed; the host's dispatcher consults it through the [`Filters`]
 //! facade before delivering URL events, so filtered URLs never reach the URL plugins.
 
@@ -39,6 +39,7 @@ use tracing::debug;
 
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_with_more};
+use zeta_utils::text::pluralize;
 
 /// The `.filter` command.
 const FILTER: CommandSpec =
@@ -293,11 +294,6 @@ impl Delete {
     }
 }
 
-/// Formats `count` with the pluralized `noun`, e.g. `1 filter` or `3 filters`.
-fn plural(count: usize, noun: &str) -> String {
-    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
-}
-
 /// Room for a ` (+N more)` truncation suffix on a listing, covering counts up to five digits.
 const MORE_SUFFIX_RESERVE: usize = " (+99999 more)".len();
 
@@ -400,7 +396,7 @@ impl FilterPlugin {
                     "Filter",
                     format!(
                         "{} matching your criteria: ",
-                        plural(filters.len(), "filter")
+                        pluralize(filters.len(), "filter")
                     ),
                 ),
                 &filters,
@@ -481,7 +477,7 @@ impl FilterPlugin {
                     "Filter",
                     format!(
                         "{} matching the criteria will be deleted: ",
-                        plural(filters.len(), "filter")
+                        pluralize(filters.len(), "filter")
                     ),
                 ),
                 &filters,
@@ -515,8 +511,7 @@ impl FilterPlugin {
         subscriptions.command(FILTER);
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 
-        ctx.shared
-            .publish(Arc::new(UrlFilters::new(service.clone())));
+        ctx.shared.publish(Arc::new(Filters::new(service.clone())));
 
         let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");
 
@@ -612,9 +607,9 @@ mod tests {
         let ctx = zeta_test_support::test_context();
         let mut subscriptions = Subscriptions::new();
 
-        <FilterPlugin as Plugin<Context>>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
+        <FilterPlugin as Plugin>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
 
-        assert!(ctx.shared.get::<UrlFilters>().is_some());
+        assert!(ctx.shared.get::<Filters>().is_some());
     }
 
     /// Parses `input` with the filter command spec and unpacks the `add` subcommand.
@@ -733,9 +728,9 @@ mod tests {
 
     #[test]
     fn counts_are_pluralized() {
-        assert_eq!(plural(1, "filter"), "1 filter");
-        assert_eq!(plural(2, "filter"), "2 filters");
-        assert_eq!(plural(0, "filter"), "0 filters");
+        assert_eq!(pluralize(1, "filter"), "1 filter");
+        assert_eq!(pluralize(2, "filter"), "2 filters");
+        assert_eq!(pluralize(0, "filter"), "0 filters");
     }
 
     #[test]

@@ -670,7 +670,7 @@ mod tests {
             ..Settings::default()
         };
 
-        <CoinMarketCap as Plugin<Context>>::new(&ctx, &settings, &mut subscriptions).unwrap();
+        <CoinMarketCap as Plugin>::new(&ctx, &settings, &mut subscriptions).unwrap();
 
         assert!(ctx.shared.get::<CmcClient>().is_some());
     }

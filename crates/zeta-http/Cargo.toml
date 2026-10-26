@@ -13,17 +13,15 @@ ignored = ["humantime-serde"]
 # Plain reqwest HTTP wrappers.
 http = [
     "dep:reqwest",
-    "dep:serde",
     "dep:serde_json",
     "dep:serde_path_to_error",
     "dep:thiserror",
-    "dep:zeta-plugin",
     "dep:zeta-utils",
 ]
 # The transport-error wrapper alone (used by the mirror crate without the HTTP stack).
 request = ["dep:reqwest"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
-emulated = ["dep:thiserror", "dep:wreq", "dep:wreq-util", "dep:zeta-plugin"]
+emulated = ["dep:thiserror", "dep:wreq", "dep:wreq-util"]
 # OAuth2 client-credentials token caching.
 oauth = ["http", "dep:tokio"]
 native-tls = ["reqwest?/native-tls"]
@@ -43,14 +41,14 @@ wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "
 wreq-util = { version = "0.2.0", optional = true }
 
 [dependencies]
+humantime-serde.workspace = true
 reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"], optional = true }
-serde = { workspace = true, optional = true }
+serde.workspace = true
 serde_json = { workspace = true, optional = true }
 serde_path_to_error = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tracing.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false, optional = true }
 zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils", optional = true }
 

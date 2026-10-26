@@ -2,8 +2,11 @@
 //!
 //! Two independent clients live here: the plain `reqwest` client shared by the API plugins
 //! (behind the `http` feature) and the browser-emulated `wreq` client for anti-bot-protected
-//! sites (behind the `emulated` feature), together with the OAuth2 client-credentials token
-//! cache and the transport-error wrappers that keep credentials out of formatted output.
+//! sites (behind the `emulated` feature), together with the [`HttpConfig`] both are built from,
+//! the OAuth2 client-credentials token cache and the transport-error wrappers that keep
+//! credentials out of formatted output.
+
+mod config;
 
 #[cfg(feature = "emulated")]
 pub mod emulated;
@@ -14,6 +17,7 @@ pub mod oauth;
 
 mod error;
 
+pub use config::HttpConfig;
 #[cfg(any(feature = "request", feature = "http"))]
 pub use error::RequestError;
 #[cfg(feature = "emulated")]
@@ -25,8 +29,6 @@ use serde::de::DeserializeOwned;
 use tracing::error;
 #[cfg(feature = "http")]
 use tracing::{Span, debug, instrument};
-#[cfg(feature = "http")]
-use zeta_plugin::config::HttpConfig;
 #[cfg(feature = "http")]
 use zeta_utils::text::Truncatable;
 
@@ -183,6 +185,26 @@ fn log_status(status: reqwest::StatusCode, body: Option<&str>, record_error_type
 pub async fn parse_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ApiError> {
+    let text = parse_text(response).await?;
+
+    json::from_str(&text).map_err(|error| {
+        Span::current().record("error.type", "invalid_json");
+
+        ApiError::Deserialize(error)
+    })
+}
+
+/// Reads the body of a successful response as text.
+///
+/// Non-success statuses are reported as [`ApiError::Status`], carrying the response body; the
+/// body is only returned for a success. The status is logged the same way [`parse_response`]
+/// logs it, so text responses get the same diagnostics as JSON ones.
+///
+/// # Errors
+///
+/// Returns an [`ApiError`] if the status is not a success or the body cannot be read.
+#[cfg(feature = "http")]
+pub async fn parse_text(response: reqwest::Response) -> Result<String, ApiError> {
     let status = response.status();
 
     if !status.is_success() {
@@ -205,13 +227,7 @@ pub async fn parse_response<T: DeserializeOwned>(
 
     debug!("http response received");
 
-    let text = response.text().await.map_err(body_error)?;
-
-    json::from_str(&text).map_err(|error| {
-        Span::current().record("error.type", "invalid_json");
-
-        ApiError::Deserialize(error)
-    })
+    response.text().await.map_err(body_error)
 }
 
 /// Parses a JSON response like [`parse_response`], mapping a `404` status to `not_found`.
@@ -270,6 +286,22 @@ pub async fn get_json_or_404<T: DeserializeOwned, E: From<ApiError>>(
     let response = send(request).await.map_err(|error| E::from(error.into()))?;
 
     parse_response_or_404(response, not_found).await
+}
+
+/// Sends `request` and reads the body of the successful response as text.
+///
+/// Combines [`send`] and [`parse_text`]: a non-success status is reported as
+/// [`ApiError::Status`], so callers cannot accidentally use an error page as content.
+///
+/// # Errors
+///
+/// Returns an [`ApiError`] if the request fails, the status is not a success, or the body cannot
+/// be read.
+#[cfg(feature = "http")]
+pub async fn get_text(request: reqwest::RequestBuilder) -> Result<String, ApiError> {
+    let response = send(request).await?;
+
+    parse_text(response).await
 }
 
 /// Returns a default HTTP client configured by [`HttpConfig`].

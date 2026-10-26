@@ -21,7 +21,7 @@ use tracing::{debug, warn};
 use zeta_cache::TtlCache;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
-use zeta_utils::duration::{HOURS_AND_MINUTES, words};
+use zeta_utils::duration::{HOURS_AND_MINUTES, format_seconds_in_words};
 
 const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
@@ -338,7 +338,7 @@ fn format_seconds(seconds: u32) -> String {
         return "--".to_string();
     }
 
-    words(i64::from(seconds), HOURS_AND_MINUTES)
+    format_seconds_in_words(i64::from(seconds), HOURS_AND_MINUTES)
 }
 
 #[cfg(test)]
@@ -416,7 +416,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs network access"]
     async fn live_api_contract_smoke() {
-        use zeta_plugin::config::HttpConfig;
+        use zeta_http::HttpConfig;
 
         let plugin = HowLongToBeat {
             client: http::build_client(&HttpConfig::default()),

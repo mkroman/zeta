@@ -13,7 +13,7 @@ mod extract;
 mod path;
 mod redact;
 
-pub use extract::{ExtractUrls, ExtractUrlsExt, ExtractedUrl, HTTP_SCHEMES, SchemeMap};
+pub use extract::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, SchemeMap};
 pub use path::{
     is_identifier, is_numeric_segment, is_prefixed_numeric_id, path_segments, query_param,
     strip_www,

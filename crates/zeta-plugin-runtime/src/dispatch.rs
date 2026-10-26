@@ -13,10 +13,7 @@ use std::sync::Arc;
 use irc::proto::{Command, Message};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
-use zeta_plugin::event::{
-    CommandEvent, CtcpEvent, JoinEvent, KickEvent, MessageEvent, NickEvent, PartEvent, QuitEvent,
-    RawEvent, Sender, Subscriptions, UrlEvent,
-};
+use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent};
 use zeta_plugin::{CommandSpec, Event, EventKind, Filters, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrl};
 
@@ -24,7 +21,7 @@ use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrl};
 #[derive(Clone, Debug)]
 struct Subscriber {
     /// The plugin's name, used for logging.
-    name: Arc<str>,
+    name: &'static str,
     /// The mailbox events are queued on.
     mailbox: mpsc::UnboundedSender<Event>,
 }
@@ -32,9 +29,9 @@ struct Subscriber {
 impl Subscriber {
     /// Queues `event` for the plugin, recording the plugin in `stopped` when its mailbox is
     /// closed (i.e. the plugin's task has stopped).
-    fn send(&self, event: Event, stopped: &mut Vec<String>) {
+    fn send(&self, event: Event, stopped: &mut Vec<&'static str>) {
         if self.mailbox.send(event).is_err() {
-            stopped.push(self.name.to_string());
+            stopped.push(self.name);
         }
     }
 }
@@ -66,14 +63,11 @@ impl EventIndex {
     /// are skipped with a warning.
     pub fn add(
         &mut self,
-        name: &str,
+        name: &'static str,
         subscriptions: &Subscriptions,
         mailbox: mpsc::UnboundedSender<Event>,
     ) {
-        let subscriber = Subscriber {
-            name: name.into(),
-            mailbox,
-        };
+        let subscriber = Subscriber { name, mailbox };
 
         for command in subscriptions.commands() {
             if command.trigger().contains(char::is_whitespace) {
@@ -118,10 +112,10 @@ impl EventIndex {
 
     /// Routes `message` to the plugins that subscribed to events it matches.
     ///
-    /// Returns the names of the plugins whose mailboxes are closed — their tasks have stopped,
-    /// so the caller should evict them with [`EventIndex::evict`].
+    /// Returns the names of the plugins whose mailboxes are closed — their tasks have stopped.
+    /// They are already evicted from the index, so the caller only needs to report them.
     #[must_use]
-    pub fn dispatch(&self, filters: &Filters, message: Message) -> Vec<String> {
+    pub fn dispatch(&mut self, filters: &Filters, message: Message) -> Vec<&'static str> {
         let message = Arc::new(message);
         let mut stopped = Vec::new();
 
@@ -129,45 +123,25 @@ impl EventIndex {
             Command::PRIVMSG(..) => self.dispatch_privmsg(filters, &message, &mut stopped),
             // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
             // ordinary notices are not an event kind.
-            Command::NOTICE(..) => self.deliver_ctcp(&message, &mut stopped),
-            Command::JOIN(..) => self.deliver_kind(
-                EventKind::Join,
-                Some(Event::Join(JoinEvent::new(Arc::clone(&message)))),
-                &mut stopped,
-            ),
-            Command::PART(..) => self.deliver_kind(
-                EventKind::Part,
-                Some(Event::Part(PartEvent::new(Arc::clone(&message)))),
-                &mut stopped,
-            ),
-            Command::QUIT(..) => self.deliver_kind(
-                EventKind::Quit,
-                Some(Event::Quit(QuitEvent::new(Arc::clone(&message)))),
-                &mut stopped,
-            ),
-            Command::NICK(..) => self.deliver_kind(
-                EventKind::Nick,
-                Some(Event::Nick(NickEvent::new(Arc::clone(&message)))),
-                &mut stopped,
-            ),
-            Command::KICK(..) => self.deliver_kind(
-                EventKind::Kick,
-                Some(Event::Kick(KickEvent::new(Arc::clone(&message)))),
-                &mut stopped,
-            ),
-            Command::Raw(..) => self.deliver_kind(
-                EventKind::Raw,
-                Some(Event::Raw(RawEvent::new(Arc::clone(&message)))),
-                &mut stopped,
-            ),
+            Command::NOTICE(..) => self.deliver_kind(EventKind::Ctcp, &message, &mut stopped),
+            Command::JOIN(..) => self.deliver_kind(EventKind::Join, &message, &mut stopped),
+            Command::PART(..) => self.deliver_kind(EventKind::Part, &message, &mut stopped),
+            Command::QUIT(..) => self.deliver_kind(EventKind::Quit, &message, &mut stopped),
+            Command::NICK(..) => self.deliver_kind(EventKind::Nick, &message, &mut stopped),
+            Command::KICK(..) => self.deliver_kind(EventKind::Kick, &message, &mut stopped),
+            Command::Raw(..) => self.deliver_kind(EventKind::Raw, &message, &mut stopped),
             // Everything else is connection protocol the plugins have no events for.
             _ => {}
         }
 
         // A stopped plugin can match several of the message's events (and several commands or
-        // URLs); report it once so the caller logs and evicts it once.
+        // URLs); report and evict it once.
         stopped.sort_unstable();
         stopped.dedup();
+
+        for name in &stopped {
+            self.evict(name);
+        }
 
         stopped
     }
@@ -175,8 +149,8 @@ impl EventIndex {
     /// Removes every trace of the named plugin from the index.
     ///
     /// Called when one of its deliveries failed because the plugin's task stopped.
-    pub fn evict(&mut self, name: &str) {
-        let other = |subscriber: &Subscriber| subscriber.name.as_ref() != name;
+    fn evict(&mut self, name: &str) {
+        let other = |subscriber: &Subscriber| subscriber.name != name;
 
         self.commands.retain(|_, targets| {
             targets.retain(|target| other(&target.subscriber));
@@ -200,26 +174,28 @@ impl EventIndex {
         self.kinds.get(&kind).map(Vec::as_slice)
     }
 
-    /// Delivers a `message` as a CTCP event to its subscribers.
-    fn deliver_ctcp(&self, message: &Arc<Message>, stopped: &mut Vec<String>) {
-        self.deliver_kind(
-            EventKind::Ctcp,
-            CtcpEvent::new(Arc::clone(message)).map(Event::Ctcp),
-            stopped,
-        );
-    }
+    /// Delivers `message` as an event of `kind` to its subscribers, if any are registered.
+    ///
+    /// The event is built only when a subscriber exists: most messages match no subscription,
+    /// and some kinds (CTCP) cannot be built from every message.
+    fn deliver_kind(
+        &self,
+        kind: EventKind,
+        message: &Arc<Message>,
+        stopped: &mut Vec<&'static str>,
+    ) {
+        let Some(subscribers) = self.subscribers(kind) else {
+            return;
+        };
+        let Some(event) = kind.event(Arc::clone(message)) else {
+            return;
+        };
 
-    /// Delivers an optional event to the subscribers of `kind`, if any are registered.
-    fn deliver_kind(&self, kind: EventKind, event: Option<Event>, stopped: &mut Vec<String>) {
-        if let Some(event) = event
-            && let Some(subscribers) = self.subscribers(kind)
-        {
-            Self::deliver(&event, subscribers, stopped);
-        }
+        Self::deliver(&event, subscribers, stopped);
     }
 
     /// Delivers one event to every subscriber of a list.
-    fn deliver(event: &Event, subscribers: &[Subscriber], stopped: &mut Vec<String>) {
+    fn deliver(event: &Event, subscribers: &[Subscriber], stopped: &mut Vec<&'static str>) {
         for subscriber in subscribers {
             subscriber.send(event.clone(), stopped);
         }
@@ -230,7 +206,7 @@ impl EventIndex {
         &self,
         filters: &Filters,
         message: &Arc<Message>,
-        stopped: &mut Vec<String>,
+        stopped: &mut Vec<&'static str>,
     ) {
         let Command::PRIVMSG(target, text) = &message.command else {
             return;
@@ -238,7 +214,7 @@ impl EventIndex {
 
         // CTCP messages are their own event kind and are routed to nothing else.
         if text.starts_with('\x01') {
-            self.deliver_ctcp(message, stopped);
+            self.deliver_kind(EventKind::Ctcp, message, stopped);
 
             return;
         }
@@ -267,11 +243,7 @@ impl EventIndex {
         }
 
         // Message subscribers observe every remaining non-CTCP message.
-        self.deliver_kind(
-            EventKind::Message,
-            Some(Event::Message(MessageEvent::new(Arc::clone(message)))),
-            stopped,
-        );
+        self.deliver_kind(EventKind::Message, message, stopped);
 
         // URLs — extracted once per message, deduplicated and filtered before routing by host.
         if self.url_hosts.is_empty() && self.url_any.is_empty() {
@@ -312,7 +284,7 @@ impl EventIndex {
 mod tests {
     use url::Url;
     use zeta_plugin::CtcpKind;
-    use zeta_plugin::{UrlFilter, UrlFilters};
+    use zeta_plugin::UrlFilter;
     use zeta_test_support::assert_empty;
 
     use super::*;
@@ -349,7 +321,7 @@ mod tests {
     /// Registers a test subscriber and returns the mailbox its events arrive on.
     fn subscribe(
         index: &mut EventIndex,
-        name: &str,
+        name: &'static str,
         register: impl FnOnce(&mut Subscriptions),
     ) -> mpsc::UnboundedReceiver<Event> {
         let mut subscriptions = Subscriptions::new();
@@ -465,7 +437,7 @@ mod tests {
     struct TestFilter;
 
     impl UrlFilter for TestFilter {
-        fn matches(&self, _channel: &str, _sender: Option<Sender<'_>>, url: &Url) -> bool {
+        fn is_filtered(&self, _channel: &str, _sender: Option<Sender<'_>>, url: &Url) -> bool {
             url.host_str() == Some("filtered.example")
         }
 
@@ -479,7 +451,7 @@ mod tests {
         // shared state — the same route the filter plugin takes at construction.
         let ctx = zeta_test_support::test_context();
         ctx.shared
-            .publish(Arc::new(UrlFilters::new(Arc::new(TestFilter))));
+            .publish(Arc::new(Filters::new(Arc::new(TestFilter))));
 
         let mut index = EventIndex::default();
         let mut filtered = subscribe(&mut index, "filtered", |subscriptions| {
@@ -503,7 +475,7 @@ mod tests {
     async fn ignored_senders_trigger_nothing() {
         let ctx = zeta_test_support::test_context();
         ctx.shared
-            .publish(Arc::new(UrlFilters::new(Arc::new(TestFilter))));
+            .publish(Arc::new(Filters::new(Arc::new(TestFilter))));
 
         let mut index = EventIndex::default();
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
@@ -670,22 +642,6 @@ mod tests {
         ));
     }
 
-    /// The event kind an [`Event`] carries, for the kinds a plugin subscribes to with a flag.
-    fn flagged_kind(event: &Event) -> Option<EventKind> {
-        match event {
-            Event::Message(_) => Some(EventKind::Message),
-            Event::Join(_) => Some(EventKind::Join),
-            Event::Part(_) => Some(EventKind::Part),
-            Event::Quit(_) => Some(EventKind::Quit),
-            Event::Nick(_) => Some(EventKind::Nick),
-            Event::Kick(_) => Some(EventKind::Kick),
-            Event::Ctcp(_) => Some(EventKind::Ctcp),
-            Event::Raw(_) => Some(EventKind::Raw),
-            // `Event` is non-exhaustive; commands and URLs are not flag-based kinds.
-            _ => None,
-        }
-    }
-
     /// Every flag-based event kind must have a dispatch arm: a kind added to the subscription
     /// table without routing would otherwise compile and never be delivered.
     #[test]
@@ -743,11 +699,7 @@ mod tests {
             let events = drain(&mut mailbox);
 
             assert_eq!(events.len(), 1, "{kind:?} was not dispatched exactly once");
-            assert_eq!(
-                flagged_kind(&events[0]),
-                Some(*kind),
-                "{kind:?} was not dispatched"
-            );
+            assert_eq!(events[0].kind(), Some(*kind), "{kind:?} was not dispatched");
         }
     }
 
@@ -764,8 +716,6 @@ mod tests {
 
         let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
         assert_eq!(stopped, ["dig"]);
-
-        index.evict("dig");
 
         // The evicted plugin receives nothing further.
         let stopped = index.dispatch(&Filters::default(), message("n!u@h", "JOIN", &["#test"]));
