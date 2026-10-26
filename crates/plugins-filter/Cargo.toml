@@ -1,0 +1,32 @@
+[package]
+name = "plugins-filter"
+version = "0.0.0"
+edition = "2024"
+description = "The filter plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls"]
+native-tls = ["zeta-plugin/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
+
+[dependencies]
+arc-swap.workspace = true
+argh.workspace = true
+sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+wildmatch.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["database"] }
+zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

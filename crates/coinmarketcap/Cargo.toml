@@ -43,7 +43,7 @@ zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]
 tokio.workspace = true
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["http"] }
 
 [lints]
 workspace = true

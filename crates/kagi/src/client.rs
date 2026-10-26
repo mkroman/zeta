@@ -1,3 +1,5 @@
+//! Client for the Kagi Search API.
+
 use std::{
     sync::OnceLock,
     time::{Duration, Instant},
@@ -17,7 +19,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error};
 use zeta_utils::text::quoted_string_literal;
 
-use super::{BASE_URL, ClientOptions, Error, ImageResult, RequestError, SearchResult};
+use crate::{BASE_URL, ClientOptions, Error, ImageResult, RequestError, SearchResult};
 
 /// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
 /// URL without its query, so a logged error never carries a credential from the query string:
@@ -403,6 +405,11 @@ fn parse_kagi_stream(raw_body: &str) -> Vec<KagiMessage> {
         .collect()
 }
 
+/// Returns the `content` string of a message's payload, if it has one.
+fn payload_content(message: &KagiMessage) -> Option<&str> {
+    message.payload.as_ref()?.get("content")?.as_str()
+}
+
 fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResult> {
     // Prefer the structured results payload when the server provides one.
     for message in messages
@@ -431,18 +438,13 @@ fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResult> {
 
     // Fall back to parsing the HTML fragments of `search` messages.
     let mut result: Vec<SearchResult> = vec![];
-    let search_msgs = messages.iter().filter(|x| x.tag == "search");
 
-    for msg in search_msgs {
-        if let Some(content) = msg
-            .payload
-            .as_ref()
-            .and_then(|p| p.get("content").and_then(|v| v.as_str()))
-        {
-            let mut results = parse_search_results_html(content);
-
-            result.append(&mut results);
-        }
+    for content in messages
+        .iter()
+        .filter(|message| message.tag == "search")
+        .filter_map(payload_content)
+    {
+        result.extend(parse_search_results_html(content));
     }
 
     result
@@ -516,14 +518,12 @@ fn parse_search_results_html(html: &str) -> Vec<SearchResult> {
 fn parse_image_result_messages(messages: &[KagiMessage]) -> Vec<ImageResult> {
     let mut result: Vec<ImageResult> = Vec::new();
 
-    for message in messages.iter().filter(|message| message.tag == "images") {
-        if let Some(content) = message
-            .payload
-            .as_ref()
-            .and_then(|payload| payload.get("content").and_then(Value::as_str))
-        {
-            result.extend(parse_image_results_html(content));
-        }
+    for content in messages
+        .iter()
+        .filter(|message| message.tag == "images")
+        .filter_map(payload_content)
+    {
+        result.extend(parse_image_results_html(content));
     }
 
     result
@@ -576,21 +576,27 @@ fn parse_image_results_html(html: &str) -> Vec<ImageResult> {
     results
 }
 
-fn extract_topmost_text(elem: &'_ ElementRef<'_>) -> String {
-    let extracted_text: String = elem
-        .children()
-        .filter_map(|node| match node.value() {
-            Node::Text(text_node) => {
-                let text = text_node.trim();
+fn extract_topmost_text(elem: &ElementRef<'_>) -> String {
+    let mut extracted = String::new();
 
-                if text.is_empty() { None } else { Some(text) }
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    for node in elem.children() {
+        let Node::Text(text_node) = node.value() else {
+            continue;
+        };
+        let text = text_node.trim();
 
-    extracted_text
+        if text.is_empty() {
+            continue;
+        }
+
+        if !extracted.is_empty() {
+            extracted.push(' ');
+        }
+
+        extracted.push_str(text);
+    }
+
+    extracted
 }
 
 #[cfg(test)]

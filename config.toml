@@ -230,7 +230,7 @@ name = "#zeta.dev"
   # Enable the plugin.
   enabled = true
   # The maximum length of a media caption before it gets truncated.
-  # title_length = 150
+  # caption_length = 150
   # The key prefix that mirrored media are uploaded under. Falls back to the `INSTAGRAM_S3_PREFIX`
   # environment variable, and to "instagram" when neither is set.
   # prefix = "instagram"

@@ -45,7 +45,7 @@ zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["http"] }
 
 [lints]
 workspace = true

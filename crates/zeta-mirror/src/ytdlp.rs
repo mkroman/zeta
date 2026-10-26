@@ -4,6 +4,7 @@
 //! output is read line-by-line, so a caller can observe the state of the download as it happens.
 
 use std::{
+    collections::VecDeque,
     ffi::OsString,
     io,
     path::{Path, PathBuf},
@@ -19,6 +20,7 @@ use tokio::{
 use tracing::{debug, warn};
 
 use futures::future::BoxFuture;
+use zeta_url::RedactedUrl;
 
 /// The default command used to run `yt-dlp`.
 const DEFAULT_COMMAND: &str = "yt-dlp";
@@ -217,7 +219,11 @@ impl YtDlp {
             // Ensure the child gets killed if we're dropped (e.g. by a timeout).
             .kill_on_drop(true);
 
-        debug!(%url, command = ?command.as_std(), "downloading video with yt-dlp");
+        debug!(
+            url.full = %RedactedUrl::from_unparsed(url),
+            command = %self.command,
+            "downloading video with yt-dlp"
+        );
 
         let mut child = command.spawn().map_err(Error::Io)?;
 
@@ -249,7 +255,7 @@ impl YtDlp {
             // The child has exited, so its stderr will reach EOF shortly.
             let stderr = stderr_task.await.unwrap_or_default();
 
-            return Err(Error::Failure(truncate_tail(stderr.trim_end())));
+            return Err(Error::Failure(stderr.trim_end().to_string()));
         }
 
         stderr_task.abort();
@@ -333,17 +339,26 @@ async fn read_output(
     Ok(json)
 }
 
-/// Drains the given stderr stream into a string, line by line.
+/// Drains the given stderr stream, retaining only its last [`STDERR_MESSAGE_LENGTH`] characters
+/// for the error message.
+///
+/// The tail is kept in a bounded queue rather than collecting the whole stream: a verbose or
+/// failing `yt-dlp` run must not be able to grow the bot's memory without bound.
 async fn drain_stderr(stderr: impl AsyncRead + Unpin) -> String {
-    let mut stderr_text = String::new();
+    let mut tail = VecDeque::with_capacity(STDERR_MESSAGE_LENGTH);
     let mut lines = BufReader::new(stderr).lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
-        stderr_text.push_str(&line);
-        stderr_text.push('\n');
+        for character in line.chars().chain(std::iter::once('\n')) {
+            if tail.len() == STDERR_MESSAGE_LENGTH {
+                tail.pop_front();
+            }
+
+            tail.push_back(character);
+        }
     }
 
-    stderr_text
+    tail.into_iter().collect()
 }
 
 /// Builds the `yt-dlp` arguments for downloading `url` into `output_dir`, naming the downloaded
@@ -412,17 +427,6 @@ async fn verify_paths(
     }
 
     Ok(verified)
-}
-
-/// Returns at most the last [`STDERR_MESSAGE_LENGTH`] characters of `s`.
-fn truncate_tail(s: &str) -> String {
-    let char_count = s.chars().count();
-
-    if char_count <= STDERR_MESSAGE_LENGTH {
-        return s.to_string();
-    }
-
-    s.chars().skip(char_count - STDERR_MESSAGE_LENGTH).collect()
 }
 
 #[cfg(test)]
@@ -651,13 +655,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_truncate_tail() {
-        assert_eq!(truncate_tail("hello"), "hello");
-        assert_eq!(truncate_tail("æøå"), "æøå");
+    #[tokio::test]
+    async fn stderr_retains_only_the_tail() {
+        let stderr = drain_stderr(&b"first line\nsecond line\n"[..]).await;
+
+        assert_eq!(stderr, "first line\nsecond line\n");
 
         let long = "a".repeat(STDERR_MESSAGE_LENGTH + 20);
-        let truncated = truncate_tail(&long);
-        assert_eq!(truncated.chars().count(), STDERR_MESSAGE_LENGTH);
+        let stderr = drain_stderr(format!("{long}\n").as_bytes()).await;
+
+        assert_eq!(stderr.chars().count(), STDERR_MESSAGE_LENGTH);
+        assert!(stderr.ends_with('\n'));
     }
 }

@@ -9,28 +9,27 @@ use figment::value::Value;
 use serde::de::DeserializeOwned;
 
 use crate::Error;
+use crate::config::deserialize_with_unknown_keys;
 use crate::context::Context;
+use crate::erased::ErasedPlugin;
 use crate::error::plugin_err;
 use crate::event::Subscriptions;
 use crate::plugin::Plugin;
-use crate::registry::ErasedPlugin;
 
 inventory::collect!(PluginRegistration);
 
 /// A plugin made available to the host for registration.
 ///
 /// The `#[plugin]` attribute macro emits an [`inventory::submit!`] for one of these next to the
-/// generated [`Plugin`](crate::Plugin) implementation; the host collects them with
-/// [`inventory::iter`] and hands each one to
-/// [`Registry::register_with`](crate::Registry::register_with).
+/// generated [`Plugin`](crate::Plugin) implementation. The host collects them with
+/// [`inventory::iter`] and hands each one to its registry; see `zeta-plugin-runtime`.
 pub struct PluginRegistration {
     /// The plugin's name (`Plugin::NAME`), used as its `[plugins.<name>]` section and in the
     /// plugin catalog.
     pub name: &'static str,
     /// Deserializes the plugin's settings section, if any, and constructs the plugin.
     ///
-    /// Called by [`Registry::register_with`](crate::Registry::register_with); plugins never call
-    /// it themselves.
+    /// Called by the host registry; plugins never call it themselves.
     #[doc(hidden)]
     pub construct: fn(&Context, Option<&Value>) -> Result<ConstructedPlugin, Error>,
     /// Deserializes the plugin's settings section and reports the unrecognized keys.
@@ -43,18 +42,19 @@ pub struct PluginRegistration {
 impl PluginRegistration {
     /// Constructs the registration for the plugin type `P`.
     ///
-    /// The `#[plugin]` attribute macro calls this in the [`inventory::submit!`] it generates;
-    /// plugins never call it themselves. The thunk this builds returns an error when the
-    /// plugin's settings section does not deserialize into `P::Settings`, or when
-    /// [`Plugin::new`](crate::Plugin::new) fails.
+    /// The plugin's name comes from [`Plugin::NAME`](crate::Plugin::NAME), so the registration and
+    /// the plugin can never disagree on it. The `#[plugin]` attribute macro calls this in the
+    /// [`inventory::submit!`] it generates; plugins never call it themselves. The thunk this
+    /// builds returns an error when the plugin's settings section does not deserialize into
+    /// `P::Settings`, or when [`Plugin::new`](crate::Plugin::new) fails.
     #[must_use]
-    pub const fn new<P>(name: &'static str) -> Self
+    pub const fn new<P>() -> Self
     where
-        P: Plugin<Context> + 'static,
+        P: Plugin + 'static,
         P::Settings: Default + DeserializeOwned,
     {
         Self {
-            name,
+            name: P::NAME,
             construct: construct::<P>,
             validate: validate_settings::<P>,
         }
@@ -74,54 +74,52 @@ impl PluginRegistration {
     }
 }
 
-/// A plugin constructed from its registration, with the subscriptions and configuration
-/// diagnostics the registry needs before committing it.
+/// A plugin constructed from its registration, with the subscriptions the registry needs
+/// before committing it.
 pub struct ConstructedPlugin {
+    /// The plugin's name, taken from [`Plugin::NAME`](crate::Plugin::NAME) so it can never
+    /// disagree with the registration.
+    pub name: &'static str,
     /// The constructed plugin, with its settings type erased.
     pub plugin: Box<dyn ErasedPlugin>,
     /// The events the plugin registered interest in during construction.
     pub subscriptions: Subscriptions,
-    /// Keys in the plugin's configuration section that its settings type did not recognize.
-    pub unknown_keys: Vec<String>,
 }
 
 /// The constructor thunk [`PluginRegistration::new`] stores: deserialize the settings section,
 /// build the plugin, and return it with its declared subscriptions.
 fn construct<P>(ctx: &Context, section: Option<&Value>) -> Result<ConstructedPlugin, Error>
 where
-    P: Plugin<Context> + 'static,
+    P: Plugin + 'static,
     P::Settings: Default + DeserializeOwned,
 {
-    let (settings, unknown_keys) = deserialize_settings::<P>(section)?;
+    let (settings, _) = deserialize_settings::<P>(section)?;
 
     let mut subscriptions = Subscriptions::new();
     let plugin = P::new(ctx, &settings, &mut subscriptions)?;
 
     Ok(ConstructedPlugin {
+        name: P::NAME,
         plugin: Box::new(plugin),
         subscriptions,
-        unknown_keys,
     })
 }
 
 /// Deserializes a plugin's settings section, or the defaults when it is omitted.
 fn deserialize_settings<P>(section: Option<&Value>) -> Result<(P::Settings, Vec<String>), Error>
 where
-    P: Plugin<Context> + 'static,
+    P: Plugin + 'static,
     P::Settings: Default + DeserializeOwned,
 {
     match section {
         Some(value) => {
-            let mut unknown_keys = Vec::new();
-            let settings = serde_ignored::deserialize(value, |path| {
-                unknown_keys.push(path.to_string());
-            })
-            .map_err(|error| {
-                plugin_err(std::io::Error::other(format!(
-                    "invalid settings for plugin `{}`: {error}",
-                    P::NAME
-                )))
-            })?;
+            let (settings, unknown_keys) =
+                deserialize_with_unknown_keys(value).map_err(|error| {
+                    plugin_err(std::io::Error::other(format!(
+                        "invalid settings for plugin `{}`: {error}",
+                        P::NAME
+                    )))
+                })?;
 
             Ok((settings, unknown_keys))
         }
@@ -134,7 +132,7 @@ where
 /// Deserializes a plugin's settings section and returns only the unrecognized keys.
 fn validate_settings<P>(section: Option<&Value>) -> Result<Vec<String>, Error>
 where
-    P: Plugin<Context> + 'static,
+    P: Plugin + 'static,
     P::Settings: Default + DeserializeOwned,
 {
     deserialize_settings::<P>(section).map(|(_, unknown_keys)| unknown_keys)
@@ -159,7 +157,7 @@ mod tests {
     /// A plugin whose construction cannot fail, so only the settings decide the outcome.
     struct TestPlugin;
 
-    impl Plugin<Context> for TestPlugin {
+    impl Plugin for TestPlugin {
         const NAME: &'static str = "test_plugin";
         type Settings = TestSettings;
 
@@ -169,7 +167,7 @@ mod tests {
     }
 
     fn registration() -> PluginRegistration {
-        PluginRegistration::new::<TestPlugin>(TestPlugin::NAME)
+        PluginRegistration::new::<TestPlugin>()
     }
 
     /// Builds the `[plugins.<name>]` section value the host hands to the registration.

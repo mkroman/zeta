@@ -1,0 +1,245 @@
+//! Send notifications to users when they show activity.
+//!
+//! Notifications are created with the `.notify <nick> <message>` command and are delivered to the
+//! recipient the next time they are active in the channel the notification was created in, at
+//! which point they are removed.
+
+mod error;
+mod model;
+mod repository;
+mod service;
+
+// The module types are re-exported as part of the module's API surface, even though the plugin
+// itself only handles them by value.
+#[allow(unused_imports)]
+pub use {
+    error::Error,
+    model::{NewNotification, Notification},
+    service::NotificationService,
+};
+
+use serde::{Deserialize, Serialize};
+use sqlx::types::chrono::Local;
+use tracing::error;
+
+use zeta_plugin::prelude::*;
+
+/// The `.notify` command.
+const NOTIFY: CommandSpec =
+    CommandSpec::new(".notify", "Queue a notification for a user's next message");
+
+/// Settings for the notification plugin, from its `[plugins.notification]` configuration
+/// section.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Settings {
+    /// The maximum number of pending notifications a target may have in a channel.
+    pub max_pending_per_target: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            max_pending_per_target: 10,
+        }
+    }
+}
+
+/// Notification plugin.
+///
+/// Lets users queue notifications for other users with the `.notify <nick> <message>` command, and
+/// delivers pending notifications to a user when they are active in a channel.
+pub struct NotificationPlugin {
+    /// The notification service.
+    service: NotificationService,
+}
+
+#[plugin(name = "notification", settings = Settings, messages)]
+impl NotificationPlugin {
+    fn new(
+        ctx: &Context,
+        settings: &Settings,
+        subscriptions: &mut Subscriptions,
+    ) -> Result<Self, ZetaError> {
+        subscriptions.command(NOTIFY);
+
+        Ok(Self {
+            service: NotificationService::new(ctx.db.clone(), settings),
+        })
+    }
+
+    #[handler(loaded)]
+    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+        self.service.load().await.map_err(plugin_err)?;
+
+        Ok(())
+    }
+
+    #[handler(command)]
+    async fn handle_command(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        command: &CommandEvent,
+    ) -> Result<(), ZetaError> {
+        let channel = command.channel();
+        let Some(sender) = command.sender() else {
+            return Ok(());
+        };
+
+        let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
+
+        let Some((target, message)) = parse_args(command.args()) else {
+            client.send_privmsg(
+                channel,
+                reply("Notification", "Usage: .notify\x0f <nick> <message>"),
+            )?;
+
+            return Ok(());
+        };
+
+        let notification = NewNotification {
+            target: target.to_owned(),
+            nickname: nickname.to_owned(),
+            username: username.to_owned(),
+            hostname: hostname.to_owned(),
+            channel: channel.to_owned(),
+            message: message.to_owned(),
+        };
+
+        let message = match self.service.create(notification).await {
+            Ok(_) => notice("The notification has been stored."),
+            Err(Error::TooManyPending(max)) => reply(
+                "Notification",
+                format!("{target} already has {max} pending notifications in this channel"),
+            ),
+            Err(_) => reply("Notification", "could not store the notification"),
+        };
+
+        client.send_privmsg(channel, message)?;
+
+        Ok(())
+    }
+
+    #[handler(message)]
+    async fn handle_message(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        event: &MessageEvent,
+    ) -> Result<(), ZetaError> {
+        let channel = event.channel();
+        let Some(sender) = event.sender() else {
+            return Ok(());
+        };
+
+        let nickname = sender.nick;
+
+        // Delivering is triggered by an ordinary message; command invocations are handled in
+        // `handle_command` and do not deliver the invoker's pending notifications.
+        if NOTIFY.parse(event.text()).is_some() {
+            return Ok(());
+        }
+
+        {
+            let mut pending = self.service.take(channel, nickname).await;
+            let mut delivered = 0;
+
+            for notification in &pending {
+                let message = &notification.message;
+                let creator = &notification.nickname;
+                let created_at = notification
+                    .created_at
+                    .with_timezone(&Local)
+                    .format("%d/%m/%Y %H:%M:%S");
+
+                match client.send_privmsg(
+                    channel,
+                    format!(
+                        "{nickname}:{COLOR} Notification{RESET} {message}{COLOR} from{RESET} {creator}{COLOR} at{RESET} {created_at}"
+                    ),
+                ) {
+                    Ok(()) => delivered += 1,
+                    Err(err) => {
+                        error!(?err, "could not deliver notification");
+
+                        break;
+                    }
+                }
+            }
+
+            // The delivered notifications are deleted from the database in one go; the
+            // undelivered tail (when a delivery failed) returns to the cache so the next
+            // message retries it instead of leaving it stranded until restart.
+            if delivered > 0 {
+                let sent_ids = pending[..delivered]
+                    .iter()
+                    .map(|notification| notification.id)
+                    .collect::<Vec<_>>();
+
+                if let Err(err) = self.service.delete_all(&sent_ids).await {
+                    error!(
+                        ?err,
+                        count = sent_ids.len(),
+                        "could not delete delivered notifications"
+                    );
+                }
+            }
+
+            if delivered < pending.len() {
+                self.service.restore(pending.split_off(delivered)).await;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn parse_args(args: &str) -> Option<(&str, &str)> {
+    let (target, message) = args.split_once(' ')?;
+
+    (!message.trim().is_empty()).then_some((target, message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zeta_test_support::settings_tests;
+
+    settings_tests! {
+        Settings,
+        settings,
+        default: {
+            assert_eq!(settings.max_pending_per_target, 10);
+        }
+        deserialize: {
+            "max_pending_per_target": 3,
+        } assert: {
+            assert_eq!(settings.max_pending_per_target, 3);
+        }
+    }
+
+    #[test]
+    fn parses_target_and_message() {
+        let cases = [
+            (
+                "a target and a message",
+                "foo hello there",
+                Some(("foo", "hello there")),
+            ),
+            (
+                "a message kept verbatim",
+                "foo   padded  ",
+                Some(("foo", "  padded  ")),
+            ),
+            ("empty arguments", "", None),
+            ("a target without a message", "foo", None),
+            ("a target and one space", "foo ", None),
+            ("a target and only spaces", "foo   ", None),
+        ];
+
+        for (case, input, expected) in cases {
+            assert_eq!(parse_args(input), expected, "for {case}: {input:?}");
+        }
+    }
+}

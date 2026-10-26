@@ -61,7 +61,7 @@ impl SharedState {
 pub struct Context {
     /// The database connection pool.
     #[cfg(feature = "database")]
-    pub db: sqlx::PgPool,
+    pub db: crate::database::Database,
     /// The plugin-visible subset of the bot configuration.
     ///
     /// Per-plugin settings are not part of the context; each plugin receives its own settings
@@ -74,7 +74,10 @@ pub struct Context {
 impl Context {
     /// Creates a new context.
     #[must_use]
-    pub fn new(#[cfg(feature = "database")] db: sqlx::PgPool, config: HostConfig) -> Self {
+    pub fn new(
+        #[cfg(feature = "database")] db: crate::database::Database,
+        config: HostConfig,
+    ) -> Self {
         Self {
             #[cfg(feature = "database")]
             db,

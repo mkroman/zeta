@@ -1,12 +1,12 @@
 //! The public contract of the shared HTTP wrappers, exercised as an external consumer would:
-//! status classification, `404` mapping and JSON decoding against a wiremock server.
+//! status classification, `404` mapping, and JSON and text decoding against a wiremock server.
 
 #![cfg(feature = "http")]
 
 use serde_json::json;
 use zeta_http as http;
 use zeta_http::ApiError;
-use zeta_plugin::config::HttpConfig;
+use zeta_http::HttpConfig;
 use zeta_test_support::wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{any, method, path, query_param},
@@ -38,6 +38,44 @@ async fn get_json_decodes_a_successful_response() {
     let decoded: serde_json::Value = http::get_json(request).await.unwrap();
 
     assert_eq!(decoded, json!({ "temp": 12.5 }));
+}
+
+#[tokio::test]
+async fn get_text_returns_a_successful_body() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html>hello</html>"))
+        .mount(&server)
+        .await;
+
+    let client = http::build_client(&HttpConfig::default());
+    let body = http::get_text(client.get(server.uri())).await.unwrap();
+
+    assert_eq!(body, "<html>hello</html>");
+}
+
+#[tokio::test]
+async fn get_text_reports_error_statuses_with_their_body() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(404).set_body_string("not here"))
+        .mount(&server)
+        .await;
+
+    let client = http::build_client(&HttpConfig::default());
+    let error = http::get_text(client.get(server.uri()))
+        .await
+        .expect_err("an error page must not be returned as content");
+
+    match error {
+        ApiError::Status { status, body } => {
+            assert_eq!(status, reqwest::StatusCode::NOT_FOUND);
+            assert_eq!(body, "not here");
+        }
+        other => panic!("expected a status error, got: {other:?}"),
+    }
 }
 
 #[tokio::test]

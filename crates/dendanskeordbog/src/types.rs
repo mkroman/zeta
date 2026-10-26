@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "log")]
 use tracing::warn;
 
-use crate::{Error, FromHtml, Selectors};
+use crate::Error;
+use crate::parse::{FromHtml, Selectors};
 
 /// Represents a complete dictionary entry from Den Danske Ordbog (The Danish Dictionary).
 ///
@@ -141,9 +142,9 @@ impl DictionaryDocument {
     /// missing entries by returning an empty list.
     pub fn from_html<S: AsRef<str>>(html: S) -> Result<Self, Error> {
         let html = html.as_ref();
-        let selectors = Selectors::default();
+        let selectors = Selectors::shared();
         let document = Html::parse_document(html);
-        let entries = Self::parse_entries(&document, &selectors)?;
+        let entries = Self::parse_entries(&document, selectors)?;
 
         Ok(Self { entries })
     }

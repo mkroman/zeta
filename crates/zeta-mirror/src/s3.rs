@@ -58,7 +58,8 @@ pub struct S3Config {
     pub region: Option<String>,
     /// The endpoint URL for S3-compatible services.
     ///
-    /// Falls back to the `S3_ENDPOINT` environment variable when unset.
+    /// Falls back to the `S3_ENDPOINT` environment variable when unset. Empty values count as
+    /// unset, so a blank endpoint does not override the environment or the AWS default.
     pub endpoint: Option<String>,
 }
 
@@ -76,7 +77,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
     /// The HTTP request failed.
     #[error("request failed: {0}")]
-    Request(RequestError),
+    Request(#[from] RequestError),
     /// The request could not be signed.
     #[error("could not sign request: {0}")]
     Signing(#[from] aws_sigv4::http_request::SigningError),
@@ -96,42 +97,19 @@ pub enum Error {
 /// Resolves a secret from the configuration, falling back to the environment variable `name`.
 ///
 /// The configured value takes precedence when it is set and non-empty; otherwise the value of
-/// the `name` environment variable is used, so secrets can stay out of `config.toml`.
+/// the `name` environment variable is used, so secrets can stay out of `config.toml`. Empty
+/// values count as unset on both sides.
 ///
 /// # Errors
 ///
 /// Returns [`Error::MissingConfig`] when neither the configured value nor the environment
 /// variable is set.
 fn resolve_secret(value: Option<&str>, name: &str) -> Result<String, Error> {
-    value
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| std::env::var(name).ok())
-        .ok_or_else(|| {
-            Error::MissingConfig(format!(
-                "neither the s3 setting nor environment variable `{name}` is set"
-            ))
-        })
-}
-
-/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
-/// URL without its query, so a logged error never carries a credential from the query string.
-///
-/// It also maps a failed client build: `Client::builder().build()` has made no request yet, so
-/// there is no URL to redact and nothing to log.
-fn request_error(error: reqwest::Error) -> Error {
-    let error = RequestError::from(error);
-
-    if let Some(url) = error.url() {
-        tracing::error!(
-            url.full = %url,
-            error.type = error.error_type(),
-            error = %error.full(),
-            "s3 request failed"
-        );
-    }
-
-    Error::Request(error)
+    zeta_utils::settings::resolve_optional_setting(value, name).ok_or_else(|| {
+        Error::MissingConfig(format!(
+            "neither the s3 setting nor environment variable `{name}` is set"
+        ))
+    })
 }
 
 /// Client for uploading mirrored files to an S3-compatible bucket.
@@ -170,7 +148,7 @@ impl S3 {
     /// # Errors
     ///
     /// Returns an error if a required value is missing or a configured value is invalid.
-    pub fn new(config: S3Config) -> Result<Self, Error> {
+    pub fn new(config: &S3Config) -> Result<Self, Error> {
         let access_key_id = resolve_secret(config.access_key_id.as_deref(), "S3_ACCESS_KEY_ID")?;
         let secret_access_key =
             resolve_secret(config.secret_access_key.as_deref(), "S3_SECRET_ACCESS_KEY")?;
@@ -178,15 +156,18 @@ impl S3 {
         let region =
             zeta_utils::settings::resolve_setting(config.region.as_deref(), "S3_REGION", "auto");
 
-        let endpoint = config
-            .endpoint
-            .or_else(|| std::env::var("S3_ENDPOINT").ok())
-            .map(|endpoint| Url::parse(&endpoint))
-            .transpose()
-            .map_err(Error::InvalidEndpoint)?;
+        let endpoint = zeta_utils::settings::resolve_optional_setting(
+            config.endpoint.as_deref(),
+            "S3_ENDPOINT",
+        )
+        .map(|endpoint| Url::parse(&endpoint))
+        .transpose()
+        .map_err(Error::InvalidEndpoint)?;
 
         Ok(Self {
-            client: Client::builder().build().map_err(request_error)?,
+            client: Client::builder()
+                .build()
+                .map_err(|error| Error::Request(RequestError::from(error)))?,
             access_key_id,
             secret_access_key,
             bucket,
@@ -209,7 +190,7 @@ impl S3 {
         let response = send_with_retry(|| async {
             let request = apply_headers(self.client.head(url.clone()), &headers);
 
-            request.send().await.map_err(request_error)
+            zeta_http::send(request).await.map_err(Error::from)
         })
         .await?;
 
@@ -249,7 +230,7 @@ impl S3 {
                 &headers,
             );
 
-            request.send().await.map_err(request_error)
+            zeta_http::send(request).await.map_err(Error::from)
         })
         .await?;
 

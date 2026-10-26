@@ -1,14 +1,15 @@
 //! Configuration loading and validation.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::consts;
 
+pub use zeta_http::HttpConfig;
 #[cfg(feature = "mirror")]
 pub use zeta_mirror::MirrorConfig;
-pub use zeta_plugin::config::HttpConfig;
 
 /// The plugin-visible subset of the configuration, as carried on the plugins' context.
 impl From<&Config> for zeta_plugin::config::HostConfig {
@@ -66,7 +67,7 @@ pub struct DbConfig {
     /// Maximum number of connections to keep active in the connection pool
     #[serde(default = "default_max_db_connections")]
     pub max_connections: u32,
-    /// Maximum idle duration for individual connections, in seconds
+    /// Maximum idle duration for individual connections.
     #[serde(default = "default_db_idle_timeout", with = "humantime_serde")]
     pub idle_timeout: Duration,
     /// Set the maximum lifetime of individual connections.
@@ -104,8 +105,8 @@ pub struct IrcTlsConfig {
 pub struct IrcConfig {
     /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
     /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.
-    /// Admins are authorized to manage URL and sender filters with the `.filter` command;
-    /// with no hostmasks configured, nobody is an admin.
+    /// Admins are authorized to manage URL and sender filters with the `.filter` command and
+    /// unwall's site list with `.unwall`; with no hostmasks configured, nobody is an admin.
     #[serde(default)]
     pub admin_hostmasks: Vec<String>,
     /// Alternative nicknames for the client, if the default is taken.
@@ -187,21 +188,30 @@ impl IrcConfig {
 impl From<IrcConfig> for irc::client::data::Config {
     fn from(config: IrcConfig) -> Self {
         let port = config.port();
-        let channels: Vec<String> = config
-            .channels
-            .iter()
-            .map(|channel| channel.name.clone())
-            .collect();
-        // TODO: channel keys
-        let use_tls = config.tls.map(|x| x.enabled);
+        let use_tls = config.tls.map(|tls| tls.enabled);
+        let mut channels = Vec::with_capacity(config.channels.len());
+        let mut channel_keys = HashMap::new();
+
+        for channel in config.channels {
+            if let Some(key) = channel.key {
+                channel_keys.insert(channel.name.clone(), key);
+            }
+
+            channels.push(channel.name);
+        }
 
         Self {
             nickname: Some(config.nickname),
             nick_password: config.nick_password,
+            username: config.username,
+            realname: config.realname,
             server: Some(config.hostname),
             port: Some(port),
+            password: config.password,
+            encoding: config.encoding,
             use_tls,
             channels,
+            channel_keys,
             alt_nicks: config.alt_nicks,
             should_ghost: config.should_ghost,
             ..Default::default()
@@ -219,12 +229,12 @@ const fn default_max_db_connections() -> u32 {
     consts::DEFAULT_MAX_DB_CONNECTIONS
 }
 
-/// Returns the default maximum lifetime of database pool connections.
+/// Returns the default duration a connection can be idle before it is dropped.
 const fn default_db_idle_timeout() -> Duration {
     consts::DEFAULT_DB_IDLE_TIMEOUT
 }
 
-/// Returns the default duration a connection can be idle before it is dropped.
+/// Returns the default maximum lifetime of database pool connections.
 const fn default_db_max_lifetime() -> Duration {
     consts::DEFAULT_DB_MAX_LIFETIME
 }
@@ -307,6 +317,53 @@ channels = []
             .expect("could not parse irc configuration");
 
         assert_eq!(config.quit_message, "goodbye");
+    }
+
+    #[test]
+    fn irc_config_conversion_carries_the_connection_settings() {
+        let config = IrcConfig {
+            alt_nicks: vec!["zeta_".to_string()],
+            channels: vec![
+                IrcChannelConfig {
+                    name: "#zeta".to_string(),
+                    key: Some("channel-secret".to_string()),
+                },
+                IrcChannelConfig {
+                    name: "#other".to_string(),
+                    key: None,
+                },
+            ],
+            encoding: Some("utf-8".to_string()),
+            hostname: "irc.example.com".to_string(),
+            nick_password: Some("nickserv-secret".to_string()),
+            nickname: "zeta".to_string(),
+            password: Some("server-secret".to_string()),
+            port: Some(7000),
+            realname: Some("Zeta".to_string()),
+            should_ghost: true,
+            tls: Some(IrcTlsConfig { enabled: true }),
+            username: Some("zeta".to_string()),
+            ..IrcConfig::default()
+        };
+
+        let config = irc::client::data::Config::from(config);
+
+        assert_eq!(config.nickname.as_deref(), Some("zeta"));
+        assert_eq!(config.nick_password.as_deref(), Some("nickserv-secret"));
+        assert_eq!(config.username.as_deref(), Some("zeta"));
+        assert_eq!(config.realname.as_deref(), Some("Zeta"));
+        assert_eq!(config.server.as_deref(), Some("irc.example.com"));
+        assert_eq!(config.port, Some(7000));
+        assert_eq!(config.password.as_deref(), Some("server-secret"));
+        assert_eq!(config.encoding.as_deref(), Some("utf-8"));
+        assert_eq!(config.use_tls, Some(true));
+        assert_eq!(config.channels, ["#zeta", "#other"]);
+        assert_eq!(
+            config.channel_keys.get("#zeta").map(String::as_str),
+            Some("channel-secret")
+        );
+        assert_eq!(config.alt_nicks, ["zeta_"]);
+        assert!(config.should_ghost);
     }
 
     /// The repository `config.toml` must parse into the full configuration: a broken edit has

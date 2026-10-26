@@ -42,8 +42,6 @@ const QUERY_WORD_PARAM: &str = "q";
 /// and parsing the HTML response.
 #[derive(Debug)]
 pub struct Client {
-    /// The base URL of the service endpoint.
-    base_url: String,
     /// The underlying [`reqwest::Client`] used for making HTTP requests.
     client: reqwest::Client,
 }
@@ -93,10 +91,8 @@ impl Client {
     ///
     /// * `client` - An existing `reqwest::Client` instance.
     #[must_use]
-    pub fn with_client(client: reqwest::Client) -> Self {
-        let base_url = String::from(BASE_URL);
-
-        Self { base_url, client }
+    pub const fn with_client(client: reqwest::Client) -> Self {
+        Self { client }
     }
 
     /// Queries the dictionary for a specific word and returns the parsed result.
@@ -116,7 +112,7 @@ impl Client {
     /// - [`Error::MissingElement`]: If the response body is received but the HTML
     ///   is malformed or does not match the expected structure, preventing parsing.
     pub async fn query(&self, word: &str) -> Result<DictionaryDocument, Error> {
-        let url = format!("{base_url}{QUERY_PATH}", base_url = self.base_url);
+        let url = format!("{BASE_URL}{QUERY_PATH}");
         let request = self.client.get(url).query(&[(QUERY_WORD_PARAM, word)]);
         let response = request
             .send()

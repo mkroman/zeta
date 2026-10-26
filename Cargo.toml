@@ -1,24 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
-    "crates/coinmarketcap",
-    "crates/dendanskeordbog",
-    "crates/kagi",
-    "crates/plugins",
-    "crates/reddit",
-    "crates/zeta",
-    "crates/zeta-cache",
-    "crates/zeta-http",
-    "crates/zeta-mirror",
-    "crates/zeta-plugin",
-    "crates/zeta-plugin-macros",
-    "crates/zeta-test-support",
-    "crates/zeta-unicode",
-    "crates/zeta-unicode-build",
-    "crates/zeta-unicode-format",
-    "crates/zeta-url",
-    "crates/zeta-utils",
-]
+members = ["crates/*"]
 # `cargo run`, `build`, `test` and `check` without a selection flag operate on the bot.
 default-members = ["crates/zeta"]
 
@@ -61,6 +43,7 @@ tokio = { version = "1.52.3", features = [
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
+wildmatch = "=2.7.0"
 
 [workspace.lints.clippy]
 # Enable all basic clippy lints. The groups run at a higher priority than the individually

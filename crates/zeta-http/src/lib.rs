@@ -2,14 +2,22 @@
 //!
 //! Two independent clients live here: the plain `reqwest` client shared by the API plugins
 //! (behind the `http` feature) and the browser-emulated `wreq` client for anti-bot-protected
-//! sites (behind the `emulated` feature), together with the OAuth2 client-credentials token
-//! cache and the transport-error wrappers that keep credentials out of formatted output.
+//! sites (behind the `emulated` feature), together with the [`HttpConfig`] both are built from,
+//! the OAuth2 client-credentials token cache and the transport-error wrappers that keep
+//! credentials out of formatted output.
 
+mod config;
+
+#[cfg(feature = "emulated")]
+pub mod emulated;
+#[cfg(feature = "http")]
+pub mod json;
 #[cfg(feature = "oauth")]
 pub mod oauth;
 
 mod error;
 
+pub use config::HttpConfig;
 #[cfg(any(feature = "request", feature = "http"))]
 pub use error::RequestError;
 #[cfg(feature = "emulated")]
@@ -17,44 +25,15 @@ pub use error::WreqError;
 
 #[cfg(feature = "http")]
 use serde::de::DeserializeOwned;
+#[cfg(any(feature = "request", feature = "http"))]
+use tracing::error;
 #[cfg(feature = "http")]
-use tracing::{Span, debug, error, instrument};
-#[cfg(feature = "http")]
-use zeta_plugin::config::HttpConfig;
+use tracing::{Span, debug, instrument};
 #[cfg(feature = "http")]
 use zeta_utils::text::Truncatable;
 
-#[cfg(feature = "http")]
-use zeta_url::redact_url;
-
-/// JSON response parsing shared by the API client plugins.
-///
-/// Bodies are parsed with [`serde_path_to_error`] so parse failures report the path to the
-/// offending part of the document, and the offending body is logged.
-#[cfg(feature = "http")]
-pub mod json {
-    use serde::de::DeserializeOwned;
-    use tracing::error;
-
-    /// The error returned when a JSON body fails to parse.
-    pub type Error = serde_path_to_error::Error<serde_json::Error>;
-
-    /// Deserializes a value of type `T` from a JSON string.
-    ///
-    /// The offending body is logged if parsing fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns the parse error, including the path to the offending part of the document, if
-    /// `text` is not valid JSON for `T`.
-    pub fn from_str<T: DeserializeOwned>(text: &str) -> Result<T, Error> {
-        let deserializer = &mut serde_json::Deserializer::from_str(text);
-
-        serde_path_to_error::deserialize(deserializer).inspect_err(|error| {
-            error!(?error, body = %text, "could not deserialize json response");
-        })
-    }
-}
+#[cfg(any(feature = "request", feature = "http"))]
+use zeta_url::RedactedUrl;
 
 /// The errors produced when sending a request and parsing its JSON response.
 #[cfg(feature = "http")]
@@ -78,7 +57,7 @@ pub enum ApiError {
     },
     /// The response body could not be parsed as JSON.
     #[error("could not deserialize response: {0}")]
-    Deserialize(json::Error),
+    Deserialize(#[source] json::Error),
 }
 
 /// The number of characters of an error response body that reaches the logs: enough to read
@@ -101,7 +80,8 @@ fn body_error(error: reqwest::Error) -> ApiError {
 
 /// Sends `request` and returns the response.
 ///
-/// A failed send is logged once with `url.full` — the request URL without its query — its
+/// A failed send is logged once with `url.full` — the request URL without its query, fragment,
+/// or userinfo — its
 /// `error.type`, and the error's full rendering, before the error comes back as a
 /// [`RequestError`]: these APIs carry their key in the query string, and the error reaches
 /// `Display` (and `Debug`) in plugin and dispatcher logs, while a log line still needs to say
@@ -110,7 +90,7 @@ fn body_error(error: reqwest::Error) -> ApiError {
 /// # Errors
 ///
 /// Returns the [`RequestError`] of the failed send, with its URL redacted.
-#[cfg(feature = "http")]
+#[cfg(any(feature = "request", feature = "http"))]
 pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response, RequestError> {
     request.send().await.map_err(|error| {
         let error = RequestError::from(error);
@@ -125,7 +105,8 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
 
 /// Reads the body of `response` as a string.
 ///
-/// A failed read is logged once with `url.full` — the response URL without its query — the
+/// A failed read is logged once with `url.full` — the response URL without its query, fragment,
+/// or userinfo — the
 /// way [`send`] logs a failed request, so no caller has to hand-roll that log line.
 ///
 /// # Errors
@@ -133,7 +114,7 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
 /// Returns the [`RequestError`] of the failed read, with its URL redacted.
 #[cfg(feature = "http")]
 pub async fn text(response: reqwest::Response) -> Result<String, RequestError> {
-    let url = redact_url(response.url());
+    let url = RedactedUrl::from_url(response.url());
 
     response.text().await.map_err(|error| {
         let error = RequestError::from(error);
@@ -145,9 +126,28 @@ pub async fn text(response: reqwest::Response) -> Result<String, RequestError> {
 }
 
 /// Logs a failed request or body read once, with its redacted URL and error type.
-#[cfg(feature = "http")]
-fn log_request_error(error: &RequestError, url: &str, message: &str) {
+#[cfg(any(feature = "request", feature = "http"))]
+fn log_request_error(error: &RequestError, url: &RedactedUrl, message: &str) {
     error!(url.full = %url, error.type = error.error_type(), error = %error.full(), "{message}");
+}
+
+/// Logs the status of a non-success response, with the already-truncated body when it could be
+/// read. `record_error_type` is false when the body read already recorded the transport failure
+/// on the span — overwriting it with the status code would lose the classification.
+#[cfg(feature = "http")]
+fn log_status(status: reqwest::StatusCode, body: Option<&str>, record_error_type: bool) {
+    let not_found = status == reqwest::StatusCode::NOT_FOUND;
+
+    if !not_found && record_error_type {
+        Span::current().record("error.type", status.as_u16().to_string().as_str());
+    }
+
+    match (not_found, body) {
+        (true, Some(body)) => debug!(body = %body, "http response not found"),
+        (true, None) => debug!("http response not found"),
+        (false, Some(body)) => error!(body = %body, "http response carries an error status"),
+        (false, None) => error!("http response carries an error status"),
+    }
 }
 
 /// Parses the response's JSON body into `T`.
@@ -157,7 +157,7 @@ fn log_request_error(error: &RequestError, url: &str, message: &str) {
 ///
 /// Everything the OpenTelemetry HTTP conventions define for an outbound request is recorded on
 /// the span this opens — <https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client-span>
-/// — rather than repeated per response: `url.full` (through [`redact_url`], since these APIs
+/// — rather than repeated per response: `url.full` (through [`RedactedUrl`], since these APIs
 /// carry their key in the query string), `server.address`, `server.port` and
 /// `http.response.status_code`, plus `error.type` when something goes wrong.
 /// `http.request.method` is missing on purpose — a `reqwest::Response` no longer exposes the
@@ -175,7 +175,7 @@ fn log_request_error(error: &RequestError, url: &str, message: &str) {
 #[instrument(
     skip(response),
     fields(
-        url.full = %redact_url(response.url()),
+        url.full = %RedactedUrl::from_url(response.url()),
         server.address = %response.url().host_str().unwrap_or_default(),
         server.port = response.url().port_or_known_default(),
         http.response.status_code = response.status().as_u16(),
@@ -185,47 +185,49 @@ fn log_request_error(error: &RequestError, url: &str, message: &str) {
 pub async fn parse_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ApiError> {
-    let status = response.status();
-
-    if !status.is_success() {
-        let not_found = status == reqwest::StatusCode::NOT_FOUND;
-
-        // Report the status even when its body cannot be read: the status is known before the
-        // read, and without this line the response would reach the logs only as span
-        // attributes. `body_error` records `error.type` first, so the event carries it too.
-        let body = response.text().await.map_err(|error| {
-            let error = body_error(error);
-
-            if not_found {
-                debug!("http response not found");
-            } else {
-                error!("http response carries an error status");
-            }
-
-            error
-        })?;
-        let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
-
-        if not_found {
-            debug!(body = %logged, "http response not found");
-        } else {
-            let error_type = status.as_u16().to_string();
-            Span::current().record("error.type", error_type.as_str());
-            error!(body = %logged, "http response carries an error status");
-        }
-
-        return Err(ApiError::Status { status, body });
-    }
-
-    debug!("http response received");
-
-    let text = response.text().await.map_err(body_error)?;
+    let text = parse_text(response).await?;
 
     json::from_str(&text).map_err(|error| {
         Span::current().record("error.type", "invalid_json");
 
         ApiError::Deserialize(error)
     })
+}
+
+/// Reads the body of a successful response as text.
+///
+/// Non-success statuses are reported as [`ApiError::Status`], carrying the response body; the
+/// body is only returned for a success. The status is logged the same way [`parse_response`]
+/// logs it, so text responses get the same diagnostics as JSON ones.
+///
+/// # Errors
+///
+/// Returns an [`ApiError`] if the status is not a success or the body cannot be read.
+#[cfg(feature = "http")]
+pub async fn parse_text(response: reqwest::Response) -> Result<String, ApiError> {
+    let status = response.status();
+
+    if !status.is_success() {
+        // Report the status even when its body cannot be read: the status is known before the
+        // read, and without this line the response would reach the logs only as span
+        // attributes. `body_error` records `error.type` first, so the event carries it too.
+        let body = response.text().await.map_err(|error| {
+            let error = body_error(error);
+
+            log_status(status, None, false);
+
+            error
+        })?;
+        let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
+
+        log_status(status, Some(&logged), true);
+
+        return Err(ApiError::Status { status, body });
+    }
+
+    debug!("http response received");
+
+    response.text().await.map_err(body_error)
 }
 
 /// Parses a JSON response like [`parse_response`], mapping a `404` status to `not_found`.
@@ -286,6 +288,22 @@ pub async fn get_json_or_404<T: DeserializeOwned, E: From<ApiError>>(
     parse_response_or_404(response, not_found).await
 }
 
+/// Sends `request` and reads the body of the successful response as text.
+///
+/// Combines [`send`] and [`parse_text`]: a non-success status is reported as
+/// [`ApiError::Status`], so callers cannot accidentally use an error page as content.
+///
+/// # Errors
+///
+/// Returns an [`ApiError`] if the request fails, the status is not a success, or the body cannot
+/// be read.
+#[cfg(feature = "http")]
+pub async fn get_text(request: reqwest::RequestBuilder) -> Result<String, ApiError> {
+    let response = send(request).await?;
+
+    parse_text(response).await
+}
+
 /// Returns a default HTTP client configured by [`HttpConfig`].
 ///
 /// # Panics
@@ -306,52 +324,6 @@ pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(config.timeout)
         .user_agent(config.user_agent.clone())
-}
-
-/// Client building for anti-bot-protected sites.
-///
-/// These are fetched with [`wreq`] browser emulation: plain `reqwest` gets TLS-fingerprinted by
-/// them regardless of headers. Built behind the `emulated` feature, which the anti-bot-protected
-/// plugins enable.
-#[cfg(feature = "emulated")]
-pub mod emulated {
-    use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
-    use zeta_plugin::{Error, prelude::plugin_err};
-
-    /// Returns a `wreq` client builder emulating Firefox 142, layered with the headers the
-    /// emulation must not omit.
-    ///
-    /// `Accept-Encoding` must be set explicitly: like reqwest, wreq does not advertise the
-    /// header itself even though it decompresses responses — and its absence is enough to get
-    /// flagged.
-    ///
-    /// The profile's user agent is overridden with `user_agent` when given. This skews with the
-    /// emulated Firefox 142 fingerprint, and that is deliberate: the profile defaults to macOS —
-    /// which anti-bot systems score far more aggressively when requests originate from
-    /// datacenter networks — and the matching Linux Firefox 142 user agent is rejected by
-    /// DataDome outright, while Firefox 151 passes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `user_agent` cannot be used as a header value.
-    pub fn builder(user_agent: Option<&str>) -> Result<wreq::ClientBuilder, Error> {
-        let mut headers = HeaderMap::new();
-
-        headers.insert(
-            ACCEPT_ENCODING,
-            HeaderValue::from_static("gzip, deflate, br, zstd"),
-        );
-
-        if let Some(user_agent) = user_agent {
-            let value = HeaderValue::from_str(user_agent).map_err(plugin_err)?;
-
-            headers.insert(USER_AGENT, value);
-        }
-
-        Ok(wreq::Client::builder()
-            .emulation(wreq_util::Emulation::Firefox142)
-            .default_headers(headers))
-    }
 }
 
 #[cfg(all(test, feature = "http"))]
@@ -527,38 +499,5 @@ mod tests {
         assert!(logged.contains("error.type"), "{logged}");
         // ...and no credential from the query reaches the log.
         assert!(!logged.contains("key=secret"), "{logged}");
-    }
-}
-
-/// Tests for the `wreq` wrapper, in a module of its own: the `emulated`-only builds
-/// (the titles plugin) reach it without the `http` feature that gates the module above.
-#[cfg(all(test, feature = "emulated"))]
-mod emulated_tests {
-    use zeta_test_support::{assert_redactions, refused_address};
-
-    #[tokio::test]
-    async fn emulated_request_errors_redact_the_uri_but_keep_the_cause() {
-        let address = refused_address();
-        let error = wreq::Client::builder()
-            .build()
-            .expect("wreq client")
-            .get(format!("http://{address}/?key=secret"))
-            .send()
-            .await
-            .expect_err("nothing listens on that address");
-
-        // Sanity: wreq attaches the request URI to the error — redacting it is on us.
-        assert!(error.uri().is_some(), "wreq attaches the request uri");
-
-        let error = crate::WreqError::from(error);
-        let full = error.full();
-
-        assert_redactions(&error.to_string(), full, &format!("{error:?}"), &address);
-
-        // `wreq` renders its first source itself; walking the chain again would print that
-        // link twice.
-        assert_eq!(full.matches("client error").count(), 1, "{full}");
-
-        assert!(std::error::Error::source(&error).is_none(), "{full}");
     }
 }

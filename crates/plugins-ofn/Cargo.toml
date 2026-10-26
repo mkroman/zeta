@@ -1,0 +1,28 @@
+[package]
+name = "plugins-ofn"
+version = "0.0.0"
+edition = "2024"
+description = "The ofn plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls"]
+native-tls = ["zeta-plugin/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
+
+[dependencies]
+argh.workspace = true
+num-format = "0.4.4"
+plugins-shared = { path = "../plugins-shared" }
+sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["database"] }
+zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils", features = ["chrono"] }
+
+[lints]
+workspace = true

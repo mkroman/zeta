@@ -22,6 +22,8 @@ pub trait Truncatable: AsRef<str> {
 
     /// Truncates the text so that it is at most `len` characters *including* `suffix`, which is
     /// appended when truncation happens.
+    ///
+    /// A suffix longer than `len` is kept whole, so the result can exceed `len` in that case.
     fn truncate_within(&self, len: usize, suffix: &str) -> String {
         let text = self.as_ref();
 
@@ -29,7 +31,8 @@ pub trait Truncatable: AsRef<str> {
             return text.to_string();
         }
 
-        let mut truncated: String = text.chars().take(len.saturating_sub(1)).collect();
+        let text_len = len.saturating_sub(suffix.chars().count());
+        let mut truncated: String = text.chars().take(text_len).collect();
         truncated.push_str(suffix);
         truncated
     }
@@ -151,13 +154,62 @@ pub fn quoted_string_literal(input: &str, quote: char) -> Option<(&str, &str)> {
     None
 }
 
+/// Joins `items` into a sentence: all but the last are separated by `", "`, and the last by
+/// `" and "`, e.g. `"rock, pop and jazz"`.
+///
+/// An empty slice yields an empty string.
+#[must_use]
+pub fn join_with_and<S: AsRef<str>>(items: &[S]) -> String {
+    let Some((last, rest)) = items.split_last() else {
+        return String::new();
+    };
+
+    let mut joined = String::new();
+
+    for (index, item) in rest.iter().enumerate() {
+        if index > 0 {
+            joined.push_str(", ");
+        }
+
+        joined.push_str(item.as_ref());
+    }
+
+    if !rest.is_empty() {
+        joined.push_str(" and ");
+    }
+
+    joined.push_str(last.as_ref());
+    joined
+}
+
+/// Formats `count` with `noun`, pluralized by a trailing `s` unless `count` is one — e.g.
+/// `"1 filter"` or `"3 filters"`.
+#[must_use]
+pub fn pluralize(count: usize, noun: &str) -> String {
+    let suffix = if count == 1 { "" } else { "s" };
+
+    format!("{count} {noun}{suffix}")
+}
+
 /// Collapses runs of whitespace in `value` into single spaces, trimming the result.
 ///
 /// Text assembled from web pages carries line breaks and repeated spaces that an IRC message
 /// cannot render: a line break terminates the message, and everything after it is lost.
 #[must_use]
 pub fn collapse_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut collapsed = String::with_capacity(value.len());
+    let mut first = true;
+
+    for word in value.split_whitespace() {
+        if !first {
+            collapsed.push(' ');
+        }
+
+        collapsed.push_str(word);
+        first = false;
+    }
+
+    collapsed
 }
 
 #[cfg(test)]
@@ -243,6 +295,12 @@ mod tests {
         assert_eq!(s.truncate_within(10, "…"), "this is a…");
         assert_eq!(s.truncate_within(30, "…"), "this is a very long string");
         assert_eq!("hæłlo".truncate_within(4, "…"), "hæł…");
+
+        // The suffix is budgeted by its character count, and an empty suffix truncates to
+        // exactly the requested length.
+        assert_eq!("hello".truncate_within(4, "..."), "h...");
+        assert_eq!("hello".truncate_within(3, ""), "hel");
+        assert_eq!("hello".truncate_within(5, ""), "hello");
     }
 
     #[test]
@@ -258,6 +316,22 @@ mod tests {
         assert!(matches!(s.truncate_with_suffix(250, "…"), Cow::Borrowed(_)));
         // should copy when truncating
         assert!(matches!(s.truncate_with_suffix(10, "…"), Cow::Owned(_)));
+    }
+
+    #[test]
+    fn joins_items_with_a_final_conjunction() {
+        assert_eq!(join_with_and::<&str>(&[]), "");
+        assert_eq!(join_with_and(&["a"]), "a");
+        assert_eq!(join_with_and(&["a", "b"]), "a and b");
+        assert_eq!(join_with_and(&["a", "b", "c"]), "a, b and c");
+        assert_eq!(join_with_and(&["a".to_owned(), "b".to_owned()]), "a and b");
+    }
+
+    #[test]
+    fn pluralizes_by_count() {
+        assert_eq!(pluralize(0, "filter"), "0 filters");
+        assert_eq!(pluralize(1, "filter"), "1 filter");
+        assert_eq!(pluralize(2, "filter"), "2 filters");
     }
 
     #[test]

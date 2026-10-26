@@ -1,0 +1,34 @@
+[package]
+name = "plugins-dendanskeordbog"
+version = "0.0.0"
+edition = "2024"
+description = "The dendanskeordbog plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls", "dendanskeordbog/rustls", "zeta-http/rustls"]
+native-tls = [
+    "zeta-plugin/native-tls",
+    "dendanskeordbog/native-tls",
+    "zeta-http/native-tls",
+]
+native-tls-vendored = [
+    "zeta-plugin/native-tls-vendored",
+    "dendanskeordbog/native-tls-vendored",
+    "zeta-http/native-tls-vendored",
+]
+
+[dependencies]
+dendanskeordbog = { path = "../dendanskeordbog", features = ["client", "log"] }
+serde.workspace = true
+zeta-http = { path = "../zeta-http", default-features = false, features = ["http"] }
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+
+[dev-dependencies]
+serde_json.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

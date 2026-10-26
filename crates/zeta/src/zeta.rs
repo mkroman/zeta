@@ -1,25 +1,48 @@
 //! The main process for communicating over IRC and managing state.
 use std::sync::Arc;
-use std::time::Duration;
 
 use irc::client::prelude::Client;
-use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::Error;
-use crate::Registry;
 use crate::config::Config;
-use crate::consts::SHUTDOWN_GRACE;
-use crate::plugin::dispatch::EventIndex;
-use crate::plugin::{Context, PluginTask};
-use zeta_plugin::Filters;
+use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE};
+use zeta_plugin::Context;
+use zeta_plugin_runtime::{PluginRuntime, Registry};
 
-/// Returns the name of the first shutdown signal received by the process.
+/// The signal that triggered a graceful shutdown.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShutdownSignal {
+    /// `SIGINT`, sent by `Ctrl-C`.
+    Interrupt,
+    /// `SIGTERM`, sent by a service manager or container orchestrator.
+    Terminate,
+}
+
+impl ShutdownSignal {
+    /// Returns the signal's conventional name, for logs.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Interrupt => "SIGINT",
+            Self::Terminate => "SIGTERM",
+        }
+    }
+
+    /// Returns the process exit code conventionally associated with the signal.
+    const fn exit_code(self) -> i32 {
+        match self {
+            Self::Interrupt => 130,
+            Self::Terminate => 143,
+        }
+    }
+}
+
+/// Returns the first shutdown signal received by the process.
 ///
 /// `SIGINT` (`Ctrl-C`) and, on unix, `SIGTERM` — e.g. sent by a container orchestrator deleting
 /// the pod — both trigger shutdown. The `SIGTERM` listener is best-effort: when it cannot be
 /// installed, only `SIGINT` triggers shutdown.
-async fn shutdown_signal() -> &'static str {
+async fn shutdown_signal() -> ShutdownSignal {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -30,8 +53,8 @@ async fn shutdown_signal() -> &'static str {
             tokio::pin!(sigterm);
 
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => return "SIGINT",
-                _ = &mut sigterm => return "SIGTERM",
+                _ = tokio::signal::ctrl_c() => return ShutdownSignal::Interrupt,
+                _ = &mut sigterm => return ShutdownSignal::Terminate,
             }
         }
     }
@@ -40,42 +63,7 @@ async fn shutdown_signal() -> &'static str {
         warn!("failed to install the SIGINT listener; shutting down anyway");
     }
 
-    "SIGINT"
-}
-
-/// Waits for the plugin tasks to drain their queued messages and run their shutdown hooks.
-///
-/// The tasks share a deadline `grace` seconds from now; any task still running when the deadline
-/// passes is aborted. The tasks are awaited concurrently, so a hanging task cannot consume the
-/// grace that is owed to the other plugins.
-async fn drain_plugin_handles(handles: Vec<(String, JoinHandle<()>)>, grace: Duration) {
-    let deadline = tokio::time::Instant::now() + grace;
-
-    let mut handles = handles;
-
-    let outcomes = futures::future::join_all(
-        handles
-            .iter_mut()
-            .map(|(_, handle)| async move { tokio::time::timeout_at(deadline, handle).await })
-            .collect::<Vec<_>>(),
-    )
-    .await;
-
-    for ((name, handle), outcome) in handles.into_iter().zip(outcomes) {
-        match outcome {
-            Ok(Ok(())) => {}
-            // The task was cancelled by its own runtime (or this function, below).
-            Ok(Err(error)) if error.is_cancelled() => {}
-            Ok(Err(error)) => {
-                warn!(plugin = %name, %error, "plugin task panicked while shutting down");
-            }
-            Err(_) => {
-                warn!(plugin = %name, "plugin task did not shut down in time; aborting");
-
-                handle.abort();
-            }
-        }
-    }
+    ShutdownSignal::Interrupt
 }
 
 /// Drives the client's outgoing sink independently of the dispatch loop.
@@ -107,9 +95,8 @@ fn drive_outgoing(client: &mut Client) {
 ///
 /// Returns any IRC protocol error that ends the stream.
 async fn dispatch_messages(
-    context: &Context,
     stream: &mut irc::client::ClientStream,
-    index: &mut EventIndex,
+    runtime: &mut PluginRuntime,
 ) -> Result<(), Error> {
     use futures::stream::StreamExt;
 
@@ -123,13 +110,7 @@ async fn dispatch_messages(
 
         debug!(payload = %message, "processing irc message");
 
-        let filters = Filters::from_context(context);
-
-        for stopped in index.dispatch(&filters, message) {
-            warn!(plugin = %stopped, "plugin task has stopped");
-
-            index.evict(&stopped);
-        }
+        runtime.dispatch(message);
     }
 
     Ok(())
@@ -140,16 +121,12 @@ async fn dispatch_messages(
 ///
 /// `send_quit` only queues the message on an unbounded channel, written to the socket by the
 /// task spawned by [`drive_outgoing`]; the stream has already ended, so nothing is read back.
-async fn flush_quit(client: &Client, quitting: bool, quit_message: &str) {
-    if !quitting {
-        return;
-    }
-
+async fn flush_quit(client: &Client, quit_message: &str) {
     if let Err(error) = client.send_quit(quit_message) {
         warn!(%error, "failed to send the QUIT message");
     }
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(QUIT_FLUSH_DELAY).await;
 }
 
 /// Exits the process immediately when a second shutdown signal arrives.
@@ -159,11 +136,13 @@ async fn flush_quit(client: &Client, quitting: bool, quit_message: &str) {
 fn exit_on_second_signal() {
     tokio::spawn(async move {
         let signal = shutdown_signal().await;
-        let code = if signal == "SIGTERM" { 143 } else { 130 };
 
-        warn!(signal = %signal, "received a second shutdown signal; exiting now");
+        warn!(
+            signal = signal.name(),
+            "received a second shutdown signal; exiting now"
+        );
 
-        std::process::exit(code);
+        std::process::exit(signal.exit_code());
     });
 }
 
@@ -238,7 +217,7 @@ impl Zeta {
     /// container orchestrator deletes the pod running the bot. On a signal, a `QUIT` with the
     /// configured message ([`IrcConfig::quit_message`]) is sent to the server, after which the
     /// plugin tasks drain their queued messages and run [`Plugin::shutdown`]. The plugin tasks
-    /// share a grace period of [`SHUTDOWN_GRACE`]; stragglers are aborted. A second signal during
+    /// share a grace period of `SHUTDOWN_GRACE`; stragglers are aborted. A second signal during
     /// the grace period exits the process immediately. The same drain runs when the IRC stream
     /// ends, or an error propagates.
     ///
@@ -273,13 +252,17 @@ impl Zeta {
 
         // Each plugin gets its own long-lived task with an unbounded mailbox, so a slow or
         // failing plugin cannot block the IRC connection or the other plugins.
-        let (mut index, plugins) = self.spawn_plugin_tasks(&client);
+        let mut runtime = PluginRuntime::start(
+            self.registry.take_plugins(),
+            Arc::clone(&self.context),
+            &client,
+        );
 
         // Dispatching incoming IRC messages as events to the plugins that registered interest,
         // until the stream ends or a shutdown signal arrives.
-        let dispatch = dispatch_messages(&self.context, &mut stream, &mut index);
+        let dispatch = dispatch_messages(&mut stream, &mut runtime);
 
-        let mut quitting = false;
+        let mut shutting_down = false;
         let mut dispatch_error = None;
 
         tokio::select! {
@@ -289,82 +272,34 @@ impl Zeta {
                 }
             }
             signal = shutdown_signal() => {
-                info!(signal = %signal, "shutting down");
-                quitting = true;
+                info!(signal = signal.name(), "shutting down");
+                shutting_down = true;
 
                 // Another signal during the grace period forces an immediate exit.
                 exit_on_second_signal();
             }
         }
 
-        // Dropping the index closes every plugin mailbox: the tasks drain their queued events
-        // and run `Plugin::shutdown`. The dispatch future only borrows the index, so ending the
-        // `select!` above does not drop it — without this the tasks sit out the grace period.
-        drop(index);
+        // Closing the plugin mailboxes makes the tasks drain their queued events and run
+        // `Plugin::shutdown`; awaiting the shutdown joins them within the grace period. The
+        // dispatch future only borrows the runtime, so ending the `select!` above does not
+        // close the mailboxes on its own.
+        let shutdown = runtime.shutdown(SHUTDOWN_GRACE);
 
-        flush_quit(&client, quitting, &quit_message).await;
-
-        let handles = plugins
-            .into_iter()
-            .map(PluginTask::into_handle)
-            .collect::<Vec<_>>();
-
-        drain_plugin_handles(handles, SHUTDOWN_GRACE).await;
-
-        dispatch_error.map_or_else(|| Ok(()), Err)
-    }
-
-    /// Spawns a long-lived task per registered plugin and indexes its subscriptions.
-    ///
-    /// Returns the dispatch index — which holds the mailboxes' sending ends, so dropping it
-    /// closes every mailbox at once, making the plugins drain and run their shutdown hooks —
-    /// together with the spawned tasks.
-    fn spawn_plugin_tasks(&mut self, client: &Arc<Client>) -> (EventIndex, Vec<PluginTask>) {
-        let mut index = EventIndex::default();
-        let mut plugins = Vec::new();
-
-        for registered in self.registry.take_plugins() {
-            let name = registered.name;
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-
-            plugins.push(PluginTask::spawn(
-                name.clone(),
-                registered.plugin,
-                Arc::clone(&self.context),
-                Arc::clone(client),
-                receiver,
-            ));
-            index.add(&name, &registered.subscriptions, sender);
+        if shutting_down {
+            // The QUIT is written while the plugins drain, so it does not delay their grace.
+            tokio::join!(flush_quit(&client, &quit_message), shutdown);
+        } else {
+            shutdown.await;
         }
 
-        (index, plugins)
+        dispatch_error.map_or_else(|| Ok(()), Err)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn drain_plugin_handles_aborts_stragglers() {
-        let finished = Arc::new(tokio::sync::Mutex::new(false));
-        let flag = Arc::clone(&finished);
-
-        let fast = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-
-            *flag.lock().await = true;
-        });
-        let hung = tokio::spawn(futures::future::pending::<()>());
-
-        drain_plugin_handles(
-            vec![("fast".to_string(), fast), ("hung".to_string(), hung)],
-            Duration::from_millis(200),
-        )
-        .await;
-
-        assert!(*finished.lock().await);
-    }
 
     #[cfg(unix)]
     #[tokio::test]
@@ -389,6 +324,6 @@ mod tests {
 
         let received = signal.await;
 
-        assert_eq!(received, "SIGTERM");
+        assert_eq!(received, ShutdownSignal::Terminate);
     }
 }

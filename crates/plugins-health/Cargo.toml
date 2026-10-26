@@ -1,0 +1,26 @@
+[package]
+name = "plugins-health"
+version = "0.0.0"
+edition = "2024"
+description = "The health plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = ["database"]
+database = ["zeta-plugin/database"]
+rustls = ["zeta-plugin/rustls"]
+native-tls = ["zeta-plugin/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
+
+[dependencies]
+memory-stats = "1.2.0"
+tokio.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+
+[dev-dependencies]
+wildmatch.workspace = true
+zeta-utils = { path = "../zeta-utils" }
+
+[lints]
+workspace = true

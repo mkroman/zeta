@@ -130,17 +130,15 @@ impl Gc {
         let relative = cp & ((1 << GC_SHIFT) - 1);
         let first = usize::from(*self.directory.get(page)?);
         let end = usize::from(*self.directory.get(page.checked_add(1)?)?);
-        let (mut low, mut high) = (first, end);
-        while low < high {
-            let middle = low + (high - low) / 2;
-            let start = u32::from(*self.records.get(middle)? >> GC_ID_BITS);
-            if start <= relative {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        let record = *self.records.get(low.checked_sub(1)?)?;
+        let index = self
+            .records
+            .get(first..end)?
+            .partition_point(|record| u32::from(*record >> GC_ID_BITS) <= relative);
+        // The run carrying into the page starts on an earlier page: when no record in the
+        // page's slice matches, the record before `first` is the one that does.
+        let record = *self
+            .records
+            .get(first.checked_add(index)?.checked_sub(1)?)?;
         let id = usize::from(record & GC_ID_MASK);
         if id == 0 || id > GC_SHORT_NAMES.len() {
             return None;

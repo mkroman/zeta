@@ -1,3 +1,5 @@
+//! Client for the Reddit API.
+
 use std::time::{Duration, Instant};
 
 use reqwest::StatusCode;
@@ -10,9 +12,13 @@ use serde_path_to_error::Error as ErrorWithSerdePath;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, trace};
 use url::Url;
+use zeta_url::RedactedUrl;
 
-use crate::{BASE_URL, HTTP_TIMEOUT, OAUTH_BASE_URL, TOKEN_URL, USER_AGENT};
-use crate::{Error, Item, Link, RequestError, Submission, Subreddit};
+use crate::urls::classify_reddit_com_url;
+use crate::{
+    BASE_URL, Error, HTTP_TIMEOUT, Item, LOGGED_BODY_LENGTH, Link, OAUTH_BASE_URL, RequestError,
+    Submission, Subreddit, TOKEN_URL, USER_AGENT,
+};
 
 /// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
 /// URL without its query, so a logged error never carries a credential from the query string.
@@ -215,7 +221,11 @@ impl Client {
                 let deserializer = &mut serde_json::Deserializer::from_str(&text);
 
                 serde_path_to_error::deserialize(deserializer)
-                    .inspect_err(|err| error!(?err, %text, "could not parse response"))
+                    .inspect_err(|err| {
+                        let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
+
+                        error!(?err, body = %body, "could not parse response");
+                    })
                     .map_err(on_parse)
             }
             Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
@@ -282,7 +292,7 @@ impl Client {
             .inspect_err(|error| debug!(%id, %error, "the video link did not redirect"))
             .map_err(|_| Error::VideoRedirect)?;
 
-        match crate::classify_reddit_com_url(&url) {
+        match classify_reddit_com_url(&url) {
             Some(Link::Submission { id, .. }) => self.submission(&id).await,
             _ => Err(Error::VideoRedirectsToNonSubmission),
         }
@@ -331,14 +341,17 @@ impl Client {
             .get_redirect_location(&format!("{BASE_URL}/r/{subreddit}/s/{id}"))
             .await?;
 
-        match crate::classify_reddit_com_url(&url) {
+        match classify_reddit_com_url(&url) {
             Some(x @ (Link::Comment { .. } | Link::Submission { .. })) => Ok(x),
             _ => Err(Error::RedirectRedditLink),
         }
     }
 
     async fn get_redirect_location(&self, url: &str) -> Result<Url, Error> {
-        debug!("fetching redirect location for url {url}");
+        debug!(
+            url.full = %RedactedUrl::from_unparsed(url),
+            "fetching redirect location"
+        );
         let request = self.client.head(url);
         let response = request
             .send()

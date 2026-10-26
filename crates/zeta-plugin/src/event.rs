@@ -158,6 +158,27 @@ pub enum Event {
     Raw(RawEvent),
 }
 
+impl Event {
+    /// Returns the flag-based kind of this event, or [`None`] for commands and URLs.
+    ///
+    /// Commands and URLs are subscribed to with payloads rather than a plain flag, so they have
+    /// no [`EventKind`].
+    #[must_use]
+    pub const fn kind(&self) -> Option<EventKind> {
+        match self {
+            Self::Command(_) | Self::Url(_) => None,
+            Self::Message(_) => Some(EventKind::Message),
+            Self::Join(_) => Some(EventKind::Join),
+            Self::Part(_) => Some(EventKind::Part),
+            Self::Quit(_) => Some(EventKind::Quit),
+            Self::Nick(_) => Some(EventKind::Nick),
+            Self::Kick(_) => Some(EventKind::Kick),
+            Self::Ctcp(_) => Some(EventKind::Ctcp),
+            Self::Raw(_) => Some(EventKind::Raw),
+        }
+    }
+}
+
 /// A registered command was invoked in a channel.
 ///
 /// The host matches the message against the [`CommandSpec`]s the plugin registered; the event
@@ -173,19 +194,21 @@ pub struct CommandEvent {
 
 impl CommandEvent {
     /// Creates a command event if `spec` matches the message's `PRIVMSG` text.
+    ///
+    /// Returns [`None`] when the message is not a `PRIVMSG` or its text does not match `spec`;
+    /// the host only builds command events for the messages it routes to plugins.
     #[must_use]
     pub fn new(message: Arc<Message>, spec: CommandSpec) -> Option<Self> {
-        let text = privmsg(&message).1;
-        let args = spec.parse(text)?;
-        // The parsed arguments are a suffix of the input, so their range is derivable from
-        // their length.
-        let start = text.len() - args.len();
-        let end = text.len();
+        let Command::PRIVMSG(_, text) = &message.command else {
+            return None;
+        };
+
+        let args = spec.parse_range(text)?;
 
         Some(Self {
             message,
             spec,
-            args: start..end,
+            args,
         })
     }
 
@@ -588,7 +611,8 @@ macro_rules! event_kind_flags {
     ($(
         $kind:ident($receive:ident, $kind_doc:literal, $receive_doc:literal $(,)?)
     ),* $(,)?) => {
-        /// The kind of an event a plugin subscribes to with a plain flag — one per per-kind handler.
+        /// The kind of an event a plugin subscribes to with a plain flag — one per kind-specific
+        /// handler.
         ///
         /// Commands and URLs are excluded: their subscriptions carry payloads ([`CommandSpec`],
         /// [`UrlScope`]) instead of a plain flag.
@@ -603,6 +627,26 @@ macro_rules! event_kind_flags {
         impl EventKind {
             /// Every kind, in declaration order.
             pub const ALL: &'static [Self] = &[$(Self::$kind,)*];
+
+            /// Builds the event of this kind from `message`, or [`None`] when the message does
+            /// not carry one (a `NOTICE` that is not a CTCP message).
+            ///
+            /// The caller is responsible for passing a message of the matching IRC command;
+            /// building a `Message` event from a `JOIN` message, for example, produces an event
+            /// whose accessors panic.
+            #[must_use]
+            pub fn event(self, message: Arc<Message>) -> Option<Event> {
+                match self {
+                    Self::Message => Some(Event::Message(MessageEvent::new(message))),
+                    Self::Join => Some(Event::Join(JoinEvent::new(message))),
+                    Self::Part => Some(Event::Part(PartEvent::new(message))),
+                    Self::Quit => Some(Event::Quit(QuitEvent::new(message))),
+                    Self::Nick => Some(Event::Nick(NickEvent::new(message))),
+                    Self::Kick => Some(Event::Kick(KickEvent::new(message))),
+                    Self::Ctcp => CtcpEvent::new(message).map(Event::Ctcp),
+                    Self::Raw => Some(Event::Raw(RawEvent::new(message))),
+                }
+            }
         }
 
         impl Subscriptions {
@@ -778,6 +822,16 @@ mod tests {
         assert!(
             CommandEvent::new(message, CommandSpec::new(".dig", "dig")).is_none(),
             "`.digg` must not match `.dig`"
+        );
+    }
+
+    #[test]
+    fn command_event_rejects_messages_that_are_not_privmsgs() {
+        let message = message("nick!user@host", "JOIN", &["#test"]);
+
+        assert!(
+            CommandEvent::new(message, CommandSpec::new(".dig", "dig")).is_none(),
+            "a JOIN cannot carry a command invocation"
         );
     }
 

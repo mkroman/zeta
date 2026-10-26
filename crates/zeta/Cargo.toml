@@ -8,7 +8,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/mkroman/zeta"
 
 [package.metadata.cargo-machete]
-ignored = ["humantime-serde"]
+# `zeta-http` is referenced from the feature table only: the crate forwards the TLS and
+# transport features its plugins enable, without naming any of its items in the host.
+ignored = ["humantime-serde", "zeta-http"]
 
 [lib]
 crate-type = ["lib"]
@@ -21,7 +23,7 @@ path = "src/main.rs"
 default = ["plugins/all", "rustls", "database", "mirror"]
 # Database-backed plugins: the context carries a connection pool, and the host connects to the
 # database and applies the plugins' migrations at startup.
-database = ["dep:sqlx", "zeta-plugin/database"]
+database = ["dep:sqlx", "zeta-plugin/database", "zeta-plugin-runtime/database"]
 # Plain reqwest HTTP wrappers (forwarded to zeta-http; plugins enable it per plugin).
 http = ["zeta-http/http"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
@@ -77,12 +79,10 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-opentelemetry = { version = "0.34.0", default-features = false }
 tracing-subscriber.workspace = true
-zeta-cache = { path = "../zeta-cache" }
 zeta-http = { path = "../zeta-http", default-features = false }
 zeta-mirror = { path = "../zeta-mirror", optional = true }
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
-zeta-url = { path = "../zeta-url" }
-zeta-utils = { path = "../zeta-utils" }
+zeta-plugin-runtime = { path = "../zeta-plugin-runtime" }
 
 [dev-dependencies]
 url.workspace = true

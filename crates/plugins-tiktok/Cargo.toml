@@ -1,0 +1,37 @@
+[package]
+name = "plugins-tiktok"
+version = "0.0.0"
+edition = "2024"
+description = "The tiktok plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls", "reqwest/rustls", "zeta-http/rustls"]
+native-tls = ["zeta-plugin/native-tls", "reqwest/native-tls", "zeta-http/native-tls"]
+native-tls-vendored = [
+    "zeta-plugin/native-tls-vendored",
+    "reqwest/native-tls-vendored",
+    "zeta-http/native-tls-vendored",
+]
+
+[dependencies]
+plugins-shared = { path = "../plugins-shared", features = ["mirror"] }
+reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"] }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+zeta-http = { path = "../zeta-http", default-features = false, features = ["http"] }
+zeta-mirror = { path = "../zeta-mirror" }
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+serde_json.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

@@ -7,12 +7,11 @@ use figment::{
 use miette::IntoDiagnostic;
 
 mod cli;
-mod tracing;
+mod telemetry;
 
 #[cfg(feature = "database")]
 use zeta::database;
 use zeta::{Config, Zeta};
-pub use zeta::{Error, config};
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
@@ -31,18 +30,18 @@ async fn main() -> miette::Result<()> {
         .extract()
         .into_diagnostic()?;
 
-    tracing::try_init(&config.tracing)?;
+    telemetry::try_init(&config.tracing)?;
 
     #[cfg(feature = "database")]
     let db = {
-        use ::tracing::debug;
+        use tracing::debug;
 
         debug!("connecting to database");
-        let db = database::connect(config.database.url.as_str(), &config.database).await?;
+        let db = database::connect(&config.database).await?;
         debug!("connected to database");
 
         debug!("running database migrations");
-        database::migrate(db.clone()).await?;
+        database::migrate(&db).await?;
         debug!("database migrations complete");
         db
     };

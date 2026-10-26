@@ -9,21 +9,23 @@ use sqlx::postgres::PgPoolOptions;
 use crate::Error;
 
 /// Database connection pool.
-pub type Database = sqlx::PgPool;
+pub use zeta_plugin::database::Database;
 
 /// The plugins' database migrations, applied at startup.
 static MIGRATOR: Migrator = sqlx::migrate!("../plugins/migrations");
 
-/// Connects to the database using the provided url and configuration.
+/// Connects to the database using `config`'s url and pool bounds.
 ///
 /// # Errors
 ///
 /// If unable to establish connection to the database, `Err(Error::OpenDatabase)` is returned.
-pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Database, Error> {
+pub async fn connect(config: &crate::config::DbConfig) -> Result<Database, Error> {
     let pool = PgPoolOptions::new()
+        .min_connections(config.min_connections)
         .max_connections(config.max_connections)
         .idle_timeout(config.idle_timeout)
-        .connect(url)
+        .max_lifetime(config.max_lifetime)
+        .connect(&config.url)
         .await
         .map_err(Error::OpenDatabase)?;
 
@@ -34,11 +36,10 @@ pub async fn connect(url: &str, config: &crate::config::DbConfig) -> Result<Data
 ///
 /// # Errors
 ///
-/// If a connection cannot be acquired from the connection pool, `Error::AcquireDatabaseConnection`
-/// is returned.
+/// If a connection cannot be acquired from the connection pool, `Error::DatabasePool` is returned.
 ///
 /// If an error occurs during migration, `Error::DatabaseMigration` is returned.
-pub async fn migrate(pool: Database) -> Result<(), Error> {
+pub async fn migrate(pool: &Database) -> Result<(), Error> {
     let mut conn = pool.acquire().await.map_err(Error::DatabasePool)?;
 
     MIGRATOR

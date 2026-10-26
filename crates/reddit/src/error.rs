@@ -1,12 +1,14 @@
+//! Error types for the Reddit client.
+
 use std::error::Error as StdError;
 use std::fmt;
 use std::fmt::Write as _;
 use std::str::Utf8Error;
 
-use reqwest::header::ToStrError;
 use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
 use url::ParseError;
+use zeta_url::RedactedUrl;
 
 /// A `reqwest::Error` whose URL has been redacted and whose message is rendered once.
 ///
@@ -25,8 +27,8 @@ pub struct RequestError {
     kind: String,
     /// [`kind`] with the source chain and the redacted URL appended — what a log line gets.
     detail: String,
-    /// The request URL without its query string or userinfo.
-    url: Option<String>,
+    /// The request URL without its query string, fragment, or userinfo.
+    url: Option<RedactedUrl>,
     /// The host the request went to, for the short rendering.
     host: Option<String>,
     /// Whether the request timed out.
@@ -36,10 +38,11 @@ pub struct RequestError {
 }
 
 impl RequestError {
-    /// Returns the request URL without its query string or userinfo, if the error carries one.
+    /// Returns the request URL without its query string, fragment, or userinfo, if the error
+    /// carries one.
     #[must_use]
     pub fn url(&self) -> Option<&str> {
-        self.url.as_deref()
+        self.url.as_ref().map(RedactedUrl::as_str)
     }
 
     /// Returns the full rendering — error kind, source chain and redacted URL — for a log line,
@@ -60,7 +63,7 @@ impl RequestError {
 
 impl From<reqwest::Error> for RequestError {
     fn from(error: reqwest::Error) -> Self {
-        let url = error.url().map(redact_url);
+        let url = error.url().map(RedactedUrl::from_url);
         let host = error
             .url()
             .and_then(|url| url.host_str().map(str::to_string));
@@ -69,7 +72,7 @@ impl From<reqwest::Error> for RequestError {
 
         let error = error.without_url();
         let kind = error.to_string();
-        let detail = detail(&kind, &error, url.as_deref());
+        let detail = detail(&kind, &error, url.as_ref().map(RedactedUrl::as_str));
 
         Self {
             kind,
@@ -99,8 +102,6 @@ impl fmt::Display for RequestError {
 }
 
 impl StdError for RequestError {}
-
-use zeta_url::redact_url;
 
 /// Renders the message a log line gets: `kind`, its source chain and its redacted URL.
 ///
@@ -150,9 +151,6 @@ pub enum Error {
     /// A request could not be sent, or its body could not be read.
     #[error("request error: {0}")]
     Reqwest(#[source] RequestError),
-    /// The comments listing could not be parsed.
-    #[error("could not deserialize comments json: {0}")]
-    DeserializeComments(#[source] ErrorWithSerdePath<JsonError>),
     /// The submission response could not be parsed.
     #[error("could not deserialize submission json: {0}")]
     DeserializeSubmission(#[source] ErrorWithSerdePath<JsonError>),
@@ -171,12 +169,6 @@ pub enum Error {
     /// The response body is in an unexpected format.
     #[error("could not deserialize response as it is in unexpected format")]
     InvalidResponse,
-    /// The shortened link did not return a usable redirect url.
-    #[error("the shortened link did not return a usable redirect url")]
-    InvalidRedirect,
-    /// The redirect url uses an invalid encoding.
-    #[error("the response redirect url is using an invalid encoding: {0}")]
-    RedirectUrlEncoding(#[source] ToStrError),
     /// The short link did not redirect to a submission or comment.
     #[error("expected the short link to redirect to a submission or comment")]
     RedirectRedditLink,

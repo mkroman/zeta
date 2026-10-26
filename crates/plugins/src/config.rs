@@ -4,73 +4,16 @@
 //! `[plugins.<name>]` section is resolved by name instead of through a typed field per plugin:
 //! [`PluginsConfig`] keeps each section's raw settings next to the host-managed `enabled`
 //! toggle; the plugin's settings type is validated when the configuration is loaded (even when
-//! the plugin is disabled) and deserialized again when the plugin is constructed.
-//! [`PluginConfig`] is the typed view of one section.
+//! the plugin is disabled) and deserialized again when the plugin is constructed. Unrecognized
+//! settings keys are collected rather than logged here, so the host can report them once its
+//! logging is initialized.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use figment::value::{Dict, Value};
-use serde::de::{DeserializeOwned, Error as _};
+use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use zeta_plugin::inventory;
-
-/// An individual plugin's typed configuration: its `[plugins.<name>]` section.
-///
-/// Returned by [`PluginsConfig::config`] for the plugin's settings type. The `enabled` key is
-/// managed by the host; a section that omits it inherits the global `enabled_by_default` under
-/// `[plugins]` (`true` when that is omitted too). Every other key belongs to the plugin's
-/// settings type. Unknown settings keys are ignored, collected in
-/// [`PluginConfig::unknown_keys`] and warned about by the host: a config that names a setting
-/// removed by a newer release must keep working, so rejection is too harsh.
-#[derive(Clone, Debug, Serialize)]
-pub struct PluginConfig<S> {
-    /// Enable the plugin.
-    pub enabled: bool,
-    /// The plugin's typed settings.
-    ///
-    /// Flattened so serialization round-trips with the custom [`Deserialize`] implementation
-    /// below, which reads settings keys at the section level.
-    #[serde(flatten)]
-    pub settings: S,
-    /// Keys in the plugin's configuration section that the settings type did not recognize.
-    ///
-    /// Populated during deserialization — a typo'd key, or a setting that no longer exists.
-    /// The host logs each one as a warning. Skipped by serialization, so round-trips only
-    /// carry `enabled` and the settings themselves.
-    #[serde(skip)]
-    pub unknown_keys: Vec<String>,
-}
-
-impl<S> PluginConfig<S>
-where
-    S: DeserializeOwned,
-{
-    /// Deserializes a plugin section, resolving an omitted `enabled` key to `default_enabled`.
-    ///
-    /// The [`Deserialize`] implementation calls this with `true`, the standalone default.
-    pub(crate) fn deserialize_with_default<'de, D>(
-        deserializer: D,
-        default_enabled: bool,
-    ) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        // A custom implementation instead of `#[serde(flatten)]`, which would silently swallow
-        // unknown keys: `serde_ignored` reports every key the settings type ignores so the
-        // host can warn about a typo, or a setting removed by this version.
-        let section = Dict::deserialize(deserializer)?;
-        let (enabled, settings) =
-            split_enabled(section, default_enabled).map_err(D::Error::custom)?;
-        let (settings, unknown_keys) = settings_with_unknown_keys(&settings)
-            .map_err(|error| D::Error::custom(format!("invalid settings: {error}")))?;
-
-        Ok(Self {
-            enabled,
-            settings,
-            unknown_keys,
-        })
-    }
-}
 
 /// Splits one raw section into its resolved `enabled` toggle and its settings.
 fn split_enabled(
@@ -87,44 +30,6 @@ fn split_enabled(
     };
 
     Ok((enabled, Value::from(section)))
-}
-
-/// Deserializes settings, collecting the keys the settings type did not recognize.
-fn settings_with_unknown_keys<S>(settings: &Value) -> Result<(S, Vec<String>), Box<figment::Error>>
-where
-    S: DeserializeOwned,
-{
-    let mut unknown_keys = Vec::new();
-    let settings = serde_ignored::deserialize(settings, |path| {
-        unknown_keys.push(path.to_string());
-    })
-    .map_err(Box::new)?;
-
-    Ok((settings, unknown_keys))
-}
-
-impl<'de, S> Deserialize<'de> for PluginConfig<S>
-where
-    S: DeserializeOwned,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::deserialize_with_default(deserializer, true)
-    }
-}
-
-/// The standalone default: the plugin is enabled, as a section omitted under the global
-/// default (`enabled_by_default = true`) would be.
-impl<S: Default> Default for PluginConfig<S> {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            settings: S::default(),
-            unknown_keys: Vec::new(),
-        }
-    }
 }
 
 /// One raw `[plugins.<name>]` section.
@@ -171,8 +76,8 @@ impl PluginSection {
 ///
 /// A section that is omitted entirely follows the global [`PluginsConfig::enabled_by_default`]
 /// and gives the plugin its default settings. The `enabled` key is managed by the host; every
-/// other key belongs to the plugin's settings type, deserialized through
-/// [`PluginsConfig::config`] or, at startup, by the plugin's registration.
+/// other key belongs to the plugin's settings type, deserialized by the plugin's registration
+/// when it is constructed.
 #[derive(Clone, Debug, Serialize)]
 pub struct PluginsConfig {
     /// Whether a plugin that does not set `enabled` explicitly — or has no section at all — is
@@ -198,39 +103,12 @@ pub struct PluginsConfig {
     /// [`PluginsConfig::sections`].
     #[serde(skip)]
     pub unknown: BTreeSet<String>,
-}
-
-impl PluginsConfig {
-    /// Returns the typed configuration of the plugin named `name`.
+    /// Settings keys that no plugin's settings type recognized, as `(plugin, key)` pairs.
     ///
-    /// `name` is the plugin's [`Plugin::NAME`](zeta_plugin::Plugin::NAME), which is also its
-    /// module name and its section key. A section that is absent from the configuration follows
-    /// [`PluginsConfig::enabled_by_default`] and gives the plugin its default settings.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the section's settings do not deserialize into `S` — a malformed
-    /// value, or a settings type that does not match the configuration.
-    pub fn config<S>(&self, name: &str) -> Result<PluginConfig<S>, Box<figment::Error>>
-    where
-        S: Default + DeserializeOwned,
-    {
-        let Some(section) = self.sections.get(name) else {
-            return Ok(PluginConfig {
-                enabled: self.enabled_by_default,
-                settings: S::default(),
-                unknown_keys: Vec::new(),
-            });
-        };
-
-        let (settings, unknown_keys) = settings_with_unknown_keys(&section.settings)?;
-
-        Ok(PluginConfig {
-            enabled: section.enabled,
-            settings,
-            unknown_keys,
-        })
-    }
+    /// Collected during deserialization so the host can report them once its logging is
+    /// initialized, including for plugins that are disabled. Not part of the serialized shape.
+    #[serde(skip)]
+    pub unknown_setting_keys: Vec<(String, String)>,
 }
 
 impl Default for PluginsConfig {
@@ -239,6 +117,7 @@ impl Default for PluginsConfig {
             enabled_by_default: true,
             sections: BTreeMap::new(),
             unknown: BTreeSet::new(),
+            unknown_setting_keys: Vec::new(),
         }
     }
 }
@@ -248,8 +127,6 @@ impl<'de> Deserialize<'de> for PluginsConfig {
     where
         D: Deserializer<'de>,
     {
-        use serde::de::Error as _;
-
         let mut values = BTreeMap::<String, Value>::deserialize(deserializer)?;
 
         // The global opt-in/opt-out toggle is pulled out first so it is not reported as an
@@ -270,6 +147,7 @@ impl<'de> Deserialize<'de> for PluginsConfig {
 
         let mut sections = BTreeMap::new();
         let mut unknown = BTreeSet::new();
+        let mut unknown_setting_keys = Vec::new();
 
         for (name, value) in values {
             let section = PluginSection::parse(&value, enabled_by_default).map_err(|error| {
@@ -277,12 +155,15 @@ impl<'de> Deserialize<'de> for PluginsConfig {
             })?;
 
             if let Some(registration) = registrations.get(name.as_str()) {
-                registration
+                let unknown_keys = registration
                     .validate_settings(Some(&section.settings))
                     .map_err(D::Error::custom)?;
+
+                unknown_setting_keys
+                    .extend(unknown_keys.into_iter().map(|key| (name.clone(), key)));
             } else if is_unknown_section(&name) {
-                // A bundled plugin that was compiled out is not a typo; its section is simply
-                // not consumed in this build.
+                // The section names no bundled plugin at all, so it is a likely typo. A bundled
+                // plugin compiled out of this build is known and stays out of `unknown`.
                 unknown.insert(name.clone());
             }
 
@@ -293,6 +174,7 @@ impl<'de> Deserialize<'de> for PluginsConfig {
             enabled_by_default,
             sections,
             unknown,
+            unknown_setting_keys,
         })
     }
 }
@@ -315,11 +197,11 @@ mod tests {
 
     use super::*;
     use crate::PluginsConfig;
+    #[cfg(feature = "dig")]
+    use serde::de::DeserializeOwned;
 
     #[cfg(feature = "dig")]
     use std::net::IpAddr;
-
-    use zeta_plugin::NoSettings;
 
     #[cfg(feature = "dig")]
     use zeta_test_support::assert_empty;
@@ -349,6 +231,30 @@ channels = []
             .map_err(Box::new)
     }
 
+    /// Returns whether the plugin named `name` is enabled, resolving an omitted section against
+    /// the global default.
+    fn enabled(plugins: &PluginsConfig, name: &str) -> bool {
+        plugins
+            .sections
+            .get(name)
+            .map_or(plugins.enabled_by_default, |section| section.enabled)
+    }
+
+    /// Deserializes the settings of the plugin named `name`, or its defaults when the section is
+    /// omitted.
+    #[cfg(feature = "dig")]
+    fn settings<S: Default + DeserializeOwned>(plugins: &PluginsConfig, name: &str) -> S {
+        plugins
+            .sections
+            .get(name)
+            .map_or_else(S::default, |section| {
+                section
+                    .settings
+                    .deserialize()
+                    .expect("plugin settings should deserialize")
+            })
+    }
+
     #[cfg(feature = "dig")]
     #[test]
     fn parses_plugin_sections() {
@@ -364,22 +270,17 @@ enabled = false
         )
         .expect("could not parse configuration");
 
-        let dig = plugins
-            .config::<crate::dig::Settings>("dig")
-            .expect("dig settings should deserialize");
-        assert!(dig.enabled);
+        let dig = settings::<plugins_dig::Settings>(&plugins, "dig");
+        assert!(enabled(&plugins, "dig"));
         assert_eq!(
-            dig.settings.nameservers,
+            dig.nameservers,
             vec![
                 IpAddr::from([1, 1, 1, 1]),
                 IpAddr::from([0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111]),
             ]
         );
 
-        let health = plugins
-            .config::<NoSettings>("health")
-            .expect("health settings should deserialize");
-        assert!(!health.enabled);
+        assert!(!enabled(&plugins, "health"));
         assert_empty!(plugins.unknown);
     }
 
@@ -390,19 +291,12 @@ enabled = false
 
         assert!(plugins.enabled_by_default);
 
-        let dig = plugins
-            .config::<crate::dig::Settings>("dig")
-            .expect("dig settings should deserialize");
-        assert!(dig.enabled);
         assert_eq!(
-            dig.settings.nameservers,
-            crate::dig::Settings::default().nameservers
+            settings::<plugins_dig::Settings>(&plugins, "dig").nameservers,
+            plugins_dig::Settings::default().nameservers
         );
-
-        let health = plugins
-            .config::<NoSettings>("health")
-            .expect("health settings should deserialize");
-        assert!(health.enabled);
+        assert!(enabled(&plugins, "dig"));
+        assert!(enabled(&plugins, "health"));
     }
 
     #[test]
@@ -411,10 +305,7 @@ enabled = false
 
         assert!(plugins.enabled_by_default);
 
-        let health = plugins
-            .config::<NoSettings>("health")
-            .expect("health settings should deserialize");
-        assert!(health.enabled);
+        assert!(enabled(&plugins, "health"));
     }
 
     #[cfg(feature = "dig")]
@@ -434,18 +325,8 @@ enabled = true
         assert!(!plugins.enabled_by_default);
         // `dig` opted itself in with an explicit toggle; `health` has no section at all and
         // follows the global default.
-        assert!(
-            plugins
-                .config::<crate::dig::Settings>("dig")
-                .expect("dig settings should deserialize")
-                .enabled
-        );
-        assert!(
-            !plugins
-                .config::<NoSettings>("health")
-                .expect("health settings should deserialize")
-                .enabled
-        );
+        assert!(enabled(&plugins, "dig"));
+        assert!(!enabled(&plugins, "health"));
         // The global toggle itself is not reported as an unknown section.
         assert_empty!(plugins.unknown);
     }
@@ -464,12 +345,7 @@ enabled = false
         .expect("could not parse configuration");
 
         assert!(plugins.enabled_by_default);
-        assert!(
-            !plugins
-                .config::<NoSettings>("health")
-                .expect("health settings should deserialize")
-                .enabled
-        );
+        assert!(!enabled(&plugins, "health"));
     }
 
     #[test]
@@ -542,24 +418,6 @@ enabled = false
         assert!(error.to_string().contains("dig"), "{error}");
     }
 
-    #[cfg(feature = "dig")]
-    #[test]
-    fn plugin_config_round_trips() {
-        let plugins = extract("[plugins.dig]\nnameservers = [\"1.1.1.1\"]\n")
-            .expect("could not parse configuration");
-        let dig = plugins
-            .config::<crate::dig::Settings>("dig")
-            .expect("dig settings should deserialize");
-
-        let json = serde_json::to_value(&dig).expect("could not serialize");
-        assert_eq!(json["enabled"], serde_json::json!(true));
-        assert_eq!(json["nameservers"], serde_json::json!(["1.1.1.1"]));
-
-        let round_tripped: PluginConfig<crate::dig::Settings> =
-            serde_json::from_value(json).expect("could not deserialize");
-        assert_eq!(round_tripped.settings.nameservers, dig.settings.nameservers);
-    }
-
     #[test]
     fn plugins_config_round_trips() {
         let plugins = extract("[plugins.dig]\nnameservers = [\"1.1.1.1\"]\n")
@@ -587,14 +445,16 @@ enabled = false
     fn unknown_settings_keys_are_ignored() {
         let plugins = extract("[plugins.dig]\nnameserverss = [\"1.1.1.1\"]\n")
             .expect("unknown settings keys should be ignored");
-        let dig = plugins
-            .config::<crate::dig::Settings>("dig")
-            .expect("dig settings should deserialize");
+        let dig = settings::<plugins_dig::Settings>(&plugins, "dig");
 
-        assert_eq!(dig.unknown_keys, ["nameserverss"]);
+        // The typo is ignored; the recognized settings keep their defaults.
         assert_eq!(
-            dig.settings.nameservers,
-            crate::dig::Settings::default().nameservers
+            dig.nameservers,
+            plugins_dig::Settings::default().nameservers
+        );
+        assert_eq!(
+            plugins.unknown_setting_keys,
+            [("dig".to_owned(), "nameserverss".to_owned())]
         );
     }
 
@@ -602,11 +462,8 @@ enabled = false
     fn unknown_settings_keys_are_ignored_for_plugins_without_settings() {
         let plugins = extract("[plugins.health]\nenabled = true\nwhatever = 1\n")
             .expect("unknown settings keys should be ignored");
-        let health = plugins
-            .config::<NoSettings>("health")
-            .expect("health settings should deserialize");
 
-        assert_eq!(health.unknown_keys, ["whatever"]);
+        assert!(enabled(&plugins, "health"));
     }
 
     #[test]
@@ -630,17 +487,10 @@ enabled = false
             .extract::<PluginsConfig>()
             .expect("the repository config.toml should parse");
 
-        let health = config
-            .config::<NoSettings>("health")
-            .expect("health settings should deserialize");
-        assert!(health.enabled);
+        assert!(enabled(&config, "health"));
         assert!(config.enabled_by_default);
-
-        let dig = config
-            .config::<crate::dig::Settings>("dig")
-            .expect("dig settings should deserialize");
         assert_eq!(
-            dig.settings.nameservers,
+            settings::<plugins_dig::Settings>(&config, "dig").nameservers,
             vec![
                 IpAddr::from([1, 1, 1, 1]),
                 IpAddr::from([1, 0, 0, 1]),
@@ -649,6 +499,7 @@ enabled = false
             ]
         );
         assert_empty!(config.unknown);
+        assert_empty!(config.unknown_setting_keys);
     }
 
     #[cfg(feature = "dig")]
@@ -661,18 +512,8 @@ enabled = false
             .expect("configuration without a [plugins] section should parse");
 
         assert!(config.enabled_by_default);
-        assert!(
-            config
-                .config::<crate::dig::Settings>("dig")
-                .expect("dig settings should deserialize")
-                .enabled
-        );
-        assert!(
-            config
-                .config::<NoSettings>("health")
-                .expect("health settings should deserialize")
-                .enabled
-        );
+        assert!(enabled(&config, "dig"));
+        assert!(enabled(&config, "health"));
         assert_empty!(config.unknown);
     }
 }

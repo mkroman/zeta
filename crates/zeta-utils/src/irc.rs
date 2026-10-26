@@ -1,7 +1,56 @@
-//! Helpers for IRC message formatting, addressing, and line budgets.
+//! Helpers for IRC reply formatting, addressing, and line budgets.
+//!
+//! Plugin replies follow a common visual convention: a teal `>` marker (mIRC color 10), an
+//! optional bold plugin name, and the message body with values emphasized by switching between
+//! the reply color and the default color. The helpers here produce those byte sequences so the
+//! exact escape codes are written down in one place.
 
+use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
+
+use crate::text::collapse_whitespace;
+
+/// The teal color (mIRC color 10) used for plugin replies.
+pub const COLOR: &str = "\x0310";
+
+/// Resets bold, color, and any other text formatting back to the default.
+pub const RESET: &str = "\x0f";
+
+/// Starts bold text.
+pub const BOLD: &str = "\x02";
+
+/// The prefix shared by every reply format, bold name or not.
+pub const REPLY_PREFIX: &str = "\x0310>";
+
+/// The complete prefix [`notice`] writes before a message, including its separating space.
+///
+/// Callers that budget a reply in bytes can subtract this instead of re-deriving the format.
+pub const NOTICE_PREFIX: &str = "\x0310> ";
+
+/// Formats `message` as a reply from the plugin named `name`.
+///
+/// The reply starts with [`REPLY_PREFIX`], followed by the bold plugin name, e.g.
+/// `> Twitch: <message>`.
+#[must_use]
+pub fn reply(name: &str, message: impl fmt::Display) -> String {
+    format!("{}{}", reply_prefix(name), message)
+}
+
+/// Returns the bold-name prefix that [`reply`] starts its replies with.
+///
+/// Unlike [`reply`], the prefix can be written to an incrementally built message, e.g. from a
+/// `Display` implementation.
+#[must_use]
+pub fn reply_prefix(name: &str) -> String {
+    format!("{REPLY_PREFIX}{RESET}{BOLD} {name}:{BOLD}{COLOR} ")
+}
+
+/// Formats `message` as a plain reply without a plugin name.
+#[must_use]
+pub fn notice(message: impl fmt::Display) -> String {
+    format!("{NOTICE_PREFIX}{message}")
+}
 
 /// Strips a nickname mention (`<nick>, ...` or `<nick>: ...`) from the start of `s`.
 ///
@@ -24,13 +73,11 @@ pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'
 /// Text that is echoed back to a channel must be stripped before it is formatted or replied
 /// with: a line break would terminate the message, and formatting bytes would restyle it.
 /// [`strip_formatting`] consumes the parameters that belong to a formatting code, so a color
-/// code cannot leak its digits into the visible text.
+/// code cannot leak its digits into the visible text. For text that may carry line breaks and
+/// other whitespace, [`sanitize_external`] is the single-line variant.
 #[must_use]
 pub fn strip_control_chars(text: &str) -> String {
-    strip_formatting(text)
-        .chars()
-        .filter(|character| !character.is_control())
-        .collect()
+    strip_formatting_where(text, |character| !character.is_control())
 }
 
 /// Removes the IRC formatting characters from `text`, leaving the visible characters.
@@ -43,9 +90,37 @@ pub fn strip_control_chars(text: &str) -> String {
 ///
 /// Unlike [`strip_control_chars`], this leaves non-formatting control characters such as line
 /// breaks alone. Callers that echo untrusted text into a single IRC line want
-/// [`strip_control_chars`] instead.
+/// [`sanitize_external`] instead.
 #[must_use]
 pub fn strip_formatting(text: &str) -> String {
+    strip_formatting_where(text, |_| true)
+}
+
+/// Cleans text from an external source for a single IRC line.
+///
+/// Formatting codes are removed, remaining control characters — including line breaks — become
+/// spaces, and runs of whitespace are collapsed. This is the form callers want before echoing a
+/// page title, an API description, or any other text they do not control: a line break would
+/// terminate the IRC message, and formatting codes would restyle the rest of the reply.
+#[must_use]
+pub fn sanitize_external(text: &str) -> String {
+    let text: String = strip_formatting(text)
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+
+    collapse_whitespace(&text)
+}
+
+/// The shared implementation of [`strip_control_chars`] and [`strip_formatting`]: formatting
+/// codes are consumed, and the remaining characters are kept only when `keep` returns `true`.
+fn strip_formatting_where(text: &str, keep: impl Fn(char) -> bool) -> String {
     let mut visible = String::with_capacity(text.len());
     let mut characters = text.chars().peekable();
 
@@ -56,7 +131,8 @@ pub fn strip_formatting(text: &str) -> String {
             // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
             // underline) and the reset code.
             '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
-            character => visible.push(character),
+            character if keep(character) => visible.push(character),
+            _ => {}
         }
     }
 
@@ -143,10 +219,10 @@ pub const MAX_LISTING_LENGTH: usize = 400;
 /// Returns the number of entries appended.
 ///
 /// Callers that trail a fixed `suffix` after the listing pass its length as `reserved` and
-/// append it themselves.
-pub fn append_entries_within_budget(
+/// append it themselves. Entries may be owned or borrowed strings.
+pub fn append_entries_within_budget<S: AsRef<str>>(
     message: &mut String,
-    entries: impl IntoIterator<Item = String>,
+    entries: impl IntoIterator<Item = S>,
     separator: &str,
     budget: usize,
     reserved: usize,
@@ -155,6 +231,7 @@ pub fn append_entries_within_budget(
     let mut first = true;
 
     for entry in entries {
+        let entry = entry.as_ref();
         let prefix = if first { "" } else { separator };
 
         if !first && message.len() + prefix.len() + entry.len() + reserved > budget {
@@ -162,9 +239,34 @@ pub fn append_entries_within_budget(
         }
 
         message.push_str(prefix);
-        message.push_str(&entry);
+        message.push_str(entry);
         first = false;
         appended += 1;
+    }
+
+    appended
+}
+
+/// Appends `entries` to `message` like [`append_entries_within_budget`], adding the suffix
+/// produced by `more` when not every entry fits.
+///
+/// `total` is the number of entries before budgeting, and `more` receives the number that were
+/// left out. `reserved` must already include room for the suffix, as with
+/// [`append_entries_within_budget`]. Returns the number of entries appended.
+pub fn append_entries_with_more<S: AsRef<str>>(
+    message: &mut String,
+    entries: impl IntoIterator<Item = S>,
+    total: usize,
+    separator: &str,
+    budget: usize,
+    reserved: usize,
+    more: impl FnOnce(usize) -> String,
+) -> usize {
+    let appended = append_entries_within_budget(message, entries, separator, budget, reserved);
+    let dropped = total.saturating_sub(appended);
+
+    if dropped > 0 {
+        message.push_str(&more(dropped));
     }
 
     appended
@@ -175,11 +277,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reply_wraps_the_message_in_the_plugin_banner() {
+        assert_eq!(
+            reply("Twitch", "hello"),
+            "\x0310>\x0f\x02 Twitch:\x02\x0310 hello"
+        );
+    }
+
+    #[test]
+    fn notice_prefixes_the_message_with_the_marker() {
+        assert_eq!(notice("No results found"), "\x0310> No results found");
+    }
+
+    #[test]
+    fn notice_prefix_is_the_whole_marker() {
+        assert_eq!(notice(""), NOTICE_PREFIX);
+        assert_eq!(NOTICE_PREFIX, "\x0310> ");
+    }
+
+    #[test]
+    fn notice_prefix_extends_the_reply_prefix_by_one_space() {
+        assert!(NOTICE_PREFIX.starts_with(REPLY_PREFIX));
+        assert_eq!(NOTICE_PREFIX.len(), REPLY_PREFIX.len() + 1);
+    }
+
+    #[test]
     fn appends_entries_within_the_budget() {
         let mut message = String::from("header: ");
 
-        let appended =
-            append_entries_within_budget(&mut message, ["a", "b"].map(String::from), ", ", 30, 0);
+        let appended = append_entries_within_budget(&mut message, ["a", "b"], ", ", 30, 0);
 
         assert_eq!(appended, 2);
         assert_eq!(message, "header: a, b");
@@ -189,13 +315,8 @@ mod tests {
     fn always_appends_the_first_entry_and_keeps_prefixes() {
         let mut message = String::from("header: ");
 
-        let appended = append_entries_within_budget(
-            &mut message,
-            ["first", "second", "third"].map(String::from),
-            ", ",
-            20,
-            0,
-        );
+        let appended =
+            append_entries_within_budget(&mut message, ["first", "second", "third"], ", ", 20, 0);
 
         // The first entry is unconditional; "header: first, second" is 21 bytes and would
         // exceed the 20-byte budget, so the loop stops after the first entry.
@@ -207,18 +328,43 @@ mod tests {
     fn reserves_room_for_a_suffix() {
         let mut message = String::new();
 
-        let appended = append_entries_within_budget(
-            &mut message,
-            ["first", "second"].map(String::from),
-            ", ",
-            10,
-            8,
-        );
+        let appended = append_entries_within_budget(&mut message, ["first", "second"], ", ", 10, 8);
 
         // "first" is unconditional; "second" (6 bytes) plus the separator and the 8 reserved
         // bytes exceeds the budget.
         assert_eq!(appended, 1);
         assert_eq!(message, "first");
+    }
+
+    #[test]
+    fn appends_a_suffix_for_the_entries_that_did_not_fit() {
+        let mut message = String::new();
+
+        let appended = append_entries_with_more(
+            &mut message,
+            ["first", "second", "third"],
+            3,
+            ", ",
+            25,
+            " (+1 more)".len(),
+            |dropped| format!(" (+{dropped} more)"),
+        );
+
+        assert_eq!(appended, 2);
+        assert_eq!(message, "first, second (+1 more)");
+    }
+
+    #[test]
+    fn does_not_append_the_suffix_when_every_entry_fits() {
+        let mut message = String::new();
+
+        let appended =
+            append_entries_with_more(&mut message, ["first", "second"], 2, ", ", 40, 0, |_| {
+                panic!("every entry fits")
+            });
+
+        assert_eq!(appended, 2);
+        assert_eq!(message, "first, second");
     }
 
     #[test]
@@ -232,6 +378,15 @@ mod tests {
         // code and must not leak into the visible text.
         assert_eq!(strip_control_chars("\u{3}10USD"), "USD");
         assert_eq!(strip_control_chars("\u{4}FF0000red"), "red");
+    }
+
+    #[test]
+    fn sanitizes_external_text_for_a_single_reply_line() {
+        // Formatting codes are removed, line breaks become spaces, and whitespace is collapsed.
+        assert_eq!(sanitize_external("\x0310Fake\nTitle\x0f"), "Fake Title");
+        assert_eq!(sanitize_external("first\nsecond"), "first second");
+        assert_eq!(sanitize_external("  a \t b  "), "a b");
+        assert_eq!(sanitize_external("plain"), "plain");
     }
 
     #[test]

@@ -17,6 +17,8 @@
 //! assert_eq!(YT.parse(".goodbye"), None);
 //! ```
 
+use std::ops::Range;
+
 use argh::{ArgsInfo, CommandInfoWithArgs, FromArgs};
 use thiserror::Error;
 
@@ -58,6 +60,11 @@ use thiserror::Error;
 /// assert_eq!(handle(LENGTH), "string length");
 /// assert_eq!(handle(CommandSpec::new(".other", "")), "unhandled");
 /// ```
+///
+/// This pattern requires a spec built with [`CommandSpec::new`]: a spec created with
+/// [`CommandSpec::with_args`] holds a function pointer, and constants containing function
+/// pointers cannot be used as match patterns. The `#[plugin]` macro therefore dispatches by
+/// trigger instead.
 ///
 /// Note that this relies on `CommandSpec` remaining a structural-match type; should its
 /// definition change, the compiler will reject const patterns with a loud error rather than
@@ -124,12 +131,27 @@ impl CommandSpec {
     /// immediately following the trigger is not whitespace (i.e. it is part of a longer word).
     #[must_use]
     pub fn parse<'a>(&self, input: &'a str) -> Option<&'a str> {
+        self.parse_range(input).map(|range| &input[range])
+    }
+
+    /// Returns the byte range of the trailing arguments within `input`, if it matches.
+    ///
+    /// The range is empty when the command was invoked without arguments, and covers the
+    /// arguments with their leading whitespace stripped otherwise. Callers that hold the input
+    /// (rather than a borrowed slice of it) use this instead of re-deriving the range from the
+    /// returned slice's length.
+    pub(crate) fn parse_range(&self, input: &str) -> Option<Range<usize>> {
         let suffix = input.strip_prefix(self.trigger)?;
+
         match suffix.chars().next() {
             // Input is exactly the trigger — no arguments.
-            None => Some(""),
+            None => Some(input.len()..input.len()),
             // Trigger followed by whitespace — skip all leading whitespace.
-            Some(c) if c.is_whitespace() => Some(suffix.trim_start()),
+            Some(c) if c.is_whitespace() => {
+                let start = input.len() - suffix.trim_start().len();
+
+                Some(start..input.len())
+            }
             // Trigger followed by a non-whitespace character — not a match (e.g. `.y` vs `.yt`).
             Some(_) => None,
         }

@@ -15,25 +15,33 @@ const SECONDS_PER_HOUR: i64 = 60 * SECONDS_PER_MINUTE;
 /// Seconds in a day.
 const SECONDS_PER_DAY: i64 = 24 * SECONDS_PER_HOUR;
 /// Seconds in a week.
+#[cfg(any(feature = "chrono", feature = "time", test))]
 const SECONDS_PER_WEEK: i64 = 7 * SECONDS_PER_DAY;
 /// Seconds in a (non-leap) year.
+#[cfg(any(feature = "chrono", feature = "time", test))]
 const SECONDS_PER_YEAR: i64 = 365 * SECONDS_PER_DAY;
 /// Seconds in a second.
 const SECONDS_PER_SECOND: i64 = 1;
 
 /// Duration units in descending order, as `(seconds per unit, singular name)`.
+#[cfg(any(feature = "chrono", feature = "time", test))]
 const YEARS: (i64, &str) = (SECONDS_PER_YEAR, "year");
+#[cfg(any(feature = "chrono", feature = "time", test))]
 const WEEKS: (i64, &str) = (SECONDS_PER_WEEK, "week");
+#[cfg(any(feature = "chrono", feature = "time", test))]
 const DAYS: (i64, &str) = (SECONDS_PER_DAY, "day");
 const HOURS: (i64, &str) = (SECONDS_PER_HOUR, "hour");
 const MINUTES: (i64, &str) = (SECONDS_PER_MINUTE, "minute");
+#[cfg(any(feature = "chrono", feature = "time", test))]
 const SECONDS: (i64, &str) = (SECONDS_PER_SECOND, "second");
 
 /// Duration units in descending order, down to and including seconds.
-pub const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
+#[cfg(any(feature = "chrono", feature = "time", test))]
+const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
 
 /// Duration units in descending order, down to and including minutes.
-pub const UNITS_TO_MINUTES: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES];
+#[cfg(any(feature = "time", test))]
+const UNITS_TO_MINUTES: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES];
 
 /// Duration units from hours down to minutes.
 pub const HOURS_AND_MINUTES: &[(i64, &str)] = &[HOURS, MINUTES];
@@ -61,7 +69,7 @@ fn split_into_units(total_seconds: i64, units: &[(i64, &'static str)]) -> Vec<(i
 ///
 /// Non-positive durations are formatted as `"0 minutes"`.
 #[must_use]
-pub fn words(total_seconds: i64, units: &[(i64, &'static str)]) -> String {
+pub fn format_seconds_in_words(total_seconds: i64, units: &[(i64, &'static str)]) -> String {
     // Sub-year remainders cap each non-leading count (weeks < 52, days < 7, ...) and large counts
     // only occur for years, so 24 bytes per part never needs a reallocation.
     let parts = split_into_units(total_seconds.max(0), units);
@@ -110,14 +118,14 @@ pub trait TimeInWords {
 #[cfg(feature = "chrono")]
 impl TimeInWords for DateTime<Utc> {
     fn in_words(&self) -> String {
-        words((Utc::now() - *self).num_seconds(), UNITS_WITH_SECONDS)
+        format_seconds_in_words((Utc::now() - *self).num_seconds(), UNITS_WITH_SECONDS)
     }
 }
 
 #[cfg(feature = "time")]
 impl TimeInWords for TimeDuration {
     fn in_words(&self) -> String {
-        words(self.whole_seconds(), UNITS_TO_MINUTES)
+        format_seconds_in_words(self.whole_seconds(), UNITS_TO_MINUTES)
     }
 }
 
@@ -177,43 +185,68 @@ pub fn parse_iso8601_duration(input: &str) -> Option<Duration> {
 #[must_use]
 pub fn format_duration(duration: Duration) -> String {
     // Seconds per day, hour, minute, and second, in descending order.
-    const UNITS: &[(i64, &str)] = &[(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")];
+    const UNITS: &[(i64, &str)] = &[
+        (SECONDS_PER_DAY, "d"),
+        (SECONDS_PER_HOUR, "h"),
+        (SECONDS_PER_MINUTE, "m"),
+        (SECONDS_PER_SECOND, "s"),
+    ];
 
     // A duration of more than `i64::MAX` seconds would outlive the universe several times over;
     // saturate rather than wrap.
     let total_seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
+    let parts = split_into_units(total_seconds, UNITS);
 
-    match split_into_units(total_seconds, UNITS).as_slice() {
-        [] => "0s".to_string(),
-        parts => parts
-            .iter()
-            .map(|(count, suffix)| format!("{count}{suffix}"))
-            .collect::<Vec<_>>()
-            .join(" "),
+    if parts.is_empty() {
+        return "0s".to_string();
     }
+
+    let mut formatted = String::with_capacity(8 * parts.len());
+
+    for (index, (count, suffix)) in parts.iter().enumerate() {
+        if index > 0 {
+            formatted.push(' ');
+        }
+
+        let _ = write!(formatted, "{count}{suffix}");
+    }
+
+    formatted
 }
 
 #[cfg(test)]
-mod words_tests {
+mod in_words_tests {
     use super::*;
 
     #[test]
     fn should_format_non_positive_durations_as_zero_minutes() {
-        assert_eq!(words(0, UNITS_WITH_SECONDS), "0 minutes");
-        assert_eq!(words(-42, UNITS_WITH_SECONDS), "0 minutes");
+        assert_eq!(format_seconds_in_words(0, UNITS_WITH_SECONDS), "0 minutes");
+        assert_eq!(
+            format_seconds_in_words(-42, UNITS_WITH_SECONDS),
+            "0 minutes"
+        );
     }
 
     #[test]
     fn should_format_single_units() {
-        assert_eq!(words(SECONDS_PER_WEEK, UNITS_WITH_SECONDS), "1 week");
-        assert_eq!(words(30, UNITS_WITH_SECONDS), "30 seconds");
-        assert_eq!(words(2 * SECONDS_PER_WEEK, UNITS_WITH_SECONDS), "2 weeks");
+        assert_eq!(
+            format_seconds_in_words(SECONDS_PER_WEEK, UNITS_WITH_SECONDS),
+            "1 week"
+        );
+        assert_eq!(
+            format_seconds_in_words(30, UNITS_WITH_SECONDS),
+            "30 seconds"
+        );
+        assert_eq!(
+            format_seconds_in_words(2 * SECONDS_PER_WEEK, UNITS_WITH_SECONDS),
+            "2 weeks"
+        );
     }
 
     #[test]
     fn should_join_two_units_with_and() {
         assert_eq!(
-            words(
+            format_seconds_in_words(
                 SECONDS_PER_HOUR + 30 * SECONDS_PER_MINUTE,
                 UNITS_WITH_SECONDS
             ),
@@ -224,7 +257,7 @@ mod words_tests {
     #[test]
     fn should_join_many_units_with_oxford_comma() {
         assert_eq!(
-            words(
+            format_seconds_in_words(
                 SECONDS_PER_YEAR + SECONDS_PER_WEEK + SECONDS_PER_DAY,
                 UNITS_WITH_SECONDS
             ),
@@ -235,7 +268,7 @@ mod words_tests {
     #[test]
     fn should_only_include_minutes_and_above_for_the_minutes_table() {
         assert_eq!(
-            words(
+            format_seconds_in_words(
                 SECONDS_PER_HOUR + 30 * SECONDS_PER_MINUTE + 42,
                 UNITS_TO_MINUTES
             ),
@@ -246,14 +279,14 @@ mod words_tests {
     #[test]
     fn should_only_include_hours_and_minutes_for_the_hours_table() {
         assert_eq!(
-            words(
+            format_seconds_in_words(
                 2 * SECONDS_PER_HOUR + 3 * SECONDS_PER_MINUTE,
                 HOURS_AND_MINUTES
             ),
             "2 hours and 3 minutes"
         );
         assert_eq!(
-            words(100 * SECONDS_PER_HOUR, HOURS_AND_MINUTES),
+            format_seconds_in_words(100 * SECONDS_PER_HOUR, HOURS_AND_MINUTES),
             "100 hours"
         );
     }
