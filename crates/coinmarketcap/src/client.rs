@@ -54,7 +54,7 @@ impl Default for Config {
 #[derive(Debug)]
 pub struct Client {
     /// HTTP client for CoinMarketCap API requests, with the API key set as a default header.
-    inner: reqwest::Client,
+    http: reqwest::Client,
     /// The base URL the client issues requests against; `API_BASE_URL` outside of tests.
     base: String,
 }
@@ -102,7 +102,7 @@ impl Client {
             ),
         ]);
 
-        let inner = reqwest::ClientBuilder::new()
+        let http = reqwest::ClientBuilder::new()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(config.timeout)
             .user_agent(&config.user_agent)
@@ -112,7 +112,7 @@ impl Client {
             .map_err(Error::Build)?;
 
         Ok(Self {
-            inner,
+            http,
             base: base.to_owned(),
         })
     }
@@ -226,7 +226,7 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T, Error> {
-        let request = self.inner.get(format!("{}{path}", self.base)).query(query);
+        let request = self.http.get(format!("{}{path}", self.base)).query(query);
 
         let response = request.send().await.map_err(request_error)?;
         let status = response.status();

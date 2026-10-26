@@ -36,6 +36,7 @@ const API_BASE_URL: &str = "https://api.spotify.com/v1";
 
 /// Settings for the spotify plugin, from its `[plugins.spotify]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The Spotify application client id.
     ///
@@ -399,9 +400,6 @@ impl Spotify {
 
 fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), ZetaError> {
     warn!("Spotify error: {}", error);
-    // Mimic Ruby behavior: simplistic error messages for common HTTP codes could be added here
-    // For now, we generally don't spam the channel with errors unless it's critical,
-    // but the Ruby plugin did print "Invalid track ID" etc.
     if let http::ApiError::Status { status, .. } = error
         && *status == reqwest::StatusCode::NOT_FOUND
     {

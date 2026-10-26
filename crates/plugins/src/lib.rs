@@ -339,13 +339,13 @@ mod tests {
     }
 
     /// Every bundled plugin self-registers through the `#[plugin]` macro, independently of any
-    /// central list. `--all-features` compiles all 35 of them.
+    /// central list. `--all-features` compiles every one of them.
     #[cfg(feature = "all")]
     #[test]
     fn all_bundled_plugins_register_themselves() {
         assert_eq!(
             zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().count(),
-            35
+            BUNDLED_PLUGIN_NAMES.len()
         );
     }
 

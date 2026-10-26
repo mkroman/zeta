@@ -6,121 +6,53 @@
 //! `S3_*` environment variables; when the configuration is incomplete, plugins degrade to their
 //! non-mirroring behavior.
 //!
-//! The actual mirroring is managed by [`DownloadManager`], a
-//! long-running task that downloads media (streaming progress status back), uploads it to the
-//! bucket and notifies the requester with the public link. Downloads happen inside temporary
-//! directories that are owned by the manager and removed when the download finishes; directories
-//! left behind by a killed or crashed process are removed on startup.
+//! The actual mirroring is managed by a long-running download manager task that downloads media
+//! (streaming progress status back), uploads it to the bucket and notifies the requester with the
+//! public link. Downloads happen inside temporary directories that are owned by the manager and
+//! removed when the download finishes; directories left behind by a killed or crashed process
+//! are removed on startup.
 //!
 //! Plugins access the shared mirror through a [`MirrorHandle`],
 //! which carries the key prefix and the public URL base used for their links, and is resolved
 //! from their own configuration.
 
+mod config;
+mod handle;
+mod manager;
+mod s3;
+mod tempdir;
+mod ytdlp;
+
 use std::{
     collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex, OnceLock},
-    time::Duration,
 };
 
-use serde::{Deserialize, Serialize};
 use tracing::{debug, error, warn};
 use url::Url;
 
-pub mod manager;
-pub mod s3;
-pub mod ytdlp;
+use manager::{DownloadManager, DownloadRequest};
+use s3::S3;
+use tempdir::{STALE_DOWNLOAD_MAX_AGE, cleanup_stale_downloads, tempdir_builder};
+use ytdlp::{YtDlp, YtDlpOptions};
 
-pub use manager::{DownloadManager, DownloadRequest};
-pub use s3::S3;
-pub use ytdlp::{YtDlp, YtDlpOptions};
+pub use config::MirrorConfig;
+pub use handle::MirrorHandle;
+pub use s3::Error as MirrorError;
 
 use zeta_url::is_identifier;
-
-/// Configuration for the shared media mirror, from the `[mirror]` configuration section.
-///
-/// Unlike the plugin sections, unknown keys here are rejected (`deny_unknown_fields`): this is a
-/// top-level section shared by all media plugins, and a typo'd or removed key is a hard
-/// configuration mistake worth failing fast on.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct MirrorConfig {
-    /// The directory that downloads are buffered in.
-    ///
-    /// When unset, a random subdirectory of the system temporary directory is used and removed
-    /// when the bot shuts down. Prefer a dedicated directory outside the system temporary
-    /// directory: its cleanup services may remove in-progress downloads. The directory is owned
-    /// by the process and must not be shared between concurrently running instances.
-    pub download_dir: Option<PathBuf>,
-    /// The maximum size of a file to download, as passed to `yt-dlp`.
-    ///
-    /// Files that report a larger size upfront are skipped.
-    pub max_filesize: String,
-    /// The maximum duration of a download before it gets killed.
-    #[serde(with = "humantime_serde")]
-    pub download_timeout: Duration,
-    /// The maximum number of downloads that run concurrently.
-    pub max_concurrent_downloads: usize,
-    /// The command used to run `yt-dlp`.
-    ///
-    /// Falls back to the `ZETA_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
-    /// neither is set.
-    pub ytdlp_command: Option<String>,
-    /// The S3 access key id used for mirroring.
-    ///
-    /// Falls back to the `S3_ACCESS_KEY_ID` environment variable when unset. Mirroring is
-    /// disabled when the S3 configuration is incomplete.
-    pub s3_access_key_id: Option<String>,
-    /// The S3 secret access key used for mirroring.
-    ///
-    /// Falls back to the `S3_SECRET_ACCESS_KEY` environment variable when unset.
-    pub s3_secret_access_key: Option<String>,
-    /// The bucket that mirrored media is uploaded to.
-    ///
-    /// Falls back to the `S3_BUCKET_NAME` environment variable when unset.
-    pub s3_bucket_name: Option<String>,
-    /// The S3 region.
-    ///
-    /// Falls back to the `S3_REGION` environment variable, and to `auto` when neither is set.
-    pub s3_region: Option<String>,
-    /// The endpoint URL for S3-compatible services.
-    ///
-    /// Falls back to the `S3_ENDPOINT` environment variable when unset. Empty values count as
-    /// unset, so a blank endpoint does not override the environment or the AWS default.
-    pub s3_endpoint: Option<String>,
-}
-
-impl Default for MirrorConfig {
-    fn default() -> Self {
-        Self {
-            download_dir: None,
-            max_filesize: "500M".to_string(),
-            download_timeout: Duration::from_mins(10),
-            max_concurrent_downloads: 4,
-            ytdlp_command: None,
-            s3_access_key_id: None,
-            s3_secret_access_key: None,
-            s3_bucket_name: None,
-            s3_region: None,
-            s3_endpoint: None,
-        }
-    }
-}
 
 /// The media currently being mirrored, keyed by `(prefix, id)`.
 type InFlight = Mutex<HashSet<(String, String)>>;
 
-/// Maps the mirror configuration's S3 fields onto the S3 client configuration.
-impl From<&MirrorConfig> for s3::S3Config {
-    fn from(config: &MirrorConfig) -> Self {
-        Self {
-            access_key_id: config.s3_access_key_id.clone(),
-            secret_access_key: config.s3_secret_access_key.clone(),
-            bucket: config.s3_bucket_name.clone(),
-            region: config.s3_region.clone(),
-            endpoint: config.s3_endpoint.clone(),
-        }
-    }
+/// The state of the download manager, cached by [`Mirror::start_downloads`].
+enum ManagerState {
+    /// The manager is running.
+    Running(DownloadManager),
+    /// The download directory could not be created, so mirroring is disabled; the failure is
+    /// cached so later calls do not retry.
+    Failed,
 }
 
 /// Mirrors media: downloads it with `yt-dlp` and uploads it to S3.
@@ -138,9 +70,9 @@ pub struct Mirror {
     max_concurrent: usize,
     /// The set of media that is currently being mirrored, by (prefix, id).
     in_flight: Arc<InFlight>,
-    /// The download manager, started by [`Mirror::start_downloads`]; `None` when the download
-    /// directory could not be created, disabling mirroring.
-    manager: OnceLock<Option<DownloadManager>>,
+    /// The download manager, started by [`Mirror::start_downloads`]; empty when it has not been
+    /// started yet, and [`ManagerState::Failed`] when it could not be built.
+    manager: OnceLock<ManagerState>,
 }
 
 impl Mirror {
@@ -149,13 +81,13 @@ impl Mirror {
     /// # Errors
     ///
     /// Returns an error if the S3 configuration is incomplete or invalid.
-    pub fn from_config(config: &MirrorConfig) -> Result<Self, s3::Error> {
+    pub fn from_config(config: &MirrorConfig) -> Result<Self, MirrorError> {
         let ytdlp = YtDlp::new(YtDlpOptions {
             command: config.ytdlp_command.clone(),
             max_filesize: config.max_filesize.clone(),
             download_timeout: config.download_timeout,
         });
-        let s3 = S3::new(&s3::S3Config::from(config))?;
+        let s3 = S3::new(config)?;
 
         Ok(Self::new(
             s3,
@@ -167,7 +99,12 @@ impl Mirror {
 
     /// Creates a mirror using the given S3 client and `yt-dlp` runner.
     #[must_use]
-    pub fn new(s3: S3, ytdlp: YtDlp, download_dir: Option<PathBuf>, max_concurrent: usize) -> Self {
+    pub(crate) fn new(
+        s3: S3,
+        ytdlp: YtDlp,
+        download_dir: Option<PathBuf>,
+        max_concurrent: usize,
+    ) -> Self {
         Self {
             s3,
             ytdlp,
@@ -186,55 +123,65 @@ impl Mirror {
     /// If the download directory cannot be created, mirroring stays disabled: the outcome is
     /// cached and later calls do not retry.
     pub fn start_downloads(&self) {
-        let _ = self.manager.get_or_init(|| {
-            // When no download directory is configured, a random subdirectory of the system
-            // temporary directory is used and kept alive for as long as the manager runs; if it
-            // cannot be created, mirroring stays disabled rather than writing into the system
-            // temporary directory itself. Otherwise the configured directory is created if
-            // missing. Either way, temporary directories left behind by a previous run are
-            // removed first.
-            let (download_dir, base_dir) = self.download_dir.clone().map_or_else(
-                || {
-                    cleanup_stale_downloads(&std::env::temp_dir(), Some(STALE_DOWNLOAD_MAX_AGE));
+        self.manager.get_or_init(|| self.build_manager());
+    }
 
-                    tempdir_builder()
-                        .tempdir()
-                        .map(|base| {
-                            let path = base.path().to_path_buf();
+    /// Builds the download manager, creating its download directory.
+    ///
+    /// Returns [`ManagerState::Failed`] when the directory cannot be created, in which case
+    /// mirroring stays disabled.
+    fn build_manager(&self) -> ManagerState {
+        // When no download directory is configured, a random subdirectory of the system
+        // temporary directory is used and kept alive for as long as the manager runs; if it
+        // cannot be created, mirroring stays disabled rather than writing into the system
+        // temporary directory itself. Otherwise the configured directory is created if
+        // missing. Either way, temporary directories left behind by a previous run are
+        // removed first.
+        let dirs = self.download_dir.clone().map_or_else(
+            || {
+                cleanup_stale_downloads(&std::env::temp_dir(), Some(STALE_DOWNLOAD_MAX_AGE));
 
-                            (path, Some(base))
-                        })
-                        .inspect_err(|err| {
-                            error!(
-                                error = %err,
-                                "could not create a download directory, mirroring is disabled"
-                            );
-                        })
-                        .ok()
-                },
-                |dir| {
-                    if let Err(err) = std::fs::create_dir_all(&dir) {
+                tempdir_builder()
+                    .tempdir()
+                    .map(|base| {
+                        let path = base.path().to_path_buf();
+
+                        (path, Some(base))
+                    })
+                    .inspect_err(|err| {
                         error!(
-                            path = %dir.display(),
                             error = %err,
-                            "could not create the download directory, mirroring is disabled"
+                            "could not create a download directory, mirroring is disabled"
                         );
+                    })
+                    .ok()
+            },
+            |dir| {
+                if let Err(err) = std::fs::create_dir_all(&dir) {
+                    error!(
+                        path = %dir.display(),
+                        error = %err,
+                        "could not create the download directory, mirroring is disabled"
+                    );
 
-                        return None;
-                    }
+                    return None;
+                }
 
-                    Some((dir, None))
-                },
-            )?;
+                Some((dir, None))
+            },
+        );
 
-            Some(DownloadManager::start(
-                Arc::new(self.ytdlp.clone()),
-                self.s3.clone(),
-                download_dir,
-                base_dir,
-                self.max_concurrent,
-            ))
-        });
+        let Some((download_dir, base_dir)) = dirs else {
+            return ManagerState::Failed;
+        };
+
+        ManagerState::Running(DownloadManager::start(
+            Arc::new(self.ytdlp.clone()),
+            self.s3.clone(),
+            download_dir,
+            base_dir,
+            self.max_concurrent,
+        ))
     }
 
     /// Returns whether media with the given id has already been mirrored under `prefix`.
@@ -242,7 +189,7 @@ impl Mirror {
     /// This is a fast-path check that assumes the common `.mp4` container; media that was
     /// mirrored under a different container is only caught by the exact-key check performed by
     /// the download manager after a new download.
-    async fn is_mirrored(&self, prefix: &str, id: &str) -> Result<bool, s3::Error> {
+    async fn is_mirrored(&self, prefix: &str, id: &str) -> Result<bool, MirrorError> {
         let key = object_key(prefix, &format!("{id}.mp4"));
 
         self.s3.object_exists(&key).await
@@ -256,6 +203,14 @@ impl Mirror {
     /// Removes media from an in-flight set.
     fn clear_in_flight(in_flight: &InFlight, prefix: &str, id: &str) {
         zeta_utils::sync::lock(in_flight).remove(&(prefix.to_string(), id.to_string()));
+    }
+
+    /// Returns the running download manager, if it was started successfully.
+    fn download_manager(&self) -> Option<&DownloadManager> {
+        match self.manager.get()? {
+            ManagerState::Running(manager) => Some(manager),
+            ManagerState::Failed => None,
+        }
     }
 
     /// Mirrors the media at `url` unless it has already been mirrored or a mirror of it is
@@ -275,7 +230,7 @@ impl Mirror {
         url: &str,
         id: &str,
         on_mirrored: F,
-    ) -> Result<Option<String>, s3::Error>
+    ) -> Result<Option<String>, MirrorError>
     where
         F: FnOnce(String) + Send + 'static,
     {
@@ -301,7 +256,7 @@ impl Mirror {
             return Ok(None);
         }
 
-        let Some(manager) = self.manager.get().and_then(Option::as_ref) else {
+        let Some(manager) = self.download_manager() else {
             warn!(%id, "download manager is not running");
             Self::clear_in_flight(&self.in_flight, prefix, id);
 
@@ -343,195 +298,6 @@ impl Mirror {
     }
 }
 
-/// A plugin's handle to the shared [`Mirror`].
-///
-/// Carries the key prefix the plugin's mirrored files are uploaded under and the base URL its
-/// public links are built from.
-#[derive(Clone)]
-pub struct MirrorHandle {
-    /// The shared mirror.
-    mirror: Arc<Mirror>,
-    /// The key prefix for the plugin's uploads.
-    prefix: String,
-    /// The base URL for the plugin's public links.
-    public_url_base: Url,
-}
-
-impl MirrorHandle {
-    /// Creates a handle for the given mirror.
-    #[must_use]
-    pub const fn new(mirror: Arc<Mirror>, prefix: String, public_url_base: Url) -> Self {
-        Self {
-            mirror,
-            prefix,
-            public_url_base,
-        }
-    }
-
-    /// Resolves a handle from a plugin's configuration.
-    ///
-    /// Every plugin follows the same convention: the download prefix resolves through the
-    /// `<PLUGIN>_S3_PREFIX` environment variable and defaults to the plugin name; the public
-    /// URL base resolves through `<PLUGIN>_PUBLIC_URL_BASE` and defaults to
-    /// `https://pub.rwx.im/<plugin>`.
-    ///
-    /// Returns `None` when the shared mirror is unavailable or the configured public URL base is
-    /// invalid, in which case the plugin should degrade to its non-mirroring behavior.
-    #[must_use]
-    pub fn resolve(
-        mirror: Option<Arc<Mirror>>,
-        plugin: &str,
-        prefix: Option<&str>,
-        public_url_base: Option<&str>,
-    ) -> Option<Self> {
-        let uppercase = plugin.to_ascii_uppercase();
-        let public_url_base = resolve_public_url_base(
-            public_url_base,
-            &format!("{uppercase}_PUBLIC_URL_BASE"),
-            &format!("https://pub.rwx.im/{plugin}"),
-        )?;
-        let prefix = zeta_utils::settings::resolve_setting(
-            prefix,
-            &format!("{uppercase}_S3_PREFIX"),
-            plugin,
-        );
-        let mirror = mirror?;
-
-        Some(Self::new(mirror, prefix, public_url_base))
-    }
-
-    /// Starts the download manager task.
-    pub fn start_downloads(&self) {
-        self.mirror.start_downloads();
-    }
-
-    /// Mirrors the media at `url` unless it has already been mirrored or a mirror of it is
-    /// already in progress; see [`Mirror::ensure_mirrored`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if it could not be checked whether the media has already been mirrored.
-    pub async fn ensure_mirrored<F>(
-        &self,
-        url: &str,
-        id: &str,
-        on_mirrored: F,
-    ) -> Result<Option<String>, s3::Error>
-    where
-        F: FnOnce(String) + Send + 'static,
-    {
-        self.mirror
-            .ensure_mirrored(&self.prefix, &self.public_url_base, url, id, on_mirrored)
-            .await
-    }
-}
-
-/// Resolves the public URL base from a plugin's configuration.
-///
-/// The configured value wins, then the environment variable, then the default. Returns `None` and
-/// logs a warning when the resolved value is not a valid URL.
-#[must_use]
-pub fn resolve_public_url_base(setting: Option<&str>, env: &str, default: &str) -> Option<Url> {
-    let value = zeta_utils::settings::resolve_setting(setting, env, default);
-
-    match Url::parse(&value) {
-        Ok(url) => Some(url),
-        Err(error) => {
-            warn!(%error, %value, "invalid public url base, mirroring is disabled");
-
-            None
-        }
-    }
-}
-
-/// The filename prefix for our temporary download directories.
-pub(crate) const TEMP_DIR_PREFIX: &str = "zeta-mirror-";
-
-/// The maximum age of a download directory before it is considered stale during the sweep of the
-/// shared system temporary directory.
-///
-/// The system temporary directory may hold the active download directories of other running
-/// processes (including other instances of the bot), so only directories that have not been
-/// touched recently are removed there.
-const STALE_DOWNLOAD_MAX_AGE: Duration = Duration::from_hours(24);
-
-/// Returns a builder for our temporary download directories.
-///
-/// Directories are private to the current user on unix, since downloaded media may be sensitive.
-#[must_use]
-pub(crate) fn tempdir_builder() -> tempfile::Builder<'static, 'static> {
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
-
-    #[cfg_attr(not(unix), allow(unused_mut))]
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(TEMP_DIR_PREFIX);
-
-    #[cfg(unix)]
-    builder.permissions(std::fs::Permissions::from_mode(0o700));
-
-    builder
-}
-
-/// Removes any temporary download directories left behind by a previous run.
-///
-/// Returns the number of directories removed. When `max_age` is given, only directories whose
-/// modification time is older are removed; use it when sweeping a directory that may hold the
-/// active download directories of other running processes (the system temporary directory). Left
-/// `None` for directories owned by this process.
-pub(crate) fn cleanup_stale_downloads(base: &std::path::Path, max_age: Option<Duration>) -> usize {
-    let Ok(entries) = std::fs::read_dir(base) else {
-        return 0;
-    };
-
-    let mut removed = 0;
-
-    for entry in entries.flatten() {
-        if !is_temp_download_dir(&entry) {
-            continue;
-        }
-
-        if let Some(max_age) = max_age
-            && !is_older_than(&entry, max_age)
-        {
-            continue;
-        }
-
-        match std::fs::remove_dir_all(entry.path()) {
-            Ok(()) => removed += 1,
-            Err(err) => warn!(
-                path = %entry.path().display(),
-                error = %err,
-                "could not remove stale download directory"
-            ),
-        }
-    }
-
-    removed
-}
-
-/// Whether `entry` is a temporary download directory left by a mirror download.
-pub(crate) fn is_temp_download_dir(entry: &std::fs::DirEntry) -> bool {
-    entry
-        .file_name()
-        .to_string_lossy()
-        .starts_with(TEMP_DIR_PREFIX)
-        && entry.file_type().is_ok_and(|file_type| file_type.is_dir())
-}
-
-/// Returns whether the entry was last modified longer than `age` ago.
-///
-/// Entries whose age cannot be determined (including ones with a modification time in the future)
-/// are not considered old.
-fn is_older_than(entry: &std::fs::DirEntry, age: Duration) -> bool {
-    entry
-        .metadata()
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .and_then(|modified| modified.elapsed().ok())
-        .is_some_and(|elapsed| elapsed > age)
-}
-
 /// Returns the object key for the given file name under `prefix`.
 #[must_use]
 pub(crate) fn object_key(prefix: &str, filename: &str) -> String {
@@ -551,68 +317,7 @@ pub(crate) fn public_url_for(base: &Url, id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
-
-    #[test]
-    fn default_config() {
-        let config = MirrorConfig::default();
-
-        assert!(config.download_dir.is_none());
-        assert_eq!(config.max_filesize, "500M");
-        assert_eq!(config.download_timeout, Duration::from_mins(10));
-        assert_eq!(config.max_concurrent_downloads, 4);
-        assert!(config.ytdlp_command.is_none());
-        assert!(config.s3_access_key_id.is_none());
-        assert!(config.s3_secret_access_key.is_none());
-        assert!(config.s3_bucket_name.is_none());
-        assert!(config.s3_region.is_none());
-        assert!(config.s3_endpoint.is_none());
-    }
-
-    #[test]
-    fn config_deserialize() {
-        let config: MirrorConfig = serde_json::from_value(serde_json::json!({
-            "download_dir": "/var/cache/zeta/mirror",
-            "max_filesize": "100M",
-            "download_timeout": "5m",
-            "max_concurrent_downloads": 1,
-            "ytdlp_command": "/usr/local/bin/yt-dlp",
-            "s3_access_key_id": "access",
-            "s3_secret_access_key": "secret",
-            "s3_bucket_name": "bucket",
-            "s3_region": "auto",
-            "s3_endpoint": "https://example.com",
-        }))
-        .expect("could not deserialize config");
-
-        assert_eq!(
-            config.download_dir.as_deref(),
-            Some(Path::new("/var/cache/zeta/mirror"))
-        );
-        assert_eq!(config.max_filesize, "100M");
-        assert_eq!(config.download_timeout, Duration::from_mins(5));
-        assert_eq!(config.max_concurrent_downloads, 1);
-        assert_eq!(
-            config.ytdlp_command.as_deref(),
-            Some("/usr/local/bin/yt-dlp")
-        );
-        assert_eq!(config.s3_access_key_id.as_deref(), Some("access"));
-        assert_eq!(config.s3_secret_access_key.as_deref(), Some("secret"));
-        assert_eq!(config.s3_bucket_name.as_deref(), Some("bucket"));
-        assert_eq!(config.s3_region.as_deref(), Some("auto"));
-        assert_eq!(config.s3_endpoint.as_deref(), Some("https://example.com"));
-    }
-
-    #[test]
-    fn config_rejects_unknown_keys() {
-        assert!(
-            serde_json::from_value::<MirrorConfig>(serde_json::json!({ "s3_bucket_nam": "x" }))
-                .is_err(),
-            "typo'd key should be rejected"
-        );
-    }
 
     #[test]
     fn test_object_key() {
@@ -636,41 +341,6 @@ mod tests {
             public_url_for(&base, "pxtf7mx2xqzg1"),
             "https://pub.rwx.im/reddit#pxtf7mx2xqzg1"
         );
-    }
-
-    #[test]
-    fn test_resolve_public_url_base() {
-        let base = resolve_public_url_base(
-            Some("https://pub.example.com/x"),
-            "X_PUBLIC_URL_BASE",
-            "https://pub.rwx.im/reddit",
-        )
-        .expect("configured base should be valid");
-
-        assert_eq!(base.as_str(), "https://pub.example.com/x");
-
-        let base = resolve_public_url_base(None, "X_PUBLIC_URL_BASE", "https://pub.rwx.im/reddit")
-            .expect("default base should be valid");
-
-        assert_eq!(base.as_str(), "https://pub.rwx.im/reddit");
-
-        assert!(resolve_public_url_base(Some("not a url"), "X_PUBLIC_URL_BASE", "").is_none());
-    }
-
-    #[test]
-    fn test_cleanup_stale_downloads_respects_age() {
-        let base = tempfile::tempdir().unwrap();
-
-        let fresh = base.path().join(format!("{TEMP_DIR_PREFIX}1234"));
-        std::fs::create_dir(&fresh).unwrap();
-
-        // A directory that was touched recently is not stale while a maximum age is given, but
-        // is removed unconditionally when no age is given.
-        cleanup_stale_downloads(base.path(), Some(STALE_DOWNLOAD_MAX_AGE));
-        assert!(fresh.exists());
-
-        cleanup_stale_downloads(base.path(), None);
-        assert!(!fresh.exists());
     }
 
     /// Returns a mirror that never talks to S3 and has no manager running.

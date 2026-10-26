@@ -1,11 +1,5 @@
 //! Zeta is an opinionated IRC bot with a bunch of plugins.
 
-use figment::{
-    Figment,
-    providers::{Env, Format, Toml},
-};
-use miette::IntoDiagnostic;
-
 mod cli;
 mod telemetry;
 
@@ -24,11 +18,7 @@ async fn main() -> miette::Result<()> {
         .expect("failed to install default rustls CryptoProvider");
 
     let opts: cli::Opts = argh::from_env();
-    let config: Config = Figment::new()
-        .merge(Toml::file(opts.config_path))
-        .merge(Env::prefixed("ZETA_").lowercase(false).split("__"))
-        .extract()
-        .into_diagnostic()?;
+    let config = Config::load(opts.config_path)?;
 
     telemetry::try_init(&config.tracing)?;
 
@@ -46,12 +36,13 @@ async fn main() -> miette::Result<()> {
         db
     };
 
-    let mut z = Zeta::new(
+    Zeta::new(
         config,
         #[cfg(feature = "database")]
         db,
-    );
-    z.run().await?;
+    )
+    .run()
+    .await?;
 
     Ok(())
 }

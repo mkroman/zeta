@@ -69,7 +69,7 @@ pub fn classify_reddit_com_url(url: &Url) -> Option<Link> {
             subreddit: (*subreddit).to_string(),
         }),
         // /comments/<id>[/]
-        ["comments", id] => Some(Link::Comments {
+        ["comments", id] => Some(Link::CommentsPage {
             id: (*id).to_string(),
         }),
         // /gallery/<id>
@@ -103,7 +103,7 @@ fn classify_redd_it_url(url: &Url) -> Option<Link> {
         // `redd.it/<id>` is the short link for a submission; resolving it is the API's job, so
         // it is classified as the comments page it redirects to.
         Some("redd.it") => match path_segments(url)?.as_slice() {
-            [id] if is_identifier(id, "") => Some(Link::Comments {
+            [id] if is_identifier(id, "") => Some(Link::CommentsPage {
                 id: (*id).to_string(),
             }),
             _ => None,
@@ -177,7 +177,7 @@ mod tests {
                 "https://www.reddit.com/comments/1nh144u/",
                 "https://www.reddit.com/comments/1nh144u",
             ],
-            Some(&Link::Comments {
+            Some(&Link::CommentsPage {
                 id: "1nh144u".to_string(),
             }),
         );
@@ -203,7 +203,7 @@ mod tests {
     fn parse_short_links() {
         assert_classifies(
             &["https://redd.it/1nh144u", "https://redd.it/1nh144u/"],
-            Some(&Link::Comments {
+            Some(&Link::CommentsPage {
                 id: "1nh144u".to_string(),
             }),
         );

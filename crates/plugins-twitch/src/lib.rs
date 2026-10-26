@@ -32,6 +32,7 @@ const BASE_URL: &str = "https://api.twitch.tv/helix";
 
 /// Settings for the twitch plugin, from its `[plugins.twitch]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The Twitch application client id.
     ///

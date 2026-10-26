@@ -47,6 +47,7 @@ use std::time::Duration;
 mod client;
 mod error;
 mod model;
+mod parse;
 
 pub use client::Client;
 pub use error::{Error, RequestError};

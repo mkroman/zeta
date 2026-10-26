@@ -3,10 +3,11 @@
 use std::fmt::Write;
 use std::time::Duration;
 
-// The unit tables below — and the constants only they need — are gated
-// `any(feature = "chrono", feature = "time", test)`: the `test` alternative keeps them available
-// to the tests at the bottom of this file even when neither feature is enabled, so the
-// table-driven core is exercised on every build.
+// The unit tables below — and the constants only they need — are gated on the feature that
+// uses them (or `test`): the `test` alternative keeps them available to the tests at the bottom
+// of this file even when neither feature is enabled, so the table-driven core is exercised on
+// every build. `UNITS_WITH_SECONDS` serves the `chrono` implementation, `UNITS_TO_MINUTES` the
+// `time` one.
 
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Utc};
@@ -37,11 +38,11 @@ const WEEKS: (i64, &str) = (SECONDS_PER_WEEK, "week");
 const DAYS: (i64, &str) = (SECONDS_PER_DAY, "day");
 const HOURS: (i64, &str) = (SECONDS_PER_HOUR, "hour");
 const MINUTES: (i64, &str) = (SECONDS_PER_MINUTE, "minute");
-#[cfg(any(feature = "chrono", feature = "time", test))]
+#[cfg(any(feature = "chrono", test))]
 const SECONDS: (i64, &str) = (SECONDS_PER_SECOND, "second");
 
 /// Duration units in descending order, down to and including seconds.
-#[cfg(any(feature = "chrono", feature = "time", test))]
+#[cfg(any(feature = "chrono", test))]
 const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
 
 /// Duration units in descending order, down to and including minutes.

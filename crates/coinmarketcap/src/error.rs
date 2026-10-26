@@ -32,9 +32,6 @@ pub struct RequestError {
     timeout: bool,
     /// Whether the request failed before it could be sent.
     connect: bool,
-    /// Whether the failure happened while sending the request rather than while reading
-    /// its response.
-    request: bool,
 }
 
 impl RequestError {
@@ -59,26 +56,6 @@ impl RequestError {
     pub const fn error_type(&self) -> &'static str {
         classify(self.timeout, self.connect)
     }
-
-    /// Returns whether the request timed out.
-    #[must_use]
-    pub const fn is_timeout(&self) -> bool {
-        self.timeout
-    }
-
-    /// Returns whether the request failed before it could be sent, e.g. because the
-    /// connection was refused or the host could not be resolved.
-    #[must_use]
-    pub const fn is_connect(&self) -> bool {
-        self.connect
-    }
-
-    /// Returns whether the failure happened while sending the request rather than while
-    /// reading its response.
-    #[must_use]
-    pub const fn is_request(&self) -> bool {
-        self.request
-    }
 }
 
 impl From<reqwest::Error> for RequestError {
@@ -89,7 +66,6 @@ impl From<reqwest::Error> for RequestError {
             .and_then(|url| url.host_str().map(str::to_string));
         let timeout = error.is_timeout();
         let connect = error.is_connect();
-        let request = error.is_request();
 
         let error = error.without_url();
         let kind = error.to_string();
@@ -102,7 +78,6 @@ impl From<reqwest::Error> for RequestError {
             host,
             timeout,
             connect,
-            request,
         }
     }
 }

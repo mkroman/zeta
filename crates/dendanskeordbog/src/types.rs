@@ -203,11 +203,11 @@ impl FromHtml for DictionaryEntry {
         let etymology = extract_optional_text(element, &selectors.etymology);
         let definitions: Vec<Definition> = element
             .select(&selectors.definition)
-            .filter_map(|ref elem| Definition::from_html_with_selectors(elem, selectors).ok())
+            .filter_map(|element| Definition::from_html_with_selectors(&element, selectors).ok())
             .collect();
         let idioms: Vec<Idiom> = element
             .select(&selectors.idiom)
-            .filter_map(|ref elem| Idiom::from_html_with_selectors(elem, selectors).ok())
+            .filter_map(|element| Idiom::from_html_with_selectors(&element, selectors).ok())
             .collect();
 
         Ok(Self {

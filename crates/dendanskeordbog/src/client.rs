@@ -29,10 +29,8 @@ fn request_error(error: reqwest::Error) -> RequestError {
     error
 }
 
-/// The base URL of the dictionary's service.
-const BASE_URL: &str = "https://ws.dsl.dk";
-/// The relative path of the query endpoint.
-const QUERY_PATH: &str = "/ddo/query";
+/// The URL of the dictionary's query endpoint.
+const QUERY_URL: &str = "https://ws.dsl.dk/ddo/query";
 /// The name of the query parameter used to specify the word to look up.
 const QUERY_WORD_PARAM: &str = "q";
 
@@ -112,8 +110,10 @@ impl Client {
     /// - [`Error::MissingElement`]: If the response body is received but the HTML
     ///   is malformed or does not match the expected structure, preventing parsing.
     pub async fn query(&self, word: &str) -> Result<DictionaryDocument, Error> {
-        let url = format!("{BASE_URL}{QUERY_PATH}");
-        let request = self.client.get(url).query(&[(QUERY_WORD_PARAM, word)]);
+        let request = self
+            .client
+            .get(QUERY_URL)
+            .query(&[(QUERY_WORD_PARAM, word)]);
         let response = request
             .send()
             .await

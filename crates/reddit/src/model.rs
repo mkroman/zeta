@@ -19,7 +19,7 @@ pub enum Link {
         subreddit: String,
     },
     /// A link that redirects the user to the comments page for the relevant submission.
-    Comments {
+    CommentsPage {
         /// The submission id.
         id: String,
     },

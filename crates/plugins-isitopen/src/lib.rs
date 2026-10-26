@@ -26,6 +26,7 @@ const API_BASE_URL: &str = "https://maps.googleapis.com";
 
 /// Settings for the isitopen plugin, from its `[plugins.isitopen]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The Google Maps API key.
     ///

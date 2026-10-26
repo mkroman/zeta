@@ -41,6 +41,93 @@ pub fn test_context() -> zeta_plugin::Context {
     )
 }
 
+/// The lifecycle log shared between a test and its [`RecordingPlugin`].
+#[cfg(feature = "context")]
+pub type Recording = std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>;
+
+/// Publishes a fresh recording log through the context's shared state.
+///
+/// The returned handle observes the lifecycle events [`RecordingPlugin`] appends.
+///
+/// # Panics
+///
+/// Panics if the context already holds a recording log.
+#[cfg(feature = "context")]
+pub fn publish_recording(ctx: &zeta_plugin::Context) -> Recording {
+    let recording: Recording = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    assert!(
+        ctx.shared
+            .publish(std::sync::Arc::clone(&recording))
+            .is_none()
+    );
+
+    recording
+}
+
+/// A plugin recording the lifecycle events it observes in a shared log.
+///
+/// It registers one command (`.recording`) so registries can exercise command publication, and
+/// appends `"message"` and `"shutdown"` to the log from the matching handlers.
+#[cfg(feature = "context")]
+pub struct RecordingPlugin {
+    /// The log the plugin appends to, shared with the test.
+    pub recording: Recording,
+}
+
+#[cfg(feature = "context")]
+#[zeta_plugin::async_trait::async_trait]
+impl zeta_plugin::Plugin for RecordingPlugin {
+    const NAME: &'static str = "recording";
+
+    type Settings = zeta_plugin::NoSettings;
+
+    fn new(
+        ctx: &zeta_plugin::Context,
+        _: &zeta_plugin::NoSettings,
+        subscriptions: &mut zeta_plugin::Subscriptions,
+    ) -> Result<Self, zeta_plugin::Error> {
+        subscriptions.command(zeta_plugin::CommandSpec::new(
+            ".recording",
+            "record a message",
+        ));
+
+        let recording = ctx
+            .shared
+            .get::<std::sync::Mutex<Vec<&'static str>>>()
+            .expect("recording log should be published through `publish_recording`");
+
+        Ok(Self { recording })
+    }
+
+    async fn handle_message(
+        &self,
+        _: &zeta_plugin::Context,
+        _: &zeta_plugin::Client,
+        _: &zeta_plugin::MessageEvent,
+    ) -> Result<(), zeta_plugin::Error> {
+        self.recording
+            .lock()
+            .expect("recording log lock")
+            .push("message");
+
+        Ok(())
+    }
+
+    async fn shutdown(
+        &mut self,
+        _: &zeta_plugin::Context,
+        _: &zeta_plugin::Client,
+    ) -> Result<(), zeta_plugin::Error> {
+        self.recording
+            .lock()
+            .expect("recording log lock")
+            .push("shutdown");
+
+        Ok(())
+    }
+}
+
 /// How long the wiremock server behind [`timeout_error`] waits before answering: long enough
 /// that a client with [`TIMEOUT_CLIENT`] cannot possibly get a response.
 #[cfg(feature = "http")]
@@ -132,16 +219,9 @@ pub async fn timeout_error() -> (reqwest::Error, SocketAddr) {
 ///
 /// Panics on the first broken guarantee.
 pub fn assert_redactions(message: &str, full: &str, debug: &str, address: &SocketAddr) {
-    assert!(!message.contains("secret"), "{message}");
-    assert!(message.starts_with("could not connect"), "{message}");
-    assert!(message.contains(&address.ip().to_string()), "{message}");
-    assert!(message.len() < 64, "{message}");
+    assert_common(message, full, debug, address, "could not connect");
 
-    assert!(!full.contains("secret"), "{full}");
-    assert!(full.contains(&format!("http://{address}/")), "{full}");
     assert!(full.contains("refused"), "{full}");
-
-    assert!(!debug.contains("secret"), "{debug}");
 }
 
 /// The timeout counterpart of [`assert_redactions`].
@@ -152,8 +232,13 @@ pub fn assert_redactions(message: &str, full: &str, debug: &str, address: &Socke
 ///
 /// Panics on the first broken guarantee.
 pub fn assert_timeout_redactions(message: &str, full: &str, debug: &str, address: &SocketAddr) {
+    assert_common(message, full, debug, address, "request timed out");
+}
+
+/// Asserts the guarantees shared by [`assert_redactions`] and [`assert_timeout_redactions`].
+fn assert_common(message: &str, full: &str, debug: &str, address: &SocketAddr, short_prefix: &str) {
     assert!(!message.contains("secret"), "{message}");
-    assert!(message.starts_with("request timed out"), "{message}");
+    assert!(message.starts_with(short_prefix), "{message}");
     assert!(message.contains(&address.ip().to_string()), "{message}");
     assert!(message.len() < 64, "{message}");
 

@@ -168,9 +168,6 @@ impl Zeta {
     ) -> Self {
         // The shared media mirror is published before any plugin is constructed, so plugins can
         // pick it up through their constructors.
-        #[cfg(feature = "mirror")]
-        let mirror_config = config.mirror.clone();
-
         // The per-plugin sections are handed to the plugins through their constructors; the
         // context's config only carries global configuration.
         let plugins = config.take_plugins();
@@ -184,7 +181,7 @@ impl Zeta {
         // mirror media can pick it up through their constructors. Mirroring stays disabled when
         // the configuration is incomplete or invalid.
         #[cfg(feature = "mirror")]
-        match zeta_mirror::Mirror::from_config(&mirror_config) {
+        match zeta_mirror::Mirror::from_config(&config.mirror) {
             Ok(mirror) => {
                 context.shared.publish(Arc::new(mirror));
             }
@@ -206,6 +203,8 @@ impl Zeta {
 
     /// Starts the bot and begins processing IRC messages.
     ///
+    /// Consumes the bot: the plugin registry is drained into the running tasks, so the instance
+    /// cannot be run twice.
     /// Each plugin is spawned into its own long-lived task. Incoming messages are dispatched to
     /// every plugin through an unbounded channel, so a slow or failing plugin cannot block the IRC
     /// connection or the other plugins. Plugin errors, including failures during loading, are
@@ -237,8 +236,8 @@ impl Zeta {
     ///   configuration issues.)
     /// - [`Error::IrcRegistration`] - if user registration fails (e.g. if the nickname is already taken.)
     /// - [`Error::Irc`] - if a protocol or communication error occurred.
-    pub async fn run(&mut self) -> Result<(), Error> {
-        let mut client = Client::from_config(self.config.irc.clone().into())
+    pub async fn run(mut self) -> Result<(), Error> {
+        let mut client = Client::from_config((&self.config.irc).into())
             .await
             .map_err(Error::IrcClient)?;
 
@@ -248,7 +247,6 @@ impl Zeta {
 
         let mut stream = client.stream()?;
         let client = Arc::new(client);
-        let quit_message = self.config.irc.quit_message.clone();
 
         // Each plugin gets its own long-lived task with an unbounded mailbox, so a slow or
         // failing plugin cannot block the IRC connection or the other plugins.
@@ -288,7 +286,7 @@ impl Zeta {
 
         if shutting_down {
             // The QUIT is written while the plugins drain, so it does not delay their grace.
-            tokio::join!(flush_quit(&client, &quit_message), shutdown);
+            tokio::join!(flush_quit(&client, &self.config.irc.quit_message), shutdown);
         } else {
             shutdown.await;
         }

@@ -15,7 +15,7 @@ use zeta_utils::text::Truncatable;
 /// Returns the prefix all IMDb replies start with: the reply marker, a bold `IMDb` label and a
 /// cyan colon.
 ///
-/// Unlike [`reply_prefix`](zeta_plugin::reply_prefix), the colon renders cyan and the prefix
+/// Unlike [`reply_prefix`](zeta_plugin::irc::reply_prefix), the colon renders cyan and the prefix
 /// carries no trailing space: the builders below append space-led segments, so a trailing space
 /// here would double up.
 pub fn prefix() -> String {

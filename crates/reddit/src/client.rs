@@ -50,11 +50,11 @@ struct AccessTokenResponse {
 
 /// Reddit client.
 // The fields keep Reddit's official OAuth2 `client_id`/`client_secret` terminology, which
-// necessarily repeats the struct's name; `client` is the house name for the HTTP client.
+// necessarily repeats the struct's name; `http` is the house name for the HTTP client.
 #[allow(clippy::struct_field_names)]
 pub struct Client {
     /// HTTP client used for requests.
-    client: reqwest::Client,
+    http: reqwest::Client,
     /// Reddit application client ID.
     client_id: String,
     /// Reddit application client secret.
@@ -116,7 +116,7 @@ impl Client {
         let client_secret = client_secret.into();
         let token_state = RwLock::new(None);
         let user_agent = options.user_agent.unwrap_or_else(|| USER_AGENT.to_string());
-        let client = reqwest::ClientBuilder::new()
+        let http = reqwest::ClientBuilder::new()
             .redirect(Policy::none())
             .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
             .user_agent(user_agent)
@@ -126,7 +126,7 @@ impl Client {
         debug!("using client id {client_id}");
 
         Ok(Self {
-            client,
+            http,
             client_id,
             client_secret,
             token_state,
@@ -171,7 +171,7 @@ impl Client {
     #[instrument(skip(self))]
     async fn request_access_token(&self) -> Result<AccessTokenResponse, Error> {
         let request = self
-            .client
+            .http
             .post(TOKEN_URL)
             .basic_auth(&self.client_id, Some(self.client_secret.expose_secret()))
             .body("grant_type=client_credentials");
@@ -193,18 +193,17 @@ impl Client {
 
     /// Sends the request and parses its JSON body into an [`Item`].
     ///
-    /// A `404` status maps to `not_found`, any other error status to [`Error::Http`].
+    /// A `404` status returns `Ok(None)`; any other error status maps to [`Error::Http`].
     ///
     /// # Errors
     ///
-    /// Returns an error if the request fails, the response is an error status, or the body
-    /// cannot be parsed.
+    /// Returns an error if the request fails, the response is an error status other than `404`,
+    /// or the body cannot be parsed.
     async fn send_json(
         &self,
         request: reqwest::RequestBuilder,
-        not_found: fn() -> Error,
         on_parse: fn(ErrorWithSerdePath<JsonError>) -> Error,
-    ) -> Result<Item, Error> {
+    ) -> Result<Option<Item>, Error> {
         let response = request
             .send()
             .await
@@ -220,22 +219,40 @@ impl Client {
                     .map_err(|error| Error::Reqwest(request_error(error)))?;
                 let deserializer = &mut serde_json::Deserializer::from_str(&text);
 
-                serde_path_to_error::deserialize(deserializer)
+                let item = serde_path_to_error::deserialize(deserializer)
                     .inspect_err(|err| {
                         let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
 
                         error!(?err, body = %body, "could not parse response");
                     })
-                    .map_err(on_parse)
+                    .map_err(on_parse)?;
+
+                Ok(Some(item))
             }
             Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
                 let err = RequestError::from(err);
                 info!(%err, "resource not found");
 
-                Err(not_found())
+                Ok(None)
             }
             Err(err) => Err(Error::Http(request_error(err))),
         }
+    }
+
+    /// Builds an authenticated GET request for `path` on the OAuth API, with the bearer token and
+    /// JSON content type set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the access token cannot be obtained.
+    async fn authorized_get(&self, path: &str) -> Result<reqwest::RequestBuilder, Error> {
+        let access_token = self.get_valid_token().await?;
+
+        Ok(self
+            .http
+            .get(format!("{OAUTH_BASE_URL}{path}"))
+            .header(AUTHORIZATION, format!("bearer {access_token}"))
+            .header(CONTENT_TYPE, "application/json"))
     }
 
     /// Fetches and returns details about a given submission.
@@ -246,23 +263,15 @@ impl Client {
     /// submission does not exist, or the response cannot be parsed as a submission.
     #[instrument(skip(self))]
     pub async fn submission(&self, article: &str) -> Result<Submission, Error> {
-        let access_token = self.get_valid_token().await?;
         debug!(%article, "requesting submission");
 
-        let request = self
-            .client
-            .get(format!("{OAUTH_BASE_URL}/by_id/t3_{article}"))
-            .header(AUTHORIZATION, format!("bearer {access_token}"))
-            .header(CONTENT_TYPE, "application/json");
-
-        match self
-            .send_json(
-                request,
-                || Error::SubmissionNotFound,
-                Error::DeserializeSubmission,
-            )
+        let request = self.authorized_get(&format!("/by_id/t3_{article}")).await?;
+        let item = self
+            .send_json(request, Error::DeserializeSubmission)
             .await?
-        {
+            .ok_or(Error::SubmissionNotFound)?;
+
+        match item {
             Item::Listing(listing) => listing
                 .children
                 .into_iter()
@@ -306,23 +315,15 @@ impl Client {
     /// subreddit does not exist, or the response cannot be parsed as a subreddit.
     #[instrument(skip(self))]
     pub async fn subreddit_about_info(&self, name: &str) -> Result<Subreddit, Error> {
-        let access_token = self.get_valid_token().await?;
         debug!(%name, "requesting subreddit details");
 
-        let request = self
-            .client
-            .get(format!("{OAUTH_BASE_URL}/r/{name}/about"))
-            .header(AUTHORIZATION, format!("bearer {access_token}"))
-            .header(CONTENT_TYPE, "application/json");
-
-        match self
-            .send_json(
-                request,
-                || Error::SubredditNotFound,
-                Error::DeserializeSubreddit,
-            )
+        let request = self.authorized_get(&format!("/r/{name}/about")).await?;
+        let item = self
+            .send_json(request, Error::DeserializeSubreddit)
             .await?
-        {
+            .ok_or(Error::SubredditNotFound)?;
+
+        match item {
             Item::Subreddit(subreddit) => Ok(subreddit),
             _ => Err(Error::InvalidResponse),
         }
@@ -352,7 +353,7 @@ impl Client {
             url.full = %RedactedUrl::from_unparsed(url),
             "fetching redirect location"
         );
-        let request = self.client.head(url);
+        let request = self.http.head(url);
         let response = request
             .send()
             .await

@@ -21,7 +21,7 @@ use url::Url;
 use super::{
     object_key, public_url_for,
     s3::S3,
-    tempdir_builder,
+    tempdir::tempdir_builder,
     ytdlp::{self, DownloadedFile, Downloader, Progress},
 };
 use zeta_url::is_identifier;
@@ -110,7 +110,7 @@ impl DownloadManager {
         base_dir: Option<tempfile::TempDir>,
         max_concurrent: usize,
     ) -> Self {
-        let removed = super::cleanup_stale_downloads(&download_dir, None);
+        let removed = super::tempdir::cleanup_stale_downloads(&download_dir, None);
         if removed > 0 {
             debug!(removed, "cleaned up stale download directories");
         }
@@ -492,14 +492,14 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::TEMP_DIR_PREFIX;
+    use crate::tempdir::TEMP_DIR_PREFIX;
 
     /// Returns the temporary download directories that currently exist under `base`.
     fn stale_download_dirs(base: &Path) -> Vec<PathBuf> {
         std::fs::read_dir(base)
             .unwrap()
             .flatten()
-            .filter(crate::is_temp_download_dir)
+            .filter(crate::tempdir::is_temp_download_dir)
             .map(|entry| entry.path())
             .collect()
     }
@@ -787,7 +787,10 @@ mod tests {
         let unrelated = base.path().join("zeta-unrelated");
         std::fs::create_dir(&unrelated).unwrap();
 
-        assert_eq!(crate::cleanup_stale_downloads(base.path(), None), 1);
+        assert_eq!(
+            crate::tempdir::cleanup_stale_downloads(base.path(), None),
+            1
+        );
         assert!(!stale.exists());
         assert!(unrelated.exists());
     }

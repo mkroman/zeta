@@ -47,6 +47,11 @@ impl<T> Entry<T> {
             expires_at: Instant::now() + ttl,
         }
     }
+
+    /// Returns whether the entry has not expired yet.
+    fn is_fresh(&self) -> bool {
+        self.expires_at > Instant::now()
+    }
 }
 
 impl<T> TtlCache<T> {
@@ -84,9 +89,7 @@ impl<T> TtlCache<T> {
     fn is_fresh(&self) -> bool {
         let entry = self.entry.load();
 
-        entry
-            .as_ref()
-            .is_some_and(|entry| entry.expires_at > Instant::now())
+        entry.as_ref().is_some_and(|entry| entry.is_fresh())
     }
 
     /// Returns a clone of the cached value when it is fresh.
@@ -102,7 +105,7 @@ impl<T> TtlCache<T> {
 
         entry
             .as_ref()
-            .filter(|entry| entry.expires_at > Instant::now())
+            .filter(|entry| entry.is_fresh())
             .map(|entry| entry.value.clone())
     }
 
@@ -273,7 +276,7 @@ where
 
         entries
             .get(key)
-            .filter(|entry| entry.expires_at > Instant::now())
+            .filter(|entry| entry.is_fresh())
             .map(|entry| entry.value.as_deref().cloned())
     }
 

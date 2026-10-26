@@ -13,7 +13,9 @@ use url::Url;
 pub type SchemeMap = &'static [(&'static str, Option<&'static str>)];
 
 /// The default accepted schemes: canonical `http` and `https`.
-const DEFAULT_SCHEMES: SchemeMap = &[("http", None), ("https", None)];
+///
+/// Derived from the first two [`HTTP_SCHEMES`] entries so the canonical prefixes cannot drift.
+const DEFAULT_SCHEMES: SchemeMap = &[HTTP_SCHEMES[0], HTTP_SCHEMES[1]];
 
 /// The schemes used for host-side URL extraction.
 ///

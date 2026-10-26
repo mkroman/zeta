@@ -104,160 +104,113 @@ struct Handler {
     cfg: Vec<syn::Attribute>,
 }
 
-/// The event kinds a `#[handler(kind)]` method can handle.
-#[derive(Clone, Copy, PartialEq)]
-enum HandlerKind {
-    Command,
-    Url,
-    Message,
-    Join,
-    Part,
-    Quit,
-    Nick,
-    Kick,
-    Ctcp,
-    Raw,
-    Loaded,
-    Shutdown,
-}
-
-/// The static description of one [`HandlerKind`].
-///
-/// Keeping the keyword, the forwarded trait method, and the event parameter together means a new
-/// event kind is a single match arm, and the parser and the diagnostics read the same keyword.
-struct KindSpec {
-    /// The kind as written in `#[handler(kind)]`.
-    keyword: &'static str,
-    /// The trait method the handler is forwarded through.
-    trait_method: &'static str,
-    /// The trait method's event parameter: its name and the event type at the `zeta_plugin`
-    /// root. `None` for `loaded` and `shutdown`, which take no event.
-    event: Option<(&'static str, &'static str)>,
-}
-
-impl HandlerKind {
-    /// Every kind, in the order diagnostics list them.
-    const ALL: &[Self] = &[
-        Self::Command,
-        Self::Url,
-        Self::Message,
-        Self::Join,
-        Self::Part,
-        Self::Quit,
-        Self::Nick,
-        Self::Kick,
-        Self::Ctcp,
-        Self::Raw,
-        Self::Loaded,
-        Self::Shutdown,
-    ];
-
-    /// The kind's keyword, trait method, and event parameter.
-    const fn spec(self) -> KindSpec {
-        match self {
-            Self::Command => KindSpec {
-                keyword: "command",
-                trait_method: "handle_command",
-                event: Some(("command", "CommandEvent")),
-            },
-            Self::Url => KindSpec {
-                keyword: "url",
-                trait_method: "handle_url",
-                event: Some(("url", "UrlEvent")),
-            },
-            Self::Message => KindSpec {
-                keyword: "message",
-                trait_method: "handle_message",
-                event: Some(("message", "MessageEvent")),
-            },
-            Self::Join => KindSpec {
-                keyword: "join",
-                trait_method: "handle_join",
-                event: Some(("join", "JoinEvent")),
-            },
-            Self::Part => KindSpec {
-                keyword: "part",
-                trait_method: "handle_part",
-                event: Some(("part", "PartEvent")),
-            },
-            Self::Quit => KindSpec {
-                keyword: "quit",
-                trait_method: "handle_quit",
-                event: Some(("quit", "QuitEvent")),
-            },
-            Self::Nick => KindSpec {
-                keyword: "nick",
-                trait_method: "handle_nick",
-                event: Some(("nick", "NickEvent")),
-            },
-            Self::Kick => KindSpec {
-                keyword: "kick",
-                trait_method: "handle_kick",
-                event: Some(("kick", "KickEvent")),
-            },
-            Self::Ctcp => KindSpec {
-                keyword: "ctcp",
-                trait_method: "handle_ctcp",
-                event: Some(("ctcp", "CtcpEvent")),
-            },
-            Self::Raw => KindSpec {
-                keyword: "raw",
-                trait_method: "handle_raw",
-                event: Some(("raw", "RawEvent")),
-            },
-            Self::Loaded => KindSpec {
-                keyword: "loaded",
-                trait_method: "loaded",
-                event: None,
-            },
-            Self::Shutdown => KindSpec {
-                keyword: "shutdown",
-                trait_method: "shutdown",
-                event: None,
-            },
+/// Generates [`HandlerKind`] and its static descriptions from one table, so the enum, the
+/// diagnostics, and the forwarding code cannot drift apart.
+macro_rules! handler_kinds {
+    ($(
+        $variant:ident($keyword:literal, $trait_method:literal $(, $parameter:literal => $event:literal)?)
+    ),* $(,)?) => {
+        /// The event kinds a `#[handler(kind)]` method can handle.
+        #[derive(Clone, Copy, PartialEq)]
+        enum HandlerKind {
+            $($variant,)*
         }
-    }
 
-    /// Parses the `kind` argument of `#[handler(kind)]`.
-    fn from_ident(ident: &Ident) -> Option<Self> {
-        Self::ALL.iter().copied().find(|kind| ident == kind.name())
-    }
+        /// The static description of one [`HandlerKind`].
+        ///
+        /// Keeping the keyword, the forwarded trait method, and the event parameter together
+        /// means a new event kind is a single table row, and the parser and the diagnostics read
+        /// the same keyword.
+        struct KindSpec {
+            /// The kind as written in `#[handler(kind)]`.
+            keyword: &'static str,
+            /// The trait method the handler is forwarded through.
+            trait_method: &'static str,
+            /// The trait method's event parameter: its name and the event type at the
+            /// `zeta_plugin` root. `None` for `loaded` and `shutdown`, which take no event.
+            event: Option<(&'static str, &'static str)>,
+        }
 
-    /// The error for an unrecognized `kind`, listing the accepted ones.
-    fn unknown_kind(ident: &Ident) -> syn::Error {
-        let expected = Self::ALL
-            .iter()
-            .map(|kind| format!("`{}`", kind.name()))
-            .collect::<Vec<_>>()
-            .join(", ");
+        impl HandlerKind {
+            /// Every kind, in the order diagnostics list them.
+            const ALL: &[Self] = &[$(Self::$variant,)*];
 
-        syn::Error::new(
-            ident.span(),
-            format!("unknown event kind `{ident}`; expected one of {expected}"),
-        )
-    }
+            /// The kind's keyword, trait method, and event parameter.
+            const fn spec(self) -> KindSpec {
+                match self {
+                    $(
+                        Self::$variant => KindSpec {
+                            keyword: $keyword,
+                            trait_method: $trait_method,
+                            event: handler_kinds!(@event $($parameter => $event)?),
+                        },
+                    )*
+                }
+            }
 
-    /// The kind as written in `#[handler(kind)]`, for diagnostics.
-    const fn name(self) -> &'static str {
-        self.spec().keyword
-    }
+            /// Parses the `kind` argument of `#[handler(kind)]`.
+            fn from_ident(ident: &Ident) -> Option<Self> {
+                Self::ALL.iter().copied().find(|kind| ident == kind.name())
+            }
 
-    /// The trait method the handler is forwarded through.
-    const fn trait_method(self) -> &'static str {
-        self.spec().trait_method
-    }
+            /// The error for an unrecognized `kind`, listing the accepted ones.
+            fn unknown_kind(ident: &Ident) -> syn::Error {
+                let expected = Self::ALL
+                    .iter()
+                    .map(|kind| format!("`{}`", kind.name()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
-    /// The trait method's event parameter, or `None` for `loaded` and `shutdown`.
-    const fn event_parameter(self) -> Option<(&'static str, &'static str)> {
-        self.spec().event
-    }
+                syn::Error::new(
+                    ident.span(),
+                    format!("unknown event kind `{ident}`; expected one of {expected}"),
+                )
+            }
 
-    /// Whether the trait handler takes `&mut self`.
-    ///
-    /// Only the eventless lifecycle hooks do; every event handler takes `&self`.
-    const fn mutable_receiver(self) -> bool {
-        self.spec().event.is_none()
-    }
+            /// The kind as written in `#[handler(kind)]`, for diagnostics.
+            const fn name(self) -> &'static str {
+                self.spec().keyword
+            }
+
+            /// The trait method the handler is forwarded through.
+            const fn trait_method(self) -> &'static str {
+                self.spec().trait_method
+            }
+
+            /// The trait method's event parameter, or `None` for `loaded` and `shutdown`.
+            const fn event_parameter(self) -> Option<(&'static str, &'static str)> {
+                self.spec().event
+            }
+
+            /// Whether the trait handler takes `&mut self`.
+            ///
+            /// Only the eventless lifecycle hooks do; every event handler takes `&self`.
+            const fn mutable_receiver(self) -> bool {
+                self.spec().event.is_none()
+            }
+        }
+    };
+    (@event) => {
+        None
+    };
+    (@event $parameter:literal => $event:literal) => {
+        Some(($parameter, $event))
+    };
+}
+
+handler_kinds! {
+    Command("command", "handle_command", "command" => "CommandEvent"),
+    Url("url", "handle_url", "url" => "UrlEvent"),
+    Message("message", "handle_message", "message" => "MessageEvent"),
+    Join("join", "handle_join", "join" => "JoinEvent"),
+    Part("part", "handle_part", "part" => "PartEvent"),
+    Quit("quit", "handle_quit", "quit" => "QuitEvent"),
+    Nick("nick", "handle_nick", "nick" => "NickEvent"),
+    Kick("kick", "handle_kick", "kick" => "KickEvent"),
+    Ctcp("ctcp", "handle_ctcp", "ctcp" => "CtcpEvent"),
+    Raw("raw", "handle_raw", "raw" => "RawEvent"),
+    Loaded("loaded", "loaded"),
+    Shutdown("shutdown", "shutdown"),
 }
 
 /// Classifies, validates, and renders the macro output for one `#[plugin]` impl block.
