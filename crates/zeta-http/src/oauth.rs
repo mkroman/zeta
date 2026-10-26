@@ -2,7 +2,7 @@
 //!
 //! Plugins that talk to an OAuth2-secured API (Twitch, Spotify, ..) all need the same
 //! machinery: request an access token with the client-credentials grant, cache it, and refresh
-//! it shortly before it expires. [`TokenCache`] implements that,
+//! it shortly before it expires. `TokenCache` implements that,
 //! parameterized over the plugin-specific token request itself, and
 //! [`Credentials`] pairs it with the application's credentials and
 //! the shared HTTP client.
@@ -21,7 +21,7 @@ const EXPIRY_BUFFER: Duration = Duration::from_mins(1);
 
 /// The response of an OAuth2 token endpoint for the client-credentials grant.
 #[derive(Debug, Deserialize)]
-pub struct TokenResponse {
+pub(crate) struct TokenResponse {
     /// The access token issued by the authorization server.
     pub access_token: String,
     /// The lifetime of the access token, in seconds.
@@ -31,7 +31,7 @@ pub struct TokenResponse {
 /// A single-slot cache of an OAuth2 client-credentials access token.
 ///
 /// Cloning is not supported; share the cache by reference from the owner.
-pub struct TokenCache {
+pub(crate) struct TokenCache {
     token: RwLock<Option<CachedToken>>,
 }
 
@@ -108,7 +108,7 @@ impl Default for TokenCache {
 ///
 /// Holds the HTTP client shared by the token request and the API's own requests, the
 /// application credentials, and the cached access token — refreshed shortly before it expires
-/// through [`TokenCache`].
+/// through `TokenCache`.
 pub struct Credentials {
     /// The HTTP client used for the token request and the API's own requests.
     client: reqwest::Client,

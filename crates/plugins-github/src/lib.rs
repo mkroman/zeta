@@ -26,6 +26,7 @@ use zeta_utils::settings::resolve_optional_setting;
 
 /// Settings for the github plugin, from its `[plugins.github]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// A GitHub API token, used to raise the rate limit for requests.
     ///

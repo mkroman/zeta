@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use tracing::error;
 use zeta_utils::text::Truncatable;
 
-use crate::LOGGED_BODY_LENGTH;
+use crate::response::LOGGED_BODY_LENGTH;
 
 /// The error returned when a JSON body fails to parse.
 pub type Error = serde_path_to_error::Error<serde_json::Error>;

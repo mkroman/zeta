@@ -3,8 +3,8 @@
 //! The registry constructs plugins, keeps the loaded ones with the subscriptions they declared,
 //! and tracks the ones that failed to initialize. The host discovers compiled-in plugins through
 //! `inventory` and registers them with [`Registry::register_with`] (the `plugins` facade drives
-//! this). The host then spawns each [`RegisteredPlugin`] into its own
-//! [`PluginTask`](crate::PluginTask) and routes events to them through the dispatch index.
+//! this). The host then spawns each [`LoadedPlugin`] into its own long-lived task and routes
+//! events to them through the dispatch index.
 
 use std::sync::Arc;
 
@@ -12,25 +12,12 @@ use figment::value::Value;
 use tracing::{debug, error, warn};
 
 use zeta_plugin::prelude::plugin_err;
-use zeta_plugin::{
-    CatalogEntry, ConstructedPlugin, Context, ErasedPlugin, Error, PluginCatalog,
-    PluginRegistration, Subscriptions,
-};
-
-/// A plugin registered with the bot, together with the subscriptions it declared.
-pub struct RegisteredPlugin {
-    /// The name of the plugin.
-    pub name: &'static str,
-    /// The plugin itself.
-    pub plugin: Box<dyn ErasedPlugin>,
-    /// The events the plugin registered interest in during initialization.
-    pub subscriptions: Subscriptions,
-}
+use zeta_plugin::{CatalogEntry, Context, Error, LoadedPlugin, PluginCatalog, PluginRegistration};
 
 /// Plugin registry.
 pub struct Registry {
     /// The loaded plugins, in registration order.
-    plugins: Vec<RegisteredPlugin>,
+    plugins: Vec<LoadedPlugin>,
     /// Plugins that failed to initialize, with the error that stopped them.
     failed_plugins: Vec<(&'static str, Error)>,
 }
@@ -113,13 +100,9 @@ impl Registry {
         }
 
         match (registration.construct)(ctx, section) {
-            Ok(constructed) => {
-                debug_assert_eq!(
-                    constructed.name, name,
-                    "the registration and the plugin disagree on the name"
-                );
-
-                self.commit(constructed);
+            Ok(loaded) => {
+                debug!(plugin = %loaded.name, "registered plugin");
+                self.plugins.push(loaded);
 
                 true
             }
@@ -135,28 +118,11 @@ impl Registry {
         false
     }
 
-    /// Commits a successfully constructed plugin to the loaded-plugin list.
-    fn commit(&mut self, constructed: ConstructedPlugin) {
-        let ConstructedPlugin {
-            name,
-            plugin,
-            subscriptions,
-        } = constructed;
-
-        debug!(plugin = %name, "registered plugin");
-
-        self.plugins.push(RegisteredPlugin {
-            name,
-            plugin,
-            subscriptions,
-        });
-    }
-
     /// Removes and returns all loaded plugins, leaving the registry empty.
     ///
     /// The caller is expected to move each plugin into its own task.
     #[must_use]
-    pub fn take_plugins(&mut self) -> Vec<RegisteredPlugin> {
+    pub fn take_plugins(&mut self) -> Vec<LoadedPlugin> {
         std::mem::take(&mut self.plugins)
     }
 }
@@ -164,59 +130,8 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_plugin::event::MessageEvent;
-    use zeta_plugin::{CommandSpec, NoSettings, Plugin};
-    use zeta_test_support::test_context;
-
-    /// The lifecycle log shared between a test and its plugin through the context.
-    type Recording = Arc<std::sync::Mutex<Vec<&'static str>>>;
-
-    /// Publishes the recording log through the context's shared state.
-    fn publish_recording(ctx: &Context) -> Recording {
-        let recording: Recording = Arc::new(std::sync::Mutex::new(Vec::new()));
-
-        assert!(ctx.shared.publish(Arc::clone(&recording)).is_none());
-
-        recording
-    }
-
-    /// Test plugin recording the lifecycle events it observes.
-    struct RecordingPlugin {
-        recording: Recording,
-    }
-
-    #[async_trait::async_trait]
-    impl Plugin for RecordingPlugin {
-        const NAME: &'static str = "recording";
-
-        type Settings = NoSettings;
-
-        fn new(
-            ctx: &Context,
-            _: &NoSettings,
-            subscriptions: &mut Subscriptions,
-        ) -> Result<Self, Error> {
-            subscriptions.command(CommandSpec::new(".recording", "record a message"));
-
-            let recording = ctx
-                .shared
-                .get::<std::sync::Mutex<Vec<&'static str>>>()
-                .expect("recording log should be published");
-
-            Ok(Self { recording })
-        }
-
-        async fn handle_message(
-            &self,
-            _: &Context,
-            _: &irc::client::Client,
-            _: &MessageEvent,
-        ) -> Result<(), Error> {
-            zeta_utils::sync::lock(&self.recording).push("message");
-
-            Ok(())
-        }
-    }
+    use zeta_plugin::{CommandSpec, Plugin};
+    use zeta_test_support::{RecordingPlugin, publish_recording, test_context};
 
     #[tokio::test]
     async fn duplicate_registrations_are_rejected() {

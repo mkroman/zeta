@@ -36,24 +36,22 @@ impl PluginTask {
         client: Arc<Client>,
         mut receiver: mpsc::UnboundedReceiver<Event>,
     ) -> Self {
-        let task_name = name;
-
         let handle = tokio::spawn(async move {
-            debug!(plugin = %task_name, "plugin task started");
+            debug!(plugin = %name, "plugin task started");
 
             // The load and shutdown hooks run inside spans for the same reason the handler
             // does: without a span, their warnings only ever reach stdout — the `loaded` span
             // above closed before this one fires.
             let failed_to_load = async {
                 if let Err(error) = plugin.loaded(&ctx, &client).await {
-                    warn!(plugin = %task_name, %error, "plugin failed to load");
+                    warn!(plugin = %name, %error, "plugin failed to load");
 
                     true
                 } else {
                     false
                 }
             }
-            .instrument(tracing::info_span!("loaded", plugin = %task_name))
+            .instrument(tracing::info_span!("loaded", plugin = %name))
             .await;
 
             if failed_to_load {
@@ -66,10 +64,10 @@ impl PluginTask {
                 // only ever reach stdout.
                 async {
                     if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
-                        error!(plugin = %task_name, %error, "plugin error during event handling");
+                        error!(plugin = %name, %error, "plugin error during event handling");
                     }
                 }
-                .instrument(tracing::info_span!("handle_event", plugin = %task_name))
+                .instrument(tracing::info_span!("handle_event", plugin = %name))
                 .await;
             }
 
@@ -77,13 +75,13 @@ impl PluginTask {
             // span, for the same reason as the load one above.
             async {
                 if let Err(error) = plugin.shutdown(&ctx, &client).await {
-                    warn!(plugin = %task_name, %error, "plugin error during shutdown");
+                    warn!(plugin = %name, %error, "plugin error during shutdown");
                 }
             }
-            .instrument(tracing::info_span!("shutdown", plugin = %task_name))
+            .instrument(tracing::info_span!("shutdown", plugin = %name))
             .await;
 
-            debug!(plugin = %task_name, "plugin task stopped");
+            debug!(plugin = %name, "plugin task stopped");
         });
 
         Self { name, handle }
@@ -104,62 +102,7 @@ impl PluginTask {
 mod tests {
     use super::*;
     use zeta_plugin::event::MessageEvent;
-    use zeta_plugin::{Error, NoSettings, Plugin};
-    use zeta_test_support::test_context;
-
-    /// The lifecycle log shared between a test and its plugin through the context.
-    type Recording = Arc<std::sync::Mutex<Vec<&'static str>>>;
-
-    /// Publishes the recording log through the context's shared state.
-    fn publish_recording(ctx: &Context) -> Recording {
-        let recording: Recording = Arc::new(std::sync::Mutex::new(Vec::new()));
-
-        assert!(ctx.shared.publish(Arc::clone(&recording)).is_none());
-
-        recording
-    }
-
-    /// Test plugin recording the lifecycle events it observes.
-    struct RecordingPlugin {
-        recording: Recording,
-    }
-
-    #[async_trait::async_trait]
-    impl Plugin for RecordingPlugin {
-        const NAME: &'static str = "recording";
-
-        type Settings = NoSettings;
-
-        fn new(
-            ctx: &Context,
-            _: &NoSettings,
-            _: &mut zeta_plugin::Subscriptions,
-        ) -> Result<Self, Error> {
-            let recording = ctx
-                .shared
-                .get::<std::sync::Mutex<Vec<&'static str>>>()
-                .expect("recording log should be published");
-
-            Ok(Self { recording })
-        }
-
-        async fn handle_message(
-            &self,
-            _: &Context,
-            _: &Client,
-            _: &MessageEvent,
-        ) -> Result<(), Error> {
-            zeta_utils::sync::lock(&self.recording).push("message");
-
-            Ok(())
-        }
-
-        async fn shutdown(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
-            zeta_utils::sync::lock(&self.recording).push("shutdown");
-
-            Ok(())
-        }
-    }
+    use zeta_test_support::{RecordingPlugin, publish_recording, test_context};
 
     #[tokio::test]
     async fn plugin_task_drains_messages_before_shutdown() {

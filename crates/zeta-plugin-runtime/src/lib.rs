@@ -11,5 +11,5 @@ mod registry;
 mod runtime;
 mod task;
 
-pub use registry::{RegisteredPlugin, Registry};
+pub use registry::Registry;
 pub use runtime::PluginRuntime;

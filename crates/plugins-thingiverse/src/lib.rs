@@ -28,6 +28,7 @@ const API_BASE_URL: &str = "https://api.thingiverse.com";
 
 /// Settings for the thingiverse plugin, from its `[plugins.thingiverse]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The Thingiverse app token.
     ///

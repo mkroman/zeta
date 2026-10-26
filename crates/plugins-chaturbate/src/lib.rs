@@ -41,7 +41,6 @@ pub enum Error {
 
 /// The parsed contents of `window.initialRoomDossier`.
 #[derive(Deserialize, Debug)]
-#[allow(unused)]
 pub struct RoomDossier {
     /// The broadcaster's username.
     pub broadcaster_username: String,

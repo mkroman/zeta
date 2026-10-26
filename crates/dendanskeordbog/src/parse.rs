@@ -72,6 +72,8 @@ impl Selectors {
     /// programming error, as the selectors are fixed.
     #[must_use]
     pub fn new() -> Self {
+        let keyword = Selector::parse(":scope > span.k").expect("keyword span selector");
+
         Self {
             level: Selector::parse(":scope > span.l").expect("level selector"),
             description: Selector::parse(":scope > span.dtrn").expect("description selector"),
@@ -86,9 +88,9 @@ impl Selectors {
             idiom: Selector::parse(":scope > .idiom > .idiom").expect("idiom selector"),
             etymology: Selector::parse(":scope > span.def > span.etym")
                 .expect("etymology selector"),
-            keyword: Selector::parse(":scope > span.k").expect("keyword span selector"),
+            keyword: keyword.clone(),
             audio: Selector::parse(":scope > span.audio audio").expect("audio span selector"),
-            phrase: Selector::parse(":scope > span.k").expect("phrase selector"),
+            phrase: keyword,
         }
     }
 }

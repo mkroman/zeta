@@ -96,6 +96,15 @@ macro_rules! event_sender {
     };
 }
 
+/// Builds an event of this type from the IRC message it was derived from.
+///
+/// Most event kinds are infallible; [`CtcpEvent`] is not, because a `NOTICE` only carries a CTCP
+/// message when its text is wrapped in the CTCP delimiter.
+trait FromMessage: Sized {
+    /// Returns the event, or [`None`] when the message does not carry one.
+    fn from_message(message: Arc<Message>) -> Option<Self>;
+}
+
 /// Generates a single-field event kind: its struct, constructor, the accessors given in the
 /// trailing block, and the shared [`event_sender!`] accessor.
 ///
@@ -125,58 +134,13 @@ macro_rules! event_kind {
 
             event_sender!();
         }
-    };
-}
 
-/// An event delivered to a plugin.
-///
-/// A plugin receives only the event kinds it registered during initialization; each kind is
-/// handled through its own [`Plugin`](super::Plugin) method (`handle_command`, `handle_url`,
-/// `handle_join`, ...), which is only called when the plugin registered that kind.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub enum Event {
-    /// A registered command was invoked.
-    Command(CommandEvent),
-    /// A URL on a registered host (or any URL, for generic handlers) was posted.
-    Url(UrlEvent),
-    /// A channel message was posted.
-    Message(MessageEvent),
-    /// A user joined a channel.
-    Join(JoinEvent),
-    /// A user left a channel.
-    Part(PartEvent),
-    /// A user quit the network.
-    Quit(QuitEvent),
-    /// A user changed their nickname.
-    Nick(NickEvent),
-    /// A user was kicked from a channel.
-    Kick(KickEvent),
-    /// A CTCP request or reply arrived.
-    Ctcp(CtcpEvent),
-    /// An unmodeled IRC command arrived.
-    Raw(RawEvent),
-}
-
-impl Event {
-    /// Returns the flag-based kind of this event, or [`None`] for commands and URLs.
-    ///
-    /// Commands and URLs are subscribed to with payloads rather than a plain flag, so they have
-    /// no [`EventKind`].
-    #[must_use]
-    pub const fn kind(&self) -> Option<EventKind> {
-        match self {
-            Self::Command(_) | Self::Url(_) => None,
-            Self::Message(_) => Some(EventKind::Message),
-            Self::Join(_) => Some(EventKind::Join),
-            Self::Part(_) => Some(EventKind::Part),
-            Self::Quit(_) => Some(EventKind::Quit),
-            Self::Nick(_) => Some(EventKind::Nick),
-            Self::Kick(_) => Some(EventKind::Kick),
-            Self::Ctcp(_) => Some(EventKind::Ctcp),
-            Self::Raw(_) => Some(EventKind::Raw),
+        impl FromMessage for $event {
+            fn from_message(message: Arc<Message>) -> Option<Self> {
+                Some(Self::new(message))
+            }
         }
-    }
+    };
 }
 
 /// A registered command was invoked in a channel.
@@ -498,6 +462,12 @@ impl CtcpEvent {
     event_sender!();
 }
 
+impl FromMessage for CtcpEvent {
+    fn from_message(message: Arc<Message>) -> Option<Self> {
+        Self::new(message)
+    }
+}
+
 /// The kind of a [`CtcpEvent`], classified from its CTCP command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CtcpKind {
@@ -609,8 +579,41 @@ pub enum UrlScope {
 /// every `#[async_trait]`-generated impl.
 macro_rules! event_kind_flags {
     ($(
-        $kind:ident($receive:ident, $kind_doc:literal, $receive_doc:literal $(,)?)
+        $kind:ident($event:ident, $receive:ident, $kind_doc:literal, $receive_doc:literal $(,)?)
     ),* $(,)?) => {
+        /// An event delivered to a plugin.
+        ///
+        /// A plugin receives only the event kinds it registered during initialization; each
+        /// kind is handled through its own [`Plugin`](super::Plugin) method
+        /// (`handle_command`, `handle_url`, `handle_join`, ...), which is only called when the
+        /// plugin registered that kind.
+        #[derive(Clone, Debug)]
+        #[non_exhaustive]
+        pub enum Event {
+            /// A registered command was invoked.
+            Command(CommandEvent),
+            /// A URL on a registered host (or any URL, for generic handlers) was posted.
+            Url(UrlEvent),
+            $(
+                #[doc = $kind_doc]
+                $kind($event),
+            )*
+        }
+
+        impl Event {
+            /// Returns the flag-based kind of this event, or [`None`] for commands and URLs.
+            ///
+            /// Commands and URLs are subscribed to with payloads rather than a plain flag, so
+            /// they have no [`EventKind`].
+            #[must_use]
+            pub const fn kind(&self) -> Option<EventKind> {
+                match self {
+                    Self::Command(_) | Self::Url(_) => None,
+                    $(Self::$kind(_) => Some(EventKind::$kind),)*
+                }
+            }
+        }
+
         /// The kind of an event a plugin subscribes to with a plain flag — one per kind-specific
         /// handler.
         ///
@@ -637,14 +640,11 @@ macro_rules! event_kind_flags {
             #[must_use]
             pub fn event(self, message: Arc<Message>) -> Option<Event> {
                 match self {
-                    Self::Message => Some(Event::Message(MessageEvent::new(message))),
-                    Self::Join => Some(Event::Join(JoinEvent::new(message))),
-                    Self::Part => Some(Event::Part(PartEvent::new(message))),
-                    Self::Quit => Some(Event::Quit(QuitEvent::new(message))),
-                    Self::Nick => Some(Event::Nick(NickEvent::new(message))),
-                    Self::Kick => Some(Event::Kick(KickEvent::new(message))),
-                    Self::Ctcp => CtcpEvent::new(message).map(Event::Ctcp),
-                    Self::Raw => Some(Event::Raw(RawEvent::new(message))),
+                    $(
+                        Self::$kind => {
+                            <$event as FromMessage>::from_message(message).map(Event::$kind)
+                        }
+                    )*
                 }
             }
         }
@@ -661,21 +661,21 @@ macro_rules! event_kind_flags {
 }
 
 event_kind_flags! {
-    Message(receive_message, "Channel messages ([`MessageEvent`]).",
+    Message(MessageEvent, receive_message, "Channel messages ([`MessageEvent`]).",
         "every channel message, whether or not it matches a registered command"),
-    Join(receive_join, "Users joining channels ([`JoinEvent`]).",
+    Join(JoinEvent, receive_join, "Users joining channels ([`JoinEvent`]).",
         "users joining channels"),
-    Part(receive_part, "Users leaving channels ([`PartEvent`]).",
+    Part(PartEvent, receive_part, "Users leaving channels ([`PartEvent`]).",
         "users leaving channels"),
-    Quit(receive_quit, "Users quitting the network ([`QuitEvent`]).",
+    Quit(QuitEvent, receive_quit, "Users quitting the network ([`QuitEvent`]).",
         "users quitting the network"),
-    Nick(receive_nick, "Nickname changes ([`NickEvent`]).",
+    Nick(NickEvent, receive_nick, "Nickname changes ([`NickEvent`]).",
         "nickname changes"),
-    Kick(receive_kick, "Users kicked from channels ([`KickEvent`]).",
+    Kick(KickEvent, receive_kick, "Users kicked from channels ([`KickEvent`]).",
         "users kicked from channels"),
-    Ctcp(receive_ctcp, "CTCP messages ([`CtcpEvent`]).",
+    Ctcp(CtcpEvent, receive_ctcp, "CTCP messages ([`CtcpEvent`]).",
         "CTCP messages"),
-    Raw(receive_raw, "Raw, unmodeled IRC commands ([`RawEvent`]).",
+    Raw(RawEvent, receive_raw, "Raw, unmodeled IRC commands ([`RawEvent`]).",
         "raw, unmodeled IRC commands"),
 }
 

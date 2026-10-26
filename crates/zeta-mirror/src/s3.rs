@@ -20,6 +20,8 @@ use url::Url;
 
 use zeta_http::RequestError;
 
+use crate::config::MirrorConfig;
+
 /// The name used to identify our credentials provider.
 const CREDENTIALS_PROVIDER_NAME: &str = "zeta-mirror";
 
@@ -31,37 +33,6 @@ const MAX_SEND_ATTEMPTS: u32 = 3;
 
 /// The delay before the first retry of a transient failure; it doubles for each subsequent retry.
 const RETRY_DELAY: Duration = Duration::from_millis(250);
-
-/// Configuration for the S3 mirror client.
-///
-/// Required values fall back to the `S3_*` environment variables when unset; optional values
-/// fall back to their environment variables and then to defaults.
-#[derive(Clone, Debug, Default)]
-pub struct S3Config {
-    /// The S3 access key id.
-    ///
-    /// Falls back to the `S3_ACCESS_KEY_ID` environment variable when unset.
-    pub access_key_id: Option<String>,
-    /// The S3 secret access key.
-    ///
-    /// Falls back to the `S3_SECRET_ACCESS_KEY` environment variable when unset.
-    pub secret_access_key: Option<String>,
-    /// The name of the bucket to upload to.
-    ///
-    /// Falls back to the `S3_BUCKET_NAME` environment variable when unset.
-    pub bucket: Option<String>,
-    /// The region to use.
-    ///
-    /// Falls back to the `S3_REGION` environment variable, and to `auto` when neither is set.
-    /// `auto` is only meaningful for S3-compatible endpoints (such as R2 or MinIO) — against AWS
-    /// proper, a real region should be set.
-    pub region: Option<String>,
-    /// The endpoint URL for S3-compatible services.
-    ///
-    /// Falls back to the `S3_ENDPOINT` environment variable when unset. Empty values count as
-    /// unset, so a blank endpoint does not override the environment or the AWS default.
-    pub endpoint: Option<String>,
-}
 
 /// Errors that can occur while talking to S3.
 #[derive(thiserror::Error, Debug)]
@@ -142,22 +113,24 @@ impl fmt::Debug for S3 {
 }
 
 impl S3 {
-    /// Creates a client from the given configuration, falling back to the `S3_*` environment
-    /// variables.
+    /// Creates a client from the given mirror configuration, falling back to the `S3_*`
+    /// environment variables.
     ///
     /// # Errors
     ///
     /// Returns an error if a required value is missing or a configured value is invalid.
-    pub fn new(config: &S3Config) -> Result<Self, Error> {
-        let access_key_id = resolve_secret(config.access_key_id.as_deref(), "S3_ACCESS_KEY_ID")?;
-        let secret_access_key =
-            resolve_secret(config.secret_access_key.as_deref(), "S3_SECRET_ACCESS_KEY")?;
-        let bucket = resolve_secret(config.bucket.as_deref(), "S3_BUCKET_NAME")?;
+    pub fn new(config: &MirrorConfig) -> Result<Self, Error> {
+        let access_key_id = resolve_secret(config.s3_access_key_id.as_deref(), "S3_ACCESS_KEY_ID")?;
+        let secret_access_key = resolve_secret(
+            config.s3_secret_access_key.as_deref(),
+            "S3_SECRET_ACCESS_KEY",
+        )?;
+        let bucket = resolve_secret(config.s3_bucket_name.as_deref(), "S3_BUCKET_NAME")?;
         let region =
-            zeta_utils::settings::resolve_setting(config.region.as_deref(), "S3_REGION", "auto");
+            zeta_utils::settings::resolve_setting(config.s3_region.as_deref(), "S3_REGION", "auto");
 
         let endpoint = zeta_utils::settings::resolve_optional_setting(
-            config.endpoint.as_deref(),
+            config.s3_endpoint.as_deref(),
             "S3_ENDPOINT",
         )
         .map(|endpoint| Url::parse(&endpoint))

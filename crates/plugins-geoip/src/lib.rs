@@ -30,6 +30,7 @@ const BASE_URL: &str = "https://api.ip2location.io";
 
 /// Settings for the geoip plugin, from its `[plugins.geoip]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Settings {
     /// The ip2location.io API key.
     ///
@@ -46,7 +47,6 @@ pub struct GeoIp {
 
 /// A successful geolocation lookup, formatting one reply line with the reported details.
 #[must_use]
-#[derive(Default)]
 pub struct LookupResult(IpInfo);
 
 /// Errors that can occur while geolocating an address.
@@ -78,7 +78,7 @@ pub struct Opts {
 /// This struct is designed to be deserialized from a JSON response
 /// providing details like location, timezone, and ASN data.
 #[allow(unused)]
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct IpInfo {
     /// The IP address.
     pub ip: String,

@@ -6009,7 +6009,6 @@ dependencies = [
 name = "zeta-plugin-runtime"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "figment",
  "futures",
  "irc",

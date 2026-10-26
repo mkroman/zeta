@@ -139,32 +139,23 @@ struct Add {
     hosts: Vec<String>,
 }
 
-/// Remove sites matching a pattern.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "rm")]
-struct Rm {
-    /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
-    #[argh(positional)]
-    pattern: String,
+/// Defines a `rm`-style subcommand alias that removes sites matching a pattern.
+macro_rules! remove_subcommand {
+    ($type:ident, $name:literal) => {
+        /// Remove sites matching a pattern.
+        #[derive(FromArgs, ArgsInfo, Debug)]
+        #[argh(subcommand, name = $name)]
+        struct $type {
+            /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
+            #[argh(positional)]
+            pattern: String,
+        }
+    };
 }
 
-/// Remove sites matching a pattern.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "del")]
-struct Del {
-    /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
-    #[argh(positional)]
-    pattern: String,
-}
-
-/// Remove sites matching a pattern.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "delete")]
-struct Delete {
-    /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
-    #[argh(positional)]
-    pattern: String,
-}
+remove_subcommand!(Rm, "rm");
+remove_subcommand!(Del, "del");
+remove_subcommand!(Delete, "delete");
 
 /// Summarize the covered sites.
 #[derive(FromArgs, ArgsInfo, Debug)]

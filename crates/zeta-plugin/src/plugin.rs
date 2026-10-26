@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use irc::client::Client;
+use serde::de::DeserializeOwned;
 
 use crate::Error;
 use crate::context::Context;
@@ -126,7 +127,7 @@ pub trait Plugin: Send + Sync {
     ///
     /// The host hands only the plugin's own settings to [`Plugin::new`]; plugins cannot access
     /// other plugins' configuration.
-    type Settings;
+    type Settings: Default + DeserializeOwned;
 
     /// The constructor for a new plugin.
     ///

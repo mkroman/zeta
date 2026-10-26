@@ -122,7 +122,7 @@ impl Reddit {
     /// unrecognized links are skipped.
     async fn process_url(&self, link: Link, channel: &str, client: &Client) -> Result<(), Error> {
         match link {
-            Link::Gallery(id) | Link::Comments { id } | Link::Submission { id, .. } => {
+            Link::Gallery(id) | Link::CommentsPage { id } | Link::Submission { id, .. } => {
                 self.process_submission(&id, channel, client).await?;
             }
             Link::Comment { submission, .. } => {

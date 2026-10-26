@@ -113,6 +113,30 @@ mod request {
     }
 
     impl Rendered {
+        /// Renders a transport error whose URL has already been stripped: `error` is the error
+        /// without its URL, `url` and `host` are its redacted forms, and `skip` drops the
+        /// source links the client prints itself.
+        fn from_parts(
+            error: &(dyn StdError + 'static),
+            url: Option<RedactedUrl>,
+            host: Option<String>,
+            timeout: bool,
+            connect: bool,
+            skip: usize,
+        ) -> Self {
+            let kind = error.to_string();
+            let detail = detail(&kind, error, skip, url.as_ref().map(RedactedUrl::as_str));
+
+            Self {
+                kind,
+                detail,
+                url,
+                host,
+                timeout,
+                connect,
+            }
+        }
+
         /// Renders a `reqwest::Error`, stripping its URL before anything can format it.
         #[cfg(any(feature = "request", feature = "http"))]
         fn from_reqwest(error: reqwest::Error) -> Self {
@@ -124,17 +148,8 @@ mod request {
             let connect = error.is_connect();
 
             let error = error.without_url();
-            let kind = error.to_string();
-            let detail = detail(&kind, &error, 0, url.as_ref().map(RedactedUrl::as_str));
 
-            Self {
-                kind,
-                detail,
-                url,
-                host,
-                timeout,
-                connect,
-            }
+            Self::from_parts(&error, url, host, timeout, connect, 0)
         }
 
         /// Renders a `wreq::Error`, stripping its URI before anything can format it.
@@ -148,18 +163,8 @@ mod request {
             let connect = error.is_connect();
 
             let error = error.without_uri();
-            let kind = error.to_string();
             // `wreq::Error` renders its own first source, so the chain starts one link deeper.
-            let detail = detail(&kind, &error, 1, url.as_ref().map(RedactedUrl::as_str));
-
-            Self {
-                kind,
-                detail,
-                url,
-                host,
-                timeout,
-                connect,
-            }
+            Self::from_parts(&error, url, host, timeout, connect, 1)
         }
 
         /// Returns the request URL without its query string, fragment, or userinfo, if the
@@ -293,17 +298,20 @@ mod request {
     impl StdError for TransportError {}
 }
 
-/// A `reqwest::Error` whose URL has been redacted and whose message is rendered once.
+/// The transport-error wrapper of the plain `reqwest` client.
 ///
-/// See `TransportError` for the redaction contract shared with `WreqError`.
+/// Not a distinct type: `RequestError` and `WreqError` are aliases of the same
+/// `TransportError`, each named for the client that produces it. It holds no transport error
+/// at all — only its redacted rendering — so [`Display`](std::fmt::Display),
+/// [`Debug`](std::fmt::Debug) and the source chain are free of credentials by construction.
 #[cfg(any(feature = "request", feature = "http"))]
 pub use request::TransportError as RequestError;
 
-/// A `wreq::Error` whose URI has been redacted and whose message is rendered once.
+/// The transport-error wrapper of the browser-emulated `wreq` client.
 ///
-/// The same contract as `RequestError`: the browser-emulated client prints its request URI
-/// in `Display` and `Debug`, and the metadata proxy instagram falls back to can carry a
-/// credential in its query.
+/// The same type and redaction contract as `RequestError`: the browser-emulated client prints
+/// its request URI in `Display` and `Debug`, and the metadata proxy instagram falls back to can
+/// carry a credential in its query.
 #[cfg(feature = "emulated")]
 pub use request::TransportError as WreqError;
 

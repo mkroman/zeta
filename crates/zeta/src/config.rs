@@ -3,6 +3,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use figment::{
+    Figment,
+    providers::{Env, Format, Toml},
+};
+use miette::IntoDiagnostic;
 use serde::{Deserialize, Serialize};
 
 use crate::consts;
@@ -46,6 +51,27 @@ pub struct Config {
 }
 
 impl Config {
+    /// Loads the configuration from `path`, with `ZETA_`-prefixed environment overrides.
+    ///
+    /// Environment variables override the file, with `__` separating sections (e.g.
+    /// `ZETA_IRC__NICK_PASSWORD`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or the merged configuration is invalid.
+    pub fn load(path: impl AsRef<std::path::Path>) -> miette::Result<Self> {
+        Self::from_figment(
+            &Figment::new()
+                .merge(Toml::file(path))
+                .merge(Env::prefixed("ZETA_").lowercase(false).split("__")),
+        )
+    }
+
+    /// Extracts the configuration from an already-built provider chain.
+    fn from_figment(figment: &Figment) -> miette::Result<Self> {
+        figment.extract().into_diagnostic()
+    }
+
     /// Removes and returns the per-plugin configuration sections.
     ///
     /// The host calls this once while starting up and hands each plugin its own section through
@@ -185,37 +211,43 @@ impl IrcConfig {
     }
 }
 
-impl From<IrcConfig> for irc::client::data::Config {
-    fn from(config: IrcConfig) -> Self {
+impl From<&IrcConfig> for irc::client::data::Config {
+    fn from(config: &IrcConfig) -> Self {
         let port = config.port();
-        let use_tls = config.tls.map(|tls| tls.enabled);
+        let use_tls = config.tls.as_ref().map(|tls| tls.enabled);
         let mut channels = Vec::with_capacity(config.channels.len());
         let mut channel_keys = HashMap::new();
 
-        for channel in config.channels {
-            if let Some(key) = channel.key {
-                channel_keys.insert(channel.name.clone(), key);
+        for channel in &config.channels {
+            if let Some(key) = &channel.key {
+                channel_keys.insert(channel.name.clone(), key.clone());
             }
 
-            channels.push(channel.name);
+            channels.push(channel.name.clone());
         }
 
         Self {
-            nickname: Some(config.nickname),
-            nick_password: config.nick_password,
-            username: config.username,
-            realname: config.realname,
-            server: Some(config.hostname),
+            nickname: Some(config.nickname.clone()),
+            nick_password: config.nick_password.clone(),
+            username: config.username.clone(),
+            realname: config.realname.clone(),
+            server: Some(config.hostname.clone()),
             port: Some(port),
-            password: config.password,
-            encoding: config.encoding,
+            password: config.password.clone(),
+            encoding: config.encoding.clone(),
             use_tls,
             channels,
             channel_keys,
-            alt_nicks: config.alt_nicks,
+            alt_nicks: config.alt_nicks.clone(),
             should_ghost: config.should_ghost,
             ..Default::default()
         }
+    }
+}
+
+impl From<IrcConfig> for irc::client::data::Config {
+    fn from(config: IrcConfig) -> Self {
+        Self::from(&config)
     }
 }
 
@@ -372,9 +404,7 @@ channels = []
     fn repository_config_parses() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config.toml");
 
-        let config = Figment::new()
-            .merge(Toml::file(path))
-            .extract::<Config>()
+        let config = Config::from_figment(&Figment::new().merge(Toml::file(path)))
             .expect("the repository config.toml should parse");
 
         assert_empty!(config.plugins.unknown);

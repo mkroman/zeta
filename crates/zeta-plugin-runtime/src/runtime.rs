@@ -14,10 +14,9 @@ use irc::proto::Message;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
-use zeta_plugin::{Context, Filters};
+use zeta_plugin::{Context, Filters, LoadedPlugin};
 
 use crate::dispatch::EventIndex;
-use crate::registry::RegisteredPlugin;
 use crate::task::PluginTask;
 
 /// The running plugins: their dispatch index and their tasks.
@@ -36,11 +35,11 @@ impl PluginRuntime {
     /// Each task gets an unbounded mailbox, so a slow or failing plugin cannot block the IRC
     /// connection or the other plugins.
     #[must_use]
-    pub fn start(plugins: Vec<RegisteredPlugin>, ctx: Arc<Context>, client: &Arc<Client>) -> Self {
+    pub fn start(plugins: Vec<LoadedPlugin>, ctx: Arc<Context>, client: &Arc<Client>) -> Self {
         let mut index = EventIndex::default();
         let mut tasks = Vec::with_capacity(plugins.len());
 
-        for RegisteredPlugin {
+        for LoadedPlugin {
             name,
             plugin,
             subscriptions,

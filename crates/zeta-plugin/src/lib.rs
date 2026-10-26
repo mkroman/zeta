@@ -44,7 +44,7 @@ pub use filtering::{Filters, UrlFilter};
 pub use hostmask::Hostmasks;
 pub use inventory;
 pub use plugin::Plugin;
-pub use registration::{ConstructedPlugin, PluginRegistration};
+pub use registration::{LoadedPlugin, PluginRegistration};
 #[cfg(feature = "database")]
 pub use sqlx;
 pub use types::NoSettings;
