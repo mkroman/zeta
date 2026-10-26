@@ -3,6 +3,11 @@
 use std::fmt::Write;
 use std::time::Duration;
 
+// The unit tables below — and the constants only they need — are gated
+// `any(feature = "chrono", feature = "time", test)`: the `test` alternative keeps them available
+// to the tests at the bottom of this file even when neither feature is enabled, so the
+// table-driven core is exercised on every build.
+
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Utc};
 #[cfg(feature = "time")]

@@ -294,6 +294,8 @@ macro_rules! assert_empty {
 
 #[cfg(test)]
 mod tests {
+    // The gate is load-bearing: with `http` off, no test below uses anything from `super`, and
+    // a fully-unused glob import warns.
     #[cfg(feature = "http")]
     use super::*;
 

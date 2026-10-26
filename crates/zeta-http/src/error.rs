@@ -23,8 +23,6 @@ mod request {
     use std::error::Error as StdError;
     use std::fmt;
     use std::fmt::Write as _;
-
-    #[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
     use zeta_url::RedactedUrl;
 
     /// Renders the message a log line gets: `kind`, its source chain and its redacted URL.
@@ -213,7 +211,6 @@ mod request {
     /// redacted form, so [`Display`](std::fmt::Display), [`Debug`](std::fmt::Debug) and the
     /// source chain are all free of the query string by construction. `RequestError` and
     /// `WreqError` are aliases of this type, narrowed to the client that produces them.
-    #[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
     #[derive(Debug)]
     pub struct TransportError {
         /// The rendered failure shared by every transport error.
@@ -223,7 +220,6 @@ mod request {
         request: bool,
     }
 
-    #[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
     impl TransportError {
         /// Returns the request URL without its query string, fragment, or userinfo, if the
         /// error carries one.
@@ -288,14 +284,12 @@ mod request {
         }
     }
 
-    #[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
     impl fmt::Display for TransportError {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             fmt::Display::fmt(&self.rendered, f)
         }
     }
 
-    #[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
     impl StdError for TransportError {}
 }
 

@@ -108,7 +108,6 @@ impl std::error::Error for DbError {
 /// [`DbError`] naming `$entity`, wrapped into `$error::Database` — the variant every repository
 /// error enum carries. The macro keeps that wiring in one place instead of three near-identical
 /// constructor blocks per plugin.
-#[cfg(feature = "database")]
 #[macro_export]
 macro_rules! database_error {
     ($error:ty, $entity:literal) => {
