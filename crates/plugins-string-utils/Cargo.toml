@@ -1,0 +1,26 @@
+[package]
+name = "plugins-string-utils"
+version = "0.0.0"
+edition = "2024"
+description = "The string_utils plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls"]
+native-tls = ["zeta-plugin/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
+
+[dependencies]
+tokio.workspace = true
+tracing.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-unicode = { path = "../zeta-unicode" }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

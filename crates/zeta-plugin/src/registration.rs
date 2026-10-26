@@ -11,27 +11,25 @@ use serde::de::DeserializeOwned;
 use crate::Error;
 use crate::config::deserialize_with_unknown_keys;
 use crate::context::Context;
+use crate::erased::ErasedPlugin;
 use crate::error::plugin_err;
 use crate::event::Subscriptions;
 use crate::plugin::Plugin;
-use crate::registry::ErasedPlugin;
 
 inventory::collect!(PluginRegistration);
 
 /// A plugin made available to the host for registration.
 ///
 /// The `#[plugin]` attribute macro emits an [`inventory::submit!`] for one of these next to the
-/// generated [`Plugin`](crate::Plugin) implementation; the host collects them with
-/// [`inventory::iter`] and hands each one to
-/// [`Registry::register_with`](crate::Registry::register_with).
+/// generated [`Plugin`](crate::Plugin) implementation. The host collects them with
+/// [`inventory::iter`] and hands each one to its registry; see `zeta-plugin-runtime`.
 pub struct PluginRegistration {
     /// The plugin's name (`Plugin::NAME`), used as its `[plugins.<name>]` section and in the
     /// plugin catalog.
     pub name: &'static str,
     /// Deserializes the plugin's settings section, if any, and constructs the plugin.
     ///
-    /// Called by [`Registry::register_with`](crate::Registry::register_with); plugins never call
-    /// it themselves.
+    /// Called by the host registry; plugins never call it themselves.
     #[doc(hidden)]
     pub construct: fn(&Context, Option<&Value>) -> Result<ConstructedPlugin, Error>,
     /// Deserializes the plugin's settings section and reports the unrecognized keys.

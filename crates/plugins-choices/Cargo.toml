@@ -1,0 +1,26 @@
+[package]
+name = "plugins-choices"
+version = "0.0.0"
+edition = "2024"
+description = "The choices plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls"]
+native-tls = ["zeta-plugin/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
+
+[dependencies]
+rand = "0.10.1"
+serde.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+serde_json.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

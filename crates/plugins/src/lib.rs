@@ -1,34 +1,104 @@
 //! The bundled plugins for the zeta IRC bot.
 //!
-//! Every plugin implements [`Plugin`](zeta_plugin::Plugin) from `zeta-plugin` through the
-//! `#[plugin]` attribute macro, which also registers the plugin with the host through
-//! `inventory`. [`register_bundled_plugins`] discovers the compiled-in plugins from those
-//! registrations, resolves each one's section in [`PluginsConfig`], and registers the enabled
-//! ones with the [`Registry`](zeta_plugin::Registry).
+//! Every plugin lives in its own `plugins-<name>` crate and implements
+//! [`Plugin`](zeta_plugin::Plugin) from `zeta-plugin` through the `#[plugin]` attribute macro,
+//! which also registers the plugin with the host through `inventory`.
+//! [`register_bundled_plugins`] discovers the compiled-in plugins from those registrations,
+//! resolves each one's section in [`PluginsConfig`], and registers the enabled ones with
+//! [`Registry`](zeta_plugin_runtime::Registry).
+//!
+//! This crate is the facade over those crates: its cargo features select which plugin crates are
+//! compiled in, preserving the feature names the host has always used.
+//!
+//! # Features
+//!
+//! `all` (the default) enables every bundled plugin. Each plugin also has a feature named after
+//! it (`titles`, `youtube`, `unwall`, ...); the shared `database`, `http`, `emulated`, `mirror`
+//! and `time` features group the capabilities the plugin crates need. See `Cargo.toml` for the
+//! exact graph.
 
 pub mod config;
 
-/// Database helpers shared by the DB-backed plugins.
-#[cfg(feature = "database")]
-pub(crate) mod database;
+pub use config::{PluginSection, PluginsConfig};
 
-mod prelude;
-
-/// Admin hostmask matching shared by the plugins that gate commands on `[irc] admin_hostmasks`.
+// Re-export the enabled plugin crates so their `inventory` registrations are linked into the
+// facade and any binary that uses it. An unreferenced optional dependency is not necessarily
+// linked, which would silently drop its plugin.
+#[cfg(feature = "alert")]
+pub use plugins_alert as alert;
+#[cfg(feature = "chaturbate")]
+pub use plugins_chaturbate as chaturbate;
+#[cfg(feature = "choices")]
+pub use plugins_choices as choices;
+#[cfg(feature = "coinmarketcap")]
+pub use plugins_coinmarketcap as coinmarketcap;
+#[cfg(feature = "dendanskeordbog")]
+pub use plugins_dendanskeordbog as dendanskeordbog;
+#[cfg(feature = "dig")]
+pub use plugins_dig as dig;
 #[cfg(feature = "filter")]
-pub(crate) mod hostmask;
-
-/// The reply flow shared by the mirroring plugins.
-#[cfg(feature = "mirror")]
-pub(crate) mod mirror_reply;
-
-pub use config::{PluginConfig, PluginSection, PluginsConfig};
+pub use plugins_filter as filter;
+#[cfg(feature = "gay")]
+pub use plugins_gay as gay;
+#[cfg(feature = "geoip")]
+pub use plugins_geoip as geoip;
+#[cfg(feature = "github")]
+pub use plugins_github as github;
+#[cfg(feature = "health")]
+pub use plugins_health as health;
+#[cfg(feature = "help")]
+pub use plugins_help as help;
+#[cfg(feature = "howlongtobeat")]
+pub use plugins_howlongtobeat as howlongtobeat;
+#[cfg(feature = "imdb")]
+pub use plugins_imdb as imdb;
+#[cfg(feature = "instagram")]
+pub use plugins_instagram as instagram;
+#[cfg(feature = "isitopen")]
+pub use plugins_isitopen as isitopen;
+#[cfg(feature = "kagi")]
+pub use plugins_kagi as kagi;
+#[cfg(feature = "notification")]
+pub use plugins_notification as notification;
+#[cfg(feature = "ofn")]
+pub use plugins_ofn as ofn;
+#[cfg(feature = "openweathermap")]
+pub use plugins_openweathermap as openweathermap;
+#[cfg(feature = "pornhub")]
+pub use plugins_pornhub as pornhub;
+#[cfg(feature = "reddit")]
+pub use plugins_reddit as reddit;
+#[cfg(feature = "rink")]
+pub use plugins_rink as rink;
+#[cfg(feature = "rust-playground")]
+pub use plugins_rust_playground as rust_playground;
+#[cfg(feature = "spotify")]
+pub use plugins_spotify as spotify;
+#[cfg(feature = "string-utils")]
+pub use plugins_string_utils as string_utils;
+#[cfg(feature = "thingiverse")]
+pub use plugins_thingiverse as thingiverse;
+#[cfg(feature = "tiktok")]
+pub use plugins_tiktok as tiktok;
+#[cfg(feature = "titles")]
+pub use plugins_titles as titles;
+#[cfg(feature = "trustpilot")]
+pub use plugins_trustpilot as trustpilot;
+#[cfg(feature = "tvmaze")]
+pub use plugins_tvmaze as tvmaze;
+#[cfg(feature = "twitch")]
+pub use plugins_twitch as twitch;
+#[cfg(feature = "unwall")]
+pub use plugins_unwall as unwall;
+#[cfg(feature = "urban-dictionary")]
+pub use plugins_urban_dictionary as urban_dictionary;
+#[cfg(feature = "youtube")]
+pub use plugins_youtube as youtube;
 
 /// The names of every bundled plugin, whether or not its cargo feature is enabled.
 ///
 /// Configuration sections for these names describe a plugin that was compiled out, not a typo,
-/// so the host can report the two cases differently. Kept in sync with the module declarations
-/// by the `bundled_plugin_names_match_the_declared_modules` test.
+/// so the host can report the two cases differently.
 pub(crate) const BUNDLED_PLUGIN_NAMES: &[&str] = &[
     "alert",
     "chaturbate",
@@ -78,7 +148,7 @@ pub(crate) const BUNDLED_PLUGIN_NAMES: &[&str] = &[
 /// for a bundled plugin whose cargo feature is disabled is known, but has no registration.
 /// Plugins that fail to initialize are logged and skipped by the registry.
 pub fn register_bundled_plugins(
-    registry: &mut zeta_plugin::Registry,
+    registry: &mut zeta_plugin_runtime::Registry,
     ctx: &zeta_plugin::Context,
     plugins: &PluginsConfig,
 ) {
@@ -122,112 +192,43 @@ pub fn register_bundled_plugins(
     }
 }
 
-// The bundled plugin modules are declared literally so rustfmt can discover them. Rustfmt does
-// not expand macros, so a generated `pub mod` would leave every plugin file invisible to
-// `cargo fmt`; the plugins register themselves through their `#[plugin]` implementations.
-#[cfg(feature = "alert")]
-pub mod alert;
-#[cfg(feature = "chaturbate")]
-pub mod chaturbate;
-#[cfg(feature = "choices")]
-pub mod choices;
-#[cfg(feature = "coinmarketcap")]
-pub mod coinmarketcap;
-#[cfg(feature = "dendanskeordbog")]
-pub mod dendanskeordbog;
-#[cfg(feature = "dig")]
-pub mod dig;
-#[cfg(feature = "filter")]
-pub mod filter;
-#[cfg(feature = "gay")]
-pub mod gay;
-#[cfg(feature = "geoip")]
-pub mod geoip;
-#[cfg(feature = "github")]
-pub mod github;
-#[cfg(feature = "health")]
-pub mod health;
-#[cfg(feature = "help")]
-pub mod help;
-#[cfg(feature = "howlongtobeat")]
-pub mod howlongtobeat;
-#[cfg(feature = "imdb")]
-pub mod imdb;
-#[cfg(feature = "instagram")]
-pub mod instagram;
-#[cfg(feature = "isitopen")]
-pub mod isitopen;
-#[cfg(feature = "kagi")]
-pub mod kagi;
-#[cfg(feature = "notification")]
-pub mod notification;
-#[cfg(feature = "ofn")]
-pub mod ofn;
-#[cfg(feature = "openweathermap")]
-pub mod openweathermap;
-#[cfg(feature = "pornhub")]
-pub mod pornhub;
-#[cfg(feature = "reddit")]
-pub mod reddit;
-#[cfg(feature = "rink")]
-pub mod rink;
-#[cfg(feature = "rust-playground")]
-pub mod rust_playground;
-#[cfg(feature = "spotify")]
-pub mod spotify;
-#[cfg(feature = "string-utils")]
-pub mod string_utils;
-#[cfg(feature = "thingiverse")]
-pub mod thingiverse;
-#[cfg(feature = "tiktok")]
-pub mod tiktok;
-#[cfg(feature = "titles")]
-pub mod titles;
-#[cfg(feature = "trustpilot")]
-pub mod trustpilot;
-#[cfg(feature = "tvmaze")]
-pub mod tvmaze;
-#[cfg(feature = "twitch")]
-pub mod twitch;
-#[cfg(feature = "unwall")]
-pub mod unwall;
-#[cfg(feature = "urban-dictionary")]
-pub mod urban_dictionary;
-#[cfg(feature = "youtube")]
-pub mod youtube;
-
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashSet};
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
 
-    /// Every bundled plugin self-registers through the `#[plugin]` macro, independently of any
-    /// central list. `--all-features` compiles all 35 of them.
     #[cfg(feature = "all")]
-    #[test]
-    fn all_bundled_plugins_register_themselves() {
-        assert_eq!(
-            zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().count(),
-            35
-        );
-    }
+    use std::collections::BTreeSet;
 
-    /// The feature named by `#[cfg(feature = "...")]`, if the attribute has that shape.
-    fn feature_gate(attrs: &[syn::Attribute]) -> Option<String> {
-        attrs.iter().find_map(|attribute| {
-            if !attribute.path().is_ident("cfg") {
-                return None;
+    #[cfg(feature = "all")]
+    use crate::BUNDLED_PLUGIN_NAMES;
+
+    /// The crate roots under `src`: `lib.rs`, `main.rs`, and the implicit binaries in `src/bin/`.
+    ///
+    /// Only the conventional layout is recognized. The workspace's explicit `[[bin]]` path
+    /// points at `src/main.rs`, which this covers; a future custom root would need extending
+    /// here.
+    fn crate_roots(src: &Path) -> Vec<PathBuf> {
+        let mut roots: Vec<PathBuf> = ["lib.rs", "main.rs"]
+            .into_iter()
+            .map(|name| src.join(name))
+            .filter(|path| path.is_file())
+            .collect();
+
+        let bin = src.join("bin");
+        if bin.is_dir() {
+            for entry in std::fs::read_dir(&bin).expect("bin directory") {
+                let path = entry.expect("directory entry").path();
+
+                if path.extension().is_some_and(|extension| extension == "rs") {
+                    roots.push(path);
+                } else if path.join("main.rs").is_file() {
+                    roots.push(path.join("main.rs"));
+                }
             }
-            let mut feature = None;
-            attribute
-                .parse_nested_meta(|meta| {
-                    if meta.path.is_ident("feature") {
-                        feature = Some(meta.value()?.parse::<syn::LitStr>()?.value());
-                    }
-                    Ok(())
-                })
-                .ok()?;
-            feature
-        })
+        }
+
+        roots
     }
 
     /// The file modules (`mod name;`, not `mod name { ... }`) declared in `source`.
@@ -245,138 +246,69 @@ mod tests {
             .collect()
     }
 
-    /// The public, feature-gated `pub mod name;` declarations in `source`.
-    fn plugin_modules(source: &str) -> BTreeSet<String> {
-        syn::parse_file(source)
-            .expect("a parsable Rust source file")
-            .items
-            .into_iter()
-            .filter_map(|item| {
-                let syn::Item::Mod(module) = item else {
-                    return None;
-                };
-                if module.content.is_some()
-                    || !matches!(module.vis, syn::Visibility::Public(_))
-                    || feature_gate(&module.attrs).is_none()
-                {
-                    return None;
-                }
-                Some(module.ident.to_string())
-            })
-            .collect()
-    }
-
-    /// The plugin name declared by a `#[plugin(name = "...")]` attribute, if present.
-    fn plugin_attribute_name(attributes: &[syn::Attribute]) -> Option<String> {
-        attributes.iter().find_map(|attribute| {
-            if !attribute.path().is_ident("plugin") {
-                return None;
-            }
-
-            let arguments = attribute
-                .parse_args_with(
-                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-                )
-                .ok()?;
-
-            arguments.into_iter().find_map(|argument| {
-                let syn::Meta::NameValue(name_value) = argument else {
-                    return None;
-                };
-                if !name_value.path.is_ident("name") {
-                    return None;
-                }
-                let syn::Expr::Lit(expression) = name_value.value else {
-                    return None;
-                };
-                let syn::Lit::Str(name) = expression.lit else {
-                    return None;
-                };
-
-                Some(name.value())
-            })
-        })
-    }
-
-    /// Every plugin module carries exactly one `#[plugin]` impl, named after the module. The
-    /// registration the macro generates from that name is what the host discovers, so a typo
-    /// would silently register the plugin under the wrong configuration section.
-    #[test]
-    fn plugin_modules_declare_one_matching_plugin_impl() {
-        let source = include_str!("lib.rs");
-        let modules = plugin_modules(source);
-        assert_eq!(modules.len(), 35);
-
-        for name in modules {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("src")
-                .join(format!("{name}.rs"));
-            let source = std::fs::read_to_string(&path).expect("read plugin source");
-            let file = syn::parse_file(&source).expect("a parsable plugin source file");
-
-            let declared: Vec<String> = file
-                .items
-                .into_iter()
-                .filter_map(|item| {
-                    let syn::Item::Impl(item) = item else {
-                        return None;
-                    };
-                    plugin_attribute_name(&item.attrs)
-                })
-                .collect();
-
-            assert_eq!(
-                declared,
-                [name],
-                "the module and its `#[plugin(name = ...)]` attribute must match"
-            );
-        }
-    }
-
-    /// The warning list of bundled names must cover every module, including plugins whose
-    /// cargo feature is disabled in this build.
-    #[test]
-    fn bundled_plugin_names_match_the_declared_modules() {
-        let modules = plugin_modules(include_str!("lib.rs"));
-        let declared: BTreeSet<&str> = modules.iter().map(String::as_str).collect();
-        let bundled: BTreeSet<&str> = crate::BUNDLED_PLUGIN_NAMES.iter().copied().collect();
-
-        assert_eq!(bundled, declared);
-    }
-
-    /// Every source file under `src` must be declared as a module by its parent: an undeclared
-    /// file is dead on disk — cargo compiles it never, and nothing else flags it. The check
-    /// parses the files as Rust items, so feature-gated modules count whether or not the
+    /// Every source file under `crates/*/src` must be declared as a module by its parent: an
+    /// undeclared file is dead on disk — cargo compiles it never, and nothing else flags it. The
+    /// check parses the files as Rust items, so feature-gated modules count whether or not the
     /// feature is enabled.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a crate has no conventional root, if a source file cannot be read or parsed, or
+    /// if a source file is not declared.
     #[test]
     fn every_source_file_is_declared_as_a_module() {
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut declared = HashSet::from([src.join("lib.rs")]);
-        let mut existing = HashSet::new();
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the facade lives under crates/");
 
-        let mut stack = vec![src];
-        while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).expect("source directory") {
-                let path = entry.expect("directory entry").path();
+        let mut orphans = Vec::new();
 
-                if path.is_dir() {
-                    stack.push(path);
-                    continue;
-                }
+        for entry in std::fs::read_dir(crates).expect("read the crates directory") {
+            let krate = entry.expect("directory entry").path();
+            let src = krate.join("src");
 
-                existing.insert(path.clone());
+            if !src.is_dir() {
+                continue;
+            }
 
-                if path.extension().is_some_and(|extension| extension == "rs") {
+            let mut declared: HashSet<PathBuf> = crate_roots(&src).into_iter().collect();
+
+            assert!(
+                !declared.is_empty(),
+                "{} has no lib.rs, main.rs, or src/bin root",
+                krate.display()
+            );
+
+            let mut existing = HashSet::new();
+            let mut stack = vec![src];
+
+            while let Some(dir) = stack.pop() {
+                for entry in std::fs::read_dir(&dir).expect("source directory") {
+                    let path = entry.expect("directory entry").path();
+
+                    if path.is_dir() {
+                        stack.push(path);
+                        continue;
+                    }
+
+                    if path.extension().is_none_or(|extension| extension != "rs") {
+                        continue;
+                    }
+
+                    existing.insert(path.clone());
+
                     let source = std::fs::read_to_string(&path).expect("read source file");
 
-                    // The submodules of `foo.rs` live in `foo/` beside it; `lib.rs` and
-                    // `mod.rs` hold the modules of their own directory.
+                    // The submodules of `foo.rs` live in `foo/` beside it, while `lib.rs`,
+                    // `main.rs` and `mod.rs` hold the modules of their own directory.
                     let stem = path
                         .file_stem()
                         .expect("rs file has a stem")
                         .to_string_lossy();
                     let child_dir = match stem.as_ref() {
-                        "lib" | "mod" => path.parent().expect("rs file has a parent").to_path_buf(),
+                        "lib" | "main" | "mod" => {
+                            path.parent().expect("rs file has a parent").to_path_buf()
+                        }
                         _ => path.with_file_name(stem.as_ref()),
                     };
 
@@ -386,13 +318,39 @@ mod tests {
                     }
                 }
             }
+
+            orphans.extend(existing.difference(&declared).cloned());
         }
 
-        let orphans: Vec<_> = existing.difference(&declared).collect();
+        orphans.sort();
 
         assert!(
             orphans.is_empty(),
             "source files no module declares (dead on disk): {orphans:?}"
         );
+    }
+
+    /// Every bundled plugin self-registers through the `#[plugin]` macro, independently of any
+    /// central list. `--all-features` compiles all 35 of them.
+    #[cfg(feature = "all")]
+    #[test]
+    fn all_bundled_plugins_register_themselves() {
+        assert_eq!(
+            zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().count(),
+            35
+        );
+    }
+
+    /// Every name the host knows about has a registration when every plugin is compiled in.
+    #[cfg(feature = "all")]
+    #[test]
+    fn every_bundled_plugin_name_has_a_registration() {
+        let registered: BTreeSet<&str> =
+            zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>()
+                .map(|registration| registration.name)
+                .collect();
+        let bundled: BTreeSet<&str> = BUNDLED_PLUGIN_NAMES.iter().copied().collect();
+
+        assert_eq!(registered, bundled);
     }
 }

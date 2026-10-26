@@ -1,3 +1,5 @@
+//! Client for the Reddit API.
+
 use std::time::{Duration, Instant};
 
 use reqwest::StatusCode;
@@ -12,8 +14,11 @@ use tracing::{debug, error, info, instrument, trace};
 use url::Url;
 use zeta_url::RedactedUrl;
 
-use crate::{BASE_URL, HTTP_TIMEOUT, LOGGED_BODY_LENGTH, OAUTH_BASE_URL, TOKEN_URL, USER_AGENT};
-use crate::{Error, Item, Link, RequestError, Submission, Subreddit};
+use crate::urls::classify_reddit_com_url;
+use crate::{
+    BASE_URL, Error, HTTP_TIMEOUT, Item, LOGGED_BODY_LENGTH, Link, OAUTH_BASE_URL, RequestError,
+    Submission, Subreddit, TOKEN_URL, USER_AGENT,
+};
 
 /// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
 /// URL without its query, so a logged error never carries a credential from the query string.
@@ -287,7 +292,7 @@ impl Client {
             .inspect_err(|error| debug!(%id, %error, "the video link did not redirect"))
             .map_err(|_| Error::VideoRedirect)?;
 
-        match crate::classify_reddit_com_url(&url) {
+        match classify_reddit_com_url(&url) {
             Some(Link::Submission { id, .. }) => self.submission(&id).await,
             _ => Err(Error::VideoRedirectsToNonSubmission),
         }
@@ -336,7 +341,7 @@ impl Client {
             .get_redirect_location(&format!("{BASE_URL}/r/{subreddit}/s/{id}"))
             .await?;
 
-        match crate::classify_reddit_com_url(&url) {
+        match classify_reddit_com_url(&url) {
             Some(x @ (Link::Comment { .. } | Link::Submission { .. })) => Ok(x),
             _ => Err(Error::RedirectRedditLink),
         }

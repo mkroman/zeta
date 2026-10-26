@@ -1,3 +1,5 @@
+//! Client for the Kagi Search API.
+
 use std::{
     sync::OnceLock,
     time::{Duration, Instant},
@@ -17,7 +19,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error};
 use zeta_utils::text::quoted_string_literal;
 
-use super::{BASE_URL, ClientOptions, Error, ImageResult, RequestError, SearchResult};
+use crate::{BASE_URL, ClientOptions, Error, ImageResult, RequestError, SearchResult};
 
 /// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
 /// URL without its query, so a logged error never carries a credential from the query string:

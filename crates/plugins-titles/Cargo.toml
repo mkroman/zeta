@@ -1,0 +1,44 @@
+[package]
+name = "plugins-titles"
+version = "0.0.0"
+edition = "2024"
+description = "The titles plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls", "zeta-http/rustls"]
+native-tls = ["zeta-plugin/native-tls", "zeta-http/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored", "zeta-http/native-tls-vendored"]
+
+# The `prefix-symbols` feature is only supported on non-Apple targets: btls-sys
+# skips prefixing the BoringSSL libraries on macOS but still applies the prefix
+# to the generated bindgen bindings, so enabling it there fails the final link
+# with undefined `build_script_main_*` symbols.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "webpki-roots", "prefix-symbols", "stream", "gzip", "brotli", "deflate", "zstd"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "webpki-roots", "stream", "gzip", "brotli", "deflate", "zstd"] }
+
+[dependencies]
+futures = "0.3.31"
+html5ever = "0.40.0"
+irc.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+zeta-http = { path = "../zeta-http", default-features = false, features = ["emulated"] }
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+serde_json.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

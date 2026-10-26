@@ -1,0 +1,31 @@
+[package]
+name = "plugins-gay"
+version = "0.0.0"
+edition = "2024"
+description = "The gay plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[package.metadata.cargo-machete]
+# The irc dependency only unifies the `channel-lists` feature used by `Client::list_users`.
+ignored = ["irc"]
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls"]
+native-tls = ["zeta-plugin/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
+
+[dependencies]
+argh.workspace = true
+chrono.workspace = true
+irc = { workspace = true, features = ["channel-lists"] }
+miette.workspace = true
+rand_mt = "6"
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+
+[lints]
+workspace = true

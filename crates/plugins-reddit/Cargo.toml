@@ -1,0 +1,32 @@
+[package]
+name = "plugins-reddit"
+version = "0.0.0"
+edition = "2024"
+description = "The reddit plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls", "reddit/rustls"]
+native-tls = ["zeta-plugin/native-tls", "reddit/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored", "reddit/native-tls-vendored"]
+
+[dependencies]
+irc.workspace = true
+plugins-shared = { path = "../plugins-shared", features = ["mirror"] }
+reddit = { path = "../reddit" }
+secrecy.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zeta-mirror = { path = "../zeta-mirror" }
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+serde_json.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

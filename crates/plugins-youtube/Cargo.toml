@@ -1,0 +1,41 @@
+[package]
+name = "plugins-youtube"
+version = "0.0.0"
+edition = "2024"
+description = "The youtube plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls", "reqwest/rustls", "zeta-http/rustls"]
+native-tls = ["zeta-plugin/native-tls", "reqwest/native-tls", "zeta-http/native-tls"]
+native-tls-vendored = [
+    "zeta-plugin/native-tls-vendored",
+    "reqwest/native-tls-vendored",
+    "zeta-http/native-tls-vendored",
+]
+
+[dependencies]
+htmlize = { version = "1.1.0", features = ["unescape"] }
+indefinite = "0.1.11"
+num-format = "0.4.4"
+plugins-shared = { path = "../plugins-shared" }
+reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"] }
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+zeta-cache = { path = "../zeta-cache" }
+zeta-http = { path = "../zeta-http", default-features = false, features = ["http"] }
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
+
+[dev-dependencies]
+serde_json.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

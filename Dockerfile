@@ -25,44 +25,15 @@ RUN sh /usr/local/bin/install-cargo-tool cargo-chef /usr/local/bin && \
 # Analyze project dependencies
 FROM chef AS planner
 
+# Every workspace member lives under `crates/`; the globs keep new crates from having to be
+# listed here by hand. `cargo chef prepare` only reads manifests, so the stub `lib.rs` files are
+# enough; `zeta-unicode`'s build script is the one non-manifest input the recipe needs.
 COPY --parents \
     Cargo.toml \
     Cargo.lock \
-    crates/zeta/Cargo.toml \
-    crates/zeta/src/lib.rs \
-    crates/zeta-plugin/Cargo.toml \
-    crates/zeta-plugin/src/lib.rs \
-    crates/zeta-plugin-macros/Cargo.toml \
-    crates/zeta-plugin-macros/src/lib.rs \
-    crates/zeta-cache/Cargo.toml \
-    crates/zeta-cache/src/lib.rs \
-    crates/zeta-http/Cargo.toml \
-    crates/zeta-http/src/lib.rs \
-    crates/zeta-mirror/Cargo.toml \
-    crates/zeta-mirror/src/lib.rs \
-    crates/zeta-url/Cargo.toml \
-    crates/zeta-url/src/lib.rs \
-    crates/zeta-utils/Cargo.toml \
-    crates/zeta-utils/src/lib.rs \
-    crates/plugins/Cargo.toml \
-    crates/plugins/src/lib.rs \
-    crates/coinmarketcap/Cargo.toml \
-    crates/coinmarketcap/src/lib.rs \
-    crates/dendanskeordbog/Cargo.toml \
-    crates/dendanskeordbog/src/lib.rs \
-    crates/reddit/Cargo.toml \
-    crates/reddit/src/lib.rs \
-    crates/zeta-test-support/Cargo.toml \
-    crates/zeta-test-support/src/lib.rs \
-    crates/zeta-unicode/Cargo.toml \
-    crates/zeta-unicode/src/lib.rs \
+    crates/*/Cargo.toml \
+    crates/*/src/lib.rs \
     crates/zeta-unicode/build.rs \
-    crates/zeta-unicode-build/Cargo.toml \
-    crates/zeta-unicode-build/src/lib.rs \
-    crates/zeta-unicode-format/Cargo.toml \
-    crates/zeta-unicode-format/src/lib.rs \
-    crates/kagi/Cargo.toml \
-    crates/kagi/src/lib.rs \
     ./
 
 RUN cargo chef prepare --recipe-path recipe.json
@@ -78,47 +49,17 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo chef cook --release --recipe-path recipe.json
 
 # Now bring in real sources and build the app. Only copy build inputs so
-# unrelated changes (config.toml, docs, ...) don't invalidate this layer.
+# unrelated changes (config.toml, docs, ...) don't invalidate this layer. The globs cover every
+# workspace member; the migrations and the UCD data are the only compile-time inputs outside a
+# crate's `src`.
 COPY --parents \
     Cargo.toml \
     Cargo.lock \
-    crates/zeta/Cargo.toml \
-    crates/zeta/src \
-    crates/zeta-plugin/Cargo.toml \
-    crates/zeta-plugin/src \
-    crates/zeta-plugin-macros/Cargo.toml \
-    crates/zeta-plugin-macros/src \
-    crates/zeta-cache/Cargo.toml \
-    crates/zeta-cache/src \
-    crates/zeta-http/Cargo.toml \
-    crates/zeta-http/src \
-    crates/zeta-mirror/Cargo.toml \
-    crates/zeta-mirror/src \
-    crates/zeta-url/Cargo.toml \
-    crates/zeta-url/src \
-    crates/zeta-utils/Cargo.toml \
-    crates/zeta-utils/src \
-    crates/plugins/Cargo.toml \
-    crates/plugins/src \
+    crates/*/Cargo.toml \
+    crates/*/src \
+    crates/*/build.rs \
     crates/plugins/migrations \
-    crates/coinmarketcap/Cargo.toml \
-    crates/coinmarketcap/src \
-    crates/dendanskeordbog/Cargo.toml \
-    crates/dendanskeordbog/src \
-    crates/reddit/Cargo.toml \
-    crates/reddit/src \
-    crates/kagi/Cargo.toml \
-    crates/kagi/src \
-    crates/zeta-test-support/Cargo.toml \
-    crates/zeta-test-support/src \
-    crates/zeta-unicode/Cargo.toml \
-    crates/zeta-unicode/src \
-    crates/zeta-unicode/build.rs \
     crates/zeta-unicode/data \
-    crates/zeta-unicode-build/Cargo.toml \
-    crates/zeta-unicode-build/src \
-    crates/zeta-unicode-format/Cargo.toml \
-    crates/zeta-unicode-format/src \
     ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \

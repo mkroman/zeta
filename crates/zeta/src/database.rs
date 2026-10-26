@@ -9,7 +9,7 @@ use sqlx::postgres::PgPoolOptions;
 use crate::Error;
 
 /// Database connection pool.
-pub type Database = sqlx::PgPool;
+pub use zeta_plugin::database::Database;
 
 /// The plugins' database migrations, applied at startup.
 static MIGRATOR: Migrator = sqlx::migrate!("../plugins/migrations");

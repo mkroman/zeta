@@ -5,6 +5,10 @@
 //! sites (behind the `emulated` feature), together with the OAuth2 client-credentials token
 //! cache and the transport-error wrappers that keep credentials out of formatted output.
 
+#[cfg(feature = "emulated")]
+pub mod emulated;
+#[cfg(feature = "http")]
+pub mod json;
 #[cfg(feature = "oauth")]
 pub mod oauth;
 
@@ -28,40 +32,6 @@ use zeta_utils::text::Truncatable;
 
 #[cfg(any(feature = "request", feature = "http"))]
 use zeta_url::RedactedUrl;
-
-/// JSON response parsing shared by the API client plugins.
-///
-/// Bodies are parsed with [`serde_path_to_error`] so parse failures report the path to the
-/// offending part of the document, and the offending body is logged.
-#[cfg(feature = "http")]
-pub mod json {
-    use serde::de::DeserializeOwned;
-    use tracing::error;
-    use zeta_utils::text::Truncatable;
-
-    use super::LOGGED_BODY_LENGTH;
-
-    /// The error returned when a JSON body fails to parse.
-    pub type Error = serde_path_to_error::Error<serde_json::Error>;
-
-    /// Deserializes a value of type `T` from a JSON string.
-    ///
-    /// The offending body is logged, truncated to a bounded length, if parsing fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns the parse error, including the path to the offending part of the document, if
-    /// `text` is not valid JSON for `T`.
-    pub fn from_str<T: DeserializeOwned>(text: &str) -> Result<T, Error> {
-        let deserializer = &mut serde_json::Deserializer::from_str(text);
-
-        serde_path_to_error::deserialize(deserializer).inspect_err(|error| {
-            let body = text.truncate_within(LOGGED_BODY_LENGTH, "…");
-
-            error!(?error, body = %body, "could not deserialize json response");
-        })
-    }
-}
 
 /// The errors produced when sending a request and parsing its JSON response.
 #[cfg(feature = "http")]
@@ -324,74 +294,6 @@ pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
         .user_agent(config.user_agent.clone())
 }
 
-/// Client building for anti-bot-protected sites.
-///
-/// These are fetched with [`wreq`] browser emulation: plain `reqwest` gets TLS-fingerprinted by
-/// them regardless of headers. Built behind the `emulated` feature, which the anti-bot-protected
-/// plugins enable.
-#[cfg(feature = "emulated")]
-pub mod emulated {
-    use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, USER_AGENT};
-    use zeta_plugin::{Error, prelude::plugin_err};
-
-    use crate::WreqError;
-
-    /// A failed request through the browser-emulated client.
-    ///
-    /// The transport variant wraps [`WreqError`], which redacts the request URI: these pages can
-    /// be fetched through a metadata proxy whose URL carries a credential in its query.
-    #[derive(Debug, thiserror::Error)]
-    pub enum ResponseError {
-        /// The request failed, or its body could not be read.
-        #[error("request error: {0}")]
-        Request(#[from] WreqError),
-        /// The server responded with an unsuccessful status code.
-        #[error("request failed with status {0}")]
-        Status(wreq::StatusCode),
-    }
-
-    impl From<wreq::Error> for ResponseError {
-        fn from(error: wreq::Error) -> Self {
-            Self::Request(error.into())
-        }
-    }
-
-    /// Returns a `wreq` client builder emulating Firefox 142, layered with the headers the
-    /// emulation must not omit.
-    ///
-    /// `Accept-Encoding` must be set explicitly: like reqwest, wreq does not advertise the
-    /// header itself even though it decompresses responses — and its absence is enough to get
-    /// flagged.
-    ///
-    /// The profile's user agent is overridden with `user_agent` when given. This skews with the
-    /// emulated Firefox 142 fingerprint, and that is deliberate: the profile defaults to macOS —
-    /// which anti-bot systems score far more aggressively when requests originate from
-    /// datacenter networks — and the matching Linux Firefox 142 user agent is rejected by
-    /// DataDome outright, while Firefox 151 passes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `user_agent` cannot be used as a header value.
-    pub fn builder(user_agent: Option<&str>) -> Result<wreq::ClientBuilder, Error> {
-        let mut headers = HeaderMap::new();
-
-        headers.insert(
-            ACCEPT_ENCODING,
-            HeaderValue::from_static("gzip, deflate, br, zstd"),
-        );
-
-        if let Some(user_agent) = user_agent {
-            let value = HeaderValue::from_str(user_agent).map_err(plugin_err)?;
-
-            headers.insert(USER_AGENT, value);
-        }
-
-        Ok(wreq::Client::builder()
-            .emulation(wreq_util::Emulation::Firefox142)
-            .default_headers(headers))
-    }
-}
-
 #[cfg(all(test, feature = "http"))]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -565,38 +467,5 @@ mod tests {
         assert!(logged.contains("error.type"), "{logged}");
         // ...and no credential from the query reaches the log.
         assert!(!logged.contains("key=secret"), "{logged}");
-    }
-}
-
-/// Tests for the `wreq` wrapper, in a module of its own: the `emulated`-only builds
-/// (the titles plugin) reach it without the `http` feature that gates the module above.
-#[cfg(all(test, feature = "emulated"))]
-mod emulated_tests {
-    use zeta_test_support::{assert_redactions, refused_address};
-
-    #[tokio::test]
-    async fn emulated_request_errors_redact_the_uri_but_keep_the_cause() {
-        let address = refused_address();
-        let error = wreq::Client::builder()
-            .build()
-            .expect("wreq client")
-            .get(format!("http://{address}/?key=secret"))
-            .send()
-            .await
-            .expect_err("nothing listens on that address");
-
-        // Sanity: wreq attaches the request URI to the error — redacting it is on us.
-        assert!(error.uri().is_some(), "wreq attaches the request uri");
-
-        let error = crate::WreqError::from(error);
-        let full = error.full();
-
-        assert_redactions(&error.to_string(), full, &format!("{error:?}"), &address);
-
-        // `wreq` renders its first source itself; walking the chain again would print that
-        // link twice.
-        assert_eq!(full.matches("client error").count(), 1, "{full}");
-
-        assert!(std::error::Error::source(&error).is_none(), "{full}");
     }
 }

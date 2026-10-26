@@ -1,0 +1,29 @@
+[package]
+name = "plugins-dig"
+version = "0.0.0"
+edition = "2024"
+description = "The dig plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls"]
+native-tls = ["zeta-plugin/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
+
+[dependencies]
+argh.workspace = true
+hickory-resolver.workspace = true
+miette.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+
+[dev-dependencies]
+serde_json.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true

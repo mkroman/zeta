@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "log")]
 use tracing::warn;
 
-use crate::{Error, FromHtml, Selectors};
+use crate::Error;
+use crate::parse::{FromHtml, Selectors};
 
 /// Represents a complete dictionary entry from Den Danske Ordbog (The Danish Dictionary).
 ///

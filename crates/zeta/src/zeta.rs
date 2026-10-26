@@ -9,9 +9,8 @@ use tracing::{debug, info, warn};
 use crate::Error;
 use crate::config::Config;
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE};
-use crate::plugin::dispatch::EventIndex;
-use crate::plugin::{Context, PluginTask, Registry};
-use zeta_plugin::Filters;
+use zeta_plugin::{Context, Filters};
+use zeta_plugin_runtime::{EventIndex, PluginTask, Registry};
 
 /// The signal that triggered a graceful shutdown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

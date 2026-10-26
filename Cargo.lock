@@ -2887,53 +2887,642 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "plugins"
 version = "0.0.0"
 dependencies = [
- "arc-swap",
- "argh",
- "base64 0.23.1",
- "chrono",
- "coinmarketcap",
- "dendanskeordbog",
  "figment",
- "futures",
- "hickory-resolver",
- "html5ever",
- "htmlize",
- "humantime-serde",
- "indefinite",
- "interim",
- "irc",
- "kagi",
- "memory-stats",
- "miette",
- "num-format",
- "rand 0.10.3",
- "rand_mt",
- "reddit",
- "reqwest",
- "rink-core",
- "scraper",
- "secrecy",
+ "plugins-alert",
+ "plugins-chaturbate",
+ "plugins-choices",
+ "plugins-coinmarketcap",
+ "plugins-dendanskeordbog",
+ "plugins-dig",
+ "plugins-filter",
+ "plugins-gay",
+ "plugins-geoip",
+ "plugins-github",
+ "plugins-health",
+ "plugins-help",
+ "plugins-howlongtobeat",
+ "plugins-imdb",
+ "plugins-instagram",
+ "plugins-isitopen",
+ "plugins-kagi",
+ "plugins-notification",
+ "plugins-ofn",
+ "plugins-openweathermap",
+ "plugins-pornhub",
+ "plugins-reddit",
+ "plugins-rink",
+ "plugins-rust-playground",
+ "plugins-spotify",
+ "plugins-string-utils",
+ "plugins-thingiverse",
+ "plugins-tiktok",
+ "plugins-titles",
+ "plugins-trustpilot",
+ "plugins-tvmaze",
+ "plugins-twitch",
+ "plugins-unwall",
+ "plugins-urban-dictionary",
+ "plugins-youtube",
  "serde",
  "serde_json",
- "sha2 0.11.1",
- "similar-asserts",
- "sqlx",
- "strsim 0.11.1",
  "syn 2.0.119",
+ "tracing",
+ "zeta-plugin",
+ "zeta-plugin-runtime",
+ "zeta-test-support",
+]
+
+[[package]]
+name = "plugins-alert"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "chrono",
+ "humantime-serde",
+ "interim",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "sqlx",
  "thiserror 2.0.21",
- "time",
+ "tokio",
+ "tracing",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-chaturbate"
+version = "0.0.0"
+dependencies = [
+ "irc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-choices"
+version = "0.0.0"
+dependencies = [
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-coinmarketcap"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "coinmarketcap",
+ "humantime-serde",
+ "serde",
+ "serde_json",
+ "strsim 0.11.1",
+ "tokio",
+ "tracing",
+ "zeta-cache",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-dendanskeordbog"
+version = "0.0.0"
+dependencies = [
+ "dendanskeordbog",
+ "serde",
+ "serde_json",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+]
+
+[[package]]
+name = "plugins-dig"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "hickory-resolver",
+ "miette",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "zeta-plugin",
+ "zeta-test-support",
+]
+
+[[package]]
+name = "plugins-filter"
+version = "0.0.0"
+dependencies = [
+ "arc-swap",
+ "argh",
+ "sqlx",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "url",
  "wildmatch",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-gay"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "chrono",
+ "irc",
+ "miette",
+ "rand_mt",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "tracing",
+ "zeta-plugin",
+]
+
+[[package]]
+name = "plugins-geoip"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "hickory-resolver",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+]
+
+[[package]]
+name = "plugins-github"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-health"
+version = "0.0.0"
+dependencies = [
+ "memory-stats",
+ "tokio",
+ "wildmatch",
+ "zeta-plugin",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-help"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "zeta-plugin",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-howlongtobeat"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "zeta-cache",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-imdb"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "num-format",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-instagram"
+version = "0.0.0"
+dependencies = [
+ "plugins-shared",
+ "scraper",
+ "serde",
+ "serde_json",
+ "similar-asserts",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
  "wreq",
- "wreq-util",
  "zeta-cache",
  "zeta-http",
  "zeta-mirror",
  "zeta-plugin",
  "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-isitopen"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "tracing",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-kagi"
+version = "0.0.0"
+dependencies = [
+ "humantime-serde",
+ "kagi",
+ "serde",
+ "serde_json",
+ "tracing",
+ "zeta-plugin",
+ "zeta-test-support",
+]
+
+[[package]]
+name = "plugins-notification"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "zeta-plugin",
+ "zeta-test-support",
+]
+
+[[package]]
+name = "plugins-ofn"
+version = "0.0.0"
+dependencies = [
+ "argh",
+ "num-format",
+ "plugins-shared",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tracing",
+ "url",
+ "zeta-plugin",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-openweathermap"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-pornhub"
+version = "0.0.0"
+dependencies = [
+ "num-format",
+ "reqwest",
+ "serde",
+ "thiserror 2.0.21",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-url",
+]
+
+[[package]]
+name = "plugins-reddit"
+version = "0.0.0"
+dependencies = [
+ "irc",
+ "plugins-shared",
+ "reddit",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "zeta-mirror",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-rink"
+version = "0.0.0"
+dependencies = [
+ "coinmarketcap",
+ "humantime-serde",
+ "reqwest",
+ "rink-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "zeta-cache",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-rust-playground"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tracing",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-shared"
+version = "0.0.0"
+dependencies = [
+ "irc",
+ "tracing",
+ "url",
+ "zeta-mirror",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+]
+
+[[package]]
+name = "plugins-spotify"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "indefinite",
+ "num-format",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "similar-asserts",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-string-utils"
+version = "0.0.0"
+dependencies = [
+ "tokio",
+ "tracing",
+ "zeta-plugin",
+ "zeta-test-support",
  "zeta-unicode",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-thingiverse"
+version = "0.0.0"
+dependencies = [
+ "num-format",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "similar-asserts",
+ "thiserror 2.0.21",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-tiktok"
+version = "0.0.0"
+dependencies = [
+ "plugins-shared",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-mirror",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-titles"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "html5ever",
+ "irc",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "wreq",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-trustpilot"
+version = "0.0.0"
+dependencies = [
+ "num-format",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-tvmaze"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "similar-asserts",
+ "thiserror 2.0.21",
+ "time",
+ "tracing",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-twitch"
+version = "0.0.0"
+dependencies = [
+ "irc",
+ "num-format",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+]
+
+[[package]]
+name = "plugins-unwall"
+version = "0.0.0"
+dependencies = [
+ "arc-swap",
+ "argh",
+ "humantime-serde",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "zeta-cache",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-urban-dictionary"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "similar-asserts",
+ "time",
+ "tracing",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-youtube"
+version = "0.0.0"
+dependencies = [
+ "htmlize",
+ "indefinite",
+ "num-format",
+ "plugins-shared",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "zeta-cache",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
  "zeta-url",
  "zeta-utils",
 ]
@@ -5320,13 +5909,11 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
- "zeta-cache",
  "zeta-http",
  "zeta-mirror",
  "zeta-plugin",
+ "zeta-plugin-runtime",
  "zeta-test-support",
- "zeta-url",
- "zeta-utils",
 ]
 
 [[package]]
@@ -5399,9 +5986,9 @@ dependencies = [
  "shlex 2.0.1",
  "sqlx",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "url",
+ "wildmatch",
  "zeta-plugin-macros",
  "zeta-test-support",
  "zeta-utils",
@@ -5416,6 +6003,22 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "zeta-plugin",
+]
+
+[[package]]
+name = "zeta-plugin-runtime"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "figment",
+ "irc",
+ "tokio",
+ "tracing",
+ "url",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-url",
+ "zeta-utils",
 ]
 
 [[package]]

@@ -1,3 +1,5 @@
+//! Error types for the Danish Dictionary crate.
+
 #[cfg(feature = "client")]
 use std::error::Error as StdError;
 #[cfg(feature = "client")]

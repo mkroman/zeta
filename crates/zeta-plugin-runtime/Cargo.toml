@@ -1,0 +1,27 @@
+[package]
+name = "zeta-plugin-runtime"
+version = "0.0.0"
+edition = "2024"
+description = "Runtime support for hosting zeta plugins."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[features]
+database = ["zeta-plugin/database"]
+
+[dependencies]
+figment.workspace = true
+irc.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-url = { path = "../zeta-url" }
+
+[dev-dependencies]
+async-trait.workspace = true
+url.workspace = true
+zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["context"] }
+zeta-utils = { path = "../zeta-utils" }
+
+[lints]
+workspace = true

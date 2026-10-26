@@ -1,0 +1,31 @@
+[package]
+name = "plugins-kagi"
+version = "0.0.0"
+edition = "2024"
+description = "The kagi plugin for the zeta IRC bot."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
+
+[package.metadata.cargo-machete]
+# `humantime-serde` is only named from `#[serde(with = "...")]` attributes.
+ignored = ["humantime-serde"]
+
+[features]
+default = []
+rustls = ["zeta-plugin/rustls", "kagi/rustls"]
+native-tls = ["zeta-plugin/native-tls", "kagi/native-tls"]
+native-tls-vendored = ["zeta-plugin/native-tls-vendored", "kagi/native-tls-vendored"]
+
+[dependencies]
+humantime-serde.workspace = true
+kagi = { path = "../kagi", default-features = false }
+serde.workspace = true
+tracing.workspace = true
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
+
+[dev-dependencies]
+serde_json.workspace = true
+zeta-test-support = { path = "../zeta-test-support" }
+
+[lints]
+workspace = true
