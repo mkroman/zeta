@@ -5,8 +5,9 @@
 //! was previously posted. YouTube videos are additionally tracked by their video id in
 //! a dedicated table, so reposts match across `watch?v=`, `shorts/`, and `youtu.be` links.
 //!
-//! URLs matching the host-wide [`Filters`] are skipped entirely, as are `.ofn` command
-//! invocations themselves.
+//! The host's dispatcher applies the shared URL and sender filters before delivery, so a
+//! filtered URL never reaches this plugin. `.ofn` command invocations are not recorded as
+//! history.
 //!
 //! The `.ofn stats` command shows aggregate statistics: the number of recorded URLs and
 //! YouTube videos in total, and how many were added today.
@@ -315,48 +316,10 @@ impl Ofn {
         })
     }
 
-    /// Scrapes URLs posted in chat and updates/checks the database.
-    async fn process_single_url(
-        &self,
-        ctx: &Context,
-        client: &Client,
-        origin: &ChannelMessageOrigin<'_>,
-        url: Url,
-    ) -> Result<(), ZetaError> {
-        match self.process_urls(ctx, origin, &[url]).await {
-            Ok(report) => {
-                for resource in report.found {
-                    let time_ago = resource.created_at().time_ago();
-
-                    client.send_privmsg(
-                        origin.channel,
-                        format!(
-                            "{}: OFN - posted by {} {time_ago}",
-                            origin.nickname,
-                            resource.nickname()
-                        ),
-                    )?;
-                }
-
-                if report.num_inserted > 0 {
-                    debug!("inserted {} new urls", report.num_inserted);
-                }
-            }
-            Err(error) => {
-                client.send_privmsg(origin.channel, formatted_err(&error.to_string()))?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Processes the given list of `urls` with the associated `origin` by querying them from the
-    /// database and inserting any of the URLs that aren't already present.
+    /// Scrapes a URL posted in chat and updates/checks the database.
     ///
-    /// URLs matching a filter are skipped — neither recorded nor announced.
-    ///
-    /// Returns a [`Report`] that contains information about URLs that were already known and URLs
-    /// that were added to the database.
+    /// The host's dispatcher has already applied the shared filters, so every URL delivered
+    /// here is recorded. A failed insert is logged by [`Self::record_url`] and left unannounced.
     #[tracing::instrument(
         skip_all,
         err,
@@ -368,36 +331,36 @@ impl Ofn {
             irc.network = %origin.network
         )
     )]
-    async fn process_urls(
+    async fn process_url(
         &self,
         ctx: &Context,
+        client: &Client,
         origin: &ChannelMessageOrigin<'_>,
-        urls: &[Url],
-    ) -> Result<Report, Error> {
-        let filters = Filters::from_context(ctx);
-        let sender = Sender::new(origin.nickname, origin.username, origin.hostname);
+        url: &Url,
+    ) -> Result<(), ZetaError> {
+        match self.record_url(ctx, origin, url).await {
+            Ok(Recorded::Found(resource)) => {
+                let time_ago = resource.created_at().time_ago();
 
-        let mut found = vec![];
-        let mut num_inserted = 0;
-
-        for url in urls {
-            if filters.is_filtered(origin.channel, Some(sender), url) {
-                debug!(url.full = %RedactedUrl::from_url(url), "skipping filtered url");
-
-                continue;
+                client.send_privmsg(
+                    origin.channel,
+                    format!(
+                        "{}: OFN - posted by {} {time_ago}",
+                        origin.nickname,
+                        resource.nickname()
+                    ),
+                )?;
             }
-
-            match self.record_url(ctx, origin, url).await? {
-                Recorded::Found(resource) => found.push(resource),
-                Recorded::Inserted => num_inserted += 1,
-                Recorded::Failed => {}
+            Ok(Recorded::Inserted) => {
+                debug!(url.full = %RedactedUrl::from_url(url), "inserted url record");
+            }
+            Ok(Recorded::Failed) => {}
+            Err(error) => {
+                client.send_privmsg(origin.channel, formatted_err(&error.to_string()))?;
             }
         }
 
-        Ok(Report {
-            found,
-            num_inserted,
-        })
+        Ok(())
     }
 }
 
@@ -427,8 +390,7 @@ impl Ofn {
             hostname: sender.hostname,
         };
 
-        self.process_single_url(ctx, client, &origin, event.url().clone())
-            .await
+        self.process_url(ctx, client, &origin, event.url()).await
     }
 
     /// Handles explicit plugin commands (e.g., `.ofn stats`).
@@ -511,14 +473,6 @@ enum Subcommand {
 #[derive(FromArgs, ArgsInfo, Debug, PartialEq, Eq)]
 #[argh(subcommand, name = "stats")]
 pub struct Stats {}
-
-/// The result of processing a batch of URLs: prior records found and how many were inserted.
-pub struct Report {
-    /// List of URL records that were found in the database.
-    found: Vec<Resource>,
-    /// Number of resources that were added to the database.
-    num_inserted: usize,
-}
 
 /// Errors that can occur while recording or looking up URLs.
 #[derive(Debug, thiserror::Error)]

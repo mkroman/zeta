@@ -40,7 +40,7 @@ const SECONDS: (i64, &str) = (SECONDS_PER_SECOND, "second");
 const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
 
 /// Duration units in descending order, down to and including minutes.
-#[cfg(any(feature = "chrono", feature = "time", test))]
+#[cfg(any(feature = "time", test))]
 const UNITS_TO_MINUTES: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES];
 
 /// Duration units from hours down to minutes.

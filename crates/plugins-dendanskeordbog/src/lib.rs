@@ -56,32 +56,36 @@ impl Display for MessageFormatter<'_> {
             write!(fmt, "{}", reply_prefix("DDO"))?;
 
             if let Some(phonetic) = &entry.phonetic {
-                write!(fmt, " {phonetic}")?;
+                write!(fmt, " {}", sanitize_external(phonetic))?;
             }
 
-            let pos = &entry.pos;
+            let pos = sanitize_external(&entry.pos);
             write!(fmt, " (\x0f{pos}\x0310)")?;
 
             if self.settings.show_morphology
                 && let Some(inflection) = &entry.morphology
             {
-                write!(fmt, " Bøjning:\x0f {inflection}\x0310")?;
+                write!(fmt, " Bøjning:\x0f {}\x0310", sanitize_external(inflection))?;
             }
 
             if self.settings.show_etymology
                 && let Some(etymology) = &entry.etymology
             {
-                write!(fmt, " Oprindelse:\x0f {etymology}\x0310")?;
+                write!(
+                    fmt,
+                    " Oprindelse:\x0f {}\x0310",
+                    sanitize_external(etymology)
+                )?;
             }
 
             if let Some(definition) = &entry.definitions.first() {
-                let description = &definition.description;
+                let description = sanitize_external(&definition.description);
                 write!(fmt, " Definition:\x0f {description}\x0310")?;
 
                 if self.settings.show_examples
                     && let Some(example) = &definition.examples.first()
                 {
-                    write!(fmt, " Eksempel:\x0f {example}\x0310")?;
+                    write!(fmt, " Eksempel:\x0f {}\x0310", sanitize_external(example))?;
                 }
             }
         } else {

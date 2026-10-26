@@ -15,7 +15,7 @@ use crate::command::ArgsError;
 use crate::event::CommandEvent;
 
 pub use zeta_utils::irc::{
-    BOLD, COLOR, NOTICE_PREFIX, REPLY_PREFIX, RESET, notice, reply, reply_prefix,
+    BOLD, COLOR, NOTICE_PREFIX, REPLY_PREFIX, RESET, notice, reply, reply_prefix, sanitize_external,
 };
 
 /// Sends the output of a failed argument parse to `channel`, one message per non-empty line.

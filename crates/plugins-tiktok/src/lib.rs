@@ -20,6 +20,7 @@ use zeta_http::RequestError;
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
+use zeta_utils::irc::sanitize_external;
 use zeta_utils::text::Truncatable;
 
 use self::oembed::OEmbed;
@@ -215,14 +216,24 @@ impl Tiktok {
 /// The title and author clauses are written independently, so a summary with only one of them
 /// does not carry the other's connecting text.
 fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
-    let title = embed.title.as_deref().map(|title| {
-        title
-            .truncate_with_suffix(title_length, "…")
-            .trim()
-            .to_owned()
-    });
+    let title = embed
+        .title
+        .as_deref()
+        .map(sanitize_external)
+        .filter(|title| !title.is_empty())
+        .map(|title| {
+            title
+                .truncate_with_suffix(title_length, "…")
+                .trim()
+                .to_owned()
+        });
+    let author = embed
+        .author_name
+        .as_deref()
+        .map(sanitize_external)
+        .filter(|author| !author.is_empty());
 
-    match (title, embed.author_name.as_deref()) {
+    match (title, author.as_deref()) {
         (Some(title), Some(author)) => Some(format!(
             "“{RESET}{title}{COLOR}” is a TikTok video by{RESET} {author}"
         )),
@@ -263,5 +274,30 @@ mod tests {
                 Some("https://pub.example.com/tiktok")
             );
         }
+    }
+
+    /// Builds an oEmbed response with the given title and author.
+    fn oembed(title: Option<&str>, author: Option<&str>) -> OEmbed {
+        OEmbed {
+            r#type: "video".to_string(),
+            version: "1.0".to_string(),
+            title: title.map(str::to_string),
+            author_name: author.map(str::to_string),
+            author_url: None,
+            provider_name: None,
+            provider_url: None,
+            cache_age: None,
+            thumbnail_url: None,
+            thumbnail_width: None,
+            thumbnail_height: None,
+        }
+    }
+
+    #[test]
+    fn summaries_strip_formatting_and_collapse_whitespace() {
+        let embed = oembed(Some("\x0310Fake\nTitle\x0f"), Some("author\x02"));
+        let summary = sanitize_external(&format_summary(&embed, 150).unwrap());
+
+        assert_eq!(summary, "“Fake Title” is a TikTok video by author");
     }
 }

@@ -162,8 +162,8 @@ impl<'de> Deserialize<'de> for PluginsConfig {
                 unknown_setting_keys
                     .extend(unknown_keys.into_iter().map(|key| (name.clone(), key)));
             } else if is_unknown_section(&name) {
-                // A bundled plugin that was compiled out is not a typo; its section is simply
-                // not consumed in this build.
+                // The section names no bundled plugin at all, so it is a likely typo. A bundled
+                // plugin compiled out of this build is known and stays out of `unknown`.
                 unknown.insert(name.clone());
             }
 

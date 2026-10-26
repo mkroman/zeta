@@ -46,8 +46,9 @@ use zeta_http::emulated::ResponseError;
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
+use zeta_utils::irc::sanitize_external;
 use zeta_utils::settings::resolve_optional_setting;
-use zeta_utils::text::{Truncatable, collapse_whitespace};
+use zeta_utils::text::Truncatable;
 
 use self::meta::MediaDetails;
 use self::urls::{InstagramLink, MediaKind, media_url, parse_instagram_url, story_url};
@@ -74,7 +75,8 @@ const SESSION_TTL: Duration = Duration::from_hours(1);
 #[serde(default)]
 pub struct Settings {
     /// The maximum length of a media caption before it gets truncated.
-    pub title_length: usize,
+    #[serde(alias = "title_length")]
+    pub caption_length: usize,
     /// The key prefix that mirrored media are uploaded under.
     ///
     /// Falls back to the `INSTAGRAM_S3_PREFIX` environment variable, and to `instagram` when
@@ -103,7 +105,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            title_length: 150,
+            caption_length: 150,
             prefix: None,
             public_url_base: None,
             session_cookie: None,
@@ -152,6 +154,16 @@ impl From<wreq::Error> for Error {
     /// URL can carry a credential in its query string.
     fn from(error: wreq::Error) -> Self {
         Self::Request(error.into())
+    }
+}
+
+impl From<ResponseError> for Error {
+    fn from(error: ResponseError) -> Self {
+        match error {
+            ResponseError::Request(error) => Self::Request(error),
+            // A share link that resolves to an error page does not identify any media.
+            ResponseError::Status(_) => Self::InvalidRedirect,
+        }
     }
 }
 
@@ -332,7 +344,7 @@ impl Instagram {
 
         if let Some(summary) = details
             .as_ref()
-            .and_then(|details| format_summary(details, label, self.settings.title_length))
+            .and_then(|details| format_summary(details, label, self.settings.caption_length))
         {
             let _ = client.send_privmsg(channel, notice(&summary));
         }
@@ -530,7 +542,7 @@ impl Instagram {
     async fn resolve_url(&self, url: &Url) -> Result<Url, Error> {
         debug!(url.full = %RedactedUrl::from_url(url), "resolving share url");
 
-        let response = self.client.get(url.as_str()).send().await?;
+        let response = http::emulated::send(self.client.get(url.as_str())).await?;
 
         // The final URI, after the followed redirects, identifies the shared resource.
         let location = response.uri().to_string();
@@ -566,23 +578,23 @@ fn proxy_media_url(proxy: &str, kind: MediaKind, id: &str) -> String {
 }
 
 /// Formats the media details as a human-readable summary of the media.
-fn format_summary(details: &MediaDetails, kind: &str, title_length: usize) -> Option<String> {
+fn format_summary(details: &MediaDetails, kind: &str, caption_length: usize) -> Option<String> {
     let mut buf = String::new();
 
     if let Some(caption) = details
         .caption
         .as_deref()
-        .map(collapse_whitespace)
+        .map(sanitize_external)
         .filter(|caption| !caption.is_empty())
     {
-        let truncated = caption.truncate_with_suffix(title_length, "…");
+        let truncated = caption.truncate_with_suffix(caption_length, "…");
         let _ = write!(buf, "“\x0f{}\x0310” ", truncated.trim());
     }
 
     if let Some(author) = details
         .author
         .as_deref()
-        .map(collapse_whitespace)
+        .map(sanitize_external)
         .filter(|author| !author.is_empty())
     {
         if buf.is_empty() {
@@ -608,20 +620,20 @@ mod tests {
         Settings,
         settings,
         default: {
-            assert_eq!(settings.title_length, 150);
+            assert_eq!(settings.caption_length, 150);
             assert!(settings.prefix.is_none());
             assert!(settings.public_url_base.is_none());
             assert!(settings.session_cookie.is_none());
             assert!(settings.metadata_proxy.is_none());
         }
         deserialize: {
-            "title_length": 100,
+            "caption_length": 100,
             "prefix": "~meta/instagram",
             "public_url_base": "https://pub.example.com/instagram",
             "session_cookie": "1234567890%3Aexample",
             "metadata_proxy": "https://d.example.com",
         } assert: {
-            assert_eq!(settings.title_length, 100);
+            assert_eq!(settings.caption_length, 100);
             assert_eq!(settings.prefix.as_deref(), Some("~meta/instagram"));
             assert_eq!(
                 settings.public_url_base.as_deref(),
@@ -633,6 +645,15 @@ mod tests {
             );
             assert_eq!(settings.metadata_proxy.as_deref(), Some("https://d.example.com"));
         }
+    }
+
+    /// The pre-rename `title_length` key keeps configuring the caption limit.
+    #[test]
+    fn legacy_title_length_key_is_accepted() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({ "title_length": 100 }))
+            .expect("the legacy key should deserialize");
+
+        assert_eq!(settings.caption_length, 100);
     }
 
     /// Returns the details of a media with both a caption and an author, to be partially
@@ -697,7 +718,7 @@ mod tests {
                 // after the first one would be lost.
                 "a caption with collapsible whitespace",
                 MediaDetails {
-                    caption: Some("First line\n\nsecond\tline\r\nthird".to_string()),
+                    caption: Some("\x0310First line\n\nsecond\tline\r\nthird\x0f".to_string()),
                     ..full_details()
                 },
                 "post",

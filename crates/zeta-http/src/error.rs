@@ -329,10 +329,15 @@ mod tests {
     }
 
     /// Whether `line` declares a tuple variant (or field) holding a raw transport error, e.g.
-    /// `Request(#[from] reqwest::Error)`. A `reqwest::Error` used as a function parameter or a
-    /// generic argument does not match: those never end up in a formatted output on their own.
+    /// `Request(#[from] reqwest::Error)`. A `reqwest::Error` used as a function parameter, a
+    /// return type, or a generic argument does not match: those never end up in a formatted
+    /// output on their own.
     fn holds_raw_transport_error(line: &str) -> bool {
         let line = line.trim();
+
+        if line.contains("fn ") || line.contains("->") {
+            return false;
+        }
 
         ["reqwest::Error", "wreq::Error"].into_iter().any(|ty| {
             line.find(ty).is_some_and(|position| {
@@ -361,39 +366,39 @@ mod tests {
         "dendanskeordbog/src/error.rs",
     ];
 
-    /// The workspace members whose sources are scanned alongside this crate's.
-    const WORKSPACE_MEMBERS: &[&str] = &[
-        "zeta",
-        "plugins",
-        "zeta-plugin",
-        "zeta-url",
-        "coinmarketcap",
-        "kagi",
-        "reddit",
-        "dendanskeordbog",
-    ];
-
     /// The rule that keeps credentials out of formatted output is enforced here, because
     /// `AGENTS.md` — which states it — is not committed: no error enum anywhere may hold a raw
     /// transport error, and `without_url()`/`without_uri()` may only appear in a wrapper.
     #[test]
     fn no_raw_transport_errors_outside_the_wrapper() {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let workspace = manifest.parent().expect("the crate is a workspace member");
+        let crates_dir = manifest.parent().expect("the crate is a workspace member");
 
+        // Scan every crate in the workspace, not a hand-maintained subset: a new plugin or
+        // client crate must not be able to add a raw transport error without tripping this
+        // test.
         let mut files = Vec::new();
-        sources(&manifest.join("src"), &mut files);
 
-        for member in WORKSPACE_MEMBERS {
-            sources(&workspace.join(member).join("src"), &mut files);
+        for entry in std::fs::read_dir(crates_dir).expect("read the crates directory") {
+            let src = entry.expect("directory entry").path().join("src");
+
+            if src.is_dir() {
+                sources(&src, &mut files);
+            }
         }
+
+        assert!(
+            files.len() > 50,
+            "the workspace scan found too few source files: {}",
+            files.len()
+        );
 
         let violations = files
             .iter()
             .flat_map(|file| {
                 let source = std::fs::read_to_string(file).expect("read source file");
                 let relative = file
-                    .strip_prefix(workspace)
+                    .strip_prefix(crates_dir)
                     .unwrap_or(file)
                     .display()
                     .to_string();

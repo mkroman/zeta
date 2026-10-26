@@ -194,9 +194,16 @@ pub struct CommandEvent {
 
 impl CommandEvent {
     /// Creates a command event if `spec` matches the message's `PRIVMSG` text.
+    ///
+    /// Returns [`None`] when the message is not a `PRIVMSG` or its text does not match `spec`;
+    /// the host only builds command events for the messages it routes to plugins.
     #[must_use]
     pub fn new(message: Arc<Message>, spec: CommandSpec) -> Option<Self> {
-        let args = spec.parse_range(privmsg(&message).1)?;
+        let Command::PRIVMSG(_, text) = &message.command else {
+            return None;
+        };
+
+        let args = spec.parse_range(text)?;
 
         Some(Self {
             message,
@@ -815,6 +822,16 @@ mod tests {
         assert!(
             CommandEvent::new(message, CommandSpec::new(".dig", "dig")).is_none(),
             "`.digg` must not match `.dig`"
+        );
+    }
+
+    #[test]
+    fn command_event_rejects_messages_that_are_not_privmsgs() {
+        let message = message("nick!user@host", "JOIN", &["#test"]);
+
+        assert!(
+            CommandEvent::new(message, CommandSpec::new(".dig", "dig")).is_none(),
+            "a JOIN cannot carry a command invocation"
         );
     }
 

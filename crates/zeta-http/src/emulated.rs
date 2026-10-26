@@ -8,6 +8,34 @@ use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, InvalidHeaderValue, 
 
 use crate::WreqError;
 
+/// Sends `request`, returning the response only when the server answered with a success status.
+///
+/// # Errors
+///
+/// Returns [`ResponseError::Request`] if the request fails, or [`ResponseError::Status`] when
+/// the response status is not a success.
+pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, ResponseError> {
+    let response = request.send().await?;
+
+    if response.status().is_success() {
+        Ok(response)
+    } else {
+        Err(ResponseError::Status(response.status()))
+    }
+}
+
+/// Sends `request` and reads the body of the successful response as text.
+///
+/// # Errors
+///
+/// Returns a [`ResponseError`] if the request fails, the response status is not a success, or
+/// the body cannot be read.
+pub async fn text(request: wreq::RequestBuilder) -> Result<String, ResponseError> {
+    let response = send(request).await?;
+
+    response.text().await.map_err(ResponseError::from)
+}
+
 /// A failed request through the browser-emulated client.
 ///
 /// The transport variant wraps [`WreqError`], which redacts the request URI: these pages can
@@ -67,7 +95,51 @@ pub fn builder(user_agent: Option<&str>) -> Result<wreq::ClientBuilder, InvalidH
 /// the `http` feature that gates the `send` and `parse_response` tests.
 #[cfg(test)]
 mod tests {
+    use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate};
     use zeta_test_support::{assert_redactions, refused_address};
+
+    use super::{ResponseError, send, text};
+
+    /// Builds the browser-emulated client the helpers are exercised with.
+    fn client() -> wreq::Client {
+        super::builder(None)
+            .expect("the default emulation builds")
+            .build()
+            .expect("the emulated client builds")
+    }
+
+    #[tokio::test]
+    async fn text_returns_the_body_of_a_successful_response() {
+        let server = MockServer::start().await;
+
+        Mock::given(zeta_test_support::wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>hello</html>"))
+            .mount(&server)
+            .await;
+
+        let body = text(client().get(server.uri())).await.unwrap();
+
+        assert_eq!(body, "<html>hello</html>");
+    }
+
+    #[tokio::test]
+    async fn send_reports_error_statuses() {
+        let server = MockServer::start().await;
+
+        Mock::given(zeta_test_support::wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let error = send(client().get(server.uri()))
+            .await
+            .expect_err("a 404 must not be returned as a response");
+
+        assert!(
+            matches!(error, ResponseError::Status(status) if status == wreq::StatusCode::NOT_FOUND),
+            "{error:?}"
+        );
+    }
 
     #[tokio::test]
     async fn emulated_request_errors_redact_the_uri_but_keep_the_cause() {

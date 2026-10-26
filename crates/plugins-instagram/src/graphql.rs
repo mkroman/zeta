@@ -138,11 +138,7 @@ pub async fn fetch_session(
         request = request.header(COOKIE, format!("sessionid={session_cookie}"));
     }
 
-    let response = request.send().await?;
-
-    if !response.status().is_success() {
-        return Err(ResponseError::Status(response.status()).into());
-    }
+    let response = zeta_http::emulated::send(request).await?;
 
     let csrf = response
         .headers()
@@ -229,13 +225,7 @@ async fn graphql(
         .append_pair("doc_id", DOC_ID)
         .finish();
 
-    let response = request.body(body).send().await?;
-
-    if !response.status().is_success() {
-        return Err(ResponseError::Status(response.status()).into());
-    }
-
-    let text = response.text().await?;
+    let text = zeta_http::emulated::text(request.body(body)).await?;
 
     match serde_json::from_str::<GraphqlResponse>(&text) {
         Ok(GraphqlResponse {

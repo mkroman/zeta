@@ -28,33 +28,46 @@ pub struct RegisteredPlugin {
 }
 
 /// Plugin registry.
-#[derive(Default)]
 pub struct Registry {
     /// The loaded plugins, in registration order.
     plugins: Vec<RegisteredPlugin>,
-    /// Catalog of the registered plugins, published to the context's shared state.
-    catalog: PluginCatalog,
     /// Plugins that failed to initialize, with the error that stopped them.
-    failed: Vec<(&'static str, Error)>,
+    failed_plugins: Vec<(&'static str, Error)>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Registry {
     /// Constructs and returns a new, empty plugin registry.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             plugins: vec![],
-            catalog: PluginCatalog::default(),
-            failed: vec![],
+            failed_plugins: vec![],
         }
     }
 
     /// Publishes the catalog of registered plugins to the context's shared state.
     ///
     /// Called once after all plugins have been registered, so plugins can discover each other
-    /// through the catalog.
+    /// through the catalog. The catalog is derived from the registered plugins' subscriptions,
+    /// so it cannot drift from them.
     pub fn publish_catalog(&self, ctx: &Context) {
-        ctx.shared.publish(Arc::new(self.catalog.clone()));
+        let entries = self
+            .plugins
+            .iter()
+            .map(|plugin| CatalogEntry {
+                name: plugin.name.to_string(),
+                commands: plugin.subscriptions.commands().to_vec(),
+                url_scope: plugin.subscriptions.url_scope(),
+            })
+            .collect();
+
+        ctx.shared.publish(Arc::new(PluginCatalog { entries }));
     }
 
     /// Registers a plugin from its [`PluginRegistration`].
@@ -67,8 +80,8 @@ impl Registry {
     ///
     /// Returns `true` if the plugin was successfully initialized and registered, `false` if it
     /// failed or if another plugin with the same name is already registered (or has failed to
-    /// initialize). Failed plugins are tracked in `self.failed` and logged with their name and
-    /// error.
+    /// initialize). Failed plugins are tracked in `self.failed_plugins` and logged with their
+    /// name and error.
     pub fn register_with(
         &mut self,
         registration: &PluginRegistration,
@@ -77,7 +90,10 @@ impl Registry {
     ) -> bool {
         let name = registration.name;
         let duplicate = self.plugins.iter().any(|plugin| plugin.name == name)
-            || self.failed.iter().any(|(failed, _)| *failed == name);
+            || self
+                .failed_plugins
+                .iter()
+                .any(|(failed, _)| *failed == name);
 
         if duplicate {
             let error = plugin_err(std::io::Error::other(format!(
@@ -85,8 +101,12 @@ impl Registry {
             )));
             error!(plugin = %name, %error, "duplicate plugin registration");
 
-            if !self.failed.iter().any(|(failed, _)| *failed == name) {
-                self.failed.push((name, error));
+            if !self
+                .failed_plugins
+                .iter()
+                .any(|(failed, _)| *failed == name)
+            {
+                self.failed_plugins.push((name, error));
             }
 
             return false;
@@ -110,12 +130,12 @@ impl Registry {
     /// Records a plugin initialization failure and reports it.
     fn fail(&mut self, name: &'static str, error: Error) -> bool {
         warn!(plugin = %name, %error, "failed to initialize plugin");
-        self.failed.push((name, error));
+        self.failed_plugins.push((name, error));
 
         false
     }
 
-    /// Commits a successfully constructed plugin to the catalog and the loaded-plugin list.
+    /// Commits a successfully constructed plugin to the loaded-plugin list.
     fn commit(&mut self, constructed: ConstructedPlugin) {
         let ConstructedPlugin {
             name,
@@ -125,11 +145,6 @@ impl Registry {
 
         debug!(plugin = %name, "registered plugin");
 
-        self.catalog.entries.push(CatalogEntry {
-            name: name.to_string(),
-            commands: subscriptions.commands().to_vec(),
-            url_scope: subscriptions.url_scope(),
-        });
         self.plugins.push(RegisteredPlugin {
             name,
             plugin,
@@ -150,7 +165,7 @@ impl Registry {
 mod tests {
     use super::*;
     use zeta_plugin::event::MessageEvent;
-    use zeta_plugin::{NoSettings, Plugin};
+    use zeta_plugin::{CommandSpec, NoSettings, Plugin};
     use zeta_test_support::test_context;
 
     /// The lifecycle log shared between a test and its plugin through the context.
@@ -176,7 +191,13 @@ mod tests {
 
         type Settings = NoSettings;
 
-        fn new(ctx: &Context, _: &NoSettings, _: &mut Subscriptions) -> Result<Self, Error> {
+        fn new(
+            ctx: &Context,
+            _: &NoSettings,
+            subscriptions: &mut Subscriptions,
+        ) -> Result<Self, Error> {
+            subscriptions.command(CommandSpec::new(".recording", "record a message"));
+
             let recording = ctx
                 .shared
                 .get::<std::sync::Mutex<Vec<&'static str>>>()
@@ -211,6 +232,29 @@ mod tests {
         );
 
         assert_eq!(registry.plugins.len(), 1);
-        assert_eq!(registry.failed.len(), 1);
+        assert_eq!(registry.failed_plugins.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn publish_catalog_derives_entries_from_the_loaded_plugins() {
+        let ctx = test_context();
+        publish_recording(&ctx);
+        let mut registry = Registry::new();
+
+        assert!(registry.register_with(&PluginRegistration::new::<RecordingPlugin>(), &ctx, None));
+
+        registry.publish_catalog(&ctx);
+
+        let catalog = ctx
+            .shared
+            .get::<PluginCatalog>()
+            .expect("the catalog should be published");
+
+        assert_eq!(catalog.entries.len(), 1);
+        assert_eq!(catalog.entries[0].name, RecordingPlugin::NAME);
+        assert_eq!(
+            catalog.entries[0].commands,
+            [CommandSpec::new(".recording", "record a message")]
+        );
     }
 }

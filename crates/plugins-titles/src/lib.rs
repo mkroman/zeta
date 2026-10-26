@@ -26,8 +26,9 @@ use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_http::emulated::ResponseError;
 use zeta_plugin::prelude::*;
-use zeta_url::{RedactedUrl, strip_www};
-use zeta_utils::text::{Truncatable, collapse_whitespace};
+use zeta_url::{RedactedUrl, path_segments, strip_www};
+use zeta_utils::irc::sanitize_external;
+use zeta_utils::text::Truncatable;
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
@@ -245,12 +246,7 @@ impl From<wreq::Error> for Error {
 async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMetadata, Error> {
     use futures::StreamExt;
 
-    let response = client.get(url.as_str()).send().await?;
-    let status = response.status();
-
-    if !status.is_success() {
-        return Err(ResponseError::Status(status).into());
-    }
+    let response = http::emulated::send(client.get(url.as_str())).await?;
 
     // The HTML tokenizer is not `Send`, so the response body is streamed through a channel and
     // tokenized on a blocking thread. The channel is bounded so that the reader stalls — and the
@@ -504,11 +500,14 @@ fn should_ignore(text: &str) -> bool {
     text.starts_with(REPLY_PREFIX)
 }
 
-/// Whether the host of `url` is handled by another plugin.
+/// Whether the host of `url` is configured as ignored.
 #[must_use]
 fn is_ignored_host(url: &Url, ignored_hosts: &[String]) -> bool {
-    url.host_str()
-        .is_some_and(|host| ignored_hosts.iter().any(|ignored| ignored == host))
+    url.host_str().is_some_and(|host| {
+        ignored_hosts
+            .iter()
+            .any(|ignored| ignored.eq_ignore_ascii_case(host))
+    })
 }
 
 /// Whether the host of `url` is declared as handled by a plugin in the catalog.
@@ -534,8 +533,8 @@ fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
 /// Whether the path of `url` looks like binary content.
 #[must_use]
 fn is_binary_url(url: &Url) -> bool {
-    url.path_segments()
-        .and_then(|mut segments| segments.next_back())
+    path_segments(url)
+        .and_then(|segments| segments.last().copied())
         .is_some_and(|segment| {
             let segment = segment.to_ascii_lowercase();
             BINARY_EXTENSIONS
@@ -553,13 +552,13 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .title
         .as_deref()
         .or(metadata.og_title.as_deref())
-        .map(collapse_whitespace)
+        .map(sanitize_external)
         .filter(|title| !title.is_empty());
 
     let description = metadata
         .description
         .as_deref()
-        .map(collapse_whitespace)
+        .map(sanitize_external)
         .filter(|description| !description.is_empty())
         .map(|description| description.truncate_within(settings.max_description_length, "…"));
 
@@ -578,7 +577,7 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         let site = metadata
             .site_name
             .as_deref()
-            .map(collapse_whitespace)
+            .map(sanitize_external)
             .filter(|site| !site.is_empty())
             .unwrap_or_else(|| host_name(url));
 
@@ -808,7 +807,7 @@ mod tests {
     fn ignores_configured_hosts() {
         let settings = Settings {
             ignored_hosts: vec![
-                "www.reddit.com".to_string(),
+                "WWW.REDDIT.COM".to_string(),
                 "youtu.be".to_string(),
                 "vm.tiktok.com".to_string(),
             ],
@@ -873,11 +872,30 @@ mod tests {
         assert!(is_binary_url(
             &Url::parse("https://maero.dk/video.mp4?start=30").unwrap()
         ));
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/photo.JPG/").unwrap()
+        ));
 
         assert!(!is_binary_url(
             &Url::parse("https://maero.dk/page.html").unwrap()
         ));
         assert!(!is_binary_url(&Url::parse("https://maero.dk").unwrap()));
+    }
+
+    #[test]
+    fn strips_formatting_from_page_metadata() {
+        let metadata = PageMetadata {
+            title: Some("\x0310Fake\nTitle\x0f".to_string()),
+            site_name: Some("Site\x02".to_string()),
+            description: Some("first\nsecond".to_string()),
+            ..PageMetadata::default()
+        };
+        let url = Url::parse("https://maero.dk").unwrap();
+
+        let message =
+            strip_formatting(&format_page(&metadata, &url, &Settings::default()).unwrap());
+
+        assert_eq!(message, "> Site: Fake Title — first second");
     }
 
     #[test]

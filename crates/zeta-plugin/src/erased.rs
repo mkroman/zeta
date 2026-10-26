@@ -24,8 +24,8 @@ pub trait ErasedPlugin: Send + Sync {
     /// Routes an event to the handler registered for its kind.
     ///
     /// Events are only routed to handlers the plugin registered the matching kind for, so an
-    /// unknown variant is unreachable in practice; it is logged when a future event kind is
-    /// added without a routing arm.
+    /// unknown variant is unreachable in practice; the match is exhaustive, so adding an event
+    /// kind without a routing arm is a compile error.
     fn handle_event<'a>(
         &'a self,
         ctx: &'a Context,

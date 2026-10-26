@@ -132,9 +132,7 @@ impl Criteria {
 
         match case {
             Case::Sensitive => wildmatch::WildMatch::new(pattern).matches(value),
-            Case::Insensitive => {
-                wildmatch::WildMatch::new(&pattern.to_lowercase()).matches(&value.to_lowercase())
-            }
+            Case::Insensitive => wildmatch::WildMatch::new_case_insensitive(pattern).matches(value),
         }
     }
 }

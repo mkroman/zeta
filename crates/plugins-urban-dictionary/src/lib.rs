@@ -13,7 +13,8 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_plugin::prelude::*;
-use zeta_utils::text::{Truncatable, collapse_whitespace};
+use zeta_utils::irc::sanitize_external;
+use zeta_utils::text::Truncatable;
 
 /// The usage line sent for empty `.ud` queries.
 pub const USAGE: &str = "Usage: .ud\x0f <query>";
@@ -138,9 +139,9 @@ struct DefinitionFormatter<'a> {
 
 impl Display for DefinitionFormatter<'_> {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let word = &self.definition.word;
-        let definition = collapse_whitespace(&self.definition.definition);
-        let example = collapse_whitespace(&self.definition.example);
+        let word = sanitize_external(&self.definition.word);
+        let definition = sanitize_external(&self.definition.definition);
+        let example = sanitize_external(&self.definition.example);
         let definition = definition.truncate_with_suffix(self.max_length, "…");
         let example = example.truncate_with_suffix(self.max_length, "…");
 
@@ -219,6 +220,21 @@ mod tests {
             formatter.to_string(),
             "Term:\x0f word\x0310 Definition:\x0f definition\x0310 Example:\x0f example"
         );
+    }
+
+    #[test]
+    fn strips_formatting_from_definitions() {
+        let mut definition = test_definition();
+        definition.definition = "\x0310Fake\nDefinition\x0f".to_string();
+
+        let formatter = DefinitionFormatter {
+            definition: &definition,
+            max_length: 400,
+        };
+        let message = formatter.to_string();
+
+        assert!(message.contains("Fake Definition"), "{message}");
+        assert!(!message.contains("\x0310Fake"), "{message}");
     }
 
     #[test]

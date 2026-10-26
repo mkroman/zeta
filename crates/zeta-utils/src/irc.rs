@@ -9,6 +9,8 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
 
+use crate::text::collapse_whitespace;
+
 /// The teal color (mIRC color 10) used for plugin replies.
 pub const COLOR: &str = "\x0310";
 
@@ -71,7 +73,8 @@ pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'
 /// Text that is echoed back to a channel must be stripped before it is formatted or replied
 /// with: a line break would terminate the message, and formatting bytes would restyle it.
 /// [`strip_formatting`] consumes the parameters that belong to a formatting code, so a color
-/// code cannot leak its digits into the visible text.
+/// code cannot leak its digits into the visible text. For text that may carry line breaks and
+/// other whitespace, [`sanitize_external`] is the single-line variant.
 #[must_use]
 pub fn strip_control_chars(text: &str) -> String {
     strip_formatting_where(text, |character| !character.is_control())
@@ -87,10 +90,32 @@ pub fn strip_control_chars(text: &str) -> String {
 ///
 /// Unlike [`strip_control_chars`], this leaves non-formatting control characters such as line
 /// breaks alone. Callers that echo untrusted text into a single IRC line want
-/// [`strip_control_chars`] instead.
+/// [`sanitize_external`] instead.
 #[must_use]
 pub fn strip_formatting(text: &str) -> String {
     strip_formatting_where(text, |_| true)
+}
+
+/// Cleans text from an external source for a single IRC line.
+///
+/// Formatting codes are removed, remaining control characters — including line breaks — become
+/// spaces, and runs of whitespace are collapsed. This is the form callers want before echoing a
+/// page title, an API description, or any other text they do not control: a line break would
+/// terminate the IRC message, and formatting codes would restyle the rest of the reply.
+#[must_use]
+pub fn sanitize_external(text: &str) -> String {
+    let text: String = strip_formatting(text)
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+
+    collapse_whitespace(&text)
 }
 
 /// The shared implementation of [`strip_control_chars`] and [`strip_formatting`]: formatting
@@ -353,6 +378,15 @@ mod tests {
         // code and must not leak into the visible text.
         assert_eq!(strip_control_chars("\u{3}10USD"), "USD");
         assert_eq!(strip_control_chars("\u{4}FF0000red"), "red");
+    }
+
+    #[test]
+    fn sanitizes_external_text_for_a_single_reply_line() {
+        // Formatting codes are removed, line breaks become spaces, and whitespace is collapsed.
+        assert_eq!(sanitize_external("\x0310Fake\nTitle\x0f"), "Fake Title");
+        assert_eq!(sanitize_external("first\nsecond"), "first second");
+        assert_eq!(sanitize_external("  a \t b  "), "a b");
+        assert_eq!(sanitize_external("plain"), "plain");
     }
 
     #[test]

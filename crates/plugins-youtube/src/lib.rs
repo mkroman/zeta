@@ -36,8 +36,8 @@ use plugins_shared::urls::youtube::URL_HOSTS;
 use zeta_cache::TtlCache;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
-use zeta_url::ExtractUrls;
 use zeta_utils::duration::{format_duration, parse_iso8601_duration};
+use zeta_utils::irc::sanitize_external;
 
 pub use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
 
@@ -295,38 +295,39 @@ impl YouTube {
         channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let args = command.args();
+        let args = command.args().trim();
 
-        // An invocation whose arguments are a YouTube URL resolves the video below instead of
-        // searching for the URL as a query.
-        if ExtractUrls::new(args).next().is_some() {
+        // An invocation whose arguments are a YouTube URL resolves the video as a link instead
+        // of searching for the URL as a query. Other URLs are searchable text.
+        if is_youtube_url(args) {
             return Ok(());
         }
 
-        match self.search(args).await {
-            Ok(results) => {
-                if let Some((result, id)) = results.iter().find_map(|result| {
-                    let id = result.id.video_id.as_deref()?;
+        let message = if args.is_empty() {
+            notice("Usage: .yt\x0f <query>")
+        } else {
+            match self.search(args).await {
+                Ok(results) => {
+                    if let Some((result, id)) = results.iter().find_map(|result| {
+                        let id = result.id.video_id.as_deref()?;
 
-                    Some((result, id))
-                }) {
-                    let title = htmlize::unescape(&result.snippet.title);
+                        Some((result, id))
+                    }) {
+                        let title = sanitize_external(&htmlize::unescape(&result.snippet.title));
 
-                    client.send_privmsg(
-                        channel,
                         reply(
                             "YouTube",
                             format!("{title} - https://www.youtube.com/watch?v={id}"),
-                        ),
-                    )?;
-                } else {
-                    client.send_privmsg(channel, notice("No results"))?;
+                        )
+                    } else {
+                        notice("No results")
+                    }
                 }
+                Err(err) => notice(err),
             }
-            Err(err) => {
-                client.send_privmsg(channel, notice(err))?;
-            }
-        }
+        };
+
+        client.send_privmsg(channel, message)?;
 
         Ok(())
     }
@@ -342,6 +343,15 @@ impl YouTube {
 
         Ok(())
     }
+}
+
+/// Returns whether `text` is a YouTube URL.
+///
+/// The `.yt` command treats a YouTube URL as the link it stands for, while other text is an
+/// ordinary search query.
+#[must_use]
+fn is_youtube_url(text: &str) -> bool {
+    Url::parse(text.trim()).is_ok_and(|url| parse_youtube_url(&url).is_some())
 }
 
 impl YouTube {
@@ -516,15 +526,17 @@ async fn fetch_video_categories(
 /// unavailable), while regular videos include only their duration.
 fn format_video_message(video: &Video, category: &str, view_count: u64) -> String {
     let snippet = video.snippet.as_ref();
-    let title = snippet.map_or("‽", |s| s.title.as_str());
-    let channel_name = snippet.map_or("unknown channel", |s| s.channel_title.as_str());
+    let title = sanitize_external(snippet.map_or("‽", |s| s.title.as_str()));
+    let channel_name =
+        sanitize_external(snippet.map_or("unknown channel", |s| s.channel_title.as_str()));
+    let category = sanitize_external(category);
     let view_count_formatted = view_count.to_formatted_string(&Locale::en);
 
     let is_live_stream =
         snippet.is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
 
     if is_live_stream {
-        let article = indefinite_article_only(category);
+        let article = indefinite_article_only(&category);
 
         if let Some(viewers) = video
             .live_streaming_details
@@ -604,6 +616,19 @@ mod tests {
                 concurrent_viewers: Some(viewers.to_string()),
             }),
         }
+    }
+
+    #[test]
+    fn only_youtube_urls_are_treated_as_links_by_the_command() {
+        assert!(is_youtube_url("https://youtu.be/dQw4w9WgXcQ"));
+        assert!(is_youtube_url(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        ));
+        assert!(is_youtube_url("https://youtube.com/shorts/l4s8y-O_ols"));
+
+        assert!(!is_youtube_url("https://example.com/watch?v=dQw4w9WgXcQ"));
+        assert!(!is_youtube_url("rust language"));
+        assert!(!is_youtube_url(""));
     }
 
     #[test]

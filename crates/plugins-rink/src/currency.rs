@@ -214,18 +214,9 @@ async fn fetch_crypto(
 ///
 /// Returns a [`ZetaError`] when the fetch fails or the response carries an error status.
 async fn fetch_fiat(client: &reqwest::Client, url: &str) -> Result<String, ZetaError> {
-    let response = zeta_http::send(client.get(url)).await.map_err(plugin_err)?;
-    let status = response.status();
-
-    let body = zeta_http::text(response).await.map_err(plugin_err)?;
-
-    if !status.is_success() {
-        return Err(plugin_err(std::io::Error::other(format!(
-            "the currency dataset returned status {status}"
-        ))));
-    }
-
-    Ok(body)
+    zeta_http::get_text(client.get(url))
+        .await
+        .map_err(plugin_err)
 }
 
 /// Builds a rink context from the bundled dataset, the fetched currency data, and the extra

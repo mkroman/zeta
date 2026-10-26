@@ -71,7 +71,7 @@ pub mod prelude {
     pub use super::hostmask::Hostmasks;
     pub use super::irc::{
         BOLD, COLOR, NOTICE_PREFIX, REPLY_PREFIX, RESET, notice, parse_args_or_usage,
-        parse_words_or_usage, reply, reply_prefix,
+        parse_words_or_usage, reply, reply_prefix, sanitize_external,
     };
     pub use super::types::NoSettings;
     pub use super::{Context, Error, Plugin};

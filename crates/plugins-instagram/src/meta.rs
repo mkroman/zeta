@@ -144,13 +144,8 @@ pub async fn fetch(
         request = request.header(wreq::header::COOKIE, format!("sessionid={session_cookie}"));
     }
 
-    let response = request.send().await?;
+    let body = zeta_http::emulated::text(request).await?;
 
-    if !response.status().is_success() {
-        return Err(ResponseError::Status(response.status()));
-    }
-
-    let body = response.text().await?;
     Ok(extract(&body))
 }
 

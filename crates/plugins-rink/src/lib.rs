@@ -59,8 +59,8 @@ use zeta_utils::text::collapse_whitespace;
 
 /// Calculator plugin using rink-rs.
 pub struct Rink {
-    /// The rink context, moved into the actor task when the plugin loads.
-    ctx: Option<RinkContext>,
+    /// The rink engine, moved into the actor task when the plugin loads.
+    engine: Option<RinkContext>,
     /// The actor task owning the context and serializing evaluations through its mailbox.
     actor: Option<Handle>,
     /// The fetched live currency data, refreshed at the TTL and used to rebuild the context.
@@ -123,7 +123,7 @@ impl Rink {
         };
 
         Ok(Self {
-            ctx: Some(build_context(None, None)?),
+            engine: Some(build_context(None, None)?),
             actor: None,
             currency: Arc::new(TtlCache::new(settings.currency_ttl)),
             refresh_task: None,
@@ -201,11 +201,11 @@ impl Rink {
 }
 
 impl Rink {
-    /// Moves the context into the actor task that serializes evaluations.
+    /// Moves the engine into the actor task that serializes evaluations.
     fn spawn_actor(&mut self) {
-        let ctx = self.ctx.take().expect("the rink context is built once");
+        let engine = self.engine.take().expect("the rink context is built once");
 
-        self.actor = Some(Handle::spawn(ctx));
+        self.actor = Some(Handle::spawn(engine));
     }
 
     /// Starts the background task that refreshes the currency data at the TTL.
@@ -753,7 +753,7 @@ mod tests {
     /// at `url` when given.
     fn test_plugin(url: Option<String>) -> Rink {
         let mut rink = Rink {
-            ctx: Some(build_context(None, None).unwrap()),
+            engine: Some(build_context(None, None).unwrap()),
             actor: None,
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
             refresh_task: None,
@@ -771,7 +771,7 @@ mod tests {
     /// Builds a plugin with currency fetching disabled.
     fn offline_plugin() -> Rink {
         let mut rink = Rink {
-            ctx: Some(build_context(None, None).unwrap()),
+            engine: Some(build_context(None, None).unwrap()),
             actor: None,
             currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
             refresh_task: None,

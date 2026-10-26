@@ -28,7 +28,7 @@ fn non_blank(pattern: Option<&str>) -> Option<&str> {
 
 /// Compiles a case-insensitive wildcard pattern, returning `None` for blank patterns.
 fn compile_insensitive(pattern: Option<&str>) -> Option<WildMatch> {
-    non_blank(pattern).map(|pattern| WildMatch::new(&pattern.to_lowercase()))
+    non_blank(pattern).map(WildMatch::new_case_insensitive)
 }
 
 /// Compiles a case-sensitive wildcard pattern for URL paths, returning `None` for blank
@@ -68,7 +68,7 @@ impl Entry {
     fn new(filter: Filter) -> Self {
         let host = non_blank(filter.host.as_deref()).map(|host| {
             if is_wildcard(host) {
-                HostMatcher::Wild(WildMatch::new(&host.to_lowercase()))
+                HostMatcher::Wild(WildMatch::new_case_insensitive(host))
             } else {
                 HostMatcher::Exact(host.to_lowercase())
             }
@@ -96,7 +96,7 @@ impl Entry {
 
     /// Whether a case-insensitive pattern matches `value`, or is unset.
     fn field_matches(pattern: Option<&WildMatch>, value: &str) -> bool {
-        pattern.is_none_or(|pattern| pattern.matches(&value.to_lowercase()))
+        pattern.is_none_or(|pattern| pattern.matches(value))
     }
 
     /// Whether the entry's sender criteria match `sender`, or are all unset.
@@ -471,6 +471,16 @@ mod tests {
         }]);
 
         assert!(hostname.ignores("#chan", Some(Sender::new("mk", "user", "dsl.isp.example"))));
+    }
+
+    #[test]
+    fn sender_patterns_match_case_insensitively() {
+        let index = index_with(&[NewFilter {
+            nickname: Some("*BOT".into()),
+            ..new_filter(None, None)
+        }]);
+
+        assert!(index.ignores("#chan", Some(Sender::new("a_bot", "user", "host.example"))));
     }
 
     #[test]
