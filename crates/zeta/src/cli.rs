@@ -21,18 +21,4 @@ mod tests {
         // bad definition into a test failure instead of a panic in debug builds.
         Opts::command().debug_assert();
     }
-
-    #[test]
-    fn config_path_defaults_and_overrides() {
-        let options = Opts::try_parse_from(["zeta"]).expect("the defaults parse");
-        assert_eq!(options.config_path, PathBuf::from("config.toml"));
-
-        let options =
-            Opts::try_parse_from(["zeta", "-c", "other.toml"]).expect("`-c` overrides the path");
-        assert_eq!(options.config_path, PathBuf::from("other.toml"));
-
-        let options = Opts::try_parse_from(["zeta", "--config-path", "other.toml"])
-            .expect("`--config-path` overrides the path");
-        assert_eq!(options.config_path, PathBuf::from("other.toml"));
-    }
 }

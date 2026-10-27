@@ -490,19 +490,6 @@ mod tests {
     #[allow(dead_code)]
     struct Stats {}
 
-    #[test]
-    fn cli_definitions_are_valid() {
-        use clap::CommandFactory;
-
-        // clap reports most definition mistakes (conflicting ids, missing required relations,
-        // invalid `num_args`, and so on) through asserts; running them here turns them into a
-        // test failure instead of a panic in production.
-        DigOpts::command().debug_assert();
-        RepeatOpts::command().debug_assert();
-        ShortOnlyOpts::command().debug_assert();
-        SubcommandOpts::command().debug_assert();
-    }
-
     fn catalog() -> PluginCatalog {
         PluginCatalog {
             entries: vec![

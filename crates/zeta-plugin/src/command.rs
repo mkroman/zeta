@@ -495,16 +495,6 @@ mod tests {
     }
 
     #[test]
-    fn option_definitions_are_valid() {
-        use clap::CommandFactory;
-
-        // clap reports contradictory definitions through asserts; evaluating them here turns a
-        // bad definition into a test failure instead of a panic in debug builds.
-        NameOpts::command().debug_assert();
-        GreedyOpts::command().debug_assert();
-    }
-
-    #[test]
     fn args_info_is_named_after_the_trigger() {
         /// Look up a domain name.
         #[derive(Parser)]

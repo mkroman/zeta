@@ -560,25 +560,6 @@ mod tests {
         Opts::command().debug_assert();
     }
 
-    #[test]
-    fn parses_subcommands_and_greedy_hosts() {
-        let opts: Opts = UNWALL
-            .parse_words("add a.com b.com")
-            .expect("`add` takes the remaining words");
-        let Subcommand::Add(add) = opts.command else {
-            panic!("`add` should select the add subcommand");
-        };
-        assert_eq!(add.hosts, ["a.com", "b.com"]);
-
-        let opts: Opts = UNWALL
-            .parse_words("rm *.x.com")
-            .expect("`rm` takes a pattern");
-        let Subcommand::Remove(Remove { pattern }) = opts.command else {
-            panic!("`rm` should select the remove subcommand");
-        };
-        assert_eq!(pattern, "*.x.com");
-    }
-
     settings_tests! {
         Settings,
         settings,

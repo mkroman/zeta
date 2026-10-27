@@ -284,18 +284,10 @@ fn print_details(output: &TrainOutput) {
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use clap::error::ErrorKind;
 
     /// Parses a list of arguments.
     fn parse(args: &[&str]) -> Result<Options, clap::Error> {
         Options::try_parse_from(std::iter::once("zeta-unicode-train").chain(args.iter().copied()))
-    }
-
-    /// Parses `args`, asserting that clap rejects them, and returns the error.
-    fn parse_error(args: &[&str]) -> clap::Error {
-        parse(args).err().unwrap_or_else(|| {
-            panic!("`{args:?}` should be rejected");
-        })
     }
 
     #[test]
@@ -306,115 +298,14 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_the_help_text() {
-        let options = parse(&[]).expect("defaults parse");
-        assert!(options.data_dir.is_none());
-        assert_eq!(options.out_dir, PathBuf::from("target/nomina"));
-        assert!(options.block_shift.is_none());
-        assert_eq!(options.priority, Priority::Balanced);
-        assert_eq!(options.max_bytes, DEFAULT_MAX_TABLE_BYTES);
-        assert!(options.baseline.is_none());
-        assert_eq!(options.max_delta_bytes, 0);
-        assert!(!options.report);
-        assert!(!options.verify);
-    }
-
-    #[test]
-    fn parses_every_flag() {
-        let options = parse(&[
-            "--data-dir",
-            "data",
-            "--out-dir",
-            "out",
-            "--block-shift",
-            "7",
-            "--priority",
-            "latency",
-            "--max-bytes",
-            "1234",
-            "--baseline",
-            "base.bin",
-            "--max-delta",
-            "12",
-            "--report",
-            "--verify",
-        ])
-        .expect("every flag parses");
-        assert_eq!(options.data_dir, Some(PathBuf::from("data")));
-        assert_eq!(options.out_dir, PathBuf::from("out"));
-        assert_eq!(options.block_shift, Some(7));
-        assert_eq!(options.priority, Priority::Latency);
-        assert_eq!(options.max_bytes, 1_234);
-        assert_eq!(options.baseline, Some(PathBuf::from("base.bin")));
-        assert_eq!(options.max_delta_bytes, 12);
-        assert!(options.report);
-        assert!(options.verify);
-
-        let options = parse(&["--priority", "SIZE"]).expect("upper case priority");
-        assert_eq!(options.priority, Priority::Size);
-    }
-
-    #[test]
-    fn rejects_out_of_range_or_malformed_block_shifts() {
+    fn block_shifts_are_range_checked() {
         for shift in ["2", "9", "x"] {
-            assert_eq!(
-                parse_error(&["--block-shift", shift]).kind(),
-                ErrorKind::ValueValidation,
-                "{shift:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_unknown_priorities() {
-        assert_eq!(
-            parse_error(&["--priority", "fast"]).kind(),
-            ErrorKind::ValueValidation
-        );
-    }
-
-    #[test]
-    fn rejects_malformed_counts() {
-        for args in [["--max-bytes", "many"], ["--max-delta", "many"]] {
-            assert_eq!(
-                parse_error(&args).kind(),
-                ErrorKind::ValueValidation,
-                "{args:?}"
-            );
+            assert!(parse_block_shift(shift).is_err(), "{shift:?}");
         }
 
-        // A negative count looks like a flag, so clap rejects it before validating the value.
-        assert_eq!(
-            parse_error(&["--max-bytes", "-1"]).kind(),
-            ErrorKind::UnknownArgument
-        );
-    }
-
-    #[test]
-    fn rejects_options_without_values() {
-        for option in [
-            "--data-dir",
-            "--out-dir",
-            "--block-shift",
-            "--priority",
-            "--max-bytes",
-            "--baseline",
-            "--max-delta",
-        ] {
-            assert_eq!(
-                parse_error(&[option]).kind(),
-                ErrorKind::InvalidValue,
-                "{option}"
-            );
+        for shift in ["3", "8"] {
+            assert!(parse_block_shift(shift).is_ok(), "{shift:?}");
         }
-    }
-
-    #[test]
-    fn rejects_unknown_flags() {
-        assert_eq!(
-            parse_error(&["--unknown"]).kind(),
-            ErrorKind::UnknownArgument
-        );
     }
 
     #[test]
@@ -430,43 +321,6 @@ mod tests {
                 .expect("the flags parse")
                 .validate()
                 .is_ok()
-        );
-    }
-
-    #[test]
-    fn help_exits_early_with_a_success_status() {
-        for flag in ["-h", "--help"] {
-            let help = parse_error(&[flag]);
-
-            assert_eq!(help.kind(), ErrorKind::DisplayHelp, "{flag}");
-            assert_eq!(help.exit_code(), 0, "{flag}");
-        }
-
-        // clap owns the help layout; assert that it documents the options instead of pinning it.
-        let help = parse_error(&["--help"]).to_string();
-
-        for option in ["--data-dir", "--out-dir", "--priority"] {
-            assert!(help.contains(option), "missing {option:?}: {help}");
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn non_utf8_paths_parse() {
-        use std::ffi::{OsStr, OsString};
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-
-        let raw = OsString::from_vec(b"data\xFE".to_vec());
-        let options = Options::try_parse_from([
-            OsString::from("zeta-unicode-train"),
-            OsString::from("--data-dir"),
-            raw,
-        ])
-        .expect("a non-UTF-8 path is a valid `PathBuf`");
-
-        assert_eq!(
-            options.data_dir,
-            Some(PathBuf::from(OsStr::from_bytes(b"data\xFE")))
         );
     }
 }

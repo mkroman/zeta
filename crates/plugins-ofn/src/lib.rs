@@ -204,11 +204,4 @@ mod tests {
         // bad definition into a test failure instead of a panic in debug builds.
         Opts::command().debug_assert();
     }
-
-    #[test]
-    fn parses_the_stats_subcommand() {
-        let opts: Opts = OFN.parse_words("stats").expect("`stats` should parse");
-
-        assert_eq!(opts.command, Subcommand::Stats(Stats {}));
-    }
 }

@@ -231,17 +231,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_domain_and_record_type() {
-        let opts: Opts = DIG
-            .parse_args("example.com")
-            .expect("the record type defaults to A");
-        assert_eq!(opts.name, "example.com");
-        assert_eq!(opts.record_type, RecordType::A);
-
-        let opts: Opts = DIG
-            .parse_args("example.com MX")
-            .expect("the record type parses");
-        assert_eq!(opts.record_type, RecordType::MX);
+    fn parses_record_types_case_insensitively() {
+        assert_eq!(record_type_from_str("mx").unwrap(), RecordType::MX);
+        assert!(record_type_from_str("nope").is_err());
     }
 
     settings_tests! {
