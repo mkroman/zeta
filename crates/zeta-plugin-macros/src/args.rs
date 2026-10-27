@@ -148,7 +148,7 @@ pub struct CommandArgs {
     pub trigger: LitStr,
     /// The user-facing description shown by the host's help command.
     pub description: Expr,
-    /// The `argh` options type, from `args = Opts`.
+    /// The `clap` options type, from `args = Opts`.
     pub args: Option<Type>,
     /// Whether the arguments are parsed with `parse_words_or_usage`, from `words`.
     ///

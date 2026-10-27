@@ -8,7 +8,7 @@
 //! are the helpers that need the plugin vocabulary: replying with a failed argument parse's
 //! usage lines.
 
-use argh::FromArgs;
+use clap::Parser;
 use irc::client::Client;
 
 use crate::command::ArgsError;
@@ -51,7 +51,7 @@ fn reply_usage_lines(
 /// # Errors
 ///
 /// Returns any error produced while sending the usage lines.
-pub fn parse_args_or_usage<T: FromArgs>(
+pub fn parse_args_or_usage<T: Parser>(
     client: &Client,
     command: &CommandEvent,
     format: impl Fn(&str) -> String,
@@ -67,7 +67,7 @@ pub fn parse_args_or_usage<T: FromArgs>(
 /// # Errors
 ///
 /// Returns any error produced while sending the usage lines.
-pub fn parse_words_or_usage<T: FromArgs>(
+pub fn parse_words_or_usage<T: Parser>(
     client: &Client,
     command: &CommandEvent,
     format: impl Fn(&str) -> String,

@@ -51,7 +51,7 @@ rustls = [
 ]
 
 [dependencies]
-argh.workspace = true
+clap.workspace = true
 figment.workspace = true
 futures = "0.3.31"
 humantime-serde.workspace = true

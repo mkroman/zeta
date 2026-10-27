@@ -13,7 +13,7 @@ native-tls = ["zeta-plugin/native-tls"]
 native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
-argh.workspace = true
+clap.workspace = true
 num-format = "0.4.4"
 plugins-shared = { path = "../plugins-shared" }
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }

@@ -13,7 +13,7 @@ native-tls = ["zeta-plugin/native-tls"]
 native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
-argh.workspace = true
+clap.workspace = true
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
 zeta-utils = { path = "../zeta-utils" }
 

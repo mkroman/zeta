@@ -17,7 +17,7 @@ native-tls = ["zeta-plugin/native-tls", "coinmarketcap/native-tls"]
 native-tls-vendored = ["zeta-plugin/native-tls-vendored", "coinmarketcap/native-tls-vendored"]
 
 [dependencies]
-argh.workspace = true
+clap.workspace = true
 coinmarketcap = { path = "../coinmarketcap", default-features = false }
 humantime-serde.workspace = true
 serde.workspace = true

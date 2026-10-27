@@ -27,8 +27,8 @@ pub use {
 use std::sync::Arc;
 use std::time::Duration;
 
-use argh::{ArgsInfo, FromArgs};
 use chrono::{Datelike, Days};
+use clap::Parser;
 use interim::{Dialect, parse_date_string};
 use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
@@ -50,14 +50,13 @@ const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
 const USAGE: &str = "Usage: .alert\x0f [-l] <message> <in|at> <datetime>";
 
 /// Schedule an alert to be posted later, or list pending alerts.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(help_triggers("--help"))]
+#[derive(Parser, Debug)]
 struct Opts {
     /// list your pending alerts in this channel
-    #[argh(switch, short = 'l')]
+    #[arg(short = 'l', long)]
     list: bool,
     /// the alert message, followed by `in` or `at` and a datetime
-    #[argh(positional, greedy)]
+    #[arg(num_args = 1.., trailing_var_arg = true)]
     args: Vec<String>,
 }
 
@@ -502,12 +501,20 @@ const fn ordinal_suffix(day: u32) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
     use sqlx::types::chrono::TimeZone;
 
     use super::*;
     use zeta_plugin::ArgsError;
     use zeta_test_support::settings_tests;
     use zeta_utils::irc::strip_formatting;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // clap reports contradictory definitions through asserts; evaluating them here turns a
+        // bad definition into a test failure instead of a panic in debug builds.
+        Opts::command().debug_assert();
+    }
 
     settings_tests! {
         Settings,

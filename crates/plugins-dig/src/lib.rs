@@ -12,7 +12,7 @@
 use std::fmt::Display;
 use std::net::IpAddr;
 
-use argh::{ArgsInfo, FromArgs};
+use clap::Parser;
 use hickory_resolver::{
     Resolver, TokioResolver,
     config::{LookupIpStrategy, NameServerConfig, ResolveHosts, ResolverConfig, ResolverOpts},
@@ -66,17 +66,12 @@ where
 }
 
 /// Look up DNS records for a domain.
-#[derive(FromArgs, ArgsInfo, Debug)]
+#[derive(Parser, Debug)]
 pub struct Opts {
     /// the domain to look up
-    #[argh(positional)]
     name: String,
     /// the type of record to look up
-    #[argh(
-        positional,
-        from_str_fn(record_type_from_str),
-        default = "RecordType::A"
-    )]
+    #[arg(value_parser = record_type_from_str, default_value = "A")]
     record_type: RecordType,
 }
 
@@ -225,7 +220,29 @@ impl Dig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use zeta_test_support::settings_tests;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // clap reports contradictory definitions through asserts; evaluating them here turns a
+        // bad definition into a test failure instead of a panic in debug builds.
+        Opts::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_the_domain_and_record_type() {
+        let opts: Opts = DIG
+            .parse_args("example.com")
+            .expect("the record type defaults to A");
+        assert_eq!(opts.name, "example.com");
+        assert_eq!(opts.record_type, RecordType::A);
+
+        let opts: Opts = DIG
+            .parse_args("example.com MX")
+            .expect("the record type parses");
+        assert_eq!(opts.record_type, RecordType::MX);
+    }
 
     settings_tests! {
         Settings,

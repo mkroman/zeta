@@ -6,10 +6,10 @@ default-members = ["crates/zeta"]
 
 [workspace.dependencies]
 arc-swap = "1.9"
-argh = { version = "0.1.19" }
 async-trait = "0.1.89"
 bytes = "1.12.1"
 chrono = { version = "0.4.45" }
+clap = { version = "4.6.7", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
 humantime-serde = "1.1.1"

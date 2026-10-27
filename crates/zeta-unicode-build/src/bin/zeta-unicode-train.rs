@@ -2,14 +2,13 @@
 //!
 //! The trainer reads the vendored UCD files, measures every requested name-block shift,
 //! writes `nomina.bin` and `manifest.json` into the output directory, and prints the
-//! candidate table. Arguments are parsed with `argh`; because `argh` parses `&str`, a
-//! non-UTF-8 argument is reported as a usage error instead of panicking.
+//! candidate table. Arguments are parsed with `clap`; path values accept the raw `OsString`,
+//! so a non-UTF-8 path reaches the filesystem unchanged.
 
-use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use argh::FromArgs;
+use clap::{CommandFactory, Parser};
 use zeta_unicode_build::{
     DEFAULT_MAX_TABLE_BYTES, MAX_CANDIDATE_SHIFT, MIN_CANDIDATE_SHIFT, Priority, Profile,
     TrainOutput, read_inputs, train, verify, write_manifest_path,
@@ -21,8 +20,8 @@ const IMAGE_STAGING_NAME: &str = "nomina.bin.staging";
 const MANIFEST_STAGING_NAME: &str = "manifest.json.staging";
 
 /// Trains a Nomina Unicode image from the vendored UCD files.
-#[derive(Debug, FromArgs)]
-#[argh(help_triggers("-h", "--help"))]
+#[derive(Debug, Parser)]
+#[command(name = "zeta-unicode-train")]
 struct Options {
     /// UCD directory (default: $ZETA_UNICODE_DATA_DIR, then ../zeta-unicode/data,
     /// crates/zeta-unicode/data or data)
@@ -30,36 +29,36 @@ struct Options {
         clippy::doc_markdown,
         reason = "the doc comment is the --help text, so backticks would render literally"
     )]
-    #[argh(option)]
+    #[arg(long)]
     data_dir: Option<PathBuf>,
     /// output directory (default: target/nomina)
-    #[argh(option, default = "PathBuf::from(\"target/nomina\")")]
+    #[arg(long, default_value = "target/nomina")]
     out_dir: PathBuf,
     /// fix the name block shift (3..=8) instead of searching
-    #[argh(option, from_str_fn(parse_block_shift))]
+    #[arg(long, value_parser = parse_block_shift)]
     block_shift: Option<u8>,
     /// size, balanced (default) or latency
-    #[argh(option, default = "Priority::Balanced")]
+    #[arg(long, default_value = "balanced")]
     priority: Priority,
     /// image budget in bytes (default: 200000)
-    #[argh(option, default = "DEFAULT_MAX_TABLE_BYTES")]
+    #[arg(long, default_value_t = DEFAULT_MAX_TABLE_BYTES)]
     max_bytes: usize,
     /// compare the trained image against an existing image
-    #[argh(option)]
+    #[arg(long)]
     baseline: Option<PathBuf>,
     /// tolerated growth over the baseline in bytes (default: 0)
-    #[argh(option, long = "max-delta", default = "0")]
+    #[arg(long = "max-delta", default_value_t = 0)]
     max_delta_bytes: usize,
     /// print per-section and per-stream details
-    #[argh(switch)]
+    #[arg(long)]
     report: bool,
     /// verify the trained image before publishing nomina.bin and manifest.json
-    #[argh(switch)]
+    #[arg(long)]
     verify: bool,
 }
 
 impl Options {
-    /// Rejects flag combinations that `argh` cannot express.
+    /// Rejects flag combinations that depend on another argument's presence.
     fn validate(&self) -> Result<(), String> {
         if self.baseline.is_none() && self.max_delta_bytes != 0 {
             return Err("--max-delta needs --baseline to compare against".into());
@@ -69,32 +68,11 @@ impl Options {
 }
 
 fn main() -> ExitCode {
-    let (program, args) = match utf8_args(std::env::args_os()) {
-        Ok(parts) => parts,
-        Err(error) => {
-            eprintln!("error: {error}");
-            return ExitCode::from(2);
-        }
-    };
-    let command = command_name(&program);
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let options = match Options::from_args(&[command], &args) {
-        Ok(options) => options,
-        Err(early_exit) if early_exit.status.is_ok() => {
-            println!("{}", early_exit.output);
-            return ExitCode::SUCCESS;
-        }
-        Err(early_exit) => {
-            eprintln!(
-                "{}\n\nRun {command} --help for more information.",
-                early_exit.output
-            );
-            return ExitCode::from(2);
-        }
-    };
-    if let Err(error) = options.validate() {
-        eprintln!("error: {error}\n\nRun {command} --help for more information.");
-        return ExitCode::from(2);
+    let options = Options::parse();
+    if let Err(message) = options.validate() {
+        Options::command()
+            .error(clap::error::ErrorKind::InvalidValue, message)
+            .exit();
     }
     match run(&options) {
         Ok(()) => ExitCode::SUCCESS,
@@ -103,39 +81,6 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-/// Converts the raw arguments to UTF-8 and separates the program name.
-///
-/// `argh` parses `&str`, so a non-UTF-8 value is a usage error; reporting it here keeps the
-/// CLI from panicking inside `std::env::args()`.
-fn utf8_args(args: impl IntoIterator<Item = OsString>) -> Result<(String, Vec<String>), String> {
-    let mut args = args.into_iter();
-    let program = args
-        .next()
-        .ok_or_else(|| "argv is empty".to_owned())?
-        .into_string()
-        .map_err(|arg| {
-            format!(
-                "the program name is not valid UTF-8: {:?}",
-                arg.to_string_lossy()
-            )
-        })?;
-    let values = args
-        .map(|arg| {
-            arg.into_string()
-                .map_err(|arg| format!("argument is not valid UTF-8: {:?}", arg.to_string_lossy()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((program, values))
-}
-
-/// The program name used in help and usage messages.
-fn command_name(program: &str) -> &str {
-    Path::new(program)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or(program)
 }
 
 /// Parses and range-checks the fixed name-block shift for `--block-shift`.
@@ -338,10 +283,26 @@ fn print_details(output: &TrainOutput) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+    use clap::error::ErrorKind;
 
     /// Parses a list of arguments.
-    fn parse(args: &[&str]) -> Result<Options, argh::EarlyExit> {
-        Options::from_args(&["zeta-unicode-train"], args)
+    fn parse(args: &[&str]) -> Result<Options, clap::Error> {
+        Options::try_parse_from(std::iter::once("zeta-unicode-train").chain(args.iter().copied()))
+    }
+
+    /// Parses `args`, asserting that clap rejects them, and returns the error.
+    fn parse_error(args: &[&str]) -> clap::Error {
+        parse(args).err().unwrap_or_else(|| {
+            panic!("`{args:?}` should be rejected");
+        })
+    }
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // clap reports contradictory definitions through asserts; evaluating them here turns a
+        // bad definition into a test failure instead of a panic in debug builds.
+        Options::command().debug_assert();
     }
 
     #[test]
@@ -388,42 +349,72 @@ mod tests {
         assert_eq!(options.max_delta_bytes, 12);
         assert!(options.report);
         assert!(options.verify);
+
+        let options = parse(&["--priority", "SIZE"]).expect("upper case priority");
+        assert_eq!(options.priority, Priority::Size);
     }
 
     #[test]
-    fn priority_names_are_case_insensitive() {
+    fn rejects_out_of_range_or_malformed_block_shifts() {
+        for shift in ["2", "9", "x"] {
+            assert_eq!(
+                parse_error(&["--block-shift", shift]).kind(),
+                ErrorKind::ValueValidation,
+                "{shift:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_priorities() {
         assert_eq!(
-            parse(&["--priority", "SIZE"])
-                .expect("upper case priority")
-                .priority,
-            Priority::Size
+            parse_error(&["--priority", "fast"]).kind(),
+            ErrorKind::ValueValidation
         );
     }
 
     #[test]
-    fn rejects_malformed_or_missing_values() {
-        for args in [
-            ["--block-shift", "2"],
-            ["--block-shift", "9"],
-            ["--block-shift", "x"],
-            ["--priority", "fast"],
-            ["--max-bytes", "-1"],
-            ["--max-delta", "many"],
-        ] {
-            assert!(parse(&args).is_err(), "{args:?} must be rejected");
+    fn rejects_malformed_counts() {
+        for args in [["--max-bytes", "many"], ["--max-delta", "many"]] {
+            assert_eq!(
+                parse_error(&args).kind(),
+                ErrorKind::ValueValidation,
+                "{args:?}"
+            );
         }
-        for args in [
-            ["--data-dir"],
-            ["--out-dir"],
-            ["--block-shift"],
-            ["--priority"],
-            ["--max-bytes"],
-            ["--baseline"],
-            ["--max-delta"],
+
+        // A negative count looks like a flag, so clap rejects it before validating the value.
+        assert_eq!(
+            parse_error(&["--max-bytes", "-1"]).kind(),
+            ErrorKind::UnknownArgument
+        );
+    }
+
+    #[test]
+    fn rejects_options_without_values() {
+        for option in [
+            "--data-dir",
+            "--out-dir",
+            "--block-shift",
+            "--priority",
+            "--max-bytes",
+            "--baseline",
+            "--max-delta",
         ] {
-            assert!(parse(&args).is_err(), "{args:?} needs a value");
+            assert_eq!(
+                parse_error(&[option]).kind(),
+                ErrorKind::InvalidValue,
+                "{option}"
+            );
         }
-        assert!(parse(&["--unknown"]).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_flags() {
+        assert_eq!(
+            parse_error(&["--unknown"]).kind(),
+            ErrorKind::UnknownArgument
+        );
     }
 
     #[test]
@@ -444,37 +435,38 @@ mod tests {
 
     #[test]
     fn help_exits_early_with_a_success_status() {
-        let early_exit = parse(&["--help"]).expect_err("--help exits early");
-        assert!(early_exit.status.is_ok());
-        assert!(early_exit.output.contains("--data-dir"));
+        for flag in ["-h", "--help"] {
+            let help = parse_error(&[flag]);
 
-        let early_exit = parse(&["-h"]).expect_err("-h exits early");
-        assert!(early_exit.status.is_ok());
-    }
+            assert_eq!(help.kind(), ErrorKind::DisplayHelp, "{flag}");
+            assert_eq!(help.exit_code(), 0, "{flag}");
+        }
 
-    #[test]
-    fn command_name_strips_the_directory() {
-        assert_eq!(
-            command_name("/tmp/bin/zeta-unicode-train"),
-            "zeta-unicode-train"
-        );
-        assert_eq!(command_name("zeta-unicode-train"), "zeta-unicode-train");
+        // clap owns the help layout; assert that it documents the options instead of pinning it.
+        let help = parse_error(&["--help"]).to_string();
+
+        for option in ["--data-dir", "--out-dir", "--priority"] {
+            assert!(help.contains(option), "missing {option:?}: {help}");
+        }
     }
 
     #[cfg(unix)]
     #[test]
-    fn non_utf8_arguments_are_reported_without_panicking() {
-        use std::os::unix::ffi::OsStringExt;
+    fn non_utf8_paths_parse() {
+        use std::ffi::{OsStr, OsString};
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
-        let error = utf8_args([
+        let raw = OsString::from_vec(b"data\xFE".to_vec());
+        let options = Options::try_parse_from([
             OsString::from("zeta-unicode-train"),
             OsString::from("--data-dir"),
-            OsString::from_vec(b"data\xFE".to_vec()),
+            raw,
         ])
-        .expect_err("non-UTF-8 arguments are rejected");
-        assert!(
-            error.contains("argument is not valid UTF-8"),
-            "unexpected error: {error}"
+        .expect("a non-UTF-8 path is a valid `PathBuf`");
+
+        assert_eq!(
+            options.data_dir,
+            Some(PathBuf::from(OsStr::from_bytes(b"data\xFE")))
         );
     }
 }

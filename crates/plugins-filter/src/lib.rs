@@ -34,7 +34,7 @@ pub use service::FilterService;
 
 use std::sync::Arc;
 
-use argh::{ArgsInfo, FromArgs};
+use clap::Parser;
 use tracing::debug;
 
 use zeta_plugin::prelude::*;
@@ -46,16 +46,15 @@ const FILTER: CommandSpec =
     CommandSpec::with_args::<Opts>(".filter", "Manage URL and sender filters (add/list/delete)");
 
 /// Manage URL and sender filters.
-#[derive(FromArgs, ArgsInfo, Debug)]
+#[derive(Parser, Debug)]
 struct Opts {
     /// the filter operation
-    #[argh(subcommand)]
+    #[command(subcommand)]
     command: Subcommand,
 }
 
 /// The `.filter` subcommands.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand)]
+#[derive(clap::Subcommand, Debug)]
 enum Subcommand {
     /// add a new filter
     Add(Add),
@@ -66,83 +65,79 @@ enum Subcommand {
 }
 
 /// Add a new filter.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "add")]
+#[derive(clap::Args, Debug)]
 struct Add {
     /// only apply the filter in this channel (defaults to the current channel)
-    #[argh(option)]
+    #[arg(long)]
     channel: Option<String>,
     /// apply the filter in all channels
-    #[argh(switch)]
+    #[arg(long)]
     all_channels: bool,
     /// URL host pattern to filter, e.g. `imdb.com` or `*.com` (repeatable)
-    #[argh(option)]
+    #[arg(long)]
     host: Vec<String>,
     /// URL path pattern to filter, e.g. `/title/*` (repeatable)
-    #[argh(option)]
+    #[arg(long)]
     path: Vec<String>,
     /// sender nickname pattern to filter, e.g. `*bot`
-    #[argh(option)]
+    #[arg(long)]
     nick: Option<String>,
     /// sender username (ident) pattern to filter, e.g. `*other`
-    #[argh(option)]
+    #[arg(long)]
     user: Option<String>,
     /// sender hostname pattern to filter, e.g. `*.isp.example`
-    #[argh(option)]
+    #[arg(long)]
     hostname: Option<String>,
 }
 
 /// List filters.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "list")]
+#[derive(clap::Args, Debug)]
 struct List {
     /// the channel pattern to match
-    #[argh(option)]
+    #[arg(long)]
     channel: Option<String>,
     /// the URL host pattern to match
-    #[argh(option)]
+    #[arg(long)]
     host: Option<String>,
     /// the URL path pattern to match
-    #[argh(option)]
+    #[arg(long)]
     path: Option<String>,
     /// the sender nickname pattern to match
-    #[argh(option)]
+    #[arg(long)]
     nick: Option<String>,
     /// the sender username pattern to match
-    #[argh(option)]
+    #[arg(long)]
     user: Option<String>,
     /// the sender hostname pattern to match
-    #[argh(option)]
+    #[arg(long)]
     hostname: Option<String>,
 }
 
 /// Delete filters.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "delete")]
+#[derive(clap::Args, Debug)]
 struct Delete {
     /// the id of a single filter to remove
-    #[argh(positional)]
     id: Option<i32>,
     /// the channel pattern to match
-    #[argh(option)]
+    #[arg(long)]
     channel: Option<String>,
     /// the URL host pattern to match
-    #[argh(option)]
+    #[arg(long)]
     host: Option<String>,
     /// the URL path pattern to match
-    #[argh(option)]
+    #[arg(long)]
     path: Option<String>,
     /// the sender nickname pattern to match
-    #[argh(option)]
+    #[arg(long)]
     nick: Option<String>,
     /// the sender username pattern to match
-    #[argh(option)]
+    #[arg(long)]
     user: Option<String>,
     /// the sender hostname pattern to match
-    #[argh(option)]
+    #[arg(long)]
     hostname: Option<String>,
     /// delete the matching filters without confirmation
-    #[argh(switch)]
+    #[arg(long)]
     force: bool,
 }
 
@@ -598,7 +593,15 @@ fn describe(filter: &Filter) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use zeta_utils::irc::strip_formatting;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // clap reports contradictory definitions through asserts; evaluating them here turns a
+        // bad definition into a test failure instead of a panic in debug builds.
+        Opts::command().debug_assert();
+    }
 
     #[tokio::test]
     async fn publishes_a_url_filters_handle_for_the_host() {

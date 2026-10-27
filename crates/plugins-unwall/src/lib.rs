@@ -45,7 +45,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-use argh::{ArgsInfo, FromArgs};
+use clap::Parser;
 use tracing::{Instrument, debug, warn};
 
 use zeta_http as http;
@@ -103,16 +103,15 @@ impl Default for Settings {
 }
 
 /// Manage the paywalled sites unwalled through unwall.app.
-#[derive(FromArgs, ArgsInfo, Debug)]
+#[derive(Parser, Debug)]
 struct Opts {
     /// the unwall operation
-    #[argh(subcommand)]
+    #[command(subcommand)]
     command: Subcommand,
 }
 
 /// The `.unwall` subcommands.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand)]
+#[derive(clap::Subcommand, Debug)]
 enum Subcommand {
     /// add sites to unwall
     Add(Add),
@@ -131,48 +130,41 @@ enum Subcommand {
 }
 
 /// Add sites to unwall.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "add")]
+#[derive(clap::Args, Debug)]
 struct Add {
     /// the hostnames to unwall, e.g. `bloomberg.com` or `*.bloomberg.com`
-    #[argh(positional, greedy)]
+    #[arg(num_args = 1.., trailing_var_arg = true)]
     hosts: Vec<String>,
 }
 
 /// Defines a `rm`-style subcommand alias that removes sites matching a pattern.
 macro_rules! remove_subcommand {
-    ($type:ident, $name:literal) => {
+    ($type:ident) => {
         /// Remove sites matching a pattern.
-        #[derive(FromArgs, ArgsInfo, Debug)]
-        #[argh(subcommand, name = $name)]
+        #[derive(clap::Args, Debug)]
         struct $type {
             /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
-            #[argh(positional)]
             pattern: String,
         }
     };
 }
 
-remove_subcommand!(Rm, "rm");
-remove_subcommand!(Del, "del");
-remove_subcommand!(Delete, "delete");
+remove_subcommand!(Rm);
+remove_subcommand!(Del);
+remove_subcommand!(Delete);
 
 /// Summarize the covered sites.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "list")]
+#[derive(clap::Args, Debug)]
 struct List {}
 
 /// Show overall statistics about the unwalled links.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "stats")]
+#[derive(clap::Args, Debug)]
 struct Stats {}
 
 /// Show statistics for one host.
-#[derive(FromArgs, ArgsInfo, Debug)]
-#[argh(subcommand, name = "info")]
+#[derive(clap::Args, Debug)]
 struct Info {
     /// the host to show statistics for
-    #[argh(positional)]
     host: String,
 }
 
@@ -572,7 +564,34 @@ impl Unwall {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use zeta_test_support::settings_tests;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // clap reports contradictory definitions through asserts; evaluating them here turns a
+        // bad definition into a test failure instead of a panic in debug builds.
+        Opts::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_subcommands_and_greedy_hosts() {
+        let opts: Opts = UNWALL
+            .parse_words("add a.com b.com")
+            .expect("`add` takes the remaining words");
+        let Subcommand::Add(add) = opts.command else {
+            panic!("`add` should select the add subcommand");
+        };
+        assert_eq!(add.hosts, ["a.com", "b.com"]);
+
+        let opts: Opts = UNWALL
+            .parse_words("rm *.x.com")
+            .expect("`rm` takes a pattern");
+        let Subcommand::Rm(Rm { pattern }) = opts.command else {
+            panic!("`rm` should select the rm subcommand");
+        };
+        assert_eq!(pattern, "*.x.com");
+    }
 
     settings_tests! {
         Settings,

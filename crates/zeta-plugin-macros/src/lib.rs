@@ -79,7 +79,7 @@
 //!
 //! | option | meaning |
 //! |---|---|
-//! | `args = Opts` | Parses the arguments into `Opts` (an `argh::FromArgs + argh::ArgsInfo` type) through `parse_args_or_usage`. |
+//! | `args = Opts` | Parses the arguments into `Opts` (a `clap::Parser` type) through `parse_args_or_usage`. |
 //! | `words` | With `args`, parses through `parse_words_or_usage` instead, preserving free-form text. |
 //! | `spec = NAME` | Overrides the generated `CommandSpec` constant's name; the default folds the trigger to upper case (`.dig` → `DIG`). |
 //! | `label = "Dig"` | The display label for generated usage and error replies; defaults to the plugin's name. |

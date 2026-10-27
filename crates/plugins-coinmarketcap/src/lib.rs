@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use argh::{ArgsInfo, FromArgs};
+use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
@@ -111,10 +111,9 @@ coin_commands! {
 }
 
 /// Convert a coin price into another fiat currency.
-#[derive(FromArgs, ArgsInfo, Debug)]
+#[derive(Parser, Debug)]
 struct QuoteOpts {
     /// fiat currency to convert the price into (defaults to USD)
-    #[argh(positional)]
     currency: Option<String>,
 }
 
@@ -122,13 +121,11 @@ struct QuoteOpts {
 const CC_USAGE: &str = "Usage: .cc \x0f<symbol> [currency]";
 
 /// Convert a cryptocurrency price into fiat currency.
-#[derive(FromArgs, ArgsInfo, Debug)]
+#[derive(Parser, Debug)]
 struct CoinOpts {
     /// the coin to quote, by symbol or name
-    #[argh(positional)]
     coin: String,
     /// fiat currency to convert the price into (defaults to USD)
-    #[argh(positional)]
     currency: Option<String>,
 }
 

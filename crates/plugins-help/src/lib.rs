@@ -4,7 +4,7 @@
 //! the plugins that were successfully registered. Invoked without arguments it replies with a
 //! usage hint and an index of the registered plugins that handle commands, with a plugin name it
 //! lists the plugin's commands, and with a command name it shows the command's description and
-//! usage synopsis derived from its `argh` argument type, along with descriptions of its arguments
+//! usage synopsis derived from its `clap` argument type, along with descriptions of its arguments
 //! and subcommands.
 //!
 //! Lists longer than the IRCv3 extended message length are split across continuation messages
@@ -20,7 +20,7 @@ use format::{gray, heading, messages};
 ///
 /// Responds to `.help` with a usage hint and an index of every plugin that handles commands,
 /// `.help <plugin>` with the plugin's commands, or `.help <command>` with the command's
-/// description, usage and arguments derived from its `argh` type.
+/// description, usage and arguments derived from its `clap` type.
 #[derive(Default)]
 pub struct Help;
 

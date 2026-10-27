@@ -24,7 +24,7 @@ mod service;
 #[allow(unused_imports)]
 pub use {error::Error, model::Statistics, service::Resource};
 
-use argh::{ArgsInfo, FromArgs};
+use clap::Parser;
 use num_format::{Locale, ToFormattedString};
 use tracing::debug;
 use url::Url;
@@ -174,23 +174,41 @@ pub struct ChannelMessageOrigin<'a> {
 }
 
 /// Look up whether a URL has been posted before.
-#[derive(FromArgs, ArgsInfo, Debug, PartialEq, Eq)]
+#[derive(Parser, Debug, PartialEq, Eq)]
 pub struct Opts {
-    #[argh(subcommand)]
+    #[command(subcommand)]
     command: Subcommand,
 }
 
-#[derive(FromArgs, ArgsInfo, Debug, PartialEq, Eq)]
-#[argh(subcommand)]
+#[derive(clap::Subcommand, Debug, PartialEq, Eq)]
 enum Subcommand {
     Stats(Stats),
 }
 
 /// Display database statistics
-#[derive(FromArgs, ArgsInfo, Debug, PartialEq, Eq)]
-#[argh(subcommand, name = "stats")]
+#[derive(clap::Args, Debug, PartialEq, Eq)]
 pub struct Stats {}
 
 fn formatted_err(s: &str) -> String {
     reply("OFN", format!("Error:\x0f {s}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // clap reports contradictory definitions through asserts; evaluating them here turns a
+        // bad definition into a test failure instead of a panic in debug builds.
+        Opts::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_the_stats_subcommand() {
+        let opts: Opts = OFN.parse_words("stats").expect("`stats` should parse");
+
+        assert_eq!(opts.command, Subcommand::Stats(Stats {}));
+    }
 }
