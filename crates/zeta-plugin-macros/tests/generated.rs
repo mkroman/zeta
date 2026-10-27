@@ -3,7 +3,7 @@
 //! The expansion tests in the crate verify classification; this test makes the generated
 //! `Plugin` implementation itself compile for the edge cases that need special handling.
 
-use zeta_plugin::argh::{ArgsInfo, FromArgs};
+use zeta_plugin::clap::Parser;
 use zeta_plugin::prelude::*;
 use zeta_plugin::{Client, Error};
 
@@ -43,10 +43,9 @@ impl Helper {
 }
 
 /// Options for the free-form `words` command.
-#[derive(ArgsInfo, FromArgs)]
+#[derive(Parser)]
 struct WordsOptions {
     /// the words to echo
-    #[argh(positional)]
     #[allow(dead_code)]
     words: Vec<String>,
 }
@@ -70,10 +69,9 @@ impl Words {
 }
 
 /// Options for the full command.
-#[derive(ArgsInfo, FromArgs)]
+#[derive(Parser)]
 struct FullOptions {
     /// the value to echo
-    #[argh(positional)]
     #[allow(dead_code)]
     value: String,
 }

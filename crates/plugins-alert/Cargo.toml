@@ -17,8 +17,8 @@ native-tls = ["zeta-plugin/native-tls"]
 native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
-argh.workspace = true
 chrono.workspace = true
+clap.workspace = true
 humantime-serde.workspace = true
 interim = { version = "0.2.1", features = ["chrono_0_4"] }
 rand = "0.10.1"

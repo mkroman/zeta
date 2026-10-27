@@ -3,6 +3,7 @@
 mod cli;
 mod telemetry;
 
+use clap::Parser;
 #[cfg(feature = "database")]
 use zeta::database;
 use zeta::{Config, Zeta};
@@ -17,7 +18,7 @@ async fn main() -> miette::Result<()> {
         .install_default()
         .expect("failed to install default rustls CryptoProvider");
 
-    let opts: cli::Opts = argh::from_env();
+    let opts = cli::Opts::parse();
     let config = Config::load(opts.config_path)?;
 
     telemetry::try_init(&config.tracing)?;

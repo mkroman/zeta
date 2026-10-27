@@ -11,7 +11,7 @@
 use std::fmt::Display;
 use std::sync::OnceLock;
 
-use argh::{ArgsInfo, FromArgs};
+use clap::Parser;
 use hickory_resolver::{
     Resolver, TokioResolver,
     config::{CLOUDFLARE, ResolverConfig},
@@ -67,10 +67,9 @@ pub enum Error {
 }
 
 /// Look up the geolocation of a domain or IP address.
-#[derive(FromArgs, ArgsInfo, Debug)]
+#[derive(Parser, Debug)]
 pub struct Opts {
     /// the domain or IP address to look up
-    #[argh(positional)]
     name: String,
 }
 

@@ -22,7 +22,7 @@ syn = { version = "2", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-argh.workspace = true
+clap.workspace = true
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
 
 [lints]

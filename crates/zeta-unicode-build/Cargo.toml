@@ -9,8 +9,8 @@ repository = "https://github.com/mkroman/zeta"
 publish = false
 
 [dependencies]
-argh = { workspace = true }
 bytes = { workspace = true }
+clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

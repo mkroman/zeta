@@ -17,8 +17,8 @@ native-tls = ["zeta-plugin/native-tls"]
 native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
-argh.workspace = true
 chrono.workspace = true
+clap.workspace = true
 irc = { workspace = true, features = ["channel-lists"] }
 miette.workspace = true
 rand_mt = "6"

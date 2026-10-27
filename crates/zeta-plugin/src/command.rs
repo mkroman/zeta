@@ -19,16 +19,16 @@
 
 use std::ops::Range;
 
-use argh::{ArgsInfo, CommandInfoWithArgs, FromArgs};
+use clap::{ArgAction, ColorChoice, Command, Parser};
 use thiserror::Error;
 
 /// A command served by a plugin: its trigger, description, and the arguments it accepts.
 ///
 /// The `trigger` is the command as users type it — most commands are dot-prefixed (`.yt`), but
 /// any single-word prefix (e.g. `!imdb`) works. The description is shown by the host's help
-/// command. Commands with typed arguments also store a function pointer to the [`ArgsInfo`]
-/// implementation of their argument type, so the host can derive usage and argument information
-/// for them without having to parse anything.
+/// command. Commands with typed arguments also store a function pointer to the [`Command`] built
+/// by their argument type, so the host can derive usage and argument information for them without
+/// having to parse anything.
 ///
 /// Because every field is a `&'static str` or function pointer, `CommandSpec` is [`Copy`],
 /// requires no heap allocation, and can be constructed in `const` context. The same constant
@@ -83,8 +83,8 @@ pub struct CommandSpec {
     trigger: &'static str,
     /// A short, user-facing description of the command.
     description: &'static str,
-    /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
-    args: Option<fn() -> CommandInfoWithArgs>,
+    /// Returns the argument command derived from the command's [`Parser`] type, if any.
+    args: Option<fn() -> Command>,
 }
 
 impl CommandSpec {
@@ -102,13 +102,13 @@ impl CommandSpec {
     }
 
     /// Creates a command with the given `description`, whose arguments are parsed into the
-    /// [`ArgsInfo`]-derived type `T`.
+    /// [`Parser`]-derived type `T`.
     #[must_use]
-    pub const fn with_args<T: ArgsInfo>(trigger: &'static str, description: &'static str) -> Self {
+    pub const fn with_args<T: Parser>(trigger: &'static str, description: &'static str) -> Self {
         Self {
             trigger,
             description,
-            args: Some(T::get_args_info),
+            args: Some(T::command),
         }
     }
 
@@ -157,29 +157,28 @@ impl CommandSpec {
         }
     }
 
-    /// Parses the trailing arguments of the command into a [`FromArgs`]-derived struct.
+    /// Parses the trailing arguments of the command into a [`Parser`]-derived struct.
     ///
     /// The arguments are tokenized like a POSIX shell (via `shlex`), so quoted arguments and
-    /// escapes are supported, and then parsed with `argh`. The trigger itself is used as the
+    /// escapes are supported, and then parsed with `clap`. The trigger itself is used as the
     /// command name in generated usage and help output.
     ///
     /// # Errors
     ///
     /// Returns [`ArgsError::Quoting`] if the arguments could not be tokenized (e.g. unbalanced
-    /// quotes), or [`ArgsError::Usage`] if `argh` rejected the arguments — the wrapped string is
+    /// quotes), or [`ArgsError::Usage`] if `clap` rejected the arguments — the wrapped string is
     /// the human-readable usage or help output, suitable for replying with directly.
     ///
     /// # Examples
     ///
     /// ```
-    /// use argh::FromArgs;
+    /// use clap::Parser;
     /// use zeta_plugin::CommandSpec;
     ///
     /// /// Greeting options.
-    /// #[derive(FromArgs)]
+    /// #[derive(Parser)]
     /// struct Opts {
     ///     /// name to greet
-    ///     #[argh(positional)]
     ///     name: String,
     /// }
     ///
@@ -187,37 +186,37 @@ impl CommandSpec {
     /// let opts: Opts = HELLO.parse_args("world").unwrap();
     /// assert_eq!(opts.name, "world");
     /// ```
-    pub fn parse_args<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
+    pub fn parse_args<T: Parser>(&self, args: &str) -> Result<T, ArgsError> {
         let tokens = shlex::split(args).ok_or(ArgsError::Quoting)?;
         let tokens = tokens.iter().map(String::as_str).collect::<Vec<_>>();
 
         self.parse_tokens(&tokens)
     }
 
-    /// Parses the trailing arguments of the command into a [`FromArgs`]-derived struct, splitting
+    /// Parses the trailing arguments of the command into a [`Parser`]-derived struct, splitting
     /// them on whitespace.
     ///
     /// Unlike [`parse_args`](CommandSpec::parse_args), the arguments are not tokenized like a
     /// POSIX shell: quotes and escapes are preserved verbatim, so free-form text (e.g. messages
-    /// containing apostrophes) reaches a greedy positional argument unharmed.
+    /// containing apostrophes) reaches a trailing positional argument unharmed.
     ///
     /// # Errors
     ///
-    /// Returns [`ArgsError::Usage`] if `argh` rejected the arguments — the wrapped string is the
+    /// Returns [`ArgsError::Usage`] if `clap` rejected the arguments — the wrapped string is the
     /// human-readable usage or help output, suitable for replying with directly. Shell quoting
     /// errors ([`ArgsError::Quoting`]) cannot occur.
     ///
     /// # Examples
     ///
     /// ```
-    /// use argh::FromArgs;
+    /// use clap::Parser;
     /// use zeta_plugin::CommandSpec;
     ///
     /// /// An alert message and datetime.
-    /// #[derive(FromArgs)]
+    /// #[derive(Parser)]
     /// struct Opts {
     ///     /// the message and datetime
-    ///     #[argh(positional, greedy)]
+    ///     #[arg(num_args = 1.., trailing_var_arg = true)]
     ///     args: Vec<String>,
     /// }
     ///
@@ -225,23 +224,67 @@ impl CommandSpec {
     /// let opts: Opts = ALERT.parse_words("don't forget at 4:20").unwrap();
     /// assert_eq!(opts.args.join(" "), "don't forget at 4:20");
     /// ```
-    pub fn parse_words<T: FromArgs>(&self, args: &str) -> Result<T, ArgsError> {
+    pub fn parse_words<T: Parser>(&self, args: &str) -> Result<T, ArgsError> {
         let tokens: Vec<&str> = args.split_whitespace().collect();
 
         self.parse_tokens(&tokens)
     }
 
     /// Parses `tokens` into `T`, with the trigger as the command name in the usage output.
-    fn parse_tokens<T: FromArgs>(&self, tokens: &[&str]) -> Result<T, ArgsError> {
-        T::from_args(&[self.trigger], tokens)
-            .map_err(|early_exit| ArgsError::Usage(early_exit.output))
+    fn parse_tokens<T: Parser>(&self, tokens: &[&str]) -> Result<T, ArgsError> {
+        let command = configure(T::command(), self.trigger);
+        let argv = std::iter::once(self.trigger).chain(tokens.iter().copied());
+        let matches = command
+            .try_get_matches_from(argv)
+            .map_err(|error| ArgsError::Usage(error.to_string()))?;
+
+        T::from_arg_matches(&matches).map_err(|error| ArgsError::Usage(error.to_string()))
     }
 
-    /// Returns the argument information derived from the command's [`ArgsInfo`] type, if any.
+    /// Returns the argument command derived from the command's [`Parser`] type, if any.
+    ///
+    /// The returned [`Command`] describes the arguments and subcommands a user may pass; the
+    /// host's help command renders its usage and details.
     #[must_use]
-    pub fn args_info(&self) -> Option<CommandInfoWithArgs> {
-        self.args.map(|info| info())
+    pub fn args_info(&self) -> Option<Command> {
+        self.args.map(|info| configure(info(), self.trigger))
     }
+}
+
+/// Applies the settings shared by argument parsing and help introspection.
+///
+/// The command is named after the trigger so generated usage reads like the user typed it, the
+/// implicit `help` subcommand is disabled (plugins provide their own `.help`), and styling is
+/// turned off because replies are IRC messages, not terminal output.
+fn configure(command: Command, trigger: &'static str) -> Command {
+    let command = command
+        .bin_name(trigger)
+        .disable_help_subcommand(true)
+        .color(ColorChoice::Never);
+
+    tolerate_repeated_switches(command)
+}
+
+/// Allows a switch to appear more than once.
+///
+/// clap reports an argument conflict for a second `SetTrue`/`SetFalse` occurrence, whereas the
+/// parser this API replaced treated repeated switches as idempotent. Only switches are relaxed:
+/// repeating an option that takes a value still reports a conflict, as before.
+fn tolerate_repeated_switches(command: Command) -> Command {
+    let command = command.mut_args(|argument| {
+        if matches!(
+            *argument.get_action(),
+            ArgAction::SetTrue | ArgAction::SetFalse
+        ) {
+            let id = argument.get_id().clone();
+
+            argument.overrides_with(id)
+        } else {
+            argument
+        }
+    });
+
+    command.mut_subcommands(tolerate_repeated_switches)
 }
 
 /// An error returned when command arguments could not be parsed.
@@ -261,20 +304,19 @@ mod tests {
 
     use zeta_test_support::assert_empty;
 
-    #[derive(FromArgs, Debug, PartialEq)]
+    #[derive(Parser, Debug, PartialEq)]
     /// Test options.
     struct NameOpts {
         /// the required positional argument
-        #[argh(positional)]
         #[allow(dead_code)]
         name: String,
     }
 
-    #[derive(FromArgs, Debug, PartialEq)]
+    #[derive(Parser, Debug, PartialEq)]
     /// Test options.
     struct GreedyOpts {
         /// the message and datetime
-        #[argh(positional, greedy)]
+        #[arg(num_args = 1.., trailing_var_arg = true)]
         #[allow(dead_code)]
         args: Vec<String>,
     }
@@ -318,17 +360,14 @@ mod tests {
 
     #[test]
     fn parse_args_tokenizes_like_a_shell() {
-        #[derive(FromArgs, Debug, PartialEq)]
+        #[derive(Parser, Debug, PartialEq)]
         /// Test options.
         struct Opts {
             /// first argument
-            #[argh(positional)]
             first: String,
             /// second argument
-            #[argh(positional)]
             second: String,
             /// third argument
-            #[argh(positional)]
             third: String,
         }
 
@@ -352,7 +391,14 @@ mod tests {
 
         let err = CMD.parse_args::<NameOpts>("").unwrap_err();
 
-        assert!(matches!(err, ArgsError::Usage(ref out) if out.contains("name")));
+        // The string is replied to verbatim, so it must read as a usage message for the
+        // command and name the missing argument; the exact layout belongs to clap.
+        let ArgsError::Usage(usage) = err else {
+            panic!("a missing argument should be a usage error");
+        };
+        assert!(usage.contains("Usage:"), "{usage}");
+        assert!(usage.contains(".test"), "{usage}");
+        assert!(usage.contains("<NAME>"), "{usage}");
     }
 
     #[test]
@@ -389,14 +435,14 @@ mod tests {
 
     #[test]
     fn parse_words_parses_flags() {
-        #[derive(FromArgs, Debug, PartialEq)]
+        #[derive(Parser, Debug, PartialEq)]
         /// Test options.
         struct Opts {
             /// list instead
-            #[argh(switch, short = 'l')]
+            #[arg(short = 'l', long)]
             list: bool,
             /// the message and datetime
-            #[argh(positional, greedy)]
+            #[arg(num_args = 1.., trailing_var_arg = true)]
             #[allow(dead_code)]
             args: Vec<String>,
         }
@@ -415,21 +461,65 @@ mod tests {
     }
 
     #[test]
+    fn repeated_switches_are_idempotent() {
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// list instead
+            #[arg(short = 'l', long)]
+            list: bool,
+            /// the message and datetime
+            #[arg(num_args = 1.., trailing_var_arg = true)]
+            #[allow(dead_code)]
+            args: Vec<String>,
+        }
+
+        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".test", "test");
+
+        let opts: Opts = CMD.parse_words("-l -l").expect("switches are idempotent");
+
+        assert!(opts.list);
+    }
+
+    #[test]
     fn parse_words_reports_usage_on_error() {
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
         let err = CMD.parse_words::<GreedyOpts>("-x").unwrap_err();
 
-        assert!(matches!(err, ArgsError::Usage(ref out) if out.contains("-x")));
+        // The reply must name the offending token; the rest of the layout is clap's.
+        let ArgsError::Usage(usage) = err else {
+            panic!("an unknown flag should be a usage error");
+        };
+        assert!(usage.contains("-x"), "{usage}");
+    }
+
+    #[test]
+    fn args_info_is_named_after_the_trigger() {
+        /// Look up a domain name.
+        #[derive(Parser)]
+        struct Opts {
+            /// the domain to look up
+            #[allow(dead_code)]
+            name: String,
+        }
+
+        const DIG: CommandSpec = CommandSpec::with_args::<Opts>(".dig", "dig");
+
+        let info = DIG.args_info().unwrap();
+
+        assert_eq!(info.get_bin_name(), Some(".dig"));
+        assert_eq!(info.get_subcommands().count(), 0);
+        // IRC replies cannot carry ANSI styling.
+        assert_eq!(info.get_color(), ColorChoice::Never);
     }
 
     #[test]
     fn args_info_returns_derived_information() {
         /// Look up a domain name.
-        #[derive(argh::ArgsInfo)]
+        #[derive(Parser)]
         struct Opts {
             /// the domain to look up
-            #[argh(positional)]
             #[allow(dead_code)]
             name: String,
         }
@@ -440,8 +530,9 @@ mod tests {
         assert_eq!(DIG.description(), "Look up DNS records for a domain");
 
         let info = DIG.args_info().unwrap();
+        let positional = info.get_positionals().next().unwrap();
 
-        assert_eq!(info.positionals[0].name, "name");
+        assert_eq!(positional.get_id().as_str(), "name");
     }
 
     #[test]

@@ -17,7 +17,7 @@ native-tls-vendored = [
 ]
 
 [dependencies]
-argh.workspace = true
+clap.workspace = true
 num-format = "0.4.4"
 reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"] }
 serde.workspace = true

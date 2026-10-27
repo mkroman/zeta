@@ -3,7 +3,7 @@
 //! Renders the plugin index, a plugin's commands, and a command's description, usage synopsis,
 //! and argument details, splitting long lists across continuation messages.
 
-use argh::{CommandInfoWithArgs, FlagInfo, FlagInfoKind, Optionality, PositionalInfo};
+use clap::{Arg, ArgAction, Command};
 
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::append_entries_within_budget;
@@ -118,31 +118,40 @@ struct Detail {
 }
 
 /// Formats the visible arguments and subcommands of a command as a styled detail list.
-fn command_details(info: &CommandInfoWithArgs) -> String {
+fn command_details(info: &Command) -> String {
     let mut details = Vec::new();
 
     for positional in visible_positionals(info) {
         details.push(Detail {
             label: positional_label(positional),
-            description: positional.description.to_owned(),
+            description: help_text(positional),
         });
     }
 
     for flag in visible_flags(info) {
         details.push(Detail {
             label: flag_label(flag),
-            description: flag.description.to_owned(),
+            description: help_text(flag),
         });
     }
 
-    for subcommand in &info.commands {
+    for subcommand in visible_subcommands(info) {
         details.push(Detail {
-            label: subcommand.command.name.to_owned(),
-            description: subcommand.command.description.to_owned(),
+            label: subcommand.get_name_and_visible_aliases().join(", "),
+            description: subcommand
+                .get_about()
+                .map_or_else(String::new, ToString::to_string),
         });
     }
 
     details_list(&details)
+}
+
+/// Returns an argument's help text, or the empty string when it has none.
+fn help_text(argument: &Arg) -> String {
+    argument
+        .get_help()
+        .map_or_else(String::new, ToString::to_string)
 }
 
 /// Formats `details` as a comma-separated list.
@@ -218,12 +227,12 @@ pub fn heading(subject: &str) -> String {
 
 /// Builds the usage synopsis of a command from its argument information.
 ///
-/// The synopsis follows `argh`'s conventions: optional flags and arguments are bracketed,
-/// repeating ones are suffixed with `...`, and greedy positionals are unbracketed names.
-fn usage(prefix: &str, info: &CommandInfoWithArgs) -> String {
+/// Optional flags and arguments are bracketed and repeating ones are suffixed with `...`;
+/// subcommands are summarized rather than listed.
+fn usage(prefix: &str, info: &Command) -> String {
     let mut usage = prefix.to_string();
 
-    if !info.commands.is_empty() {
+    if info.has_subcommands() {
         usage.push_str(" <command> [<args>]");
 
         return usage;
@@ -243,37 +252,73 @@ fn usage(prefix: &str, info: &CommandInfoWithArgs) -> String {
 }
 
 /// Returns the flags that should appear in help output.
-fn visible_flags(info: &CommandInfoWithArgs) -> impl Iterator<Item = &FlagInfo<'_>> {
-    info.flags
-        .iter()
-        .filter(|flag| !flag.hidden && flag.long != "--help")
+fn visible_flags(info: &Command) -> impl Iterator<Item = &Arg> {
+    info.get_opts().filter(|flag| !flag.is_hide_set())
 }
 
 /// Returns the positional arguments that should appear in help output.
-fn visible_positionals(info: &CommandInfoWithArgs) -> impl Iterator<Item = &PositionalInfo<'_>> {
-    info.positionals
-        .iter()
-        .filter(|positional| !positional.hidden)
+fn visible_positionals(info: &Command) -> impl Iterator<Item = &Arg> {
+    info.get_positionals()
+        .filter(|positional| !positional.is_hide_set())
+}
+
+/// Returns the subcommands that should appear in help output.
+fn visible_subcommands(info: &Command) -> impl Iterator<Item = &Command> {
+    info.get_subcommands()
+        .filter(|subcommand| !subcommand.is_hide_set())
+}
+
+/// Whether the argument accepts more than one value.
+fn is_repeating(argument: &Arg) -> bool {
+    matches!(*argument.get_action(), ArgAction::Append)
+        || argument
+            .get_num_args()
+            .is_some_and(|range| range.max_values() > 1)
+}
+
+/// Formats an argument's long form, e.g. `--short`, when it has one.
+fn long_flag(argument: &Arg) -> Option<String> {
+    argument.get_long().map(|long| format!("--{long}"))
+}
+
+/// Returns the name clap uses for an argument's value, e.g. `HOST`.
+///
+/// clap derives a value name from the field name and lets the plugin type override it, so prefer
+/// it over the internal id, which only carries the Rust field name.
+fn value_name_text(argument: &Arg) -> String {
+    argument
+        .get_value_names()
+        .and_then(|names| names.first())
+        .map_or_else(|| argument.get_id().to_string(), ToString::to_string)
+}
+
+/// Formats an argument's value placeholder, e.g. `<HOST>`.
+fn value_name(argument: &Arg) -> String {
+    format!("<{}>", value_name_text(argument))
+}
+
+/// Formats an argument's value placeholder, marking a repeating argument with `...`.
+fn value_label(argument: &Arg) -> String {
+    if is_repeating(argument) {
+        format!("<{}...>", value_name_text(argument))
+    } else {
+        value_name(argument)
+    }
 }
 
 /// Formats a flag for the usage synopsis, using its short form when it has one.
-fn flag_usage(flag: &FlagInfo<'_>) -> String {
-    let mut label = flag
-        .short
-        .map_or_else(|| flag.long.to_string(), |short| format!("-{short}"));
+fn flag_usage(flag: &Arg) -> String {
+    let mut label = flag.get_short().map_or_else(
+        || long_flag(flag).unwrap_or_else(|| format!("--{}", flag.get_id())),
+        |short| format!("-{short}"),
+    );
 
-    if let FlagInfoKind::Option { arg_name } = flag.kind {
-        label.push_str(" <");
-        label.push_str(arg_name);
-
-        if flag.optionality == Optionality::Repeating {
-            label.push_str("...");
-        }
-
-        label.push('>');
+    if flag.get_action().takes_values() {
+        label.push(' ');
+        label.push_str(&value_label(flag));
     }
 
-    if flag.optionality == Optionality::Required {
+    if flag.is_required_set() {
         label
     } else {
         format!("[{label}]")
@@ -281,53 +326,44 @@ fn flag_usage(flag: &FlagInfo<'_>) -> String {
 }
 
 /// Formats a flag for the argument list, showing both its short and long forms.
-fn flag_label(flag: &FlagInfo<'_>) -> String {
+///
+/// A short-only argument is rendered as just `-x`; clap does not accept the long form that the
+/// field id would suggest. Arguments with neither form fall back to the id so the list stays
+/// readable.
+fn flag_label(flag: &Arg) -> String {
     let mut label = String::new();
 
-    if let Some(short) = flag.short {
+    if let Some(short) = flag.get_short() {
         label.push('-');
         label.push(short);
-        label.push_str(", ");
     }
 
-    label.push_str(flag.long);
+    if let Some(long) = long_flag(flag) {
+        if !label.is_empty() {
+            label.push_str(", ");
+        }
 
-    if let FlagInfoKind::Option { arg_name } = flag.kind {
-        label.push_str(" <");
-        label.push_str(arg_name);
-        label.push('>');
+        label.push_str(&long);
+    }
+
+    if label.is_empty() {
+        label.push_str("--");
+        label.push_str(flag.get_id().as_str());
+    }
+
+    if flag.get_action().takes_values() {
+        label.push(' ');
+        label.push_str(&value_name(flag));
     }
 
     label
 }
 
 /// Formats a positional argument, marking its optionality and repetition.
-fn positional_label(positional: &PositionalInfo<'_>) -> String {
-    let repeating = matches!(
-        positional.optionality,
-        Optionality::Repeating | Optionality::Greedy
-    );
+fn positional_label(positional: &Arg) -> String {
+    let label = value_label(positional);
 
-    let mut label = String::new();
-
-    if positional.optionality == Optionality::Greedy {
-        label.push_str(positional.name);
-
-        if repeating {
-            label.push_str("...");
-        }
-    } else {
-        label.push('<');
-        label.push_str(positional.name);
-
-        if repeating {
-            label.push_str("...");
-        }
-
-        label.push('>');
-    }
-
-    if positional.optionality == Optionality::Required {
+    if positional.is_required_set() {
         label
     } else {
         format!("[{label}]")
@@ -376,6 +412,7 @@ fn find_plugin<'a>(catalog: &'a PluginCatalog, query: &str) -> Option<&'a Catalo
 mod tests {
     use super::*;
     use crate::HELP;
+    use clap::Parser;
     use zeta_utils::irc::strip_formatting;
 
     const ALERT: CommandSpec = CommandSpec::new(".alert", "Schedule an alert to be posted later");
@@ -394,30 +431,27 @@ mod tests {
     const BARE: CommandSpec = CommandSpec::new(".bare", "");
 
     /// Look up a domain name.
-    #[derive(argh::ArgsInfo)]
+    #[derive(Parser)]
     #[allow(dead_code)]
     struct DigOpts {
         /// the domain to look up
-        #[argh(positional)]
         name: String,
         /// only display the answer section
-        #[argh(switch, short = 's')]
+        #[arg(short = 's', long)]
         short: bool,
     }
 
     /// Repeat values.
-    #[derive(argh::ArgsInfo)]
+    #[derive(Parser)]
     #[allow(dead_code)]
-    #[argh(example = ".repeat --values one two")]
     struct RepeatOpts {
         /// values to repeat
-        #[argh(option)]
+        #[arg(long)]
         values: Vec<String>,
         /// files to process
-        #[argh(positional)]
         files: Vec<String>,
         /// not shown in help
-        #[argh(switch, hidden_help)]
+        #[arg(long, hide = true)]
         hidden: bool,
     }
 
@@ -425,25 +459,35 @@ mod tests {
         CommandSpec::with_args::<RepeatOpts>(".repeat", "Repeat the given values");
     const REPEAT_COMMANDS: &[CommandSpec] = &[REPEAT];
 
+    /// Short-only flag fixture.
+    #[derive(Parser)]
+    #[allow(dead_code)]
+    struct ShortOnlyOpts {
+        /// a switch with no long form
+        #[arg(short = 'q')]
+        quiet: bool,
+    }
+
+    const SHORT_ONLY: CommandSpec =
+        CommandSpec::with_args::<ShortOnlyOpts>(".short", "Short-only flag");
+
     /// Subcommand fixture.
-    #[derive(argh::ArgsInfo)]
+    #[derive(Parser)]
     #[allow(dead_code)]
     struct SubcommandOpts {
-        #[argh(subcommand)]
+        #[command(subcommand)]
         command: Subcommands,
     }
 
-    #[derive(argh::ArgsInfo)]
+    #[derive(clap::Subcommand)]
     #[allow(dead_code)]
-    #[argh(subcommand)]
     enum Subcommands {
         Stats(Stats),
     }
 
     /// Display statistics.
-    #[derive(argh::ArgsInfo)]
+    #[derive(clap::Args)]
     #[allow(dead_code)]
-    #[argh(subcommand, name = "stats")]
     struct Stats {}
 
     fn catalog() -> PluginCatalog {
@@ -501,12 +545,12 @@ mod tests {
     #[test]
     fn derives_usage_from_argument_info() {
         let info = DIG_COMMANDS[0].args_info().unwrap();
-        assert_eq!(usage(".dig", &info), ".dig [-s] <name>");
+        assert_eq!(usage(".dig", &info), ".dig [-s] <NAME>");
 
         let info = REPEAT_COMMANDS[0].args_info().unwrap();
         assert_eq!(
             usage(".repeat", &info),
-            ".repeat [--values <values...>] [<files...>]"
+            ".repeat [--values <VALUES...>] [<FILES...>]"
         );
 
         let command = CommandSpec::with_args::<SubcommandOpts>(".stats", "Show statistics");
@@ -523,9 +567,9 @@ mod tests {
             concat!(
                 "\x0310>\x0f\x02 Help (.dig)\x02",
                 "\x0310: Look up DNS records for a domain\x0f",
-                "\x0310 Usage:\x0f .dig [-s] <name>",
+                "\x0310 Usage:\x0f .dig [-s] <NAME>",
                 "\x0310 (\x0f",
-                "\x02<name>\x02\x0310: the domain to look up,\x0f",
+                "\x02<NAME>\x02\x0310: the domain to look up,\x0f",
                 "\x02 -s, --short\x02\x0310: only display the answer section\x0f",
                 ")"
             )
@@ -542,9 +586,9 @@ mod tests {
         for expected in [
             "Help (.repeat)",
             "Repeat the given values",
-            "Usage: .repeat [--values <values...>] [<files...>]",
-            "[<files...>]: files to process",
-            "--values <values>: values to repeat",
+            "Usage: .repeat [--values <VALUES...>] [<FILES...>]",
+            "[<FILES...>]: files to process",
+            "--values <VALUES>: values to repeat",
         ] {
             assert!(repeat.contains(expected), "missing {expected:?}: {repeat}");
         }
@@ -556,13 +600,24 @@ mod tests {
             "Help (.stats)",
             "Show statistics",
             "Usage: .stats <command> [<args>]",
-            "stats: Display statistics.",
+            "stats: Display statistics",
         ] {
             assert!(
                 subcommands.contains(expected),
                 "missing {expected:?}: {subcommands}"
             );
         }
+    }
+
+    #[test]
+    fn describes_short_only_flags_without_a_long_form() {
+        let message = strip_formatting(&command_messages(&SHORT_ONLY)[0]);
+
+        assert!(
+            message.contains("-q: a switch with no long form"),
+            "{message}"
+        );
+        assert!(!message.contains("--quiet"), "{message}");
     }
 
     #[test]

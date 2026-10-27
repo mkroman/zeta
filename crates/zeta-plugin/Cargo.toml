@@ -17,8 +17,8 @@ rustls = ["sqlx?/tls-rustls-aws-lc-rs"]
 
 [dependencies]
 arc-swap.workspace = true
-argh.workspace = true
 async-trait.workspace = true
+clap.workspace = true
 figment.workspace = true
 inventory = "0.3.24"
 irc.workspace = true

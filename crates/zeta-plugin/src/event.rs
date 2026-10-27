@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::Arc;
 
-use argh::FromArgs;
+use clap::Parser;
 use irc::proto::{Command, Message};
 use url::Url;
 
@@ -189,27 +189,27 @@ impl CommandEvent {
         &privmsg(&self.message).1[self.args.clone()]
     }
 
-    /// Parses the trailing arguments into a [`FromArgs`]-derived struct.
+    /// Parses the trailing arguments into a [`Parser`]-derived struct.
     ///
     /// See [`CommandSpec::parse_args`] for the tokenization and error behavior.
     ///
     /// # Errors
     ///
     /// Returns [`ArgsError::Quoting`] if the arguments could not be tokenized, or
-    /// [`ArgsError::Usage`] if `argh` rejected the arguments.
-    pub fn parse_args<T: FromArgs>(&self) -> Result<T, ArgsError> {
+    /// [`ArgsError::Usage`] if `clap` rejected the arguments.
+    pub fn parse_args<T: Parser>(&self) -> Result<T, ArgsError> {
         self.spec.parse_args(self.args())
     }
 
-    /// Parses the trailing arguments into a [`FromArgs`]-derived struct, splitting them on
+    /// Parses the trailing arguments into a [`Parser`]-derived struct, splitting them on
     /// whitespace.
     ///
     /// See [`CommandSpec::parse_words`] for the tokenization and error behavior.
     ///
     /// # Errors
     ///
-    /// Returns [`ArgsError::Usage`] if `argh` rejected the arguments.
-    pub fn parse_words<T: FromArgs>(&self) -> Result<T, ArgsError> {
+    /// Returns [`ArgsError::Usage`] if `clap` rejected the arguments.
+    pub fn parse_words<T: Parser>(&self) -> Result<T, ArgsError> {
         self.spec.parse_words(self.args())
     }
 

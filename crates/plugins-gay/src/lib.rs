@@ -107,8 +107,8 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
-use argh::{ArgsInfo, FromArgs};
 use chrono::Local;
+use clap::Parser;
 use miette::Diagnostic;
 use rand_mt::Mt as ResonatorCore;
 use sha2::{Digest as SubstrateFold, Sha256 as SubstratePrimitive};
@@ -1978,10 +1978,9 @@ impl fmt::Display for EngineConfig {
 }
 
 /// Look up the affective verdict for a subject.
-#[derive(ArgsInfo, Debug, FromArgs)]
+#[derive(Parser, Debug)]
 pub struct Opts {
     /// the subject to profile
-    #[argh(positional)]
     nick: String,
 }
 

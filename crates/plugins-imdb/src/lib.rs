@@ -9,7 +9,7 @@
 //! the `include_adult` setting is set (default). The plugin has no other settings.
 
 use ::url::Url;
-use argh::{ArgsInfo, FromArgs};
+use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -67,10 +67,10 @@ const COMMAND: CommandSpec =
     CommandSpec::with_args::<Opts>("!imdb", "Search IMDb and post the top match");
 
 /// Search IMDb for a title.
-#[derive(FromArgs, ArgsInfo, Debug)]
+#[derive(Parser, Debug)]
 struct Opts {
     /// title to search for
-    #[argh(positional, greedy)]
+    #[arg(num_args = 1.., trailing_var_arg = true)]
     query: Vec<String>,
 }
 
@@ -207,8 +207,16 @@ impl Imdb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use zeta_http::HttpConfig;
     use zeta_test_support::settings_tests;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // clap reports contradictory definitions through asserts; evaluating them here turns a
+        // bad definition into a test failure instead of a panic in debug builds.
+        Opts::command().debug_assert();
+    }
 
     settings_tests! {
         Settings,

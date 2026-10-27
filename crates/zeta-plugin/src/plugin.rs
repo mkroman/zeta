@@ -35,7 +35,7 @@ use crate::event::{
 ///# Examples
 ///
 /// ```
-/// use argh::{ArgsInfo, FromArgs};
+/// use clap::Parser;
 /// use irc::client::Client;
 /// use zeta_plugin::{Error, prelude::*};
 ///
@@ -44,10 +44,9 @@ use crate::event::{
 /// struct Greet;
 ///
 /// /// The greeting options.
-/// #[derive(FromArgs, ArgsInfo)]
+/// #[derive(Parser)]
 /// struct Opts {
 ///     /// the name of the person to greet
-///     #[argh(positional)]
 ///     name: String,
 /// }
 ///

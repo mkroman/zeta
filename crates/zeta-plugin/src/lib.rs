@@ -29,9 +29,9 @@ pub mod database;
 pub mod filtering;
 pub mod hostmask;
 
-pub use argh;
 pub use async_trait;
 pub use catalog::{CatalogEntry, PluginCatalog};
+pub use clap;
 pub use command::{ArgsError, CommandSpec};
 pub use context::{Context, SharedState};
 pub use erased::ErasedPlugin;
