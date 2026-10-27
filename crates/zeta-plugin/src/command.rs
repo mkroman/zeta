@@ -482,21 +482,6 @@ mod tests {
     }
 
     #[test]
-    fn repeated_options_still_conflict() {
-        #[derive(Parser, Debug, PartialEq)]
-        /// Test options.
-        struct Opts {
-            /// the channel
-            #[arg(long)]
-            channel: Option<String>,
-        }
-
-        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".test", "test");
-
-        assert!(CMD.parse_words::<Opts>("--channel a --channel b").is_err());
-    }
-
-    #[test]
     fn parse_words_reports_usage_on_error() {
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 

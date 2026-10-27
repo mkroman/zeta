@@ -137,7 +137,7 @@ fn command_details(info: &Command) -> String {
 
     for subcommand in visible_subcommands(info) {
         details.push(Detail {
-            label: subcommand.get_name().to_owned(),
+            label: subcommand.get_name_and_visible_aliases().join(", "),
             description: subcommand
                 .get_about()
                 .map_or_else(String::new, ToString::to_string),

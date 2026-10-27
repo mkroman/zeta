@@ -116,11 +116,8 @@ enum Subcommand {
     /// add sites to unwall
     Add(Add),
     /// remove sites matching a pattern
-    Rm(Rm),
-    /// remove sites matching a pattern (alias of `rm`)
-    Del(Del),
-    /// remove sites matching a pattern (alias of `rm`)
-    Delete(Delete),
+    #[command(name = "rm", visible_alias = "del", visible_alias = "delete")]
+    Remove(Remove),
     /// summarize the covered sites
     List(List),
     /// show overall statistics about the unwalled links
@@ -137,21 +134,12 @@ struct Add {
     hosts: Vec<String>,
 }
 
-/// Defines a `rm`-style subcommand alias that removes sites matching a pattern.
-macro_rules! remove_subcommand {
-    ($type:ident) => {
-        /// Remove sites matching a pattern.
-        #[derive(clap::Args, Debug)]
-        struct $type {
-            /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
-            pattern: String,
-        }
-    };
+/// Remove sites matching a pattern.
+#[derive(clap::Args, Debug)]
+struct Remove {
+    /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
+    pattern: String,
 }
-
-remove_subcommand!(Rm);
-remove_subcommand!(Del);
-remove_subcommand!(Delete);
 
 /// Summarize the covered sites.
 #[derive(clap::Args, Debug)]
@@ -533,9 +521,7 @@ impl Unwall {
 
                 self.add(client, channel, sender.nick, add).await
             }
-            Subcommand::Rm(Rm { pattern })
-            | Subcommand::Del(Del { pattern })
-            | Subcommand::Delete(Delete { pattern }) => {
+            Subcommand::Remove(Remove { pattern }) => {
                 if !self.authorized(client, channel, sender)? {
                     return Ok(());
                 }
@@ -587,8 +573,8 @@ mod tests {
         let opts: Opts = UNWALL
             .parse_words("rm *.x.com")
             .expect("`rm` takes a pattern");
-        let Subcommand::Rm(Rm { pattern }) = opts.command else {
-            panic!("`rm` should select the rm subcommand");
+        let Subcommand::Remove(Remove { pattern }) = opts.command else {
+            panic!("`rm` should select the remove subcommand");
         };
         assert_eq!(pattern, "*.x.com");
     }
