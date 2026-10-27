@@ -827,6 +827,15 @@ mod tests {
     }
 
     #[test]
+    fn repeated_switches_parse_in_subcommands() {
+        let add = parse_add("add --all-channels --all-channels --host example.com");
+        assert!(add.all_channels);
+
+        let delete = parse_delete("delete 12 --force --force");
+        assert!(delete.force);
+    }
+
+    #[test]
     fn list_criteria_convert() {
         let opts: Opts = FILTER
             .parse_words("list --host *.com")

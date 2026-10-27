@@ -276,23 +276,31 @@ fn is_repeating(argument: &Arg) -> bool {
             .is_some_and(|range| range.max_values() > 1)
 }
 
-/// Formats an argument's long form, e.g. `--short`.
-fn long_flag(argument: &Arg) -> String {
-    argument.get_long().map_or_else(
-        || format!("--{}", argument.get_id()),
-        |long| format!("--{long}"),
-    )
+/// Formats an argument's long form, e.g. `--short`, when it has one.
+fn long_flag(argument: &Arg) -> Option<String> {
+    argument.get_long().map(|long| format!("--{long}"))
 }
 
-/// Formats an argument's value placeholder, e.g. `<host>`.
+/// Returns the name clap uses for an argument's value, e.g. `HOST`.
+///
+/// clap derives a value name from the field name and lets the plugin type override it, so prefer
+/// it over the internal id, which only carries the Rust field name.
+fn value_name_text(argument: &Arg) -> String {
+    argument
+        .get_value_names()
+        .and_then(|names| names.first())
+        .map_or_else(|| argument.get_id().to_string(), ToString::to_string)
+}
+
+/// Formats an argument's value placeholder, e.g. `<HOST>`.
 fn value_name(argument: &Arg) -> String {
-    format!("<{}>", argument.get_id())
+    format!("<{}>", value_name_text(argument))
 }
 
 /// Formats an argument's value placeholder, marking a repeating argument with `...`.
 fn value_label(argument: &Arg) -> String {
     if is_repeating(argument) {
-        format!("<{}...>", argument.get_id())
+        format!("<{}...>", value_name_text(argument))
     } else {
         value_name(argument)
     }
@@ -300,9 +308,10 @@ fn value_label(argument: &Arg) -> String {
 
 /// Formats a flag for the usage synopsis, using its short form when it has one.
 fn flag_usage(flag: &Arg) -> String {
-    let mut label = flag
-        .get_short()
-        .map_or_else(|| long_flag(flag), |short| format!("-{short}"));
+    let mut label = flag.get_short().map_or_else(
+        || long_flag(flag).unwrap_or_else(|| format!("--{}", flag.get_id())),
+        |short| format!("-{short}"),
+    );
 
     if flag.get_action().takes_values() {
         label.push(' ');
@@ -317,16 +326,30 @@ fn flag_usage(flag: &Arg) -> String {
 }
 
 /// Formats a flag for the argument list, showing both its short and long forms.
+///
+/// A short-only argument is rendered as just `-x`; clap does not accept the long form that the
+/// field id would suggest. Arguments with neither form fall back to the id so the list stays
+/// readable.
 fn flag_label(flag: &Arg) -> String {
     let mut label = String::new();
 
     if let Some(short) = flag.get_short() {
         label.push('-');
         label.push(short);
-        label.push_str(", ");
     }
 
-    label.push_str(&long_flag(flag));
+    if let Some(long) = long_flag(flag) {
+        if !label.is_empty() {
+            label.push_str(", ");
+        }
+
+        label.push_str(&long);
+    }
+
+    if label.is_empty() {
+        label.push_str("--");
+        label.push_str(flag.get_id().as_str());
+    }
 
     if flag.get_action().takes_values() {
         label.push(' ');
@@ -436,6 +459,18 @@ mod tests {
         CommandSpec::with_args::<RepeatOpts>(".repeat", "Repeat the given values");
     const REPEAT_COMMANDS: &[CommandSpec] = &[REPEAT];
 
+    /// Short-only flag fixture.
+    #[derive(Parser)]
+    #[allow(dead_code)]
+    struct ShortOnlyOpts {
+        /// a switch with no long form
+        #[arg(short = 'q')]
+        quiet: bool,
+    }
+
+    const SHORT_ONLY: CommandSpec =
+        CommandSpec::with_args::<ShortOnlyOpts>(".short", "Short-only flag");
+
     /// Subcommand fixture.
     #[derive(Parser)]
     #[allow(dead_code)]
@@ -464,6 +499,7 @@ mod tests {
         // test failure instead of a panic in production.
         DigOpts::command().debug_assert();
         RepeatOpts::command().debug_assert();
+        ShortOnlyOpts::command().debug_assert();
         SubcommandOpts::command().debug_assert();
     }
 
@@ -522,12 +558,12 @@ mod tests {
     #[test]
     fn derives_usage_from_argument_info() {
         let info = DIG_COMMANDS[0].args_info().unwrap();
-        assert_eq!(usage(".dig", &info), ".dig [-s] <name>");
+        assert_eq!(usage(".dig", &info), ".dig [-s] <NAME>");
 
         let info = REPEAT_COMMANDS[0].args_info().unwrap();
         assert_eq!(
             usage(".repeat", &info),
-            ".repeat [--values <values...>] [<files...>]"
+            ".repeat [--values <VALUES...>] [<FILES...>]"
         );
 
         let command = CommandSpec::with_args::<SubcommandOpts>(".stats", "Show statistics");
@@ -544,9 +580,9 @@ mod tests {
             concat!(
                 "\x0310>\x0f\x02 Help (.dig)\x02",
                 "\x0310: Look up DNS records for a domain\x0f",
-                "\x0310 Usage:\x0f .dig [-s] <name>",
+                "\x0310 Usage:\x0f .dig [-s] <NAME>",
                 "\x0310 (\x0f",
-                "\x02<name>\x02\x0310: the domain to look up,\x0f",
+                "\x02<NAME>\x02\x0310: the domain to look up,\x0f",
                 "\x02 -s, --short\x02\x0310: only display the answer section\x0f",
                 ")"
             )
@@ -563,9 +599,9 @@ mod tests {
         for expected in [
             "Help (.repeat)",
             "Repeat the given values",
-            "Usage: .repeat [--values <values...>] [<files...>]",
-            "[<files...>]: files to process",
-            "--values <values>: values to repeat",
+            "Usage: .repeat [--values <VALUES...>] [<FILES...>]",
+            "[<FILES...>]: files to process",
+            "--values <VALUES>: values to repeat",
         ] {
             assert!(repeat.contains(expected), "missing {expected:?}: {repeat}");
         }
@@ -584,6 +620,17 @@ mod tests {
                 "missing {expected:?}: {subcommands}"
             );
         }
+    }
+
+    #[test]
+    fn describes_short_only_flags_without_a_long_form() {
+        let message = strip_formatting(&command_messages(&SHORT_ONLY)[0]);
+
+        assert!(
+            message.contains("-q: a switch with no long form"),
+            "{message}"
+        );
+        assert!(!message.contains("--quiet"), "{message}");
     }
 
     #[test]

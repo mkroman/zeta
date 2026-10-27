@@ -19,7 +19,7 @@
 
 use std::ops::Range;
 
-use clap::{ColorChoice, Command, Parser};
+use clap::{ArgAction, ColorChoice, Command, Parser};
 use thiserror::Error;
 
 /// A command served by a plugin: its trigger, description, and the arguments it accepts.
@@ -257,10 +257,34 @@ impl CommandSpec {
 /// implicit `help` subcommand is disabled (plugins provide their own `.help`), and styling is
 /// turned off because replies are IRC messages, not terminal output.
 fn configure(command: Command, trigger: &'static str) -> Command {
-    command
+    let command = command
         .bin_name(trigger)
         .disable_help_subcommand(true)
-        .color(ColorChoice::Never)
+        .color(ColorChoice::Never);
+
+    tolerate_repeated_switches(command)
+}
+
+/// Allows a switch to appear more than once.
+///
+/// clap reports an argument conflict for a second `SetTrue`/`SetFalse` occurrence, whereas the
+/// parser this API replaced treated repeated switches as idempotent. Only switches are relaxed:
+/// repeating an option that takes a value still reports a conflict, as before.
+fn tolerate_repeated_switches(command: Command) -> Command {
+    let command = command.mut_args(|argument| {
+        if matches!(
+            *argument.get_action(),
+            ArgAction::SetTrue | ArgAction::SetFalse
+        ) {
+            let id = argument.get_id().clone();
+
+            argument.overrides_with(id)
+        } else {
+            argument
+        }
+    });
+
+    command.mut_subcommands(tolerate_repeated_switches)
 }
 
 /// An error returned when command arguments could not be parsed.
@@ -434,6 +458,42 @@ mod tests {
 
         assert!(!opts.list);
         assert_eq!(opts.args, vec!["don't".to_owned(), "panic".to_owned()]);
+    }
+
+    #[test]
+    fn repeated_switches_are_idempotent() {
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// list instead
+            #[arg(short = 'l', long)]
+            list: bool,
+            /// the message and datetime
+            #[arg(num_args = 1.., trailing_var_arg = true)]
+            #[allow(dead_code)]
+            args: Vec<String>,
+        }
+
+        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".test", "test");
+
+        let opts: Opts = CMD.parse_words("-l -l").expect("switches are idempotent");
+
+        assert!(opts.list);
+    }
+
+    #[test]
+    fn repeated_options_still_conflict() {
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the channel
+            #[arg(long)]
+            channel: Option<String>,
+        }
+
+        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".test", "test");
+
+        assert!(CMD.parse_words::<Opts>("--channel a --channel b").is_err());
     }
 
     #[test]
