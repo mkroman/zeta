@@ -24,17 +24,28 @@ pub trait Truncatable: AsRef<str> {
     /// appended when truncation happens.
     ///
     /// A suffix longer than `len` is kept whole, so the result can exceed `len` in that case.
-    fn truncate_within(&self, len: usize, suffix: &str) -> String {
+    ///
+    /// The text is borrowed unchanged when it already fits; truncation walks only the first
+    /// `len` characters, not the whole text — callers feed this full response bodies to bound
+    /// log lines.
+    fn truncate_within(&self, len: usize, suffix: &str) -> Cow<'_, str> {
         let text = self.as_ref();
 
-        if text.chars().count() <= len {
-            return text.to_string();
+        if text.chars().nth(len).is_none() {
+            return Cow::Borrowed(text);
         }
 
         let text_len = len.saturating_sub(suffix.chars().count());
-        let mut truncated: String = text.chars().take(text_len).collect();
+        let byte_idx = text
+            .char_indices()
+            .nth(text_len)
+            .map_or(text.len(), |(byte_idx, _)| byte_idx);
+
+        let mut truncated = String::with_capacity(byte_idx + suffix.len());
+        truncated.push_str(&text[..byte_idx]);
         truncated.push_str(suffix);
-        truncated
+
+        Cow::Owned(truncated)
     }
 }
 
@@ -301,6 +312,14 @@ mod tests {
         assert_eq!("hello".truncate_within(4, "..."), "h...");
         assert_eq!("hello".truncate_within(3, ""), "hel");
         assert_eq!("hello".truncate_within(5, ""), "hello");
+    }
+
+    #[test]
+    fn truncate_within_borrows_when_the_text_fits() {
+        let s = "a very long body";
+
+        assert!(matches!(s.truncate_within(100, "…"), Cow::Borrowed(_)));
+        assert!(matches!(s.truncate_within(10, "…"), Cow::Owned(_)));
     }
 
     #[test]
