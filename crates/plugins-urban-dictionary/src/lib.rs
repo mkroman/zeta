@@ -13,7 +13,7 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_plugin::prelude::*;
-use zeta_utils::irc::sanitize_external;
+use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
 /// The usage line sent for empty `.ud` queries.
@@ -107,21 +107,21 @@ impl UrbanDictionary {
         let query = command.args();
 
         let message = if query.is_empty() {
-            reply("Urban Dictionary", USAGE)
+            labeled_reply("Urban Dictionary", USAGE)
         } else {
             match self.definitions(query).await {
                 Ok(definitions) => definitions.list.first().map_or_else(
-                    || reply("Urban Dictionary", "No results"),
+                    || labeled_reply("Urban Dictionary", "No results"),
                     |definition| {
                         let formatter = DefinitionFormatter {
                             definition,
                             max_length: self.settings.max_definition_length,
                         };
 
-                        reply("Urban Dictionary", formatter.to_string())
+                        labeled_reply("Urban Dictionary", formatter.to_string())
                     },
                 ),
-                Err(err) => reply("Urban Dictionary", err),
+                Err(err) => labeled_reply("Urban Dictionary", err),
             }
         };
 
@@ -139,9 +139,9 @@ struct DefinitionFormatter<'a> {
 
 impl Display for DefinitionFormatter<'_> {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let word = sanitize_external(&self.definition.word);
-        let definition = sanitize_external(&self.definition.definition);
-        let example = sanitize_external(&self.definition.example);
+        let word = unstyle_text(&self.definition.word);
+        let definition = unstyle_text(&self.definition.definition);
+        let example = unstyle_text(&self.definition.example);
         let definition = definition.truncate_with_suffix(self.max_length, "…");
         let example = example.truncate_with_suffix(self.max_length, "…");
 

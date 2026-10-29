@@ -37,7 +37,7 @@ impl Health {
         if let Some(mut snapshot) = Snapshot::capture() {
             capture_pool_stats(&mut snapshot, ctx);
 
-            client.send_privmsg(channel, reply("Health", snapshot))?;
+            client.send_privmsg(channel, labeled_reply("Health", snapshot))?;
         }
 
         Ok(())

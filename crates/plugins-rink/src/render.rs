@@ -51,7 +51,7 @@ pub fn error_message(error: &QueryError) -> String {
 
 /// Renders `obj`'s markup spans as a one-line IRC reply.
 ///
-/// The scaffolding stays cyan (inherited from the reply prefix), while the values — numbers,
+/// The scaffolding stays cyan (inherited from the reply marker), while the values — numbers,
 /// datetimes, property names, the user's echoed input in errors, category labels, and the unit
 /// expressions that follow numbers — have their color reset to the default to stand out. This
 /// mirrors the token-to-color mapping of rink's own IRC frontend, inverted into the house

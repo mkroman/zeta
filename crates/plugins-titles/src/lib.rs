@@ -20,7 +20,7 @@ use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_plugin::prelude::*;
 use zeta_url::{RedactedUrl, path_segments, strip_www};
-use zeta_utils::irc::sanitize_external;
+use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
 use metadata::{PageMetadata, fetch_metadata};
@@ -129,7 +129,7 @@ impl Titles {
         if let Some(scheme) = repaired_from {
             debug!(%scheme, url.full = %RedactedUrl::from_url(&url), "posting repaired url");
 
-            if let Err(error) = client.send_privmsg(channel, notice(&url)) {
+            if let Err(error) = client.send_privmsg(channel, plain_reply(&url)) {
                 warn!(%error, "could not send repaired url");
             }
         }
@@ -175,7 +175,7 @@ impl Titles {
                         );
 
                         if let Err(send_error) =
-                            sender.send_privmsg(&channel, format!("{REPLY_PREFIX} {error}"))
+                            sender.send_privmsg(&channel, format!("{REPLY_MARKER} {error}"))
                         {
                             warn!(%send_error, "could not send fetch error");
                         }
@@ -211,7 +211,7 @@ fn should_ignore(text: &str) -> bool {
         return true;
     }
 
-    text.starts_with(REPLY_PREFIX)
+    text.starts_with(REPLY_MARKER)
 }
 
 /// Whether the host of `url` is configured as ignored.
@@ -266,13 +266,13 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .title
         .as_deref()
         .or(metadata.og_title.as_deref())
-        .map(sanitize_external)
+        .map(unstyle_text)
         .filter(|title| !title.is_empty());
 
     let description = metadata
         .description
         .as_deref()
-        .map(sanitize_external)
+        .map(unstyle_text)
         .filter(|description| !description.is_empty())
         .map(|description| description.truncate_within(settings.max_description_length, "…"));
 
@@ -291,13 +291,13 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         let site = metadata
             .site_name
             .as_deref()
-            .map(sanitize_external)
+            .map(unstyle_text)
             .filter(|site| !site.is_empty())
             .unwrap_or_else(|| host_name(url));
 
-        reply(&site, &content)
+        labeled_reply(&site, &content)
     } else {
-        notice(&content)
+        plain_reply(&content)
     };
 
     Some(message.truncate_within(settings.max_message_length, "…"))

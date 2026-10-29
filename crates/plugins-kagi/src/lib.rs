@@ -2,7 +2,7 @@
 //!
 //! The `.g <query>` command posts the title and URL of the top web result, and `.gis <query>`
 //! posts the first Kagi Images result (with its image URL), both as a reply prefixed with the
-//! Kagi name. No results and search errors are sent as a notice.
+//! Kagi name. No results and search errors are sent as a plain reply.
 //!
 //! Kagi is a cookie-authenticated service: the client holds a session token — set in
 //! `[plugins.kagi]`, falling back to the `KAGI_SESSION_TOKEN` environment variable — and
@@ -137,16 +137,16 @@ impl KagiPlugin {
         Fut: Future<Output = Result<Vec<(String, String)>, kagi::Error>>,
     {
         let message = if query.trim().is_empty() {
-            notice(usage)
+            plain_reply(usage)
         } else {
             match search(query.to_string()).await {
                 Ok(results) => results.first().map_or_else(
-                    || notice("No results"),
-                    |(title, url)| reply("Kagi", format!("{title} - {url}")),
+                    || plain_reply("No results"),
+                    |(title, url)| labeled_reply("Kagi", format!("{title} - {url}")),
                 ),
                 Err(err) => {
                     warn!(?err, "kagi search failed");
-                    notice(err)
+                    plain_reply(err)
                 }
             }
         };

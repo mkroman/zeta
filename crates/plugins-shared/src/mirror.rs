@@ -55,13 +55,13 @@ pub async fn ensure_mirrored_and_reply(
     let on_mirrored = {
         let channel = channel.clone();
         move |link: String| {
-            let _ = sender.send_privmsg(&channel, notice(link));
+            let _ = sender.send_privmsg(&channel, plain_reply(link));
         }
     };
 
     match mirror.ensure_mirrored(url, id, on_mirrored).await {
         Ok(Some(link)) => {
-            let _ = client.send_privmsg(&channel, notice(&link));
+            let _ = client.send_privmsg(&channel, plain_reply(&link));
         }
         Ok(None) => {}
         Err(error) => {

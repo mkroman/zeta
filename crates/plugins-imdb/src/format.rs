@@ -6,8 +6,8 @@
 use std::fmt::Write;
 
 use num_format::{Locale, ToFormattedString};
-use zeta_plugin::prelude::{BOLD, COLOR, REPLY_PREFIX, RESET};
-use zeta_utils::irc::sanitize_external;
+use zeta_plugin::prelude::{BOLD, COLOR, REPLY_MARKER, RESET};
+use zeta_utils::irc::unstyle_text;
 
 use super::model::{Person, Title};
 use zeta_utils::text::Truncatable;
@@ -15,11 +15,11 @@ use zeta_utils::text::Truncatable;
 /// Returns the prefix all IMDb replies start with: the reply marker, a bold `IMDb` label and a
 /// cyan colon.
 ///
-/// Unlike [`reply_prefix`](zeta_plugin::irc::reply_prefix), the colon renders cyan and the prefix
-/// carries no trailing space: the builders below append space-led segments, so a trailing space
-/// here would double up.
+/// Unlike [`labeled_reply_prefix`](zeta_plugin::irc::labeled_reply_prefix), the colon renders
+/// cyan and the prefix carries no trailing space: the builders below append space-led segments,
+/// so a trailing space here would double up.
 pub fn prefix() -> String {
-    format!("{REPLY_PREFIX}{RESET}{BOLD} IMDb{BOLD}{COLOR}:{RESET}")
+    format!("{REPLY_MARKER}{RESET}{BOLD} IMDb{BOLD}{COLOR}:{RESET}")
 }
 
 /// Formats the details of `title` as a single IRC message.
@@ -31,7 +31,7 @@ pub fn format_title(title: &Title) -> String {
     // (e.g. `Breaking Bad S01E01: Pilot`).
     if let Some(series) = title.series.as_ref().filter(|_| title.is_episode()) {
         if let Some(series_title) = &series.title {
-            let _ = write!(message, " {}\x0310", sanitize_external(series_title));
+            let _ = write!(message, " {}\x0310", unstyle_text(series_title));
         }
 
         if let Some(marker) = series.episode_marker() {
@@ -44,11 +44,11 @@ pub fn format_title(title: &Title) -> String {
         .as_deref()
         .or(title.original_title.as_deref())
         .unwrap_or(&title.id);
-    let _ = write!(message, " {}\x0310", sanitize_external(name));
+    let _ = write!(message, " {}\x0310", unstyle_text(name));
     write_years(&mut message, title.year, title.end_year);
 
     if let Some(plot) = &title.plot {
-        let _ = write!(message, " Plot:\x0f {}\x0310", sanitize_external(plot));
+        let _ = write!(message, " Plot:\x0f {}\x0310", unstyle_text(plot));
     }
 
     if let Some(rating) = title.rating {
@@ -71,7 +71,7 @@ pub fn format_title(title: &Title) -> String {
                 let _ = write!(message, ",");
             }
 
-            let _ = write!(message, "\x0f {}\x0310", sanitize_external(genre));
+            let _ = write!(message, "\x0f {}\x0310", unstyle_text(genre));
         }
     }
 
@@ -85,7 +85,7 @@ pub fn format_title(title: &Title) -> String {
 pub fn format_person(person: &Person) -> String {
     let mut message = prefix();
     let name = person.name.as_deref().unwrap_or(&person.id);
-    let _ = write!(message, " {}\x0310", sanitize_external(name));
+    let _ = write!(message, " {}\x0310", unstyle_text(name));
     write_life_years(&mut message, person.birth_year, person.death_year);
 
     if !person.known_for.is_empty() {
@@ -97,13 +97,13 @@ pub fn format_person(person: &Person) -> String {
             }
 
             let name = title.title.as_deref().unwrap_or(&title.id);
-            let _ = write!(message, "\x0f {}\x0310", sanitize_external(name));
+            let _ = write!(message, "\x0f {}\x0310", unstyle_text(name));
             write_years(&mut message, title.year, title.end_year);
         }
     }
 
     if let Some(bio) = &person.bio {
-        let bio = sanitize_external(bio);
+        let bio = unstyle_text(bio);
         let _ = write!(
             message,
             " Bio:\x0f {}\x0310",

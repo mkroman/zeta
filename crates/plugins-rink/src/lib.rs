@@ -1,8 +1,8 @@
 //! Evaluates calculations with unit, currency, and cryptocurrency conversions through rink.
 //!
 //! The `.r <expression>` command evaluates the whole argument as a rink expression and replies
-//! with the one-line result as a notice — arithmetic, physical unit conversions, and, with live
-//! currency data loaded, fiat currency, Bitcoin, and cryptocurrency lookups. The
+//! with the one-line result as a plain reply — arithmetic, physical unit conversions, and, with
+//! live currency data loaded, fiat currency, Bitcoin, and cryptocurrency lookups. The
 //! `.c <expression>` command does the same but case-corrects unit tokens rink cannot resolve,
 //! so lowercase abbreviations like `10 usd to dkk` evaluate like `10 USD to DKK`. Evaluation
 //! errors are reported inline as `> Error: <message>`.

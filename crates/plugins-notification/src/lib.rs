@@ -92,7 +92,7 @@ impl NotificationPlugin {
         let Some((target, message)) = parse_args(command.args()) else {
             client.send_privmsg(
                 channel,
-                reply("Notification", "Usage: .notify\x0f <nick> <message>"),
+                labeled_reply("Notification", "Usage: .notify\x0f <nick> <message>"),
             )?;
 
             return Ok(());
@@ -108,12 +108,12 @@ impl NotificationPlugin {
         };
 
         let message = match self.service.create(notification).await {
-            Ok(_) => notice("The notification has been stored."),
-            Err(Error::TooManyPending(max)) => reply(
+            Ok(_) => plain_reply("The notification has been stored."),
+            Err(Error::TooManyPending(max)) => labeled_reply(
                 "Notification",
                 format!("{target} already has {max} pending notifications in this channel"),
             ),
-            Err(_) => reply("Notification", "could not store the notification"),
+            Err(_) => labeled_reply("Notification", "could not store the notification"),
         };
 
         client.send_privmsg(channel, message)?;

@@ -53,7 +53,7 @@ pub use zeta_plugin_macros::plugin;
 // Re-exported through the crate root so the code the `#[plugin]` macro generates — and plugin
 // crates generally — can reference it as absolute `::zeta_plugin::…` paths without adding
 // dependencies of their own.
-pub use self::irc::{parse_args_or_usage, parse_words_or_usage, reply};
+pub use self::irc::{labeled_reply, parse_args_or_usage, parse_words_or_usage};
 pub use ::irc::client::Client;
 
 /// Common includes used in plugins.
@@ -70,8 +70,8 @@ pub mod prelude {
     pub use super::filtering::{Filters, UrlFilter};
     pub use super::hostmask::Hostmasks;
     pub use super::irc::{
-        BOLD, COLOR, NOTICE_PREFIX, REPLY_PREFIX, RESET, notice, parse_args_or_usage,
-        parse_words_or_usage, reply, reply_prefix, sanitize_external,
+        BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
+        parse_args_or_usage, parse_words_or_usage, plain_reply, unstyle_text,
     };
     pub use super::types::NoSettings;
     pub use super::{Context, Error, Plugin};

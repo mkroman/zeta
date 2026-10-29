@@ -14,7 +14,7 @@ use tracing::error;
 
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
-use zeta_utils::irc::sanitize_external;
+use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
@@ -138,7 +138,7 @@ impl Reddit {
                 Err(err) => {
                     client.send_privmsg(
                         channel,
-                        notice(format!("could not resolve video link: {err}")),
+                        plain_reply(format!("could not resolve video link: {err}")),
                     )?;
                 }
             },
@@ -152,7 +152,7 @@ impl Reddit {
                     Err(err) => {
                         client.send_privmsg(
                             channel,
-                            notice(format!("could not resolve shortened link: {err}")),
+                            plain_reply(format!("could not resolve shortened link: {err}")),
                         )?;
                     }
                 }
@@ -165,7 +165,7 @@ impl Reddit {
                     Err(err) => {
                         client.send_privmsg(
                             channel,
-                            notice(format!("could not fetch subreddit details: {err}")),
+                            plain_reply(format!("could not fetch subreddit details: {err}")),
                         )?;
                     }
                 }
@@ -191,7 +191,7 @@ impl Reddit {
             Err(err) => {
                 client.send_privmsg(
                     channel,
-                    notice(format!("could not fetch submission details: {err}")),
+                    plain_reply(format!("could not fetch submission details: {err}")),
                 )?;
             }
         }
@@ -209,7 +209,7 @@ impl Reddit {
     ) -> Result<(), Error> {
         let id = submission.id.as_deref().unwrap_or(fallback_id).to_string();
 
-        client.send_privmsg(channel, notice(format_submission(&submission)))?;
+        client.send_privmsg(channel, format_submission(&submission))?;
 
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
@@ -228,26 +228,27 @@ impl Reddit {
     }
 }
 
-/// Formats a submission's title and subreddit as an IRC notice, sanitized for a single IRC line.
+/// Formats a submission's title and subreddit as a complete plain reply, unstyled for a single
+/// IRC line. Callers send the result as-is.
 fn format_submission(submission: &Submission) -> String {
-    notice(format!(
+    plain_reply(format!(
         "{} : {}",
-        sanitize_external(&submission.title),
-        sanitize_external(&submission.subreddit)
+        unstyle_text(&submission.title),
+        unstyle_text(&submission.subreddit)
     ))
 }
 
-/// Formats a subreddit's title and public description as an IRC reply, sanitized for a single
+/// Formats a subreddit's title and public description as a labeled reply, unstyled for a single
 /// IRC line.
 ///
-/// The description is sanitized before it is truncated, so the character budget counts what is
+/// The description is unstyled before it is truncated, so the character budget counts what is
 /// actually sent.
 fn format_subreddit(subreddit: &Subreddit) -> String {
-    let title = sanitize_external(&subreddit.title);
-    let description = sanitize_external(&subreddit.public_description);
+    let title = unstyle_text(&subreddit.title);
+    let description = unstyle_text(&subreddit.public_description);
     let description = description.truncate_with_suffix(250, "…");
 
-    reply(&title, description)
+    labeled_reply(&title, description)
 }
 
 #[cfg(test)]
@@ -282,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_submission_as_a_notice() {
+    fn formats_submission_as_a_plain_reply() {
         let submission = submission("Sparindex S&amp;P500 børsnoteres i morgen", "dkfinance");
 
         assert_eq!(
@@ -302,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitizes_control_characters_in_replies() {
+    fn removes_control_characters_from_replies() {
         let submission = submission("Fake\x0310\nTitle", "dkfinance");
         let subreddit = subreddit("r/Denmark", "News&#10;and\x02 discussion");
 

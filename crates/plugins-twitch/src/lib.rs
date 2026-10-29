@@ -192,12 +192,12 @@ impl Twitch {
             let game_name = &stream.game_name;
             let viewers = stream.viewer_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, reply("Twitch", format!(
+            client.send_privmsg(channel, labeled_reply("Twitch", format!(
                 "{user_login}:\x0f {title}\x0310 - Game:\x0f {game_name}\x0310 Viewers:\x0f {viewers}\x0310"
             )))?;
         } else {
             // Fallback behavior: just print the channel name if not live.
-            client.send_privmsg(channel, notice(format!("{user_login} - Twitch")))?;
+            client.send_privmsg(channel, plain_reply(format!("{user_login} - Twitch")))?;
         }
 
         Ok(())
@@ -215,8 +215,8 @@ impl Twitch {
         let response: Response<T> = self.get(endpoint, query).await?;
 
         let message = response.data.first().map_or_else(
-            || reply("Twitch", "No results"),
-            |item| reply("Twitch", render(item)),
+            || labeled_reply("Twitch", "No results"),
+            |item| labeled_reply("Twitch", render(item)),
         );
 
         client.send_privmsg(channel, message)?;

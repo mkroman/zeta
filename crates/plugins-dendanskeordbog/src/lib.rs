@@ -3,7 +3,7 @@
 //! The `.ddo <word>` command queries the dictionary's web service through the `dendanskeordbog`
 //! crate and replies with the phonetics and part of speech of the first matching entry, its
 //! inflection (Bøjning), origin (Oprindelse), first definition, and an example sentence
-//! (Eksempel). No results and lookup errors are sent as a notice.
+//! (Eksempel). No results and lookup errors are sent as a plain reply.
 //!
 //! The inflection, etymology, and example are optional; each is shown by default and can be
 //! turned off in `[plugins.dendanskeordbog]`.
@@ -53,43 +53,39 @@ struct MessageFormatter<'a> {
 impl Display for MessageFormatter<'_> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(entry) = self.document.entries.first() {
-            write!(fmt, "{}", reply_prefix("DDO"))?;
+            write!(fmt, "{}", labeled_reply_prefix("DDO"))?;
 
             if let Some(phonetic) = &entry.phonetic {
-                write!(fmt, " {}", sanitize_external(phonetic))?;
+                write!(fmt, " {}", unstyle_text(phonetic))?;
             }
 
-            let pos = sanitize_external(&entry.pos);
+            let pos = unstyle_text(&entry.pos);
             write!(fmt, " (\x0f{pos}\x0310)")?;
 
             if self.settings.show_morphology
                 && let Some(inflection) = &entry.morphology
             {
-                write!(fmt, " Bøjning:\x0f {}\x0310", sanitize_external(inflection))?;
+                write!(fmt, " Bøjning:\x0f {}\x0310", unstyle_text(inflection))?;
             }
 
             if self.settings.show_etymology
                 && let Some(etymology) = &entry.etymology
             {
-                write!(
-                    fmt,
-                    " Oprindelse:\x0f {}\x0310",
-                    sanitize_external(etymology)
-                )?;
+                write!(fmt, " Oprindelse:\x0f {}\x0310", unstyle_text(etymology))?;
             }
 
             if let Some(definition) = &entry.definitions.first() {
-                let description = sanitize_external(&definition.description);
+                let description = unstyle_text(&definition.description);
                 write!(fmt, " Definition:\x0f {description}\x0310")?;
 
                 if self.settings.show_examples
                     && let Some(example) = &definition.examples.first()
                 {
-                    write!(fmt, " Eksempel:\x0f {}\x0310", sanitize_external(example))?;
+                    write!(fmt, " Eksempel:\x0f {}\x0310", unstyle_text(example))?;
                 }
             }
         } else {
-            write!(fmt, "{}", notice("No results"))?;
+            write!(fmt, "{}", plain_reply("No results"))?;
         }
 
         Ok(())
@@ -122,7 +118,7 @@ impl DenDanskeOrdbog {
         let args = command.args();
 
         let message = if args.is_empty() {
-            notice("Usage: .ddo\x0f <query>")
+            plain_reply("Usage: .ddo\x0f <query>")
         } else {
             match self.client.query(args).await {
                 Ok(document) => MessageFormatter {
@@ -130,7 +126,7 @@ impl DenDanskeOrdbog {
                     settings: &self.settings,
                 }
                 .to_string(),
-                Err(err) => notice(err),
+                Err(err) => plain_reply(err),
             }
         };
 

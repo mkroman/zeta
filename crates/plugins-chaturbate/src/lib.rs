@@ -72,7 +72,7 @@ impl Chaturbate {
         if let Some(username) = extract_username(url.url()) {
             debug!(%username, "processing chaturbate url");
             if let Err(e) = self.process_broadcaster(&username, channel, client).await {
-                client.send_privmsg(channel, reply("Chaturbate", e.to_string()))?;
+                client.send_privmsg(channel, labeled_reply("Chaturbate", e.to_string()))?;
             }
         }
 
@@ -104,7 +104,7 @@ impl Chaturbate {
             )
         };
 
-        client.send_privmsg(channel, reply("Chaturbate", &msg))?;
+        client.send_privmsg(channel, labeled_reply("Chaturbate", &msg))?;
 
         Ok(())
     }

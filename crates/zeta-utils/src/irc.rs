@@ -1,8 +1,9 @@
 //! Helpers for IRC reply formatting, addressing, and line budgets.
 //!
 //! Plugin replies follow a common visual convention: a teal `>` marker (mIRC color 10), an
-//! optional bold plugin name, and the message body with values emphasized by switching between
-//! the reply color and the default color. The helpers here produce those byte sequences so the
+//! optional bold label naming the source, and the message body with values emphasized by
+//! switching between the reply color and the default color. A reply with a label is a labeled
+//! reply; one without is a plain reply. The helpers here produce those byte sequences so the
 //! exact escape codes are written down in one place.
 
 use std::fmt;
@@ -20,36 +21,36 @@ pub const RESET: &str = "\x0f";
 /// Starts bold text.
 pub const BOLD: &str = "\x02";
 
-/// The prefix shared by every reply format, bold name or not.
-pub const REPLY_PREFIX: &str = "\x0310>";
+/// The teal `>` marker every reply opens with.
+pub const REPLY_MARKER: &str = "\x0310>";
 
-/// The complete prefix [`notice`] writes before a message, including its separating space.
+/// The complete prefix [`plain_reply`] writes before a message, including its separating space.
 ///
 /// Callers that budget a reply in bytes can subtract this instead of re-deriving the format.
-pub const NOTICE_PREFIX: &str = "\x0310> ";
+pub const PLAIN_REPLY_PREFIX: &str = "\x0310> ";
 
-/// Formats `message` as a reply from the plugin named `name`.
+/// Formats `message` as a reply labeled `label`.
 ///
-/// The reply starts with [`REPLY_PREFIX`], followed by the bold plugin name, e.g.
+/// The reply starts with [`REPLY_MARKER`], followed by the bold label, e.g.
 /// `> Twitch: <message>`.
 #[must_use]
-pub fn reply(name: &str, message: impl fmt::Display) -> String {
-    format!("{}{}", reply_prefix(name), message)
+pub fn labeled_reply(label: &str, message: impl fmt::Display) -> String {
+    format!("{}{}", labeled_reply_prefix(label), message)
 }
 
-/// Returns the bold-name prefix that [`reply`] starts its replies with.
+/// Returns the bold-label prefix that [`labeled_reply`] starts its replies with.
 ///
-/// Unlike [`reply`], the prefix can be written to an incrementally built message, e.g. from a
-/// `Display` implementation.
+/// Unlike [`labeled_reply`], the prefix can be written to an incrementally built message, e.g.
+/// from a `Display` implementation.
 #[must_use]
-pub fn reply_prefix(name: &str) -> String {
-    format!("{REPLY_PREFIX}{RESET}{BOLD} {name}:{BOLD}{COLOR} ")
+pub fn labeled_reply_prefix(label: &str) -> String {
+    format!("{REPLY_MARKER}{RESET}{BOLD} {label}:{BOLD}{COLOR} ")
 }
 
-/// Formats `message` as a plain reply without a plugin name.
+/// Formats `message` as a reply without a label.
 #[must_use]
-pub fn notice(message: impl fmt::Display) -> String {
-    format!("{NOTICE_PREFIX}{message}")
+pub fn plain_reply(message: impl fmt::Display) -> String {
+    format!("{PLAIN_REPLY_PREFIX}{message}")
 }
 
 /// Strips a nickname mention (`<nick>, ...` or `<nick>: ...`) from the start of `s`.
@@ -74,7 +75,7 @@ pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'
 /// with: a line break would terminate the message, and formatting bytes would restyle it.
 /// [`strip_formatting`] consumes the parameters that belong to a formatting code, so a color
 /// code cannot leak its digits into the visible text. For text that may carry line breaks and
-/// other whitespace, [`sanitize_external`] is the single-line variant.
+/// other whitespace, [`unstyle_text`] is the single-line variant.
 #[must_use]
 pub fn strip_control_chars(text: &str) -> String {
     strip_formatting_where(text, |character| !character.is_control())
@@ -90,20 +91,20 @@ pub fn strip_control_chars(text: &str) -> String {
 ///
 /// Unlike [`strip_control_chars`], this leaves non-formatting control characters such as line
 /// breaks alone. Callers that echo untrusted text into a single IRC line want
-/// [`sanitize_external`] instead.
+/// [`unstyle_text`] instead.
 #[must_use]
 pub fn strip_formatting(text: &str) -> String {
     strip_formatting_where(text, |_| true)
 }
 
-/// Cleans text from an external source for a single IRC line.
+/// Unstyles text for a single IRC line.
 ///
 /// Formatting codes are removed, remaining control characters — including line breaks — become
 /// spaces, and runs of whitespace are collapsed. This is the form callers want before echoing a
 /// page title, an API description, or any other text they do not control: a line break would
 /// terminate the IRC message, and formatting codes would restyle the rest of the reply.
 #[must_use]
-pub fn sanitize_external(text: &str) -> String {
+pub fn unstyle_text(text: &str) -> String {
     let text: String = strip_formatting(text)
         .chars()
         .map(|character| {
@@ -277,28 +278,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reply_wraps_the_message_in_the_plugin_banner() {
+    fn labeled_reply_wraps_the_message_in_the_label() {
         assert_eq!(
-            reply("Twitch", "hello"),
+            labeled_reply("Twitch", "hello"),
             "\x0310>\x0f\x02 Twitch:\x02\x0310 hello"
         );
     }
 
     #[test]
-    fn notice_prefixes_the_message_with_the_marker() {
-        assert_eq!(notice("No results found"), "\x0310> No results found");
+    fn plain_reply_prefixes_the_message_with_the_marker() {
+        assert_eq!(plain_reply("No results found"), "\x0310> No results found");
     }
 
     #[test]
-    fn notice_prefix_is_the_whole_marker() {
-        assert_eq!(notice(""), NOTICE_PREFIX);
-        assert_eq!(NOTICE_PREFIX, "\x0310> ");
+    fn plain_reply_prefix_is_the_whole_marker() {
+        assert_eq!(plain_reply(""), PLAIN_REPLY_PREFIX);
+        assert_eq!(PLAIN_REPLY_PREFIX, "\x0310> ");
     }
 
     #[test]
-    fn notice_prefix_extends_the_reply_prefix_by_one_space() {
-        assert!(NOTICE_PREFIX.starts_with(REPLY_PREFIX));
-        assert_eq!(NOTICE_PREFIX.len(), REPLY_PREFIX.len() + 1);
+    fn plain_reply_prefix_extends_the_reply_marker_by_one_space() {
+        assert!(PLAIN_REPLY_PREFIX.starts_with(REPLY_MARKER));
+        assert_eq!(PLAIN_REPLY_PREFIX.len(), REPLY_MARKER.len() + 1);
     }
 
     #[test]
@@ -381,12 +382,12 @@ mod tests {
     }
 
     #[test]
-    fn sanitizes_external_text_for_a_single_reply_line() {
+    fn unstyles_text_for_a_single_reply_line() {
         // Formatting codes are removed, line breaks become spaces, and whitespace is collapsed.
-        assert_eq!(sanitize_external("\x0310Fake\nTitle\x0f"), "Fake Title");
-        assert_eq!(sanitize_external("first\nsecond"), "first second");
-        assert_eq!(sanitize_external("  a \t b  "), "a b");
-        assert_eq!(sanitize_external("plain"), "plain");
+        assert_eq!(unstyle_text("\x0310Fake\nTitle\x0f"), "Fake Title");
+        assert_eq!(unstyle_text("first\nsecond"), "first second");
+        assert_eq!(unstyle_text("  a \t b  "), "a b");
+        assert_eq!(unstyle_text("plain"), "plain");
     }
 
     #[test]

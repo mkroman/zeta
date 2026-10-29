@@ -203,14 +203,14 @@ impl AlertPlugin {
         let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
 
         let Some(opts) =
-            parse_words_or_usage::<Opts>(client, command, |line| reply("Alert", line))?
+            parse_words_or_usage::<Opts>(client, command, |line| labeled_reply("Alert", line))?
         else {
             return Ok(());
         };
 
         if opts.list {
             if !opts.args.is_empty() {
-                client.send_privmsg(channel, reply("Alert", USAGE))?;
+                client.send_privmsg(channel, labeled_reply("Alert", USAGE))?;
 
                 return Ok(());
             }
@@ -222,7 +222,7 @@ impl AlertPlugin {
 
                     client.send_privmsg(
                         channel,
-                        reply("Alert", "could not list your pending alerts"),
+                        labeled_reply("Alert", "could not list your pending alerts"),
                     )?;
 
                     return Ok(());
@@ -237,7 +237,7 @@ impl AlertPlugin {
         let input = opts.input();
 
         let Some((message, time_spec)) = split_args(&input) else {
-            client.send_privmsg(channel, reply("Alert", USAGE))?;
+            client.send_privmsg(channel, labeled_reply("Alert", USAGE))?;
 
             return Ok(());
         };
@@ -245,7 +245,7 @@ impl AlertPlugin {
         let time = match parse_time(time_spec, Local::now()) {
             Ok(time) => time,
             Err(err) => {
-                client.send_privmsg(channel, reply("Alert", err.to_string()))?;
+                client.send_privmsg(channel, labeled_reply("Alert", err.to_string()))?;
 
                 return Ok(());
             }
@@ -266,7 +266,7 @@ impl AlertPlugin {
 
                 client.send_privmsg(
                     channel,
-                    reply(
+                    labeled_reply(
                         "Alert",
                         format!("{} Alert stored for\x0f {local}.", success_message()),
                     ),
@@ -274,7 +274,8 @@ impl AlertPlugin {
             }
             Err(err) => {
                 error!(?err, "could not store alert");
-                client.send_privmsg(channel, reply("Alert", "could not store the alert"))?;
+                client
+                    .send_privmsg(channel, labeled_reply("Alert", "could not store the alert"))?;
             }
         }
 
@@ -437,10 +438,10 @@ const MAX_LISTED_MESSAGE_CHARS: usize = 50;
 /// pending alert.
 fn format_pending(pending: &[Alert]) -> String {
     if pending.is_empty() {
-        return reply("Alert", "You have no pending alerts");
+        return labeled_reply("Alert", "You have no pending alerts");
     }
 
-    let mut listing = reply("Alert", format!("Pending alerts:\x0f {}", pending.len()));
+    let mut listing = labeled_reply("Alert", format!("Pending alerts:\x0f {}", pending.len()));
 
     let entries = pending
         .iter()

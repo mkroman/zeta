@@ -273,7 +273,7 @@ impl CoinMarketCap {
         let opts = match CC.parse_args::<CoinOpts>(args) {
             Ok(opts) if !opts.coin.trim().is_empty() => opts,
             _ => {
-                client.send_privmsg(channel, notice(CC_USAGE))?;
+                client.send_privmsg(channel, plain_reply(CC_USAGE))?;
                 return Ok(());
             }
         };
@@ -304,7 +304,7 @@ impl CoinMarketCap {
         let Ok(opts) = command.parse_args::<QuoteOpts>(args) else {
             client.send_privmsg(
                 channel,
-                notice(format!("Usage: {} \x0f[currency]", command.trigger())),
+                plain_reply(format!("Usage: {} \x0f[currency]", command.trigger())),
             )?;
             return Ok(());
         };
@@ -371,7 +371,7 @@ impl CoinMarketCap {
             warn!(error = %err, "coin lookup failed");
         }
 
-        client.send_privmsg(channel, notice(err.to_string()))?;
+        client.send_privmsg(channel, plain_reply(err.to_string()))?;
 
         Ok(())
     }

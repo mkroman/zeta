@@ -222,7 +222,7 @@ fn pack<S: AsRef<str>>(entries: &[S], max_length: usize) -> Vec<String> {
 
 /// Formats the header of a help reply, with `subject` appended inside the bold heading.
 pub fn heading(subject: &str) -> String {
-    format!("{REPLY_PREFIX}{RESET}{BOLD} Help{subject}{BOLD}")
+    format!("{REPLY_MARKER}{RESET}{BOLD} Help{subject}{BOLD}")
 }
 
 /// Builds the usage synopsis of a command from its argument information.

@@ -93,16 +93,16 @@ impl GitHubPlugin {
         let query = command.args().trim();
 
         let response = if query.is_empty() {
-            reply("GitHub", ".gh <query>")
+            labeled_reply("GitHub", ".gh <query>")
         } else {
             info!(query, %channel, "searching github");
 
             match self.search_repos(query).await {
-                Ok(response) => response
-                    .items
-                    .first()
-                    .map_or_else(|| reply("GitHub", "No results"), Self::format_repo_details),
-                Err(err) => reply("GitHub", err),
+                Ok(response) => response.items.first().map_or_else(
+                    || labeled_reply("GitHub", "No results"),
+                    Self::format_repo_details,
+                ),
+                Err(err) => labeled_reply("GitHub", err),
             }
         };
 
@@ -187,7 +187,7 @@ impl GitHubPlugin {
             lang, item.stargazers_count
         );
 
-        reply("GitHub", &line)
+        labeled_reply("GitHub", &line)
     }
 }
 

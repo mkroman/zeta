@@ -13,8 +13,8 @@ use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_with_more};
 
 use zeta_plugin::prelude::*;
 
-/// The body budget of a `.uni` reply, after the notice prefix.
-const REPLY_BUDGET: usize = MAX_LISTING_LENGTH - NOTICE_PREFIX.len();
+/// The body budget of a `.uni` reply, after the plain reply prefix.
+const REPLY_BUDGET: usize = MAX_LISTING_LENGTH - PLAIN_REPLY_PREFIX.len();
 /// The budget of one entry once the outer `SUFFIX` is reserved.
 const ENTRY_BUDGET: usize = REPLY_BUDGET - SUFFIX.len();
 /// Appended when a listing does not fit the budget.
@@ -56,16 +56,16 @@ impl Entry<'_> {
 
 /// Formats the reply to `.uni`.
 ///
-/// `notice()` supplies the teal `> ` marker the reply opens with; the message itself lists one
-/// entry per character, each entry naming its codepoint bold inside braces and its general
+/// `plain_reply()` supplies the teal `> ` marker the reply opens with; the message itself lists
+/// one entry per character, each entry naming its codepoint bold inside braces and its general
 /// category in parentheses: `d` answers
 /// `{\x0f\x02U+0064\x02\x0310}:\x0f LATIN SMALL LETTER D\x0310 (\x0fLowercase Letter\x0310)`.
 /// An emoji code point is named by its emoji name, which is the more informative spelling for
 /// the button and squared sets; a run of characters that names an emoji sequence of more than
 /// one code point — `🏳️‍🌈` — is grouped into one entry that names the sequence as a whole and
 /// carries the category of its base character. A listing that does not fit
-/// [`MAX_LISTING_LENGTH`] once the notice prefix is added stops with [`SUFFIX`], and a grouped
-/// sequence's codepoint list is budgeted the same way.
+/// [`MAX_LISTING_LENGTH`] once the plain reply prefix is added stops with [`SUFFIX`], and a
+/// grouped sequence's codepoint list is budgeted the same way.
 pub fn unicode_details(args: &str) -> String {
     let entries = grouped_entries(args);
     let mut message = String::with_capacity(REPLY_BUDGET);
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn the_entry_opening_is_the_expected_control_code_sequence() {
         assert_eq!(ENTRY_OPEN, format!("{{{RESET}{BOLD}"));
-        assert_eq!(notice(""), NOTICE_PREFIX);
+        assert_eq!(plain_reply(""), PLAIN_REPLY_PREFIX);
     }
 
     #[test]
@@ -379,9 +379,9 @@ mod tests {
         assert!(reply.contains('…'), "reply was not truncated: {reply}");
         assert!(reply.ends_with(", …"));
         assert!(
-            notice(&reply).len() <= MAX_LISTING_LENGTH,
+            plain_reply(&reply).len() <= MAX_LISTING_LENGTH,
             "{}",
-            notice(&reply).len()
+            plain_reply(&reply).len()
         );
     }
 
@@ -394,9 +394,9 @@ mod tests {
 
         assert!(reply.contains('…'), "reply was not truncated: {reply}");
         assert!(
-            notice(&reply).len() <= MAX_LISTING_LENGTH,
+            plain_reply(&reply).len() <= MAX_LISTING_LENGTH,
             "{}",
-            notice(&reply).len()
+            plain_reply(&reply).len()
         );
         assert!(reply.ends_with("Other Symbol\x0310)"), "{reply}");
     }
@@ -456,9 +456,9 @@ mod tests {
         assert!(reply.ends_with(", …"), "{reply}");
         assert!(!reply.contains("U+0061"), "{reply}");
         assert!(
-            notice(&reply).len() <= MAX_LISTING_LENGTH,
+            plain_reply(&reply).len() <= MAX_LISTING_LENGTH,
             "{}",
-            notice(&reply).len()
+            plain_reply(&reply).len()
         );
     }
 

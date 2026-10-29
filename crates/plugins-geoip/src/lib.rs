@@ -141,7 +141,7 @@ impl GeoIp {
             Err(err) => {
                 warn!(?err, name = %opts.name, "geoip lookup failed");
 
-                client.send_privmsg(channel, reply("GeoIP", err))?;
+                client.send_privmsg(channel, labeled_reply("GeoIP", err))?;
             }
         }
 
@@ -178,7 +178,11 @@ impl Display for LookupResult {
         let info = &self.0;
         let ip = &info.ip;
 
-        write!(fmt, "{}({RESET}{ip}{COLOR}): {info}", reply_prefix("GeoIP"))
+        write!(
+            fmt,
+            "{}({RESET}{ip}{COLOR}): {info}",
+            labeled_reply_prefix("GeoIP")
+        )
     }
 }
 
