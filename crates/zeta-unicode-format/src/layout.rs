@@ -79,6 +79,93 @@ impl NameLayout {
     }
 }
 
+/// The parsed 64-byte image header and its section directory.
+///
+/// Both the runtime and the trainer use this one parse, so the magic, version, shifts, layout
+/// byte and section bounds cannot drift between them. The trainer additionally enforces that
+/// section payloads are aligned, ordered and exhaust the image; the runtime only needs the
+/// ranges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Header {
+    /// The Unicode major, minor and patch version.
+    pub version: (u8, u8, u8),
+    /// The name-block shift: `1 << block_shift` names per front-coded block.
+    pub block_shift: u8,
+    /// The general-category page shift.
+    pub gc_page_shift: u8,
+    /// The name-section layout.
+    pub layout: NameLayout,
+    /// `(offset, length)` of each section, indexed by section id.
+    pub sections: [(usize, usize); SECTION_COUNT],
+}
+
+impl Header {
+    /// Parses and validates the image header and section directory.
+    ///
+    /// Returns `None` for a truncated header, a foreign magic, a different section count, an
+    /// unsupported version field, shift or layout id, or a section range outside `image`.
+    #[must_use]
+    pub fn parse(image: &[u8]) -> Option<Self> {
+        if image.len() < HEADER_LEN || image.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
+            return None;
+        }
+        if usize::from(*image.get(SECTION_COUNT_AT)?) != SECTION_COUNT {
+            return None;
+        }
+        let version = (
+            u8::try_from(read_u16(image, VERSION_AT)?).ok()?,
+            u8::try_from(read_u16(image, VERSION_AT + 2)?).ok()?,
+            u8::try_from(read_u16(image, VERSION_AT + 4)?).ok()?,
+        );
+        let block_shift = *image.get(NAME_BLOCK_SHIFT_AT)?;
+        if !(MIN_NAME_BLOCK_SHIFT..=MAX_NAME_BLOCK_SHIFT).contains(&block_shift) {
+            return None;
+        }
+        let gc_page_shift = *image.get(GC_PAGE_SHIFT_AT)?;
+        if gc_page_shift != GC_PAGE_SHIFT {
+            return None;
+        }
+        let layout = NameLayout::from_id(*image.get(NAME_LAYOUT_AT)?)?;
+
+        let mut sections = [(0usize, 0usize); SECTION_COUNT];
+        for (id, slot) in sections.iter_mut().enumerate() {
+            let at = DIRECTORY_AT.checked_add(id.checked_mul(DIRECTORY_ENTRY_LEN)?)?;
+            let offset = usize::try_from(read_u32(image, at)?).ok()?;
+            let length = usize::try_from(read_u32(image, at.checked_add(4)?)?).ok()?;
+            if offset.checked_add(length)? > image.len() {
+                return None;
+            }
+            *slot = (offset, length);
+        }
+        Some(Self {
+            version,
+            block_shift,
+            gc_page_shift,
+            layout,
+            sections,
+        })
+    }
+
+    /// Returns the payload of section `id`, or `None` for an unknown id or a truncated range.
+    #[must_use]
+    pub fn section<'a>(&self, image: &'a [u8], id: usize) -> Option<&'a [u8]> {
+        let &(offset, length) = self.sections.get(id)?;
+        image.get(offset..offset.checked_add(length)?)
+    }
+}
+
+/// Reads a little-endian `u16` at `at`.
+fn read_u16(image: &[u8], at: usize) -> Option<u16> {
+    let bytes: [u8; 2] = image.get(at..at.checked_add(2)?)?.try_into().ok()?;
+    Some(u16::from_le_bytes(bytes))
+}
+
+/// Reads a little-endian `u32` at `at`.
+fn read_u32(image: &[u8], at: usize) -> Option<u32> {
+    let bytes: [u8; 4] = image.get(at..at.checked_add(4)?)?.try_into().ok()?;
+    Some(u32::from_le_bytes(bytes))
+}
+
 /// The first Unicode scalar value.
 pub const UNICODE_START: u32 = 0;
 /// The last Unicode scalar value.
@@ -259,5 +346,51 @@ mod tests {
         out.clear();
         assert!(!write_hangul(0xABFF, &mut out));
         assert_eq!(out, "");
+    }
+
+    /// Packs a header whose four sections are empty and start at `HEADER_LEN`.
+    fn empty_image() -> Vec<u8> {
+        let mut image = vec![0u8; HEADER_LEN];
+        image[..MAGIC.len()].copy_from_slice(MAGIC);
+        image[VERSION_AT..VERSION_AT + 2].copy_from_slice(&18u16.to_le_bytes());
+        image[SECTION_COUNT_AT] = u8::try_from(SECTION_COUNT).unwrap();
+        image[NAME_BLOCK_SHIFT_AT] = 6;
+        image[GC_PAGE_SHIFT_AT] = GC_PAGE_SHIFT;
+        image[NAME_LAYOUT_AT] = NameLayout::Global.id();
+        for id in 0..SECTION_COUNT {
+            let at = DIRECTORY_AT + id * DIRECTORY_ENTRY_LEN;
+            image[at..at + 4].copy_from_slice(&u32::try_from(HEADER_LEN).unwrap().to_le_bytes());
+            image[at + 4..at + 8].copy_from_slice(&0u32.to_le_bytes());
+        }
+        image
+    }
+
+    #[test]
+    fn the_image_header_parses_every_field_and_rejects_bad_ones() {
+        let image = empty_image();
+        let header = Header::parse(&image).expect("a valid header");
+        assert_eq!(header.version, (18, 0, 0));
+        assert_eq!(header.block_shift, 6);
+        assert_eq!(header.gc_page_shift, GC_PAGE_SHIFT);
+        assert_eq!(header.layout, NameLayout::Global);
+        assert_eq!(header.section(&image, NAMES), Some(&[][..]));
+        assert_eq!(header.section(&image, SECTION_COUNT), None);
+
+        let mut wrong_magic = image.clone();
+        wrong_magic[0] = b'X';
+        assert!(Header::parse(&wrong_magic).is_none());
+
+        let mut wrong_layout = image.clone();
+        wrong_layout[NAME_LAYOUT_AT] = 2;
+        assert!(Header::parse(&wrong_layout).is_none());
+
+        let mut wrong_shift = image.clone();
+        wrong_shift[NAME_BLOCK_SHIFT_AT] = 0;
+        assert!(Header::parse(&wrong_shift).is_none());
+
+        let mut out_of_bounds = image;
+        out_of_bounds[DIRECTORY_AT + 4..DIRECTORY_AT + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(Header::parse(&out_of_bounds).is_none());
+        assert!(Header::parse(&[0u8; HEADER_LEN - 1]).is_none());
     }
 }

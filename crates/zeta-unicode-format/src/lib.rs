@@ -11,8 +11,9 @@
 //!
 //! The modules group the parts by concern:
 //!
-//! - [`layout`] — image header offsets, section ids, name and category table constants and
+//! - [`layout`] — image header parsing, section ids, name and category table constants and
 //!   the Hangul name generator;
+//! - [`names`] — the name section's fixed index and Huffman model area;
 //! - [`primitives`] — varints, hex placeholders, UTF-8 code-point encoding and packed bit
 //!   fields;
 //! - [`emoji`] — the rule ids, tone tables and name-grammar helpers;
@@ -23,6 +24,7 @@
 pub mod emoji;
 pub mod huffman;
 pub mod layout;
+pub mod names;
 pub mod primitives;
 
 pub use emoji::{
@@ -30,16 +32,18 @@ pub use emoji::{
     format_toned, is_tone, join_family, keycap_word, pair_phrase, plural, swap_person,
     tone_indices, tone_phrase, tone_positions, ucd_mask_name,
 };
+pub use huffman::{BitReader, Code, Codebook, Model};
 pub use layout::{
     DIRECTORY_AT, DIRECTORY_ENTRY_LEN, EMOJI, GC, GC_ID_BITS, GC_ID_MASK, GC_PAGE_SHIFT,
     GC_PAGE_SHIFT_AT, GC_PAGES, GC_SHIFT, GC_SHORT_NAMES, HANGUL_COUNT, HANGUL_END, HANGUL_START,
-    HEADER_LEN, MAGIC, MAX_CODE_BITS, MAX_NAME_BLOCK_SHIFT, MAX_NAME_BYTES, MAX_NAME_MODELS,
-    MIN_NAME_BLOCK_SHIFT, NAME_BLOCK_SHIFT_AT, NAME_CONTEXT_MAP_LEN, NAME_INDEX_HEADER_LEN,
-    NAME_LAYOUT_AT, NAME_MODEL_COUNT_LEN, NAME_MODEL_DIRECTORY_ENTRY_LEN, NAME_PAGE_COUNT,
-    NAME_PAGE_DIRECTORY_ENTRY_LEN, NAME_PAGE_SHIFT, NAME_RUN_LEN, NAMES, NameLayout, PATTERNS,
-    SECTION_COUNT, SECTION_COUNT_AT, UNICODE_END, UNICODE_LIMIT, UNICODE_START, VERSION_AT,
-    write_hangul,
+    HEADER_LEN, Header, MAGIC, MAX_CODE_BITS, MAX_NAME_BLOCK_SHIFT, MAX_NAME_BYTES,
+    MAX_NAME_MODELS, MIN_NAME_BLOCK_SHIFT, NAME_BLOCK_SHIFT_AT, NAME_CONTEXT_MAP_LEN,
+    NAME_INDEX_HEADER_LEN, NAME_LAYOUT_AT, NAME_MODEL_COUNT_LEN, NAME_MODEL_DIRECTORY_ENTRY_LEN,
+    NAME_PAGE_COUNT, NAME_PAGE_DIRECTORY_ENTRY_LEN, NAME_PAGE_SHIFT, NAME_RUN_LEN, NAMES,
+    NameLayout, PATTERNS, SECTION_COUNT, SECTION_COUNT_AT, UNICODE_END, UNICODE_LIMIT,
+    UNICODE_START, VERSION_AT, write_hangul,
 };
+pub use names::{NameIndex, NameModels};
 pub use primitives::{
     encode_cps, pack_bits, read_varint, unpack_bits, write_hex, write_pattern_name, write_varint,
 };
