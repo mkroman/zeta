@@ -1,7 +1,7 @@
 //! The plugin API for the zeta IRC bot.
 //!
 //! Plugins implement the [`Plugin`] trait: they register the events they want to receive in
-//! [`Plugin::new`] through a [`Subscriptions`] set and handle them by overloading the
+//! [`Registered::new`] through a [`Subscriptions`] set and handle them by overloading the
 //! corresponding per-kind handler methods. See the [`event`] module for the event vocabulary.
 //!
 //! Alongside the plugin vocabulary, this crate carries the machinery shared by the host and the
@@ -16,7 +16,6 @@ pub mod event;
 pub mod irc;
 
 mod catalog;
-mod erased;
 mod error;
 mod plugin;
 mod registration;
@@ -32,9 +31,8 @@ pub mod hostmask;
 pub use async_trait;
 pub use catalog::{CatalogEntry, PluginCatalog};
 pub use clap;
-pub use command::{ArgsError, CommandSpec};
+pub use command::{ArgsError, ArgsMode, CommandSpec};
 pub use context::{Context, SharedState};
-pub use erased::ErasedPlugin;
 pub use error::Error;
 pub use event::{
     CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
@@ -43,7 +41,7 @@ pub use event::{
 pub use filtering::{Filters, UrlFilter};
 pub use hostmask::Hostmasks;
 pub use inventory;
-pub use plugin::Plugin;
+pub use plugin::{Plugin, Registered, handle_event};
 pub use registration::{LoadedPlugin, PluginRegistration};
 #[cfg(feature = "database")]
 pub use sqlx;
@@ -53,28 +51,32 @@ pub use zeta_plugin_macros::plugin;
 // Re-exported through the crate root so the code the `#[plugin]` macro generates — and plugin
 // crates generally — can reference it as absolute `::zeta_plugin::…` paths without adding
 // dependencies of their own.
-pub use self::irc::{labeled_reply, parse_args_or_usage, parse_words_or_usage};
+pub use self::irc::{labeled_reply, parse_or_usage};
 pub use ::irc::client::Client;
 
 /// Common includes used in plugins.
 pub mod prelude {
     pub use async_trait::async_trait;
 
-    pub use super::catalog::{CatalogEntry, PluginCatalog};
-    pub use super::command::{ArgsError, CommandSpec};
-    pub use super::error::{BoxError, Error as ZetaError, plugin_err, resolve_secret};
-    pub use super::event::{
-        CommandEvent, CtcpEvent, CtcpKind, Event, JoinEvent, KickEvent, MessageEvent, NickEvent,
-        PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
+    // The crate's own `irc` module cannot be glob-imported here: its name collides with the
+    // external `irc` crate that plugins also import. Everything else the public API exports is
+    // listed, including the items used less often, so the prelude does not silently omit them.
+    pub use crate::catalog::{CatalogEntry, PluginCatalog};
+    pub use crate::command::{ArgsError, ArgsMode, CommandSpec};
+    pub use crate::error::{BoxError, Error as ZetaError, plugin_err, resolve_secret};
+    pub use crate::event::{
+        CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
+        NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
     };
-    pub use super::filtering::{Filters, UrlFilter};
-    pub use super::hostmask::Hostmasks;
-    pub use super::irc::{
+    pub use crate::filtering::{Filters, UrlFilter};
+    pub use crate::hostmask::Hostmasks;
+    pub use crate::irc::{
         BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
-        parse_args_or_usage, parse_words_or_usage, plain_reply, unstyle_text,
+        parse_or_usage, plain_reply, unstyle_text,
     };
-    pub use super::types::NoSettings;
-    pub use super::{Context, Error, Plugin};
+    pub use crate::registration::{LoadedPlugin, PluginRegistration};
+    pub use crate::types::NoSettings;
+    pub use crate::{Context, Error, Plugin, Registered, SharedState};
     pub use ::irc::client::Client;
     pub use zeta_plugin_macros::plugin;
 }

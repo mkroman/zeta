@@ -33,7 +33,7 @@
 //!
 //! | attribute | meaning |
 //! |---|---|
-//! | `name = "…"` | **Required.** The plugin's name (`Plugin::NAME`), which must match its module name. |
+//! | `name = "…"` | **Required.** The plugin's name (`Registered::NAME`), which must match its module name. |
 //! | `settings = Type` | The plugin's settings type; defaults to `NoSettings`. |
 //! | `urls(any)` | Receives every URL posted in any channel. |
 //! | `urls(hosts = EXPR)` | Receives the URLs whose host is in `EXPR` (a `&[&str]`). |
@@ -79,8 +79,8 @@
 //!
 //! | option | meaning |
 //! |---|---|
-//! | `args = Opts` | Parses the arguments into `Opts` (a `clap::Parser` type) through `parse_args_or_usage`. |
-//! | `words` | With `args`, parses through `parse_words_or_usage` instead, preserving free-form text. |
+//! | `args = Opts` | Parses the arguments into `Opts` (a `clap::Parser` type) through `parse_or_usage` in `ArgsMode::Shell`. |
+//! | `words` | With `args`, parses in `ArgsMode::Words` instead, preserving free-form text. |
 //! | `spec = NAME` | Overrides the generated `CommandSpec` constant's name; the default folds the trigger to upper case (`.dig` → `DIG`). |
 //! | `label = "Dig"` | The display label for generated usage and error replies; defaults to the plugin's name. |
 //! | `event` | The handler also receives the `&CommandEvent`, and may omit the `channel` parameter. |

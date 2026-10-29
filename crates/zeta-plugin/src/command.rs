@@ -22,7 +22,19 @@ use std::ops::Range;
 use clap::{ArgAction, ColorChoice, Command, Parser};
 use thiserror::Error;
 
+/// How a command's trailing arguments are split into tokens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArgsMode {
+    /// Tokenize like a POSIX shell, supporting quotes and escapes.
+    Shell,
+    /// Split on whitespace only, preserving quotes and escapes verbatim for free-form text.
+    Words,
+}
+
 /// A command served by a plugin: its trigger, description, and the arguments it accepts.
+///
+/// Arguments are parsed with [`ArgsMode::Shell`] by default; declare a command's `words` flag
+/// to parse free-form text with [`ArgsMode::Words`] instead.
 ///
 /// The `trigger` is the command as users type it — most commands are dot-prefixed (`.yt`), but
 /// any single-word prefix (e.g. `!imdb`) works. The description is shown by the host's help
@@ -228,6 +240,19 @@ impl CommandSpec {
         let tokens: Vec<&str> = args.split_whitespace().collect();
 
         self.parse_tokens(&tokens)
+    }
+
+    /// Parses the trailing arguments with the tokenization selected by `mode`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the selected parser: [`ArgsError::Quoting`] for shell tokenization,
+    /// or [`ArgsError::Usage`] when `clap` rejected the arguments.
+    pub fn parse_with<T: Parser>(&self, args: &str, mode: ArgsMode) -> Result<T, ArgsError> {
+        match mode {
+            ArgsMode::Shell => self.parse_args(args),
+            ArgsMode::Words => self.parse_words(args),
+        }
     }
 
     /// Parses `tokens` into `T`, with the trigger as the command name in the usage output.

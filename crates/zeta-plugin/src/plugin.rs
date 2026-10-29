@@ -1,3 +1,6 @@
+use std::future::Future;
+use std::pin::Pin;
+
 use async_trait::async_trait;
 use irc::client::Client;
 use serde::de::DeserializeOwned;
@@ -5,27 +8,73 @@ use serde::de::DeserializeOwned;
 use crate::Error;
 use crate::context::Context;
 use crate::event::{
-    CommandEvent, CtcpEvent, JoinEvent, KickEvent, MessageEvent, NickEvent, PartEvent, QuitEvent,
-    RawEvent, Subscriptions, UrlEvent,
+    CommandEvent, CtcpEvent, Event, JoinEvent, KickEvent, MessageEvent, NickEvent, PartEvent,
+    QuitEvent, RawEvent, Subscriptions, UrlEvent,
 };
 
-/// The base trait that all plugins must implement.
+/// Construction-time metadata and the constructor for a plugin type.
 ///
-/// A plugin declares the events it wants to receive in [`Plugin::new`] by registering them on
-/// the [`Subscriptions`] set the host passes in — the commands it handles, the URL hosts it
-/// reacts to, and the presence, message, CTCP or raw traffic it observes. The host routes only
-/// the matching events to the plugin, where each kind is handled by overloading the
-/// corresponding handler method: [`Plugin::handle_command`], [`Plugin::handle_url`],
-/// [`Plugin::handle_join`], and so on. Handlers the plugin did not register are never called;
-/// their default implementations do nothing.
+/// Kept separate from [`Plugin`] so that trait stays object-safe: every plugin runs behind
+/// `Box<dyn Plugin>`, while the name, settings and constructor are only needed once, when the
+/// host builds the plugin from its registration.
 ///
-/// A plugin's configuration is declared through [`Plugin::Settings`] and deserialized from its
-/// `[plugins.<name>]` section by the host, which passes it to [`Plugin::new`].
+/// The `#[plugin]` attribute macro generates this implementation, including [`Registered::NAME`]
+/// and the constructor that registers the plugin's subscriptions.
+pub trait Registered: Plugin + Sized + 'static {
+    /// The plugin's name, e.g. `alert`.
+    ///
+    /// The name identifies the plugin in the help system and the plugin catalog, and must match
+    /// the plugin's module name. The `#[plugin]` attribute macro sets it from its `name`
+    /// argument and submits a [`PluginRegistration`](crate::PluginRegistration) under it, so the
+    /// host discovers every compiled-in plugin without a central list.
+    const NAME: &'static str;
+
+    /// This plugin's deserialized `[plugins.<name>]` settings.
+    ///
+    /// The host hands only the plugin's own settings to [`Registered::new`]; plugins cannot
+    /// access other plugins' configuration.
+    type Settings: Default + DeserializeOwned;
+
+    /// The constructor for a new plugin.
+    ///
+    /// `settings` holds the plugin's own configuration section, deserialized from
+    /// `[plugins.<name>]` at startup. Register the events the plugin handles on
+    /// `subscriptions` — the host routes only those events to the plugin, and publishes the
+    /// registered commands and URL hosts through the plugin catalog for other plugins to see.
+    ///
+    /// The subscriptions are only committed when this function returns `Ok`; a plugin that
+    /// fails to initialize is skipped entirely.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the plugin cannot be initialized (e.g. missing environment
+    /// variables, failed HTTP client creation). The registry will log the error and skip
+    /// loading the plugin.
+    fn new(
+        ctx: &Context,
+        settings: &Self::Settings,
+        subscriptions: &mut Subscriptions,
+    ) -> Result<Self, Error>;
+}
+
+/// The behaviour shared by every plugin: the event handlers the host calls.
 ///
-/// Most plugins are written with the `#[plugin]` attribute macro instead of implementing this
-/// trait by hand: it reads the container attributes and the `#[command]`/`#[handler]` method
-/// annotations off an inherent impl block and generates the implementation, including the
-/// [`Plugin::NAME`] constant and the command dispatch.
+/// A plugin declares the events it wants to receive during construction, through the
+/// [`Subscriptions`] it registers — the commands it handles, the URL hosts it reacts to, and the
+/// presence, message, CTCP or raw traffic it observes. The host routes only the matching events
+/// to the plugin, where each kind is handled by overloading the corresponding handler method:
+/// [`Plugin::handle_command`], [`Plugin::handle_url`], [`Plugin::handle_join`], and so on.
+/// Handlers the plugin did not register are never called; their default implementations do
+/// nothing.
+///
+/// This trait carries only behaviour, so it is object-safe: the host stores every plugin behind
+/// `Box<dyn Plugin>`. Construction — the plugin's name, its settings type and its constructor —
+/// lives in [`Registered`].
+///
+/// Most plugins are written with the `#[plugin]` attribute macro instead of implementing these
+/// traits by hand: it reads the container attributes and the `#[command]`/`#[handler]` method
+/// annotations off an inherent impl block and generates both implementations, including the
+/// name constant, the settings plumbing and the command dispatch.
 ///
 /// Each plugin runs in its own long-lived task, and the calls to a plugin's handlers are
 /// serialized. Handlers therefore must not block the task; spawn a task for work that outlives
@@ -67,27 +116,18 @@ use crate::event::{
 /// }
 /// ```
 ///
-/// A plugin reacts to more than commands by registering the matching event kinds:
+/// A plugin reacts to more than commands by declaring a handler for the event kind:
 ///
 /// ```
 /// use irc::client::Client;
 /// use zeta_plugin::{Error, prelude::*};
 ///
 /// /// Watches the channel traffic.
+/// #[derive(Default)]
 /// struct Watcher;
 ///
-/// #[plugin(name = "watcher", urls(any), messages)]
+/// #[plugin(name = "watcher", urls(any))]
 /// impl Watcher {
-///     fn new(
-///         _: &Context,
-///         _: &NoSettings,
-///         subscriptions: &mut Subscriptions,
-///     ) -> Result<Self, Error> {
-///         // `urls` and `messages` cover their kinds; join events need an explicit registration.
-///         subscriptions.receive_join();
-///         Ok(Self)
-///     }
-///
 ///     #[handler(url)]
 ///     async fn url(&self, _: &Context, _: &Client, url: &UrlEvent) -> Result<(), Error> {
 ///         // Every URL posted in any channel — already filtered, deduplicated, and repaired.
@@ -114,47 +154,10 @@ use crate::event::{
 /// ```
 #[async_trait]
 pub trait Plugin: Send + Sync {
-    /// The plugin's name, e.g. `alert`.
-    ///
-    /// The name identifies the plugin in the help system and the plugin catalog, and must match
-    /// the plugin's module name. The `#[plugin]` attribute macro sets it from its `name`
-    /// argument and submits a [`PluginRegistration`](crate::PluginRegistration) under it, so the
-    /// host discovers every compiled-in plugin without a central list.
-    const NAME: &'static str;
-
-    /// This plugin's deserialized `[plugins.<name>]` settings.
-    ///
-    /// The host hands only the plugin's own settings to [`Plugin::new`]; plugins cannot access
-    /// other plugins' configuration.
-    type Settings: Default + DeserializeOwned;
-
-    /// The constructor for a new plugin.
-    ///
-    /// `settings` holds the plugin's own configuration section, deserialized from
-    /// `[plugins.<name>]` at startup. Register the events the plugin handles on
-    /// `subscriptions` — the host routes only those events to the plugin, and publishes the
-    /// registered commands and URL hosts through the plugin catalog for other plugins to see.
-    ///
-    /// The subscriptions are only committed when this function returns `Ok`; a plugin that
-    /// fails to initialize is skipped entirely.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the plugin cannot be initialized (e.g. missing environment
-    /// variables, failed HTTP client creation). The registry will log the error and skip
-    /// loading the plugin.
-    fn new(
-        _ctx: &Context,
-        _settings: &Self::Settings,
-        _subscriptions: &mut Subscriptions,
-    ) -> Result<Self, Error>
-    where
-        Self: Sized;
-
     /// Handles a command invocation.
     ///
     /// Called when a channel message's first word matches the trigger of one of the commands
-    /// registered in [`Plugin::new`]. The event carries the
+    /// registered in [`Registered::new`]. The event carries the
     /// [`CommandSpec`](super::CommandSpec) that matched and the trailing arguments of the
     /// invocation.
     ///
@@ -392,5 +395,37 @@ pub trait Plugin: Send + Sync {
     /// Returns an error if flushing failed; the error is logged and the shutdown continues.
     async fn shutdown(&mut self, _ctx: &Context, _client: &Client) -> Result<(), Error> {
         Ok(())
+    }
+}
+
+/// Routes `event` to `plugin`'s handler for its kind.
+///
+/// The dispatcher only delivers events whose kind the plugin registered, so handlers for other
+/// kinds are never reached. The match is exhaustive, so adding an event kind without a routing
+/// arm is a compile error.
+///
+/// The handler's own future is returned rather than awaited inside another boxed future, so
+/// routing an event costs one heap allocation, not two.
+///
+/// # Errors
+///
+/// Returns the error of the handler the event was routed to.
+pub fn handle_event<'a>(
+    plugin: &'a dyn Plugin,
+    ctx: &'a Context,
+    client: &'a Client,
+    event: &'a Event,
+) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+    match event {
+        Event::Command(event) => plugin.handle_command(ctx, client, event),
+        Event::Url(event) => plugin.handle_url(ctx, client, event),
+        Event::Message(event) => plugin.handle_message(ctx, client, event),
+        Event::Join(event) => plugin.handle_join(ctx, client, event),
+        Event::Part(event) => plugin.handle_part(ctx, client, event),
+        Event::Quit(event) => plugin.handle_quit(ctx, client, event),
+        Event::Nick(event) => plugin.handle_nick(ctx, client, event),
+        Event::Kick(event) => plugin.handle_kick(ctx, client, event),
+        Event::Ctcp(event) => plugin.handle_ctcp(ctx, client, event),
+        Event::Raw(event) => plugin.handle_raw(ctx, client, event),
     }
 }

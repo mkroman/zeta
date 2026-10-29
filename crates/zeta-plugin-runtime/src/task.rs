@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{Instrument, debug, error, warn};
 
-use zeta_plugin::{Context, ErasedPlugin, Event};
+use zeta_plugin::{Context, Event, Plugin, handle_event};
 
 /// A plugin running in its own long-lived task.
 ///
@@ -31,7 +31,7 @@ impl PluginTask {
     /// closes, the plugin's shutdown hook runs before the task exits.
     pub fn spawn(
         name: &'static str,
-        mut plugin: Box<dyn ErasedPlugin>,
+        mut plugin: Box<dyn Plugin>,
         ctx: Arc<Context>,
         client: Arc<Client>,
         mut receiver: mpsc::UnboundedReceiver<Event>,
@@ -63,7 +63,7 @@ impl PluginTask {
                 // are not in the context of a span, so without it the plugin's logs would
                 // only ever reach stdout.
                 async {
-                    if let Err(error) = plugin.handle_event(&ctx, &client, &event).await {
+                    if let Err(error) = handle_event(plugin.as_ref(), &ctx, &client, &event).await {
                         error!(plugin = %name, %error, "plugin error during event handling");
                     }
                 }

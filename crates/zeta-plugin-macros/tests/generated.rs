@@ -138,6 +138,77 @@ impl Full {
     }
 }
 
+/// A plugin with one handler per event kind.
+///
+/// The macro derives each trait method and event type from the kind keyword, so this is what
+/// verifies every derived name against the real `Plugin` trait — including the kinds no bundled
+/// plugin uses yet.
+#[derive(Default)]
+struct Kinds;
+
+#[plugin(name = "kinds", urls(any))]
+impl Kinds {
+    #[handler(command)]
+    async fn command(&self, _: &Context, _: &Client, _: &CommandEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(url)]
+    async fn url(&self, _: &Context, _: &Client, _: &UrlEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(message)]
+    async fn message(&self, _: &Context, _: &Client, _: &MessageEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(join)]
+    async fn join(&self, _: &Context, _: &Client, _: &JoinEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(part)]
+    async fn part(&self, _: &Context, _: &Client, _: &PartEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(quit)]
+    async fn quit(&self, _: &Context, _: &Client, _: &QuitEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(nick)]
+    async fn nick(&self, _: &Context, _: &Client, _: &NickEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(kick)]
+    async fn kick(&self, _: &Context, _: &Client, _: &KickEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(ctcp)]
+    async fn ctcp(&self, _: &Context, _: &Client, _: &CtcpEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(raw)]
+    async fn raw(&self, _: &Context, _: &Client, _: &RawEvent) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(loaded)]
+    async fn loaded(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
+        Ok(())
+    }
+
+    #[handler(shutdown)]
+    async fn shutdown(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
 #[test]
 fn helper_constructor_remains_callable() {
     let _ = Helper::new();
@@ -158,11 +229,11 @@ impl Partial {
 
 #[test]
 fn every_plugin_shape_registers_itself() {
-    let names: Vec<&str> = zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>()
+    let names: Vec<&str> = zeta_plugin::inventory::iter::<PluginRegistration>()
         .map(|registration| registration.name)
         .collect();
 
-    for expected in ["full", "gated", "helper", "partial", "words"] {
+    for expected in ["full", "gated", "helper", "kinds", "partial", "words"] {
         assert!(
             names.contains(&expected),
             "{expected} missing from {names:?}"

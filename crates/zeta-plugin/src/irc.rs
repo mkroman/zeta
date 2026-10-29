@@ -11,7 +11,7 @@
 use clap::Parser;
 use irc::client::Client;
 
-use crate::command::ArgsError;
+use crate::command::{ArgsError, ArgsMode};
 use crate::event::CommandEvent;
 
 pub use zeta_utils::irc::{
@@ -41,44 +41,26 @@ fn reply_usage_lines(
     Ok(())
 }
 
-/// Parses the trailing arguments of `command` with [`CommandEvent::parse_args`], replying with
-/// the usage lines to the command's channel when the parse fails.
-///
-/// Unlike [`parse_words_or_usage`], the arguments are tokenized like a POSIX shell (via
-/// [`CommandEvent::parse_args`]), so quoted arguments and escapes are supported.
+/// Parses the trailing arguments of `command` with the tokenization selected by `mode`,
+/// replying with the usage lines to the command's channel when the parse fails.
 ///
 /// Returns `Ok(None)` when the usage was replied to and the command should be abandoned.
 ///
 /// # Errors
 ///
 /// Returns any error produced while sending the usage lines.
-pub fn parse_args_or_usage<T: Parser>(
+pub fn parse_or_usage<T: Parser>(
     client: &Client,
     command: &CommandEvent,
+    mode: ArgsMode,
     format: impl Fn(&str) -> String,
 ) -> Result<Option<T>, irc::error::Error> {
-    parse_or_usage(command.parse_args(), client, command.channel(), format)
-}
-
-/// Parses the trailing arguments of `command` with [`CommandEvent::parse_words`], replying with
-/// the usage lines to the command's channel when the parse fails.
-///
-/// Returns `Ok(None)` when the usage was replied to and the command should be abandoned.
-///
-/// # Errors
-///
-/// Returns any error produced while sending the usage lines.
-pub fn parse_words_or_usage<T: Parser>(
-    client: &Client,
-    command: &CommandEvent,
-    format: impl Fn(&str) -> String,
-) -> Result<Option<T>, irc::error::Error> {
-    parse_or_usage(command.parse_words(), client, command.channel(), format)
+    reply_parse_result(command.parse_with(mode), client, command.channel(), format)
 }
 
 /// Replies `error`'s usage lines through `format` and yields `None` for the caller to abandon
 /// the command with, or passes a successful parse result through.
-fn parse_or_usage<T>(
+fn reply_parse_result<T>(
     result: Result<T, ArgsError>,
     client: &Client,
     channel: &str,

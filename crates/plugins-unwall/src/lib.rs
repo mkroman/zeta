@@ -509,8 +509,9 @@ impl Unwall {
             return Ok(());
         };
 
-        let Some(opts) =
-            parse_words_or_usage::<Opts>(client, command, |line| labeled_reply(NAME, line))?
+        let Some(opts) = parse_or_usage::<Opts>(client, command, ArgsMode::Words, |line| {
+            labeled_reply(NAME, line)
+        })?
         else {
             return Ok(());
         };

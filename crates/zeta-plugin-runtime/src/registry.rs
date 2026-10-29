@@ -130,7 +130,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_plugin::{CommandSpec, Plugin};
+    use zeta_plugin::{CommandSpec, Registered};
     use zeta_test_support::{RecordingPlugin, publish_recording, test_context};
 
     #[tokio::test]

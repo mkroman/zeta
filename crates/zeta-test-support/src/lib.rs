@@ -78,28 +78,6 @@ pub struct RecordingPlugin {
 #[cfg(feature = "context")]
 #[zeta_plugin::async_trait::async_trait]
 impl zeta_plugin::Plugin for RecordingPlugin {
-    const NAME: &'static str = "recording";
-
-    type Settings = zeta_plugin::NoSettings;
-
-    fn new(
-        ctx: &zeta_plugin::Context,
-        _: &zeta_plugin::NoSettings,
-        subscriptions: &mut zeta_plugin::Subscriptions,
-    ) -> Result<Self, zeta_plugin::Error> {
-        subscriptions.command(zeta_plugin::CommandSpec::new(
-            ".recording",
-            "record a message",
-        ));
-
-        let recording = ctx
-            .shared
-            .get::<std::sync::Mutex<Vec<&'static str>>>()
-            .expect("recording log should be published through `publish_recording`");
-
-        Ok(Self { recording })
-    }
-
     async fn handle_message(
         &self,
         _: &zeta_plugin::Context,
@@ -125,6 +103,31 @@ impl zeta_plugin::Plugin for RecordingPlugin {
             .push("shutdown");
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "context")]
+impl zeta_plugin::Registered for RecordingPlugin {
+    const NAME: &'static str = "recording";
+
+    type Settings = zeta_plugin::NoSettings;
+
+    fn new(
+        ctx: &zeta_plugin::Context,
+        _: &zeta_plugin::NoSettings,
+        subscriptions: &mut zeta_plugin::Subscriptions,
+    ) -> Result<Self, zeta_plugin::Error> {
+        subscriptions.command(zeta_plugin::CommandSpec::new(
+            ".recording",
+            "record a message",
+        ));
+
+        let recording = ctx
+            .shared
+            .get::<std::sync::Mutex<Vec<&'static str>>>()
+            .expect("recording log should be published through `publish_recording`");
+
+        Ok(Self { recording })
     }
 }
 

@@ -338,6 +338,80 @@ mod tests {
         );
     }
 
+    /// The bundled plugin crates, derived from the `crates/plugins-*` directory names.
+    fn plugin_crates() -> Vec<String> {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the facade lives under crates/");
+
+        let mut plugins: Vec<String> = std::fs::read_dir(crates)
+            .expect("read the crates directory")
+            .filter_map(|entry| {
+                let name = entry.ok()?.file_name().into_string().ok()?;
+
+                // `plugins` is this facade and `plugins-shared` is a helper library, not a
+                // bundled plugin.
+                let plugin = name.strip_prefix("plugins-")?;
+
+                (plugin != "shared").then(|| plugin.to_owned())
+            })
+            .collect();
+
+        plugins.sort();
+
+        plugins
+    }
+
+    /// Every `plugins-*` crate must be wired into the facade everywhere Cargo cannot derive it.
+    ///
+    /// Adding a plugin touches seven places across two files; a missed entry either fails the
+    /// build (the dependency, the re-export) or silently ships a plugin that is never compiled
+    /// (the `all` list, the TLS lists) or never named (the bundled-name list). This test turns
+    /// the silent cases into a failure.
+    #[test]
+    fn every_plugin_crate_is_wired_into_the_facade() {
+        let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .expect("read the facade manifest");
+        let lib = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+            .expect("read the facade source");
+
+        for plugin in plugin_crates() {
+            let snake = plugin.replace('-', "_");
+
+            assert!(
+                manifest.contains(&format!(
+                    "plugins-{plugin} = {{ path = \"../plugins-{plugin}\", default-features = \
+                     false, optional = true }}"
+                )),
+                "`{plugin}` is missing its optional dependency in crates/plugins/Cargo.toml"
+            );
+            assert!(
+                manifest.contains(&format!("dep:plugins-{plugin}")),
+                "`{plugin}` has no cargo feature enabling its dependency"
+            );
+            assert!(
+                manifest.contains(&format!("\"{plugin}\",")),
+                "`{plugin}` is missing from the `all` feature list"
+            );
+
+            for tls in ["native-tls", "native-tls-vendored", "rustls"] {
+                assert!(
+                    manifest.contains(&format!("\"plugins-{plugin}?/{tls}\"")),
+                    "`{plugin}` is missing from the `{tls}` feature list"
+                );
+            }
+
+            assert!(
+                lib.contains(&format!("pub use plugins_{snake} as {snake};")),
+                "`{plugin}` is missing its re-export in crates/plugins/src/lib.rs"
+            );
+            assert!(
+                lib.contains(&format!("\"{snake}\",")),
+                "`{plugin}` is missing from BUNDLED_PLUGIN_NAMES"
+            );
+        }
+    }
+
     /// Every bundled plugin self-registers through the `#[plugin]` macro, independently of any
     /// central list. `--all-features` compiles every one of them.
     #[cfg(feature = "all")]
