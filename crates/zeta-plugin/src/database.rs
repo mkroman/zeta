@@ -2,7 +2,7 @@
 //!
 //! The host connects the pool and applies the migrations; the plugins' repositories reach it
 //! through their context and persist their state through the [`DbError`] and
-//! [`database_error!`](crate::database_error) helpers here.
+//! [`impl_repository_error!`](crate::impl_repository_error) helpers here.
 
 /// Database connection pool.
 pub type Database = sqlx::PgPool;
@@ -143,7 +143,7 @@ macro_rules! impl_repository {
 /// error enum carries. The macro keeps that wiring in one place instead of three near-identical
 /// constructor blocks per plugin.
 #[macro_export]
-macro_rules! database_error {
+macro_rules! impl_repository_error {
     ($error:ty, $entity:literal) => {
         impl $error {
             /// Constructs the error for a failed load from the database.

@@ -1,7 +1,7 @@
 //! Errors that can occur while handling notifications.
 
 use zeta_plugin::database::DbError;
-use zeta_plugin::database_error;
+use zeta_plugin::impl_repository_error;
 
 /// Errors that can occur while handling notifications.
 #[derive(Debug, thiserror::Error)]
@@ -14,4 +14,4 @@ pub enum Error {
     TooManyPending(usize),
 }
 
-database_error!(Error, "notifications");
+impl_repository_error!(Error, "notifications");

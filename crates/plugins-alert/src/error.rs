@@ -1,7 +1,7 @@
 //! Errors that can occur while handling alerts.
 
 use zeta_plugin::database::DbError;
-use zeta_plugin::database_error;
+use zeta_plugin::impl_repository_error;
 
 /// Errors that can occur while handling alerts.
 #[derive(Debug, thiserror::Error)]
@@ -14,4 +14,4 @@ pub enum Error {
     Closed,
 }
 
-database_error!(Error, "alerts");
+impl_repository_error!(Error, "alerts");
