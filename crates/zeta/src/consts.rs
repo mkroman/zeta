@@ -24,7 +24,7 @@ pub const DEFAULT_IRC_TLS_PORT: u16 = 6697;
 /// their queued messages and shutdown hooks, before they are aborted.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
-/// How long to wait for the outgoing task to flush the `QUIT` message before draining plugins.
+/// How long to wait for the outgoing task to flush the `QUIT` message before giving up.
 pub const QUIT_FLUSH_DELAY: Duration = Duration::from_millis(500);
 
 /// The default `QUIT` message sent when the bot shuts down.
