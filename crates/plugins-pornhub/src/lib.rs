@@ -15,6 +15,7 @@ use url::Url;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_url::query_param;
+use zeta_utils::irc::unstyle_text;
 
 /// The hostname for PornHub URLs.
 const PORNHUB_HOST: &str = "www.pornhub.com";
@@ -197,7 +198,7 @@ impl PornHub {
 
     /// Formats a message about the video.
     fn format_video_message(video: &Video) -> String {
-        let title = &video.title;
+        let title = unstyle_text(&video.title);
         let views = video.views.to_formatted_string(&Locale::en);
 
         plain_reply(format!(

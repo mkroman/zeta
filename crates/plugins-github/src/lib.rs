@@ -22,6 +22,7 @@ use zeta_http as http;
 use zeta_http::HttpConfig;
 use zeta_http::RequestError;
 use zeta_plugin::prelude::*;
+use zeta_utils::irc::unstyle_text;
 use zeta_utils::settings::resolve_optional_setting;
 
 /// Settings for the github plugin, from its `[plugins.github]` configuration section.
@@ -170,17 +171,18 @@ impl GitHubPlugin {
             let _ = write!(line, "\x0F\u{2442}\x0310 ");
         }
 
-        line.push_str(&item.full_name);
+        line.push_str(&unstyle_text(&item.full_name));
 
         if let Some(desc) = &item.description {
-            let _ = write!(line, " - {desc}");
+            let _ = write!(line, " - {}", unstyle_text(desc));
         }
 
         // " -\x0f <url>"
-        let _ = write!(line, " -\x0F {}", item.html_url);
+        let _ = write!(line, " -\x0F {}", unstyle_text(&item.html_url));
 
         // "\x0310 - Language:\x0f <lang>\x0310 Stars:\x0f <stars>"
-        let lang = item.language.as_deref().unwrap_or("?");
+        let language = item.language.as_deref().map(unstyle_text);
+        let lang = language.as_deref().unwrap_or("?");
         let _ = write!(
             line,
             "\x0310 - Language:\x0F {}\x0310 Stars:\x0F {}",

@@ -289,9 +289,6 @@ impl Delete {
     }
 }
 
-/// Room for a ` (+N more)` truncation suffix on a listing, covering counts up to five digits.
-const MORE_SUFFIX_RESERVE: usize = " (+99999 more)".len();
-
 /// The complete labeled confirmation for the added or removed `filters`, describing each one so
 /// the sender can act on the ids without a follow-up `.filter list`. Callers send the result
 /// as-is.
@@ -573,7 +570,7 @@ fn listing(header: String, filters: &[Filter], reserved: usize) -> String {
         filters.len(),
         ", ",
         MAX_LISTING_LENGTH,
-        reserved + MORE_SUFFIX_RESERVE,
+        reserved,
         |dropped| format!(" (+{dropped} more)"),
     );
 

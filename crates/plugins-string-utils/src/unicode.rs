@@ -74,7 +74,7 @@ pub fn unicode_details(args: &str) -> String {
         entries.iter().map(Entry::render),
         entries.len(),
         REPLY_BUDGET,
-        SUFFIX.len(),
+        0,
     );
     message
 }
@@ -181,7 +181,7 @@ fn render_entry(points: &str, name: &str, category: &str) -> String {
         points.chars().map(|c| format!("U+{:04X}", u32::from(c))),
         total,
         ENTRY_BUDGET,
-        SUFFIX.len() + tail.len(),
+        tail.len(),
     );
     entry.push_str(&tail);
 

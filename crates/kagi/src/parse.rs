@@ -6,6 +6,7 @@ use htmlize::unescape;
 use scraper::{ElementRef, Html, Node, Selector};
 use serde::Deserialize;
 use serde_json::Value;
+use tracing::debug;
 use zeta_utils::text::quoted_string_literal;
 
 use crate::{BASE_URL, ImageResult, SearchResult};
@@ -88,7 +89,12 @@ fn parse_sse_stream(raw_body: &str) -> Vec<KagiMessage> {
         .lines()
         .filter_map(|line| line.strip_prefix("data:"))
         .map(str::trim_start)
-        .flat_map(|json| serde_json::from_str::<Vec<KagiMessage>>(json).unwrap_or_default())
+        .filter_map(|json| {
+            serde_json::from_str::<Vec<KagiMessage>>(json)
+                .inspect_err(|error| debug!(%error, "dropping an unparseable Kagi SSE event"))
+                .ok()
+        })
+        .flatten()
         .collect()
 }
 
@@ -106,9 +112,18 @@ fn parse_kagi_stream(raw_body: &str) -> Vec<KagiMessage> {
         .filter(|chunk| !chunk.is_empty())
         .filter_map(|chunk| {
             // Split wire format: "tag:json_data"
-            let (wire_tag, json_str) = chunk.split_once(':')?;
+            let Some((wire_tag, json_str)) = chunk.split_once(':') else {
+                debug!("dropping a Kagi chunk without a wire tag");
+                return None;
+            };
             // Parse JSON body
-            let mut message: KagiMessage = serde_json::from_str(json_str).ok()?;
+            let mut message: KagiMessage = match serde_json::from_str(json_str) {
+                Ok(message) => message,
+                Err(error) => {
+                    debug!(wire_tag, %error, "dropping an unparseable Kagi chunk");
+                    return None;
+                }
+            };
             // Normalize Tag: If the JSON body didn't have a tag, use the wire tag.
             if message.tag.is_empty() {
                 message.tag = wire_tag.to_string();
@@ -133,8 +148,12 @@ pub fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResul
         let Some(payload) = message.payload.as_ref().and_then(Value::as_str) else {
             continue;
         };
-        let Ok(results) = serde_json::from_str::<SearchResultsJson>(payload) else {
-            continue;
+        let results = match serde_json::from_str::<SearchResultsJson>(payload) {
+            Ok(results) => results,
+            Err(error) => {
+                debug!(%error, "falling back to HTML results, structured payload is malformed");
+                continue;
+            }
         };
 
         if !results.items.is_empty() {

@@ -12,6 +12,7 @@ use url::Url;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_url::{RedactedUrl, is_identifier, path_segments};
+use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::quoted_string_literal;
 
 /// The Chaturbate hosts whose links this plugin handles.
@@ -95,13 +96,14 @@ impl Chaturbate {
         let dossier = parse_room_dossier(&html)?;
         debug!(?dossier, "parsed room dossier");
 
+        let username = unstyle_text(&dossier.broadcaster_username);
+        let gender = unstyle_text(&dossier.broadcaster_gender);
+        let title = unstyle_text(&dossier.room_title);
+
         let msg = if dossier.room_status == "offline" {
-            format!("{} (\x0foffline\x0310)", dossier.broadcaster_username)
+            format!("{username} (\x0foffline\x0310)")
         } else {
-            format!(
-                "{} (\x0f{}\x0310) - {}",
-                dossier.broadcaster_username, dossier.broadcaster_gender, dossier.room_title
-            )
+            format!("{username} (\x0f{gender}\x0310) - {title}")
         };
 
         client.send_privmsg(channel, labeled_reply("Chaturbate", &msg))?;

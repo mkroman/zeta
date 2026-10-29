@@ -21,7 +21,8 @@ async fn main() -> miette::Result<()> {
     let opts = cli::Opts::parse();
     let config = Config::load(opts.config_path)?;
 
-    telemetry::try_init(&config.tracing)?;
+    // Held until `main` returns so the shutdown flushes the tracer provider's batches.
+    let _telemetry = telemetry::try_init(&config.tracing)?;
 
     #[cfg(feature = "database")]
     let db = {

@@ -20,6 +20,7 @@ use tracing::warn;
 use zeta_http as http;
 use zeta_http::oauth::Credentials;
 use zeta_plugin::prelude::*;
+use zeta_utils::irc::unstyle_text;
 
 mod urls;
 
@@ -187,9 +188,9 @@ impl Twitch {
         let response: Response<Stream> = self.get("streams", &[("user_login", user_login)]).await?;
 
         if let Some(stream) = response.data.first() {
-            let user_login = &stream.user_login;
-            let title = &stream.title;
-            let game_name = &stream.game_name;
+            let user_login = unstyle_text(&stream.user_login);
+            let title = unstyle_text(&stream.title);
+            let game_name = unstyle_text(&stream.game_name);
             let viewers = stream.viewer_count.to_formatted_string(&Locale::en);
 
             client.send_privmsg(channel, labeled_reply("Twitch", format!(
@@ -232,9 +233,9 @@ impl Twitch {
         client: &Client,
     ) -> Result<(), Error> {
         self.handle_first("clips", &[("id", clip_id)], channel, client, |clip: &Clip| {
-            let title = &clip.title;
-            let broadcaster = &clip.broadcaster_name;
-            let creator = &clip.creator_name;
+            let title = unstyle_text(&clip.title);
+            let broadcaster = unstyle_text(&clip.broadcaster_name);
+            let creator = unstyle_text(&clip.creator_name);
             let views = clip.view_count.to_formatted_string(&Locale::en);
 
             format!(

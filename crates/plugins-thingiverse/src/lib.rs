@@ -20,6 +20,7 @@ use url::Url;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_url::{is_numeric_segment, path_segments};
+use zeta_utils::irc::unstyle_text;
 
 /// The Thingiverse hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
@@ -158,8 +159,8 @@ fn thing_id(url: &Url) -> Option<&str> {
 
 impl Display for Thing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = &self.name;
-        let creator = &self.creator.name;
+        let name = unstyle_text(&self.name);
+        let creator = unstyle_text(&self.creator.name);
 
         let type_desc = if self.is_wip == 1 {
             "\x0f work in progress\x0310"

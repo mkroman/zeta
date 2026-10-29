@@ -26,6 +26,7 @@ use thiserror::Error;
 use tracing::debug;
 
 use zeta_plugin::prelude::*;
+use zeta_utils::irc::unstyle_text;
 
 /// Settings for the dig plugin, from its `[plugins.dig]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -96,11 +97,11 @@ impl Display for LookupResult {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for lookup in self.0.answers() {
             // We need to convert the fields to strings for string padding to work.
-            let name = lookup.name.to_string();
+            let name = unstyle_text(&lookup.name.to_string());
             let ttl = lookup.ttl.to_string();
             let dns_class = lookup.dns_class.to_string();
             let record_type = lookup.record_type().to_string();
-            let data = &lookup.data;
+            let data = unstyle_text(&lookup.data.to_string());
 
             write!(fmt, "{}", labeled_reply_prefix("Dig"))?;
             writeln!(

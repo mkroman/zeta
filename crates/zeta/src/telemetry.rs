@@ -28,12 +28,36 @@ fn otel_resource_detectors() -> Vec<Box<dyn ResourceDetector>> {
     ]
 }
 
-pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
+/// Flushes and shuts down the OpenTelemetry tracer provider when dropped.
+///
+/// The provider's batch span processor holds spans in memory until it is shut down, so without
+/// this guard the spans emitted while the bot shuts down — exactly the ones worth keeping — are
+/// lost when the process exits. Hold the guard for the lifetime of the process.
+#[must_use = "dropping the guard immediately shuts the tracer provider down"]
+pub struct TelemetryGuard {
+    /// The provider to shut down, or `None` when OpenTelemetry is disabled.
+    provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+}
+
+impl Drop for TelemetryGuard {
+    fn drop(&mut self) {
+        let Some(provider) = self.provider.take() else {
+            return;
+        };
+
+        if let Err(error) = provider.shutdown() {
+            eprintln!("could not shut down the OpenTelemetry tracer provider: {error}");
+        }
+    }
+}
+
+pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<TelemetryGuard> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    // Create a tracing layer with the configured tracer
-    let telemetry_layer = if tracing.enabled {
+    // Create a tracing layer with the configured tracer, keeping the provider so the guard can
+    // flush the batches on exit.
+    let (telemetry_layer, provider) = if tracing.enabled {
         // Set up the OTLP exporter
         let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_http()
@@ -70,9 +94,9 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
         let tracer = provider.tracer_with_scope(scope);
         let layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-        Some(layer)
+        (Some(layer), Some(provider))
     } else {
-        None
+        (None, None)
     };
 
     let stdout_layer = tracing_subscriber::fmt::layer().json();
@@ -94,5 +118,5 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<()> {
 
     info!("tracing initialized");
 
-    Ok(())
+    Ok(TelemetryGuard { provider })
 }

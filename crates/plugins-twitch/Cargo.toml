@@ -27,6 +27,7 @@ url.workspace = true
 zeta-http = { path = "../zeta-http", default-features = false, features = ["http", "oauth"] }
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
 zeta-url = { path = "../zeta-url" }
+zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
 serde_json.workspace = true

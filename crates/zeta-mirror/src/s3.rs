@@ -137,10 +137,18 @@ impl S3 {
         .transpose()
         .map_err(Error::InvalidEndpoint)?;
 
+        // Signed requests must not follow redirects: replaying `Authorization` and the signature
+        // at a redirect target cannot work, and an unresponsive endpoint must not hold the
+        // plugin task — or a download slot — forever.
+        let client = Client::builder()
+            .connect_timeout(config.s3_connect_timeout)
+            .timeout(config.s3_request_timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| Error::Request(RequestError::from(error)))?;
+
         Ok(Self {
-            client: Client::builder()
-                .build()
-                .map_err(|error| Error::Request(RequestError::from(error)))?,
+            client,
             access_key_id,
             secret_access_key,
             bucket,

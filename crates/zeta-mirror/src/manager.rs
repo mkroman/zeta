@@ -418,9 +418,17 @@ impl Manager {
         Ok(public_url_for(public_url_base, id))
     }
 
-    /// Starts the next queued download, if there is one.
+    /// Starts queued downloads until every slot is busy or the queue is empty.
+    ///
+    /// A request that [`start_download`](Self::start_download) rejects early — an unsafe id or a
+    /// temporary directory that could not be created — never becomes active, so draining the
+    /// queue here keeps a rejected request from stranding every request behind it.
     fn start_next(&mut self) {
-        if let Some(request) = self.queue.pop_front() {
+        while self.active.len() < self.max_concurrent {
+            let Some(request) = self.queue.pop_front() else {
+                break;
+            };
+
             self.start_download(request);
         }
     }
@@ -774,6 +782,53 @@ mod tests {
         }
 
         assert_eq!(order, vec![0, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn test_rejected_queued_request_does_not_stall_the_queue() {
+        let (started, mut started_rx) = mpsc::unbounded_channel();
+        let (gate_0, gate_rx_0) = oneshot::channel();
+        let (gate_2, gate_rx_2) = oneshot::channel();
+
+        // Only the two valid requests reach the downloader; the rejected one never gets a gate.
+        let downloader = Arc::new(GatedDownloader {
+            started,
+            gates: Mutex::new(VecDeque::from([gate_rx_0, gate_rx_2])),
+        });
+        let (_download_dir, manager) = start_manager(downloader, S3::for_test(), 1);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        manager
+            .submit(request("0", "first", results.clone(), 0))
+            .expect("manager is running");
+
+        // The first download holds the only slot, so the next two requests are queued.
+        assert_eq!(started_rx.recv().await.as_deref(), Some("first"));
+
+        manager
+            .submit(request("0", "../evil", results.clone(), 1))
+            .expect("manager is running");
+        manager
+            .submit(request("0", "third", results, 2))
+            .expect("manager is running");
+
+        drop(gate_0);
+
+        // The queued request with the unsafe id is rejected as soon as it is popped; the request
+        // behind it must still start.
+        assert_eq!(started_rx.recv().await.as_deref(), Some("third"));
+
+        drop(gate_2);
+
+        let mut outcomes = Vec::new();
+
+        for _ in 0..3 {
+            outcomes.push(rx.recv().await.expect("every request finishes").1);
+        }
+
+        assert!(matches!(outcomes[0], Err(Error::Download(_))));
+        assert!(matches!(outcomes[1], Err(Error::InvalidId(_))));
+        assert!(matches!(outcomes[2], Err(Error::Download(_))));
     }
 
     #[test]

@@ -20,6 +20,7 @@ serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
 serde_json.workspace = true

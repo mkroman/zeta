@@ -15,6 +15,7 @@ use tracing::{debug, warn};
 
 use zeta_http as http;
 use zeta_plugin::prelude::*;
+use zeta_utils::irc::unstyle_text;
 
 /// The base URL for the Trustpilot API.
 const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
@@ -175,7 +176,7 @@ fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
         "https://{review_domain}.trustpilot.com/review/{}",
         b.name.identifying
     );
-    let name = &b.display_name;
+    let name = unstyle_text(&b.display_name);
 
     labeled_reply(
         "Trustpilot",
@@ -217,6 +218,24 @@ mod tests {
             assert_eq!(settings.api_key.as_deref(), Some("secret"));
             assert_eq!(settings.review_domain, "www");
         }
+    }
+
+    #[test]
+    fn untrusted_business_names_cannot_inject_formatting() {
+        let business = BusinessUnit {
+            display_name: "evil\x02\nname\x0310".to_string(),
+            name: BusinessName {
+                identifying: "evil.com".to_string(),
+            },
+            score: Score { trust_score: 4.0 },
+            number_of_reviews: NumberOfReviews { total: 1 },
+        };
+
+        let formatted = format_business(&business, "dk");
+
+        assert!(formatted.contains("evil name"), "{formatted}");
+        assert!(!formatted.contains('\n'), "{formatted}");
+        assert!(!formatted.contains("evil\x02"), "{formatted}");
     }
 
     #[test]

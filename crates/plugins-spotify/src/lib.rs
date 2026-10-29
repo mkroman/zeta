@@ -26,6 +26,7 @@ use zeta_http as http;
 use zeta_http::oauth::Credentials;
 use zeta_plugin::prelude::*;
 use zeta_url::path_segments;
+use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::join_with_and;
 
 /// The Spotify hosts whose links this plugin handles.
@@ -278,9 +279,9 @@ impl Spotify {
             include_url,
             client,
             |track: &Track, include_url| {
-                let name = &track.name;
+                let name = unstyle_text(&track.name);
                 let artists = join_artists(&track.artists);
-                let album = &track.album.name;
+                let album = unstyle_text(&track.album.name);
 
                 let mut msg = format!("\x0f{name}\x0310 is a track by {artists}\x0310");
                 let _ = write!(msg, " from the album \x0f{album}\x0310");
@@ -308,7 +309,7 @@ impl Spotify {
             include_url,
             client,
             |album: &Album, include_url| {
-                let name = &album.name;
+                let name = unstyle_text(&album.name);
                 let artists = join_artists(&album.artists);
 
                 let mut msg = format!("\x0f{name}\x0310 is an album by {artists}");
@@ -336,7 +337,7 @@ impl Spotify {
             include_url,
             client,
             |artist: &Artist, include_url| {
-                let name = &artist.name;
+                let name = unstyle_text(&artist.name);
                 let genres = join_with_and(&artist.genres);
                 let followers = artist.followers.total.to_formatted_string(&Locale::en);
 
@@ -372,13 +373,15 @@ impl Spotify {
             include_url,
             client,
             |playlist: &Playlist, include_url| {
-                let name = &playlist.name;
+                let name = unstyle_text(&playlist.name);
                 let total_tracks = playlist.tracks.total;
-                let owner = playlist
-                    .owner
-                    .display_name
-                    .as_deref()
-                    .unwrap_or(&playlist.owner.id);
+                let owner = unstyle_text(
+                    playlist
+                        .owner
+                        .display_name
+                        .as_deref()
+                        .unwrap_or(&playlist.owner.id),
+                );
                 let followers = playlist.followers.total;
 
                 let mut msg = format!(
@@ -415,7 +418,7 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
 fn join_artists(artists: &[ArtistSimple]) -> String {
     let names: Vec<String> = artists
         .iter()
-        .map(|a| format!("\x0f{}\x0310", a.name))
+        .map(|a| format!("\x0f{}\x0310", unstyle_text(&a.name)))
         .collect();
     join_with_and(&names)
 }
