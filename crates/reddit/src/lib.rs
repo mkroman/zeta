@@ -4,6 +4,10 @@
 //! client-credentials, classifies reddit.com and redd.it URLs into [`Link`]s, and parses
 //! listing responses into [`Submission`], [`Subreddit`] and [`Comment`] models.
 //!
+//! Reddit HTML-escapes plain-text fields unless a request opts into raw JSON; the models decode
+//! them on deserialization, so their text fields hold the visible text. URL fields and
+//! [`Comment::body_html`] are kept as the API sends them.
+//!
 //! ## Features
 //!
 //! - **`default-tls`** *(enabled by default)*: selects the default TLS backend (**`rustls`**).

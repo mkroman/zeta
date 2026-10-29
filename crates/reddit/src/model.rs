@@ -1,6 +1,20 @@
 //! The data model of the Reddit API responses and of the links the URL classifier yields.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+
+/// Deserializes a plain-text field, decoding the HTML entities the API escapes it with.
+///
+/// Reddit escapes `<`, `>`, `&`, and quotes in text fields unless the request opts into raw
+/// JSON, so a title containing `&` arrives as `&amp;`. Decoding here keeps every consumer of
+/// the model from having to unescape the fields it displays.
+fn deserialize_html_unescaped<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = String::deserialize(deserializer)?;
+
+    Ok(htmlize::unescape(text).into_owned())
+}
 
 /// A link to a Reddit resource.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -90,12 +104,14 @@ pub struct Submission {
     /// The subreddit the submission is in.
     pub subreddit: String,
     /// The title of the submission.
+    #[serde(deserialize_with = "deserialize_html_unescaped")]
     pub title: String,
     /// Number of upvotes.
     pub ups: u32,
     /// Upvote ratio.
     pub upvote_ratio: f32,
     /// The main selftext.
+    #[serde(deserialize_with = "deserialize_html_unescaped")]
     pub selftext: String,
     /// The URL of the submission — the outlink, or the Reddit URL for a self post.
     pub url: String,
@@ -181,8 +197,10 @@ pub struct Subreddit {
     /// Display name of the subreddit.
     pub display_name: String,
     /// Title of the subreddit.
+    #[serde(deserialize_with = "deserialize_html_unescaped")]
     pub title: String,
     /// Public description.
+    #[serde(deserialize_with = "deserialize_html_unescaped")]
     pub public_description: String,
     /// Number of subscribers.
     pub subscribers: u32,
@@ -196,6 +214,7 @@ pub struct Comment {
     /// The unique base36 id of the comment.
     pub id: String,
     /// The comment body.
+    #[serde(deserialize_with = "deserialize_html_unescaped")]
     pub body: String,
     /// The comment body as HTML.
     pub body_html: String,
@@ -246,7 +265,53 @@ mod tests {
                 .all(|child| matches!(child, Item::Comment(_)))
         );
 
+        // The fixture's comment bodies contain escaped ampersands and must arrive decoded.
+        assert!(
+            comment_listing
+                .children
+                .iter()
+                .filter_map(|child| match child {
+                    Item::Comment(comment) => Some(&comment.body),
+                    _ => None,
+                })
+                .all(|body| !body.contains("&amp;"))
+        );
+
         Ok(())
+    }
+
+    #[test]
+    fn submission_text_fields_are_decoded_on_deserialization() {
+        let submission: Submission = serde_json::from_value(serde_json::json!({
+            "subreddit": "dkfinance",
+            "title": "Sparindex S&amp;P500 &quot;børsnoteres&quot; i morgen",
+            "ups": 1,
+            "upvote_ratio": 1.0,
+            "selftext": "A &lt;b&gt; tag &amp; more",
+            "url": "https://example.com/?a=1&amp;b=2",
+        }))
+        .expect("could not parse submission");
+
+        assert_eq!(
+            submission.title,
+            "Sparindex S&P500 \"børsnoteres\" i morgen"
+        );
+        assert_eq!(submission.selftext, "A <b> tag & more");
+    }
+
+    #[test]
+    fn subreddit_text_fields_are_decoded_on_deserialization() {
+        let subreddit: Subreddit = serde_json::from_value(serde_json::json!({
+            "display_name": "denmark",
+            "title": "r/Denmark &amp; friends",
+            "public_description": "News &amp; discussion",
+            "subscribers": 1,
+            "url": "/r/denmark/",
+        }))
+        .expect("could not parse subreddit");
+
+        assert_eq!(subreddit.title, "r/Denmark & friends");
+        assert_eq!(subreddit.public_description, "News & discussion");
     }
 
     /// A minimal submission with hosted video, as returned by the API.

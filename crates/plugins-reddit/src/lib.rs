@@ -14,6 +14,7 @@ use tracing::error;
 
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
+use zeta_utils::irc::sanitize_external;
 use zeta_utils::text::Truncatable;
 
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
@@ -227,25 +228,26 @@ impl Reddit {
     }
 }
 
-/// Formats a submission's title and subreddit as an IRC notice.
-///
-/// Reddit's API HTML-escapes plain-text fields unless the request opts into raw JSON, so the
-/// title still contains entities such as `&amp;` when it reaches the plugin.
+/// Formats a submission's title and subreddit as an IRC notice, sanitized for a single IRC line.
 fn format_submission(submission: &Submission) -> String {
-    let title = htmlize::unescape(&submission.title);
-
-    notice(format!("{title} : {}", submission.subreddit))
+    notice(format!(
+        "{} : {}",
+        sanitize_external(&submission.title),
+        sanitize_external(&submission.subreddit)
+    ))
 }
 
-/// Formats a subreddit's title and public description as an IRC reply.
+/// Formats a subreddit's title and public description as an IRC reply, sanitized for a single
+/// IRC line.
 ///
-/// Like submission titles, both fields arrive HTML-entity encoded from the API.
+/// The description is sanitized before it is truncated, so the character budget counts what is
+/// actually sent.
 fn format_subreddit(subreddit: &Subreddit) -> String {
-    let title = htmlize::unescape(&subreddit.title);
-    let description = htmlize::unescape(&subreddit.public_description);
+    let title = sanitize_external(&subreddit.title);
+    let description = sanitize_external(&subreddit.public_description);
     let description = description.truncate_with_suffix(250, "…");
 
-    reply(title.as_ref(), description)
+    reply(&title, description)
 }
 
 #[cfg(test)]
@@ -280,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn unescapes_submission_titles() {
+    fn formats_submission_as_a_notice() {
         let submission = submission("Sparindex S&amp;P500 børsnoteres i morgen", "dkfinance");
 
         assert_eq!(
@@ -290,12 +292,27 @@ mod tests {
     }
 
     #[test]
-    fn unescapes_subreddit_titles_and_descriptions() {
+    fn formats_subreddit_as_a_reply() {
         let subreddit = subreddit("r/Denmark &amp; friends", "News &amp; discussion");
 
         assert_eq!(
             strip_formatting(&format_subreddit(&subreddit)),
             "> r/Denmark & friends: News & discussion"
+        );
+    }
+
+    #[test]
+    fn sanitizes_control_characters_in_replies() {
+        let submission = submission("Fake\x0310\nTitle", "dkfinance");
+        let subreddit = subreddit("r/Denmark", "News&#10;and\x02 discussion");
+
+        assert_eq!(
+            strip_formatting(&format_submission(&submission)),
+            "> Fake Title : dkfinance"
+        );
+        assert_eq!(
+            strip_formatting(&format_subreddit(&subreddit)),
+            "> r/Denmark: News and discussion"
         );
     }
 
