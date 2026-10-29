@@ -37,7 +37,7 @@ mod format;
 mod matching;
 
 use format::format_quote;
-use matching::find_by_name;
+use matching::{NamedCoin, find_by_name};
 
 /// Settings for the coinmarketcap plugin, from its `[plugins.coinmarketcap]` configuration
 /// section.
@@ -137,6 +137,12 @@ struct CoinOpts {
 struct CoinCache {
     /// The cached coins, keyed by ticker symbol.
     by_symbol: HashMap<String, Coin>,
+    /// Every cached coin beside its lowercased name, for fuzzy name matching.
+    ///
+    /// The names are lowercased once per cache build rather than per candidate per query, and
+    /// the coins are duplicated from `by_symbol` so the matcher can tie-break on the original
+    /// name and symbol without a hash lookup per comparison.
+    by_name: Vec<NamedCoin>,
 }
 
 impl From<Vec<Coin>> for CoinCache {
@@ -149,7 +155,20 @@ impl From<Vec<Coin>> for CoinCache {
             by_symbol.entry(coin.symbol.clone()).or_insert(coin);
         }
 
-        Self { by_symbol }
+        let mut by_name: Vec<NamedCoin> = by_symbol
+            .values()
+            .map(|coin| (coin.name.to_lowercase(), coin.clone()))
+            .collect();
+
+        // HashMap iteration order is unspecified; sorting keeps the matcher's input, and the
+        // tests derived from it, reproducible.
+        by_name.sort_unstable_by(|(a_name, a_coin), (b_name, b_coin)| {
+            a_name
+                .cmp(b_name)
+                .then_with(|| a_coin.symbol.cmp(&b_coin.symbol))
+        });
+
+        Self { by_symbol, by_name }
     }
 }
 
@@ -284,7 +303,7 @@ impl CoinMarketCap {
         // resolve the query as a symbol (e.g. when the cache has not been populated yet, or the
         // coin is outside the cached top 1000).
         let query = match self.resolve_coin(&opts.coin) {
-            Some(coin) => CoinQuery::Id(coin.id),
+            Some(id) => CoinQuery::Id(id),
             None => CoinQuery::Symbol(opts.coin.to_ascii_uppercase()),
         };
 
@@ -376,16 +395,23 @@ impl CoinMarketCap {
         Ok(())
     }
 
-    /// Resolves a user query to a coin, by exact symbol match first and by fuzzy name match
+    /// Resolves a user query to a coin id, by exact symbol match first and by fuzzy name match
     /// second.
-    fn resolve_coin(&self, query: &str) -> Option<Coin> {
+    fn resolve_coin(&self, query: &str) -> Option<u64> {
         self.coins.read(|cache| {
-            let coins = cache.map(|cache| &cache.by_symbol)?;
+            let cache = cache?;
 
-            coins
-                .get(&query.to_ascii_uppercase())
-                .cloned()
-                .or_else(|| find_by_name(coins, query, self.max_name_typos))
+            // Symbols are uppercase, so the uppercased lookup answers in the common case; the
+            // exact-case lookup before it is free and finds any symbol the API does not spell
+            // all-uppercase.
+            cache
+                .by_symbol
+                .get(query)
+                .or_else(|| cache.by_symbol.get(&query.to_ascii_uppercase()))
+                .map(|coin| coin.id)
+                .or_else(|| {
+                    find_by_name(&cache.by_name, query, self.max_name_typos).map(|coin| coin.id)
+                })
         })
     }
 
@@ -458,7 +484,10 @@ fn parse_currency(
     default_currency: &str,
     is_valid: impl Fn(&str) -> bool,
 ) -> Result<String, Error> {
-    let currency = strip_control_chars(currency.unwrap_or(default_currency)).to_ascii_uppercase();
+    // The stripped result is uppercased in place: the currency is ASCII, and copying it into
+    // a second string would only give `to_ascii_uppercase` something to allocate.
+    let mut currency = strip_control_chars(currency.unwrap_or(default_currency));
+    currency.make_ascii_uppercase();
 
     if is_valid(&currency) {
         Ok(currency)
@@ -589,27 +618,20 @@ mod tests {
     fn resolves_coins_by_symbol_and_name() {
         let plugin = test_plugin();
 
-        let coin = plugin.resolve_coin("btc").expect("symbol lookup");
-        assert_eq!(coin.name, "Bitcoin");
-        assert_eq!(coin.id, 1);
+        assert_eq!(plugin.resolve_coin("btc"), Some(1));
+        assert_eq!(plugin.resolve_coin("BTC"), Some(1));
 
         // `bitcoin` matches `Bitcoin` rather than the longer `Bitcoin Cash`.
-        let coin = plugin.resolve_coin("bitcoin").expect("name lookup");
-        assert_eq!(coin.name, "Bitcoin");
+        assert_eq!(plugin.resolve_coin("bitcoin"), Some(1));
 
         // Misspelled names still resolve, including with substituted characters.
-        let coin = plugin.resolve_coin("bitcon").expect("fuzzy lookup");
-        assert_eq!(coin.name, "Bitcoin");
+        assert_eq!(plugin.resolve_coin("bitcon"), Some(1));
+        assert_eq!(plugin.resolve_coin("bitkoin"), Some(1));
+        assert_eq!(plugin.resolve_coin("doge"), Some(74));
 
-        let coin = plugin.resolve_coin("bitkoin").expect("typo lookup");
-        assert_eq!(coin.name, "Bitcoin");
-
-        let coin = plugin.resolve_coin("doge").expect("fuzzy lookup");
-        assert_eq!(coin.name, "Dogecoin");
-
-        assert!(plugin.resolve_coin("").is_none());
-        assert!(plugin.resolve_coin("   ").is_none());
-        assert!(plugin.resolve_coin("zzzz").is_none());
+        assert_eq!(plugin.resolve_coin(""), None);
+        assert_eq!(plugin.resolve_coin("   "), None);
+        assert_eq!(plugin.resolve_coin("zzzz"), None);
     }
 
     #[test]
