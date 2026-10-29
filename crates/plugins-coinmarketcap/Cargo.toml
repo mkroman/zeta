@@ -25,7 +25,7 @@ strsim = "0.11"
 tokio.workspace = true
 tracing.workspace = true
 zeta-cache = { path = "../zeta-cache" }
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["http"] }
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]

@@ -1,11 +1,12 @@
 //! Plugin-facing configuration.
 //!
 //! The host keeps the full configuration; plugins only see the [`HostConfig`] subset carried on
-//! their [`Context`](crate::Context). [`HttpConfig`] lives in `zeta-http`, which owns the shared
-//! client builders that consume it.
+//! their [`Context`](crate::Context). The HTTP configuration lives in `zeta-http`, which owns the
+//! shared client builders that consume it.
 
 use figment::value::Value;
 use serde::de::DeserializeOwned;
+#[cfg(feature = "http")]
 use zeta_http::HttpConfig;
 
 /// The subset of the host configuration plugins can see through their context.
@@ -15,7 +16,9 @@ use zeta_http::HttpConfig;
 /// connection, the media mirror) never reach plugin code.
 #[derive(Clone, Debug, Default)]
 pub struct HostConfig {
-    /// HTTP client configuration, for plugins that build their own clients.
+    /// HTTP configuration for the shared client
+    /// ([`Context::http`](crate::Context::http)) and for plugins that build their own clients.
+    #[cfg(feature = "http")]
     pub http: HttpConfig,
     /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
     /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.

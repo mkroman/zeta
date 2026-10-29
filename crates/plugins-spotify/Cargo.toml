@@ -25,7 +25,7 @@ serde.workspace = true
 tracing.workspace = true
 url.workspace = true
 zeta-http = { path = "../zeta-http", default-features = false, features = ["http", "oauth"] }
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["http"] }
 zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils" }
 
