@@ -28,17 +28,11 @@
 //! `prefix + upper-case hex(cp) + suffix`, with the hex padded to at least four digits so a
 //! future range below U+1000 formats the way the trainer's verifier writes it.
 
-use bytes::Buf;
-use zeta_unicode_format::{
-    DIRECTORY_AT, DIRECTORY_ENTRY_LEN, NAME_BLOCK_SHIFT_AT, NAME_LAYOUT_AT, SECTION_COUNT_AT,
-    UNICODE_END, read_varint, write_pattern_name,
-};
+use zeta_unicode_format::{Header, UNICODE_END, read_varint, write_pattern_name};
 
-use super::names::{self, NameLayout, Names};
+use super::names::{self, Names};
 
-pub use zeta_unicode_format::{
-    EMOJI, GC, GC_PAGE_SHIFT, GC_PAGE_SHIFT_AT, HEADER_LEN, MAGIC, NAMES, PATTERNS, SECTION_COUNT,
-};
+pub use zeta_unicode_format::{EMOJI, GC, NAMES, PATTERNS};
 
 /// Returns the payload of section `id` from a Nomina image.
 ///
@@ -47,20 +41,7 @@ pub use zeta_unicode_format::{
 /// section count, an unknown id or an out-of-bounds range.
 #[must_use]
 pub fn section(table: &[u8], id: usize) -> Option<&[u8]> {
-    if table.len() < HEADER_LEN || table.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
-        return None;
-    }
-    if usize::from(*table.get(SECTION_COUNT_AT)?) != SECTION_COUNT {
-        return None;
-    }
-    if id >= SECTION_COUNT {
-        return None;
-    }
-    let at = DIRECTORY_AT.checked_add(id.checked_mul(DIRECTORY_ENTRY_LEN)?)?;
-    let mut entry = table.get(at..)?;
-    let offset = usize::try_from(entry.try_get_u32_le().ok()?).ok()?;
-    let length = usize::try_from(entry.try_get_u32_le().ok()?).ok()?;
-    table.get(offset..offset.checked_add(length)?)
+    Header::parse(table)?.section(table, id)
 }
 
 /// A parsed Nomina image.
@@ -82,27 +63,13 @@ impl<'a> Nomina<'a> {
     /// The image must outlive the returned [`Nomina`] because the decoder reads it in place.
     #[must_use]
     pub fn new(table: &'a [u8]) -> Option<Self> {
-        if table.len() < HEADER_LEN || table.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
-            return None;
-        }
-        let section_count = *table.get(SECTION_COUNT_AT)?;
-        if usize::from(section_count) != SECTION_COUNT {
-            return None;
-        }
-        let block_shift = *table.get(NAME_BLOCK_SHIFT_AT)?;
-        let page_shift = *table.get(GC_PAGE_SHIFT_AT)?;
-        if page_shift != GC_PAGE_SHIFT {
-            return None;
-        }
-        let layout = NameLayout::from_id(*table.get(NAME_LAYOUT_AT)?)?;
-
-        let mut sections = [None; SECTION_COUNT];
-        for (id, slot) in sections.iter_mut().enumerate() {
-            *slot = Some(section(table, id)?);
-        }
-
-        let names = Names::new(sections[NAMES]?, block_shift, layout)?;
-        let patterns = Patterns::new(sections[PATTERNS]?)?;
+        let header = Header::parse(table)?;
+        let names = Names::new(
+            header.section(table, NAMES)?,
+            header.block_shift,
+            header.layout,
+        )?;
+        let patterns = Patterns::new(header.section(table, PATTERNS)?)?;
         Some(Self { names, patterns })
     }
 
@@ -229,7 +196,11 @@ fn read_dictionary(section: &[u8], at: usize) -> Option<(Vec<&str>, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use zeta_unicode_format::{NAME_PAGE_COUNT, NAME_PAGE_SHIFT, VERSION_AT, write_varint};
+    use zeta_unicode_format::{
+        DIRECTORY_AT, DIRECTORY_ENTRY_LEN, GC_PAGE_SHIFT, GC_PAGE_SHIFT_AT, HEADER_LEN, MAGIC,
+        NAME_BLOCK_SHIFT_AT, NAME_LAYOUT_AT, NAME_PAGE_COUNT, NAME_PAGE_SHIFT, SECTION_COUNT,
+        SECTION_COUNT_AT, VERSION_AT, write_varint,
+    };
 
     use super::*;
 

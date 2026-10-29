@@ -13,12 +13,8 @@
 
 use std::fmt::Write as _;
 
-use bytes::Buf;
 use thiserror::Error;
-use zeta_unicode_format::{
-    DIRECTORY_AT, DIRECTORY_ENTRY_LEN, GC_PAGE_SHIFT_AT, NAME_BLOCK_SHIFT_AT, NAME_LAYOUT_AT,
-    SECTION_COUNT_AT, VERSION_AT,
-};
+use zeta_unicode_format::Header;
 
 use crate::nomina::names::{NameLayout, NameStats};
 use crate::nomina::{emoji, gc, image, names, patterns};
@@ -112,32 +108,14 @@ impl ImageLayout {
     /// Returns [`Error::Image`] when the magic, section count, shifts, alignment, bounds or
     /// ordering are invalid, or when the last section does not end at the end of the image.
     pub fn parse(image: &[u8]) -> Result<Self, Error> {
-        if image.len() < image::HEADER_LEN {
-            return Err(bad("the header is truncated"));
-        }
-        if &image[..image::MAGIC.len()] != image::MAGIC {
-            return Err(bad("the magic is not NOM1"));
-        }
-        if usize::from(image[SECTION_COUNT_AT]) != image::SECTION_COUNT {
-            return Err(bad("the section count is not four"));
-        }
-        let name_layout = NameLayout::from_id(image[NAME_LAYOUT_AT])
-            .ok_or_else(|| bad("the name layout byte is unknown"))?;
-        let name_block_shift = image[NAME_BLOCK_SHIFT_AT];
-        if !(names::MIN_BLOCK_SHIFT..=names::MAX_BLOCK_SHIFT).contains(&name_block_shift) {
-            return Err(bad("the name block shift is outside the supported range"));
-        }
-        let gc_page_shift = image[GC_PAGE_SHIFT_AT];
-        if gc_page_shift != image::GC_PAGE_SHIFT {
-            return Err(bad("the general-category page shift is not eleven"));
-        }
-
+        let header = Header::parse(image)
+            .ok_or_else(|| bad("the header, shifts, layout or section directory is invalid"))?;
         Ok(Self {
-            version: parse_version(image)?,
-            name_block_shift,
-            name_layout,
-            gc_page_shift,
-            sections: parse_sections(image)?,
+            version: header.version,
+            name_block_shift: header.block_shift,
+            name_layout: header.layout,
+            gc_page_shift: header.gc_page_shift,
+            sections: parse_sections(image, &header)?,
             total_bytes: image.len(),
         })
     }
@@ -148,40 +126,19 @@ const fn bad(reason: &'static str) -> Error {
     Error::Image { reason }
 }
 
-/// Reads the three `u16` version fields from the image header.
-fn parse_version(image: &[u8]) -> Result<(u8, u8, u8), Error> {
-    let bytes = image
-        .get(VERSION_AT..SECTION_COUNT_AT)
-        .ok_or_else(|| bad("the version is truncated"))?;
-    let field = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
-    Ok((
-        u8::try_from(field(0)).map_err(|_| bad("the major version does not fit in a byte"))?,
-        u8::try_from(field(2)).map_err(|_| bad("the minor version does not fit in a byte"))?,
-        u8::try_from(field(4)).map_err(|_| bad("the patch version does not fit in a byte"))?,
-    ))
-}
-
-/// Reads and validates the four section directory entries.
-fn parse_sections(image: &[u8]) -> Result<Vec<SectionRecord>, Error> {
+/// Validates the section directory beyond the ranges [`Header::parse`] already checked.
+///
+/// Training images are packed by [`crate::nomina::image::pack_with_layout`], so payloads are
+/// eight-byte aligned, in id order, non-overlapping and exhaust the image. A decoder tolerates
+/// gaps and padding, but the trainer's own output must be canonical.
+fn parse_sections(image: &[u8], header: &Header) -> Result<Vec<SectionRecord>, Error> {
     let mut sections = Vec::with_capacity(image::SECTION_COUNT);
     let mut previous_end = image::HEADER_LEN;
     for id in 0..image::SECTION_COUNT {
-        let at = DIRECTORY_AT + id * DIRECTORY_ENTRY_LEN;
-        let mut entry = image
-            .get(at..at + DIRECTORY_ENTRY_LEN)
-            .ok_or_else(|| bad("a section directory entry is truncated"))?;
-        let offset = usize::try_from(
-            entry
-                .try_get_u32_le()
-                .map_err(|_| bad("a section offset is truncated"))?,
-        )
-        .map_err(|_| bad("a section offset does not fit in usize"))?;
-        let size = usize::try_from(
-            entry
-                .try_get_u32_le()
-                .map_err(|_| bad("a section length is truncated"))?,
-        )
-        .map_err(|_| bad("a section length does not fit in usize"))?;
+        let &(offset, size) = header
+            .sections
+            .get(id)
+            .ok_or_else(|| bad("a section directory entry is missing"))?;
         if !offset.is_multiple_of(8) {
             return Err(bad("a section offset is not eight-byte aligned"));
         }
