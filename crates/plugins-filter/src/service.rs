@@ -106,6 +106,9 @@ impl FilterService {
     /// Returns a snapshot of the filters matching `criteria`, in id order.
     #[must_use]
     pub fn select(&self, criteria: &Criteria) -> Vec<Filter> {
+        // Compile once for the whole listing, not once per filter.
+        let criteria = criteria.compile();
+
         self.list()
             .into_iter()
             .filter(|filter| criteria.matches(filter))

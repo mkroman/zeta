@@ -7,12 +7,12 @@
 //! filter is inserted, not on every check.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tracing::trace;
 use url::Url;
-use wildmatch::WildMatch;
 
-use super::model::Filter;
+use super::model::{Case, Filter, Pattern};
 use zeta_plugin::Sender;
 use zeta_url::RedactedUrl;
 
@@ -26,59 +26,52 @@ fn non_blank(pattern: Option<&str>) -> Option<&str> {
     pattern.map(str::trim).filter(|pattern| !pattern.is_empty())
 }
 
-/// Compiles a case-insensitive wildcard pattern, returning `None` for blank patterns.
-fn compile_insensitive(pattern: Option<&str>) -> Option<WildMatch> {
-    non_blank(pattern).map(WildMatch::new_case_insensitive)
-}
-
-/// Compiles a case-sensitive wildcard pattern for URL paths, returning `None` for blank
-/// patterns.
-fn compile_sensitive(pattern: Option<&str>) -> Option<WildMatch> {
-    non_blank(pattern).map(WildMatch::new)
-}
-
 /// The compiled host pattern of a filter.
 #[derive(Debug, Clone)]
 enum HostMatcher {
     /// An exact host, matched for equality.
     Exact(String),
     /// A wildcard host pattern.
-    Wild(WildMatch),
+    Wild(Pattern),
 }
 
 /// A filter with its wildcard patterns precompiled for matching.
-#[derive(Debug, Clone)]
+///
+/// Shared behind an [`Arc`] so cloning the index on add/delete does not copy every filter and
+/// matcher.
+#[derive(Debug)]
 struct Entry {
     /// The raw filter.
-    filter: Filter,
+    filter: Arc<Filter>,
     /// The compiled host pattern, if any.
     host: Option<HostMatcher>,
-    /// The compiled URL path pattern, if any.
-    path: Option<WildMatch>,
-    /// The compiled sender nickname pattern, if any.
-    nickname: Option<WildMatch>,
-    /// The compiled sender username pattern, if any.
-    username: Option<WildMatch>,
-    /// The compiled sender hostname pattern, if any.
-    hostname: Option<WildMatch>,
+    /// The compiled URL path pattern.
+    path: Pattern,
+    /// The compiled sender nickname pattern.
+    nickname: Pattern,
+    /// The compiled sender username pattern.
+    username: Pattern,
+    /// The compiled sender hostname pattern.
+    hostname: Pattern,
 }
 
 impl Entry {
     /// Compiles `filter` into an entry.
     fn new(filter: Filter) -> Self {
+        let filter = Arc::new(filter);
         let host = non_blank(filter.host.as_deref()).map(|host| {
             if is_wildcard(host) {
-                HostMatcher::Wild(WildMatch::new_case_insensitive(host))
+                HostMatcher::Wild(Pattern::compile(Some(host), Case::Insensitive))
             } else {
                 HostMatcher::Exact(host.to_lowercase())
             }
         });
 
         Self {
-            path: compile_sensitive(filter.path.as_deref()),
-            nickname: compile_insensitive(filter.nickname.as_deref()),
-            username: compile_insensitive(filter.username.as_deref()),
-            hostname: compile_insensitive(filter.hostname.as_deref()),
+            path: Pattern::compile(filter.path.as_deref(), Case::Sensitive),
+            nickname: Pattern::compile(filter.nickname.as_deref(), Case::Insensitive),
+            username: Pattern::compile(filter.username.as_deref(), Case::Insensitive),
+            hostname: Pattern::compile(filter.hostname.as_deref(), Case::Insensitive),
             host,
             filter,
         }
@@ -90,25 +83,22 @@ impl Entry {
         match &self.host {
             None => true,
             Some(HostMatcher::Exact(expected)) => host == Some(expected.as_str()),
-            Some(HostMatcher::Wild(pattern)) => pattern.matches(host.unwrap_or("")),
+            Some(HostMatcher::Wild(pattern)) => pattern.matches(Some(host.unwrap_or(""))),
         }
-    }
-
-    /// Whether a case-insensitive pattern matches `value`, or is unset.
-    fn field_matches(pattern: Option<&WildMatch>, value: &str) -> bool {
-        pattern.is_none_or(|pattern| pattern.matches(value))
     }
 
     /// Whether the entry's sender criteria match `sender`, or are all unset.
     fn sender_matches(&self, sender: Option<Sender<'_>>) -> bool {
         let Some(sender) = sender else {
             // A set sender criterion needs a sender to match against.
-            return self.nickname.is_none() && self.username.is_none() && self.hostname.is_none();
+            return self.nickname.is_unset()
+                && self.username.is_unset()
+                && self.hostname.is_unset();
         };
 
-        Self::field_matches(self.nickname.as_ref(), sender.nick)
-            && Self::field_matches(self.username.as_ref(), sender.username)
-            && Self::field_matches(self.hostname.as_ref(), sender.hostname)
+        self.nickname.matches(Some(sender.nick))
+            && self.username.matches(Some(sender.username))
+            && self.hostname.matches(Some(sender.hostname))
     }
 
     /// Whether the entry matches `host`, `sender` and `url`. The host check is repeated for
@@ -118,9 +108,7 @@ impl Entry {
             return false;
         }
 
-        if let Some(path) = &self.path
-            && !path.matches(url.path())
-        {
+        if !self.path.matches(Some(url.path())) {
             return false;
         }
 
@@ -132,11 +120,11 @@ impl Entry {
     /// requirement keeps a criteria-less filter — which the command cannot create — from
     /// ignoring everyone.
     fn ignores(&self, sender: Option<Sender<'_>>) -> bool {
-        if self.host.is_some() || self.path.is_some() {
+        if self.host.is_some() || !self.path.is_unset() {
             return false;
         }
 
-        if self.nickname.is_none() && self.username.is_none() && self.hostname.is_none() {
+        if self.nickname.is_unset() && self.username.is_unset() && self.hostname.is_unset() {
             return false;
         }
 
@@ -148,16 +136,16 @@ impl Entry {
 #[derive(Debug, Default, Clone)]
 struct HostIndex {
     /// Filters with an exact host pattern, keyed by the lowercased host.
-    exact: HashMap<String, Vec<Entry>>,
+    exact: HashMap<String, Vec<Arc<Entry>>>,
     /// Filters with a wildcard host pattern.
-    wildcard: Vec<Entry>,
+    wildcard: Vec<Arc<Entry>>,
     /// Filters without a host pattern.
-    any_host: Vec<Entry>,
+    any_host: Vec<Arc<Entry>>,
 }
 
 impl HostIndex {
     /// Inserts `entry` into the bucket its host pattern routes to.
-    fn insert(&mut self, entry: Entry) {
+    fn insert(&mut self, entry: Arc<Entry>) {
         match &entry.host {
             Some(HostMatcher::Exact(host)) => {
                 self.exact.entry(host.clone()).or_default().push(entry);
@@ -192,7 +180,7 @@ impl HostIndex {
             .flatten()
             .chain(&self.wildcard)
             .chain(&self.any_host)
-            .map(|entry| &entry.filter)
+            .map(|entry| entry.filter.as_ref())
     }
 
     /// Whether any entry in the bucket matches `host`, `sender` and `url`.
@@ -229,7 +217,7 @@ impl FilterIndex {
     /// Inserts `filter` into the index.
     pub(super) fn insert(&mut self, filter: Filter) {
         let channel = filter.channel.as_deref().map(str::to_lowercase);
-        let entry = Entry::new(filter);
+        let entry = Arc::new(Entry::new(filter));
 
         self.channels.entry(channel).or_default().insert(entry);
     }
