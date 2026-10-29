@@ -7,7 +7,7 @@
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
 //! environment variables); without it, the plugin only posts summaries.
 
-use reddit::{Link, Submission, URL_HOSTS};
+use reddit::{Link, Submission, Subreddit, URL_HOSTS};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tracing::error;
@@ -159,11 +159,7 @@ impl Reddit {
             Link::Subreddit(subreddit) => {
                 match self.client.subreddit_about_info(&subreddit).await {
                     Ok(subreddit) => {
-                        let title = subreddit.title;
-                        let description =
-                            subreddit.public_description.truncate_with_suffix(250, "…");
-
-                        client.send_privmsg(channel, reply(&title, &description))?;
+                        client.send_privmsg(channel, format_subreddit(&subreddit))?;
                     }
                     Err(err) => {
                         client.send_privmsg(
@@ -210,11 +206,9 @@ impl Reddit {
         channel: &str,
         client: &Client,
     ) -> Result<(), Error> {
-        let title = submission.title.clone();
-        let subreddit = submission.subreddit.clone();
         let id = submission.id.as_deref().unwrap_or(fallback_id).to_string();
 
-        client.send_privmsg(channel, notice(format!("{title} : {subreddit}")))?;
+        client.send_privmsg(channel, notice(format_submission(&submission)))?;
 
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
@@ -233,10 +227,77 @@ impl Reddit {
     }
 }
 
+/// Formats a submission's title and subreddit as an IRC notice.
+///
+/// Reddit's API HTML-escapes plain-text fields unless the request opts into raw JSON, so the
+/// title still contains entities such as `&amp;` when it reaches the plugin.
+fn format_submission(submission: &Submission) -> String {
+    let title = htmlize::unescape(&submission.title);
+
+    notice(format!("{title} : {}", submission.subreddit))
+}
+
+/// Formats a subreddit's title and public description as an IRC reply.
+///
+/// Like submission titles, both fields arrive HTML-entity encoded from the API.
+fn format_subreddit(subreddit: &Subreddit) -> String {
+    let title = htmlize::unescape(&subreddit.title);
+    let description = htmlize::unescape(&subreddit.public_description);
+    let description = description.truncate_with_suffix(250, "…");
+
+    reply(title.as_ref(), description)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
+    use zeta_utils::irc::strip_formatting;
+
+    /// Builds a submission from the API shape used in the tests below.
+    fn submission(title: &str, subreddit: &str) -> Submission {
+        serde_json::from_value(serde_json::json!({
+            "subreddit": subreddit,
+            "title": title,
+            "ups": 1,
+            "upvote_ratio": 1.0,
+            "selftext": "",
+            "url": "https://example.com/",
+        }))
+        .expect("the test submission should deserialize")
+    }
+
+    /// Builds a subreddit from the API shape used in the tests below.
+    fn subreddit(title: &str, public_description: &str) -> Subreddit {
+        serde_json::from_value(serde_json::json!({
+            "display_name": "denmark",
+            "title": title,
+            "public_description": public_description,
+            "subscribers": 1,
+            "url": "/r/denmark/",
+        }))
+        .expect("the test subreddit should deserialize")
+    }
+
+    #[test]
+    fn unescapes_submission_titles() {
+        let submission = submission("Sparindex S&amp;P500 børsnoteres i morgen", "dkfinance");
+
+        assert_eq!(
+            strip_formatting(&format_submission(&submission)),
+            "> Sparindex S&P500 børsnoteres i morgen : dkfinance"
+        );
+    }
+
+    #[test]
+    fn unescapes_subreddit_titles_and_descriptions() {
+        let subreddit = subreddit("r/Denmark &amp; friends", "News &amp; discussion");
+
+        assert_eq!(
+            strip_formatting(&format_subreddit(&subreddit)),
+            "> r/Denmark & friends: News & discussion"
+        );
+    }
 
     settings_tests! {
         Settings,

@@ -13,6 +13,7 @@ native-tls = ["zeta-plugin/native-tls", "reddit/native-tls"]
 native-tls-vendored = ["zeta-plugin/native-tls-vendored", "reddit/native-tls-vendored"]
 
 [dependencies]
+htmlize = { version = "1.1.0", features = ["unescape"] }
 irc.workspace = true
 plugins-shared = { path = "../plugins-shared", features = ["mirror"] }
 reddit = { path = "../reddit" }

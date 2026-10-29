@@ -142,7 +142,7 @@ pub fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResul
                 .items
                 .into_iter()
                 .map(|item| SearchResult {
-                    title: item.title,
+                    title: unescape(&item.title).into_owned(),
                     url: item.url,
                     description: unescape(&item.snippet).into_owned(),
                 })
@@ -389,6 +389,21 @@ mod tests {
         // Snippets arrive HTML-entity encoded and must be decoded.
         assert!(result.description.contains('"'));
         assert!(!result.description.contains("&quot;"));
+    }
+
+    #[test]
+    fn test_search_results_structured_unescapes_title_and_description() {
+        let payload = r#"{"items":[{"title":"Fish &amp; Chips","url":"https://example.com/fish","snippet":"A &quot;classic&quot; dish &amp; more"}]}"#;
+        let messages = vec![KagiMessage {
+            tag: "search_results_json".to_string(),
+            payload: Some(Value::String(payload.to_string())),
+        }];
+
+        let results = parse_search_result_messages(&messages);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Fish & Chips");
+        assert_eq!(results[0].description, "A \"classic\" dish & more");
     }
 
     #[test]
