@@ -106,13 +106,6 @@ impl Tiktok {
         })
     }
 
-    #[handler(loaded)]
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        plugins_shared::mirror::start_downloads(self.mirror.as_ref());
-
-        Ok(())
-    }
-
     #[handler(url)]
     async fn handle_url(
         &self,
