@@ -100,6 +100,10 @@ name = "#zeta.dev"
 # The endpoint URL for S3-compatible services. Falls back to the `S3_ENDPOINT` environment
 # variable when unset.
 # s3_endpoint = "https://..."
+# The maximum time to wait for a connection to the S3 endpoint.
+# s3_connect_timeout = "10s"
+# The maximum time a single S3 request may take, including large uploads.
+# s3_request_timeout = "5m"
 
 # Plugin Configuration.
 #

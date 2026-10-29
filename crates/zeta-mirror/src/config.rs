@@ -57,6 +57,18 @@ pub struct MirrorConfig {
     /// Falls back to the `S3_ENDPOINT` environment variable when unset. Empty values count as
     /// unset, so a blank endpoint does not override the environment or the AWS default.
     pub s3_endpoint: Option<String>,
+    /// The maximum time to wait for a connection to the S3 endpoint.
+    ///
+    /// Bounds the failure of an unreachable endpoint instead of leaving the plugin that mirrors
+    /// the media waiting indefinitely.
+    #[serde(with = "humantime_serde")]
+    pub s3_connect_timeout: Duration,
+    /// The maximum time a single S3 request may take, including large uploads.
+    ///
+    /// Generous by default because it covers uploading a whole video; it exists to bound a
+    /// stalled transfer, not to time out healthy uploads.
+    #[serde(with = "humantime_serde")]
+    pub s3_request_timeout: Duration,
 }
 
 impl Default for MirrorConfig {
@@ -72,6 +84,8 @@ impl Default for MirrorConfig {
             s3_bucket_name: None,
             s3_region: None,
             s3_endpoint: None,
+            s3_connect_timeout: Duration::from_secs(10),
+            s3_request_timeout: Duration::from_mins(5),
         }
     }
 }
