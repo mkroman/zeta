@@ -33,6 +33,14 @@ fn otel_resource_detectors() -> Vec<Box<dyn ResourceDetector>> {
 /// The provider's batch span processor holds spans in memory until it is shut down, so without
 /// this guard the spans emitted while the bot shuts down — exactly the ones worth keeping — are
 /// lost when the process exits. Hold the guard for the lifetime of the process.
+///
+/// The SDK shuts a provider down when its last reference drops, but that never happens here:
+/// every `SdkTracer` holds a provider clone, and the tracer lives in the global subscriber,
+/// which is a static. The explicit shutdown is therefore required.
+///
+/// `shutdown` blocks while the batch processor flushes. The multi-thread runtime this binary
+/// uses runs the exporter on another worker meanwhile; on a current-thread runtime, shut down
+/// from `tokio::task::spawn_blocking` instead to avoid deadlocking with the exporter task.
 #[must_use = "dropping the guard immediately shuts the tracer provider down"]
 pub struct TelemetryGuard {
     /// The provider to shut down, or `None` when OpenTelemetry is disabled.
