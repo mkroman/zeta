@@ -2,17 +2,16 @@
 //!
 //! Plugins that talk to an OAuth2-secured API (Twitch, Spotify, ..) all need the same
 //! machinery: request an access token with the client-credentials grant, cache it, and refresh
-//! it shortly before it expires. `TokenCache` implements that,
-//! parameterized over the plugin-specific token request itself, and
-//! [`Credentials`] pairs it with the application's credentials and
-//! the shared HTTP client.
+//! it shortly before it expires. [`TokenCache`] implements that on top of
+//! [`zeta_cache::TtlCache`], parameterized over the plugin-specific token request itself, and
+//! [`Credentials`] pairs it with the application's credentials and the shared HTTP client.
 
 use std::future::Future;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::Deserialize;
-use tokio::sync::RwLock;
 use tracing::debug;
+use zeta_cache::TtlCache;
 
 /// How long before its actual expiry a cached token is considered stale.
 ///
@@ -21,7 +20,7 @@ const EXPIRY_BUFFER: Duration = Duration::from_mins(1);
 
 /// The response of an OAuth2 token endpoint for the client-credentials grant.
 #[derive(Debug, Deserialize)]
-pub(crate) struct TokenResponse {
+pub struct TokenResponse {
     /// The access token issued by the authorization server.
     pub access_token: String,
     /// The lifetime of the access token, in seconds.
@@ -30,23 +29,22 @@ pub(crate) struct TokenResponse {
 
 /// A single-slot cache of an OAuth2 client-credentials access token.
 ///
-/// Cloning is not supported; share the cache by reference from the owner.
-pub(crate) struct TokenCache {
-    token: RwLock<Option<CachedToken>>,
-}
-
-/// A cached token with its absolute expiry time.
-struct CachedToken {
-    access_token: String,
-    expires_at: Instant,
+/// The token is cached for its `expires_in` lifetime minus the expiry buffer, and concurrent
+/// misses request one token. Cloning is not supported; share the cache by reference from the
+/// owner.
+pub struct TokenCache {
+    /// The cached access token, stale once its lifetime minus the expiry buffer has passed.
+    token: TtlCache<String>,
 }
 
 impl TokenCache {
     /// Creates an empty cache.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
+        // The cache-wide TTL is unused: every token carries its own lifetime, which `get`
+        // supplies through `TtlCache::get_or_refresh_with`.
         Self {
-            token: RwLock::new(None),
+            token: TtlCache::new(Duration::ZERO),
         }
     }
 
@@ -54,46 +52,29 @@ impl TokenCache {
     /// token is missing or within `EXPIRY_BUFFER` of expiring.
     ///
     /// `refresh` should perform the client-credentials grant request and return the token
-    /// endpoint's response. Concurrent misses request one token: the write guard is held across
-    /// the refresh, so the tasks that wait for it pick up the token the first refresh produced
-    /// through the double-check.
+    /// endpoint's response; the token is cached for its `expires_in` lifetime minus the expiry
+    /// buffer. Concurrent misses request one token: the refresh is single-flight, and the tasks
+    /// that wait for it pick up the token the first refresh produced.
     ///
     /// # Errors
     ///
     /// Returns the error produced by `refresh` if it fails to obtain a new token.
-    // The write guard is deliberately held across the refresh — that is what serializes
-    // concurrent misses into a single token request.
-    #[allow(clippy::significant_drop_tightening)]
     pub async fn get<E, F, R>(&self, refresh: R) -> Result<String, E>
     where
-        R: FnOnce() -> F,
-        F: Future<Output = Result<TokenResponse, E>>,
+        R: FnOnce() -> F + Send,
+        F: Future<Output = Result<TokenResponse, E>> + Send,
     {
-        if let Some(token) = self.token.read().await.as_ref()
-            && token.expires_at > Instant::now() + EXPIRY_BUFFER
-        {
-            return Ok(token.access_token.clone());
-        }
+        self.token
+            .get_or_refresh_with(|| async move {
+                let response = refresh().await?;
+                let lifetime = Duration::from_secs(response.expires_in);
 
-        let mut guard = self.token.write().await;
-
-        // Double-check and return the current token if another task refreshed it while this
-        // one waited for the write guard.
-        if let Some(token) = guard.as_ref()
-            && token.expires_at > Instant::now() + EXPIRY_BUFFER
-        {
-            return Ok(token.access_token.clone());
-        }
-
-        let response = refresh().await?;
-        let expires_at = Instant::now() + Duration::from_secs(response.expires_in);
-
-        *guard = Some(CachedToken {
-            access_token: response.access_token.clone(),
-            expires_at,
-        });
-
-        Ok(response.access_token)
+                Ok((
+                    response.access_token,
+                    lifetime.saturating_sub(EXPIRY_BUFFER),
+                ))
+            })
+            .await
     }
 }
 
@@ -171,7 +152,7 @@ impl Credentials {
     /// parsed.
     pub async fn access_token(
         &self,
-        grant: impl FnOnce(&reqwest::Client, &Self) -> reqwest::RequestBuilder,
+        grant: impl FnOnce(&reqwest::Client, &Self) -> reqwest::RequestBuilder + Send,
     ) -> Result<String, crate::ApiError> {
         self.token
             .get(|| async {
@@ -191,13 +172,8 @@ mod tests {
 
     use super::*;
 
-    async fn cached_token(cache: &TokenCache) -> Option<String> {
-        cache
-            .token
-            .read()
-            .await
-            .as_ref()
-            .map(|token| token.access_token.clone())
+    fn cached_token(cache: &TokenCache) -> Option<String> {
+        cache.token.get()
     }
 
     #[tokio::test]
@@ -225,7 +201,35 @@ mod tests {
         assert_eq!(first, "token-0");
         assert_eq!(second, first);
         assert_eq!(requests.load(Ordering::SeqCst), 1);
-        assert_eq!(cached_token(&cache).await.as_deref(), Some("token-0"));
+        assert_eq!(cached_token(&cache).as_deref(), Some("token-0"));
+    }
+
+    #[tokio::test]
+    async fn tokens_that_expire_within_the_buffer_are_not_cached() {
+        let cache = TokenCache::new();
+        let requests = Arc::new(AtomicUsize::new(0));
+
+        // A token whose lifetime is shorter than the expiry buffer is stale as soon as it is
+        // cached, so every read requests a new one.
+        for _ in 0..2 {
+            let requests = Arc::clone(&requests);
+
+            let token = cache
+                .get(|| async move {
+                    requests.fetch_add(1, Ordering::SeqCst);
+
+                    Ok::<_, ()>(TokenResponse {
+                        access_token: "short-lived".to_owned(),
+                        expires_in: 30,
+                    })
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(token, "short-lived");
+        }
+
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -235,7 +239,7 @@ mod tests {
         let refresh = || async { Err("denied") };
 
         assert_eq!(cache.get(refresh).await, Err("denied"));
-        assert_eq!(cached_token(&cache).await, None);
+        assert_eq!(cached_token(&cache), None);
     }
 
     #[tokio::test]
@@ -273,5 +277,42 @@ mod tests {
         }
 
         assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn access_token_requests_one_token_through_the_grant() {
+        use serde_json::json;
+        use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
+
+        let server = MockServer::start().await;
+
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "token",
+                "expires_in": 3600,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let credentials = Credentials::new(
+            reqwest::Client::new(),
+            "https://auth.example/token",
+            "client-id",
+            "client-secret",
+        );
+        let grant = |client: &reqwest::Client, _: &Credentials| {
+            client
+                .post(&uri)
+                .form(&[("grant_type", "client_credentials")])
+        };
+
+        // The second call is served from the cache, so the token endpoint is hit once.
+        let first = credentials.access_token(grant).await.unwrap();
+        let second = credentials.access_token(grant).await.unwrap();
+
+        assert_eq!(first, "token");
+        assert_eq!(second, "token");
     }
 }

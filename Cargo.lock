@@ -6038,6 +6038,7 @@ dependencies = [
  "tracing-subscriber",
  "wreq",
  "wreq-util",
+ "zeta-cache",
  "zeta-test-support",
  "zeta-url",
  "zeta-utils",
