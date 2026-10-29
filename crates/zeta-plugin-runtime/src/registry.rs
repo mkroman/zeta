@@ -118,6 +118,26 @@ impl Registry {
         false
     }
 
+    /// Returns the number of plugins that were successfully initialized.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.plugins.len()
+    }
+
+    /// Returns whether no plugins were successfully initialized.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.plugins.is_empty()
+    }
+
+    /// Returns the names of the plugins that failed to initialize, in registration order.
+    ///
+    /// The errors themselves are logged when they happen; the host uses this to report one
+    /// startup summary instead of leaving the failures scattered across the log.
+    pub fn failed_plugin_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.failed_plugins.iter().map(|(name, _)| *name)
+    }
+
     /// Removes and returns all loaded plugins, leaving the registry empty.
     ///
     /// The caller is expected to move each plugin into its own task.
@@ -146,8 +166,11 @@ mod tests {
             "a name can only be registered once"
         );
 
-        assert_eq!(registry.plugins.len(), 1);
-        assert_eq!(registry.failed_plugins.len(), 1);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(
+            registry.failed_plugin_names().collect::<Vec<_>>(),
+            [RecordingPlugin::NAME]
+        );
     }
 
     #[tokio::test]

@@ -21,6 +21,12 @@ pub enum Error {
     /// Failed to register with the IRC server.
     #[error("Could not send registration details for IRC")]
     IrcRegistration(#[source] IrcError),
+    /// The IRC server closed the connection, or the connection's write path stopped.
+    #[error("IRC connection closed: {reason}")]
+    IrcDisconnected {
+        /// The server's closing message, or a description of the local failure.
+        reason: String,
+    },
     /// Failed to acquire a database connection from the connection pool.
     #[error("Could not acquire a connection from the connection pool")]
     #[cfg(feature = "database")]
@@ -32,4 +38,21 @@ pub enum Error {
     /// General IRC communication error.
     #[error("IRC error")]
     Irc(#[from] IrcError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disconnected_error_reports_the_reason() {
+        let error = Error::IrcDisconnected {
+            reason: "Closing Link: too many connections".to_owned(),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "IRC connection closed: Closing Link: too many connections"
+        );
+    }
 }

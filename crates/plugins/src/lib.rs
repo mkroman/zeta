@@ -17,6 +17,8 @@
 //! and `time` features group the capabilities the plugin crates need. See `Cargo.toml` for the
 //! exact graph.
 
+use std::collections::BTreeSet;
+
 pub mod config;
 
 pub use config::{PluginSection, PluginsConfig};
@@ -144,9 +146,10 @@ pub(crate) const BUNDLED_PLUGIN_NAMES: &[&str] = &[
 /// function only has to iterate the registrations — sorted by name for a deterministic catalog
 /// and log order.
 ///
-/// Configuration sections matching no bundled plugin are warned about as likely typos; a section
-/// for a bundled plugin whose cargo feature is disabled is known, but has no registration.
-/// Plugins that fail to initialize are logged and skipped by the registry.
+/// Configuration sections matching no bundled plugin are warned about as likely typos; enabled
+/// sections for a bundled plugin whose cargo feature is disabled are reported together as
+/// compiled out rather than silently ignored. Plugins that fail to initialize are logged and
+/// skipped by the registry.
 pub fn register_bundled_plugins(
     registry: &mut zeta_plugin_runtime::Registry,
     ctx: &zeta_plugin::Context,
@@ -170,6 +173,32 @@ pub fn register_bundled_plugins(
     let mut registrations: Vec<&'static zeta_plugin::PluginRegistration> =
         zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().collect();
     registrations.sort_unstable_by_key(|registration| registration.name);
+
+    // A bundled plugin whose cargo feature is disabled has no registration, so an enabled
+    // section for it would otherwise be parsed and silently ignored. Report them together once
+    // instead of emitting one line per plugin (a minimal build of the repository config can
+    // omit many).
+    let registered: BTreeSet<&'static str> = registrations
+        .iter()
+        .map(|registration| registration.name)
+        .collect();
+    let compiled_out: Vec<&str> = plugins
+        .sections
+        .iter()
+        .filter(|(name, section)| {
+            section.enabled
+                && BUNDLED_PLUGIN_NAMES.contains(&name.as_str())
+                && !registered.contains(name.as_str())
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+
+    if !compiled_out.is_empty() {
+        tracing::warn!(
+            plugins = ?compiled_out,
+            "configured plugins are not compiled into this build"
+        );
+    }
 
     let mut previous: Option<&'static str> = None;
     for registration in registrations {

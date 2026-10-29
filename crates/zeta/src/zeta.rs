@@ -72,11 +72,14 @@ async fn shutdown_signal() -> ShutdownSignal {
 /// `QUIT` unflushed after the dispatch loop stops. Driving it separately writes sent messages
 /// to the socket as they are queued.
 ///
+/// Returns the task's handle so the caller can supervise the write path and wait for the final
+/// flush after the last client handle is dropped.
+///
 /// # Panics
 ///
 /// Panics if the outgoing future is unavailable — only possible if `stream()` had already been
 /// called on the client.
-fn drive_outgoing(client: &mut Client) {
+fn drive_outgoing(client: &mut Client) -> tokio::task::JoinHandle<()> {
     let outgoing = client
         .outgoing()
         .expect("the outgoing future is only available before the stream is taken");
@@ -90,7 +93,7 @@ fn drive_outgoing(client: &mut Client) {
             }
         }
         .instrument(tracing::info_span!("irc_outgoing")),
-    );
+    )
 }
 
 /// Dispatches incoming IRC messages as events to the plugins that registered interest, until
@@ -98,7 +101,9 @@ fn drive_outgoing(client: &mut Client) {
 ///
 /// # Errors
 ///
-/// Returns any IRC protocol error that ends the stream.
+/// Returns any IRC protocol error that ends the stream, and [`Error::IrcDisconnected`] when the
+/// server sends `ERROR` or closes the stream. A closed connection is reported as an error so the
+/// process exits non-zero rather than looking like a successful run to its supervisor.
 async fn dispatch_messages(
     stream: &mut irc::client::ClientStream,
     runtime: &mut PluginRuntime,
@@ -113,25 +118,26 @@ async fn dispatch_messages(
         // keeps them out of the backend.
         let _dispatch = tracing::info_span!("dispatch").entered();
 
+        // `ERROR` carries the server's reason for closing the connection. It is not a `Raw`
+        // command, so without this check the reason would be dropped entirely.
+        if let irc::proto::Command::ERROR(reason) = &message.command {
+            warn!(reason = %reason, "the IRC server closed the connection");
+
+            return Err(Error::IrcDisconnected {
+                reason: reason.clone(),
+            });
+        }
+
         debug!(payload = %message, "processing irc message");
 
         runtime.dispatch(message);
     }
 
-    Ok(())
-}
+    warn!("the IRC message stream ended");
 
-/// Sends the configured `QUIT` message on shutdown and waits briefly for the outgoing task to
-/// flush it to the server.
-///
-/// `send_quit` only queues the message on an unbounded channel, written to the socket by the
-/// task spawned by [`drive_outgoing`]; the stream has already ended, so nothing is read back.
-async fn flush_quit(client: &Client, quit_message: &str) {
-    if let Err(error) = client.send_quit(quit_message) {
-        warn!(%error, "failed to send the QUIT message");
-    }
-
-    tokio::time::sleep(QUIT_FLUSH_DELAY).await;
+    Err(Error::IrcDisconnected {
+        reason: "the server closed the connection".to_owned(),
+    })
 }
 
 /// Exits the process immediately when a second shutdown signal arrives.
@@ -202,6 +208,18 @@ impl Zeta {
         plugins::register_bundled_plugins(&mut registry, &context, &plugins);
         registry.publish_catalog(&context);
 
+        let failed = registry.failed_plugin_names().collect::<Vec<_>>();
+
+        if failed.is_empty() {
+            info!(plugins.loaded = registry.len(), "plugins registered");
+        } else {
+            warn!(
+                plugins.loaded = registry.len(),
+                plugins.failed = ?failed,
+                "some plugins failed to initialize"
+            );
+        }
+
         Self {
             config,
             registry,
@@ -221,12 +239,14 @@ impl Zeta {
     /// # Shutdown behavior
     ///
     /// The bot shuts down gracefully on `SIGINT` (`Ctrl-C`) and, on unix, `SIGTERM` — e.g. when a
-    /// container orchestrator deletes the pod running the bot. On a signal, a `QUIT` with the
-    /// configured message ([`IrcConfig::quit_message`]) is sent to the server, after which the
-    /// plugin tasks drain their queued messages and run [`Plugin::shutdown`]. The plugin tasks
+    /// container orchestrator deletes the pod running the bot. On a signal, the plugin tasks
+    /// drain their queued messages and run [`Plugin::shutdown`] first, then a `QUIT` with the
+    /// configured message ([`IrcConfig::quit_message`]) is sent to the server. The plugin tasks
     /// share a grace period of `SHUTDOWN_GRACE`; stragglers are aborted. A second signal during
-    /// the grace period exits the process immediately. The same drain runs when the IRC stream
-    /// ends, or an error propagates.
+    /// the grace period exits the process immediately, whether the shutdown was triggered by a
+    /// signal or by the connection ending. The same drain runs when the IRC stream ends, or an
+    /// error propagates; a connection that ends without a shutdown signal is reported as an
+    /// error so the process exits non-zero.
     ///
     /// [`IrcConfig::quit_message`]: crate::config::IrcConfig::quit_message
     /// [`Plugin::shutdown`]: zeta_plugin::Plugin::shutdown
@@ -244,6 +264,7 @@ impl Zeta {
     ///   configuration issues.)
     /// - [`Error::IrcRegistration`] - if user registration fails (e.g. if the nickname is already taken.)
     /// - [`Error::Irc`] - if a protocol or communication error occurred.
+    /// - [`Error::IrcDisconnected`] - if the server closed the connection or sent `ERROR`.
     #[tracing::instrument(name = "run", skip_all)]
     pub async fn run(mut self) -> Result<(), Error> {
         let mut client = Client::from_config((&self.config.irc).into())
@@ -252,7 +273,7 @@ impl Zeta {
 
         client.identify().map_err(Error::IrcRegistration)?;
 
-        drive_outgoing(&mut client);
+        let mut outgoing = drive_outgoing(&mut client);
 
         let mut stream = client.stream()?;
         let client = Arc::new(client);
@@ -266,11 +287,12 @@ impl Zeta {
         );
 
         // Dispatching incoming IRC messages as events to the plugins that registered interest,
-        // until the stream ends or a shutdown signal arrives.
+        // until the stream ends, the write path stops, or a shutdown signal arrives.
         let dispatch = dispatch_messages(&mut stream, &mut runtime);
 
         let mut shutting_down = false;
         let mut dispatch_error = None;
+        let mut outgoing_done = false;
 
         tokio::select! {
             result = dispatch => {
@@ -285,19 +307,54 @@ impl Zeta {
                 // Another signal during the grace period forces an immediate exit.
                 exit_on_second_signal();
             }
+            result = &mut outgoing => {
+                outgoing_done = true;
+
+                match result {
+                    Ok(()) => warn!("the IRC connection write path stopped"),
+                    Err(error) => warn!(%error, "the IRC connection write path stopped"),
+                }
+
+                if dispatch_error.is_none() {
+                    dispatch_error = Some(Error::IrcDisconnected {
+                        reason: "the IRC connection write path stopped".to_owned(),
+                    });
+                }
+            }
+        }
+
+        // The signal branch already armed the forced-exit path; arm it for the branches that
+        // ended the connection without a signal. The signal handlers stay installed after the
+        // first signal, so a second one must not be delivered to nobody.
+        if !shutting_down {
+            exit_on_second_signal();
         }
 
         // Closing the plugin mailboxes makes the tasks drain their queued events and run
         // `Plugin::shutdown`; awaiting the shutdown joins them within the grace period. The
         // dispatch future only borrows the runtime, so ending the `select!` above does not
-        // close the mailboxes on its own.
-        let shutdown = runtime.shutdown(SHUTDOWN_GRACE);
+        // close the mailboxes on its own. Draining before the QUIT lets those final replies
+        // reach the server while the connection is still open.
+        runtime.shutdown(SHUTDOWN_GRACE).await;
 
-        if shutting_down {
-            // The QUIT is written while the plugins drain, so it does not delay their grace.
-            tokio::join!(flush_quit(&client, &self.config.irc.quit_message), shutdown);
-        } else {
-            shutdown.await;
+        if shutting_down && let Err(error) = client.send_quit(&self.config.irc.quit_message) {
+            warn!(%error, "failed to send the QUIT message");
+        }
+
+        // Dropping the stream closes the incoming half and its sender; dropping the last client
+        // handle closes the outgoing channel, so the write task can flush the queued QUIT and
+        // finish.
+        drop(stream);
+        drop(client);
+
+        if shutting_down && !outgoing_done {
+            match tokio::time::timeout(QUIT_FLUSH_DELAY, &mut outgoing).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    warn!(%error, "the IRC connection write path failed while flushing the QUIT message");
+                }
+                Err(_) => warn!("timed out flushing the QUIT message"),
+            }
         }
 
         dispatch_error.map_or_else(|| Ok(()), Err)
