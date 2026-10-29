@@ -292,14 +292,15 @@ impl Delete {
 /// Room for a ` (+N more)` truncation suffix on a listing, covering counts up to five digits.
 const MORE_SUFFIX_RESERVE: usize = " (+99999 more)".len();
 
-/// The confirmation for the added or removed `filters`, describing each one so the sender can
-/// act on the ids without a follow-up `.filter list`.
+/// The complete labeled confirmation for the added or removed `filters`, describing each one so
+/// the sender can act on the ids without a follow-up `.filter list`. Callers send the result
+/// as-is.
 fn changed_response(name: &str, verb: &str, filters: &[Filter]) -> String {
     match filters {
-        [filter] => reply(name, format!("{verb} {}.", describe(filter))),
+        [filter] => labeled_reply(name, format!("{verb} {}.", describe(filter))),
         // More than one filter, so the plural is always right.
         filters => listing(
-            reply(name, format!("{verb} {} filters: ", filters.len())),
+            labeled_reply(name, format!("{verb} {} filters: ", filters.len())),
             filters,
             0,
         ),
@@ -338,7 +339,7 @@ impl FilterPlugin {
         let scope = match opts.validate(channel) {
             Ok(scope) => scope,
             Err(error) => {
-                client.send_privmsg(channel, reply("Filter", &error))?;
+                client.send_privmsg(channel, labeled_reply("Filter", &error))?;
 
                 return Ok(());
             }
@@ -361,7 +362,7 @@ impl FilterPlugin {
                         )
                     };
 
-                    client.send_privmsg(channel, reply("Filter", response))?;
+                    client.send_privmsg(channel, labeled_reply("Filter", response))?;
 
                     return Ok(());
                 }
@@ -381,13 +382,13 @@ impl FilterPlugin {
 
         let response = if filters.is_empty() {
             if self.service.list().is_empty() {
-                reply("Filter", "No filters are configured.")
+                labeled_reply("Filter", "No filters are configured.")
             } else {
-                reply("Filter", "No filters match your criteria.")
+                labeled_reply("Filter", "No filters match your criteria.")
             }
         } else {
             listing(
-                reply(
+                labeled_reply(
                     "Filter",
                     format!(
                         "{} matching your criteria: ",
@@ -410,7 +411,7 @@ impl FilterPlugin {
             if opts.criteria().is_some() {
                 client.send_privmsg(
                     channel,
-                    reply("Filter", "specify either a filter id or criteria, not both"),
+                    labeled_reply("Filter", "specify either a filter id or criteria, not both"),
                 )?;
 
                 return Ok(());
@@ -424,8 +425,10 @@ impl FilterPlugin {
                 .into_iter()
                 .find(|filter| filter.id == id)
             else {
-                client
-                    .send_privmsg(channel, reply("Filter", format!("No filter with id {id}.")))?;
+                client.send_privmsg(
+                    channel,
+                    labeled_reply("Filter", format!("No filter with id {id}.")),
+                )?;
 
                 return Ok(());
             };
@@ -436,7 +439,7 @@ impl FilterPlugin {
                 Err(error) => format!("could not delete the filter: {error}"),
             };
 
-            client.send_privmsg(channel, reply("Filter", &response))?;
+            client.send_privmsg(channel, labeled_reply("Filter", &response))?;
 
             return Ok(());
         }
@@ -444,7 +447,7 @@ impl FilterPlugin {
         let Some(criteria) = opts.criteria() else {
             client.send_privmsg(
                 channel,
-                reply(
+                labeled_reply(
                     "Filter",
                     "specify a filter id, or at least one criterion to match filters by (e.g. \
                      `.filter delete --host example.com`)",
@@ -457,7 +460,10 @@ impl FilterPlugin {
         let filters = self.service.select(&criteria);
 
         if filters.is_empty() {
-            client.send_privmsg(channel, reply("Filter", "No filters match your criteria."))?;
+            client.send_privmsg(
+                channel,
+                labeled_reply("Filter", "No filters match your criteria."),
+            )?;
 
             return Ok(());
         }
@@ -468,7 +474,7 @@ impl FilterPlugin {
             const FORCE_SUFFIX: &str = " - use --force to proceed.";
 
             let mut confirmation = listing(
-                reply(
+                labeled_reply(
                     "Filter",
                     format!(
                         "{} matching the criteria will be deleted: ",
@@ -490,11 +496,14 @@ impl FilterPlugin {
             Ok(removed) if removed == filters.len() as u64 => {
                 changed_response("Filter", "Removed", &filters)
             }
-            Ok(removed) => format!("Removed {removed} of {} matching filters.", filters.len()),
-            Err(error) => format!("could not delete the filters: {error}"),
+            Ok(removed) => labeled_reply(
+                "Filter",
+                format!("Removed {removed} of {} matching filters.", filters.len()),
+            ),
+            Err(error) => labeled_reply("Filter", format!("could not delete the filters: {error}")),
         };
 
-        client.send_privmsg(channel, reply("Filter", &response))?;
+        client.send_privmsg(channel, response)?;
 
         Ok(())
     }
@@ -533,13 +542,13 @@ impl FilterPlugin {
         };
 
         if !self.is_admin(sender) {
-            client.send_privmsg(channel, reply("Filter", UNAUTHORIZED))?;
+            client.send_privmsg(channel, labeled_reply("Filter", UNAUTHORIZED))?;
 
             return Ok(());
         }
 
         let Some(opts) =
-            parse_words_or_usage::<Opts>(client, command, |line| reply("Filter", line))?
+            parse_words_or_usage::<Opts>(client, command, |line| labeled_reply("Filter", line))?
         else {
             return Ok(());
         };
@@ -795,7 +804,7 @@ mod tests {
             ..long.clone()
         };
 
-        let message = listing(reply("Filter", "2 filters: "), &[long, second], 0);
+        let message = listing(labeled_reply("Filter", "2 filters: "), &[long, second], 0);
 
         assert!(message.len() <= MAX_LISTING_LENGTH);
         assert!(message.contains("#1: "), "{message}");

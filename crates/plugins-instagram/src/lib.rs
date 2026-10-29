@@ -46,7 +46,7 @@ use zeta_http::emulated::ResponseError;
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
-use zeta_utils::irc::sanitize_external;
+use zeta_utils::irc::unstyle_text;
 use zeta_utils::settings::resolve_optional_setting;
 use zeta_utils::text::Truncatable;
 
@@ -346,7 +346,7 @@ impl Instagram {
             .as_ref()
             .and_then(|details| format_summary(details, label, self.settings.caption_length))
         {
-            let _ = client.send_privmsg(channel, notice(&summary));
+            let _ = client.send_privmsg(channel, plain_reply(&summary));
         }
 
         plugins_shared::mirror::ensure_mirrored_if_configured(
@@ -584,7 +584,7 @@ fn format_summary(details: &MediaDetails, kind: &str, caption_length: usize) -> 
     if let Some(caption) = details
         .caption
         .as_deref()
-        .map(sanitize_external)
+        .map(unstyle_text)
         .filter(|caption| !caption.is_empty())
     {
         let truncated = caption.truncate_with_suffix(caption_length, "…");
@@ -594,7 +594,7 @@ fn format_summary(details: &MediaDetails, kind: &str, caption_length: usize) -> 
     if let Some(author) = details
         .author
         .as_deref()
-        .map(sanitize_external)
+        .map(unstyle_text)
         .filter(|author| !author.is_empty())
     {
         if buf.is_empty() {

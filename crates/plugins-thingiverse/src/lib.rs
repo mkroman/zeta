@@ -119,11 +119,11 @@ impl Thingiverse {
             debug!(%thing_id, "fetching thingiverse thing");
 
             let message = match self.fetch_thing(thing_id).await {
-                Ok(thing) => reply("Thingiverse", thing.to_string()),
-                Err(Error::NotFound) => reply("Thingiverse", "Thing not found"),
+                Ok(thing) => labeled_reply("Thingiverse", thing.to_string()),
+                Err(Error::NotFound) => labeled_reply("Thingiverse", "Thing not found"),
                 Err(e) => {
                     warn!(error = ?e, "thingiverse api error");
-                    reply("Thingiverse", e)
+                    labeled_reply("Thingiverse", e)
                 }
             };
 

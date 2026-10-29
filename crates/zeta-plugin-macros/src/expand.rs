@@ -1315,7 +1315,7 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
             let Some(opts) = ::zeta_plugin::#parse::<#options>(
                 client,
                 command,
-                |line: &str| ::zeta_plugin::reply(#label, line),
+                |line: &str| ::zeta_plugin::labeled_reply(#label, line),
             )? else {
                 return ::core::result::Result::Ok(());
             };

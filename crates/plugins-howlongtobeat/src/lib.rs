@@ -2,7 +2,8 @@
 //!
 //! The `.hltb <game>` command searches HowLongToBeat and replies with the top match's
 //! completion times in words: Main Story, Main + Extra, and Completionist — each rendered as
-//! `--` when the game has no recorded time. No matches and fetch errors are sent as a notice.
+//! `--` when the game has no recorded time. No matches and fetch errors are sent as a plain
+//! reply.
 //!
 //! The site's unauthenticated API requires a short-lived search token: the plugin bootstraps it
 //! from the init endpoint, caches it in memory, sends it as the `x-auth-token` header, and on a
@@ -225,13 +226,13 @@ impl HowLongToBeat {
         let query = command.args();
 
         let message = if query.trim().is_empty() {
-            notice("Usage: .hltb\x0f <game>")
+            plain_reply("Usage: .hltb\x0f <game>")
         } else {
             match self.search(query).await {
                 Ok(games) => games
                     .first()
-                    .map_or_else(|| notice("No results found"), format_game),
-                Err(err) => notice(err),
+                    .map_or_else(|| plain_reply("No results found"), format_game),
+                Err(err) => plain_reply(err),
             }
         };
 
@@ -323,7 +324,7 @@ fn format_game(game: &Game) -> String {
     let main_extra = format_seconds(game.comp_plus);
     let completionist = format_seconds(game.comp_100);
 
-    reply(
+    labeled_reply(
         "HLTB",
         format!(
             "(\x0f{}\x0310): Main Story: \x0f{}\x0310 | Main + Extra: \x0f{}\x0310 | Completionist: \x0f{}",

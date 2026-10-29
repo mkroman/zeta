@@ -15,14 +15,15 @@ use crate::command::ArgsError;
 use crate::event::CommandEvent;
 
 pub use zeta_utils::irc::{
-    BOLD, COLOR, NOTICE_PREFIX, REPLY_PREFIX, RESET, notice, reply, reply_prefix, sanitize_external,
+    BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
+    plain_reply, unstyle_text,
 };
 
 /// Sends the output of a failed argument parse to `channel`, one message per non-empty line.
 ///
 /// Parse failures produce the command's usage or help output, which spans multiple lines; IRC
 /// messages cannot contain line breaks, so each line is sent as its own `PRIVMSG`, formatted by
-/// `format` (e.g. by wrapping it in [`reply`] with the plugin's name).
+/// `format` (e.g. by wrapping it in [`labeled_reply`] with the plugin's label).
 ///
 /// # Errors
 ///

@@ -150,7 +150,7 @@ impl Ofn {
                     "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"
                 );
 
-                client.send_privmsg(channel, reply("OFN", &output))?;
+                client.send_privmsg(channel, labeled_reply("OFN", &output))?;
             }
         }
 
@@ -190,7 +190,7 @@ enum Subcommand {
 pub struct Stats {}
 
 fn formatted_err(s: &str) -> String {
-    reply("OFN", format!("Error:\x0f {s}"))
+    labeled_reply("OFN", format!("Error:\x0f {s}"))
 }
 
 #[cfg(test)]

@@ -254,7 +254,10 @@ impl Spotify {
     {
         match self.fetch::<T>(path).await {
             Ok(details) => {
-                client.send_privmsg(channel, reply("Spotify", render(&details, include_url)))?;
+                client.send_privmsg(
+                    channel,
+                    labeled_reply("Spotify", render(&details, include_url)),
+                )?;
             }
             Err(error) => handle_error(channel, client, &error)?,
         }
@@ -403,7 +406,7 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
     if let http::ApiError::Status { status, .. } = error
         && *status == reqwest::StatusCode::NOT_FOUND
     {
-        client.send_privmsg(channel, reply("Spotify", "Resource not found"))?;
+        client.send_privmsg(channel, labeled_reply("Spotify", "Resource not found"))?;
     }
 
     Ok(())

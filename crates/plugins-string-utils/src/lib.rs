@@ -5,7 +5,7 @@
 //! reverses it, and `.uni <chars>` lists every character's name — the emoji name where one
 //! exists — and general category, naming each run of characters that forms an emoji sequence
 //! as a whole. An empty argument replies with the command's usage. Results are sent as a
-//! notice, which supplies each reply's `\x0310> ` prefix.
+//! plain reply, which supplies each reply's `\x0310> ` prefix.
 
 use std::fmt::Write;
 use std::sync::Once;
@@ -105,7 +105,7 @@ impl StringUtils {
 
         client.send_privmsg(
             command.channel(),
-            notice((definition.render)(command.args())),
+            plain_reply((definition.render)(command.args())),
         )?;
 
         Ok(())
@@ -124,7 +124,7 @@ impl StringUtils {
             return Ok(());
         };
 
-        client.send_privmsg(channel, notice(usage))?;
+        client.send_privmsg(channel, plain_reply(usage))?;
 
         Ok(())
     }

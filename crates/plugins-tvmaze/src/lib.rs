@@ -244,8 +244,8 @@ impl Tvmaze {
     /// Formats a message for display in IRC with an optional bold subject name.
     fn build_formatted_message(prefix: Option<&str>, message: &str) -> String {
         prefix.map_or_else(
-            || reply("TVmaze", message),
-            |name| reply("TVmaze", format!("(\x0f{name}\x0310): {message}")),
+            || labeled_reply("TVmaze", message),
+            |name| labeled_reply("TVmaze", format!("(\x0f{name}\x0310): {message}")),
         )
     }
 }

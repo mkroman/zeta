@@ -37,7 +37,7 @@ use zeta_cache::TtlCache;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_utils::duration::{format_duration, parse_iso8601_duration};
-use zeta_utils::irc::sanitize_external;
+use zeta_utils::irc::unstyle_text;
 
 pub use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
 
@@ -304,7 +304,7 @@ impl YouTube {
         }
 
         let message = if args.is_empty() {
-            notice("Usage: .yt\x0f <query>")
+            plain_reply("Usage: .yt\x0f <query>")
         } else {
             match self.search(args).await {
                 Ok(results) => {
@@ -315,15 +315,15 @@ impl YouTube {
                     }) {
                         let title = sanitize_html(&result.snippet.title);
 
-                        reply(
+                        labeled_reply(
                             "YouTube",
                             format!("{title} - https://www.youtube.com/watch?v={id}"),
                         )
                     } else {
-                        notice("No results")
+                        plain_reply("No results")
                     }
                 }
-                Err(err) => notice(err),
+                Err(err) => plain_reply(err),
             }
         };
 
@@ -430,7 +430,7 @@ impl YouTube {
                     client.send_privmsg(channel, message)?;
                 }
                 Err(e) => {
-                    client.send_privmsg(channel, notice(e))?;
+                    client.send_privmsg(channel, plain_reply(e))?;
                 }
             }
         }
@@ -519,12 +519,12 @@ async fn fetch_video_categories(
     }
 }
 
-/// Decodes HTML entities in an API text field and sanitizes it for an IRC reply.
+/// Decodes HTML entities in an API text field and unstyles it for an IRC reply.
 ///
 /// YouTube HTML-escapes titles, channel names, and category names in both the search and
 /// videos responses.
 fn sanitize_html(text: &str) -> String {
-    sanitize_external(&htmlize::unescape(text))
+    unstyle_text(&htmlize::unescape(text))
 }
 
 /// Formats the message describing `video`, using the resolved `category` and `view_count`.
@@ -554,14 +554,14 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
             .and_then(|details| details.concurrent_viewers.as_deref())
             .and_then(|viewers| viewers.parse::<u64>().ok())
         {
-            return notice(format!(
+            return plain_reply(format!(
                 "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
                  {channel_name}\x0310 with\x0f {}\x0310 viewers",
                 viewers.to_formatted_string(&Locale::en),
             ));
         }
 
-        return notice(format!(
+        return plain_reply(format!(
             "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
              {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
         ));
@@ -574,7 +574,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         .map_or_else(|| "unknown duration".to_string(), format_duration);
     let article = indefinite_article_only(&duration);
 
-    notice(format!(
+    plain_reply(format!(
         "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
          {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
     ))

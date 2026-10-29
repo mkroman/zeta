@@ -206,7 +206,7 @@ impl OpenWeatherMap {
 
         let location = if args.trim().is_empty() {
             let Some(location) = self.default_location.as_deref() else {
-                client.send_privmsg(channel, notice("Usage: .w\x0f <location>"))?;
+                client.send_privmsg(channel, plain_reply("Usage: .w\x0f <location>"))?;
 
                 return Ok(());
             };
@@ -218,10 +218,10 @@ impl OpenWeatherMap {
 
         let message = match self.fetch_weather(location).await {
             Ok(weather) => format_weather(&weather, self.units),
-            Err(Error::LocationNotFound) => notice("Location not found"),
+            Err(Error::LocationNotFound) => plain_reply("Location not found"),
             Err(e) => {
                 warn!(error = ?e, "openweathermap error");
-                notice(e)
+                plain_reply(e)
             }
         };
 
@@ -324,7 +324,7 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
         extra_info.push(format!("Cloud coverage: \x0f{}%\x0310", clouds.all));
     }
 
-    notice(format!(
+    plain_reply(format!(
         "Right now in \x0f{}\x0310 it's \x0f{:.1} {temp_unit}\x0310 (feels like \x0f{:.1} {temp_unit}\x0310) with \x0f{}\x0310. {}",
         location,
         w.main.temp,

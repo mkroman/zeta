@@ -122,15 +122,15 @@ impl Trustpilot {
         let query = command.args();
 
         let message = if query.trim().is_empty() {
-            notice("Usage: .tp\x0f <domain name>")
+            plain_reply("Usage: .tp\x0f <domain name>")
         } else {
             match self.search(query).await {
                 Ok(business) => format_business(&business, &self.review_domain),
-                Err(Error::NotFound) => notice("No results found"),
+                Err(Error::NotFound) => plain_reply("No results found"),
                 Err(e) => {
                     warn!(error = ?e, "trustpilot error");
                     // The error is already safe for display
-                    notice(e)
+                    plain_reply(e)
                 }
             }
         };
@@ -177,7 +177,7 @@ fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
     );
     let name = &b.display_name;
 
-    reply(
+    labeled_reply(
         "Trustpilot",
         format!(
             "(\x0f{name}\x0310): Score:\x0f {score:.1}\x0310/\x0f5.0\x0310 Reviews:\x0f {reviews}\x0310 - {url}"

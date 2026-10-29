@@ -184,7 +184,7 @@ impl Unwall {
             return Ok(true);
         }
 
-        client.send_privmsg(channel, reply(NAME, UNAUTHORIZED))?;
+        client.send_privmsg(channel, labeled_reply(NAME, UNAUTHORIZED))?;
 
         Ok(false)
     }
@@ -206,7 +206,7 @@ impl Unwall {
                 None => {
                     client.send_privmsg(
                         channel,
-                        reply(
+                        labeled_reply(
                             NAME,
                             format!("{RESET}{input}{COLOR} does not look like a hostname."),
                         ),
@@ -220,7 +220,7 @@ impl Unwall {
         if hosts.is_empty() {
             client.send_privmsg(
                 channel,
-                reply(NAME, "specify at least one hostname to unwall."),
+                labeled_reply(NAME, "specify at least one hostname to unwall."),
             )?;
 
             return Ok(());
@@ -229,7 +229,7 @@ impl Unwall {
         if let Err(error) = self.service.add_sites(&hosts, nickname).await {
             client.send_privmsg(
                 channel,
-                reply(NAME, format!("could not add the sites:{RESET} {error}")),
+                labeled_reply(NAME, format!("could not add the sites:{RESET} {error}")),
             )?;
 
             return Ok(());
@@ -239,7 +239,7 @@ impl Unwall {
 
         client.send_privmsg(
             channel,
-            reply(NAME, format!("Now unwalling {}{COLOR}.", join_and(&hosts))),
+            labeled_reply(NAME, format!("Now unwalling {}{COLOR}.", join_and(&hosts))),
         )?;
 
         Ok(())
@@ -250,7 +250,7 @@ impl Unwall {
         let Some(pattern) = sites::normalize_site(pattern) else {
             client.send_privmsg(
                 channel,
-                reply(
+                labeled_reply(
                     NAME,
                     format!("{RESET}{pattern}{COLOR} does not look like a hostname or wildcard."),
                 ),
@@ -264,7 +264,7 @@ impl Unwall {
             Err(error) => {
                 client.send_privmsg(
                     channel,
-                    reply(NAME, format!("could not remove the sites:{RESET} {error}")),
+                    labeled_reply(NAME, format!("could not remove the sites:{RESET} {error}")),
                 )?;
 
                 return Ok(());
@@ -277,7 +277,7 @@ impl Unwall {
             format!("Removed {}{COLOR} from unwalled sites.", join_and(&removed))
         };
 
-        client.send_privmsg(channel, reply(NAME, response))?;
+        client.send_privmsg(channel, labeled_reply(NAME, response))?;
 
         Ok(())
     }
@@ -287,7 +287,7 @@ impl Unwall {
         let sites = self.service.sites();
 
         let response = if sites.is_empty() {
-            reply(
+            labeled_reply(
                 NAME,
                 format!(
                     "{RESET}No unwalled sites yet{COLOR}: add one with\
@@ -295,7 +295,7 @@ impl Unwall {
                 ),
             )
         } else {
-            let mut message = reply(
+            let mut message = labeled_reply(
                 NAME,
                 format!("{RESET}{}{COLOR} unwalled sites:{RESET} ", sites.len()),
             );
@@ -322,7 +322,7 @@ impl Unwall {
     /// Replies with the overall statistics of the unwalled links.
     async fn stats(&self, client: &Client, channel: &str) -> Result<(), ZetaError> {
         let response = match self.service.statistics().await {
-            Ok(stats) => reply(
+            Ok(stats) => labeled_reply(
                 NAME,
                 format!(
                     "{RESET}{}{COLOR} links unwalled across{RESET} {}{COLOR} sites \
@@ -330,7 +330,7 @@ impl Unwall {
                     stats.urls, stats.hosts, stats.users, stats.urls_today
                 ),
             ),
-            Err(error) => reply(
+            Err(error) => labeled_reply(
                 NAME,
                 format!("could not load the statistics:{RESET} {error}"),
             ),
@@ -346,7 +346,7 @@ impl Unwall {
         let host = host.trim().to_lowercase();
 
         let response = match self.service.host_statistics(&host).await {
-            Ok(Some(stats)) => reply(
+            Ok(Some(stats)) => labeled_reply(
                 NAME,
                 format!(
                     "{RESET}{}{COLOR} links unwalled for{RESET} {host}{COLOR} \
@@ -358,8 +358,8 @@ impl Unwall {
                     stats.latest.map_or_default(|latest| latest.time_ago()),
                 ),
             ),
-            Ok(None) => reply(NAME, format!("No unwalled links for{RESET} {host}{COLOR}.")),
-            Err(error) => reply(
+            Ok(None) => labeled_reply(NAME, format!("No unwalled links for{RESET} {host}{COLOR}.")),
+            Err(error) => labeled_reply(
                 NAME,
                 format!("could not load the statistics:{RESET} {error}"),
             ),
@@ -419,9 +419,11 @@ impl Unwall {
             async move {
                 match service.resolve(&article, fetch).await {
                     Ok(cached) => {
-                        // The link rides on the plain `>` notice prefix, which colors the
+                        // The link rides on the plain reply prefix, which colors the
                         // whole line cyan.
-                        if let Err(error) = irc.send_privmsg(&channel, notice(&cached.unwall_url)) {
+                        if let Err(error) =
+                            irc.send_privmsg(&channel, plain_reply(&cached.unwall_url))
+                        {
                             warn!(%error, "could not send the unwall link");
                         }
                     }
@@ -434,7 +436,7 @@ impl Unwall {
 
                         if let Err(error) = irc.send_privmsg(
                             &channel,
-                            notice(format!("could not unwall the article:{RESET} {error}")),
+                            plain_reply(format!("could not unwall the article:{RESET} {error}")),
                         ) {
                             warn!(%error, "could not send the unwall failure");
                         }
@@ -508,7 +510,8 @@ impl Unwall {
             return Ok(());
         };
 
-        let Some(opts) = parse_words_or_usage::<Opts>(client, command, |line| reply(NAME, line))?
+        let Some(opts) =
+            parse_words_or_usage::<Opts>(client, command, |line| labeled_reply(NAME, line))?
         else {
             return Ok(());
         };

@@ -269,10 +269,10 @@ impl IsItOpen {
                 QueryAction::IsOpen => Self::format_is_open(&place, nick),
                 QueryAction::IsClosed => Self::format_is_closed(&place, nick),
             },
-            Err(Error::NotFound) => notice("place not found"),
+            Err(Error::NotFound) => plain_reply("place not found"),
             Err(e) => {
                 warn!(?e, "isitopen error");
-                notice(e)
+                plain_reply(e)
             }
         };
 

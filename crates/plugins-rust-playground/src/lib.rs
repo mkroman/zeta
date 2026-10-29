@@ -100,11 +100,11 @@ impl RustPlayground {
         let expr = command.args();
 
         let message = if expr.trim().is_empty() {
-            reply("Rust Playground", "Usage: .rs\x0f <expr>")
+            labeled_reply("Rust Playground", "Usage: .rs\x0f <expr>")
         } else {
             match self.evaluate(expr).await {
-                Ok(output) => reply("Rust Playground", &output),
-                Err(e) => reply("Rust Playground", e),
+                Ok(output) => labeled_reply("Rust Playground", &output),
+                Err(e) => labeled_reply("Rust Playground", e),
             }
         };
 

@@ -20,7 +20,7 @@ use zeta_http::RequestError;
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
-use zeta_utils::irc::sanitize_external;
+use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
 use self::oembed::OEmbed;
@@ -177,7 +177,7 @@ impl Tiktok {
         if self.settings.post_summary
             && let Some(summary) = format_summary(&embed, self.settings.title_length)
         {
-            let _ = client.send_privmsg(channel, notice(&summary));
+            let _ = client.send_privmsg(channel, plain_reply(&summary));
         }
 
         plugins_shared::mirror::ensure_mirrored_if_configured(
@@ -219,7 +219,7 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
     let title = embed
         .title
         .as_deref()
-        .map(sanitize_external)
+        .map(unstyle_text)
         .filter(|title| !title.is_empty())
         .map(|title| {
             title
@@ -230,7 +230,7 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
     let author = embed
         .author_name
         .as_deref()
-        .map(sanitize_external)
+        .map(unstyle_text)
         .filter(|author| !author.is_empty());
 
     match (title, author.as_deref()) {
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn summaries_strip_formatting_and_collapse_whitespace() {
         let embed = oembed(Some("\x0310Fake\nTitle\x0f"), Some("author\x02"));
-        let summary = sanitize_external(&format_summary(&embed, 150).unwrap());
+        let summary = unstyle_text(&format_summary(&embed, 150).unwrap());
 
         assert_eq!(summary, "“Fake Title” is a TikTok video by author");
     }

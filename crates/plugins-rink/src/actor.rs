@@ -22,7 +22,7 @@ pub struct Handle(mpsc::UnboundedSender<Request>);
 
 /// The rendered outcome of an evaluation request.
 pub enum EvalOutcome {
-    /// The final IRC reply, including the notice marker.
+    /// The final IRC reply, including the reply marker.
     Answer(String),
     /// The query needs currency data that is not loaded yet.
     NeedsCurrency {
@@ -125,12 +125,12 @@ async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<Request>) {
                 // Rink's replies are not `Send`, so the answer is rendered here, before it is
                 // sent back over the channel.
                 let answer = match rink_core::eval(&mut ctx, &evaluated_line) {
-                    Ok(reply) => EvalOutcome::Answer(notice(render_reply(&reply))),
+                    Ok(reply) => EvalOutcome::Answer(plain_reply(render_reply(&reply))),
                     Err(error @ QueryError::MissingDeps(_)) => EvalOutcome::NeedsCurrency {
-                        error_reply: notice(error_message(&error)),
+                        error_reply: plain_reply(error_message(&error)),
                         retry_line: evaluated_line,
                     },
-                    Err(error) => EvalOutcome::Answer(notice(error_message(&error))),
+                    Err(error) => EvalOutcome::Answer(plain_reply(error_message(&error))),
                 };
 
                 let _ = reply.send(answer);

@@ -102,7 +102,7 @@ impl Display for LookupResult {
             let record_type = lookup.record_type().to_string();
             let data = &lookup.data;
 
-            write!(fmt, "{}", reply_prefix("Dig"))?;
+            write!(fmt, "{}", labeled_reply_prefix("Dig"))?;
             writeln!(
                 fmt,
                 "{name:<25} {ttl:<7} {dns_class:<7} {record_type:<7} {data}"
@@ -138,7 +138,7 @@ impl Dig {
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, reply("Dig", err.to_string()))?;
+                client.send_privmsg(channel, labeled_reply("Dig", err.to_string()))?;
             }
         }
 
