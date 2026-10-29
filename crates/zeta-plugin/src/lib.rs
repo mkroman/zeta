@@ -46,7 +46,7 @@ pub use registration::{LoadedPlugin, PluginRegistration};
 #[cfg(feature = "database")]
 pub use sqlx;
 pub use types::NoSettings;
-pub use zeta_plugin_macros::plugin;
+pub use zeta_plugin_macros::{instrument_database, plugin};
 
 // Re-exported through the crate root so the code the `#[plugin]` macro generates — and plugin
 // crates generally — can reference it as absolute `::zeta_plugin::…` paths without adding
@@ -78,5 +78,5 @@ pub mod prelude {
     pub use crate::types::NoSettings;
     pub use crate::{Context, Error, Plugin, Registered, SharedState};
     pub use ::irc::client::Client;
-    pub use zeta_plugin_macros::plugin;
+    pub use zeta_plugin_macros::{instrument_database, plugin};
 }

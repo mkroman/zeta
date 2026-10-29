@@ -1,44 +1,25 @@
 //! Database access for filters.
 
-use tracing::{instrument, trace};
+use tracing::trace;
 
 use super::{
     error::Error,
     model::{Filter, NewFilter},
 };
-use zeta_plugin::database::{Database, namespace};
+use zeta_plugin::instrument_database;
 
-/// Repository for storing and retrieving filters in the database.
-#[derive(Debug, Clone)]
-pub struct FilterRepository {
-    /// The database connection pool.
-    db: Database,
+zeta_plugin::impl_repository! {
+    /// Repository for storing and retrieving filters in the database.
+    FilterRepository
 }
 
 impl FilterRepository {
-    /// Creates a new repository backed by the given database pool.
-    #[must_use]
-    pub const fn new(db: Database) -> Self {
-        Self { db }
-    }
-
     /// Inserts `filter` into the database, returning the stored instance.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the filter could not be inserted.
-    #[instrument(
-        name = "INSERT filters",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "INSERT",
-            db.collection.name = "filters",
-            db.query.summary = "INSERT filters",
-        )
-    )]
+    #[instrument_database(operation = "INSERT", collection = "filters")]
     pub async fn insert(&self, filter: NewFilter) -> Result<Filter, Error> {
         trace!("inserting filter into database");
 
@@ -66,18 +47,7 @@ impl FilterRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the filters could not be fetched.
-    #[instrument(
-        name = "SELECT filters",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "filters",
-            db.query.summary = "SELECT filters",
-        )
-    )]
+    #[instrument_database(operation = "SELECT", collection = "filters")]
     pub async fn list(&self) -> Result<Vec<Filter>, Error> {
         trace!("loading filters from database");
 
@@ -96,18 +66,7 @@ impl FilterRepository {
     /// # Errors
     ///
     /// Returns [`Error::Delete`] if the filters could not be deleted.
-    #[instrument(
-        name = "DELETE filters",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "DELETE",
-            db.collection.name = "filters",
-            db.query.summary = "DELETE filters",
-        )
-    )]
+    #[instrument_database(operation = "DELETE", collection = "filters")]
     pub async fn delete_all(&self, ids: &[i32]) -> Result<u64, Error> {
         trace!(?ids, "deleting filters from database");
 

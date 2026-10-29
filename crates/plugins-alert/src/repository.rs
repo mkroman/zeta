@@ -1,45 +1,26 @@
 //! Database access for alerts.
 
 use sqlx::types::chrono::{DateTime, Utc};
-use tracing::{instrument, trace};
+use tracing::trace;
 
 use super::{
     error::Error,
     model::{Alert, NewAlert},
 };
-use zeta_plugin::database::{Database, namespace};
+use zeta_plugin::instrument_database;
 
-/// Repository for storing and retrieving alerts in the database.
-#[derive(Debug, Clone)]
-pub struct AlertRepository {
-    /// The database connection pool.
-    db: Database,
+zeta_plugin::impl_repository! {
+    /// Repository for storing and retrieving alerts in the database.
+    AlertRepository
 }
 
 impl AlertRepository {
-    /// Creates a new repository backed by the given database pool.
-    #[must_use]
-    pub const fn new(db: Database) -> Self {
-        Self { db }
-    }
-
     /// Inserts `alert` into the database, returning the stored instance.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the alert could not be inserted.
-    #[instrument(
-        name = "INSERT alerts",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "INSERT",
-            db.collection.name = "alerts",
-            db.query.summary = "INSERT alerts",
-        )
-    )]
+    #[instrument_database(operation = "INSERT", collection = "alerts")]
     pub async fn insert(&self, alert: NewAlert) -> Result<Alert, Error> {
         trace!("inserting alert into database");
 
@@ -66,18 +47,7 @@ impl AlertRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched.
-    #[instrument(
-        name = "SELECT alerts",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "alerts",
-            db.query.summary = "SELECT alerts",
-        )
-    )]
+    #[instrument_database(operation = "SELECT", collection = "alerts")]
     pub async fn list_due_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<Alert>, Error> {
         trace!(?cutoff, "loading alerts from database");
 
@@ -98,18 +68,7 @@ impl AlertRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched.
-    #[instrument(
-        name = "SELECT alerts",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "alerts",
-            db.query.summary = "SELECT alerts",
-        )
-    )]
+    #[instrument_database(operation = "SELECT", collection = "alerts")]
     pub async fn list_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
         trace!(channel, nickname, "loading pending alerts from database");
 
@@ -131,18 +90,7 @@ impl AlertRepository {
     /// # Errors
     ///
     /// Returns [`Error::Delete`] if the alerts could not be deleted.
-    #[instrument(
-        name = "DELETE alerts",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "DELETE",
-            db.collection.name = "alerts",
-            db.query.summary = "DELETE alerts",
-        )
-    )]
+    #[instrument_database(operation = "DELETE", collection = "alerts")]
     pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting alerts from database");
 

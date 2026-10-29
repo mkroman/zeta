@@ -1,45 +1,26 @@
 //! Database access for unwalled URLs, sites, and fetches.
 
 use sqlx::types::chrono::{DateTime, NaiveDate, Utc};
-use tracing::{instrument, trace};
+use tracing::trace;
 
 use super::{
     error::Error,
     model::{CachedUrl, HostStatistics, NewFetch, Site, Statistics},
 };
-use zeta_plugin::database::{Database, namespace};
+use zeta_plugin::instrument_database;
 
-/// Repository for storing and retrieving unwalled URLs, sites, and fetches.
-#[derive(Debug, Clone)]
-pub struct UnwallRepository {
-    /// The database connection pool.
-    db: Database,
+zeta_plugin::impl_repository! {
+    /// Repository for storing and retrieving unwalled URLs, sites, and fetches.
+    UnwallRepository
 }
 
 impl UnwallRepository {
-    /// Creates a new repository backed by the given database pool.
-    #[must_use]
-    pub const fn new(db: Database) -> Self {
-        Self { db }
-    }
-
     /// Returns the cached URL row for `url`, if it has been unwalled before.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the URL could not be fetched.
-    #[instrument(
-        name = "SELECT unwall_urls",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "unwall_urls",
-            db.query.summary = "SELECT unwall_urls",
-        )
-    )]
+    #[instrument_database(operation = "SELECT", collection = "unwall_urls")]
     pub async fn cached_url(&self, url: &str) -> Result<Option<CachedUrl>, Error> {
         trace!("loading the cached unwall URL from database");
 
@@ -60,18 +41,7 @@ impl UnwallRepository {
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the URL could not be inserted.
-    #[instrument(
-        name = "INSERT unwall_urls",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "INSERT",
-            db.collection.name = "unwall_urls",
-            db.query.summary = "INSERT unwall_urls",
-        )
-    )]
+    #[instrument_database(operation = "INSERT", collection = "unwall_urls")]
     pub async fn insert_url(&self, url: &str, host: &str, unwall_url: &str) -> Result<(), Error> {
         trace!(host, "caching the unwalled URL in database");
 
@@ -95,18 +65,7 @@ impl UnwallRepository {
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the fetch could not be inserted.
-    #[instrument(
-        name = "INSERT unwall_fetches",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "INSERT",
-            db.collection.name = "unwall_fetches",
-            db.query.summary = "INSERT unwall_fetches",
-        )
-    )]
+    #[instrument_database(operation = "INSERT", collection = "unwall_fetches")]
     pub async fn record_fetch(&self, fetch: &NewFetch) -> Result<(), Error> {
         trace!(
             host = fetch.host,
@@ -140,18 +99,7 @@ impl UnwallRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the sites could not be fetched.
-    #[instrument(
-        name = "SELECT unwall_sites",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "unwall_sites",
-            db.query.summary = "SELECT unwall_sites",
-        )
-    )]
+    #[instrument_database(operation = "SELECT", collection = "unwall_sites")]
     pub async fn sites(&self) -> Result<Vec<Site>, Error> {
         trace!("loading the unwalled sites from database");
 
@@ -170,18 +118,7 @@ impl UnwallRepository {
     /// # Errors
     ///
     /// Returns [`Error::Insert`] if the site could not be inserted.
-    #[instrument(
-        name = "INSERT unwall_sites",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "INSERT",
-            db.collection.name = "unwall_sites",
-            db.query.summary = "INSERT unwall_sites",
-        )
-    )]
+    #[instrument_database(operation = "INSERT", collection = "unwall_sites")]
     pub async fn insert_site(&self, host: &str, nickname: &str) -> Result<(), Error> {
         trace!(host, "adding the unwalled site to database");
 
@@ -204,18 +141,7 @@ impl UnwallRepository {
     /// # Errors
     ///
     /// Returns [`Error::Delete`] if the sites could not be deleted.
-    #[instrument(
-        name = "DELETE unwall_sites",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "DELETE",
-            db.collection.name = "unwall_sites",
-            db.query.summary = "DELETE unwall_sites",
-        )
-    )]
+    #[instrument_database(operation = "DELETE", collection = "unwall_sites")]
     pub async fn delete_sites(&self, hosts: &[String]) -> Result<u64, Error> {
         trace!(
             count = hosts.len(),
@@ -235,17 +161,10 @@ impl UnwallRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the statistics could not be queried.
-    #[instrument(
-        name = "SELECT unwall statistics",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "unwall_urls",
-            db.query.summary = "SELECT unwall statistics",
-        )
+    #[instrument_database(
+        operation = "SELECT",
+        collection = "unwall_urls",
+        summary = "SELECT unwall statistics"
     )]
     pub async fn statistics(&self, today: NaiveDate) -> Result<Statistics, Error> {
         trace!(%today, "loading the unwall statistics from database");
@@ -286,17 +205,10 @@ impl UnwallRepository {
     /// # Errors
     ///
     /// Returns [`Error::Load`] if the statistics could not be queried.
-    #[instrument(
-        name = "SELECT unwall host statistics",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "unwall_urls",
-            db.query.summary = "SELECT unwall host statistics",
-        )
+    #[instrument_database(
+        operation = "SELECT",
+        collection = "unwall_urls",
+        summary = "SELECT unwall host statistics"
     )]
     pub async fn host_statistics(
         &self,

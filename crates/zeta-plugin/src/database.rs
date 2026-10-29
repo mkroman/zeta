@@ -102,6 +102,40 @@ impl std::error::Error for DbError {
     }
 }
 
+/// Generates a repository struct backed by the shared database pool.
+///
+/// ```ignore
+/// zeta_plugin::impl_repository! {
+///     /// Repository for storing and retrieving alerts in the database.
+///     AlertRepository
+/// }
+/// ```
+///
+/// The generated struct has a private `db` field and a `pub const fn new(db: Database)`, so the
+/// repository's own `impl` block contains only queries.
+#[macro_export]
+macro_rules! impl_repository {
+    (
+        $(#[$meta:meta])*
+        $name:ident
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            /// The database connection pool.
+            db: $crate::database::Database,
+        }
+
+        impl $name {
+            /// Creates a new repository backed by the given database pool.
+            #[must_use]
+            pub const fn new(db: $crate::database::Database) -> Self {
+                Self { db }
+            }
+        }
+    };
+}
+
 /// Generates the database error constructors for a repository error enum.
 ///
 /// The generated `load`, `insert` and `delete` constructors wrap a [`sqlx::Error`] into a
