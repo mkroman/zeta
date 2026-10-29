@@ -223,7 +223,7 @@ fn format_time_string(s: &str) -> Option<String> {
 impl IsItOpen {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "GOOGLE_MAPS_API_KEY")?;
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
 
         Ok(Self { client, api_key })
     }

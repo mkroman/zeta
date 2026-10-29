@@ -33,3 +33,18 @@ impl Default for HttpConfig {
         }
     }
 }
+
+#[cfg(feature = "http")]
+impl HttpConfig {
+    /// Validates the values the shared HTTP client is built from.
+    ///
+    /// The client builder cannot represent an invalid `user_agent`, and failing at configuration
+    /// load is preferable to panicking on the first request — the shared client is built lazily.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `user_agent` is not a valid HTTP header value.
+    pub fn validate(&self) -> Result<(), reqwest::header::InvalidHeaderValue> {
+        reqwest::header::HeaderValue::try_from(self.user_agent.as_str()).map(|_| ())
+    }
+}

@@ -260,7 +260,7 @@ pub type SearchListResponse = ApiListResponse<Search>;
 impl YouTube {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "YOUTUBE_API_KEY")?;
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
 
         Ok(Self {
             api_key,

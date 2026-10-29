@@ -206,7 +206,7 @@ impl HowLongToBeat {
     // The `Plugin` trait requires the constructor to return `Result`, even when initialization
     // cannot fail.
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
 
         Ok(Self {
             client,

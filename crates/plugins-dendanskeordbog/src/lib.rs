@@ -13,7 +13,6 @@ use std::fmt::{self, Display};
 use dendanskeordbog::DictionaryDocument;
 use serde::{Deserialize, Serialize};
 
-use zeta_http as http;
 use zeta_plugin::prelude::*;
 
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
@@ -97,7 +96,7 @@ impl DenDanskeOrdbog {
     // The `Plugin` trait requires the constructor to return `Result`, even when initialization
     // cannot fail.
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
-        let http_client = http::build_client(&ctx.config.http);
+        let http_client = ctx.http().clone();
         let client = dendanskeordbog::Client::with_client(http_client);
 
         Ok(Self {

@@ -21,7 +21,7 @@ humantime-serde.workspace = true
 kagi = { path = "../kagi", default-features = false }
 serde.workspace = true
 tracing.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["http"] }
 
 [dev-dependencies]
 serde_json.workspace = true

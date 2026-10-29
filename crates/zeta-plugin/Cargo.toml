@@ -11,9 +11,11 @@ default = []
 # Database-backed plugins: the context carries a connection pool and plugins persist their
 # state through repositories.
 database = ["dep:sqlx"]
-native-tls = ["sqlx?/tls-native-tls"]
-native-tls-vendored = ["sqlx?/tls-native-tls"]
-rustls = ["sqlx?/tls-rustls-aws-lc-rs"]
+# The shared HTTP client on the context (and the HTTP configuration it is built from).
+http = ["dep:reqwest", "dep:zeta-http"]
+native-tls = ["sqlx?/tls-native-tls", "zeta-http?/native-tls"]
+native-tls-vendored = ["sqlx?/tls-native-tls", "zeta-http?/native-tls-vendored"]
+rustls = ["sqlx?/tls-rustls-aws-lc-rs", "zeta-http?/rustls"]
 
 [dependencies]
 arc-swap.workspace = true
@@ -22,6 +24,7 @@ clap.workspace = true
 figment.workspace = true
 inventory = "0.3.24"
 irc.workspace = true
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_ignored.workspace = true
 shlex.workspace = true
@@ -30,11 +33,12 @@ thiserror.workspace = true
 tracing.workspace = true
 url.workspace = true
 wildmatch.workspace = true
-zeta-http = { path = "../zeta-http", default-features = false }
+zeta-http = { path = "../zeta-http", default-features = false, features = ["http"], optional = true }
 zeta-plugin-macros = { path = "../zeta-plugin-macros" }
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
+tokio.workspace = true
 zeta-test-support = { path = "../zeta-test-support", default-features = false }
 
 [lints]
