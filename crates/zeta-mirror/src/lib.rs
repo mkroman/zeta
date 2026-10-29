@@ -46,7 +46,7 @@ use zeta_url::is_identifier;
 /// The media currently being mirrored, keyed by `(prefix, id)`.
 type InFlight = Mutex<HashSet<(String, String)>>;
 
-/// The state of the download manager, cached by [`Mirror::start_downloads`].
+/// The state of the download manager, initialized on the first mirror request.
 enum ManagerState {
     /// The manager is running.
     Running(DownloadManager),
@@ -70,8 +70,8 @@ pub struct Mirror {
     max_concurrent: usize,
     /// The set of media that is currently being mirrored, by (prefix, id).
     in_flight: Arc<InFlight>,
-    /// The download manager, started by [`Mirror::start_downloads`]; empty when it has not been
-    /// started yet, and [`ManagerState::Failed`] when it could not be built.
+    /// The download manager, initialized on the first mirror request; empty until then, and
+    /// [`ManagerState::Failed`] when it could not be built.
     manager: OnceLock<ManagerState>,
 }
 
@@ -113,17 +113,6 @@ impl Mirror {
             in_flight: Arc::default(),
             manager: OnceLock::new(),
         }
-    }
-
-    /// Starts the download manager task.
-    ///
-    /// Must be called before [`Mirror::ensure_mirrored`], when a plugin using the mirror is
-    /// loaded. Subsequent calls are no-ops.
-    ///
-    /// If the download directory cannot be created, mirroring stays disabled: the outcome is
-    /// cached and later calls do not retry.
-    pub fn start_downloads(&self) {
-        self.manager.get_or_init(|| self.build_manager());
     }
 
     /// Builds the download manager, creating its download directory.
@@ -205,9 +194,13 @@ impl Mirror {
         zeta_utils::sync::lock(in_flight).remove(&(prefix.to_string(), id.to_string()));
     }
 
-    /// Returns the running download manager, if it was started successfully.
+    /// Returns the download manager, starting it on first use.
+    ///
+    /// Starting here rather than from a plugin's `loaded` hook closes the startup window in
+    /// which the dispatcher could already deliver a URL: before the manager existed, that
+    /// request was dropped with only a warning.
     fn download_manager(&self) -> Option<&DownloadManager> {
-        match self.manager.get()? {
+        match self.manager.get_or_init(|| self.build_manager()) {
             ManagerState::Running(manager) => Some(manager),
             ManagerState::Failed => None,
         }
@@ -370,7 +363,8 @@ mod tests {
         let endpoint = format!("http://{}", server.address());
         let mirror = Mirror::new(
             S3::with_endpoint(&endpoint),
-            YtDlp::with_command("yt-dlp"),
+            // `false` fails every download immediately, so the test never reaches the network.
+            YtDlp::with_command("false"),
             None,
             2,
         );
@@ -401,9 +395,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ensure_mirrored_without_manager_clears_in_flight() {
+    async fn test_ensure_mirrored_starts_the_download_manager() {
         let (mirror, _server) = mirror_with_missing_objects().await;
         let base = Url::parse("https://pub.rwx.im/reddit").unwrap();
+
+        // The manager is not started by a `loaded` hook anymore: the first request must start
+        // it, or a URL delivered before `loaded` runs would be dropped.
+        assert!(mirror.manager.get().is_none());
 
         let result = mirror
             .ensure_mirrored("reddit", &base, "https://v.redd.it/123", "123", |_| {})
@@ -411,7 +409,9 @@ mod tests {
             .expect("the fast-path check should succeed");
 
         assert!(result.is_none());
-        // The media must not remain marked as in-flight, so a later mirror can be requested.
-        assert!(mirror.mark_in_flight("reddit", "123"));
+        assert!(
+            mirror.download_manager().is_some(),
+            "the first mirror request should start the download manager"
+        );
     }
 }

@@ -64,11 +64,6 @@ impl MirrorHandle {
         Some(Self::new(mirror, prefix, public_url_base))
     }
 
-    /// Starts the download manager task.
-    pub fn start_downloads(&self) {
-        self.mirror.start_downloads();
-    }
-
     /// Mirrors the media at `url` unless it has already been mirrored or a mirror of it is
     /// already in progress; see [`Mirror::ensure_mirrored`].
     ///

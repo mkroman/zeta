@@ -10,15 +10,6 @@ use tracing::error;
 use zeta_mirror::MirrorHandle;
 use zeta_plugin::prelude::*;
 
-/// Starts the shared download manager when the plugin has a mirror configured.
-///
-/// Plugins call this from their `loaded` hook; without a configured mirror it is a no-op.
-pub fn start_downloads(mirror: Option<&MirrorHandle>) {
-    if let Some(mirror) = mirror {
-        mirror.start_downloads();
-    }
-}
-
 /// Mirrors the media at `url` and replies with the mirrored file's link, when the plugin has a
 /// mirror configured.
 ///
