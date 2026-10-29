@@ -313,7 +313,7 @@ impl YouTube {
 
                         Some((result, id))
                     }) {
-                        let title = sanitize_external(&htmlize::unescape(&result.snippet.title));
+                        let title = sanitize_html(&result.snippet.title);
 
                         reply(
                             "YouTube",
@@ -519,6 +519,14 @@ async fn fetch_video_categories(
     }
 }
 
+/// Decodes HTML entities in an API text field and sanitizes it for an IRC reply.
+///
+/// YouTube HTML-escapes titles, channel names, and category names in both the search and
+/// videos responses.
+fn sanitize_html(text: &str) -> String {
+    sanitize_external(&htmlize::unescape(text))
+}
+
 /// Formats the message describing `video`, using the resolved `category` and `view_count`.
 ///
 /// Live and upcoming streams are described as live streams along with their category and
@@ -526,10 +534,12 @@ async fn fetch_video_categories(
 /// unavailable), while regular videos include only their duration.
 fn format_video_message(video: &Video, category: &str, view_count: u64) -> String {
     let snippet = video.snippet.as_ref();
-    let title = sanitize_external(snippet.map_or("‽", |s| s.title.as_str()));
-    let channel_name =
-        sanitize_external(snippet.map_or("unknown channel", |s| s.channel_title.as_str()));
-    let category = sanitize_external(category);
+    let title = snippet.map_or_else(|| "‽".to_string(), |s| sanitize_html(&s.title));
+    let channel_name = snippet.map_or_else(
+        || "unknown channel".to_string(),
+        |s| sanitize_html(&s.channel_title),
+    );
+    let category = sanitize_html(category);
     let view_count_formatted = view_count.to_formatted_string(&Locale::en);
 
     let is_live_stream =
@@ -638,6 +648,22 @@ mod tests {
         assert_eq!(
             format_video_message(&video, "Music", 123_456),
             "\x0310> “\x0fTest Video\x0310” is a\x0f 1h 2m 20s\x0310 video by\x0f Test Channel\x0310 with\x0f 123,456\x0310 views",
+        );
+    }
+
+    #[test]
+    fn unescapes_html_entities_in_video_metadata() {
+        let mut video = test_video("none", Some("PT1H2M20S"), None);
+        let snippet = video
+            .snippet
+            .as_mut()
+            .expect("the test video has a snippet");
+        snippet.title = "Fish &amp; Chips".to_string();
+        snippet.channel_title = "Ben &amp; Jerry".to_string();
+
+        assert_eq!(
+            strip_formatting(&format_video_message(&video, "Film &amp; Animation", 1)),
+            "> “Fish & Chips” is a 1h 2m 20s video by Ben & Jerry with 1 views",
         );
     }
 

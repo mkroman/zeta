@@ -7,13 +7,14 @@
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
 //! environment variables); without it, the plugin only posts summaries.
 
-use reddit::{Link, Submission, URL_HOSTS};
+use reddit::{Link, Submission, Subreddit, URL_HOSTS};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
+use zeta_utils::irc::sanitize_external;
 use zeta_utils::text::Truncatable;
 
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
@@ -159,11 +160,7 @@ impl Reddit {
             Link::Subreddit(subreddit) => {
                 match self.client.subreddit_about_info(&subreddit).await {
                     Ok(subreddit) => {
-                        let title = subreddit.title;
-                        let description =
-                            subreddit.public_description.truncate_with_suffix(250, "…");
-
-                        client.send_privmsg(channel, reply(&title, &description))?;
+                        client.send_privmsg(channel, format_subreddit(&subreddit))?;
                     }
                     Err(err) => {
                         client.send_privmsg(
@@ -210,11 +207,9 @@ impl Reddit {
         channel: &str,
         client: &Client,
     ) -> Result<(), Error> {
-        let title = submission.title.clone();
-        let subreddit = submission.subreddit.clone();
         let id = submission.id.as_deref().unwrap_or(fallback_id).to_string();
 
-        client.send_privmsg(channel, notice(format!("{title} : {subreddit}")))?;
+        client.send_privmsg(channel, notice(format_submission(&submission)))?;
 
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
@@ -233,10 +228,93 @@ impl Reddit {
     }
 }
 
+/// Formats a submission's title and subreddit as an IRC notice, sanitized for a single IRC line.
+fn format_submission(submission: &Submission) -> String {
+    notice(format!(
+        "{} : {}",
+        sanitize_external(&submission.title),
+        sanitize_external(&submission.subreddit)
+    ))
+}
+
+/// Formats a subreddit's title and public description as an IRC reply, sanitized for a single
+/// IRC line.
+///
+/// The description is sanitized before it is truncated, so the character budget counts what is
+/// actually sent.
+fn format_subreddit(subreddit: &Subreddit) -> String {
+    let title = sanitize_external(&subreddit.title);
+    let description = sanitize_external(&subreddit.public_description);
+    let description = description.truncate_with_suffix(250, "…");
+
+    reply(&title, description)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
+    use zeta_utils::irc::strip_formatting;
+
+    /// Builds a submission from the API shape used in the tests below.
+    fn submission(title: &str, subreddit: &str) -> Submission {
+        serde_json::from_value(serde_json::json!({
+            "subreddit": subreddit,
+            "title": title,
+            "ups": 1,
+            "upvote_ratio": 1.0,
+            "selftext": "",
+            "url": "https://example.com/",
+        }))
+        .expect("the test submission should deserialize")
+    }
+
+    /// Builds a subreddit from the API shape used in the tests below.
+    fn subreddit(title: &str, public_description: &str) -> Subreddit {
+        serde_json::from_value(serde_json::json!({
+            "display_name": "denmark",
+            "title": title,
+            "public_description": public_description,
+            "subscribers": 1,
+            "url": "/r/denmark/",
+        }))
+        .expect("the test subreddit should deserialize")
+    }
+
+    #[test]
+    fn formats_submission_as_a_notice() {
+        let submission = submission("Sparindex S&amp;P500 børsnoteres i morgen", "dkfinance");
+
+        assert_eq!(
+            strip_formatting(&format_submission(&submission)),
+            "> Sparindex S&P500 børsnoteres i morgen : dkfinance"
+        );
+    }
+
+    #[test]
+    fn formats_subreddit_as_a_reply() {
+        let subreddit = subreddit("r/Denmark &amp; friends", "News &amp; discussion");
+
+        assert_eq!(
+            strip_formatting(&format_subreddit(&subreddit)),
+            "> r/Denmark & friends: News & discussion"
+        );
+    }
+
+    #[test]
+    fn sanitizes_control_characters_in_replies() {
+        let submission = submission("Fake\x0310\nTitle", "dkfinance");
+        let subreddit = subreddit("r/Denmark", "News&#10;and\x02 discussion");
+
+        assert_eq!(
+            strip_formatting(&format_submission(&submission)),
+            "> Fake Title : dkfinance"
+        );
+        assert_eq!(
+            strip_formatting(&format_subreddit(&subreddit)),
+            "> r/Denmark: News and discussion"
+        );
+    }
 
     settings_tests! {
         Settings,

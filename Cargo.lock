@@ -3893,6 +3893,7 @@ dependencies = [
 name = "reddit"
 version = "0.1.0"
 dependencies = [
+ "htmlize",
  "reqwest",
  "secrecy",
  "serde",
