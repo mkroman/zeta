@@ -89,26 +89,26 @@ impl RustPlayground {
     }
 
     /// Replies to `.rs` with the playground's output for the expression.
-    #[command(".rs", "Evaluate a Rust expression on the Rust playground", event)]
+    #[command(
+        ".rs",
+        "Evaluate a Rust expression on the Rust playground",
+        event,
+        usage = "Usage: .rs\x0f <expr>"
+    )]
     async fn evaluate_command(
         &self,
         _ctx: &Context,
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let channel = command.channel();
-        let expr = command.args();
-
-        let message = if expr.trim().is_empty() {
-            labeled_reply("Rust Playground", "Usage: .rs\x0f <expr>")
-        } else {
-            match self.evaluate(expr).await {
-                Ok(output) => labeled_reply("Rust Playground", &output),
-                Err(e) => labeled_reply("Rust Playground", e),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+        reply_lookup(
+            client,
+            command.channel(),
+            self.evaluate(command.args()),
+            |output| labeled_reply("Rust Playground", &output),
+            |error| labeled_reply("Rust Playground", error),
+        )
+        .await?;
 
         Ok(())
     }

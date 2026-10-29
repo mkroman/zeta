@@ -259,8 +259,8 @@ fn expand(values: &[String]) -> Vec<Option<String>> {
     }
 }
 
-/// Builds `Criteria` from the pattern fields `List` and `Delete` share.
-macro_rules! criteria_from {
+/// Generates the `From<&…> for Criteria` impl for the pattern fields `List` and `Delete` share.
+macro_rules! impl_criteria_from {
     ($pattern:ty) => {
         impl From<&$pattern> for Criteria {
             fn from(pattern: &$pattern) -> Self {
@@ -277,8 +277,8 @@ macro_rules! criteria_from {
     };
 }
 
-criteria_from!(List);
-criteria_from!(Delete);
+impl_criteria_from!(List);
+impl_criteria_from!(Delete);
 
 impl Delete {
     /// Returns the deletion criteria, or `None` if no criterion was given.

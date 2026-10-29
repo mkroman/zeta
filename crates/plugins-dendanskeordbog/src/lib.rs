@@ -107,30 +107,32 @@ impl DenDanskeOrdbog {
     }
 
     /// Replies to `.ddo` with the dictionary entry of the queried word.
-    #[command(".ddo", "Look up a word in Den Danske Ordbog", event)]
+    #[command(
+        ".ddo",
+        "Look up a word in Den Danske Ordbog",
+        event,
+        usage = "Usage: .ddo\x0f <query>"
+    )]
     async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let channel = command.channel();
-        let args = command.args();
-
-        let message = if args.is_empty() {
-            plain_reply("Usage: .ddo\x0f <query>")
-        } else {
-            match self.client.query(args).await {
-                Ok(document) => MessageFormatter {
+        reply_lookup(
+            client,
+            command.channel(),
+            self.client.query(command.args()),
+            |document| {
+                MessageFormatter {
                     document: &document,
                     settings: &self.settings,
                 }
-                .to_string(),
-                Err(err) => plain_reply(err),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+                .to_string()
+            },
+            plain_reply,
+        )
+        .await?;
 
         Ok(())
     }

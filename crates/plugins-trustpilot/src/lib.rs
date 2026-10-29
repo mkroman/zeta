@@ -112,31 +112,33 @@ impl Trustpilot {
     }
 
     /// Replies to `.tp` with the business's Trustpilot score and review count.
-    #[command(".tp", "Look up a business's Trustpilot score", event)]
+    #[command(
+        ".tp",
+        "Look up a business's Trustpilot score",
+        event,
+        usage = "Usage: .tp\x0f <domain name>"
+    )]
     async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let channel = command.channel();
-        let query = command.args();
-
-        let message = if query.trim().is_empty() {
-            plain_reply("Usage: .tp\x0f <domain name>")
-        } else {
-            match self.search(query).await {
-                Ok(business) => format_business(&business, &self.review_domain),
-                Err(Error::NotFound) => plain_reply("No results found"),
-                Err(e) => {
-                    warn!(error = ?e, "trustpilot error");
-                    // The error is already safe for display
-                    plain_reply(e)
+        reply_lookup(
+            client,
+            command.channel(),
+            self.search(command.args()),
+            |business| format_business(&business, &self.review_domain),
+            |error| match error {
+                Error::NotFound => plain_reply("No results found"),
+                Error::Api(error) => {
+                    warn!(?error, "trustpilot error");
+                    // The error is already safe for display.
+                    plain_reply(error)
                 }
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+            },
+        )
+        .await?;
 
         Ok(())
     }

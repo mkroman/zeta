@@ -1,45 +1,26 @@
 //! Database access for the OFN URL history.
 
 use sqlx::types::chrono::NaiveDate;
-use tracing::{instrument, trace};
+use tracing::trace;
 
 use super::{
     error::Error,
     model::{InsertUrlRecord, InsertYouTubeRecord, Statistics, UrlRecord, YouTubeRecord},
 };
-use zeta_plugin::database::{Database, namespace};
+use zeta_plugin::instrument_database;
 
-/// Repository for storing and retrieving the posted URLs and YouTube videos.
-#[derive(Debug, Clone)]
-pub struct OfnRepository {
-    /// The database connection pool.
-    db: Database,
+zeta_plugin::impl_repository! {
+    /// Repository for storing and retrieving the posted URLs and YouTube videos.
+    OfnRepository
 }
 
 impl OfnRepository {
-    /// Creates a new repository backed by the given database pool.
-    #[must_use]
-    pub const fn new(db: Database) -> Self {
-        Self { db }
-    }
-
     /// Returns the URL record matching `record`, if it has been posted before.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the URL record could not be fetched.
-    #[instrument(
-        name = "SELECT url_records",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "url_records",
-            db.query.summary = "SELECT url_records",
-        )
-    )]
+    #[instrument_database(operation = "SELECT", collection = "url_records")]
     pub async fn find_url(&self, record: &InsertUrlRecord) -> Result<Option<UrlRecord>, Error> {
         trace!(host = %record.host, "loading url record from database");
 
@@ -72,18 +53,7 @@ impl OfnRepository {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the video record could not be fetched.
-    #[instrument(
-        name = "SELECT youtube_video_urls",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "youtube_video_urls",
-            db.query.summary = "SELECT youtube_video_urls",
-        )
-    )]
+    #[instrument_database(operation = "SELECT", collection = "youtube_video_urls")]
     pub async fn find_youtube_video(
         &self,
         video_id: &str,
@@ -114,18 +84,7 @@ impl OfnRepository {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the record could not be inserted.
-    #[instrument(
-        name = "INSERT url_records",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "INSERT",
-            db.collection.name = "url_records",
-            db.query.summary = "INSERT url_records",
-        )
-    )]
+    #[instrument_database(operation = "INSERT", collection = "url_records")]
     pub async fn insert_url(&self, record: &InsertUrlRecord) -> Result<(), Error> {
         trace!("inserting url record into database");
 
@@ -167,18 +126,7 @@ impl OfnRepository {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the record could not be inserted.
-    #[instrument(
-        name = "INSERT youtube_video_urls",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "INSERT",
-            db.collection.name = "youtube_video_urls",
-            db.query.summary = "INSERT youtube_video_urls",
-        )
-    )]
+    #[instrument_database(operation = "INSERT", collection = "youtube_video_urls")]
     pub async fn insert_youtube_video(&self, record: &InsertYouTubeRecord) -> Result<(), Error> {
         trace!(
             video_id = %record.video_id,
@@ -213,17 +161,10 @@ impl OfnRepository {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the counts could not be queried.
-    #[instrument(
-        name = "SELECT ofn statistics",
-        skip_all,
-        err,
-        fields(
-            db.system.name = "postgresql",
-            db.namespace = %namespace(&self.db),
-            db.operation.name = "SELECT",
-            db.collection.name = "url_records",
-            db.query.summary = "SELECT ofn statistics",
-        )
+    #[instrument_database(
+        operation = "SELECT",
+        collection = "url_records",
+        summary = "SELECT ofn statistics"
     )]
     pub async fn statistics(&self, today: NaiveDate) -> Result<Statistics, Error> {
         trace!(%today, "loading ofn statistics from database");

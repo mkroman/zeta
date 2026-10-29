@@ -46,12 +46,12 @@ pub use registration::{LoadedPlugin, PluginRegistration};
 #[cfg(feature = "database")]
 pub use sqlx;
 pub use types::NoSettings;
-pub use zeta_plugin_macros::plugin;
+pub use zeta_plugin_macros::{instrument_database, plugin};
 
 // Re-exported through the crate root so the code the `#[plugin]` macro generates — and plugin
 // crates generally — can reference it as absolute `::zeta_plugin::…` paths without adding
 // dependencies of their own.
-pub use self::irc::{labeled_reply, parse_or_usage};
+pub use self::irc::{labeled_reply, parse_or_usage, plain_reply, reply_lookup};
 pub use ::irc::client::Client;
 
 /// Common includes used in plugins.
@@ -72,11 +72,11 @@ pub mod prelude {
     pub use crate::hostmask::Hostmasks;
     pub use crate::irc::{
         BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
-        parse_or_usage, plain_reply, unstyle_text,
+        parse_or_usage, plain_reply, reply_lookup, unstyle_text,
     };
     pub use crate::registration::{LoadedPlugin, PluginRegistration};
     pub use crate::types::NoSettings;
     pub use crate::{Context, Error, Plugin, Registered, SharedState};
     pub use ::irc::client::Client;
-    pub use zeta_plugin_macros::plugin;
+    pub use zeta_plugin_macros::{instrument_database, plugin};
 }

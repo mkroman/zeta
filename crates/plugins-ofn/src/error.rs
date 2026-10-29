@@ -1,7 +1,7 @@
 //! Errors that can occur while recording or looking up URLs.
 
 use zeta_plugin::database::DbError;
-use zeta_plugin::database_error;
+use zeta_plugin::impl_repository_error;
 
 /// Errors that can occur while recording or looking up URLs.
 #[derive(Debug, thiserror::Error)]
@@ -14,4 +14,4 @@ pub enum Error {
     InsertUrlNoHost,
 }
 
-database_error!(Error, "ofn records");
+impl_repository_error!(Error, "ofn records");

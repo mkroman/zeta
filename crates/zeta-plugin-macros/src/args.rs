@@ -11,7 +11,15 @@ use syn::{Expr, Ident, LitStr, Token, Type};
 const PLUGIN_OPTIONS: &[&str] = &["name", "settings", "urls", "messages"];
 
 /// The options `#[command(...)]` accepts, for the unknown-option diagnostic.
-const COMMAND_OPTIONS: &[&str] = &["args", "words", "spec", "label", "event", "register_if"];
+const COMMAND_OPTIONS: &[&str] = &[
+    "args",
+    "words",
+    "spec",
+    "label",
+    "event",
+    "usage",
+    "register_if",
+];
 
 /// Parses the `= value` following an option name.
 fn parse_value<T: Parse>(input: ParseStream<'_>) -> syn::Result<T> {
@@ -160,6 +168,10 @@ pub struct CommandArgs {
     pub label: Option<LitStr>,
     /// Whether the handler also receives the `CommandEvent`, from `event`.
     pub event: bool,
+    /// The reply sent when the command is invoked without arguments, from `usage = "…"`.
+    ///
+    /// The literal is the complete reply line, e.g. `"Usage: .dig <name>"`.
+    pub usage: Option<LitStr>,
     /// The registration condition, from `register_if = expr`.
     pub register_if: Option<Expr>,
 }
@@ -178,6 +190,7 @@ impl Parse for CommandArgs {
             spec: None,
             label: None,
             event: false,
+            usage: None,
             register_if: None,
         };
 
@@ -203,6 +216,10 @@ impl Parse for CommandArgs {
                     set_once(&mut this.label, value, &ident)?;
                 }
                 "event" => set_flag(&mut this.event, &ident)?,
+                "usage" => {
+                    let value: LitStr = parse_value(input)?;
+                    set_once(&mut this.usage, value, &ident)?;
+                }
                 "register_if" => {
                     let value: Expr = parse_value(input)?;
                     set_once(&mut this.register_if, value, &ident)?;
@@ -280,7 +297,7 @@ mod tests {
     fn parses_every_command_option() {
         let args: CommandArgs = syn::parse_str(
             "\".test\", \"A test\", args = Opts, words, spec = TEST, label = \"Test\", event, \
-             register_if = settings.enabled",
+             usage = \"Usage: .test <arg>\", register_if = settings.enabled",
         )
         .expect("the arguments should parse");
 
@@ -290,6 +307,10 @@ mod tests {
         assert_eq!(args.spec.expect("spec should be set").to_string(), "TEST");
         assert_eq!(args.label.expect("label should be set").value(), "Test");
         assert!(args.event);
+        assert_eq!(
+            args.usage.expect("usage should be set").value(),
+            "Usage: .test <arg>"
+        );
         assert!(args.register_if.is_some());
     }
 
@@ -311,6 +332,7 @@ mod tests {
             "\".test\", \"A test\", spec = A, spec = B",
             "\".test\", \"A test\", label = \"a\", label = \"b\"",
             "\".test\", \"A test\", event, event",
+            "\".test\", \"A test\", usage = \"a\", usage = \"b\"",
             "\".test\", \"A test\", register_if = a, register_if = b",
         ] {
             let error = syn::parse_str::<CommandArgs>(arguments)

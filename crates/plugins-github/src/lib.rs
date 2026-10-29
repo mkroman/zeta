@@ -83,7 +83,12 @@ impl GitHubPlugin {
     }
 
     /// Replies to `.gh` with the most starred repository matching the query.
-    #[command(".gh", "Search GitHub and show the most starred match", event)]
+    #[command(
+        ".gh",
+        "Search GitHub and show the most starred match",
+        event,
+        usage = "Usage: .gh <query>"
+    )]
     async fn search(
         &self,
         _ctx: &Context,
@@ -93,21 +98,21 @@ impl GitHubPlugin {
         let channel = command.channel();
         let query = command.args().trim();
 
-        let response = if query.is_empty() {
-            labeled_reply("GitHub", ".gh <query>")
-        } else {
-            info!(query, %channel, "searching github");
+        info!(query, %channel, "searching github");
 
-            match self.search_repos(query).await {
-                Ok(response) => response.items.first().map_or_else(
+        reply_lookup(
+            client,
+            channel,
+            self.search_repos(query),
+            |response| {
+                response.items.first().map_or_else(
                     || labeled_reply("GitHub", "No results"),
                     Self::format_repo_details,
-                ),
-                Err(err) => labeled_reply("GitHub", err),
-            }
-        };
-
-        client.send_privmsg(channel, response)?;
+                )
+            },
+            |error| labeled_reply("GitHub", error),
+        )
+        .await?;
 
         Ok(())
     }

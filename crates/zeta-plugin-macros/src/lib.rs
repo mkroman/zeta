@@ -84,6 +84,7 @@
 //! | `spec = NAME` | Overrides the generated `CommandSpec` constant's name; the default folds the trigger to upper case (`.dig` → `DIG`). |
 //! | `label = "Dig"` | The display label for generated usage and error replies; defaults to the plugin's name. |
 //! | `event` | The handler also receives the `&CommandEvent`, and may omit the `channel` parameter. |
+//! | `usage = "Usage: …"` | Replies with this complete line when the command is invoked without arguments, without calling the handler. |
 //! | `register_if = expr` | Registers the command only when `expr` evaluates to `true` (e.g. `settings.enable_command`); the expression runs in the generated constructor, where `settings` is in scope. |
 //!
 //! The method's signature convention is strict. Without `event` it is `async fn m(&self, ctx:
@@ -106,6 +107,7 @@ use proc_macro::TokenStream;
 use syn::parse_macro_input;
 
 mod args;
+mod database;
 mod expand;
 
 /// Implements [`Plugin`](https://docs.rs/zeta-plugin) for an inherent impl block; see the
@@ -116,6 +118,26 @@ pub fn plugin(attributes: TokenStream, item: TokenStream) -> TokenStream {
     let inherent = parse_macro_input!(item as syn::ItemImpl);
 
     expand::expand(&args, inherent).into()
+}
+
+/// Wraps a repository method in the database span every plugin's queries share.
+///
+/// Expands to a `tracing::instrument` attribute with the semantic-convention `db.*` fields:
+///
+/// ```ignore
+/// #[instrument_database(operation = "SELECT", collection = "filters")]
+/// async fn list(&self) -> Result<Vec<Filter>, Error> { /* … */ }
+/// ```
+///
+/// `operation` and `collection` are required. `summary`, which names the span and fills
+/// `db.query.summary`, defaults to `"<operation> <collection>"`; give it explicitly for queries
+/// whose purpose is narrower than their table (e.g. statistics).
+///
+/// The method must live on a struct with a `db` field: the generated `db.namespace` field reads
+/// `::zeta_plugin::database::namespace(&self.db)`.
+#[proc_macro_attribute]
+pub fn instrument_database(attributes: TokenStream, item: TokenStream) -> TokenStream {
+    database::expand(attributes.into(), item.into()).into()
 }
 
 #[cfg(test)]

@@ -1364,6 +1364,21 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
         arguments.push(quote!(command));
     }
 
+    // A declared `usage` replaces the method call when the command has no arguments, before
+    // either the option parser or the handler runs.
+    let usage = args.usage.as_ref().map(|usage| {
+        quote! {
+            if command.args().trim().is_empty() {
+                client.send_privmsg(
+                    command.channel(),
+                    ::zeta_plugin::plain_reply(#usage),
+                )?;
+
+                return ::core::result::Result::Ok(());
+            }
+        }
+    });
+
     // With `args`, parse the options first and reply with the usage lines when they are
     // malformed; the parsed value is the method's last argument.
     let parse = args.args.as_ref().map_or_else(TokenStream::new, |options| {
@@ -1389,6 +1404,7 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
     quote! {
         #(#cfg)*
         #trigger => {
+            #usage
             #parse
             self.#method(#(#arguments),*).await?;
         }
@@ -1465,6 +1481,7 @@ mod tests {
             spec: None,
             label: None,
             event: false,
+            usage: None,
             register_if: None,
         }
     }
@@ -1991,6 +2008,29 @@ mod tests {
             .expect("a URL handler without a URL scope must be rejected");
 
         assert!(error.to_string().contains("urls(...)"), "{error}");
+    }
+
+    #[test]
+    fn command_usage_replies_before_dispatch() {
+        let inherent: syn::ItemImpl = parse_quote! {
+            impl Plugin {
+                #[command(".test", "desc", event, usage = "Usage: .test <arg>")]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &CommandEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+        };
+        let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
+
+        let rendered = render(&plugin, &inherent).to_string();
+
+        assert!(rendered.contains("plain_reply"), "{rendered}");
+        assert!(rendered.contains("Usage: .test <arg>"), "{rendered}");
     }
 
     #[test]
