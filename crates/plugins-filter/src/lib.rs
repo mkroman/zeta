@@ -64,6 +64,37 @@ enum Subcommand {
     Delete(Delete),
 }
 
+/// The sender patterns `add`, `list` and `delete` share.
+#[derive(clap::Args, Debug, Default)]
+struct SenderArgs {
+    /// sender nickname pattern, e.g. `*bot`
+    #[arg(long)]
+    nick: Option<String>,
+    /// sender username (ident) pattern, e.g. `*other`
+    #[arg(long)]
+    user: Option<String>,
+    /// sender hostname pattern, e.g. `*.isp.example`
+    #[arg(long)]
+    hostname: Option<String>,
+}
+
+/// The filter selection criteria `list` and `delete` share.
+#[derive(clap::Args, Debug, Default)]
+struct CriteriaArgs {
+    /// the channel pattern to match
+    #[arg(long)]
+    channel: Option<String>,
+    /// the URL host pattern to match
+    #[arg(long)]
+    host: Option<String>,
+    /// the URL path pattern to match
+    #[arg(long)]
+    path: Option<String>,
+    /// the sender patterns to match
+    #[command(flatten)]
+    sender: SenderArgs,
+}
+
 /// Add a new filter.
 #[derive(clap::Args, Debug)]
 struct Add {
@@ -79,38 +110,17 @@ struct Add {
     /// URL path pattern to filter, e.g. `/title/*` (repeatable)
     #[arg(long)]
     path: Vec<String>,
-    /// sender nickname pattern to filter, e.g. `*bot`
-    #[arg(long)]
-    nick: Option<String>,
-    /// sender username (ident) pattern to filter, e.g. `*other`
-    #[arg(long)]
-    user: Option<String>,
-    /// sender hostname pattern to filter, e.g. `*.isp.example`
-    #[arg(long)]
-    hostname: Option<String>,
+    /// the sender patterns to filter
+    #[command(flatten)]
+    sender: SenderArgs,
 }
 
 /// List filters.
 #[derive(clap::Args, Debug)]
 struct List {
-    /// the channel pattern to match
-    #[arg(long)]
-    channel: Option<String>,
-    /// the URL host pattern to match
-    #[arg(long)]
-    host: Option<String>,
-    /// the URL path pattern to match
-    #[arg(long)]
-    path: Option<String>,
-    /// the sender nickname pattern to match
-    #[arg(long)]
-    nick: Option<String>,
-    /// the sender username pattern to match
-    #[arg(long)]
-    user: Option<String>,
-    /// the sender hostname pattern to match
-    #[arg(long)]
-    hostname: Option<String>,
+    /// the criteria to match
+    #[command(flatten)]
+    criteria: CriteriaArgs,
 }
 
 /// Delete filters.
@@ -118,24 +128,9 @@ struct List {
 struct Delete {
     /// the id of a single filter to remove
     id: Option<i32>,
-    /// the channel pattern to match
-    #[arg(long)]
-    channel: Option<String>,
-    /// the URL host pattern to match
-    #[arg(long)]
-    host: Option<String>,
-    /// the URL path pattern to match
-    #[arg(long)]
-    path: Option<String>,
-    /// the sender nickname pattern to match
-    #[arg(long)]
-    nick: Option<String>,
-    /// the sender username pattern to match
-    #[arg(long)]
-    user: Option<String>,
-    /// the sender hostname pattern to match
-    #[arg(long)]
-    hostname: Option<String>,
+    /// the criteria to match
+    #[command(flatten)]
+    criteria: CriteriaArgs,
     /// delete the matching filters without confirmation
     #[arg(long)]
     force: bool,
@@ -181,9 +176,9 @@ impl Add {
         }
 
         for (name, value) in [
-            ("--nick", &self.nick),
-            ("--user", &self.user),
-            ("--hostname", &self.hostname),
+            ("--nick", &self.sender.nick),
+            ("--user", &self.sender.user),
+            ("--hostname", &self.sender.hostname),
         ] {
             if value
                 .as_deref()
@@ -195,9 +190,9 @@ impl Add {
 
         if self.host.is_empty()
             && self.path.is_empty()
-            && self.nick.is_none()
-            && self.user.is_none()
-            && self.hostname.is_none()
+            && self.sender.nick.is_none()
+            && self.sender.user.is_none()
+            && self.sender.hostname.is_none()
         {
             return Err(
                 "at least one of --host, --path, --nick, --user or --hostname is required"
@@ -213,9 +208,21 @@ impl Add {
         let hosts = expand(&self.host);
         let paths = expand(&self.path);
         let (nickname, username, hostname) = (
-            self.nick.as_deref().map(str::trim).map(str::to_owned),
-            self.user.as_deref().map(str::trim).map(str::to_owned),
-            self.hostname.as_deref().map(str::trim).map(str::to_owned),
+            self.sender
+                .nick
+                .as_deref()
+                .map(str::trim)
+                .map(str::to_owned),
+            self.sender
+                .user
+                .as_deref()
+                .map(str::trim)
+                .map(str::to_owned),
+            self.sender
+                .hostname
+                .as_deref()
+                .map(str::trim)
+                .map(str::to_owned),
         );
 
         let mut filters = Vec::with_capacity(hosts.len() * paths.len());
@@ -259,31 +266,30 @@ fn expand(values: &[String]) -> Vec<Option<String>> {
     }
 }
 
-/// Generates the `From<&…> for Criteria` impl for the pattern fields `List` and `Delete` share.
-macro_rules! impl_criteria_from {
-    ($pattern:ty) => {
-        impl From<&$pattern> for Criteria {
-            fn from(pattern: &$pattern) -> Self {
-                Self {
-                    channel: pattern.channel.clone(),
-                    host: pattern.host.clone(),
-                    path: pattern.path.clone(),
-                    nickname: pattern.nick.clone(),
-                    username: pattern.user.clone(),
-                    hostname: pattern.hostname.clone(),
-                }
-            }
+impl From<&CriteriaArgs> for Criteria {
+    fn from(args: &CriteriaArgs) -> Self {
+        Self {
+            channel: args.channel.clone(),
+            host: args.host.clone(),
+            path: args.path.clone(),
+            nickname: args.sender.nick.clone(),
+            username: args.sender.user.clone(),
+            hostname: args.sender.hostname.clone(),
         }
-    };
+    }
 }
 
-impl_criteria_from!(List);
-impl_criteria_from!(Delete);
+impl List {
+    /// Returns the listing criteria.
+    fn criteria(&self) -> Criteria {
+        Criteria::from(&self.criteria)
+    }
+}
 
 impl Delete {
     /// Returns the deletion criteria, or `None` if no criterion was given.
     fn criteria(&self) -> Option<Criteria> {
-        let criteria = Criteria::from(self);
+        let criteria = Criteria::from(&self.criteria);
 
         (!criteria.is_empty()).then_some(criteria)
     }
@@ -375,7 +381,7 @@ impl FilterPlugin {
 
     /// Lists the filters matching the `list` subcommand criteria.
     fn list(&self, client: &Client, channel: &str, opts: &List) -> Result<(), ZetaError> {
-        let filters = self.service.select(&Criteria::from(opts));
+        let filters = self.service.select(&opts.criteria());
 
         let response = if filters.is_empty() {
             if self.service.list().is_empty() {
@@ -653,7 +659,7 @@ mod tests {
         let add = parse_add("add --host imdb.com --host www.imdb.com --user other");
 
         assert_eq!(add.host, ["imdb.com", "www.imdb.com"]);
-        assert_eq!(add.user.as_deref(), Some("other"));
+        assert_eq!(add.sender.user.as_deref(), Some("other"));
     }
 
     #[test]
@@ -852,7 +858,7 @@ mod tests {
             panic!("expected the list subcommand");
         };
 
-        let criteria = Criteria::from(&list);
+        let criteria = list.criteria();
 
         assert_eq!(criteria.host.as_deref(), Some("*.com"));
         assert!(criteria.channel.is_none());
