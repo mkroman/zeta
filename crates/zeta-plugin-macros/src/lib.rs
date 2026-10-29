@@ -84,6 +84,7 @@
 //! | `spec = NAME` | Overrides the generated `CommandSpec` constant's name; the default folds the trigger to upper case (`.dig` → `DIG`). |
 //! | `label = "Dig"` | The display label for generated usage and error replies; defaults to the plugin's name. |
 //! | `event` | The handler also receives the `&CommandEvent`, and may omit the `channel` parameter. |
+//! | `usage = "Usage: …"` | Replies with this complete line when the command is invoked without arguments, without calling the handler. |
 //! | `register_if = expr` | Registers the command only when `expr` evaluates to `true` (e.g. `settings.enable_command`); the expression runs in the generated constructor, where `settings` is in scope. |
 //!
 //! The method's signature convention is strict. Without `event` it is `async fn m(&self, ctx:

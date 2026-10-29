@@ -98,6 +98,7 @@ impl Full {
         event,
         label = "Full",
         spec = FULL,
+        usage = "Usage: .full <value>",
         register_if = true
     )]
     async fn full(

@@ -126,7 +126,12 @@ impl Tvmaze {
     }
 
     /// Replies to `.next` with the show's next episode, or its current status.
-    #[command(".next", "Show when a show's next episode airs", event)]
+    #[command(
+        ".next",
+        "Show when a show's next episode airs",
+        event,
+        usage = "Usage: .next\x0f <show>"
+    )]
     async fn next(
         &self,
         _ctx: &Context,

@@ -8,6 +8,8 @@
 //! are the helpers that need the plugin vocabulary: replying with a failed argument parse's
 //! usage lines.
 
+use std::future::Future;
+
 use clap::Parser;
 use irc::client::Client;
 
@@ -56,6 +58,29 @@ pub fn parse_or_usage<T: Parser>(
     format: impl Fn(&str) -> String,
 ) -> Result<Option<T>, irc::error::Error> {
     reply_parse_result(command.parse_with(mode), client, command.channel(), format)
+}
+
+/// Awaits a lookup and replies with its outcome to `channel`.
+///
+/// `render` formats a successful value and `on_error` a failed lookup, so a handler that only
+/// differs in how it presents the two does not repeat the `match` and `send_privmsg` scaffold.
+///
+/// # Errors
+///
+/// Returns any error produced while sending the reply.
+pub async fn reply_lookup<T, E>(
+    client: &Client,
+    channel: &str,
+    lookup: impl Future<Output = Result<T, E>>,
+    render: impl FnOnce(T) -> String,
+    on_error: impl FnOnce(E) -> String,
+) -> Result<(), irc::error::Error> {
+    let message = match lookup.await {
+        Ok(value) => render(value),
+        Err(error) => on_error(error),
+    };
+
+    client.send_privmsg(channel, message)
 }
 
 /// Replies `error`'s usage lines through `format` and yields `None` for the caller to abandon

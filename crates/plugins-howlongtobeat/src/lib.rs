@@ -215,28 +215,30 @@ impl HowLongToBeat {
     }
 
     /// Replies to `.hltb` with the top match's completion times.
-    #[command(".hltb", "Look up a game's completion times", event)]
+    #[command(
+        ".hltb",
+        "Look up a game's completion times",
+        event,
+        usage = "Usage: .hltb\x0f <game>"
+    )]
     async fn lookup(
         &self,
         _ctx: &Context,
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let channel = command.channel();
-        let query = command.args();
-
-        let message = if query.trim().is_empty() {
-            plain_reply("Usage: .hltb\x0f <game>")
-        } else {
-            match self.search(query).await {
-                Ok(games) => games
+        reply_lookup(
+            client,
+            command.channel(),
+            self.search(command.args()),
+            |games| {
+                games
                     .first()
-                    .map_or_else(|| plain_reply("No results found"), format_game),
-                Err(err) => plain_reply(err),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+                    .map_or_else(|| plain_reply("No results found"), format_game)
+            },
+            plain_reply,
+        )
+        .await?;
 
         Ok(())
     }

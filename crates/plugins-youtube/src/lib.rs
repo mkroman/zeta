@@ -286,6 +286,7 @@ impl YouTube {
         ".yt",
         "Search YouTube and link the top video",
         event,
+        usage = "Usage: .yt\x0f <query>",
         register_if = settings.enable_command
     )]
     async fn search_video(
@@ -303,31 +304,33 @@ impl YouTube {
             return Ok(());
         }
 
-        let message = if args.is_empty() {
-            plain_reply("Usage: .yt\x0f <query>")
-        } else {
-            match self.search(args).await {
-                Ok(results) => {
-                    if let Some((result, id)) = results.iter().find_map(|result| {
+        reply_lookup(
+            client,
+            channel,
+            self.search(args),
+            |results| {
+                results
+                    .iter()
+                    .find_map(|result| {
                         let id = result.id.video_id.as_deref()?;
 
                         Some((result, id))
-                    }) {
-                        let title = sanitize_html(&result.snippet.title);
+                    })
+                    .map_or_else(
+                        || plain_reply("No results"),
+                        |(result, id)| {
+                            let title = sanitize_html(&result.snippet.title);
 
-                        labeled_reply(
-                            "YouTube",
-                            format!("{title} - https://www.youtube.com/watch?v={id}"),
-                        )
-                    } else {
-                        plain_reply("No results")
-                    }
-                }
-                Err(err) => plain_reply(err),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+                            labeled_reply(
+                                "YouTube",
+                                format!("{title} - https://www.youtube.com/watch?v={id}"),
+                            )
+                        },
+                    )
+            },
+            plain_reply,
+        )
+        .await?;
 
         Ok(())
     }

@@ -17,8 +17,6 @@ use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
 /// The usage line sent for empty `.ud` queries.
-pub const USAGE: &str = "Usage: .ud\x0f <query>";
-
 /// The Urban Dictionary API base URL.
 pub const BASE_URL: &str = "https://api.urbandictionary.com";
 
@@ -96,21 +94,24 @@ impl UrbanDictionary {
     }
 
     /// Replies to `.ud` with the top Urban Dictionary definition of the query.
-    #[command(".ud", "Look up the top Urban Dictionary definition", event)]
+    #[command(
+        ".ud",
+        "Look up the top Urban Dictionary definition",
+        event,
+        usage = "Usage: .ud\x0f <query>"
+    )]
     async fn define(
         &self,
         _ctx: &Context,
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let channel = command.channel();
-        let query = command.args();
-
-        let message = if query.is_empty() {
-            labeled_reply("Urban Dictionary", USAGE)
-        } else {
-            match self.definitions(query).await {
-                Ok(definitions) => definitions.list.first().map_or_else(
+        reply_lookup(
+            client,
+            command.channel(),
+            self.definitions(command.args()),
+            |definitions| {
+                definitions.list.first().map_or_else(
                     || labeled_reply("Urban Dictionary", "No results"),
                     |definition| {
                         let formatter = DefinitionFormatter {
@@ -120,12 +121,11 @@ impl UrbanDictionary {
 
                         labeled_reply("Urban Dictionary", formatter.to_string())
                     },
-                ),
-                Err(err) => labeled_reply("Urban Dictionary", err),
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+                )
+            },
+            |error| labeled_reply("Urban Dictionary", error),
+        )
+        .await?;
 
         Ok(())
     }

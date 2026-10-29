@@ -65,7 +65,12 @@ impl KagiPlugin {
     }
 
     /// Replies to `.g` with the top search result for the query.
-    #[command(".g", "Search with Kagi and link the top result", event)]
+    #[command(
+        ".g",
+        "Search with Kagi and link the top result",
+        event,
+        usage = "Usage: .g\x0f <query>"
+    )]
     async fn search(
         &self,
         _ctx: &Context,
@@ -81,18 +86,17 @@ impl KagiPlugin {
             })
         };
 
-        self.handle_lookup(
-            client,
-            command.channel(),
-            command.args(),
-            "Usage: .g\x0f <query>",
-            search,
-        )
-        .await
+        self.handle_lookup(client, command.channel(), command.args(), search)
+            .await
     }
 
     /// Replies to `.gis` with the first image result for the query.
-    #[command(".gis", "Search Kagi Images and link the first result", event)]
+    #[command(
+        ".gis",
+        "Search Kagi Images and link the first result",
+        event,
+        usage = "Usage: .gis\x0f <query>"
+    )]
     async fn search_images(
         &self,
         _ctx: &Context,
@@ -108,14 +112,8 @@ impl KagiPlugin {
             })
         };
 
-        self.handle_lookup(
-            client,
-            command.channel(),
-            command.args(),
-            "Usage: .gis\x0f <query>",
-            search,
-        )
-        .await
+        self.handle_lookup(client, command.channel(), command.args(), search)
+            .await
     }
 }
 
@@ -129,29 +127,28 @@ impl KagiPlugin {
         client: &Client,
         channel: &str,
         query: &str,
-        usage: &str,
         search: F,
     ) -> Result<(), ZetaError>
     where
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Result<Vec<(String, String)>, kagi::Error>>,
     {
-        let message = if query.trim().is_empty() {
-            plain_reply(usage)
-        } else {
-            match search(query.to_string()).await {
-                Ok(results) => results.first().map_or_else(
+        reply_lookup(
+            client,
+            channel,
+            search(query.to_string()),
+            |results| {
+                results.first().map_or_else(
                     || plain_reply("No results"),
                     |(title, url)| labeled_reply("Kagi", format!("{title} - {url}")),
-                ),
-                Err(err) => {
-                    warn!(?err, "kagi search failed");
-                    plain_reply(err)
-                }
-            }
-        };
-
-        client.send_privmsg(channel, message)?;
+                )
+            },
+            |error| {
+                warn!(?error, "kagi search failed");
+                plain_reply(error)
+            },
+        )
+        .await?;
 
         Ok(())
     }
