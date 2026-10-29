@@ -22,9 +22,8 @@ use std::cmp::Ordering;
 use bytes::Buf;
 use zeta_unicode_format::huffman;
 use zeta_unicode_format::{
-    MAX_CPS, MAX_KEY, Rule, TONE_NAMES, TONES, ZWJ, clock_name, encode_cps, format_toned, is_tone,
-    join_family, keycap_word, pair_phrase, plural, swap_person, tone_indices, ucd_mask_name,
-    unpack_bits,
+    MAX_CPS, MAX_KEY, Rule, RuleContext, encode_cps, format_toned, is_tone, rule_name,
+    rule_needs_sequence, tone_indices, unpack_bits,
 };
 
 /// Four stream descriptors of `u16 raw_len | u16 coded_len | u8 order`.
@@ -32,8 +31,8 @@ const STREAM_COUNT: usize = 4;
 
 /// The longest chain of rule expansions a name may take.
 ///
-/// The gender rules recurse into a base entry, but the [`gendered_head`] guard bounds what
-/// the shipped table produces to a couple of levels. This cap only stops a corrupt
+/// The gender rules recurse into a base entry, but the shared renderer's `gendered_head` guard
+/// bounds what the shipped table produces to a couple of levels. This cap only stops a corrupt
 /// self-referential rule — a gender rule whose base resolves back to itself — before it
 /// overflows the stack.
 const MAX_MATERIALIZE_DEPTH: u8 = 8;
@@ -308,69 +307,25 @@ impl Emoji {
         }
         let packed = *self.entries.get(index)?;
         let (rule, argument) = Rule::unpack(packed)?;
-        let argument = usize::from(argument);
-        match rule {
-            Rule::Literal => Some(Cow::Borrowed(self.literal(argument)?)),
-            Rule::UcdMask | Rule::UcdMaskHyphen => {
-                let mask = u8::try_from(argument).ok()?;
-                Some(Cow::Owned(lookup_name(
-                    self.first_cp(index)?,
-                    lookup,
-                    |name| ucd_mask_name(name, mask, rule == Rule::UcdMaskHyphen),
-                )?))
-            }
-            Rule::Keycap => Some(Cow::Owned(format!(
-                "KEYCAP {}",
-                keycap_word(self.first_cp(index)?)?
-            ))),
-            Rule::GenderWoman | Rule::GenderMan => {
-                let gender = if rule == Rule::GenderWoman {
-                    "woman"
-                } else {
-                    "man"
-                };
-                let base = gender_base(self.entry_cps(index)?.as_slice(), self)?;
-                let base_name = self.materialize(base, lookup, depth + 1)?;
-                Some(Cow::Owned(swap_person(&base_name, gender)))
-            }
-            Rule::Facing => {
-                let cps = self.entry_cps(index)?;
-                let cps = cps.as_slice();
-                let base = self.find_key(cps.get(..cps.len().checked_sub(2)?)?)?;
-                let base_name = self.materialize(base, lookup, depth + 1)?;
-                Some(Cow::Owned(format!("{base_name} facing right")))
-            }
-            Rule::Family => Some(Cow::Owned(format!(
-                "family: {}",
-                join_family(self.entry_cps(index)?.as_slice(), &[ZWJ])
-            ))),
-            Rule::Couple => Some(Cow::Owned(format!(
-                "couple with heart: {}",
-                join_family(self.entry_cps(index)?.as_slice(), &[ZWJ, 0x2764, 0x1F48B])
-            ))),
-            Rule::Kiss => Some(Cow::Owned(format!(
-                "kiss: {}",
-                join_family(self.entry_cps(index)?.as_slice(), &[ZWJ, 0x2764, 0x1F48B])
-            ))),
-            Rule::Pair => {
-                let cps = self.entry_cps(index)?;
-                let cps = cps.as_slice();
-                Some(Cow::Owned(format!(
-                    "{} {}",
-                    plural(*cps.first()?, *cps.get(4)?)?,
-                    pair_phrase(*cps.get(2)?)?
-                )))
-            }
-            Rule::ToneComponent => {
-                let first = self.first_cp(index)?;
-                let tone = TONES.iter().position(|&tone| tone == first)?;
-                Some(Cow::Borrowed(TONE_NAMES[tone]))
-            }
-            Rule::Clock => lookup_name(self.first_cp(index)?, lookup, clock_name)
-                .flatten()
-                .map(Cow::Owned),
-            Rule::Keycap10 => Some(Cow::Borrowed("keycap: 10")),
+        if rule == Rule::Literal {
+            return Some(Cow::Borrowed(self.literal(usize::from(argument))?));
         }
+        let cps = if rule_needs_sequence(rule) {
+            self.entry_cps(index)?
+        } else {
+            Cps::single(self.first_cp(index)?)
+        };
+        let mut context = MaterializeContext {
+            emoji: self,
+            lookup,
+            depth,
+        };
+        Some(Cow::Owned(rule_name(
+            rule,
+            argument,
+            cps.as_slice(),
+            &mut context,
+        )?))
     }
 
     /// Returns the cached first code point of entry `index`.
@@ -391,13 +346,28 @@ impl Emoji {
     }
 }
 
-/// Resolves a rule that needs the UCD character name through a name lookup.
-fn lookup_name<L, R>(cp: u32, lookup: &mut L, render: impl FnOnce(&str) -> R) -> Option<R>
-where
-    L: NameLookup,
-{
-    let mut name = String::new();
-    lookup.write_name(cp, &mut name).then(|| render(&name))
+/// The runtime's table lookups for the shared emoji rule renderer.
+struct MaterializeContext<'a, 'b, L: NameLookup> {
+    /// The decoded section the base keys resolve against.
+    emoji: &'a Emoji,
+    /// The character-name lookup for `ucd_mask` and `clock`.
+    lookup: &'b mut L,
+    /// The expansions already taken, so a recursive base stops at the shared depth cap.
+    depth: u8,
+}
+
+impl<L: NameLookup> RuleContext for MaterializeContext<'_, '_, L> {
+    fn ucd_name(&mut self, cp: u32) -> Option<String> {
+        let mut name = String::new();
+        self.lookup.write_name(cp, &mut name).then_some(name)
+    }
+
+    fn base_name(&mut self, cps: &[u32]) -> Option<String> {
+        let index = self.emoji.find_key(cps)?;
+        self.emoji
+            .materialize(index, self.lookup, self.depth + 1)
+            .map(Cow::into_owned)
+    }
 }
 
 /// Decodes the key stream into a UTF-8 arena and its `u16` starts.
@@ -549,6 +519,13 @@ struct Cps {
 }
 
 impl Cps {
+    /// A one-code-point sequence for the rules that only need the first code point.
+    const fn single(cp: u32) -> Self {
+        let mut data = [0u32; MAX_CPS];
+        data[0] = cp;
+        Self { data, len: 1 }
+    }
+
     /// Parses a key string into its code points.
     fn parse(key: &str) -> Option<Self> {
         let mut data = [0u32; MAX_CPS];
@@ -566,54 +543,9 @@ impl Cps {
     }
 }
 
-/// The head code points a gender rule may rewrite to the `person` base.
-///
-/// The trainer only assigns a gender rule when its own rewrite check passed for a man or
-/// woman head (`gender_rule`/`role_rule` reject every other head), so the runtime mirrors
-/// that guard: a corrupt table then answers `None` instead of synthesizing a base the
-/// trainer never verified.
-const fn gendered_head(cp: u32) -> bool {
-    matches!(cp, 0x1F468 | 0x1F469)
-}
-
-/// Builds the `person` base for a gendered sequence: `U+1F9D1` and `cps[1..end]`.
-fn person_base(cps: &[u32], end: usize) -> Option<Cps> {
-    let rest = cps.get(1..end)?;
-    let mut data = [0u32; MAX_CPS];
-    *data.first_mut()? = 0x1F9D1;
-    let len = 1 + rest.len();
-    data.get_mut(1..len)?.copy_from_slice(rest);
-    Some(Cps { data, len })
-}
-
-/// The first existing base a gender rule applies to.
-fn gender_base(cps: &[u32], emoji: &Emoji) -> Option<usize> {
-    let suffix = cps.len() >= 3
-        && cps.get(cps.len() - 2) == Some(&ZWJ)
-        && matches!(cps.last().copied(), Some(0x2640 | 0x2642));
-    if suffix {
-        if let Some(base) = emoji.find_key(cps.get(..cps.len() - 2)?) {
-            return Some(base);
-        }
-        if !cps.first().is_some_and(|&head| gendered_head(head)) {
-            return None;
-        }
-        let candidate = person_base(cps, cps.len() - 2)?;
-        return emoji.find_key(candidate.as_slice());
-    }
-    if cps.len() == 3
-        && cps.get(1) == Some(&ZWJ)
-        && cps.first().is_some_and(|&head| gendered_head(head))
-    {
-        let candidate = person_base(cps, cps.len())?;
-        return emoji.find_key(candidate.as_slice());
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
-    use zeta_unicode_format::pack_bits;
+    use zeta_unicode_format::{ZWJ, pack_bits};
 
     use super::*;
 

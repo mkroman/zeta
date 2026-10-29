@@ -31,9 +31,10 @@ use std::collections::BTreeMap;
 use bytes::BufMut;
 
 use zeta_unicode_format::{
-    MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, TONE_NAMES, TONES, ZWJ, clock_name, encode_cps,
-    family_word, format_toned, is_tone, join_family, keycap_word, pack_bits, pair_phrase, plural,
-    swap_person, tone_phrase, tone_positions, ucd_mask_name, write_varint,
+    MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, RuleContext, TONE_NAMES, TONES, ZWJ, clock_name,
+    encode_cps, family_word, format_toned, is_tone, join_family, keycap_word, pack_bits,
+    pair_phrase, plural, rule_name, swap_person, tone_phrase, tone_positions, ucd_mask_name,
+    write_varint,
 };
 
 use zeta_unicode_format::huffman;
@@ -738,6 +739,26 @@ fn family_rule(cps: &[u32], name: &str) -> Option<(Rule, u16)> {
     (name == format!("couple with heart: {words}")).then_some((Rule::Couple, 0))
 }
 
+/// The trainer's table lookups for the shared emoji rule renderer.
+struct BuildRuleContext<'a> {
+    /// The canonical entry table, sorted by key.
+    entries: &'a [EmojiEntry],
+    /// The single-code-point `DerivedName.txt` names.
+    ucd: &'a BTreeMap<u32, String>,
+}
+
+impl RuleContext for BuildRuleContext<'_> {
+    fn ucd_name(&mut self, cp: u32) -> Option<String> {
+        self.ucd.get(&cp).cloned()
+    }
+
+    fn base_name(&mut self, cps: &[u32]) -> Option<String> {
+        find_entry(cps, self.entries)
+            .and_then(|index| self.entries.get(index))
+            .map(|entry| entry.name.clone())
+    }
+}
+
 /// Materialises the name a rule produces, or `None` when its base is not in the table.
 ///
 /// [`Rule::Literal`] returns `None`: its name comes from the literal-name arena, not a rule.
@@ -748,73 +769,7 @@ fn generated_name(
     entries: &[EmojiEntry],
     ucd: &BTreeMap<u32, String>,
 ) -> Option<String> {
-    match rule {
-        Rule::Literal => None,
-        Rule::UcdMask | Rule::UcdMaskHyphen => {
-            let name = ucd.get(cps.first()?)?;
-            Some(ucd_mask_name(
-                name,
-                u8::try_from(arg).ok()?,
-                rule == Rule::UcdMaskHyphen,
-            ))
-        }
-        Rule::Keycap => Some(format!("KEYCAP {}", keycap_word(*cps.first()?)?)),
-        Rule::GenderWoman | Rule::GenderMan => {
-            let gender = if rule == Rule::GenderWoman {
-                "woman"
-            } else {
-                "man"
-            };
-            let base = gender_base(cps, entries)?;
-            Some(swap_person(&entries[base].name, gender))
-        }
-        Rule::Facing => {
-            let base = find_entry(&cps[..cps.len().checked_sub(2)?], entries)?;
-            Some(format!("{} facing right", entries[base].name))
-        }
-        Rule::Family => Some(format!("family: {}", join_family(cps, &[ZWJ]))),
-        Rule::Couple => Some(format!(
-            "couple with heart: {}",
-            join_family(cps, &[ZWJ, 0x2764, 0x1F48B])
-        )),
-        Rule::Kiss => Some(format!(
-            "kiss: {}",
-            join_family(cps, &[ZWJ, 0x2764, 0x1F48B])
-        )),
-        Rule::Pair => Some(format!(
-            "{} {}",
-            plural(*cps.first()?, *cps.get(4)?)?,
-            pair_phrase(*cps.get(2)?)?
-        )),
-        Rule::ToneComponent => {
-            let first = *cps.first()?;
-            let index = TONES.iter().position(|&tone| tone == first)?;
-            Some(TONE_NAMES[index].to_owned())
-        }
-        Rule::Clock => clock_name(ucd.get(cps.first()?)?),
-        Rule::Keycap10 => Some("keycap: 10".to_owned()),
-    }
-}
-
-/// The first existing base a gender rule applies to.
-fn gender_base(cps: &[u32], entries: &[EmojiEntry]) -> Option<usize> {
-    let suffix = cps.len() >= 3
-        && cps.get(cps.len() - 2) == Some(&ZWJ)
-        && matches!(cps.last().copied(), Some(0x2640 | 0x2642));
-    if suffix && let Some(base) = find_entry(cps.get(..cps.len() - 2)?, entries) {
-        return Some(base);
-    }
-    if suffix {
-        let mut candidate = vec![0x1F9D1];
-        candidate.extend_from_slice(cps.get(1..cps.len() - 2)?);
-        return find_entry(&candidate, entries);
-    }
-    if cps.len() == 3 && cps.get(1) == Some(&ZWJ) {
-        let mut candidate = vec![0x1F9D1];
-        candidate.extend_from_slice(cps.get(1..)?);
-        return find_entry(&candidate, entries);
-    }
-    None
+    rule_name(rule, arg, cps, &mut BuildRuleContext { entries, ucd })
 }
 
 /// The index of `cps` in the sorted entry table.
