@@ -6,6 +6,7 @@
 //! and host-agnostic entries are considered. All wildcard patterns are compiled once when a
 //! filter is inserted, not on every check.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -24,6 +25,23 @@ pub fn is_wildcard(pattern: &str) -> bool {
 /// Returns `pattern` trimmed, or `None` when it is missing or blank.
 fn non_blank(pattern: Option<&str>) -> Option<&str> {
     pattern.map(str::trim).filter(|pattern| !pattern.is_empty())
+}
+
+/// The host of `url` as the index keys store it: lowercased.
+///
+/// The hosts of special-scheme URLs (`http`, `https`, …) are lowercased by the URL parser
+/// itself, so this borrows the host unchanged in the common case. It stays a guard rather than
+/// a plain `host_str()` because the host of a non-special scheme is opaque and keeps its case
+/// (`foo://EXAMPLE.COM`), the filter facade accepts any `&Url`, and an unnormalized host would
+/// silently miss its exact-host filter.
+fn indexed_host(url: &Url) -> Option<Cow<'_, str>> {
+    let host = url.host_str()?;
+
+    Some(if host.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Cow::Owned(host.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(host)
+    })
 }
 
 /// The compiled host pattern of a filter.
@@ -241,28 +259,27 @@ impl FilterIndex {
         self.channels.values().all(HostIndex::is_empty)
     }
 
-    /// All filters in the index, ordered by id.
-    pub(super) fn filters(&self) -> Vec<Filter> {
-        let mut filters: Vec<Filter> = self
-            .channels
-            .values()
-            .flat_map(HostIndex::filters)
-            .cloned()
-            .collect();
-
-        filters.sort_unstable_by_key(|filter| filter.id);
-
-        filters
+    /// All filters in the index, in unspecified order.
+    pub(super) fn filters(&self) -> impl Iterator<Item = &Filter> {
+        self.channels.values().flat_map(HostIndex::filters)
     }
 
     /// The buckets a lookup in `channel` consults: the channel's own filters and the filters
     /// applying to all channels.
+    ///
+    /// Scanned rather than hashed: the map holds a bucket per configured channel and the keys
+    /// are lowercased when inserted, so a scan compares a handful of keys where a hash lookup
+    /// would have to allocate a lowercased copy of the channel name first — on the path every
+    /// posted URL takes.
     fn buckets(&self, channel: &str) -> impl Iterator<Item = &HostIndex> {
-        let key = channel.to_lowercase();
-
-        [self.channels.get(&Some(key)), self.channels.get(&None)]
-            .into_iter()
-            .flatten()
+        self.channels
+            .iter()
+            .filter(|(key, _)| {
+                key.as_deref()
+                    .is_some_and(|key| key.eq_ignore_ascii_case(channel))
+            })
+            .map(|(_, index)| index)
+            .chain(self.channels.get(&None))
     }
 
     /// Whether any filter applies to `channel` and matches `sender` and `url`.
@@ -271,7 +288,7 @@ impl FilterIndex {
             return false;
         }
 
-        let host = url.host_str().map(str::to_lowercase);
+        let host = indexed_host(url);
 
         if self
             .buckets(channel)
@@ -619,7 +636,9 @@ mod tests {
             new_filter(None, Some("dr.dk")),
         ]);
 
-        let ids: Vec<_> = index.filters().iter().map(|filter| filter.id).collect();
+        // The index lists filters in unspecified order; the service sorts them by id.
+        let mut ids: Vec<_> = index.filters().map(|filter| filter.id).collect();
+        ids.sort_unstable();
 
         assert_eq!(ids, [1, 2]);
         assert_eq!(index.len(), 2);

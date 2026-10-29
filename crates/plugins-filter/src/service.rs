@@ -100,19 +100,47 @@ impl FilterService {
     /// Returns a snapshot of all filters, in id order.
     #[must_use]
     pub fn list(&self) -> Vec<Filter> {
-        self.index.load().filters()
+        let mut filters = self.index.load().filters().cloned().collect::<Vec<_>>();
+
+        filters.sort_unstable_by_key(|filter| filter.id);
+
+        filters
+    }
+
+    /// Whether no filters are configured.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.index.load().is_empty()
+    }
+
+    /// Returns the filter with `id`, if it is configured.
+    #[must_use]
+    pub fn get(&self, id: i32) -> Option<Filter> {
+        self.index
+            .load()
+            .filters()
+            .find(|filter| filter.id == id)
+            .cloned()
     }
 
     /// Returns a snapshot of the filters matching `criteria`, in id order.
     #[must_use]
     pub fn select(&self, criteria: &Criteria) -> Vec<Filter> {
-        // Compile once for the whole listing, not once per filter.
+        // Compile once for the whole listing, not once per filter; only the matching filters
+        // are cloned, from an iterator over the shared entries.
         let criteria = criteria.compile();
 
-        self.list()
-            .into_iter()
+        let mut filters = self
+            .index
+            .load()
+            .filters()
             .filter(|filter| criteria.matches(filter))
-            .collect()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        filters.sort_unstable_by_key(|filter| filter.id);
+
+        filters
     }
 
     /// Whether `url`, posted by `sender` in `channel`, matches any filter.

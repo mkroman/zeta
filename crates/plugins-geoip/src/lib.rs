@@ -165,19 +165,28 @@ impl Display for IpInfo {
             ("Country", self.country_name.as_str()),
             ("Region", self.region_name.as_str()),
             ("City", self.city_name.as_str()),
-        ]
-        .into_iter()
-        .filter(|(_, value)| !value.is_empty())
-        .map(|(label, value)| format!("{label}:{RESET} {value}"))
-        .collect::<Vec<_>>();
+        ];
 
-        if parts.is_empty() {
-            write!(fmt, "No location data available")
-        } else {
+        // Written part by part: collecting formatted strings to join them afterwards would
+        // allocate once per part for a display that is built for every reply.
+        let mut wrote = false;
+
+        for (label, value) in parts.into_iter().filter(|(_, value)| !value.is_empty()) {
+            if wrote {
+                fmt.write_str(" ")?;
+            }
+
             // Every part ends in the reply color, so a plain space between parts keeps the
             // separator cyan.
-            write!(fmt, "{}", parts.join(" "))
+            write!(fmt, "{label}:{RESET} {value}")?;
+            wrote = true;
         }
+
+        if !wrote {
+            write!(fmt, "No location data available")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -215,11 +224,16 @@ impl GeoIp {
                 // `dns.answers` is the OpenTelemetry convention for the addresses a lookup
                 // resolved to:
                 // https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
-                let addresses: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
-                if !addresses.is_empty() {
-                    // The answers are a string array per convention; tracing macros have no
-                    // array value type, so they go through Debug as a single string.
-                    debug!(dns.answers = ?addresses, "resolved domain");
+                // The string array is built only when debug logging is on: the collection
+                // itself would run for every lookup even when the event is filtered out.
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    let addresses: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
+
+                    if !addresses.is_empty() {
+                        // The answers are a string array per convention; tracing macros have no
+                        // array value type, so they go through Debug as a single string.
+                        debug!(dns.answers = ?addresses, "resolved domain");
+                    }
                 }
 
                 lookup

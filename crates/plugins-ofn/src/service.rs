@@ -89,7 +89,7 @@ impl OfnService {
             }
 
             let insert = InsertYouTubeRecord {
-                video_id: video_id.clone(),
+                video_id,
                 nickname: origin.nickname.to_owned(),
                 username: origin.username.to_owned(),
                 hostname: origin.hostname.to_owned(),
@@ -97,11 +97,11 @@ impl OfnService {
                 network_id: origin.network.to_owned(),
             };
 
-            debug!(%video_id, "inserting youtube record");
+            debug!(video_id = %insert.video_id, "inserting youtube record");
 
             return match self.repo.insert_youtube_video(&insert).await {
                 Ok(()) => {
-                    debug!(?origin, %video_id, "inserted youtube record");
+                    debug!(?origin, video_id = %insert.video_id, "inserted youtube record");
 
                     Ok(Recorded::Inserted)
                 }

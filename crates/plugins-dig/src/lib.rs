@@ -200,18 +200,22 @@ impl Dig {
 
         // `dns.answers` is the OpenTelemetry convention for the addresses a lookup resolved
         // to, so only address records go through it — the answers of any other record type
-        // are not addresses and stay in the reply to the channel.
-        let addresses: Vec<String> = lookup
-            .answers()
-            .iter()
-            .filter(|record| matches!(record.record_type(), RecordType::A | RecordType::AAAA))
-            .map(|record| record.data.to_string())
-            .collect();
+        // are not addresses and stay in the reply to the channel. The string array is built
+        // only when debug logging is on: the collection itself would run for every lookup
+        // even when the event is filtered out.
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let addresses: Vec<String> = lookup
+                .answers()
+                .iter()
+                .filter(|record| matches!(record.record_type(), RecordType::A | RecordType::AAAA))
+                .map(|record| record.data.to_string())
+                .collect();
 
-        if !addresses.is_empty() {
-            // `dns.answers` is a string array per convention; tracing macros have no array
-            // value type, so it goes through Debug as a single string.
-            debug!(dns.answers = ?addresses, "resolved dns records");
+            if !addresses.is_empty() {
+                // `dns.answers` is a string array per convention; tracing macros have no array
+                // value type, so it goes through Debug as a single string.
+                debug!(dns.answers = ?addresses, "resolved dns records");
+            }
         }
 
         Ok(LookupResult(lookup))
