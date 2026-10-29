@@ -43,9 +43,9 @@ pub struct Settings {
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
     pub max_redirects: usize,
-    /// The maximum length of a posted message, in characters.
+    /// The maximum length of a posted message, in bytes.
     pub max_message_length: usize,
-    /// The maximum length of a posted description, in characters.
+    /// The maximum length of a posted description, in bytes.
     pub max_description_length: usize,
 }
 
@@ -274,7 +274,11 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .as_deref()
         .map(unstyle_text)
         .filter(|description| !description.is_empty())
-        .map(|description| description.truncate_within(settings.max_description_length, "…"));
+        .map(|description| {
+            description
+                .truncate_bytes_within(settings.max_description_length, "…")
+                .into_owned()
+        });
 
     if title.is_none() && description.is_none() {
         return None;
@@ -300,7 +304,7 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         plain_reply(&content)
     };
 
-    Some(message.truncate_within(settings.max_message_length, "…"))
+    Some(truncate_reply(&message, settings.max_message_length, "…").into_owned())
 }
 
 /// Whether any OpenGraph metadata was captured.
@@ -533,8 +537,28 @@ mod tests {
         let url = Url::parse("https://maero.dk").unwrap();
         let message = format_page(&metadata, &url, &settings).unwrap();
 
-        assert_eq!(message.chars().count(), settings.max_message_length);
-        assert!(message.ends_with('…'));
+        assert!(
+            visible_len(&message) <= settings.max_message_length,
+            "{message:?}"
+        );
+        assert!(strip_formatting(&message).ends_with('…'), "{message:?}");
+    }
+
+    #[test]
+    fn truncates_multibyte_titles_by_bytes() {
+        let settings = Settings {
+            max_message_length: 20,
+            ..Settings::default()
+        };
+        let metadata = PageMetadata {
+            title: Some("🦀".repeat(100)),
+            ..PageMetadata::default()
+        };
+        let url = Url::parse("https://maero.dk").unwrap();
+        let message = format_page(&metadata, &url, &settings).unwrap();
+
+        assert!(visible_len(&message) <= 20, "{message:?}");
+        assert!(strip_formatting(&message).ends_with('…'), "{message:?}");
     }
 
     settings_tests! {

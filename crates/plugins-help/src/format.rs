@@ -8,9 +8,11 @@ use clap::{Arg, ArgAction, Command};
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::append_entries_within_budget;
 
-/// The maximum length of a help message, assuming the IRCv3 extended line length of 8191 bytes
-/// and leaving room for the sender prefix, `PRIVMSG` framing and line ending overhead.
-const MAX_MESSAGE_LENGTH: usize = 7679;
+/// The maximum length of a help message in bytes, matching the classic 512-byte IRC line.
+///
+/// The bot does not negotiate an extended line length, so help must fit the same budget as every
+/// other reply.
+const MAX_MESSAGE_LENGTH: usize = MAX_LISTING_LENGTH;
 
 /// The separator between entries in a help list: a comma in the scaffolding color and a space.
 const SEPARATOR: &str = "\x0310,\x0f ";
@@ -21,23 +23,26 @@ const SEPARATOR: &str = "\x0310,\x0f ";
 /// plugin name lists its commands, and a command name shows the command's description, usage and
 /// arguments.
 pub fn messages(catalog: &PluginCatalog, query: &str) -> Vec<String> {
-    if query.is_empty() {
-        return index_messages(catalog);
-    }
+    let messages = if query.is_empty() {
+        index_messages(catalog)
+    } else if let Some((_, command)) = find_command(catalog, query) {
+        command_messages(command)
+    } else if let Some(plugin) = find_plugin(catalog, query) {
+        plugin_messages(plugin)
+    } else {
+        vec![format!(
+            "{}{}",
+            heading(""),
+            gray(&format!(" no plugin or command matches `{query}`"))
+        )]
+    };
 
-    if let Some((_, command)) = find_command(catalog, query) {
-        return command_messages(command);
-    }
-
-    if let Some(plugin) = find_plugin(catalog, query) {
-        return plugin_messages(plugin);
-    }
-
-    vec![format!(
-        "{}{}",
-        heading(""),
-        gray(&format!(" no plugin or command matches `{query}`"))
-    )]
+    // The listing helpers budget as they build, but command details and unmatched queries are
+    // rendered in one go; clamp every message so no path can exceed the line.
+    messages
+        .into_iter()
+        .map(|message| truncate_reply(&message, MAX_MESSAGE_LENGTH, "…").into_owned())
+        .collect()
 }
 
 /// Returns the messages showing a usage hint and indexing the catalog's plugins.

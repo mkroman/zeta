@@ -25,7 +25,9 @@ pub const BASE_URL: &str = "https://api.urbandictionary.com";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Settings {
-    /// The maximum length of the definition and example text, in characters.
+    /// The maximum length of the definition and example text, in bytes.
+    ///
+    /// The complete reply is additionally capped to fit one IRC line.
     pub max_definition_length: usize,
 }
 
@@ -118,8 +120,10 @@ impl UrbanDictionary {
                             definition,
                             max_length: self.settings.max_definition_length,
                         };
+                        let content = formatter.to_string();
+                        let content = truncate_reply(&content, MAX_LISTING_LENGTH, "…");
 
-                        labeled_reply("Urban Dictionary", formatter.to_string())
+                        labeled_reply("Urban Dictionary", content)
                     },
                 )
             },
@@ -142,8 +146,8 @@ impl Display for DefinitionFormatter<'_> {
         let word = unstyle_text(&self.definition.word);
         let definition = unstyle_text(&self.definition.definition);
         let example = unstyle_text(&self.definition.example);
-        let definition = definition.truncate_with_suffix(self.max_length, "…");
-        let example = example.truncate_with_suffix(self.max_length, "…");
+        let definition = definition.truncate_bytes_within(self.max_length, "…");
+        let example = example.truncate_bytes_within(self.max_length, "…");
 
         write!(fmt, "Term:\x0f {word}\x0310")?;
         write!(fmt, " Definition:\x0f {definition}\x0310")?;
@@ -248,12 +252,13 @@ mod tests {
         };
         let message = formatter.to_string();
 
+        // The suffix counts toward the byte budget: 10 - "…".len() = 7 visible bytes.
         assert!(
-            message.contains(&format!("{}\u{2026}", "x".repeat(10))),
+            message.contains(&format!("{}\u{2026}", "x".repeat(7))),
             "{message}"
         );
         assert!(
-            message.contains(&format!("{}\u{2026}", "y".repeat(10))),
+            message.contains(&format!("{}\u{2026}", "y".repeat(7))),
             "{message}"
         );
     }

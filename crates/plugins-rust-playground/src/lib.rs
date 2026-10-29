@@ -3,7 +3,7 @@
 //! The `.rs <expr>` command wraps the expression in `fn main() { println!("{:?}", { expr }); }`
 //! and executes it on `play.rust-lang.org`, replying with the printed output — or the compiler
 //! errors when it fails to build. Output has its control characters (including newlines)
-//! stripped and is truncated to `max_output_length` characters with an ellipsis suffix; an
+//! stripped and is truncated to `max_output_length` bytes with an ellipsis suffix; an
 //! empty expression replies with usage.
 //!
 //! The playground channel (`stable`), build mode (`debug`), edition (`2024`), and output limit
@@ -30,7 +30,7 @@ pub struct Settings {
     pub mode: String,
     /// The Rust edition: `2015`, `2018`, `2021` or `2024`.
     pub edition: String,
-    /// The maximum output length, in characters.
+    /// The maximum output length, in bytes.
     pub max_output_length: usize,
 }
 
@@ -148,7 +148,7 @@ impl RustPlayground {
         };
 
         Ok(output
-            .truncate_with_suffix(self.settings.max_output_length, "…")
+            .truncate_bytes_within(self.settings.max_output_length, "…")
             .into_owned())
     }
 }

@@ -8,6 +8,7 @@
 //! are the helpers that need the plugin vocabulary: replying with a failed argument parse's
 //! usage lines.
 
+use std::borrow::Cow;
 use std::future::Future;
 
 use clap::Parser;
@@ -17,8 +18,8 @@ use crate::command::{ArgsError, ArgsMode};
 use crate::event::CommandEvent;
 
 pub use zeta_utils::irc::{
-    BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
-    plain_reply, unstyle_text,
+    BOLD, COLOR, MAX_LISTING_LENGTH, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply,
+    labeled_reply_prefix, plain_reply, truncate_reply, unstyle_text, visible_len,
 };
 
 /// Sends the output of a failed argument parse to `channel`, one message per non-empty line.
@@ -37,7 +38,9 @@ fn reply_usage_lines(
     format: impl Fn(&str) -> String,
 ) -> Result<(), irc::error::Error> {
     for line in error.to_string().lines().filter(|line| !line.is_empty()) {
-        client.send_privmsg(channel, format(line))?;
+        let line = truncate_reply(line, MAX_LISTING_LENGTH, "…");
+
+        client.send_privmsg(channel, format(line.as_ref()))?;
     }
 
     Ok(())
@@ -78,6 +81,10 @@ pub async fn reply_lookup<T, E>(
     let message = match lookup.await {
         Ok(value) => render(value),
         Err(error) => on_error(error),
+    };
+    let message = match truncate_reply(&message, MAX_LISTING_LENGTH, "…") {
+        Cow::Borrowed(_) => message,
+        Cow::Owned(truncated) => truncated,
     };
 
     client.send_privmsg(channel, message)

@@ -6,11 +6,8 @@
 //! reply; one without is a plain reply. The helpers here produce those byte sequences so the
 //! exact escape codes are written down in one place.
 
+use std::borrow::Cow;
 use std::fmt;
-use std::iter::Peekable;
-use std::str::Chars;
-
-use crate::text::collapse_whitespace;
 
 /// The teal color (mIRC color 10) used for plugin replies.
 pub const COLOR: &str = "\x0310";
@@ -103,107 +100,205 @@ pub fn strip_formatting(text: &str) -> String {
 /// spaces, and runs of whitespace are collapsed. This is the form callers want before echoing a
 /// page title, an API description, or any other text they do not control: a line break would
 /// terminate the IRC message, and formatting codes would restyle the rest of the reply.
+///
+/// The result is built in one pass, so already-clean text no longer pays for an intermediate
+/// allocation per stage.
 #[must_use]
 pub fn unstyle_text(text: &str) -> String {
-    let text: String = strip_formatting(text)
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect();
-
-    collapse_whitespace(&text)
-}
-
-/// The shared implementation of [`strip_control_chars`] and [`strip_formatting`]: formatting
-/// codes are consumed, and the remaining characters are kept only when `keep` returns `true`.
-fn strip_formatting_where(text: &str, keep: impl Fn(char) -> bool) -> String {
     let mut visible = String::with_capacity(text.len());
-    let mut characters = text.chars().peekable();
+    let mut pending_space = false;
+    let mut at = 0;
 
-    while let Some(character) = characters.next() {
-        match character {
-            '\u{3}' => strip_mirc_color(&mut characters),
-            '\u{4}' => strip_hex_color(&mut characters),
-            // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
-            // underline) and the reset code.
-            '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
-            character if keep(character) => visible.push(character),
-            _ => {}
+    while at < text.len() {
+        if let Some(end) = formatting_span(text, at) {
+            at = end;
+            continue;
+        }
+
+        let Some(character) = text[at..].chars().next() else {
+            break;
+        };
+        at += character.len_utf8();
+
+        if character.is_control() || character.is_whitespace() {
+            pending_space = !visible.is_empty();
+        } else {
+            if pending_space {
+                visible.push(' ');
+                pending_space = false;
+            }
+
+            visible.push(character);
         }
     }
 
     visible
 }
 
+/// The shared implementation of [`strip_control_chars`] and [`strip_formatting`]: formatting
+/// codes are consumed, and the remaining characters are kept only when `keep` returns `true`.
+fn strip_formatting_where(text: &str, keep: impl Fn(char) -> bool) -> String {
+    let mut visible = String::with_capacity(text.len());
+    let mut at = 0;
+
+    while at < text.len() {
+        if let Some(end) = formatting_span(text, at) {
+            at = end;
+            continue;
+        }
+
+        let Some(character) = text[at..].chars().next() else {
+            break;
+        };
+        if keep(character) {
+            visible.push(character);
+        }
+        at += character.len_utf8();
+    }
+
+    visible
+}
+
+/// Returns the number of bytes `text` occupies when displayed, excluding IRC formatting codes
+/// and their parameters.
+#[must_use]
+pub fn visible_len(text: &str) -> usize {
+    let mut length = 0;
+    let mut at = 0;
+
+    while at < text.len() {
+        if let Some(end) = formatting_span(text, at) {
+            at = end;
+            continue;
+        }
+
+        let Some(character) = text[at..].chars().next() else {
+            break;
+        };
+        length += character.len_utf8();
+        at += character.len_utf8();
+    }
+
+    length
+}
+
+/// Truncates a formatted IRC reply to at most `max_bytes` visible bytes.
+///
+/// Formatting codes are copied intact and do not count toward the budget, so truncation never
+/// splits a color parameter. A [`RESET`] is appended when the reply is cut, so it cannot leave
+/// formatting active for the rest of the channel; the reset's one byte is reserved from the
+/// budget. Text that already fits is returned borrowed.
+///
+/// A suffix longer than `max_bytes` is kept whole, so the result can exceed `max_bytes` in that
+/// case.
+#[must_use]
+pub fn truncate_reply<'a>(text: &'a str, max_bytes: usize, suffix: &str) -> Cow<'a, str> {
+    if visible_len(text) <= max_bytes {
+        return Cow::Borrowed(text);
+    }
+
+    let budget = max_bytes.saturating_sub(suffix.len() + RESET.len());
+    let mut truncated =
+        String::with_capacity(text.len().min(max_bytes) + suffix.len() + RESET.len());
+    let mut visible = 0;
+    let mut at = 0;
+
+    while at < text.len() {
+        if let Some(end) = formatting_span(text, at) {
+            truncated.push_str(&text[at..end]);
+            at = end;
+            continue;
+        }
+
+        let Some(character) = text[at..].chars().next() else {
+            break;
+        };
+        let width = character.len_utf8();
+
+        if visible + width > budget {
+            break;
+        }
+
+        truncated.push(character);
+        visible += width;
+        at += width;
+    }
+
+    truncated.push_str(suffix);
+    truncated.push_str(RESET);
+
+    Cow::Owned(truncated)
+}
+
 /// The number of hex digits in one hex-color component.
 const HEX_COLOR_DIGITS: usize = 6;
 
-/// Consumes an mIRC color's parameters, leaving a comma that introduces text.
-fn strip_mirc_color(characters: &mut Peekable<Chars<'_>>) {
-    if !characters.peek().is_some_and(char::is_ascii_digit) {
-        return;
-    }
+/// The byte offset just past the IRC formatting code starting at `at`, if one starts there.
+///
+/// Only the presence and width of the code matter here; whether it is a color, a toggle, or a
+/// reset makes no difference to the visible length.
+fn formatting_span(text: &str, at: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
 
-    consume_color_digits(characters);
-
-    let mut lookahead = characters.clone();
-    if lookahead.next() == Some(',') && lookahead.peek().is_some_and(char::is_ascii_digit) {
-        characters.next();
-        consume_color_digits(characters);
-    }
-}
-
-/// Consumes the one or two digits of an mIRC color component.
-fn consume_color_digits(characters: &mut Peekable<Chars<'_>>) {
-    for _ in 0..2 {
-        if characters.peek().is_some_and(char::is_ascii_digit) {
-            characters.next();
-        } else {
-            break;
-        }
+    match *bytes.get(at)? {
+        0x03 => Some(mirc_color_end(bytes, at + 1)),
+        0x04 => Some(hex_color_end(bytes, at + 1)),
+        // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
+        // underline) and the reset code.
+        0x02 | 0x0f | 0x11 | 0x16 | 0x1d | 0x1e | 0x1f => Some(at + 1),
+        _ => None,
     }
 }
 
-/// Consumes a hex color's parameters, leaving a comma that introduces text.
-fn strip_hex_color(characters: &mut Peekable<Chars<'_>>) {
-    if !has_hex_color(characters) {
-        return;
+/// The end of an mIRC color code whose parameters start at `at`.
+fn mirc_color_end(bytes: &[u8], mut at: usize) -> usize {
+    let (end, digits) = consume_color_digits(bytes, at);
+
+    if digits == 0 {
+        return at;
     }
 
-    consume_hex_color(characters);
+    at = end;
 
-    let mut lookahead = characters.clone();
-    if lookahead.peek() == Some(&',') {
-        lookahead.next();
-        if has_hex_color(&lookahead) {
-            characters.next();
-            consume_hex_color(characters);
-        }
+    // A comma is only part of the code when a background color follows it.
+    if bytes.get(at) == Some(&b',') && bytes.get(at + 1).is_some_and(u8::is_ascii_digit) {
+        at = consume_color_digits(bytes, at + 1).0;
+    }
+
+    at
+}
+
+/// Consumes up to two color digits, returning the new offset and how many were consumed.
+fn consume_color_digits(bytes: &[u8], mut at: usize) -> (usize, usize) {
+    let start = at;
+
+    while at - start < 2 && bytes.get(at).is_some_and(u8::is_ascii_digit) {
+        at += 1;
+    }
+
+    (at, at - start)
+}
+
+/// The end of a hex color code whose parameters start at `at`.
+fn hex_color_end(bytes: &[u8], at: usize) -> usize {
+    if !has_hex_color(bytes, at) {
+        return at;
+    }
+
+    let end = at + HEX_COLOR_DIGITS;
+
+    if bytes.get(end) == Some(&b',') && has_hex_color(bytes, end + 1) {
+        end + 1 + HEX_COLOR_DIGITS
+    } else {
+        end
     }
 }
 
-/// Whether the next [`HEX_COLOR_DIGITS`] characters are hex digits.
-fn has_hex_color(characters: &Peekable<Chars<'_>>) -> bool {
-    let mut lookahead = characters.clone();
-
-    (0..HEX_COLOR_DIGITS).all(|_| {
-        let is_hex = lookahead.peek().is_some_and(char::is_ascii_hexdigit);
-        lookahead.next();
-
-        is_hex
-    })
-}
-
-/// Consumes one hex-color component.
-fn consume_hex_color(characters: &mut Peekable<Chars<'_>>) {
-    for _ in 0..HEX_COLOR_DIGITS {
-        characters.next();
-    }
+/// Whether six hex digits start at `at`.
+fn has_hex_color(bytes: &[u8], at: usize) -> bool {
+    bytes
+        .get(at..at + HEX_COLOR_DIGITS)
+        .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit))
 }
 
 /// The maximum length of a listing, leaving room for the sender prefix, `PRIVMSG` framing and
@@ -463,5 +558,51 @@ mod tests {
             ),
             "Rules: Don't spam 5,6,7,8, and especially not 9!"
         );
+    }
+
+    #[test]
+    fn visible_length_excludes_formatting_codes() {
+        assert_eq!(visible_len("plain"), 5);
+        assert_eq!(visible_len("\x0310red\x0f"), 3);
+        assert_eq!(visible_len("\u{4}FF0000red"), 3);
+        assert_eq!(visible_len("é"), 2);
+    }
+
+    #[test]
+    fn truncates_replies_without_counting_formatting_codes() {
+        // The color and reset codes are not part of the visible budget, and the cut does not
+        // split a multibyte character.
+        let truncated = truncate_reply("\x0310abcédef\x0f", 7, "…");
+
+        assert_eq!(truncated, "\x0310abc…\x0f");
+        assert_eq!(visible_len(&truncated), 6);
+    }
+
+    #[test]
+    fn truncation_keeps_color_parameters_whole() {
+        let truncated = truncate_reply("\x0312,34long message", 8, "…");
+
+        assert_eq!(truncated, "\x0312,34long…\x0f");
+    }
+
+    #[test]
+    fn truncation_resets_formatting_and_keeps_short_text_borrowed() {
+        assert!(matches!(
+            truncate_reply("short", 10, "…"),
+            Cow::Borrowed("short")
+        ));
+
+        let truncated = truncate_reply("\x02bold text", 6, "…");
+
+        assert!(truncated.starts_with("\x02bo"));
+        assert!(truncated.ends_with('\x0f'));
+    }
+
+    #[test]
+    fn truncation_stops_before_a_partial_emoji() {
+        let text = "🦀".repeat(10);
+        let truncated = truncate_reply(&text, 9, "…");
+
+        assert_eq!(strip_formatting(&truncated), "🦀…");
     }
 }

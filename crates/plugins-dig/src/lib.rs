@@ -8,6 +8,8 @@
 //!
 //! A resolver is built once at plugin initialization, querying the nameservers over both UDP
 //! and TCP; the host file is never consulted.
+//!
+//! Large answer sets are capped to keep a single lookup from flooding the channel.
 
 use std::fmt::Display;
 use std::net::IpAddr;
@@ -27,6 +29,9 @@ use tracing::debug;
 
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
+
+/// The maximum number of answer lines sent for one lookup.
+const MAX_REPLY_LINES: usize = 5;
 
 /// Settings for the dig plugin, from its `[plugins.dig]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -114,6 +119,13 @@ impl Display for LookupResult {
     }
 }
 
+impl LookupResult {
+    /// Returns the number of answer records.
+    fn len(&self) -> usize {
+        self.0.answers().len()
+    }
+}
+
 #[plugin(name = "dig", settings = Settings)]
 impl Dig {
     /// Builds the resolver the plugin queries nameservers through.
@@ -134,12 +146,30 @@ impl Dig {
     ) -> Result<(), ZetaError> {
         match self.resolve(&opts.name, opts.record_type).await {
             Ok(result) => {
-                for line in result.to_string().lines() {
-                    client.send_privmsg(channel, line)?;
+                let total = result.len();
+
+                for line in result.to_string().lines().take(MAX_REPLY_LINES) {
+                    client.send_privmsg(channel, truncate_reply(line, MAX_LISTING_LENGTH, "…"))?;
+                }
+
+                if total > MAX_REPLY_LINES {
+                    client.send_privmsg(
+                        channel,
+                        labeled_reply(
+                            "Dig",
+                            format!("(+{} more records)", total - MAX_REPLY_LINES),
+                        ),
+                    )?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, labeled_reply("Dig", err.to_string()))?;
+                client.send_privmsg(
+                    channel,
+                    labeled_reply(
+                        "Dig",
+                        truncate_reply(&err.to_string(), MAX_LISTING_LENGTH, "…"),
+                    ),
+                )?;
             }
         }
 

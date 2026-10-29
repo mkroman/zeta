@@ -36,6 +36,32 @@ pub trait Truncatable: AsRef<str> {
         truncated.push_str(suffix);
         truncated
     }
+
+    /// Truncates the text so that it is at most `max_bytes` UTF-8 bytes *including* `suffix`,
+    /// which is appended when truncation happens.
+    ///
+    /// IRC budgets are line budgets in bytes, not character counts: a short run of CJK or emoji
+    /// text can be several times its character count. Truncation always stops on a character
+    /// boundary. A suffix longer than `max_bytes` is kept whole, so the result can exceed the
+    /// budget in that case.
+    fn truncate_bytes_within(&self, max_bytes: usize, suffix: &str) -> Cow<'_, str> {
+        let text = self.as_ref();
+
+        if text.len() <= max_bytes {
+            return Cow::Borrowed(text);
+        }
+
+        let mut end = max_bytes.saturating_sub(suffix.len()).min(text.len());
+
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+
+        let mut truncated = String::with_capacity(end + suffix.len());
+        truncated.push_str(&text[..end]);
+        truncated.push_str(suffix);
+        Cow::Owned(truncated)
+    }
 }
 
 impl<T: ?Sized + AsRef<str>> Truncatable for T {}
@@ -301,6 +327,23 @@ mod tests {
         assert_eq!("hello".truncate_within(4, "..."), "h...");
         assert_eq!("hello".truncate_within(3, ""), "hel");
         assert_eq!("hello".truncate_within(5, ""), "hello");
+    }
+
+    #[test]
+    fn truncates_bytes_within_a_character_boundary() {
+        let s: &str = "this is a very long string";
+
+        assert_eq!(s.truncate_bytes_within(10, "…"), "this is…");
+        assert_eq!(s.truncate_bytes_within(250, "…"), s);
+        assert!(matches!(
+            s.truncate_bytes_within(250, "…"),
+            Cow::Borrowed(_)
+        ));
+
+        // Multibyte characters are never split, and the suffix counts toward the byte budget.
+        assert_eq!("🦀🦀🦀🦀".truncate_bytes_within(13, "…"), "🦀🦀…");
+        assert_eq!("🦀x".truncate_bytes_within(4, ""), "🦀");
+        assert_eq!("hello".truncate_bytes_within(4, "..."), "h...");
     }
 
     #[test]

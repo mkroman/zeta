@@ -224,11 +224,13 @@ impl Reddit {
 /// Formats a submission's title and subreddit as a complete plain reply, unstyled for a single
 /// IRC line. Callers send the result as-is.
 fn format_submission(submission: &Submission) -> String {
-    plain_reply(format!(
+    let message = plain_reply(format!(
         "{} : {}",
         unstyle_text(&submission.title),
         unstyle_text(&submission.subreddit)
-    ))
+    ));
+
+    truncate_reply(&message, MAX_LISTING_LENGTH, "…").into_owned()
 }
 
 /// Formats a subreddit's title and public description as a labeled reply, unstyled for a single
@@ -239,9 +241,10 @@ fn format_submission(submission: &Submission) -> String {
 fn format_subreddit(subreddit: &Subreddit) -> String {
     let title = unstyle_text(&subreddit.title);
     let description = unstyle_text(&subreddit.public_description);
-    let description = description.truncate_with_suffix(250, "…");
+    let description = description.truncate_bytes_within(250, "…");
+    let message = labeled_reply(&title, description);
 
-    labeled_reply(&title, description)
+    truncate_reply(&message, MAX_LISTING_LENGTH, "…").into_owned()
 }
 
 #[cfg(test)]
@@ -283,6 +286,15 @@ mod tests {
             strip_formatting(&format_submission(&submission)),
             "> Sparindex S&P500 børsnoteres i morgen : dkfinance"
         );
+    }
+
+    #[test]
+    fn truncates_long_submission_titles() {
+        let submission = submission(&"é".repeat(500), "dkfinance");
+        let message = format_submission(&submission);
+
+        assert!(visible_len(&message) <= MAX_LISTING_LENGTH, "{message:?}");
+        assert!(strip_formatting(&message).ends_with('…'), "{message:?}");
     }
 
     #[test]

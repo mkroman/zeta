@@ -430,7 +430,8 @@ impl YouTube {
                         .unwrap_or(0);
 
                     let message = format_video_message(&video, &category, view_count);
-                    client.send_privmsg(channel, message)?;
+                    client
+                        .send_privmsg(channel, truncate_reply(&message, MAX_LISTING_LENGTH, "…"))?;
                 }
                 Err(e) => {
                     client.send_privmsg(channel, plain_reply(e))?;

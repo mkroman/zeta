@@ -74,7 +74,7 @@ const SESSION_TTL: Duration = Duration::from_hours(1);
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Settings {
-    /// The maximum length of a media caption before it gets truncated.
+    /// The maximum length of a media caption in bytes before it gets truncated.
     #[serde(alias = "title_length")]
     pub caption_length: usize,
     /// The key prefix that mirrored media are uploaded under.
@@ -580,7 +580,7 @@ fn format_summary(details: &MediaDetails, kind: &str, caption_length: usize) -> 
         .map(unstyle_text)
         .filter(|caption| !caption.is_empty())
     {
-        let truncated = caption.truncate_with_suffix(caption_length, "…");
+        let truncated = caption.truncate_bytes_within(caption_length, "…");
         let _ = write!(buf, "“\x0f{}\x0310” ", truncated.trim());
     }
 
@@ -599,7 +599,7 @@ fn format_summary(details: &MediaDetails, kind: &str, caption_length: usize) -> 
         let _ = write!(buf, "is an Instagram {kind}");
     }
 
-    (!buf.is_empty()).then_some(buf)
+    (!buf.is_empty()).then(|| truncate_reply(&buf, MAX_LISTING_LENGTH, "…").into_owned())
 }
 
 #[cfg(test)]
@@ -676,7 +676,7 @@ mod tests {
                 "post",
                 Some(format!(
                     "“{}…” is an Instagram post by user.name",
-                    "a".repeat(150)
+                    "a".repeat(147)
                 )),
             ),
             (

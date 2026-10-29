@@ -71,8 +71,9 @@ pub mod prelude {
     pub use crate::filtering::{Filters, UrlFilter};
     pub use crate::hostmask::Hostmasks;
     pub use crate::irc::{
-        BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
-        parse_or_usage, plain_reply, reply_lookup, unstyle_text,
+        BOLD, COLOR, MAX_LISTING_LENGTH, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply,
+        labeled_reply_prefix, parse_or_usage, plain_reply, reply_lookup, truncate_reply,
+        unstyle_text, visible_len,
     };
     pub use crate::registration::{LoadedPlugin, PluginRegistration};
     pub use crate::types::NoSettings;

@@ -24,6 +24,7 @@ use zeta_http::RequestError;
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
 use zeta_utils::settings::resolve_optional_setting;
+use zeta_utils::text::Truncatable;
 
 /// Settings for the github plugin, from its `[plugins.github]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -179,7 +180,10 @@ impl GitHubPlugin {
         line.push_str(&unstyle_text(&item.full_name));
 
         if let Some(desc) = &item.description {
-            let _ = write!(line, " - {}", unstyle_text(desc));
+            let description = unstyle_text(desc);
+            let description = description.truncate_bytes_within(200, "…");
+
+            let _ = write!(line, " - {description}");
         }
 
         // " -\x0f <url>"
@@ -194,7 +198,7 @@ impl GitHubPlugin {
             lang, item.stargazers_count
         );
 
-        labeled_reply("GitHub", &line)
+        labeled_reply("GitHub", truncate_reply(&line, MAX_LISTING_LENGTH, "…"))
     }
 }
 

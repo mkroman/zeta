@@ -32,7 +32,7 @@ use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};
 pub struct Settings {
     /// Whether to post a summary of the video's oEmbed metadata.
     pub post_summary: bool,
-    /// The maximum length of a video title before it gets truncated.
+    /// The maximum length of a video title in bytes before it gets truncated.
     pub title_length: usize,
     /// Whether videos are mirrored to the S3 bucket.
     ///
@@ -216,7 +216,7 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
         .filter(|title| !title.is_empty())
         .map(|title| {
             title
-                .truncate_with_suffix(title_length, "…")
+                .truncate_bytes_within(title_length, "…")
                 .trim()
                 .to_owned()
         });
@@ -226,14 +226,16 @@ fn format_summary(embed: &OEmbed, title_length: usize) -> Option<String> {
         .map(unstyle_text)
         .filter(|author| !author.is_empty());
 
-    match (title, author.as_deref()) {
-        (Some(title), Some(author)) => Some(format!(
-            "“{RESET}{title}{COLOR}” is a TikTok video by{RESET} {author}"
-        )),
-        (Some(title), None) => Some(format!("“{RESET}{title}{COLOR}”")),
-        (None, Some(author)) => Some(format!("TikTok video by{RESET} {author}")),
-        (None, None) => None,
-    }
+    let summary = match (title, author.as_deref()) {
+        (Some(title), Some(author)) => {
+            format!("“{RESET}{title}{COLOR}” is a TikTok video by{RESET} {author}")
+        }
+        (Some(title), None) => format!("“{RESET}{title}{COLOR}”"),
+        (None, Some(author)) => format!("TikTok video by{RESET} {author}"),
+        (None, None) => return None,
+    };
+
+    Some(truncate_reply(&summary, MAX_LISTING_LENGTH, "…").into_owned())
 }
 
 #[cfg(test)]

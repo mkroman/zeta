@@ -7,8 +7,8 @@
 //! usage synopsis derived from its `clap` argument type, along with descriptions of its arguments
 //! and subcommands.
 //!
-//! Lists longer than the IRCv3 extended message length are split across continuation messages
-//! without splitting an entry.
+//! Lists longer than one IRC line are split across continuation messages without splitting an
+//! entry.
 
 mod format;
 

@@ -7,7 +7,7 @@ use std::fmt::Write;
 
 use num_format::{Locale, ToFormattedString};
 use zeta_plugin::prelude::{BOLD, COLOR, REPLY_MARKER, RESET};
-use zeta_utils::irc::unstyle_text;
+use zeta_utils::irc::{MAX_LISTING_LENGTH, truncate_reply, unstyle_text};
 
 use super::model::{Person, Title};
 use zeta_utils::text::Truncatable;
@@ -77,7 +77,7 @@ pub fn format_title(title: &Title) -> String {
 
     let _ = write!(message, " URL:\x0f https://imdb.com/title/{}", title.id);
 
-    message
+    truncate_reply(&message, MAX_LISTING_LENGTH, "…").into_owned()
 }
 
 /// Formats the details of `person` as a single IRC message.
@@ -107,13 +107,13 @@ pub fn format_person(person: &Person) -> String {
         let _ = write!(
             message,
             " Bio:\x0f {}\x0310",
-            bio.truncate_with_suffix(250, "…")
+            bio.truncate_bytes_within(250, "…")
         );
     }
 
     let _ = write!(message, " URL:\x0f https://imdb.com/name/{}", person.id);
 
-    message
+    truncate_reply(&message, MAX_LISTING_LENGTH, "…").into_owned()
 }
 
 /// Writes the release years of a title as `(2008)` or `(2005–2013)`.
@@ -321,7 +321,7 @@ mod tests {
             .and_then(|rest| rest.split(" URL:").next())
             .expect("bio segment");
 
-        assert_eq!(bio.trim_end_matches('…').chars().count(), 250);
+        assert_eq!(bio.trim_end_matches('…').len(), 247);
         assert!(bio.ends_with('…'), "{formatted}");
         assert!(
             formatted.ends_with("URL: https://imdb.com/name/nm0000138"),
