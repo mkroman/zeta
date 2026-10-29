@@ -33,7 +33,7 @@ pub use error::WreqError;
 #[cfg(any(feature = "request", feature = "http"))]
 pub use client::send;
 #[cfg(feature = "http")]
-pub use client::{build_client, builder, text};
+pub use client::{build_client, builder};
 #[cfg(feature = "http")]
 pub use response::{
     ApiError, get_json, get_json_or_404, get_text, parse_response, parse_response_or_404,

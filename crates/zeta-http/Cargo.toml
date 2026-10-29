@@ -23,7 +23,7 @@ request = ["dep:reqwest"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
 emulated = ["dep:thiserror", "dep:wreq", "dep:wreq-util"]
 # OAuth2 client-credentials token caching.
-oauth = ["http", "dep:tokio"]
+oauth = ["http", "dep:zeta-cache"]
 native-tls = ["reqwest?/native-tls"]
 native-tls-vendored = ["reqwest?/native-tls-vendored"]
 rustls = ["reqwest?/rustls"]
@@ -47,8 +47,8 @@ serde.workspace = true
 serde_json = { workspace = true, optional = true }
 serde_path_to_error = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
 tracing.workspace = true
+zeta-cache = { path = "../zeta-cache", optional = true }
 zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils", optional = true }
 

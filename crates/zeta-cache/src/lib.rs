@@ -127,6 +127,36 @@ impl<T> TtlCache<T> {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<T, E>> + Send,
     {
+        let ttl = self.ttl;
+
+        self.get_or_refresh_with(|| async move {
+            let value = refresh().await?;
+
+            Ok((value, ttl))
+        })
+        .await
+    }
+
+    /// Returns the cached value when it is fresh, refreshing through `refresh` otherwise and
+    /// caching the refreshed value for the [`Duration`] it provides.
+    ///
+    /// Unlike [`TtlCache::get_or_refresh`], the refresh chooses how long its value stays fresh,
+    /// for callers whose entries carry a lifetime of their own — e.g. an OAuth2 token that the
+    /// authorization server expires on its own schedule. A zero [`Duration`] makes the value
+    /// immediately stale, so the next read refreshes again.
+    ///
+    /// Concurrent misses refresh once: the first task refreshes while the others wait, and
+    /// pick up the refreshed value through the double-check afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `refresh` when the value could not be refreshed.
+    pub async fn get_or_refresh_with<E, F, Fut>(&self, refresh: F) -> Result<T, E>
+    where
+        T: Clone + Send + Sync,
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<(T, Duration), E>> + Send,
+    {
         if let Some(value) = self.get() {
             return Ok(value);
         }
@@ -137,9 +167,9 @@ impl<T> TtlCache<T> {
             return Ok(value);
         }
 
-        let value = refresh().await?;
+        let (value, ttl) = refresh().await?;
 
-        self.replace(Entry::new(value.clone(), self.ttl));
+        self.replace(Entry::new(value.clone(), ttl));
 
         Ok(value)
     }
@@ -715,6 +745,91 @@ mod tests {
         }
 
         assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_with_honors_the_refresh_provided_ttl() {
+        // The cache-wide TTL is zero: only the refresh-provided TTL can keep the value fresh.
+        let cache = TtlCache::new(Duration::ZERO);
+        let mut refreshes = 0;
+
+        let first = cache
+            .get_or_refresh_with(|| async {
+                refreshes += 1;
+                Ok::<_, ()>((7, Duration::from_mins(1)))
+            })
+            .await
+            .unwrap();
+        let second = cache
+            .get_or_refresh_with(|| async {
+                refreshes += 1;
+                Ok::<_, ()>((9, Duration::from_mins(1)))
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(first, 7);
+        assert_eq!(second, 7);
+        assert_eq!(refreshes, 1);
+        assert_eq!(cache.get(), Some(7));
+
+        // A refresh-provided zero TTL overrides a long cache-wide TTL: the value is immediately
+        // stale, so the next read refreshes again.
+        let cache = TtlCache::new(Duration::from_hours(1));
+        let mut refreshes = 0;
+
+        cache
+            .get_or_refresh_with(|| async {
+                refreshes += 1;
+                Ok::<_, ()>((7, Duration::ZERO))
+            })
+            .await
+            .unwrap();
+        let value = cache
+            .get_or_refresh_with(|| async {
+                refreshes += 1;
+                Ok::<_, ()>((9, Duration::from_mins(1)))
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(value, 9);
+        assert_eq!(refreshes, 2);
+        assert_eq!(cache.get(), Some(9));
+    }
+
+    #[tokio::test]
+    async fn get_or_refresh_with_refreshes_once_for_concurrent_misses() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cache = Arc::new(cache_with(Duration::from_mins(1)));
+        let refreshes = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+
+        for _ in 0..8 {
+            let cache = Arc::clone(&cache);
+            let refreshes = Arc::clone(&refreshes);
+
+            handles.push(tokio::spawn(async move {
+                cache
+                    .get_or_refresh_with(|| async {
+                        refreshes.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+
+                        Ok::<_, ()>((7, Duration::from_mins(5)))
+                    })
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), 7);
+        }
+
+        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(cache.get(), Some(7));
     }
 
     #[tokio::test]
