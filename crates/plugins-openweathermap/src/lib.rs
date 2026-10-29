@@ -17,6 +17,7 @@ use tracing::{debug, warn};
 use zeta_http as http;
 use zeta_http::RequestError;
 use zeta_plugin::prelude::*;
+use zeta_utils::irc::unstyle_text;
 
 /// Base URL for the OpenWeatherMap API.
 const API_BASE_URL: &str = "https://api.openweathermap.org";
@@ -291,18 +292,19 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
     let temp_unit = units.temperature();
     let speed_unit = units.wind_speed();
 
+    let name = unstyle_text(&w.name);
     let location = w
         .sys
         .country
         .as_ref()
-        .map_or_else(|| w.name.clone(), |c| format!("{}, {}", w.name, c));
+        .map_or_else(|| name.clone(), |c| format!("{name}, {}", unstyle_text(c)));
 
     let conditions = if w.weather.is_empty() {
         "unknown conditions".to_string()
     } else {
         w.weather
             .iter()
-            .map(|d| d.description.as_str())
+            .map(|d| unstyle_text(&d.description))
             .collect::<Vec<_>>()
             .join(", ")
     };

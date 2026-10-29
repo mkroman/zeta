@@ -24,11 +24,11 @@ thiserror.workspace = true
 tracing.workspace = true
 zeta-http = { path = "../zeta-http", default-features = false, features = ["http"] }
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
 serde_json.workspace = true
 zeta-test-support = { path = "../zeta-test-support" }
-zeta-utils = { path = "../zeta-utils" }
 
 [lints]
 workspace = true

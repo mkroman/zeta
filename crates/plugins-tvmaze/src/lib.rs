@@ -15,6 +15,7 @@ use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
 use zeta_utils::duration::TimeInWords;
+use zeta_utils::irc::unstyle_text;
 
 /// Base URL for the TVmaze API.
 pub const API_BASE_URL: &str = "https://api.tvmaze.com";
@@ -193,7 +194,7 @@ impl Tvmaze {
 
     /// Formats a message about the next episode.
     fn format_next_episode_message(show: &Show, episode: &Episode) -> String {
-        let title = &episode.name;
+        let title = unstyle_text(&episode.name);
         let season = episode.season;
         let number = episode.number;
         let time_until_air = {
@@ -211,8 +212,8 @@ impl Tvmaze {
 
     /// Formats a message about the show's current status.
     fn format_show_status_message(show: &Show) -> String {
-        let name = &show.name;
-        let status = &show.status;
+        let name = unstyle_text(&show.name);
+        let status = unstyle_text(&show.status);
         let content = format!(
             "\x0f{name}\x0310 is currently marked as\x0f {status}\x0310 and there is no next episode"
         );
