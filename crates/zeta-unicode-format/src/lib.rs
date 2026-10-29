@@ -16,7 +16,7 @@
 //! - [`names`] — the name section's fixed index and Huffman model area;
 //! - [`primitives`] — varints, hex placeholders, UTF-8 code-point encoding and packed bit
 //!   fields;
-//! - [`emoji`] — the rule ids, tone tables and name-grammar helpers;
+//! - [`emoji`] — the rule ids, tone tables, name grammar helpers and the rule renderer;
 //! - [`huffman`] — the canonical Huffman codec used by every compressed section.
 //!
 //! Everything is re-exported at the crate root so callers can keep using the flat paths.
@@ -28,9 +28,10 @@ pub mod names;
 pub mod primitives;
 
 pub use emoji::{
-    MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, TONE_NAMES, TONES, ZWJ, clock_name, family_word,
-    format_toned, is_tone, join_family, keycap_word, pair_phrase, plural, swap_person,
-    tone_indices, tone_phrase, tone_positions, ucd_mask_name,
+    MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, RuleContext, TONE_NAMES, TONES, ZWJ, clock_name,
+    family_word, format_toned, gender_base, is_tone, join_family, keycap_word, pair_phrase, plural,
+    rule_name, rule_needs_sequence, swap_person, tone_indices, tone_phrase, tone_positions,
+    ucd_mask_name,
 };
 pub use huffman::{BitReader, Code, Codebook, Model};
 pub use layout::{
