@@ -7,7 +7,7 @@ use figment::{
     Figment,
     providers::{Env, Format, Toml},
 };
-use miette::IntoDiagnostic;
+use miette::{IntoDiagnostic, WrapErr};
 use serde::{Deserialize, Serialize};
 
 use crate::consts;
@@ -69,7 +69,15 @@ impl Config {
 
     /// Extracts the configuration from an already-built provider chain.
     fn from_figment(figment: &Figment) -> miette::Result<Self> {
-        figment.extract().into_diagnostic()
+        let config: Self = figment.extract().into_diagnostic()?;
+
+        config
+            .http
+            .validate()
+            .into_diagnostic()
+            .wrap_err("invalid `[http].user_agent`")?;
+
+        Ok(config)
     }
 
     /// Removes and returns the per-plugin configuration sections.
@@ -325,6 +333,17 @@ channels = []
 
         assert_eq!(config.timeout, Duration::from_secs(10));
         assert_eq!(config.user_agent, "zeta/test");
+    }
+
+    #[test]
+    fn invalid_http_user_agent_is_rejected() {
+        let toml = format!("{FULL_BASE}\n[http]\nuser_agent = \"bad\\nagent\"\n");
+        let figment = Figment::new().merge(Toml::string(&toml));
+
+        let error =
+            Config::from_figment(&figment).expect_err("an invalid user agent should be rejected");
+
+        assert!(error.to_string().contains("user_agent"), "{error}");
     }
 
     #[test]
