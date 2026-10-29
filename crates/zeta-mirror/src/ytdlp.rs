@@ -331,7 +331,11 @@ async fn read_output(
     while let Some(line) = lines.next_line().await? {
         if let Some(progress) = parse_progress_line(&line) {
             on_progress(progress);
-        } else if let Ok(dump) = serde_json::from_str::<JsonDump>(&line) {
+        } else if line.starts_with('{')
+            && let Ok(dump) = serde_json::from_str::<JsonDump>(&line)
+        {
+            // Only the json dump arrives as JSON, and it starts with `{`: without the guard,
+            // every informational line of the run pays for a doomed parse attempt.
             json = Some(dump);
         }
     }
