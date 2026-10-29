@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use irc::client::prelude::Client;
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, warn};
 
 use crate::Error;
 use crate::config::Config;
@@ -81,11 +81,16 @@ fn drive_outgoing(client: &mut Client) {
         .outgoing()
         .expect("the outgoing future is only available before the stream is taken");
 
-    tokio::spawn(async move {
-        if let Err(error) = outgoing.await {
-            warn!(%error, "the IRC connection write path failed");
+    // The span keeps the write-path failure visible: events outside a span are dropped by the
+    // OpenTelemetry layer.
+    tokio::spawn(
+        async move {
+            if let Err(error) = outgoing.await {
+                warn!(%error, "the IRC connection write path failed");
+            }
         }
-    });
+        .instrument(tracing::info_span!("irc_outgoing")),
+    );
 }
 
 /// Dispatches incoming IRC messages as events to the plugins that registered interest, until
@@ -134,16 +139,19 @@ async fn flush_quit(client: &Client, quit_message: &str) {
 /// The signal handlers stay installed after the first signal is received, so a second one
 /// resolves here instead of terminating the process with the default handler.
 fn exit_on_second_signal() {
-    tokio::spawn(async move {
-        let signal = shutdown_signal().await;
+    tokio::spawn(
+        async move {
+            let signal = shutdown_signal().await;
 
-        warn!(
-            signal = signal.name(),
-            "received a second shutdown signal; exiting now"
-        );
+            warn!(
+                signal = signal.name(),
+                "received a second shutdown signal; exiting now"
+            );
 
-        std::process::exit(signal.exit_code());
-    });
+            std::process::exit(signal.exit_code());
+        }
+        .instrument(tracing::info_span!("second_signal")),
+    );
 }
 
 /// The main IRC bot struct that manages connection state and message handling.
@@ -236,6 +244,7 @@ impl Zeta {
     ///   configuration issues.)
     /// - [`Error::IrcRegistration`] - if user registration fails (e.g. if the nickname is already taken.)
     /// - [`Error::Irc`] - if a protocol or communication error occurred.
+    #[tracing::instrument(name = "run", skip_all)]
     pub async fn run(mut self) -> Result<(), Error> {
         let mut client = Client::from_config((&self.config.irc).into())
             .await
