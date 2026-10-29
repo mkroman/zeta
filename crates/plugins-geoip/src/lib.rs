@@ -9,7 +9,6 @@
 //! variable; a missing key fails plugin initialization and the plugin is skipped at startup.
 
 use std::fmt::Display;
-use std::sync::OnceLock;
 
 use clap::Parser;
 use hickory_resolver::{
@@ -43,6 +42,8 @@ pub struct GeoIp {
     /// The HTTP client used for API requests.
     pub client: reqwest::Client,
     api_key: String,
+    /// The resolver used to turn domains into addresses.
+    resolver: TokioResolver,
 }
 
 /// A successful geolocation lookup, formatting one reply line with the reported details.
@@ -114,8 +115,18 @@ impl GeoIp {
         let client = http::builder(&ctx.config.http)
             .build()
             .map_err(|error| plugin_err(RequestError::from(error)))?;
+        let resolver = Resolver::builder_with_config(
+            ResolverConfig::tls(&CLOUDFLARE),
+            TokioRuntimeProvider::default(),
+        )
+        .build()
+        .map_err(plugin_err)?;
 
-        Ok(Self { client, api_key })
+        Ok(Self {
+            client,
+            api_key,
+            resolver,
+        })
     }
 
     /// Looks up the requested domain or IP and replies with its geolocation details.
@@ -186,37 +197,23 @@ impl Display for LookupResult {
     }
 }
 
-/// Returns the process-wide DNS resolver: Cloudflare over TLS, used for the hostname
-/// lookups the geolocation is built from.
-///
-/// # Panics
-///
-/// Panics if the default DNS resolver cannot be created.
-fn resolver() -> &'static TokioResolver {
-    static RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
-
-    RESOLVER.get_or_init(|| {
-        Resolver::builder_with_config(
-            ResolverConfig::tls(&CLOUDFLARE),
-            TokioRuntimeProvider::default(),
-        )
-        .build()
-        .expect("couldn't create the dns resolver")
-    })
-}
-
 impl GeoIp {
-    async fn resolve_domain(domain: &str) -> Result<String, Error> {
+    /// Resolves `domain` to its first address through the plugin's Cloudflare-over-TLS
+    /// resolver. IP address literals are returned as they are.
+    async fn resolve_domain(&self, domain: &str) -> Result<String, Error> {
         match Host::parse(domain) {
             Ok(Host::Ipv4(addr)) => Ok(addr.to_string()),
             Ok(Host::Ipv6(addr)) => Ok(addr.to_string()),
             Ok(Host::Domain(domain)) => {
-                let resolver = resolver();
                 // `dns.question.name` is the OpenTelemetry convention for the name a DNS query
                 // asks for: https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
                 debug!(dns.question.name = %domain, "resolving domain");
 
-                let lookup = resolver.lookup_ip(domain).await.map_err(Error::Resolve)?;
+                let lookup = self
+                    .resolver
+                    .lookup_ip(domain)
+                    .await
+                    .map_err(Error::Resolve)?;
 
                 // `dns.answers` is the OpenTelemetry convention for the addresses a lookup
                 // resolved to:
@@ -248,7 +245,7 @@ impl GeoIp {
     /// Returns an [`enum@Error`] when the input is neither a domain nor an IP address, the domain
     /// cannot be resolved, the request fails, or the response cannot be parsed.
     pub async fn resolve(&self, name: &str) -> Result<LookupResult, Error> {
-        let ip = Self::resolve_domain(name).await?;
+        let ip = self.resolve_domain(name).await?;
         let params = [
             ("ip", ip.as_str()),
             ("key", &self.api_key),

@@ -107,14 +107,9 @@ impl UnwallService {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Database`] if the cache could not be consulted or written, and the
-    /// errors of `UnwallClient::submit` otherwise.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the database reports a submission cached that a re-read cannot find — a
-    /// write that vanished, which would mean the database broke its read-your-writes
-    /// guarantee.
+    /// Returns [`Error::Database`] if the cache could not be consulted or written, the errors
+    /// of `UnwallClient::submit` otherwise, and [`Error::InvalidUrl`] if a submission reported
+    /// as cached cannot be read back.
     pub async fn resolve(&self, article: &Url, fetch: NewFetch) -> Result<CachedUrl, Error> {
         let key = fetch.url.clone();
 
@@ -152,7 +147,7 @@ impl UnwallService {
                 ))
             })
             .await
-            .map(|cached| cached.expect("a successful refresh caches the row"))
+            .and_then(|cached| cached.ok_or(Error::InvalidUrl))
     }
 
     /// Adds `hosts` as covered sites.
