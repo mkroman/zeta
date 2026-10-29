@@ -171,6 +171,13 @@ pub enum Error {
     #[cfg(feature = "client")]
     #[error("the server responded with status {0}")]
     Status(reqwest::StatusCode),
+    /// The dictionary page could not be parsed.
+    ///
+    /// Parsing runs on a blocking thread; this reports that task failing — e.g. a panic in the
+    /// HTML parser — rather than a page that merely lacks the expected structure.
+    #[cfg(feature = "client")]
+    #[error("could not parse the dictionary page: {0}")]
+    Parse(String),
     /// Indicates that a required HTML element could not be found during parsing.
     ///
     /// This error is returned when a CSS selector does not match any element in the document,
