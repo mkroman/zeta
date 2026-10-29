@@ -24,8 +24,13 @@ use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_utils::duration::{HOURS_AND_MINUTES, format_seconds_in_words};
 
-const BASE_URL: &str = "https://howlongtobeat.com";
 const REFERER_URL: &str = "https://howlongtobeat.com/";
+
+/// The endpoint search tokens are requested from; the timestamp query is appended per request.
+const SEARCH_INIT_URL: &str = "https://howlongtobeat.com/api/search/site/init";
+
+/// The endpoint searches are posted to.
+const SEARCH_URL: &str = "https://howlongtobeat.com/api/search/site";
 
 /// How long the cached search token stays in use before a new one is requested.
 ///
@@ -263,10 +268,13 @@ impl HowLongToBeat {
             .unwrap_or_default()
             .as_millis();
 
-        let url = format!("{BASE_URL}/api/search/site/init?t={timestamp}");
         debug!("refreshing hltb search token");
 
-        let request = self.client.get(&url).header(REFERER, REFERER_URL);
+        let request = self
+            .client
+            .get(SEARCH_INIT_URL)
+            .query(&[("t", timestamp.to_string())])
+            .header(REFERER, REFERER_URL);
         let init: InitResponse = http::get_json(request).await?;
 
         Ok(init.token)
@@ -295,7 +303,6 @@ impl HowLongToBeat {
 
     /// Executes the HTTP POST request to the API with the necessary headers and payload.
     async fn perform_search_request(&self, token: &str, query: &str) -> Result<Vec<Game>, Error> {
-        let url = format!("{BASE_URL}/api/search/site");
         let search_terms: Vec<&str> = query.split_whitespace().collect();
 
         let body = SearchRequest {
@@ -309,7 +316,7 @@ impl HowLongToBeat {
 
         let request = self
             .client
-            .post(&url)
+            .post(SEARCH_URL)
             .header(REFERER, REFERER_URL)
             .header("x-auth-token", token)
             .header(CONTENT_TYPE, "application/json")

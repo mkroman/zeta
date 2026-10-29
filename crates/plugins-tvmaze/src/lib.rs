@@ -17,8 +17,8 @@ use zeta_url::RedactedUrl;
 use zeta_utils::duration::TimeInWords;
 use zeta_utils::irc::unstyle_text;
 
-/// Base URL for the TVmaze API.
-pub const API_BASE_URL: &str = "https://api.tvmaze.com";
+/// The single-search endpoint shows are looked up against.
+const SINGLESEARCH_URL: &str = "https://api.tvmaze.com/singlesearch/shows";
 
 /// Errors that can occur while talking to the TVmaze API.
 #[derive(thiserror::Error, Debug)]
@@ -238,8 +238,7 @@ impl Tvmaze {
 
     /// Builds the search URL with query parameters.
     fn build_search_url(query: &str) -> Url {
-        let mut url =
-            Url::parse(&format!("{API_BASE_URL}/singlesearch/shows")).expect("single search url");
+        let mut url = Url::parse(SINGLESEARCH_URL).expect("single search url");
 
         url.query_pairs_mut()
             .append_pair("q", query)
