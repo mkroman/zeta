@@ -138,7 +138,7 @@ pub struct Category {
 impl PornHub {
     /// Creates a new instance of the PornHub plugin.
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
 
         Ok(Self { client })
     }

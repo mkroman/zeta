@@ -57,7 +57,7 @@ pub struct RoomDossier {
 impl Chaturbate {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
         Ok(Self {
-            client: http::build_client(&ctx.config.http),
+            client: ctx.http().clone(),
         })
     }
 

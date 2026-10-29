@@ -102,7 +102,7 @@ pub enum Error {
 impl Trustpilot {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "TRUSTPILOT_API_KEY")?;
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
 
         Ok(Self {
             client,

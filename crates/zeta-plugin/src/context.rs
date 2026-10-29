@@ -104,6 +104,10 @@ impl Context {
     /// The client follows no redirects, applies the configured timeout, and sends the configured
     /// user agent (its only default header).
     ///
+    /// Cloning the returned handle is cheap and shares the same connection pool, so a plugin that
+    /// needs the client in helpers can keep its own `reqwest::Client` field initialized with
+    /// `ctx.http().clone()`.
+    ///
     /// # Panics
     ///
     /// Panics if the HTTP client fails to build.

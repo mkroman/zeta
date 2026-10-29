@@ -100,7 +100,7 @@ impl Tiktok {
         };
 
         Ok(Self {
-            client: http::build_client(&ctx.config.http),
+            client: ctx.http().clone(),
             mirror,
             settings: settings.clone(),
         })

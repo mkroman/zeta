@@ -3094,7 +3094,6 @@ dependencies = [
  "dendanskeordbog",
  "serde",
  "serde_json",
- "zeta-http",
  "zeta-plugin",
  "zeta-test-support",
 ]

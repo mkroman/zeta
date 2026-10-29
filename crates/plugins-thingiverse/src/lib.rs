@@ -86,7 +86,7 @@ struct Creator {
 impl Thingiverse {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_token = resolve_secret(settings.api_key.as_deref(), "THINGIVERSE_APP_TOKEN")?;
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
 
         Ok(Self { client, app_token })
     }

@@ -22,7 +22,6 @@ use tracing::{debug, info, warn};
 use url::Host;
 
 use zeta_http as http;
-use zeta_http::RequestError;
 use zeta_plugin::prelude::*;
 
 const BASE_URL: &str = "https://api.ip2location.io";
@@ -109,12 +108,10 @@ pub struct IpInfo {
 
 #[plugin(name = "geoip", settings = Settings)]
 impl GeoIp {
-    /// Resolves the API key and builds the HTTP client the lookups go through.
+    /// Resolves the API key and takes a handle to the shared HTTP client the lookups go through.
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "GEOIP_API_KEY")?;
-        let client = http::builder(&ctx.config.http)
-            .build()
-            .map_err(|error| plugin_err(RequestError::from(error)))?;
+        let client = ctx.http().clone();
         let resolver = Resolver::builder_with_config(
             ResolverConfig::tls(&CLOUDFLARE),
             TokioRuntimeProvider::default(),

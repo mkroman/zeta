@@ -183,7 +183,7 @@ struct Clouds {
 impl OpenWeatherMap {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let app_id = resolve_secret(settings.app_id.as_deref(), "OPENWEATHERMAP_APP_ID")?;
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
 
         Ok(Self {
             client,
