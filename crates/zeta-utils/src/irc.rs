@@ -252,8 +252,10 @@ pub fn append_entries_within_budget<S: AsRef<str>>(
 /// produced by `more` when not every entry fits.
 ///
 /// `total` is the number of entries before budgeting, and `more` receives the number that were
-/// left out. `reserved` must already include room for the suffix, as with
-/// [`append_entries_within_budget`]. Returns the number of entries appended.
+/// left out. `reserved` covers suffixes the caller adds besides the truncation suffix, as with
+/// [`append_entries_within_budget`]; the truncation suffix itself is measured here, so callers
+/// cannot drift from the length `more` actually returns. Returns the number of entries
+/// appended.
 pub fn append_entries_with_more<S: AsRef<str>>(
     message: &mut String,
     entries: impl IntoIterator<Item = S>,
@@ -261,9 +263,19 @@ pub fn append_entries_with_more<S: AsRef<str>>(
     separator: &str,
     budget: usize,
     reserved: usize,
-    more: impl FnOnce(usize) -> String,
+    more: impl Fn(usize) -> String,
 ) -> usize {
-    let appended = append_entries_within_budget(message, entries, separator, budget, reserved);
+    // Reserve for the longest suffix, when every entry is dropped: over-reserving by a few
+    // bytes for smaller counts is preferable to a suffix that pushes the line over budget.
+    let suffix_reserve = more(total).len();
+
+    let appended = append_entries_within_budget(
+        message,
+        entries,
+        separator,
+        budget,
+        reserved + suffix_reserve,
+    );
     let dropped = total.saturating_sub(appended);
 
     if dropped > 0 {
@@ -347,7 +359,7 @@ mod tests {
             3,
             ", ",
             25,
-            " (+1 more)".len(),
+            0,
             |dropped| format!(" (+{dropped} more)"),
         );
 
@@ -356,12 +368,28 @@ mod tests {
     }
 
     #[test]
-    fn does_not_append_the_suffix_when_every_entry_fits() {
+    fn the_truncation_suffix_counts_against_the_budget() {
         let mut message = String::new();
 
         let appended =
+            append_entries_with_more(&mut message, ["first", "second"], 2, ", ", 20, 0, |_| {
+                " (1 more)".to_string()
+            });
+
+        // "first, second" fits on its own, but the 9-byte suffix that would follow does not.
+        assert_eq!(appended, 1);
+        assert_eq!(message, "first (1 more)");
+        assert!(message.len() <= 20);
+    }
+
+    #[test]
+    fn does_not_append_the_suffix_when_every_entry_fits() {
+        let mut message = String::new();
+
+        // The suffix length is measured up front, even when every entry ends up fitting.
+        let appended =
             append_entries_with_more(&mut message, ["first", "second"], 2, ", ", 40, 0, |_| {
-                panic!("every entry fits")
+                " (0 more)".to_string()
             });
 
         assert_eq!(appended, 2);

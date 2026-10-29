@@ -300,14 +300,13 @@ impl Unwall {
                 format!("{RESET}{}{COLOR} unwalled sites:{RESET} ", sites.len()),
             );
 
-            let reserved = " (999 more)".len();
             append_entries_with_more(
                 &mut message,
                 sites.iter().map(|site| site.host.as_str()),
                 sites.len(),
                 &format!("{COLOR}, {RESET}"),
                 MAX_LISTING_LENGTH,
-                reserved,
+                0,
                 |dropped| format!("{COLOR} ({dropped} more)"),
             );
 
