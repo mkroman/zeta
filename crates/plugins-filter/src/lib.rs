@@ -544,8 +544,9 @@ impl FilterPlugin {
             return Ok(());
         }
 
-        let Some(opts) =
-            parse_words_or_usage::<Opts>(client, command, |line| labeled_reply("Filter", line))?
+        let Some(opts) = parse_or_usage::<Opts>(client, command, ArgsMode::Words, |line| {
+            labeled_reply("Filter", line)
+        })?
         else {
             return Ok(());
         };
@@ -616,7 +617,7 @@ mod tests {
         let ctx = zeta_test_support::test_context();
         let mut subscriptions = Subscriptions::new();
 
-        <FilterPlugin as Plugin>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
+        <FilterPlugin as Registered>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
 
         assert!(ctx.shared.get::<Filters>().is_some());
     }

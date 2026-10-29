@@ -2,7 +2,8 @@
 //!
 //! Instead of raw IRC protocol messages, plugins receive events — typed values derived from the
 //! incoming IRC traffic they registered an interest in during initialization. A plugin declares
-//! its interests in [`Plugin::new`](crate::Plugin::new) through a [`Subscriptions`] set;
+//! its interests in [`Registered::new`](crate::Registered::new) through a [`Subscriptions`]
+//! set;
 //! the host only routes messages that match it, so a plugin's handlers are called only for
 //! the events it asked for.
 //!
@@ -22,7 +23,7 @@ use clap::Parser;
 use irc::proto::{Command, Message};
 use url::Url;
 
-use crate::command::{ArgsError, CommandSpec};
+use crate::command::{ArgsError, ArgsMode, CommandSpec};
 
 /// Destructures a message into its `PRIVMSG` target and text.
 ///
@@ -211,6 +212,19 @@ impl CommandEvent {
     /// Returns [`ArgsError::Usage`] if `clap` rejected the arguments.
     pub fn parse_words<T: Parser>(&self) -> Result<T, ArgsError> {
         self.spec.parse_words(self.args())
+    }
+
+    /// Parses the trailing arguments with the tokenization selected by `mode`.
+    ///
+    /// See [`CommandSpec::parse_with`](super::CommandSpec::parse_with) for the tokenization and
+    /// error behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArgsError::Quoting`] when shell tokenization fails, or [`ArgsError::Usage`] if
+    /// `clap` rejected the arguments.
+    pub fn parse_with<T: Parser>(&self, mode: ArgsMode) -> Result<T, ArgsError> {
+        self.spec.parse_with(self.args(), mode)
     }
 
     event_sender!();
@@ -682,7 +696,7 @@ event_kind_flags! {
 /// The events a plugin registers interest in during initialization.
 ///
 /// The host passes a fresh, empty `Subscriptions` to
-/// [`Plugin::new`](super::Plugin::new), where the plugin registers everything it wants to
+/// [`Registered::new`](super::Registered::new), where the plugin registers everything it wants to
 /// receive:
 ///
 /// ```

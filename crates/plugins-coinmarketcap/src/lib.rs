@@ -521,7 +521,7 @@ mod tests {
             ..Settings::default()
         };
 
-        <CoinMarketCap as Plugin>::new(&ctx, &settings, &mut subscriptions).unwrap();
+        <CoinMarketCap as Registered>::new(&ctx, &settings, &mut subscriptions).unwrap();
 
         assert!(ctx.shared.get::<CmcClient>().is_some());
     }

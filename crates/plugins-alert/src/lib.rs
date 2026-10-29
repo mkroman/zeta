@@ -202,8 +202,9 @@ impl AlertPlugin {
 
         let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
 
-        let Some(opts) =
-            parse_words_or_usage::<Opts>(client, command, |line| labeled_reply("Alert", line))?
+        let Some(opts) = parse_or_usage::<Opts>(client, command, ArgsMode::Words, |line| {
+            labeled_reply("Alert", line)
+        })?
         else {
             return Ok(());
         };

@@ -150,7 +150,7 @@ pub struct CommandArgs {
     pub description: Expr,
     /// The `clap` options type, from `args = Opts`.
     pub args: Option<Type>,
-    /// Whether the arguments are parsed with `parse_words_or_usage`, from `words`.
+    /// Whether the arguments are parsed with `ArgsMode::Words`, from `words`.
     ///
     /// Requires `args`.
     pub words: bool,

@@ -104,49 +104,22 @@ struct Handler {
     cfg: Vec<syn::Attribute>,
 }
 
-/// Generates [`HandlerKind`] and its static descriptions from one table, so the enum, the
-/// diagnostics, and the forwarding code cannot drift apart.
+/// Generates [`HandlerKind`] from one table of keywords.
+///
+/// Every event kind follows a single convention: the keyword `k` is forwarded through
+/// `handle_k` with a `KEvent` parameter. Only the lifecycle hooks take no event, which the
+/// table marks as such instead of naming their trait method and parameter separately.
 macro_rules! handler_kinds {
-    ($(
-        $variant:ident($keyword:literal, $trait_method:literal $(, $parameter:literal => $event:literal)?)
-    ),* $(,)?) => {
+    ($($variant:ident($keyword:literal, $role:ident)),* $(,)?) => {
         /// The event kinds a `#[handler(kind)]` method can handle.
         #[derive(Clone, Copy, PartialEq)]
         enum HandlerKind {
             $($variant,)*
         }
 
-        /// The static description of one [`HandlerKind`].
-        ///
-        /// Keeping the keyword, the forwarded trait method, and the event parameter together
-        /// means a new event kind is a single table row, and the parser and the diagnostics read
-        /// the same keyword.
-        struct KindSpec {
-            /// The kind as written in `#[handler(kind)]`.
-            keyword: &'static str,
-            /// The trait method the handler is forwarded through.
-            trait_method: &'static str,
-            /// The trait method's event parameter: its name and the event type at the
-            /// `zeta_plugin` root. `None` for `loaded` and `shutdown`, which take no event.
-            event: Option<(&'static str, &'static str)>,
-        }
-
         impl HandlerKind {
             /// Every kind, in the order diagnostics list them.
             const ALL: &[Self] = &[$(Self::$variant,)*];
-
-            /// The kind's keyword, trait method, and event parameter.
-            const fn spec(self) -> KindSpec {
-                match self {
-                    $(
-                        Self::$variant => KindSpec {
-                            keyword: $keyword,
-                            trait_method: $trait_method,
-                            event: handler_kinds!(@event $($parameter => $event)?),
-                        },
-                    )*
-                }
-            }
 
             /// Parses the `kind` argument of `#[handler(kind)]`.
             fn from_ident(ident: &Ident) -> Option<Self> {
@@ -169,60 +142,119 @@ macro_rules! handler_kinds {
 
             /// The kind as written in `#[handler(kind)]`, for diagnostics.
             const fn name(self) -> &'static str {
-                self.spec().keyword
+                match self {
+                    $(Self::$variant => $keyword,)*
+                }
+            }
+
+            /// Whether this is an eventless lifecycle hook rather than an event.
+            const fn is_lifecycle(self) -> bool {
+                match self {
+                    $(Self::$variant => handler_kinds!(@role $role),)*
+                }
             }
 
             /// The trait method the handler is forwarded through.
-            const fn trait_method(self) -> &'static str {
-                self.spec().trait_method
+            ///
+            /// Event handlers follow `handle_<kind>`; the lifecycle hooks are the methods
+            /// themselves (`loaded`, `shutdown`).
+            fn trait_method(self) -> String {
+                if self.is_lifecycle() {
+                    self.name().to_owned()
+                } else {
+                    format!("handle_{}", self.name())
+                }
             }
 
-            /// The trait method's event parameter, or `None` for `loaded` and `shutdown`.
-            const fn event_parameter(self) -> Option<(&'static str, &'static str)> {
-                self.spec().event
+            /// The trait method's event parameter: its name and the event type at the
+            /// `zeta_plugin` root. `None` for `loaded` and `shutdown`, which take no event.
+            fn event_parameter(self) -> Option<(String, String)> {
+                if self.is_lifecycle() {
+                    return None;
+                }
+
+                let keyword = self.name();
+
+                Some((keyword.to_owned(), format!("{}Event", pascal_case(keyword))))
             }
 
             /// Whether the trait handler takes `&mut self`.
             ///
             /// Only the eventless lifecycle hooks do; every event handler takes `&self`.
             const fn mutable_receiver(self) -> bool {
-                self.spec().event.is_none()
+                self.is_lifecycle()
+            }
+
+            /// The `Subscriptions` method that registers this event kind, or `None` for the
+            /// eventless lifecycle hooks.
+            fn subscription(self) -> Option<Ident> {
+                (!self.is_lifecycle()).then(|| format_ident!("receive_{}", self.name()))
             }
         }
     };
-    (@event) => {
-        None
+    (@role Event) => {
+        false
     };
-    (@event $parameter:literal => $event:literal) => {
-        Some(($parameter, $event))
+    (@role Lifecycle) => {
+        true
     };
 }
 
 handler_kinds! {
-    Command("command", "handle_command", "command" => "CommandEvent"),
-    Url("url", "handle_url", "url" => "UrlEvent"),
-    Message("message", "handle_message", "message" => "MessageEvent"),
-    Join("join", "handle_join", "join" => "JoinEvent"),
-    Part("part", "handle_part", "part" => "PartEvent"),
-    Quit("quit", "handle_quit", "quit" => "QuitEvent"),
-    Nick("nick", "handle_nick", "nick" => "NickEvent"),
-    Kick("kick", "handle_kick", "kick" => "KickEvent"),
-    Ctcp("ctcp", "handle_ctcp", "ctcp" => "CtcpEvent"),
-    Raw("raw", "handle_raw", "raw" => "RawEvent"),
-    Loaded("loaded", "loaded"),
-    Shutdown("shutdown", "shutdown"),
+    Command("command", Event),
+    Url("url", Event),
+    Message("message", Event),
+    Join("join", Event),
+    Part("part", Event),
+    Quit("quit", Event),
+    Nick("nick", Event),
+    Kick("kick", Event),
+    Ctcp("ctcp", Event),
+    Raw("raw", Event),
+    Loaded("loaded", Lifecycle),
+    Shutdown("shutdown", Lifecycle),
+}
+
+/// Returns `word` with its first character uppercased, for the `KEvent` type names.
+fn pascal_case(word: &str) -> String {
+    let mut characters = word.chars();
+
+    characters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(characters).collect()
+    })
 }
 
 /// Classifies, validates, and renders the macro output for one `#[plugin]` impl block.
 pub fn expand(args: &PluginArgs, mut inherent: syn::ItemImpl) -> TokenStream {
     match classify(args, &inherent) {
         Ok(plugin) => {
+            if let Some(error) = validate_handler_subscriptions(&plugin) {
+                return error.to_compile_error();
+            }
+
             strip_annotations(&plugin, &mut inherent);
 
             render(&plugin, &inherent)
         }
         Err(error) => error.to_compile_error(),
     }
+}
+
+/// Rejects handlers whose subscription the macro cannot derive from the annotation.
+///
+/// Every other event kind is registered from its `#[handler(kind)]` annotation; a URL handler
+/// additionally needs the `urls(...)` attribute, because only the plugin knows which hosts it
+/// wants. Without one the handler would compile and never run.
+fn validate_handler_subscriptions(plugin: &Plugin) -> Option<syn::Error> {
+    plugin.handlers.iter().find_map(|handler| {
+        (handler.kind == HandlerKind::Url && plugin.urls.is_none()).then(|| {
+            syn::Error::new(
+                handler.span,
+                "a `#[handler(url)]` method needs a `urls(...)` attribute on the impl block to \
+                 declare the hosts it receives",
+            )
+        })
+    })
 }
 
 /// Rejects trait impls and generic impl blocks, which the macro cannot implement `Plugin` for.
@@ -404,7 +436,7 @@ fn classify_constructor(
     {
         return Err(syn::Error::new(
             method.sig.ident.span(),
-            "the plugin constructor cannot be gated with `#[cfg]`; the generated `Plugin::new` \
+            "the plugin constructor cannot be gated with `#[cfg]`; the generated `Registered::new` \
              always calls it",
         ));
     }
@@ -811,7 +843,7 @@ fn validate_handler(kind: HandlerKind, method: &ImplItemFn) -> syn::Result<()> {
     expect_receiver(method, kind.mutable_receiver())?;
     let typed = typed_parameters(method);
 
-    let mut expected: Vec<&str> = vec!["Context", "Client"];
+    let mut expected: Vec<String> = vec!["Context".to_owned(), "Client".to_owned()];
     if let Some((_, event)) = kind.event_parameter() {
         expected.push(event);
     }
@@ -1114,6 +1146,13 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
 
         #[::zeta_plugin::async_trait::async_trait]
         impl ::zeta_plugin::Plugin for #self_ty {
+            #handle_command
+
+            #(#handlers)*
+        }
+
+        /// The construction half of the plugin: name, settings and constructor.
+        impl ::zeta_plugin::Registered for #self_ty {
             const NAME: &'static str = #name;
             type Settings = #settings;
 
@@ -1127,10 +1166,6 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
 
                 #constructor_tail
             }
-
-            #handle_command
-
-            #(#handlers)*
         }
 
         // Self-register the plugin with the host: the registration is collected by `inventory`
@@ -1212,10 +1247,38 @@ fn registrations(plugin: &Plugin) -> Vec<TokenStream> {
         None => {}
     }
 
-    if plugin.messages {
+    // The annotations are authoritative: a handler for an event kind without a container
+    // attribute (all kinds but URLs, which need a host scope) registers its subscription here,
+    // so a handler cannot silently never fire.
+    let handles_messages = plugin.messages
+        || plugin
+            .handlers
+            .iter()
+            .any(|handler| handler.kind == HandlerKind::Message);
+
+    if handles_messages {
         registrations.push(quote! {
             subscriptions.receive_message();
         });
+    }
+
+    for handler in &plugin.handlers {
+        let Some(subscription) = handler.kind.subscription() else {
+            continue;
+        };
+
+        // Messages are registered above so the `messages` attribute and the handler cannot
+        // double-register; URLs are registered by `urls(...)`, which also carries the scope.
+        if matches!(
+            handler.kind,
+            HandlerKind::Message | HandlerKind::Url | HandlerKind::Command
+        ) {
+            continue;
+        }
+
+        let cfg = &handler.cfg;
+
+        registrations.push(quote! { #(#cfg)* subscriptions.#subscription(); });
     }
 
     for command in &plugin.commands {
@@ -1304,17 +1367,18 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
     // With `args`, parse the options first and reply with the usage lines when they are
     // malformed; the parsed value is the method's last argument.
     let parse = args.args.as_ref().map_or_else(TokenStream::new, |options| {
-        let parse = if args.words {
-            quote!(parse_words_or_usage)
+        let mode = if args.words {
+            quote!(::zeta_plugin::ArgsMode::Words)
         } else {
-            quote!(parse_args_or_usage)
+            quote!(::zeta_plugin::ArgsMode::Shell)
         };
         arguments.push(quote!(opts));
 
         quote! {
-            let Some(opts) = ::zeta_plugin::#parse::<#options>(
+            let Some(opts) = ::zeta_plugin::parse_or_usage::<#options>(
                 client,
                 command,
+                #mode,
                 |line: &str| ::zeta_plugin::labeled_reply(#label, line),
             )? else {
                 return ::core::result::Result::Ok(());
@@ -1902,6 +1966,65 @@ mod tests {
             .expect("two methods cannot handle the same event kind");
 
         assert!(error.to_string().contains("duplicate"), "{error}");
+    }
+
+    #[test]
+    fn url_handlers_require_a_urls_attribute() {
+        let plugin = classify_source(
+            r"
+            impl Plugin {
+                #[handler(url)]
+                async fn url(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &UrlEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            ",
+        )
+        .expect("the impl should classify");
+
+        let error = validate_handler_subscriptions(&plugin)
+            .expect("a URL handler without a URL scope must be rejected");
+
+        assert!(error.to_string().contains("urls(...)"), "{error}");
+    }
+
+    #[test]
+    fn event_handlers_register_their_own_subscriptions() {
+        let source = r"
+            impl Plugin {
+                #[handler(message)]
+                async fn message(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &MessageEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+
+                #[handler(join)]
+                async fn join(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &JoinEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            ";
+        let inherent: syn::ItemImpl = syn::parse_str(source).expect("a parsable impl block");
+        let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
+
+        let rendered = render(&plugin, &inherent).to_string();
+
+        assert!(rendered.contains("receive_message"), "{rendered}");
+        assert!(rendered.contains("receive_join"), "{rendered}");
     }
 
     /// Classifies a parsed `impl` block with the default plugin arguments.

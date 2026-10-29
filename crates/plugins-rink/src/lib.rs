@@ -578,7 +578,7 @@ mod tests {
     async fn the_plugin_registers_its_commands() {
         let mut subscriptions = Subscriptions::new();
 
-        <Rink as Plugin>::new(
+        <Rink as Registered>::new(
             &zeta_test_support::test_context(),
             &Settings::default(),
             &mut subscriptions,

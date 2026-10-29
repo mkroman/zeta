@@ -113,7 +113,7 @@ impl Imdb {
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
-        let Some(opts) = parse_args_or_usage::<Opts>(client, command, |line: &str| {
+        let Some(opts) = parse_or_usage::<Opts>(client, command, ArgsMode::Shell, |line: &str| {
             format!("{} {line}", prefix())
         })?
         else {
