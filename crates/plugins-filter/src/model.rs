@@ -1,6 +1,7 @@
 //! The data model of the filter plugin.
 
 use sqlx::prelude::FromRow;
+use wildmatch::WildMatch;
 
 /// A filter, as stored in the database.
 ///
@@ -50,11 +51,50 @@ pub struct NewFilter {
 
 /// The case sensitivity of a wildcard pattern comparison.
 #[derive(Debug, Clone, Copy)]
-enum Case {
+pub enum Case {
     /// URL paths are matched case-sensitively.
     Sensitive,
     /// Every other field is matched case-insensitively.
     Insensitive,
+}
+
+/// A wildcard pattern compiled once for repeated matching.
+///
+/// A missing or blank pattern is unset and matches everything, mirroring the filter semantics.
+#[derive(Debug, Clone, Default)]
+pub struct Pattern {
+    /// The compiled matcher, or `None` when the pattern is unset or blank.
+    matcher: Option<WildMatch>,
+}
+
+impl Pattern {
+    /// Compiles `raw`, trimming it and treating a blank pattern as unset.
+    #[must_use]
+    pub fn compile(raw: Option<&str>, case: Case) -> Self {
+        let matcher = raw
+            .map(str::trim)
+            .filter(|pattern| !pattern.is_empty())
+            .map(|pattern| match case {
+                Case::Sensitive => WildMatch::new(pattern),
+                Case::Insensitive => WildMatch::new_case_insensitive(pattern),
+            });
+
+        Self { matcher }
+    }
+
+    /// Whether the pattern is unset.
+    #[must_use]
+    pub const fn is_unset(&self) -> bool {
+        self.matcher.is_none()
+    }
+
+    /// Whether the pattern matches `value`, or is unset (an unset criterion matches anything).
+    #[must_use]
+    pub fn matches(&self, value: Option<&str>) -> bool {
+        self.matcher
+            .as_ref()
+            .is_none_or(|pattern| value.is_some_and(|value| pattern.matches(value)))
+    }
 }
 
 /// A set of filter criteria for selecting filters in listings and deletions.
@@ -90,50 +130,55 @@ impl Criteria {
             && self.hostname.is_none()
     }
 
+    /// Compiles the patterns once, for matching many filters.
+    #[must_use]
+    pub fn compile(&self) -> CompiledCriteria {
+        CompiledCriteria {
+            channel: Pattern::compile(self.channel.as_deref(), Case::Insensitive),
+            host: Pattern::compile(self.host.as_deref(), Case::Insensitive),
+            path: Pattern::compile(self.path.as_deref(), Case::Sensitive),
+            nickname: Pattern::compile(self.nickname.as_deref(), Case::Insensitive),
+            username: Pattern::compile(self.username.as_deref(), Case::Insensitive),
+            hostname: Pattern::compile(self.hostname.as_deref(), Case::Insensitive),
+        }
+    }
+
+    /// Whether the criteria select `filter`.
+    ///
+    /// Compiles the patterns on every call; use [`Criteria::compile`] when matching a list.
+    #[must_use]
+    pub fn matches(&self, filter: &Filter) -> bool {
+        self.compile().matches(filter)
+    }
+}
+
+/// Criteria with their wildcard patterns compiled once.
+#[derive(Debug, Clone)]
+pub struct CompiledCriteria {
+    /// The compiled channel pattern.
+    channel: Pattern,
+    /// The compiled host pattern.
+    host: Pattern,
+    /// The compiled path pattern.
+    path: Pattern,
+    /// The compiled nickname pattern.
+    nickname: Pattern,
+    /// The compiled username pattern.
+    username: Pattern,
+    /// The compiled hostname pattern.
+    hostname: Pattern,
+}
+
+impl CompiledCriteria {
     /// Whether the criteria select `filter`.
     #[must_use]
     pub fn matches(&self, filter: &Filter) -> bool {
-        Self::matches_field(
-            self.channel.as_deref(),
-            filter.channel.as_deref(),
-            Case::Insensitive,
-        ) && Self::matches_field(
-            self.host.as_deref(),
-            filter.host.as_deref(),
-            Case::Insensitive,
-        ) && Self::matches_field(
-            self.path.as_deref(),
-            filter.path.as_deref(),
-            Case::Sensitive,
-        ) && Self::matches_field(
-            self.nickname.as_deref(),
-            filter.nickname.as_deref(),
-            Case::Insensitive,
-        ) && Self::matches_field(
-            self.username.as_deref(),
-            filter.username.as_deref(),
-            Case::Insensitive,
-        ) && Self::matches_field(
-            self.hostname.as_deref(),
-            filter.hostname.as_deref(),
-            Case::Insensitive,
-        )
-    }
-
-    /// Whether `pattern` matches `value`, or is unset.
-    fn matches_field(pattern: Option<&str>, value: Option<&str>, case: Case) -> bool {
-        let Some(pattern) = pattern.map(str::trim).filter(|pattern| !pattern.is_empty()) else {
-            return true;
-        };
-
-        let Some(value) = value else {
-            return false;
-        };
-
-        match case {
-            Case::Sensitive => wildmatch::WildMatch::new(pattern).matches(value),
-            Case::Insensitive => wildmatch::WildMatch::new_case_insensitive(pattern).matches(value),
-        }
+        self.channel.matches(filter.channel.as_deref())
+            && self.host.matches(filter.host.as_deref())
+            && self.path.matches(filter.path.as_deref())
+            && self.nickname.matches(filter.nickname.as_deref())
+            && self.username.matches(filter.username.as_deref())
+            && self.hostname.matches(filter.hostname.as_deref())
     }
 }
 
