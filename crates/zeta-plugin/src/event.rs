@@ -506,16 +506,25 @@ pub enum CtcpKind {
 impl CtcpKind {
     /// Classifies a CTCP command, matching case-insensitively.
     #[must_use]
-    pub fn classify(command: &str) -> Self {
-        match command.to_ascii_uppercase().as_str() {
-            "ACTION" => Self::Action,
-            "DCC" => Self::Dcc,
-            "PING" => Self::Ping,
-            "VERSION" => Self::Version,
-            "TIME" => Self::Time,
-            "CLIENTINFO" => Self::Clientinfo,
-            "USERINFO" => Self::Userinfo,
-            _ => Self::Other,
+    pub const fn classify(command: &str) -> Self {
+        // Compared in place: uppercasing the command would allocate a `String` for every
+        // incoming CTCP message, and `/me` (`ACTION`) is common.
+        if command.eq_ignore_ascii_case("ACTION") {
+            Self::Action
+        } else if command.eq_ignore_ascii_case("DCC") {
+            Self::Dcc
+        } else if command.eq_ignore_ascii_case("PING") {
+            Self::Ping
+        } else if command.eq_ignore_ascii_case("VERSION") {
+            Self::Version
+        } else if command.eq_ignore_ascii_case("TIME") {
+            Self::Time
+        } else if command.eq_ignore_ascii_case("CLIENTINFO") {
+            Self::Clientinfo
+        } else if command.eq_ignore_ascii_case("USERINFO") {
+            Self::Userinfo
+        } else {
+            Self::Other
         }
     }
 }
@@ -926,6 +935,22 @@ mod tests {
         assert_eq!(event.args(), "slaps");
         assert_eq!(event.target(), "#test");
         assert_eq!(event.text(), "\x01ACTION slaps\x01");
+    }
+
+    #[test]
+    fn ctcp_kinds_are_classified_case_insensitively() {
+        for (command, kind) in [
+            ("ACTION", CtcpKind::Action),
+            ("dcc", CtcpKind::Dcc),
+            ("pInG", CtcpKind::Ping),
+            ("Version", CtcpKind::Version),
+            ("time", CtcpKind::Time),
+            ("CLIENTINFO", CtcpKind::Clientinfo),
+            ("UserInfo", CtcpKind::Userinfo),
+            ("NOTAKIND", CtcpKind::Other),
+        ] {
+            assert_eq!(CtcpKind::classify(command), kind, "`{command}`");
+        }
     }
 
     #[test]
