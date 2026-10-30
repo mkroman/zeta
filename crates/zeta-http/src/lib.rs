@@ -46,6 +46,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
+    use tracing::Instrument;
     use tracing::field::{Field, Visit};
     use tracing::span::{Attributes, Id};
     use tracing_subscriber::layer::{Context as LayerContext, Layer};
@@ -100,6 +101,8 @@ mod tests {
         id: Id,
         /// The span's name.
         name: &'static str,
+        /// The span that was current when this one was created.
+        parent: Option<Id>,
         /// Every field with its last recorded value, rendered as text.
         fields: BTreeMap<String, String>,
         /// When the span was created.
@@ -157,11 +160,20 @@ mod tests {
         }
     }
 
-    impl<S: tracing::Subscriber> Layer<S> for SpanRecorder {
-        fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, _: LayerContext<'_, S>) {
+    impl<S> Layer<S> for SpanRecorder
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: LayerContext<'_, S>) {
             let mut fields = BTreeMap::new();
 
             attrs.record(&mut FieldVisitor(&mut fields));
+
+            let parent = if attrs.is_contextual() {
+                ctx.lookup_current().map(|span| span.id())
+            } else {
+                None
+            };
 
             self.0
                 .lock()
@@ -169,6 +181,7 @@ mod tests {
                 .push(RecordedSpan {
                     id: id.clone(),
                     name: attrs.metadata().name(),
+                    parent,
                     fields,
                     opened: Instant::now(),
                     closed: None,
@@ -366,10 +379,20 @@ mod tests {
         let subscriber = tracing_subscriber::registry().with(recorder.clone());
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        let value: serde_json::Value =
+        // The client span is created inside the calling operation, so the trace shows the API
+        // call under it instead of as a root of its own.
+        let operation = tracing::info_span!("test.operation");
+        let operation_id = operation
+            .id()
+            .expect("the operation span should be enabled");
+
+        let value: serde_json::Value = async {
             get_json(reqwest::Client::new().get(format!("{}/endpoint?key=secret", server.uri())))
                 .await
-                .expect("200 response");
+        }
+        .instrument(operation)
+        .await
+        .expect("200 response");
 
         assert_eq!(value["hello"], "world");
 
@@ -378,8 +401,9 @@ mod tests {
 
         let span = &spans[0];
 
+        assert_eq!(span.name, "http.client");
+        assert_eq!(span.parent, Some(operation_id));
         assert_eq!(span.field("otel.kind"), Some("client"));
-        assert_eq!(span.field("otel.name"), Some("GET"));
         assert_eq!(span.field("http.request.method"), Some("GET"));
         assert_eq!(span.field("http.response.status_code"), Some("200"));
         assert_eq!(

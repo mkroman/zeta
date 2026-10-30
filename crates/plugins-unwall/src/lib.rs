@@ -410,15 +410,14 @@ impl Unwall {
         let channel = event.channel().to_owned();
 
         // The span carries the redacted URL: without it, this task's logs would only ever
-        // reach stdout. It is a new root — the handler ends as soon as this function returns,
-        // so a child span would outlive its parent — with a causal link back to the handler
-        // span, which tracing exports as an OpenTelemetry link.
+        // reach stdout. It is a child of the handler span, created while the handler is
+        // current, so the resolution stays in the message's trace even though the handler
+        // returns (and its span closes) first.
         let span = tracing::info_span!(
-            parent: None,
+            parent: tracing::Span::current(),
             "unwall.resolve",
             url.full = %RedactedUrl::from_url(&article)
         );
-        span.follows_from(tracing::Span::current());
 
         tokio::spawn(
             async move {

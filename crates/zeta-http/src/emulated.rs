@@ -20,9 +20,9 @@ pub struct ClientSpan(Span);
 ///
 /// The span carries the OpenTelemetry client attributes — `otel.kind`, `http.request.method`,
 /// `url.full` (redacted), `server.address` and `server.port` — plus
-/// `http.response.status_code` once a response exists and `error.type` when the send fails. Its
-/// exported name is the request method, the HTTP semconv fallback for a URL whose route is not
-/// static; `http.client` remains the tracing name because span names must be static.
+/// `http.response.status_code` once a response exists and `error.type` when the send fails. It is
+/// exported as `http.client`: the method is an attribute, and a method-only name would hide the
+/// operation the call belongs to; the caller's span in the trace says what is being fetched.
 ///
 /// # Errors
 ///
@@ -42,7 +42,6 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
     let span = info_span!(
         "http.client",
         otel.kind = "client",
-        otel.name = %method,
         http.request.method = %method,
         url.full = %RedactedUrl::from_unparsed(&uri.to_string()),
         server.address = %uri.host().unwrap_or_default(),

@@ -137,12 +137,8 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<TelemetryGuar
     // initialize tracing
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                // `zeta=debug` would prefix-match every `zeta_*` crate and enable the
-                // per-message/per-progress debug lines; production starts at info and the
-                // debug detail is opt-in with RUST_LOG.
-                "zeta=info,reddit=debug,dendanskeordbog=debug,kagi=debug,coinmarketcap=debug".into()
-            }),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| DEFAULT_FILTER.into()),
         )
         .with(telemetry_layer)
         .with(stdout_layer)
@@ -153,4 +149,52 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<TelemetryGuar
     info!("tracing initialized");
 
     Ok(TelemetryGuard { provider })
+}
+
+/// The filter used when `RUST_LOG` is not set.
+///
+/// `zeta=debug` would prefix-match every `zeta_*` crate and enable the per-message and
+/// per-progress debug lines; production starts at info and the debug detail is opt-in with
+/// `RUST_LOG`. `plugins=info` keeps the plugin spans (and the HTTP, DNS and S3 children under
+/// them) in the export: without them the client spans would become roots of their own traces.
+const DEFAULT_FILTER: &str =
+    "zeta=info,plugins=info,reddit=debug,dendanskeordbog=debug,kagi=debug,coinmarketcap=debug";
+
+#[cfg(test)]
+mod tests {
+    use tracing::Level;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use super::DEFAULT_FILTER;
+
+    /// The filter that keeps one message one trace must keep the plugin spans that parent the
+    /// HTTP, DNS and S3 client spans, without enabling their per-operation debug detail.
+    #[test]
+    fn the_default_filter_exports_plugin_spans_but_not_their_detail() {
+        let subscriber =
+            tracing_subscriber::registry().with(tracing_subscriber::EnvFilter::new(DEFAULT_FILTER));
+
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(
+                !tracing::span!(target: "plugins_titles::lib", Level::INFO, "titles.fetch")
+                    .is_disabled()
+            );
+            assert!(
+                !tracing::span!(target: "zeta_http::client", Level::INFO, "http.client")
+                    .is_disabled()
+            );
+            assert!(
+                !tracing::span!(
+                    target: "zeta_plugin_runtime::dispatch",
+                    Level::INFO,
+                    "zeta.event.handle"
+                )
+                .is_disabled()
+            );
+            assert!(
+                tracing::span!(target: "plugins_titles::lib", Level::DEBUG, "titles.debug")
+                    .is_disabled()
+            );
+        });
+    }
 }

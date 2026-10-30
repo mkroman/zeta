@@ -28,9 +28,9 @@ pub struct PluginRuntime {
     tasks: Vec<PluginTask>,
     /// The context shared with every plugin task, consulted for the current filters.
     context: Arc<Context>,
-    /// The runtime's `zeta.shutdown` span, linked from each task's `zeta.plugin.shutdown`
-    /// span. The shutdown hooks run in their own tasks, so they cannot be children; the link
-    /// keeps the shutdown trace together.
+    /// The runtime's `zeta.shutdown` span, used as the parent of each task's
+    /// `zeta.plugin.shutdown` span. The hooks run in the plugin tasks, so the parent is set
+    /// explicitly; it keeps the shutdown in one trace.
     shutdown_span: Arc<OnceLock<Span>>,
 }
 
@@ -89,8 +89,8 @@ impl PluginRuntime {
     /// `grace` from now; any task still running when the deadline passes is aborted.
     pub async fn shutdown(self, grace: Duration) {
         // Set before the mailboxes close: each task reads it when it opens its
-        // `zeta.plugin.shutdown` span, and links that span to this one. Outside a span (tests),
-        // leave it unset so the link is omitted.
+        // `zeta.plugin.shutdown` span, and parents that span to this one. Outside a span
+        // (tests), leave it unset so the hook span is a root.
         let current = Span::current();
 
         if current.id().is_some() {

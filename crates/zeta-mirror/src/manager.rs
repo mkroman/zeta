@@ -57,7 +57,7 @@ pub struct DownloadRequest {
     /// receives the public URL of the mirrored media.
     pub on_finish: OnFinish,
     /// The download's `media.download` span, opened when the request was created — while the
-    /// requester's span was current — so it links back to the requester. It covers the queue
+    /// requester's span was current — so it nests under the requester. It covers the queue
     /// wait, the download and the upload.
     pub span: tracing::Span,
 }

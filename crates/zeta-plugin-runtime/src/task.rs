@@ -88,14 +88,20 @@ impl PluginTask {
             }
 
             // The mailbox is closed: the bot is shutting down. The warning goes inside the
-            // span, for the same reason as the load one above. The span links to the runtime's
-            // `zeta.shutdown` span when the shutdown came from there: it runs in a separate
-            // task, so it cannot be a child, but the link keeps the shutdown trace together.
-            let span = tracing::info_span!("zeta.plugin.shutdown", zeta.plugin.name = %name);
-
-            if let Some(shutdown) = shutdown_span.get() {
-                span.follows_from(shutdown);
-            }
+            // span, for the same reason as the load one above. The span is a child of the
+            // runtime's `zeta.shutdown` span when the shutdown came from there: the hook runs
+            // in the plugin's own task, but the explicit parent keeps the shutdown in one
+            // trace.
+            let span = shutdown_span.get().map_or_else(
+                || tracing::info_span!("zeta.plugin.shutdown", zeta.plugin.name = %name),
+                |shutdown| {
+                    tracing::info_span!(
+                        parent: shutdown,
+                        "zeta.plugin.shutdown",
+                        zeta.plugin.name = %name
+                    )
+                },
+            );
 
             async {
                 if let Err(error) = plugin.shutdown(&ctx, &client).await {

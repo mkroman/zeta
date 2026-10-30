@@ -33,10 +33,9 @@ pub struct ClientSpan(pub(crate) Span);
 /// the time to first byte and — through the `ClientSpan` stored in the response — the body
 /// read and parse. It carries the OpenTelemetry client attributes — `otel.kind`,
 /// `http.request.method`, `url.full` (redacted), `server.address` and `server.port` — plus
-/// `http.response.status_code` once a response exists and `error.type` when the send fails. The
-/// span's exported name is the request method (`GET`, `POST`), the HTTP semconv fallback for a
-/// URL whose route is not static; `http.client` remains the tracing name because span names
-/// must be static.
+/// `http.response.status_code` once a response exists and `error.type` when the send fails. It is
+/// exported as `http.client`: the method is an attribute, and a method-only name would hide the
+/// operation the call belongs to; the caller's span in the trace says what is being fetched.
 ///
 /// A failed send is logged once inside the span — with `url.full` (the request URL without its
 /// query, fragment, or userinfo), `error.type`, and the error's full rendering — before the
@@ -60,7 +59,6 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
     let span = info_span!(
         "http.client",
         otel.kind = "client",
-        otel.name = %method,
         http.request.method = %method,
         url.full = %RedactedUrl::from_url(request.url()),
         server.address = %request.url().host_str().unwrap_or_default(),

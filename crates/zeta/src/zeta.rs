@@ -389,8 +389,9 @@ impl Zeta {
         // dispatch future only borrows the runtime, so ending the `select!` above does not
         // close the mailboxes on its own. Draining before the QUIT lets those final replies
         // reach the server while the connection is still open.
-        // A short span for the drain; the per-plugin shutdown spans are linked to their own
-        // tasks, so they are not children of this span, but the drain itself is timed.
+        // A short span for the drain; the per-plugin shutdown spans are children of this span
+        // (set explicitly from the plugin tasks), so the drain and every hook end up in one
+        // trace.
         let shutdown = tracing::info_span!("zeta.shutdown");
         runtime.shutdown(SHUTDOWN_GRACE).instrument(shutdown).await;
 
