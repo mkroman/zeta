@@ -10,8 +10,6 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
 
-use crate::text::collapse_whitespace;
-
 /// The teal color (mIRC color 10) used for plugin replies.
 pub const COLOR: &str = "\x0310";
 
@@ -35,7 +33,9 @@ pub const PLAIN_REPLY_PREFIX: &str = "\x0310> ";
 /// `> Twitch: <message>`.
 #[must_use]
 pub fn labeled_reply(label: &str, message: impl fmt::Display) -> String {
-    format!("{}{}", labeled_reply_prefix(label), message)
+    // One `format!` instead of formatting the prefix into its own string first: the reply is
+    // built for every plugin response, and the two-step version copied the prefix twice.
+    format!("{REPLY_MARKER}{RESET}{BOLD} {label}:{BOLD}{COLOR} {message}")
 }
 
 /// Returns the bold-label prefix that [`labeled_reply`] starts its replies with.
@@ -103,20 +103,46 @@ pub fn strip_formatting(text: &str) -> String {
 /// spaces, and runs of whitespace are collapsed. This is the form callers want before echoing a
 /// page title, an API description, or any other text they do not control: a line break would
 /// terminate the IRC message, and formatting codes would restyle the rest of the reply.
+///
+/// The stripping and the collapsing run in one pass over the input: this runs for every echoed
+/// title and description, and the three intermediate strings of a strip-then-map-then-collapse
+/// pipeline are pure waste. Whitespace collapsing and control-character replacement commute with
+/// formatting-code removal, so the fused pass produces the same output.
 #[must_use]
 pub fn unstyle_text(text: &str) -> String {
-    let text: String = strip_formatting(text)
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect();
+    let mut unstyled = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+    // Start as if after a space, so leading whitespace is trimmed too.
+    let mut trailing_space = true;
 
-    collapse_whitespace(&text)
+    while let Some(character) = characters.next() {
+        match character {
+            '\u{3}' => strip_mirc_color(&mut characters),
+            '\u{4}' => strip_hex_color(&mut characters),
+            // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
+            // the reset code).
+            '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
+            // Whitespace collapses into single spaces; other control characters become
+            // spaces first, so a line break or an escape byte cannot reach the reply.
+            character if character.is_whitespace() || character.is_control() => {
+                if !trailing_space {
+                    unstyled.push(' ');
+                    trailing_space = true;
+                }
+            }
+            character => {
+                unstyled.push(character);
+                trailing_space = false;
+            }
+        }
+    }
+
+    // Trim the trailing space the flag tracked.
+    if trailing_space {
+        unstyled.pop();
+    }
+
+    unstyled
 }
 
 /// The shared implementation of [`strip_control_chars`] and [`strip_formatting`]: formatting
@@ -294,6 +320,16 @@ mod tests {
         assert_eq!(
             labeled_reply("Twitch", "hello"),
             "\x0310>\x0f\x02 Twitch:\x02\x0310 hello"
+        );
+    }
+
+    #[test]
+    fn labeled_reply_extends_the_prefix() {
+        // The two must never drift: callers that budget bytes count on the prefix being what
+        // `labeled_reply` writes first.
+        assert_eq!(
+            labeled_reply("Twitch", "hello"),
+            format!("{}hello", labeled_reply_prefix("Twitch"))
         );
     }
 

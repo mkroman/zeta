@@ -48,7 +48,9 @@ fn log_status(status: reqwest::StatusCode, body: Option<&str>, record_error_type
     let not_found = status == reqwest::StatusCode::NOT_FOUND;
 
     if !not_found && record_error_type {
-        Span::current().record("error.type", status.as_u16().to_string().as_str());
+        // The numeric status is recorded as a display value: a `to_string` here would
+        // allocate for every error response just to render a four-digit number.
+        Span::current().record("error.type", tracing::field::display(status.as_u16()));
     }
 
     match (not_found, body) {
@@ -114,7 +116,7 @@ where
         };
         let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
 
-        log_status(status, Some(&logged), true);
+        log_status(status, Some(logged.as_ref()), true);
 
         return Err(ApiError::Status { status, body });
     }

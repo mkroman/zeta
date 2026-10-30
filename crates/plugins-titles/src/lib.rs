@@ -10,6 +10,8 @@
 
 mod metadata;
 
+use std::sync::Arc;
+
 use irc::client::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, debug, warn};
@@ -72,7 +74,11 @@ pub struct Titles {
     /// The HTTP client used for fetching pages.
     client: wreq::Client,
     /// The plugin settings used when processing URLs.
-    settings: Settings,
+    ///
+    /// Shared through an [`Arc`]: every URL event clones the settings into its spawned task,
+    /// which only reads the two line-length budgets — a deep clone of the ignored-hosts list
+    /// per URL would be wasted work.
+    settings: Arc<Settings>,
 }
 
 #[plugin(name = "titles", settings = Settings, urls(any))]
@@ -87,7 +93,7 @@ impl Titles {
 
         Ok(Self {
             client,
-            settings: settings.clone(),
+            settings: Arc::new(settings.clone()),
         })
     }
 
@@ -250,10 +256,16 @@ fn is_binary_url(url: &Url) -> bool {
     path_segments(url)
         .and_then(|segments| segments.last().copied())
         .is_some_and(|segment| {
-            let segment = segment.to_ascii_lowercase();
-            BINARY_EXTENSIONS
-                .iter()
-                .any(|extension| segment.ends_with(extension))
+            BINARY_EXTENSIONS.iter().any(|extension| {
+                // The extension is ASCII, so a case-insensitive suffix test needs no
+                // lowercased copy of the segment; the boundary check keeps a multi-byte
+                // segment from being sliced mid-character.
+                let Some(start) = segment.len().checked_sub(extension.len()) else {
+                    return false;
+                };
+
+                segment.is_char_boundary(start) && segment[start..].eq_ignore_ascii_case(extension)
+            })
         })
 }
 
@@ -269,11 +281,13 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .map(unstyle_text)
         .filter(|title| !title.is_empty());
 
-    let description = metadata
+    let unstyled_description = metadata
         .description
         .as_deref()
         .map(unstyle_text)
-        .filter(|description| !description.is_empty())
+        .filter(|description| !description.is_empty());
+    let description = unstyled_description
+        .as_deref()
         .map(|description| description.truncate_within(settings.max_description_length, "…"));
 
     if title.is_none() && description.is_none() {
@@ -300,7 +314,11 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         plain_reply(&content)
     };
 
-    Some(message.truncate_within(settings.max_message_length, "…"))
+    Some(
+        message
+            .truncate_within(settings.max_message_length, "…")
+            .into_owned(),
+    )
 }
 
 /// Whether any OpenGraph metadata was captured.

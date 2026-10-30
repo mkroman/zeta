@@ -22,7 +22,11 @@ use zeta_plugin::prelude::*;
 use zeta_utils::irc::strip_nick_prefix;
 use zeta_utils::text::{strip_prefix_ignore_case, strip_suffix_ignore_case};
 
-const API_BASE_URL: &str = "https://maps.googleapis.com";
+/// The place-text-search endpoint place ids are resolved against.
+const TEXTSEARCH_URL: &str = "https://maps.googleapis.com/maps/api/place/textsearch/json";
+
+/// The place-details endpoint place information is fetched from.
+const DETAILS_URL: &str = "https://maps.googleapis.com/maps/api/place/details/json";
 
 /// Settings for the isitopen plugin, from its `[plugins.isitopen]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -285,11 +289,10 @@ impl IsItOpen {
     async fn find_place(&self, query: &str) -> Result<PlaceDetails, Error> {
         debug!(%query, "searching for place");
 
-        let search_url = format!("{API_BASE_URL}/maps/api/place/textsearch/json");
         let params = [("query", query), ("key", &self.api_key)];
 
         let search_res: PlaceSearchResponse =
-            http::get_json(self.client.get(&search_url).query(&params)).await?;
+            http::get_json(self.client.get(TEXTSEARCH_URL).query(&params)).await?;
 
         if search_res.status != "OK" && search_res.status != "ZERO_RESULTS" {
             return Err(Error::Places(search_res.status));
@@ -304,11 +307,10 @@ impl IsItOpen {
 
         debug!(%place_id, "fetching place details");
 
-        let details_url = format!("{API_BASE_URL}/maps/api/place/details/json");
         let details_params = [("placeid", &place_id), ("key", &self.api_key)];
 
         let details_res: PlaceDetailsResponse =
-            http::get_json(self.client.get(&details_url).query(&details_params)).await?;
+            http::get_json(self.client.get(DETAILS_URL).query(&details_params)).await?;
 
         if details_res.status != "OK" {
             return Err(Error::Places(details_res.status));

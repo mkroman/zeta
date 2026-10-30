@@ -49,12 +49,12 @@ fn index_messages(catalog: &PluginCatalog) -> Vec<String> {
         gray(" Plugins:"),
     );
 
-    let entries = catalog
+    let entries: Vec<&str> = catalog
         .entries
         .iter()
         .filter(|plugin| !plugin.commands.is_empty())
-        .map(|plugin| plugin.name.clone())
-        .collect::<Vec<_>>();
+        .map(|plugin| plugin.name.as_str())
+        .collect();
 
     with_list(&header, &entries)
 }
@@ -67,11 +67,7 @@ fn plugin_messages(plugin: &CatalogEntry) -> Vec<String> {
         gray(": Commands:"),
     );
 
-    let entries = plugin
-        .commands
-        .iter()
-        .map(|command| command.trigger().to_owned())
-        .collect::<Vec<_>>();
+    let entries: Vec<&str> = plugin.commands.iter().map(CommandSpec::trigger).collect();
 
     with_list(&header, &entries)
 }

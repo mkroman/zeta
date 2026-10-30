@@ -17,8 +17,8 @@ use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
 
-/// The base URL for the Trustpilot API.
-const API_BASE_URL: &str = "https://api.trustpilot.com/v1";
+/// The business-unit search endpoint reviews are looked up against.
+const FIND_URL: &str = "https://api.trustpilot.com/v1/business-units/find";
 
 /// Settings for the trustpilot plugin, from its `[plugins.trustpilot]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -156,14 +156,13 @@ impl Trustpilot {
     /// Returns `Error::NotFound` if the API returns a 404, or another [`Error`] for other
     /// failures.
     async fn search(&self, query: &str) -> Result<BusinessUnit, Error> {
-        let url = format!("{API_BASE_URL}/business-units/find");
         let params = [("name", query)];
 
-        debug!(%url, ?params, "searching trustpilot");
+        debug!(url = FIND_URL, ?params, "searching trustpilot");
 
         let request = self
             .client
-            .get(&url)
+            .get(FIND_URL)
             .header("apikey", &self.api_key)
             .query(&params);
         http::get_json_or_404(request, Error::NotFound).await

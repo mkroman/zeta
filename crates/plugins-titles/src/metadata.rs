@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::sync::mpsc;
 
+use bytes::Bytes;
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{
     BufferQueue, EndTag, StartTag, Tag, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts,
@@ -189,15 +190,16 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
 
     // The HTML tokenizer is not `Send`, so the response body is streamed through a channel and
     // tokenized on a blocking thread. The channel is bounded so that the reader stalls — and the
-    // download is throttled — once the tokenizer falls behind.
-    let (sender, receiver) = mpsc::sync_channel::<Result<Vec<u8>, wreq::Error>>(4);
+    // download is throttled — once the tokenizer falls behind. Chunks cross as `Bytes`, which
+    // are cheap to hand over; copying each chunk into a `Vec` would double its allocations.
+    let (sender, receiver) = mpsc::sync_channel::<Result<Bytes, wreq::Error>>(4);
 
     let reader = tokio::spawn(async move {
         let mut stream = response.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
             let sent = match chunk {
-                Ok(chunk) => sender.send(Ok(chunk.to_vec())).is_ok(),
+                Ok(chunk) => sender.send(Ok(chunk)).is_ok(),
                 Err(error) => sender.send(Err(error)).is_ok(),
             };
 

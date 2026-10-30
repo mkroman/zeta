@@ -200,7 +200,9 @@ impl Reddit {
         channel: &str,
         client: &Client,
     ) -> Result<(), Error> {
-        let id = submission.id.as_deref().unwrap_or(fallback_id).to_string();
+        // The id is borrowed from the submission (or the fallback) — the mirror call only
+        // reads it, so a copy would be a wasted allocation per mirrored submission.
+        let id = submission.id.as_deref().unwrap_or(fallback_id);
 
         client.send_privmsg(channel, format_submission(&submission))?;
 
@@ -210,7 +212,7 @@ impl Reddit {
             plugins_shared::mirror::ensure_mirrored_if_configured(
                 self.mirror.as_ref(),
                 url,
-                &id,
+                id,
                 channel,
                 client,
             )

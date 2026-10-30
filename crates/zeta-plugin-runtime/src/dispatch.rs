@@ -265,8 +265,11 @@ impl EventIndex {
 
             let event = UrlEvent::new(Arc::clone(message), Arc::new(url), repaired_from);
 
+            // The hosts of the http(s) URLs this dispatcher routes are lowercased by the URL
+            // parser, and the index keys are lowercased at registration, so the borrowed host
+            // is already in key form; lowercasing here would allocate for every posted URL.
             if let Some(host) = event.url().host_str()
-                && let Some(subscribers) = self.url_hosts.get(&host.to_ascii_lowercase())
+                && let Some(subscribers) = self.url_hosts.get(host)
             {
                 for subscriber in subscribers {
                     subscriber.send(Event::Url(event.clone()), stopped);

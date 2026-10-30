@@ -3,10 +3,11 @@
 //! A long-running task that owns the full lifecycle of a mirror: download requests are submitted
 //! through an unbounded mpsc channel, every accepted request runs as its own `yt-dlp` task that
 //! streams progress status back to the manager over a second mpsc channel, and completed downloads
-//! are uploaded to S3 inline before the requester is notified with the public link.
+//! are uploaded to S3 in a task of their own before the requester is notified with the public link.
 //!
 //! At most the configured number of downloads run at a time; further requests are queued and
-//! started in order as running downloads finish.
+//! started in order as running downloads finish. The upload is kept off the manager's loop so a
+//! long upload cannot stall the intake of new requests or the draining of statuses.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -204,7 +205,7 @@ impl Manager {
                     // The sending end lives in `self`, so the status channel cannot close
                     // while the manager runs; the match only makes the select total.
                     let Some(status) = status else { break };
-                    self.on_status(status).await;
+                    self.on_status(status);
                 }
             }
         }
@@ -295,10 +296,15 @@ impl Manager {
     }
 
     /// Handles a status update reported by a download task.
-    async fn on_status(&mut self, status: DownloadStatus) {
+    fn on_status(&mut self, status: DownloadStatus) {
         let (id, result) = match status {
             DownloadStatus::Progress { id, progress } => {
-                if let Some(active) = self.active.get(&id) {
+                if tracing::enabled!(tracing::Level::DEBUG)
+                    && let Some(active) = self.active.get(&id)
+                {
+                    // Gated on the level, not left to the field expressions: `yt-dlp` reports
+                    // progress many times per second, and the percent field would format a
+                    // fresh string for every line even when debug logging filters it out.
                     debug!(
                         media_id = %active.request.id,
                         percent = ?progress.fraction().map(|fraction| format!("{:.0}%", fraction * 100.0)),
@@ -325,13 +331,20 @@ impl Manager {
             );
         }
 
-        self.finish(active, result).await;
+        self.finish(active, result);
     }
 
-    /// Finishes a download: uploads the downloaded files to the bucket (if any), notifies the
-    /// requester of the result and removes the temporary download directory. Starts the next
-    /// queued download, if any.
-    async fn finish(
+    /// Finishes a download: a completed download is uploaded to the bucket in a task of its
+    /// own before the requester is notified, a failed one is notified inline, and the temporary
+    /// download directory is removed either way. Starts the next queued download, if any.
+    ///
+    /// The upload runs in a task of its own: a large upload can take minutes, and awaiting it
+    /// here would keep the manager from accepting requests and draining the other downloads'
+    /// statuses — the queued requests behind it would not start even though their slots were
+    /// free, and progress lines would pile up unread. Failures notify inline because there is
+    /// nothing to upload and no await to hide: the outcomes of a queue of requests then reach
+    /// the requester in submission order.
+    fn finish(
         &mut self,
         active: ActiveDownload,
         result: Result<Vec<DownloadedFile>, ytdlp::Error>,
@@ -348,29 +361,50 @@ impl Manager {
             tempdir,
         } = active;
 
-        let result = match result {
+        match result {
             Ok(files) => {
-                match Self::upload(&self.s3, &prefix, &public_url_base, &id, &files).await {
-                    Ok(link) => Ok(link),
-                    Err(err) => {
-                        error!(media_id = %id, error = %err, "could not upload the downloaded media");
-                        Err(Error::Upload(err))
+                // The span keeps the upload's logs reachable: the OpenTelemetry layer drops
+                // events that are not in the context of a span, and the task outlives the
+                // manager's dispatch span.
+                let span = tracing::info_span!("upload_media", media_id = %id);
+                let s3 = self.s3.clone();
+
+                tokio::spawn(
+                    async move {
+                        let result =
+                            match Self::upload(&s3, &prefix, &public_url_base, &id, &files).await {
+                                Ok(link) => Ok(link),
+                                Err(err) => {
+                                    error!(media_id = %id, error = %err, "could not upload the downloaded media");
+                                    Err(Error::Upload(err))
+                                }
+                            };
+
+                        // The temporary directory and everything in it are removed here, both
+                        // on success and on failure, so that downloaded files never outlive
+                        // the upload. The path is captured before `close`, since it is no
+                        // longer valid afterwards.
+                        let tempdir_path = tempdir.path().to_path_buf();
+
+                        if let Err(err) = tempdir.close() {
+                            error!(path = %tempdir_path.display(), error = %err, "could not remove the temporary download directory");
+                        }
+
+                        on_finish(result);
                     }
-                }
+                    .instrument(span),
+                );
             }
-            Err(err) => Err(Error::Download(err)),
-        };
+            Err(err) => {
+                let tempdir_path = tempdir.path().to_path_buf();
 
-        // The temporary directory and everything in it are removed here, both on success and on
-        // failure, so that downloaded files never outlive the download. The path is captured
-        // before `close`, since it is no longer valid afterwards.
-        let tempdir_path = tempdir.path().to_path_buf();
+                if let Err(err) = tempdir.close() {
+                    error!(path = %tempdir_path.display(), error = %err, "could not remove the temporary download directory");
+                }
 
-        if let Err(err) = tempdir.close() {
-            error!(path = %tempdir_path.display(), error = %err, "could not remove the temporary download directory");
+                on_finish(Err(Error::Download(err)));
+            }
         }
-
-        on_finish(result);
 
         self.start_next();
     }

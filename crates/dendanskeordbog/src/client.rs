@@ -128,7 +128,11 @@ impl Client {
             .await
             .map_err(|error| Error::Request(request_error(error)))?;
 
-        DictionaryDocument::from_html(&body)
+        // Parsing a full page is synchronous CPU work (`Html::parse_document`); on a blocking
+        // thread it cannot stall the async executor while it runs.
+        tokio::task::spawn_blocking(move || DictionaryDocument::from_html(&body))
+            .await
+            .map_err(|error| Error::Parse(error.to_string()))?
     }
 }
 

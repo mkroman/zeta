@@ -3485,6 +3485,7 @@ dependencies = [
 name = "plugins-titles"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "futures",
  "html5ever",
  "irc",
@@ -3612,7 +3613,6 @@ dependencies = [
  "zeta-http",
  "zeta-plugin",
  "zeta-test-support",
- "zeta-url",
  "zeta-utils",
 ]
 
