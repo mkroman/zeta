@@ -11,10 +11,10 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 
 /// A single-slot cache holding a value until its time-to-live expires.
 ///
@@ -249,9 +249,8 @@ const DEFAULT_TTL_MAP_CAPACITY: usize = 256;
 pub struct TtlMap<K, V> {
     /// The cached entries, keyed by their lookup key.
     ///
-    /// Values are shared through [`Arc`], so publishing a snapshot copies the map's keys and
-    /// entries but not the cached values themselves.
-    entries: ArcSwap<HashMap<K, Entry<Option<Arc<V>>>>>,
+    /// A short write guard covers an insert; reads share a read guard.
+    entries: RwLock<HashMap<K, Entry<Option<Arc<V>>>>>,
     /// Per-key single-flight locks: concurrent misses for the same key refresh once. Entries
     /// are removed once they are uncontended, so the map does not grow with refreshed keys.
     flights: tokio::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
@@ -272,7 +271,7 @@ where
     #[must_use]
     pub fn with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
         Self {
-            entries: ArcSwap::from_pointee(HashMap::new()),
+            entries: RwLock::new(HashMap::new()),
             flights: tokio::sync::Mutex::new(HashMap::new()),
             ttl,
             negative_ttl,
@@ -302,7 +301,7 @@ where
     where
         V: Clone,
     {
-        let entries = self.entries.load();
+        let entries = self.entries.read().unwrap_or_else(PoisonError::into_inner);
 
         entries
             .get(key)
@@ -385,8 +384,6 @@ where
 
     /// Inserts an entry for `key`, evicting expired and closest-to-expiring entries first when
     /// the cache is at capacity.
-    // `rcu` may retry its closure, so the key cannot be moved into it.
-    #[allow(clippy::needless_pass_by_value)]
     fn insert(&self, key: K, value: Option<V>) {
         let ttl = if value.is_some() {
             self.ttl
@@ -398,17 +395,13 @@ where
             expires_at: Instant::now() + ttl,
         };
 
-        self.entries.rcu(|entries| {
-            let mut next = (**entries).clone();
+        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
 
-            if next.len() >= self.capacity && !next.contains_key(&key) {
-                Self::evict(&mut next, self.capacity);
-            }
+        if entries.len() >= self.capacity && !entries.contains_key(&key) {
+            Self::evict(&mut entries, self.capacity);
+        }
 
-            next.insert(key.clone(), entry.clone());
-
-            Arc::new(next)
-        });
+        entries.insert(key, entry);
     }
 
     /// Makes room for a new entry by removing expired entries, then the entries closest to
@@ -559,12 +552,13 @@ mod ttl_map_tests {
             .unwrap();
 
         // Expire only `a`'s entry.
-        let mut entries = cache.entries.load_full();
-        Arc::make_mut(&mut entries)
+        cache
+            .entries
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
             .get_mut(&"a".to_string())
             .unwrap()
             .expires_at = Instant::now();
-        cache.entries.store(entries);
 
         assert_eq!(cache.get(&"a".to_string()), None);
         assert_eq!(cache.get(&"b".to_string()), Some(9));
@@ -607,8 +601,14 @@ mod ttl_map_tests {
         assert_eq!(refreshes, 1);
 
         // Negative results expire before values do.
-        let entry_expires_at =
-            |key: &str| cache.entries.load().get(key).map(|entry| entry.expires_at);
+        let entry_expires_at = |key: &str| {
+            cache
+                .entries
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(key)
+                .map(|entry| entry.expires_at)
+        };
 
         cache
             .get_or_refresh("present".to_string(), || async { Ok::<_, ()>(Some(7)) })
@@ -650,7 +650,14 @@ mod ttl_map_tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(cache.entries.load().len(), 4);
+        assert_eq!(
+            cache
+                .entries
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .len(),
+            4
+        );
 
         // A fifth entry evicts the closest-to-expiring one, keeping the cache bounded.
         cache
@@ -659,7 +666,7 @@ mod ttl_map_tests {
             .unwrap();
 
         let (len, contains_e) = {
-            let entries = cache.entries.load();
+            let entries = cache.entries.read().unwrap_or_else(PoisonError::into_inner);
             (entries.len(), entries.contains_key(&"e".to_string()))
         };
 
