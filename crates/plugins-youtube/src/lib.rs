@@ -395,7 +395,12 @@ impl YouTube {
                         warn!(exception.message = %error, "could not refresh video categories");
                     }
                 }
-                .instrument(tracing::info_span!("video_category.refresh"))
+                // The target stays under `zeta`: the tick parents the HTTP calls, and a plugin
+                // log filter must not leave them as trace roots of their own.
+                .instrument(tracing::info_span!(
+                    target: "zeta.plugins",
+                    "video_category.refresh"
+                ))
                 .await;
             }
         });

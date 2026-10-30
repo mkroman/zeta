@@ -254,7 +254,12 @@ impl Rink {
                         warn!(exception.message = %error, "could not refresh currency data");
                     }
                 }
-                .instrument(tracing::info_span!("currency.refresh"))
+                // The target stays under `zeta`: the tick parents the HTTP calls, and a plugin
+                // log filter must not leave them as trace roots of their own.
+                .instrument(tracing::info_span!(
+                    target: "zeta.plugins",
+                    "currency.refresh"
+                ))
                 .await;
             }
         }));

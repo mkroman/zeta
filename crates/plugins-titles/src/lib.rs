@@ -161,8 +161,11 @@ impl Titles {
         // The span carries the redacted URL: without it, this task's logs would only ever
         // reach stdout. It is a child of the handler span, created while the handler is
         // current, so the fetch stays in the message's trace even though the handler returns
-        // (and its span closes) first.
+        // (and its span closes) first. The target stays under `zeta`: the span parents the
+        // HTTP client span, and disabling it with a plugin log filter would leave that span as
+        // a trace root of its own.
         let span = tracing::info_span!(
+            target: "zeta.plugins",
             parent: tracing::Span::current(),
             "titles.fetch",
             url.full = %RedactedUrl::from_url(&url)
