@@ -5,11 +5,14 @@
 
 use std::borrow::Cow;
 use std::fmt::Write as _;
+use std::iter::Peekable;
+use std::str::CharIndices;
 
 use zeta_unicode::{
     MAX_EMOJI_KEY_BYTES, emoji_name, general_category, may_start_emoji_sequence, name_or_label,
+    write_name,
 };
-use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_with_more};
+use zeta_utils::irc::{BOLD, COLOR, MAX_LISTING_LENGTH, RESET};
 
 use zeta_plugin::prelude::*;
 
@@ -23,6 +26,17 @@ const SUFFIX: &str = ", …";
 const ENTRY_OPEN: &str = "{\x0f\x02";
 /// The widest a code point can be spelled, used to prove an entry always fits.
 const WIDEST_POINT: &str = "U+10FFFF";
+/// The bytes of an entry's tail around the name and category.
+const TAIL_FIXED_LEN: usize = BOLD.len()
+    + COLOR.len()
+    + "}:".len()
+    + RESET.len()
+    + " ".len()
+    + COLOR.len()
+    + " (".len()
+    + RESET.len()
+    + COLOR.len()
+    + ")".len();
 /// Longest run of characters `.uni` probes for an emoji sequence.
 ///
 /// A stored emoji key is at most [`MAX_EMOJI_KEY_BYTES`] bytes, hence at most that many
@@ -45,11 +59,29 @@ enum Entry<'a> {
 }
 
 impl Entry<'_> {
-    /// Renders the entry in the `.uni` wire format.
-    fn render(&self) -> String {
+    /// Renders the entry into `out`, reusing `name` for the entry's upper-cased name.
+    ///
+    /// `out` is cleared first, so a listing renders every entry through the same buffers.
+    fn render_into(&self, out: &mut String, name: &mut String) {
         match self {
-            Self::Char(c) => char_entry(*c),
-            Self::Sequence { text, name } => sequence_entry(text, &uppercase(name)),
+            Self::Char(c) => {
+                character_name_into(*c, name);
+                let category = general_category(*c).long_name();
+                let mut encoded = [0u8; 4];
+                render_entry_into(c.encode_utf8(&mut encoded), name, category, out);
+            }
+            Self::Sequence {
+                text,
+                name: sequence_name,
+            } => {
+                write_uppercase(name, sequence_name);
+                let base = text
+                    .chars()
+                    .next()
+                    .expect("a sequence has a base character");
+                let category = general_category(base).long_name();
+                render_entry_into(text, name, category, out);
+            }
         }
     }
 }
@@ -67,162 +99,218 @@ impl Entry<'_> {
 /// [`MAX_LISTING_LENGTH`] once the plain reply prefix is added stops with [`SUFFIX`], and a
 /// grouped sequence's codepoint list is budgeted the same way.
 pub fn unicode_details(args: &str) -> String {
-    let entries = grouped_entries(args);
     let mut message = String::with_capacity(REPLY_BUDGET);
-    append_listing(
-        &mut message,
-        entries.iter().map(Entry::render),
-        entries.len(),
-        REPLY_BUDGET,
-        0,
-    );
+    let mut entry = String::with_capacity(ENTRY_BUDGET);
+    let mut name = String::new();
+    let mut truncated = false;
+
+    // Entries are grouped and rendered one at a time: rendering is what costs, so it stops as
+    // soon as the next entry cannot fit, and the grouping never buffers the whole input.
+    // `SUFFIX` is reserved exactly as `append_entries_with_more` would.
+    for (appended, item) in GroupedEntries::new(args).enumerate() {
+        item.render_into(&mut entry, &mut name);
+        let separator = if appended == 0 { "" } else { ", " };
+        if appended > 0
+            && message.len() + separator.len() + entry.len() + SUFFIX.len() > REPLY_BUDGET
+        {
+            truncated = true;
+            break;
+        }
+
+        message.push_str(separator);
+        message.push_str(&entry);
+    }
+
+    if truncated {
+        message.push_str(SUFFIX);
+    }
+
     message
 }
 
-/// Appends `entries` within `budget`, adding [`SUFFIX`] when the list does not fit.
-///
-/// `total` is the number of entries before budgeting; `reserved` is the space the caller still
-/// needs after the list.
-fn append_listing(
-    message: &mut String,
-    entries: impl IntoIterator<Item = String>,
-    total: usize,
-    budget: usize,
-    reserved: usize,
-) {
-    append_entries_with_more(message, entries, total, ", ", budget, reserved, |_| {
-        SUFFIX.to_string()
-    });
+/// The character entries of an input, grouped lazily as [`grouped_entries`] describes.
+struct GroupedEntries<'a> {
+    /// The input text every entry borrows from.
+    args: &'a str,
+    /// The characters that have not been grouped yet.
+    chars: Peekable<CharIndices<'a>>,
+}
+
+impl<'a> GroupedEntries<'a> {
+    /// Starts grouping `args` from its first character.
+    fn new(args: &'a str) -> Self {
+        Self {
+            args,
+            chars: args.char_indices().peekable(),
+        }
+    }
+}
+
+impl<'a> Iterator for GroupedEntries<'a> {
+    type Item = Entry<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (start, c) = self.chars.next()?;
+        // Plain text cannot start a stored key, so the admission check rejects it before
+        // probing every candidate end.
+        let Some((end, name)) = longest_sequence(self.args, start, &self.chars) else {
+            return Some(Entry::Char(c));
+        };
+
+        while self.chars.peek().is_some_and(|&(offset, _)| offset < end) {
+            self.chars.next();
+        }
+
+        Some(Entry::Sequence {
+            text: &self.args[start..end],
+            name,
+        })
+    }
 }
 
 /// Splits `args` into character entries, grouping each run that names an emoji sequence of at
 /// least two code points into a single entry.
+#[cfg(test)]
 fn grouped_entries(args: &str) -> Vec<Entry<'_>> {
-    let chars: Vec<(usize, char)> = args.char_indices().collect();
-    let mut entries = Vec::with_capacity(chars.len());
-    let mut at = 0usize;
-
-    while at < chars.len() {
-        // Plain text cannot start a stored key, so the admission check rejects it before
-        // probing every candidate end.
-        let end_limit = chars.len().min(at.saturating_add(MAX_GROUPING_CHARS));
-        if let Some((end, name)) = longest_sequence(args, &chars, at, end_limit) {
-            entries.push(Entry::Sequence {
-                text: &args[chars[at].0..byte_at(args, &chars, end)],
-                name,
-            });
-            at = end;
-        } else {
-            entries.push(Entry::Char(chars[at].1));
-            at += 1;
-        }
-    }
-
-    entries
+    GroupedEntries::new(args).collect()
 }
 
-/// The byte offset of character `index`, or the end of `args` for the sentinel index.
-fn byte_at(args: &str, chars: &[(usize, char)], index: usize) -> usize {
-    chars.get(index).map_or(args.len(), |&(offset, _)| offset)
-}
-
-/// The longest run starting at character `at` that names an emoji sequence, if any.
+/// The longest run starting at `start` that names an emoji sequence, with the byte offset just
+/// past it.
+///
+/// A run is at most [`MAX_GROUPING_CHARS`] characters long, so the probe reads a bounded window
+/// into a fixed-size stack buffer instead of materializing the whole input.
 fn longest_sequence(
     args: &str,
-    chars: &[(usize, char)],
-    at: usize,
-    end_limit: usize,
+    start: usize,
+    rest: &Peekable<CharIndices<'_>>,
 ) -> Option<(usize, Cow<'static, str>)> {
-    let start = chars[at].0;
     if !may_start_emoji_sequence(&args[start..]) {
         return None;
     }
-    (at + 2..=end_limit)
+
+    // `ends[length]` is the byte offset just past a run of `length` characters; the slot after
+    // the last filled one is the end of the longest run the cap allows.
+    let mut ends = [args.len(); MAX_GROUPING_CHARS + 1];
+    let mut lookahead = rest.clone();
+    let mut length = 1usize;
+
+    while length < MAX_GROUPING_CHARS {
+        let Some((offset, _)) = lookahead.next() else {
+            break;
+        };
+        ends[length] = offset;
+        length += 1;
+    }
+    ends[length] = lookahead.peek().map_or(args.len(), |&(offset, _)| offset);
+
+    (2..=length)
         .rev()
-        .find_map(|end| emoji_name(&args[start..byte_at(args, chars, end)]).map(|name| (end, name)))
+        .find_map(|end| emoji_name(&args[start..ends[end]]).map(|name| (ends[end], name)))
 }
 
-/// The bytes [`render_entry`] appends after the codepoint list.
-fn entry_tail(name: &str, category: &str) -> String {
-    let mut tail = String::with_capacity(name.len() + category.len() + 24);
+/// Appends the tail that follows an entry's codepoint list.
+fn write_entry_tail(out: &mut String, name: &str, category: &str) {
     let _ = write!(
-        tail,
+        out,
         "{BOLD}{COLOR}}}:{RESET} {name}{COLOR} ({RESET}{category}{COLOR})"
     );
+}
+
+/// The bytes [`write_entry_tail`] appends after the codepoint list.
+const fn entry_tail_len(name: &str, category: &str) -> usize {
+    TAIL_FIXED_LEN
+        .saturating_add(name.len())
+        .saturating_add(category.len())
+}
+
+/// The bytes [`write_entry_tail`] appends after the codepoint list.
+#[cfg(test)]
+fn entry_tail(name: &str, category: &str) -> String {
+    let mut tail = String::with_capacity(entry_tail_len(name, category));
+    write_entry_tail(&mut tail, name, category);
     tail
 }
 
-/// Renders an entry: its codepoints bold inside the braces, then name and category.
+/// Renders an entry into `entry`: its codepoints bold inside the braces, then name and category.
 ///
 /// The codepoint list is a listing too: canonicalization strips every `U+FE0F`, so the input
 /// that matched can be much longer than the stored key, and the list stops with [`SUFFIX`]
-/// inside the braces. The computed tail is the exact text that follows the list, so the
-/// reserved budget cannot drift from what is written.
-fn render_entry(points: &str, name: &str, category: &str) -> String {
-    let tail = entry_tail(name, category);
-    let capacity = points
-        .len()
-        .saturating_mul(8)
-        .saturating_add(tail.len())
-        .saturating_add(ENTRY_OPEN.len());
-    let mut entry = String::with_capacity(ENTRY_BUDGET.min(capacity));
+/// inside the braces. [`entry_tail_len`] is the exact length of the tail that follows the list,
+/// so the reserved budget cannot drift from what is written.
+fn render_entry_into(points: &str, name: &str, category: &str, entry: &mut String) {
+    let tail_len = entry_tail_len(name, category);
+    entry.clear();
     entry.push_str(ENTRY_OPEN);
 
     // The first codepoint is appended unconditionally, so the entry only fits while the tail
     // leaves room for the prefix and `U+10FFFF` on top of the reserved bytes.
     debug_assert!(
-        ENTRY_OPEN.len() + WIDEST_POINT.len() + SUFFIX.len() + tail.len() <= ENTRY_BUDGET,
+        ENTRY_OPEN.len() + WIDEST_POINT.len() + SUFFIX.len() + tail_len <= ENTRY_BUDGET,
         "the name {name:?} does not leave room for the codepoint list"
     );
 
-    let total = points.chars().count();
-    append_listing(
-        &mut entry,
-        points.chars().map(|c| format!("U+{:04X}", u32::from(c))),
-        total,
-        ENTRY_BUDGET,
-        tail.len(),
-    );
-    entry.push_str(&tail);
+    append_points(entry, points, tail_len);
+    write_entry_tail(entry, name, category);
+}
 
+/// Appends the codepoint list within [`ENTRY_BUDGET`], reserving `tail_len` for the tail.
+///
+/// The first codepoint is appended unconditionally; each later one is written and rolled back
+/// when it would push the entry past the budget, which is the same boundary
+/// `append_entries_with_more` uses without building a `String` per codepoint.
+fn append_points(entry: &mut String, points: &str, tail_len: usize) {
+    let total = points.chars().count();
+    let mut appended = 0usize;
+
+    for c in points.chars() {
+        let before = entry.len();
+        if appended > 0 {
+            entry.push_str(", ");
+        }
+        let _ = write!(entry, "U+{:04X}", u32::from(c));
+
+        if appended > 0 && entry.len() + tail_len + SUFFIX.len() > ENTRY_BUDGET {
+            entry.truncate(before);
+            break;
+        }
+        appended += 1;
+    }
+
+    if appended < total {
+        entry.push_str(SUFFIX);
+    }
+}
+
+/// Renders an entry as a standalone string.
+#[cfg(test)]
+fn render_entry(points: &str, name: &str, category: &str) -> String {
+    let mut entry = String::with_capacity(ENTRY_BUDGET);
+    render_entry_into(points, name, category, &mut entry);
     entry
 }
 
-/// Renders one grouped emoji sequence with the category of its base character.
-fn sequence_entry(text: &str, name: &str) -> String {
-    let base = text
-        .chars()
-        .next()
-        .expect("a sequence has a base character");
-    let category = general_category(base).long_name();
-    render_entry(text, name, category)
-}
-
-/// Renders one character entry.
-///
-/// An emoji code point is named by its emoji name — the CLDR spelling says what a character is
-/// for (`AB button (blood type)`) where the character name spells its glyph (`NEGATIVE SQUARED
-/// AB`) — falling back to [`name_or_label`] for everything else.
-fn char_entry(c: char) -> String {
-    let name = character_name(c);
-    let category = general_category(c).long_name();
-    let mut encoded = [0u8; 4];
-    render_entry(c.encode_utf8(&mut encoded), &name, category)
-}
-
-/// The upper-cased name a character entry shows.
-fn character_name(c: char) -> String {
+/// Writes the upper-cased name a character entry shows into `out`.
+fn character_name_into(c: char, out: &mut String) {
+    out.clear();
     let mut encoded = [0u8; 4];
     let text = c.encode_utf8(&mut encoded);
-    emoji_name(text).map_or_else(|| name_or_label(c), |name| name.to_uppercase())
+    if let Some(name) = emoji_name(text) {
+        write_uppercase(out, name.as_ref());
+    } else if !write_name(c, out) {
+        out.push_str(&name_or_label(c));
+    }
 }
 
-/// Upper-cases `name`, borrowing it unchanged when it has no lower-case characters.
-fn uppercase(name: &str) -> Cow<'_, str> {
-    if name.chars().any(char::is_lowercase) {
-        Cow::Owned(name.to_uppercase())
-    } else {
-        Cow::Borrowed(name)
+/// Upper-cases `name` into `out`, borrowing the buffer rather than allocating a string.
+fn write_uppercase(out: &mut String, name: &str) {
+    out.clear();
+    for c in name.chars() {
+        if c.is_lowercase() {
+            out.extend(c.to_uppercase());
+        } else {
+            out.push(c);
+        }
     }
 }
 
@@ -463,6 +551,11 @@ mod tests {
     }
 
     #[test]
+    fn the_entry_tail_fixed_length_matches_the_rendered_tail() {
+        assert_eq!(entry_tail("", "").len(), TAIL_FIXED_LEN);
+    }
+
+    #[test]
     fn every_char_entry_tail_fits_the_entry_budget() {
         let tail_base_len = entry_tail("", "").len();
         let mut longest: Option<(usize, char, String, &'static str)> = None;
@@ -471,7 +564,8 @@ mod tests {
             let Some(c) = char::from_u32(cp) else {
                 continue;
             };
-            let name = character_name(c);
+            let mut name = String::new();
+            character_name_into(c, &mut name);
             let category = general_category(c).long_name();
             let tail_len = tail_base_len + name.len() + category.len();
 
