@@ -155,17 +155,30 @@ impl HostIndex {
         }
     }
 
-    /// Removes the entries with the given filter ids, dropping host buckets that become empty.
-    fn remove_ids(&mut self, ids: &[i32]) {
+    /// Removes the entries with the given filter ids, dropping host buckets that become empty,
+    /// and returns how many entries were removed.
+    fn remove_ids(&mut self, ids: &[i32]) -> usize {
+        let mut removed = 0;
+
         self.exact.retain(|_, entries| {
+            let before = entries.len();
             entries.retain(|entry| !ids.contains(&entry.filter.id));
+            removed += before - entries.len();
+
             !entries.is_empty()
         });
 
+        let before = self.wildcard.len();
         self.wildcard
             .retain(|entry| !ids.contains(&entry.filter.id));
+        removed += before - self.wildcard.len();
+
+        let before = self.any_host.len();
         self.any_host
             .retain(|entry| !ids.contains(&entry.filter.id));
+        removed += before - self.any_host.len();
+
+        removed
     }
 
     /// Whether the bucket holds no filters at all.
@@ -210,7 +223,12 @@ impl HostIndex {
 /// bucket, and never touches the filters of other channels.
 #[derive(Debug, Default, Clone)]
 pub struct FilterIndex {
+    /// The channel buckets, keyed by lowercased channel name.
     channels: HashMap<Option<String>, HostIndex>,
+    /// The number of filters in the index, kept exact by [`FilterIndex::insert`] and
+    /// [`FilterIndex::remove_ids`] so [`FilterIndex::len`] and [`FilterIndex::is_empty`] are
+    /// constant-time.
+    count: usize,
 }
 
 impl FilterIndex {
@@ -220,25 +238,30 @@ impl FilterIndex {
         let entry = Arc::new(Entry::new(filter));
 
         self.channels.entry(channel).or_default().insert(entry);
+        self.count += 1;
     }
 
     /// Removes the filters with the given ids, dropping channel buckets that become empty.
     pub(super) fn remove_ids(&mut self, ids: &[i32]) {
+        let mut removed = 0;
+
         self.channels.retain(|_, bucket| {
-            bucket.remove_ids(ids);
+            removed += bucket.remove_ids(ids);
 
             !bucket.is_empty()
         });
+
+        self.count -= removed;
     }
 
     /// The number of filters in the index.
-    pub(super) fn len(&self) -> usize {
-        self.channels.values().flat_map(HostIndex::filters).count()
+    pub(super) const fn len(&self) -> usize {
+        self.count
     }
 
     /// Whether the index holds no filters at all.
-    pub(super) fn is_empty(&self) -> bool {
-        self.channels.values().all(HostIndex::is_empty)
+    pub(super) const fn is_empty(&self) -> bool {
+        self.count == 0
     }
 
     /// All filters in the index, ordered by id.
@@ -624,5 +647,92 @@ mod tests {
         assert_eq!(ids, [1, 2]);
         assert_eq!(index.len(), 2);
         assert!(!index.is_empty());
+    }
+
+    /// Measures the hot lookup paths over a populated fifty-channel index.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_matches_and_ignores`.
+    #[test]
+    #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
+    fn benchmark_matches_and_ignores() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        const CHANNELS: usize = 50;
+
+        #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
+        fn measure(mut operation: impl FnMut() -> bool) -> f64 {
+            const ITERATIONS: usize = 100_000;
+            const RUNS: usize = 5;
+
+            let mut best = f64::MAX;
+
+            for _ in 0..RUNS {
+                let start = Instant::now();
+
+                for _ in 0..ITERATIONS {
+                    black_box(operation());
+                }
+
+                let nanos = start.elapsed().as_secs_f64() * 1e9;
+
+                best = best.min(nanos / ITERATIONS as f64);
+            }
+
+            best
+        }
+
+        let mut index = FilterIndex::default();
+        let mut id = 1;
+
+        for channel in 0..CHANNELS {
+            let name = format!("#chan-{channel}");
+
+            for host in 0..8 {
+                index.insert(filter(
+                    id,
+                    NewFilter {
+                        channel: Some(name.clone()),
+                        host: Some(format!("site-{channel}-{host}.example")),
+                        ..new_filter(None, None)
+                    },
+                ));
+                id += 1;
+            }
+
+            index.insert(filter(
+                id,
+                NewFilter {
+                    channel: Some(name.clone()),
+                    host: Some("*.wild.example".into()),
+                    ..new_filter(None, None)
+                },
+            ));
+            id += 1;
+
+            for nickname in 0..4 {
+                index.insert(filter(
+                    id,
+                    NewFilter {
+                        channel: Some(name.clone()),
+                        nickname: Some(format!("*bot{nickname}")),
+                        ..new_filter(None, None)
+                    },
+                ));
+                id += 1;
+            }
+        }
+
+        let url: Url = "https://unmatched.example/some/path".parse().unwrap();
+        let sender = Sender::new("someone", "user", "host.example");
+        let matches = measure(|| index.matches("#chan-0", Some(sender), &url));
+        let ignores = measure(|| index.ignores("#chan-0", Some(sender)));
+
+        println!(
+            "{} channels, {} filters: matches {matches:.0} ns/op, ignores {ignores:.0} ns/op",
+            CHANNELS,
+            index.len()
+        );
     }
 }
