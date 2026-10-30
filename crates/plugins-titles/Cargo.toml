@@ -23,6 +23,7 @@ wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "
 wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "webpki-roots", "stream", "gzip", "brotli", "deflate", "zstd"] }
 
 [dependencies]
+bytes.workspace = true
 futures = "0.3.31"
 html5ever = "0.40.0"
 irc.workspace = true

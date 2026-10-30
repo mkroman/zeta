@@ -189,18 +189,13 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
     // The HTML tokenizer is not `Send`, so the response body is streamed through a channel and
     // tokenized on a blocking thread. The channel is bounded so that the reader stalls — and the
     // download is throttled — once the tokenizer falls behind.
-    let (sender, receiver) = mpsc::sync_channel::<Result<Vec<u8>, wreq::Error>>(4);
+    let (sender, receiver) = mpsc::sync_channel::<Result<bytes::Bytes, wreq::Error>>(4);
 
     let reader = tokio::spawn(async move {
         let mut stream = response.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
-            let sent = match chunk {
-                Ok(chunk) => sender.send(Ok(chunk.to_vec())).is_ok(),
-                Err(error) => sender.send(Err(error)).is_ok(),
-            };
-
-            if !sent {
+            if sender.send(chunk).is_err() {
                 break;
             }
         }
@@ -224,7 +219,7 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
             }
 
             let text = decode_chunk(&mut pending, &chunk);
-            queue.push_back(StrTendril::from_slice(&text));
+            queue.push_back(StrTendril::from(text));
 
             let _ = tokenizer.feed(&queue);
 
@@ -262,11 +257,23 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
 /// Invalid sequences are replaced with `U+FFFD`, as if the bytes were decoded lossily.
 #[must_use]
 fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
+    // The common case: the previous chunk ended on a character boundary and this one is valid
+    // UTF-8. Validating first avoids appending the chunk to `pending` only to copy it back out.
+    if pending.is_empty()
+        && let Ok(valid) = std::str::from_utf8(chunk)
+    {
+        let mut text = String::with_capacity(chunk.len());
+        text.push_str(valid);
+
+        return text;
+    }
+
     pending.extend_from_slice(chunk);
-    let mut text = String::new();
+    let mut text = String::with_capacity(pending.len());
+    let mut offset = 0;
 
     loop {
-        match std::str::from_utf8(pending) {
+        match std::str::from_utf8(&pending[offset..]) {
             Ok(valid) => {
                 text.push_str(valid);
                 pending.clear();
@@ -278,7 +285,7 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 
                 if valid > 0 {
                     // The prefix is valid UTF-8 by construction.
-                    if let Ok(prefix) = std::str::from_utf8(&pending[..valid]) {
+                    if let Ok(prefix) = std::str::from_utf8(&pending[offset..offset + valid]) {
                         text.push_str(prefix);
                     }
                 }
@@ -286,13 +293,13 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
                 match error.error_len() {
                     // An incomplete sequence at the end of the chunk is carried over as-is.
                     None => {
-                        pending.drain(..valid);
+                        pending.drain(..offset + valid);
 
                         break;
                     }
                     Some(invalid_len) => {
                         text.push('\u{fffd}');
-                        pending.drain(..valid + invalid_len);
+                        offset += valid + invalid_len;
                     }
                 }
             }
