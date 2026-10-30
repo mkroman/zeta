@@ -268,7 +268,7 @@ impl GeoIp {
                 );
             })?;
 
-        debug!(geo.ip = %info.ip, "resolved");
+        debug!(geoip.lookup.address = %info.ip, "resolved");
 
         Ok(LookupResult(info))
     }
