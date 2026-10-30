@@ -255,7 +255,7 @@ zeta-plugin-runtime = { path = "../zeta-plugin-runtime" }
 [dev-dependencies]
 plugins-dig = { path = "../plugins-dig" }
 serde_json.workspace = true
-syn = { version = "=2.0.119", default-features = false, features = ["derive", "full", "parsing"] }
+syn = { version = "=3.0.9", default-features = false, features = ["derive", "full", "parsing"] }
 zeta-test-support = { path = "../zeta-test-support" }
 
 [lints]
