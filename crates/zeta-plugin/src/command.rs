@@ -17,10 +17,14 @@
 //! assert_eq!(YT.parse(".goodbye"), None);
 //! ```
 
+use std::any::TypeId;
+use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::{Arc, Mutex, OnceLock, TryLockError};
 
 use clap::{ArgAction, ColorChoice, Command, Parser};
 use thiserror::Error;
+use zeta_utils::sync;
 
 /// How a command's trailing arguments are split into tokens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +51,10 @@ pub enum ArgsMode {
 /// serves every role: it is registered through [`Subscriptions`](super::Subscriptions) during
 /// initialization, and matched against the [`CommandEvent`](super::CommandEvent)'s specification
 /// in the command handler.
+///
+/// The configured `clap` command is built on the first parse and cached, keyed by trigger and
+/// argument type, for reuse on later parses; a parse that finds the cached entry busy builds an
+/// uncached command instead of blocking. [`CommandSpec::args_info`] always builds its own copy.
 ///
 /// # Matching commands by identity
 ///
@@ -115,8 +123,14 @@ impl CommandSpec {
 
     /// Creates a command with the given `description`, whose arguments are parsed into the
     /// [`Parser`]-derived type `T`.
+    ///
+    /// `T` must be `'static` because configured commands are cached and keyed by
+    /// [`TypeId`], which requires a `'static` type.
     #[must_use]
-    pub const fn with_args<T: Parser>(trigger: &'static str, description: &'static str) -> Self {
+    pub const fn with_args<T: Parser + 'static>(
+        trigger: &'static str,
+        description: &'static str,
+    ) -> Self {
         Self {
             trigger,
             description,
@@ -198,11 +212,10 @@ impl CommandSpec {
     /// let opts: Opts = HELLO.parse_args("world").unwrap();
     /// assert_eq!(opts.name, "world");
     /// ```
-    pub fn parse_args<T: Parser>(&self, args: &str) -> Result<T, ArgsError> {
+    pub fn parse_args<T: Parser + 'static>(&self, args: &str) -> Result<T, ArgsError> {
         let tokens = shlex::split(args).ok_or(ArgsError::Quoting)?;
-        let tokens = tokens.iter().map(String::as_str).collect::<Vec<_>>();
 
-        self.parse_tokens(&tokens)
+        self.parse_tokens(tokens.iter().map(String::as_str))
     }
 
     /// Parses the trailing arguments of the command into a [`Parser`]-derived struct, splitting
@@ -236,10 +249,8 @@ impl CommandSpec {
     /// let opts: Opts = ALERT.parse_words("don't forget at 4:20").unwrap();
     /// assert_eq!(opts.args.join(" "), "don't forget at 4:20");
     /// ```
-    pub fn parse_words<T: Parser>(&self, args: &str) -> Result<T, ArgsError> {
-        let tokens: Vec<&str> = args.split_whitespace().collect();
-
-        self.parse_tokens(&tokens)
+    pub fn parse_words<T: Parser + 'static>(&self, args: &str) -> Result<T, ArgsError> {
+        self.parse_tokens(args.split_whitespace())
     }
 
     /// Parses the trailing arguments with the tokenization selected by `mode`.
@@ -248,7 +259,11 @@ impl CommandSpec {
     ///
     /// Returns the error of the selected parser: [`ArgsError::Quoting`] for shell tokenization,
     /// or [`ArgsError::Usage`] when `clap` rejected the arguments.
-    pub fn parse_with<T: Parser>(&self, args: &str, mode: ArgsMode) -> Result<T, ArgsError> {
+    pub fn parse_with<T: Parser + 'static>(
+        &self,
+        args: &str,
+        mode: ArgsMode,
+    ) -> Result<T, ArgsError> {
         match mode {
             ArgsMode::Shell => self.parse_args(args),
             ArgsMode::Words => self.parse_words(args),
@@ -256,12 +271,18 @@ impl CommandSpec {
     }
 
     /// Parses `tokens` into `T`, with the trigger as the command name in the usage output.
-    fn parse_tokens<T: Parser>(&self, tokens: &[&str]) -> Result<T, ArgsError> {
-        let command = configure(T::command(), self.trigger);
-        let argv = std::iter::once(self.trigger).chain(tokens.iter().copied());
-        let matches = command
-            .try_get_matches_from(argv)
-            .map_err(|error| ArgsError::Usage(error.to_string()))?;
+    fn parse_tokens<'a, T, I>(&self, tokens: I) -> Result<T, ArgsError>
+    where
+        T: Parser + 'static,
+        I: IntoIterator<Item = &'a str>,
+    {
+        let matches = with_cached_command::<T, _>(self.trigger, move |command| {
+            let argv = std::iter::once(self.trigger).chain(tokens);
+
+            command
+                .try_get_matches_from_mut(argv)
+                .map_err(|error| ArgsError::Usage(error.to_string()))
+        })?;
 
         T::from_arg_matches(&matches).map_err(|error| ArgsError::Usage(error.to_string()))
     }
@@ -312,6 +333,54 @@ fn tolerate_repeated_switches(command: Command) -> Command {
     command.mut_subcommands(tolerate_repeated_switches)
 }
 
+/// The configured commands reused across parses.
+///
+/// [`Command`] is `Send`, and [`Command::try_get_matches_from_mut`] is clap's API for parsing
+/// with a command that stays alive, so one configured tree per command is reused instead of
+/// rebuilding the whole argument tree on every call. The trigger is part of the key because it
+/// is rendered as the binary name in usage and help output; the argument type is keyed by
+/// [`TypeId`], so parsers must be `'static`.
+type CommandKey = (&'static str, TypeId);
+
+static COMMANDS: OnceLock<Mutex<HashMap<CommandKey, Arc<Mutex<Command>>>>> = OnceLock::new();
+
+/// Returns the process-wide command cache, initializing it on first use.
+fn commands() -> &'static Mutex<HashMap<CommandKey, Arc<Mutex<Command>>>> {
+    COMMANDS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Returns the cached command for `T` under `trigger`, configuring it on first use.
+fn cached_command<T: Parser + 'static>(trigger: &'static str) -> Arc<Mutex<Command>> {
+    let mut commands = sync::lock(commands());
+
+    Arc::clone(
+        commands
+            .entry((trigger, TypeId::of::<T>()))
+            .or_insert_with(|| Arc::new(Mutex::new(configure(T::command(), trigger)))),
+    )
+}
+
+/// Runs `parse` against the cached command for `T` under `trigger`.
+///
+/// A busy entry means another thread is parsing the same command (or a value parser recursed
+/// into it); rather than block, that call configures a fresh command. A poisoned entry comes
+/// from a parse that panicked: it is evicted so a later call caches a fresh command, and this
+/// call uses a fresh command directly.
+fn with_cached_command<T, R>(trigger: &'static str, parse: impl FnOnce(&mut Command) -> R) -> R
+where
+    T: Parser + 'static,
+{
+    match cached_command::<T>(trigger).try_lock() {
+        Ok(mut command) => parse(&mut command),
+        Err(TryLockError::Poisoned(_)) => {
+            sync::lock(commands()).remove(&(trigger, TypeId::of::<T>()));
+
+            parse(&mut configure(T::command(), trigger))
+        }
+        Err(TryLockError::WouldBlock) => parse(&mut configure(T::command(), trigger)),
+    }
+}
+
 /// An error returned when command arguments could not be parsed.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum ArgsError {
@@ -327,6 +396,7 @@ pub enum ArgsError {
 mod tests {
     use super::*;
 
+    use clap::{CommandFactory, FromArgMatches};
     use zeta_test_support::assert_empty;
 
     #[derive(Parser, Debug, PartialEq)]
@@ -504,6 +574,406 @@ mod tests {
         let opts: Opts = CMD.parse_words("-l -l").expect("switches are idempotent");
 
         assert!(opts.list);
+
+        // The second parse runs against the cached command; the relaxation must survive reuse.
+        let opts: Opts = CMD
+            .parse_words("--list -l -l")
+            .expect("switches are idempotent with a cached command");
+
+        assert!(opts.list);
+    }
+
+    #[test]
+    fn repeated_parses_reuse_the_cached_command() {
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the query
+            query: String,
+            /// the language
+            #[arg(long, default_value = "en")]
+            language: String,
+        }
+
+        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".test", "test");
+
+        let first: Opts = CMD.parse_words("hello").unwrap();
+        let second: Opts = CMD.parse_words("--language fr hello").unwrap();
+        let third: Opts = CMD.parse_args("\"hello\" --language de").unwrap();
+
+        assert_eq!(
+            first,
+            Opts {
+                query: "hello".into(),
+                language: "en".into(),
+            }
+        );
+        assert_eq!(
+            second,
+            Opts {
+                query: "hello".into(),
+                language: "fr".into(),
+            }
+        );
+        assert_eq!(
+            third,
+            Opts {
+                query: "hello".into(),
+                language: "de".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn repeated_parses_build_the_command_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use clap::{Arg, ArgMatches};
+
+        /// Test options built by hand, so the test can count command builds.
+        #[derive(Debug, PartialEq)]
+        struct CountedOpts {
+            /// the required positional argument
+            name: String,
+        }
+
+        static BUILDS: AtomicUsize = AtomicUsize::new(0);
+
+        impl CommandFactory for CountedOpts {
+            fn command() -> Command {
+                BUILDS.fetch_add(1, Ordering::SeqCst);
+
+                Command::new("counted").arg(Arg::new("name").required(true))
+            }
+
+            fn command_for_update() -> Command {
+                Self::command()
+            }
+        }
+
+        impl FromArgMatches for CountedOpts {
+            fn from_arg_matches(matches: &ArgMatches) -> Result<Self, clap::Error> {
+                matches
+                    .get_one::<String>("name")
+                    .cloned()
+                    .map(|name| Self { name })
+                    .ok_or_else(|| {
+                        clap::Error::raw(
+                            clap::error::ErrorKind::MissingRequiredArgument,
+                            "missing name",
+                        )
+                    })
+            }
+
+            fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> Result<(), clap::Error> {
+                *self = Self::from_arg_matches(matches)?;
+
+                Ok(())
+            }
+        }
+
+        impl Parser for CountedOpts {}
+
+        const CMD: CommandSpec = CommandSpec::with_args::<CountedOpts>(".counted", "test");
+
+        let first: CountedOpts = CMD.parse_words("one").unwrap();
+        let second: CountedOpts = CMD.parse_words("two").unwrap();
+        let third: CountedOpts = CMD.parse_args("three").unwrap();
+
+        assert_eq!(
+            BUILDS.load(Ordering::SeqCst),
+            1,
+            "the command should be built once and then reused"
+        );
+        assert_eq!(first, CountedOpts { name: "one".into() });
+        assert_eq!(second, CountedOpts { name: "two".into() });
+        assert_eq!(
+            third,
+            CountedOpts {
+                name: "three".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_busy_cached_command_parses_without_blocking() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the required positional argument
+            name: String,
+        }
+
+        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".busy", "test");
+
+        let cached = cached_command::<Opts>(".busy");
+        let guard = sync::lock(&cached);
+
+        let (sender, receiver) = mpsc::channel();
+        let parse = std::thread::spawn(move || {
+            let parsed: Result<Opts, ArgsError> = CMD.parse_words("one");
+            sender
+                .send(parsed)
+                .expect("the test thread should receive the parse result");
+        });
+
+        let parsed = match receiver.recv_timeout(Duration::from_secs(10)) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                drop(guard);
+                let _ = parse.join();
+
+                panic!("parsing a busy cached command blocked: {error}");
+            }
+        };
+
+        drop(guard);
+
+        assert_eq!(parsed.unwrap(), Opts { name: "one".into() });
+
+        // Once the lock is released, parsing goes back to the cached command.
+        let again: Opts = CMD.parse_words("two").unwrap();
+
+        assert_eq!(again, Opts { name: "two".into() });
+    }
+
+    #[test]
+    fn a_poisoned_cached_command_is_replaced() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static PANICKED: AtomicBool = AtomicBool::new(false);
+
+        /// A value parser that fails the first parse, leaving the cached command poisoned.
+        // clap's value parser functions must return `Result`, even though this one only panics.
+        #[allow(clippy::unnecessary_wraps)]
+        fn panics_once(value: &str) -> Result<String, String> {
+            assert!(
+                PANICKED.swap(true, Ordering::SeqCst),
+                "the first parse panics while holding the cached command"
+            );
+
+            Ok(value.to_owned())
+        }
+
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the required positional argument
+            #[arg(value_parser = panics_once)]
+            name: String,
+        }
+
+        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".poisoned", "test");
+
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            CMD.parse_words::<Opts>("one")
+        }));
+
+        assert!(first.is_err(), "the first parse should panic");
+
+        // The poisoned entry is evicted, so this parse configures a fresh command.
+        let second: Opts = CMD
+            .parse_words("two")
+            .expect("a poisoned command should be replaced");
+
+        assert_eq!(second, Opts { name: "two".into() });
+    }
+
+    #[test]
+    fn repeated_missing_argument_reports_the_same_usage() {
+        const CMD: CommandSpec = CommandSpec::with_args::<NameOpts>(".missing", "test");
+
+        let first = CMD.parse_words::<NameOpts>("").unwrap_err();
+        let second = CMD.parse_words::<NameOpts>("").unwrap_err();
+
+        assert_eq!(first, second);
+
+        let ArgsError::Usage(usage) = first else {
+            panic!("a missing argument should be a usage error");
+        };
+        assert!(usage.contains(".missing"), "{usage}");
+        assert!(usage.contains("<NAME>"), "{usage}");
+    }
+
+    #[test]
+    fn repeated_unknown_flag_reports_the_same_usage() {
+        const CMD: CommandSpec = CommandSpec::with_args::<NameOpts>(".unknown", "test");
+
+        let first = CMD.parse_words::<NameOpts>("-x").unwrap_err();
+        let second = CMD.parse_words::<NameOpts>("-x").unwrap_err();
+
+        assert_eq!(first, second);
+
+        let ArgsError::Usage(usage) = first else {
+            panic!("an unknown flag should be a usage error");
+        };
+        assert!(usage.contains("-x"), "{usage}");
+    }
+
+    #[test]
+    fn repeated_help_output_is_identical() {
+        const CMD: CommandSpec = CommandSpec::with_args::<GreedyOpts>(".help", "test");
+
+        // A successful parse first, so help is rendered from an already-built cached command.
+        assert_eq!(
+            CMD.parse_words::<GreedyOpts>("hello").unwrap().args,
+            vec!["hello".to_owned()]
+        );
+
+        let first = CMD.parse_words::<GreedyOpts>("--help").unwrap_err();
+        let second = CMD.parse_words::<GreedyOpts>("--help").unwrap_err();
+
+        assert_eq!(first, second);
+
+        let ArgsError::Usage(help) = first else {
+            panic!("--help should return the rendered help");
+        };
+        assert!(help.contains(".help"), "{help}");
+        assert!(help.contains("--help"), "{help}");
+    }
+
+    #[test]
+    fn cached_command_parses_subcommands_repeatedly() {
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the subcommand
+            #[command(subcommand)]
+            command: Action,
+        }
+
+        #[derive(clap::Subcommand, Debug, PartialEq)]
+        /// Test actions.
+        enum Action {
+            /// add an entry
+            Add {
+                /// the entry name
+                name: String,
+            },
+            /// list the entries
+            List,
+        }
+
+        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".sub", "test");
+
+        assert_eq!(
+            CMD.parse_words::<Opts>("add one").unwrap(),
+            Opts {
+                command: Action::Add { name: "one".into() },
+            }
+        );
+        assert_eq!(
+            CMD.parse_words::<Opts>("list").unwrap(),
+            Opts {
+                command: Action::List,
+            }
+        );
+        assert_eq!(
+            CMD.parse_words::<Opts>("add two").unwrap(),
+            Opts {
+                command: Action::Add { name: "two".into() },
+            }
+        );
+    }
+
+    #[test]
+    fn cached_parses_match_freshly_configured_commands() {
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Opts {
+            /// the query
+            query: String,
+            /// the language
+            #[arg(long, default_value = "en")]
+            language: String,
+            /// verbose output
+            #[arg(short, long)]
+            verbose: bool,
+        }
+
+        const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".compare", "test");
+
+        // Populate the cache before the comparison.
+        assert_eq!(CMD.parse_words::<Opts>("warm").unwrap().query, "warm");
+
+        for args in [
+            "hello",
+            "--language fr hello",
+            "-v hello",
+            "-v -v hello",
+            "--verbose --verbose hello",
+            "",
+            "-x",
+            "--language",
+            "one two",
+            "--help",
+        ] {
+            let cached = CMD
+                .parse_words::<Opts>(args)
+                .map_err(|error| error.to_string());
+
+            let fresh = configure(Opts::command(), CMD.trigger())
+                .try_get_matches_from(std::iter::once(CMD.trigger()).chain(args.split_whitespace()))
+                .map_err(|error| error.to_string())
+                .and_then(|matches| {
+                    Opts::from_arg_matches(&matches).map_err(|error| error.to_string())
+                });
+
+            assert_eq!(cached, fresh, "arguments: {args:?}");
+        }
+    }
+
+    #[test]
+    fn different_command_types_do_not_share_a_cache_entry() {
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Left {
+            /// left flag
+            #[arg(long)]
+            left: bool,
+        }
+
+        #[derive(Parser, Debug, PartialEq)]
+        /// Test options.
+        struct Right {
+            /// right flag
+            #[arg(long)]
+            right: bool,
+        }
+
+        const LEFT: CommandSpec = CommandSpec::with_args::<Left>(".shared", "left");
+        const RIGHT: CommandSpec = CommandSpec::with_args::<Right>(".shared", "right");
+
+        assert!(LEFT.parse_words::<Left>("--left").unwrap().left);
+        assert!(RIGHT.parse_words::<Right>("--right").unwrap().right);
+
+        // Each type only accepts its own flag.
+        assert!(LEFT.parse_words::<Left>("--right").is_err());
+        assert!(RIGHT.parse_words::<Right>("--left").is_err());
+
+        // The first entry still parses after the second type was configured.
+        assert!(LEFT.parse_words::<Left>("--left").unwrap().left);
+    }
+
+    #[test]
+    fn the_same_type_gets_one_entry_per_trigger() {
+        const ONE: CommandSpec = CommandSpec::with_args::<NameOpts>(".one", "test");
+        const TWO: CommandSpec = CommandSpec::with_args::<NameOpts>(".two", "test");
+
+        let Err(ArgsError::Usage(one)) = ONE.parse_words::<NameOpts>("") else {
+            panic!("a missing argument should be a usage error");
+        };
+        let Err(ArgsError::Usage(two)) = TWO.parse_words::<NameOpts>("") else {
+            panic!("a missing argument should be a usage error");
+        };
+
+        assert!(one.contains(".one"), "{one}");
+        assert!(!one.contains(".two"), "{one}");
+        assert!(two.contains(".two"), "{two}");
+        assert!(!two.contains(".one"), "{two}");
     }
 
     #[test]

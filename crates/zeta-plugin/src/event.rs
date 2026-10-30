@@ -198,7 +198,7 @@ impl CommandEvent {
     ///
     /// Returns [`ArgsError::Quoting`] if the arguments could not be tokenized, or
     /// [`ArgsError::Usage`] if `clap` rejected the arguments.
-    pub fn parse_args<T: Parser>(&self) -> Result<T, ArgsError> {
+    pub fn parse_args<T: Parser + 'static>(&self) -> Result<T, ArgsError> {
         self.spec.parse_args(self.args())
     }
 
@@ -210,7 +210,7 @@ impl CommandEvent {
     /// # Errors
     ///
     /// Returns [`ArgsError::Usage`] if `clap` rejected the arguments.
-    pub fn parse_words<T: Parser>(&self) -> Result<T, ArgsError> {
+    pub fn parse_words<T: Parser + 'static>(&self) -> Result<T, ArgsError> {
         self.spec.parse_words(self.args())
     }
 
@@ -223,7 +223,7 @@ impl CommandEvent {
     ///
     /// Returns [`ArgsError::Quoting`] when shell tokenization fails, or [`ArgsError::Usage`] if
     /// `clap` rejected the arguments.
-    pub fn parse_with<T: Parser>(&self, mode: ArgsMode) -> Result<T, ArgsError> {
+    pub fn parse_with<T: Parser + 'static>(&self, mode: ArgsMode) -> Result<T, ArgsError> {
         self.spec.parse_with(self.args(), mode)
     }
 
