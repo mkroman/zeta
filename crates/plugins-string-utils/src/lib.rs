@@ -147,10 +147,17 @@ fn character_count(text: &str) -> String {
 
 /// Renders `.ord`: each character's code point, comma separated.
 fn code_points(text: &str) -> String {
-    text.chars()
-        .map(|c| u32::from(c).to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
+    // A code point is at most seven decimal digits plus its separator.
+    let mut out = String::with_capacity(text.chars().count().saturating_mul(9));
+
+    for (index, c) in text.char_indices() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        let _ = write!(out, "{}", u32::from(c));
+    }
+
+    out
 }
 
 /// Renders `.rev`: the characters in reverse order.
@@ -195,6 +202,11 @@ mod tests {
             str_to_hex("🏳️‍🌈"),
             r"\xf0\x9f\x8f\xb3\xef\xb8\x8f\xe2\x80\x8d\xf0\x9f\x8c\x88"
         );
+    }
+
+    #[test]
+    fn code_points_lists_every_codepoint() {
+        assert_eq!(code_points("a🦔\u{0}"), "97, 129428, 0");
     }
 
     #[test]
