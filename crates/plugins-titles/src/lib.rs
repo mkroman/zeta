@@ -10,6 +10,8 @@
 
 mod metadata;
 
+use std::sync::{Arc, OnceLock};
+
 use irc::client::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, debug, warn};
@@ -72,7 +74,16 @@ pub struct Titles {
     /// The HTTP client used for fetching pages.
     client: wreq::Client,
     /// The plugin settings used when processing URLs.
-    settings: Settings,
+    ///
+    /// Shared rather than cloned per URL: posted URLs are frequent and the settings carry the
+    /// configured `ignored_hosts`.
+    settings: Arc<Settings>,
+    /// The catalog of registered plugins, cached on load or on first use.
+    ///
+    /// The catalog is published once, before any plugin task starts, so the handle stays valid
+    /// for the process lifetime. Once a handle is cached, a replacement published later is not
+    /// observed.
+    catalog: OnceLock<Arc<PluginCatalog>>,
 }
 
 #[plugin(name = "titles", settings = Settings, urls(any))]
@@ -87,8 +98,18 @@ impl Titles {
 
         Ok(Self {
             client,
-            settings: settings.clone(),
+            settings: Arc::new(settings.clone()),
+            catalog: OnceLock::new(),
         })
+    }
+
+    #[handler(loaded)]
+    async fn loaded(&mut self, ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+        if let Some(catalog) = ctx.shared.get::<PluginCatalog>() {
+            let _ = self.catalog.set(catalog);
+        }
+
+        Ok(())
     }
 
     #[handler(url)]
@@ -102,61 +123,67 @@ impl Titles {
             return Ok(());
         }
 
-        let catalog = ctx.shared.get::<PluginCatalog>();
-        self.process_url(
-            event.url().clone(),
-            event.repaired_from,
-            event.channel(),
-            client,
-            catalog.as_deref(),
-        );
+        let url = event.url();
+
+        if let Some(scheme) = event.repaired_from {
+            debug!(%scheme, url.full = %RedactedUrl::from_url(url), "posting repaired url");
+
+            if let Err(error) = client.send_privmsg(event.channel(), plain_reply(url)) {
+                warn!(exception.message = %error, "could not send repaired url");
+            }
+        }
+
+        // The checks run on the borrowed URL, before the `Arc` clones needed by the spawned task.
+        let catalog = self.catalog(ctx);
+
+        if is_ignored_host(url, &self.settings.ignored_hosts) || is_catalog_handled(url, catalog) {
+            debug!(
+                url.full = %RedactedUrl::from_url(url),
+                "skipping url handled by another plugin"
+            );
+
+            return Ok(());
+        }
+
+        if is_binary_url(url) {
+            debug!(
+                url.full = %RedactedUrl::from_url(url),
+                "skipping url that looks like binary content"
+            );
+
+            return Ok(());
+        }
+
+        self.process_url(event.url_arc(), event.channel(), client);
 
         Ok(())
     }
 }
 
 impl Titles {
-    /// Processes a single extracted URL: announces repaired schemes, and spawns a task that
-    /// fetches the page and posts its metadata to the channel.
-    fn process_url(
-        &self,
-        url: Url,
-        repaired_from: Option<&'static str>,
-        channel: &str,
-        client: &Client,
-        catalog: Option<&PluginCatalog>,
-    ) {
-        if let Some(scheme) = repaired_from {
-            debug!(%scheme, url.full = %RedactedUrl::from_url(&url), "posting repaired url");
-
-            if let Err(error) = client.send_privmsg(channel, plain_reply(&url)) {
-                warn!(exception.message = %error, "could not send repaired url");
-            }
-        }
-
-        if is_ignored_host(&url, &self.settings.ignored_hosts) || is_catalog_handled(&url, catalog)
+    /// Returns the catalog of registered plugins.
+    ///
+    /// Prefers the handle cached by `loaded`, so the per-URL path does not touch shared state.
+    /// Shared state is only consulted while nothing is cached — when the load hook has not run
+    /// (e.g. in tests calling the handler directly) or when no catalog was published yet — and
+    /// the first handle found is cached for the following events.
+    fn catalog(&self, ctx: &Context) -> Option<&PluginCatalog> {
+        if self.catalog.get().is_none()
+            && let Some(catalog) = ctx.shared.get::<PluginCatalog>()
         {
-            debug!(
-                url.full = %RedactedUrl::from_url(&url),
-                "skipping url handled by another plugin"
-            );
-
-            return;
+            let _ = self.catalog.set(catalog);
         }
 
-        if is_binary_url(&url) {
-            debug!(
-                url.full = %RedactedUrl::from_url(&url),
-                "skipping url that looks like binary content"
-            );
+        self.catalog.get().map(Arc::as_ref)
+    }
 
-            return;
-        }
-
+    /// Processes a single extracted URL by spawning a task that fetches the page and posts its
+    /// metadata to the channel.
+    fn process_url(&self, url: Arc<Url>, channel: &str, client: &Client) {
         let http_client = self.client.clone();
         let sender = client.sender();
         let channel = channel.to_string();
-        let settings = self.settings.clone();
+        let settings = Arc::clone(&self.settings);
 
         // The span carries the redacted URL: without it, this task's logs would only ever
         // reach stdout. It is a child of the handler span, created while the handler is
@@ -330,6 +357,17 @@ mod tests {
     use zeta_test_support::{assert_empty, settings_tests};
     use zeta_utils::irc::strip_formatting;
 
+    /// Returns a catalog whose only entry declares `hosts`.
+    fn catalog_with(name: &str, hosts: &'static [&'static str]) -> PluginCatalog {
+        PluginCatalog {
+            entries: vec![CatalogEntry {
+                name: name.to_owned(),
+                commands: Vec::new(),
+                url_scope: UrlScope::Hosts(hosts),
+            }],
+        }
+    }
+
     #[test]
     fn ignores_command_messages() {
         assert!(should_ignore(".gis https://maero.dk"));
@@ -347,6 +385,87 @@ mod tests {
         assert!(should_ignore("\x0310>\x0f\x02 Site:\x02\x0310 Some page"));
 
         assert!(!should_ignore("check this out https://maero.dk"));
+    }
+
+    #[tokio::test]
+    async fn caches_the_catalog_on_load() {
+        let ctx = zeta_test_support::test_context();
+        ctx.shared.publish(Arc::new(catalog_with(
+            "imdb",
+            &["imdb.com", "www.imdb.com"],
+        )));
+
+        let mut titles = Titles::new(&ctx, &Settings::default()).expect("titles plugin builds");
+        let client = Client::from_config(irc::client::data::Config {
+            nickname: Some("zeta-test".to_owned()),
+            server: Some("mock".to_owned()),
+            use_mock_connection: true,
+            mock_initial_value: Some(String::new()),
+            ..Default::default()
+        })
+        .await
+        .expect("mock irc client");
+
+        titles.loaded(&ctx, &client).await.expect("plugin loads");
+
+        // A catalog published after the load hook does not replace the cached one.
+        ctx.shared.publish(Arc::new(catalog_with(
+            "youtube",
+            &["youtube.com", "youtu.be"],
+        )));
+
+        let catalog = titles.catalog(&ctx).expect("catalog is cached");
+
+        assert!(is_catalog_handled(
+            &Url::parse("https://www.imdb.com/title/tt1375666").unwrap(),
+            Some(catalog)
+        ));
+        assert!(!is_catalog_handled(
+            &Url::parse("https://youtu.be/dQw4w9WgXcQ").unwrap(),
+            Some(catalog)
+        ));
+    }
+
+    #[tokio::test]
+    async fn resolves_an_uncached_catalog_from_shared_state() {
+        let ctx = zeta_test_support::test_context();
+        ctx.shared.publish(Arc::new(catalog_with(
+            "imdb",
+            &["imdb.com", "www.imdb.com"],
+        )));
+
+        // The load hook never runs when a test calls the handler directly.
+        let titles = Titles::new(&ctx, &Settings::default()).expect("titles plugin builds");
+
+        let catalog = titles
+            .catalog(&ctx)
+            .expect("catalog is resolved from shared state");
+
+        assert!(is_catalog_handled(
+            &Url::parse("https://www.imdb.com/title/tt1375666").unwrap(),
+            Some(catalog)
+        ));
+
+        // The fallback is cached too, so later events do not consult shared state again.
+        ctx.shared.publish(Arc::new(catalog_with(
+            "youtube",
+            &["youtube.com", "youtu.be"],
+        )));
+
+        let cached = titles.catalog(&ctx).expect("catalog is cached");
+
+        assert!(!is_catalog_handled(
+            &Url::parse("https://youtu.be/dQw4w9WgXcQ").unwrap(),
+            Some(cached)
+        ));
+    }
+
+    #[tokio::test]
+    async fn has_no_catalog_until_one_is_published() {
+        let ctx = zeta_test_support::test_context();
+        let titles = Titles::new(&ctx, &Settings::default()).expect("titles plugin builds");
+
+        assert!(titles.catalog(&ctx).is_none());
     }
 
     #[test]

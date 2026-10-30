@@ -34,7 +34,7 @@ impl CatalogEntry {
 ///
 /// The catalog is published to the context's shared state once registration is finished, so
 /// plugins can look it up through [`Context::shared`](crate::Context::shared) to discover
-/// other plugins.
+/// other plugins. It is not replaced afterwards, so consumers may cache the handle.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PluginCatalog {
     /// The registered plugins, in registration order.
