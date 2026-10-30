@@ -51,7 +51,7 @@ fn reply_usage_lines(
 /// # Errors
 ///
 /// Returns any error produced while sending the usage lines.
-pub fn parse_or_usage<T: Parser>(
+pub fn parse_or_usage<T: Parser + 'static>(
     client: &Client,
     command: &CommandEvent,
     mode: ArgsMode,
