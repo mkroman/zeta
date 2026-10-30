@@ -79,8 +79,9 @@ impl NotificationService {
 
         let mut cache = self.cache.lock().await;
         *cache = loaded;
-        // Set the exact count under the lock, so a concurrent insert cannot be missed.
-        self.pending.store(pending, Ordering::Release);
+        // Store the count together with the replacement cache, so the counter always matches
+        // it. `load` runs at startup, before any event is dispatched.
+        self.pending.store(pending, Ordering::Relaxed);
         drop(cache);
 
         Ok(())
@@ -114,7 +115,7 @@ impl NotificationService {
         trace!(?notification, "storing notification in cache");
 
         let mut cache = self.cache.lock().await;
-        self.pending.fetch_add(1, Ordering::Release);
+        self.pending.fetch_add(1, Ordering::Relaxed);
         cache
             .entry(notification.channel.clone())
             .or_default()
@@ -132,7 +133,7 @@ impl NotificationService {
     /// The common case is that there are none: the pending counter then lets the call return
     /// without locking the cache.
     pub async fn take(&self, channel: &str, target: &str) -> Vec<Notification> {
-        if self.pending.load(Ordering::Acquire) == 0 {
+        if self.pending.load(Ordering::Relaxed) == 0 {
             return Vec::new();
         }
 
@@ -147,7 +148,7 @@ impl NotificationService {
             cache.remove(channel);
         }
 
-        self.pending.fetch_sub(taken.len(), Ordering::AcqRel);
+        self.pending.fetch_sub(taken.len(), Ordering::Relaxed);
         drop(cache);
 
         taken
@@ -164,7 +165,7 @@ impl NotificationService {
 
         let mut cache = self.cache.lock().await;
         self.pending
-            .fetch_add(notifications.len(), Ordering::Release);
+            .fetch_add(notifications.len(), Ordering::Relaxed);
 
         for notification in notifications {
             trace!(?notification, "restoring undelivered notification");
@@ -212,15 +213,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn taking_without_pending_notifications_returns_nothing() {
+    async fn taking_without_pending_notifications_does_not_lock_the_cache() {
         // `take` never touches the database, so a lazy pool is enough.
-        let db = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgresql://user:changeme@localhost/zeta_development")
-            .expect("the probe database URL is valid");
+        let service =
+            NotificationService::new(zeta_test_support::test_context().db, &Settings::default());
+
+        // Hold the cache lock across `take`: only the lock-free fast path can complete.
+        let cache = service.cache.lock().await;
+        let taken = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            service.take("#chan", "someone"),
+        )
+        .await
+        .expect("take must not wait on the cache lock when nothing is pending");
+        drop(cache);
+
+        assert!(taken.is_empty());
+    }
+
+    #[sqlx::test(migrations = "../plugins/migrations")]
+    async fn take_with_missing_channel_or_target_keeps_the_pending_count(db: sqlx::PgPool) {
         let service = NotificationService::new(db, &Settings::default());
 
-        assert!(service.take("#chan", "someone").await.is_empty());
-        assert!(service.take("#chan", "someone").await.is_empty());
+        service.create(notification()).await.unwrap();
+
+        // A miss must not decrement the counter: it would reach zero while a notification
+        // remains, and the final `take` would wrongly fast-path to an empty result.
+        assert!(service.take("#other", "someone").await.is_empty());
+        assert!(service.take("#chan", "someone-else").await.is_empty());
+
+        assert_eq!(service.take("#chan", "someone").await.len(), 1);
     }
 
     #[sqlx::test(migrations = "../plugins/migrations")]
