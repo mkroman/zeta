@@ -259,7 +259,7 @@ fn validate_handler_subscriptions(plugin: &Plugin) -> Option<syn::Error> {
 
 /// Rejects trait impls and generic impl blocks, which the macro cannot implement `Plugin` for.
 fn reject_target(inherent: &syn::ItemImpl) -> Option<syn::Error> {
-    if let Some((_, trait_path, _)) = &inherent.trait_ {
+    if let Some((trait_path, _)) = &inherent.trait_ {
         return Some(syn::Error::new(
             trait_path.span(),
             "`#[plugin]` must be applied to an inherent impl block, not a trait implementation",
@@ -974,7 +974,11 @@ fn is_self(argument: &GenericArgument) -> bool {
 fn expect_receiver(method: &ImplItemFn, mutable: bool) -> syn::Result<()> {
     match method.sig.inputs.first() {
         Some(syn::FnArg::Receiver(receiver)) => {
-            if receiver.reference.is_some() && receiver.mutability.is_some() == mutable {
+            if matches!(
+                &receiver.kind,
+                syn::ReceiverKind::Reference(_, _, mutability)
+                    if mutability.is_some() == mutable
+            ) {
                 Ok(())
             } else {
                 let expected = if mutable { "`&mut self`" } else { "`&self`" };
