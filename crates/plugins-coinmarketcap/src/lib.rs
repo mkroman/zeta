@@ -18,6 +18,7 @@
 //! the plugin is skipped at startup. The `default_currency` (USD), `cache_ttl` (24 hours), and
 //! `max_name_typos` (2) settings tune quoting and fuzzy name lookups.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +38,7 @@ mod format;
 mod matching;
 
 use format::format_quote;
-use matching::find_by_name;
+use matching::NamedCoin;
 
 /// Settings for the coinmarketcap plugin, from its `[plugins.coinmarketcap]` configuration
 /// section.
@@ -137,6 +138,8 @@ struct CoinOpts {
 struct CoinCache {
     /// The cached coins, keyed by ticker symbol.
     by_symbol: HashMap<String, Coin>,
+    /// The coins' names, lower-cased once for fuzzy matching.
+    names: Vec<NamedCoin>,
 }
 
 impl From<Vec<Coin>> for CoinCache {
@@ -144,12 +147,25 @@ impl From<Vec<Coin>> for CoinCache {
         // The map endpoint returns coins in ascending rank order; keep the first (highest
         // ranked) occurrence when multiple coins share a symbol.
         let mut by_symbol = HashMap::with_capacity(coins.len());
+        let mut names = Vec::with_capacity(coins.len());
 
         for coin in coins {
-            by_symbol.entry(coin.symbol.clone()).or_insert(coin);
+            if let Entry::Vacant(entry) = by_symbol.entry(coin.symbol.clone()) {
+                names.push(NamedCoin::new(&coin));
+                entry.insert(coin);
+            }
         }
 
-        Self { by_symbol }
+        Self { by_symbol, names }
+    }
+}
+
+impl CoinCache {
+    /// Finds the highest-scoring coin whose name matches `query`.
+    fn find_by_name(&self, query: &str, max_name_typos: u16) -> Option<&Coin> {
+        let symbol = matching::find_by_name(&self.names, query, max_name_typos)?;
+
+        self.by_symbol.get(symbol)
     }
 }
 
@@ -380,12 +396,13 @@ impl CoinMarketCap {
     /// second.
     fn resolve_coin(&self, query: &str) -> Option<Coin> {
         self.coins.read(|cache| {
-            let coins = cache.map(|cache| &cache.by_symbol)?;
+            let cache = cache?;
 
-            coins
+            cache
+                .by_symbol
                 .get(&query.to_ascii_uppercase())
                 .cloned()
-                .or_else(|| find_by_name(coins, query, self.max_name_typos))
+                .or_else(|| cache.find_by_name(query, self.max_name_typos).cloned())
         })
     }
 
