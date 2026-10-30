@@ -5,7 +5,9 @@
 //! the error comes back as a [`RequestError`], and hands the response to [`crate::response`]
 //! with the span attached. [`builder`]/[`build_client`] build the client from [`HttpConfig`].
 
-use tracing::{Instrument, Span, error, info_span};
+#[cfg(feature = "http")]
+use tracing::Span;
+use tracing::{Instrument, error, info_span};
 use zeta_url::RedactedUrl;
 
 #[cfg(feature = "http")]
@@ -18,6 +20,10 @@ use crate::RequestError;
 /// [`send`] cannot close the span when the response headers arrive: the body is read by the
 /// caller, and a span that ends there would hide the download. The last clone is dropped when
 /// the response is consumed, which closes the span after the body read.
+///
+/// Only the `http` feature reads the span back (from `response`); with the `request` feature
+/// alone it would be dead weight, so it is not compiled there.
+#[cfg(feature = "http")]
 #[derive(Clone, Debug)]
 pub struct ClientSpan(pub(crate) Span);
 
@@ -32,12 +38,11 @@ pub struct ClientSpan(pub(crate) Span);
 /// URL whose route is not static; `http.client` remains the tracing name because span names
 /// must be static.
 ///
-/// A failed send is logged once with `url.full` — the request URL without its query, fragment,
-/// or userinfo — its
-/// `error.type`, and the error's full rendering, before the error comes back as a
-/// [`RequestError`]: these APIs carry their key in the query string, and the error reaches
-/// `Display` (and `Debug`) in plugin and dispatcher logs, while a log line still needs to say
-/// which request failed and why.
+/// A failed send is logged once inside the span — with `url.full` (the request URL without its
+/// query, fragment, or userinfo), `error.type`, and the error's full rendering — before the
+/// error comes back as a [`RequestError`]: these APIs carry their key in the query string, and
+/// the error reaches `Display` (and `Debug`) in plugin and dispatcher logs, while a log line
+/// still needs to say which request failed and why.
 ///
 /// # Errors
 ///
@@ -65,9 +70,13 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
     );
 
     match client.execute(request).instrument(span.clone()).await {
-        Ok(mut response) => {
+        Ok(response) => {
             span.record("http.response.status_code", response.status().as_u16());
-            response.extensions_mut().insert(ClientSpan(span));
+
+            // The body helpers read the span back; without the `http` feature there is no body
+            // helper, so the span ends with the response headers.
+            #[cfg(feature = "http")]
+            let response = attach_span(response, span);
 
             Ok(response)
         }
@@ -76,9 +85,20 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
 
             span.record("error.type", error.error_type());
 
-            Err(log_request_failure(error))
+            // Logged inside the span: the event marks the span as failed and is exported with
+            // its attributes, also when the caller has no enabled span of its own.
+            Err(span.in_scope(|| log_request_failure(error)))
         }
     }
+}
+
+/// Attaches the client span to `response`, so the body read stays in the span the request
+/// opened.
+#[cfg(feature = "http")]
+fn attach_span(mut response: reqwest::Response, span: Span) -> reqwest::Response {
+    response.extensions_mut().insert(ClientSpan(span));
+
+    response
 }
 
 /// Logs a failed request once, when the error names its URL, and returns the error.

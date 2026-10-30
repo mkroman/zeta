@@ -51,9 +51,14 @@ impl Subscriber {
             otel.kind = "consumer",
             zeta.plugin.name = %self.name,
             zeta.event.kind = event.kind_name(),
-            irc.channel = event.channel().unwrap_or_default(),
-        )
-        .or_current();
+            irc.channel = tracing::field::Empty,
+        );
+
+        if let Some(channel) = event.channel() {
+            span.record("irc.channel", channel);
+        }
+
+        let span = span.or_current();
         let envelope = Envelope { event, span };
 
         if self.mailbox.send(envelope).is_err() {

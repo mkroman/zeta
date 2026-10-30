@@ -11,8 +11,24 @@ use reqwest::redirect::Policy;
 use crate::{DictionaryDocument, Error, RequestError};
 
 /// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string.
+///
+/// With the `log` feature the failed request is logged once with its redacted URL and error
+/// type: the caller reports the short rendering, so this is the only line that names the
+/// request.
 fn request_error(error: reqwest::Error) -> RequestError {
-    RequestError::from(error)
+    let error = RequestError::from(error);
+
+    #[cfg(feature = "log")]
+    if let Some(url) = error.url() {
+        tracing::debug!(
+            url.full = %url,
+            error.type = error.error_type(),
+            exception.message = %error.full(),
+            "request failed"
+        );
+    }
+
+    error
 }
 
 /// The URL of the dictionary's query endpoint.

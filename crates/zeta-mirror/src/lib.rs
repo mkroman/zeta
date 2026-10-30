@@ -262,9 +262,13 @@ impl Mirror {
         let prefix = prefix.to_string();
         let public_url_base = public_url_base.clone();
 
-        // The download is asynchronous and outlives this handler, so capture the requester's
-        // span now: the manager links the download's own trace back to it.
-        let producer = tracing::Span::current();
+        // The download is asynchronous and outlives this handler, so the download's span is
+        // opened now, while the requester's span is current: it is a root of its own that links
+        // back to the requester instead of being its child (a child would outlive its parent).
+        // Opening it here rather than when the download starts also keeps the requester's span
+        // from staying open until a queued download finishes.
+        let span = tracing::info_span!(parent: None, "media.download", media.id = %id);
+        span.follows_from(tracing::Span::current());
 
         let request = DownloadRequest {
             url,
@@ -280,7 +284,7 @@ impl Mirror {
                     on_mirrored(link);
                 }
             }),
-            span: producer,
+            span,
         };
 
         if let Err(request) = manager.submit(request) {

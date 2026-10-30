@@ -56,7 +56,9 @@ pub struct DownloadRequest {
     /// Called exactly once when the download finishes, successfully or not. On success it
     /// receives the public URL of the mirrored media.
     pub on_finish: OnFinish,
-    /// The span of the requester, linked from the download's own `media.download` span.
+    /// The download's `media.download` span, opened when the request was created — while the
+    /// requester's span was current — so it links back to the requester. It covers the queue
+    /// wait, the download and the upload.
     pub span: tracing::Span,
 }
 
@@ -266,14 +268,11 @@ impl Manager {
         let media_id = request.id.clone();
         let path = tempdir.path().to_path_buf();
 
-        // The span carries the media id and covers the whole unit of work: the spawned download
-        // task runs in it, and the manager re-enters it while it uploads the result, so the
-        // download's status and upload diagnostics are exported as span events. The download
-        // outlives the message that requested it, so it is a root of its own that links back to
-        // the requester's span instead of being a child of it; a disabled requester span (as in
-        // tests) adds no link.
-        let span = tracing::info_span!(parent: None, "media.download", media.id = %media_id);
-        span.follows_from(&request.span);
+        // The span was opened when the request was queued, so it covers the wait as well as the
+        // download and the upload. Re-entering it here keeps the pre-start diagnostics in it;
+        // the spawned download task and the manager re-enter it for the rest of the unit of
+        // work.
+        let span = request.span.clone();
 
         span.in_scope(|| {
             debug!(

@@ -60,7 +60,8 @@ async fn shutdown_signal() -> ShutdownSignal {
     }
 
     if tokio::signal::ctrl_c().await.is_err() {
-        warn!("failed to install the SIGINT listener; shutting down anyway");
+        tracing::warn_span!("zeta.signal.install")
+            .in_scope(|| warn!("failed to install the SIGINT listener; shutting down anyway"));
     }
 
     ShutdownSignal::Interrupt
@@ -158,11 +159,17 @@ async fn dispatch_messages(
                 | irc::proto::Command::ERROR(..)
         );
         let dispatch = routed.then(|| {
-            tracing::info_span!(
+            let span = tracing::info_span!(
                 "irc.dispatch",
                 irc.command = command_name(&message.command),
-                irc.channel = message_channel(&message.command).unwrap_or_default(),
-            )
+                irc.channel = tracing::field::Empty,
+            );
+
+            if let Some(channel) = message_channel(&message.command) {
+                span.record("irc.channel", channel);
+            }
+
+            span
         });
         let _dispatch = dispatch.as_ref().map(tracing::Span::enter);
 
@@ -181,7 +188,7 @@ async fn dispatch_messages(
         runtime.dispatch(message);
     }
 
-    warn!("the IRC message stream ended");
+    tracing::warn_span!("irc.stream.ended").in_scope(|| warn!("the IRC message stream ended"));
 
     Err(Error::IrcDisconnected {
         reason: "the server closed the connection".to_owned(),
@@ -344,7 +351,11 @@ impl Zeta {
                 }
             }
             signal = shutdown_signal() => {
-                info!(signal = signal.name(), "shutting down");
+                // `run` has no process-lifetime span of its own, and the OpenTelemetry layer
+                // drops events that are not in a span, so each one-off diagnostic gets a short
+                // span here.
+                tracing::info_span!("zeta.signal", signal = signal.name())
+                    .in_scope(|| info!("shutting down"));
                 shutting_down = true;
 
                 // Another signal during the grace period forces an immediate exit.
@@ -353,10 +364,10 @@ impl Zeta {
             result = &mut outgoing => {
                 outgoing_done = true;
 
-                match result {
+                tracing::warn_span!("irc.outgoing.stopped").in_scope(|| match result {
                     Ok(()) => warn!("the IRC connection write path stopped"),
                     Err(error) => warn!(exception.message = %error, "the IRC connection write path stopped"),
-                }
+                });
 
                 if dispatch_error.is_none() {
                     dispatch_error = Some(Error::IrcDisconnected {
@@ -384,7 +395,9 @@ impl Zeta {
         runtime.shutdown(SHUTDOWN_GRACE).instrument(shutdown).await;
 
         if shutting_down && let Err(error) = client.send_quit(&self.config.irc.quit_message) {
-            warn!(exception.message = %error, "failed to send the QUIT message");
+            tracing::warn_span!("irc.quit").in_scope(|| {
+                warn!(exception.message = %error, "failed to send the QUIT message");
+            });
         }
 
         // Dropping the stream closes the incoming half and its sender; dropping the last client
@@ -394,7 +407,12 @@ impl Zeta {
         drop(client);
 
         if shutting_down && !outgoing_done {
-            match tokio::time::timeout(QUIT_FLUSH_DELAY, &mut outgoing).await {
+            let flush = tracing::info_span!("irc.quit.flush");
+
+            match tokio::time::timeout(QUIT_FLUSH_DELAY, &mut outgoing)
+                .instrument(flush)
+                .await
+            {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
                     warn!(exception.message = %error, "the IRC connection write path failed while flushing the QUIT message");
