@@ -235,7 +235,7 @@ impl Unwall {
             return Ok(());
         }
 
-        debug!(count = hosts.len(), "added unwall sites");
+        debug!(unwall.site.count = hosts.len(), "added unwall sites");
 
         client.send_privmsg(
             channel,
@@ -410,9 +410,15 @@ impl Unwall {
         let channel = event.channel().to_owned();
 
         // The span carries the redacted URL: without it, this task's logs would only ever
-        // reach stdout.
-        let span =
-            tracing::info_span!("unwall_article", url.full = %RedactedUrl::from_url(&article));
+        // reach stdout. It is a new root — the handler ends as soon as this function returns,
+        // so a child span would outlive its parent — with a causal link back to the handler
+        // span, which tracing exports as an OpenTelemetry link.
+        let span = tracing::info_span!(
+            parent: None,
+            "unwall.resolve",
+            url.full = %RedactedUrl::from_url(&article)
+        );
+        span.follows_from(tracing::Span::current());
 
         tokio::spawn(
             async move {
@@ -423,13 +429,13 @@ impl Unwall {
                         if let Err(error) =
                             irc.send_privmsg(&channel, plain_reply(&cached.unwall_url))
                         {
-                            warn!(%error, "could not send the unwall link");
+                            warn!(exception.message = %error, "could not send the unwall link");
                         }
                     }
                     Err(error) => {
                         warn!(
                             url.full = %RedactedUrl::from_url(&article),
-                            %error,
+                            exception.message = %error,
                             "could not unwall the article"
                         );
 
@@ -437,7 +443,7 @@ impl Unwall {
                             &channel,
                             plain_reply(format!("could not unwall the article:{RESET} {error}")),
                         ) {
-                            warn!(%error, "could not send the unwall failure");
+                            warn!(exception.message = %error, "could not send the unwall failure");
                         }
                     }
                 }

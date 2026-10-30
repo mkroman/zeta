@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tracing::{debug, error};
+use tracing::{debug, warn};
 use url::Url;
 use wreq::redirect::Policy;
 
@@ -217,7 +217,7 @@ impl Instagram {
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
         if let Err(err) = self.process_url(url.url(), url.channel(), client).await {
-            error!("could not process url: {err}");
+            warn!(exception.message = %err, "could not process url");
         }
 
         Ok(())
@@ -228,12 +228,12 @@ impl Instagram {
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
         match parse_instagram_url(url) {
             Some(InstagramLink::Media { kind, id }) => {
-                debug!(%id, "processing media");
+                debug!(instagram.media.id = %id, "processing media");
 
                 self.process_media(&kind, &id, channel, client).await?;
             }
             Some(InstagramLink::Story { username, id }) => {
-                debug!(%id, %username, "processing story");
+                debug!(instagram.media.id = %id, %username, "processing story");
 
                 self.process_story(&username, &id, channel, client).await?;
             }
@@ -329,7 +329,11 @@ impl Instagram {
         let details = match self.details.get_or_refresh(id.to_string(), refresh).await {
             Ok(details) => details,
             Err(error) => {
-                debug!(%id, %error, "could not fetch {label} details");
+                debug!(
+                    instagram.media.id = %id,
+                    exception.message = %error,
+                    "could not fetch {label} details"
+                );
 
                 None
             }
@@ -383,7 +387,7 @@ impl Instagram {
         .await;
 
         if details.is_none() {
-            debug!(%id, "falling back to the graphql api");
+            debug!(instagram.media.id = %id, "falling back to the graphql api");
 
             self.try_source(
                 id,
@@ -437,7 +441,11 @@ impl Instagram {
         match source.await {
             Ok(source_details) => *details = source_details,
             Err(error) => {
-                debug!(%id, %error, "the {context} request failed");
+                debug!(
+                    instagram.media.id = %id,
+                    exception.message = %error,
+                    "the {context} request failed"
+                );
 
                 *failed = true;
             }
@@ -472,7 +480,11 @@ impl Instagram {
         {
             Ok(details) => Ok(Some(details)),
             Err(error @ graphql::Error::Gated) => {
-                debug!(%id, %error, "the graphql api carried no details");
+                debug!(
+                    instagram.media.id = %id,
+                    exception.message = %error,
+                    "the graphql api carried no details"
+                );
 
                 Ok(None)
             }
@@ -514,7 +526,11 @@ impl Instagram {
             Err(error) => error,
         };
 
-        debug!(url.full = %RedactedUrl::from_unparsed(url), %error, "could not fetch page metadata");
+        debug!(
+            url.full = %RedactedUrl::from_unparsed(url),
+            exception.message = %error,
+            "could not fetch page metadata"
+        );
 
         if let ResponseError::Status(status) = &error
             && status.is_client_error()
@@ -528,7 +544,13 @@ impl Instagram {
 
         meta::fetch(&self.client, url, session_cookie)
             .await
-            .inspect_err(|error| debug!(url.full = %RedactedUrl::from_unparsed(url), %error, "the page request failed again"))
+            .inspect_err(|error| {
+                debug!(
+                    url.full = %RedactedUrl::from_unparsed(url),
+                    exception.message = %error,
+                    "the page request failed again"
+                );
+            })
     }
 
     /// Requests the given share link and returns the URL it resolves to.

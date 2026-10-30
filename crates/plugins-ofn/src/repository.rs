@@ -61,8 +61,9 @@ impl OfnRepository {
         network_id: &str,
     ) -> Result<Option<YouTubeRecord>, Error> {
         trace!(
-            video_id,
-            channel, "loading youtube video record from database"
+            media.id = %video_id,
+            irc.channel = %channel,
+            "loading youtube video record from database"
         );
 
         sqlx::query_as(
@@ -129,7 +130,7 @@ impl OfnRepository {
     #[instrument_database(operation = "INSERT", collection = "youtube_video_urls")]
     pub async fn insert_youtube_video(&self, record: &InsertYouTubeRecord) -> Result<(), Error> {
         trace!(
-            video_id = %record.video_id,
+            media.id = %record.video_id,
             "inserting youtube video record into database"
         );
 

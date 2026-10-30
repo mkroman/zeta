@@ -64,8 +64,8 @@ pub fn cleanup_stale_downloads(base: &std::path::Path, max_age: Option<Duration>
         match std::fs::remove_dir_all(entry.path()) {
             Ok(()) => removed += 1,
             Err(err) => warn!(
-                path = %entry.path().display(),
-                error = %err,
+                file.path = %entry.path().display(),
+                exception.message = %err,
                 "could not remove stale download directory"
             ),
         }

@@ -17,7 +17,7 @@ use reqwest::{
     header::{CONTENT_TYPE, REFERER},
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use zeta_cache::TtlCache;
 use zeta_http as http;
@@ -285,7 +285,7 @@ impl HowLongToBeat {
                 status: StatusCode::FORBIDDEN,
                 ..
             }) => {
-                warn!("hltb token expired, refreshing...");
+                debug!("hltb token expired, refreshing...");
                 let new_token = self.auth.force_refresh(|| self.fetch_auth()).await?;
                 self.perform_search_request(&new_token, query).await
             }

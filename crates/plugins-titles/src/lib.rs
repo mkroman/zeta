@@ -130,7 +130,7 @@ impl Titles {
             debug!(%scheme, url.full = %RedactedUrl::from_url(&url), "posting repaired url");
 
             if let Err(error) = client.send_privmsg(channel, plain_reply(&url)) {
-                warn!(%error, "could not send repaired url");
+                warn!(exception.message = %error, "could not send repaired url");
             }
         }
 
@@ -159,9 +159,15 @@ impl Titles {
         let settings = self.settings.clone();
 
         // The span carries the redacted URL: without it, this task's logs would only ever
-        // reach stdout.
-        let span =
-            tracing::info_span!("fetch_page_metadata", url.full = %RedactedUrl::from_url(&url));
+        // reach stdout. It is a new root — the handler ends as soon as this function returns,
+        // so a child span would outlive its parent — with a causal link back to the handler
+        // span, which tracing exports as an OpenTelemetry link.
+        let span = tracing::info_span!(
+            parent: None,
+            "titles.fetch",
+            url.full = %RedactedUrl::from_url(&url)
+        );
+        span.follows_from(tracing::Span::current());
 
         tokio::spawn(
             async move {
@@ -170,14 +176,14 @@ impl Titles {
                     Err(error) => {
                         warn!(
                             url.full = %RedactedUrl::from_url(&url),
-                            %error,
+                            exception.message = %error,
                             "could not fetch page metadata"
                         );
 
                         if let Err(send_error) =
                             sender.send_privmsg(&channel, format!("{REPLY_MARKER} {error}"))
                         {
-                            warn!(%send_error, "could not send fetch error");
+                            warn!(exception.message = %send_error, "could not send fetch error");
                         }
 
                         return;
@@ -187,7 +193,7 @@ impl Titles {
                 if let Some(message) = format_page(&metadata, &url, &settings)
                     && let Err(error) = sender.send_privmsg(&channel, message)
                 {
-                    warn!(%error, "could not send page metadata");
+                    warn!(exception.message = %error, "could not send page metadata");
                 }
             }
             .instrument(span),

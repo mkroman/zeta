@@ -163,7 +163,7 @@ impl PornHub {
         if is_pornhub_video_url(url)
             && let Some(video_id) = query_param(url, "viewkey")
         {
-            debug!(%video_id, "processing video");
+            debug!(media.id = %video_id, "processing video");
             let video = self.video_by_id(&video_id).await?;
             debug!(?video, "fetched video");
 

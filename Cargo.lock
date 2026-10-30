@@ -3094,6 +3094,7 @@ dependencies = [
  "dendanskeordbog",
  "serde",
  "serde_json",
+ "tracing",
  "zeta-plugin",
  "zeta-test-support",
 ]
@@ -3515,6 +3516,7 @@ dependencies = [
  "zeta-http",
  "zeta-plugin",
  "zeta-test-support",
+ "zeta-url",
  "zeta-utils",
 ]
 
@@ -6114,6 +6116,7 @@ dependencies = [
  "irc",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
  "zeta-plugin",
  "zeta-test-support",

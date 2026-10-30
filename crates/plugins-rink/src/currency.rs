@@ -199,7 +199,7 @@ async fn fetch_crypto(
         Ok(listings) => Some(listings),
         Err(error) => {
             warn!(
-                %error,
+                exception.message = %error,
                 "could not refresh cryptocurrency listings; keeping the previous table"
             );
 
@@ -254,7 +254,7 @@ pub fn build_context(
             && let Err(error) = ctx.load_definitions(&text)
         {
             warn!(
-                %error,
+                exception.message = %error,
                 "could not load the synthesized cryptocurrency units; keeping the fiat data"
             );
         }

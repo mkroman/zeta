@@ -16,7 +16,7 @@ use reqwest::{
     header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::HttpConfig;
@@ -98,7 +98,7 @@ impl GitHubPlugin {
         let channel = command.channel();
         let query = command.args().trim();
 
-        info!(query, %channel, "searching github");
+        debug!(search.query = %query, irc.channel = %channel, "searching github");
 
         reply_lookup(
             client,

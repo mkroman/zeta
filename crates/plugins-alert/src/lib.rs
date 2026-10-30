@@ -134,25 +134,36 @@ impl AlertPlugin {
     fn start_delivery(client: &Client, mut receiver: mpsc::UnboundedReceiver<Alert>) {
         let sender = client.sender();
 
-        tokio::spawn(
-            async move {
+        tokio::spawn(async move {
+            tracing::info_span!("alert.delivery.start").in_scope(|| {
                 debug!("starting alert delivery task");
+            });
 
-                while let Some(alert) = receiver.recv().await {
+            while let Some(alert) = receiver.recv().await {
+                let span = tracing::info_span!(
+                    "alert.deliver",
+                    alert.id = alert.id,
+                    irc.channel = %alert.channel,
+                );
+
+                async {
                     trace!(?alert, "delivering alert");
 
                     if let Err(err) = sender.send_privmsg(
                         &alert.channel,
                         format!("{}: {}", alert.nickname, alert.message),
                     ) {
-                        error!(?err, alert_id = alert.id, "could not deliver alert");
+                        error!(exception.message = ?err, alert.id = alert.id, "could not deliver alert");
                     }
                 }
-
-                debug!("alert delivery channel is closed");
+                .instrument(span)
+                .await;
             }
-            .instrument(tracing::info_span!("alert_delivery")),
-        );
+
+            tracing::info_span!("alert.delivery.stop").in_scope(|| {
+                debug!("alert delivery channel is closed");
+            });
+        });
     }
 }
 
@@ -219,7 +230,7 @@ impl AlertPlugin {
             let pending = match self.service.pending_for(channel, nickname).await {
                 Ok(pending) => pending,
                 Err(err) => {
-                    error!(?err, "could not list pending alerts");
+                    error!(exception.message = ?err, "could not list pending alerts");
 
                     client.send_privmsg(
                         channel,
@@ -274,7 +285,7 @@ impl AlertPlugin {
                 )?;
             }
             Err(err) => {
-                error!(?err, "could not store alert");
+                error!(exception.message = ?err, "could not store alert");
                 client
                     .send_privmsg(channel, labeled_reply("Alert", "could not store the alert"))?;
             }

@@ -9,7 +9,6 @@
 use rink_core::Context as RinkContext;
 use rink_core::output::QueryError;
 use tokio::sync::{mpsc, oneshot};
-use tracing::Instrument;
 
 use zeta_plugin::prelude::*;
 
@@ -58,7 +57,7 @@ impl Handle {
     pub(super) fn spawn(ctx: RinkContext) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
 
-        tokio::spawn(run(ctx, rx).instrument(tracing::info_span!("rink_actor")));
+        tokio::spawn(run(ctx, rx));
 
         Self(tx)
     }
@@ -110,7 +109,7 @@ fn actor_stopped() -> ZetaError {
 /// Runs the actor loop until every handle is dropped.
 async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<Request>) {
     while let Some(request) = rx.recv().await {
-        match request {
+        tracing::info_span!("rink.eval").in_scope(|| match request {
             Request::Evaluate {
                 line,
                 classify,
@@ -138,6 +137,6 @@ async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<Request>) {
             Request::UpdateContext { data, reply } => {
                 let _ = reply.send(super::currency::swap_in(&mut ctx, &data));
             }
-        }
+        });
     }
 }

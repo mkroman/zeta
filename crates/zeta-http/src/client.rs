@@ -1,18 +1,36 @@
 //! The plain `reqwest` client shared by the API plugins.
 //!
-//! [`send`] logs a failed request once before the error comes back as a [`RequestError`], and
-//! [`builder`]/[`build_client`] build the client from [`HttpConfig`]. Reading a body — and
-//! logging a failed read — lives in [`crate::response`], so JSON and text responses share one
-//! status-handling path.
+//! [`send`] opens one `http.client` span around the request — so name resolution, connect, TLS,
+//! the time to first byte and the body read are on the span — logs a failed request once before
+//! the error comes back as a [`RequestError`], and hands the response to [`crate::response`]
+//! with the span attached. [`builder`]/[`build_client`] build the client from [`HttpConfig`].
 
-use tracing::error;
+use tracing::{Instrument, Span, error, info_span};
 use zeta_url::RedactedUrl;
 
 #[cfg(feature = "http")]
 use crate::HttpConfig;
 use crate::RequestError;
 
-/// Sends `request` and returns the response.
+/// The client span of a response, carried in its extensions so the body read and the parse run
+/// inside the span the request opened.
+///
+/// [`send`] cannot close the span when the response headers arrive: the body is read by the
+/// caller, and a span that ends there would hide the download. The last clone is dropped when
+/// the response is consumed, which closes the span after the body read.
+#[derive(Clone, Debug)]
+pub struct ClientSpan(pub(crate) Span);
+
+/// Sends `request` inside an `http.client` span and returns the response.
+///
+/// The span starts before the request is executed, so it covers name resolution, connect, TLS,
+/// the time to first byte and — through the `ClientSpan` stored in the response — the body
+/// read and parse. It carries the OpenTelemetry client attributes — `otel.kind`,
+/// `http.request.method`, `url.full` (redacted), `server.address` and `server.port` — plus
+/// `http.response.status_code` once a response exists and `error.type` when the send fails. The
+/// span's exported name is the request method (`GET`, `POST`), the HTTP semconv fallback for a
+/// URL whose route is not static; `http.client` remains the tracing name because span names
+/// must be static.
 ///
 /// A failed send is logged once with `url.full` — the request URL without its query, fragment,
 /// or userinfo — its
@@ -25,20 +43,56 @@ use crate::RequestError;
 ///
 /// Returns the [`RequestError`] of the failed send, with its URL redacted.
 pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response, RequestError> {
-    request.send().await.map_err(|error| {
-        let error = RequestError::from(error);
+    let (client, request) = request.build_split();
+    let request = match request {
+        Ok(request) => request,
+        // A request that cannot be built never reaches the network, so there is nothing for a
+        // client span to measure; the log still names the URL when the error carries one.
+        Err(error) => return Err(log_request_failure(RequestError::from(error))),
+    };
+    let method = request.method().clone();
 
-        if let Some(url) = error.url() {
-            log_request_error(&error, url, "request failed");
+    let span = info_span!(
+        "http.client",
+        otel.kind = "client",
+        otel.name = %method,
+        http.request.method = %method,
+        url.full = %RedactedUrl::from_url(request.url()),
+        server.address = %request.url().host_str().unwrap_or_default(),
+        server.port = request.url().port_or_known_default(),
+        http.response.status_code = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+    );
+
+    match client.execute(request).instrument(span.clone()).await {
+        Ok(mut response) => {
+            span.record("http.response.status_code", response.status().as_u16());
+            response.extensions_mut().insert(ClientSpan(span));
+
+            Ok(response)
         }
+        Err(error) => {
+            let error = RequestError::from(error);
 
-        error
-    })
+            span.record("error.type", error.error_type());
+
+            Err(log_request_failure(error))
+        }
+    }
+}
+
+/// Logs a failed request once, when the error names its URL, and returns the error.
+fn log_request_failure(error: RequestError) -> RequestError {
+    if let Some(url) = error.url() {
+        log_request_error(&error, url, "request failed");
+    }
+
+    error
 }
 
 /// Logs a failed request once, with its redacted URL and error type.
 fn log_request_error(error: &RequestError, url: &RedactedUrl, message: &str) {
-    error!(url.full = %url, error.type = error.error_type(), error = %error.full(), "{message}");
+    error!(url.full = %url, error.type = error.error_type(), exception.message = %error.full(), "{message}");
 }
 
 /// Returns a default HTTP client configured by [`HttpConfig`].

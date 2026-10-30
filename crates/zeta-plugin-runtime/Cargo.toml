@@ -19,6 +19,7 @@ zeta-plugin = { path = "../zeta-plugin", default-features = false }
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]
+tracing-subscriber.workspace = true
 url.workspace = true
 zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["context"] }
 zeta-utils = { path = "../zeta-utils" }

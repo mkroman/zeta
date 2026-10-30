@@ -4,23 +4,76 @@
 //! them regardless of headers. Built behind the `emulated` feature, which the anti-bot-protected
 //! plugins enable.
 
+use tracing::{Instrument, Span, info_span};
 use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, InvalidHeaderValue, USER_AGENT};
+use zeta_url::RedactedUrl;
 
 use crate::WreqError;
 
-/// Sends `request`, returning the response only when the server answered with a success status.
+/// The client span of a response, carried in its extensions so a body read stays inside the
+/// span that covers the request. The last clone is dropped when the response is consumed.
+#[derive(Clone, Debug)]
+pub struct ClientSpan(Span);
+
+/// Sends `request` inside an `http.client` span and returns the response only when the server
+/// answered with a success status.
+///
+/// The span carries the OpenTelemetry client attributes — `otel.kind`, `http.request.method`,
+/// `url.full` (redacted), `server.address` and `server.port` — plus
+/// `http.response.status_code` once a response exists and `error.type` when the send fails. Its
+/// exported name is the request method, the HTTP semconv fallback for a URL whose route is not
+/// static; `http.client` remains the tracing name because span names must be static.
 ///
 /// # Errors
 ///
 /// Returns [`ResponseError::Request`] if the request fails, or [`ResponseError::Status`] when
 /// the response status is not a success.
 pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, ResponseError> {
-    let response = request.send().await?;
+    let (client, request) = request.build_split();
+    let request = request?;
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let port = uri.port_u16().or_else(|| match uri.scheme_str() {
+        Some("https") => Some(443),
+        Some("http") => Some(80),
+        _ => None,
+    });
 
-    if response.status().is_success() {
-        Ok(response)
-    } else {
-        Err(ResponseError::Status(response.status()))
+    let span = info_span!(
+        "http.client",
+        otel.kind = "client",
+        otel.name = %method,
+        http.request.method = %method,
+        url.full = %RedactedUrl::from_unparsed(&uri.to_string()),
+        server.address = %uri.host().unwrap_or_default(),
+        server.port = port,
+        http.response.status_code = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+    );
+
+    match client.execute(request).instrument(span.clone()).await {
+        Ok(mut response) => {
+            let status = response.status();
+
+            span.record("http.response.status_code", status.as_u16());
+
+            if status.is_success() {
+                response.extensions_mut().insert(ClientSpan(span));
+
+                Ok(response)
+            } else {
+                span.record("error.type", status.as_u16().to_string().as_str());
+
+                Err(ResponseError::Status(status))
+            }
+        }
+        Err(error) => {
+            let error = WreqError::from(error);
+
+            span.record("error.type", error.error_type());
+
+            Err(error.into())
+        }
     }
 }
 
@@ -32,8 +85,24 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
 /// the body cannot be read.
 pub async fn text(request: wreq::RequestBuilder) -> Result<String, ResponseError> {
     let response = send(request).await?;
+    let span = response
+        .extensions()
+        .get::<ClientSpan>()
+        .map_or_else(Span::none, |client| client.0.clone());
 
-    response.text().await.map_err(ResponseError::from)
+    async move {
+        response.text().await.map_err(|error| {
+            let error = ResponseError::from(error);
+
+            if let ResponseError::Request(error) = &error {
+                Span::current().record("error.type", error.error_type());
+            }
+
+            error
+        })
+    }
+    .instrument(span)
+    .await
 }
 
 /// A failed request through the browser-emulated client.

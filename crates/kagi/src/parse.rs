@@ -91,7 +91,7 @@ fn parse_sse_stream(raw_body: &str) -> Vec<KagiMessage> {
         .map(str::trim_start)
         .filter_map(|json| {
             serde_json::from_str::<Vec<KagiMessage>>(json)
-                .inspect_err(|error| debug!(%error, "dropping an unparseable Kagi SSE event"))
+                .inspect_err(|error| debug!(exception.message = %error, "dropping an unparseable Kagi SSE event"))
                 .ok()
         })
         .flatten()
@@ -120,7 +120,7 @@ fn parse_kagi_stream(raw_body: &str) -> Vec<KagiMessage> {
             let mut message: KagiMessage = match serde_json::from_str(json_str) {
                 Ok(message) => message,
                 Err(error) => {
-                    debug!(wire_tag, %error, "dropping an unparseable Kagi chunk");
+                    debug!(wire_tag, exception.message = %error, "dropping an unparseable Kagi chunk");
                     return None;
                 }
             };
@@ -151,7 +151,7 @@ pub fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResul
         let results = match serde_json::from_str::<SearchResultsJson>(payload) {
             Ok(results) => results,
             Err(error) => {
-                debug!(%error, "falling back to HTML results, structured payload is malformed");
+                debug!(exception.message = %error, "falling back to HTML results, structured payload is malformed");
                 continue;
             }
         };

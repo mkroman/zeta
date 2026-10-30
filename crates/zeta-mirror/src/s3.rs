@@ -15,7 +15,7 @@ use aws_smithy_runtime_api::client::identity::Identity;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::{Body, Client, StatusCode};
 use sha2::{Digest, Sha256};
-use tracing::debug;
+use tracing::{Span, debug, instrument};
 use url::Url;
 
 use zeta_http::RequestError;
@@ -63,6 +63,31 @@ pub enum Error {
         /// The response body.
         body: String,
     },
+}
+
+impl Error {
+    /// The low-cardinality [`error.type`] value for this failure, for a span or log field.
+    ///
+    /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
+    const fn error_type(&self) -> &'static str {
+        match self {
+            Self::MissingConfig(_) => "s3_config",
+            Self::InvalidEndpoint(_) => "s3_endpoint",
+            Self::Io(_) => "s3_io",
+            Self::Request(_) => "s3_request",
+            Self::Signing(_) | Self::SigningParams(_) => "s3_signing",
+            Self::Status { .. } => "s3_status",
+        }
+    }
+}
+
+/// Records the [`error.type`] of a failed S3 operation on the current span.
+///
+/// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
+fn record_error<T>(result: &Result<T, Error>) {
+    if let Err(error) = result {
+        Span::current().record("error.type", error.error_type());
+    }
 }
 
 /// Resolves a secret from the configuration, falling back to the environment variable `name`.
@@ -162,8 +187,27 @@ impl S3 {
     /// # Errors
     ///
     /// Returns an error if the object could not be checked.
+    #[instrument(
+        name = "aws.s3.object_exists",
+        skip_all,
+        fields(
+            otel.kind = "client",
+            aws.s3.key = %key,
+            http.request.method = "HEAD",
+            error.type = tracing::field::Empty,
+        )
+    )]
     pub async fn object_exists(&self, key: &str) -> Result<bool, Error> {
-        debug!(%key, "checking if object exists");
+        let result = self.head_object(key).await;
+
+        record_error(&result);
+
+        result
+    }
+
+    /// Issues the signed `HEAD` request [`object_exists`](Self::object_exists) is built on.
+    async fn head_object(&self, key: &str) -> Result<bool, Error> {
+        debug!(aws.s3.key = %key, "checking if object exists");
 
         let url = self.object_url(key)?;
         let headers = self.signing_headers("HEAD", &url, SignableBody::empty())?;
@@ -192,8 +236,32 @@ impl S3 {
     /// # Errors
     ///
     /// Returns an error if the file could not be read or uploaded.
+    #[instrument(
+        name = "aws.s3.upload",
+        skip_all,
+        fields(
+            otel.kind = "client",
+            aws.s3.key = %key,
+            file.path = %path.display(),
+            http.request.method = "PUT",
+            error.type = tracing::field::Empty,
+        )
+    )]
     pub async fn upload_file(&self, path: &Path, key: &str) -> Result<(), Error> {
-        debug!(%key, path = %path.display(), "uploading file to s3");
+        let result = self.put_file(path, key).await;
+
+        record_error(&result);
+
+        result
+    }
+
+    /// Issues the signed `PUT` request [`upload_file`](Self::upload_file) is built on.
+    async fn put_file(&self, path: &Path, key: &str) -> Result<(), Error> {
+        debug!(
+            aws.s3.key = %key,
+            file.path = %path.display(),
+            "uploading file to s3"
+        );
 
         let length = tokio::fs::metadata(path).await?.len();
         let digest = sha256_file(path).await?;

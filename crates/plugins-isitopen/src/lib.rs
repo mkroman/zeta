@@ -271,7 +271,7 @@ impl IsItOpen {
             },
             Err(Error::NotFound) => plain_reply("place not found"),
             Err(e) => {
-                warn!(?e, "isitopen error");
+                warn!(exception.message = ?e, "isitopen error");
                 plain_reply(e)
             }
         };
@@ -283,7 +283,7 @@ impl IsItOpen {
 
     /// Performs a two-step search: first finding the Place ID, then fetching details.
     async fn find_place(&self, query: &str) -> Result<PlaceDetails, Error> {
-        debug!(%query, "searching for place");
+        debug!(search.query = %query, "searching for place");
 
         let search_url = format!("{API_BASE_URL}/maps/api/place/textsearch/json");
         let params = [("query", query), ("key", &self.api_key)];

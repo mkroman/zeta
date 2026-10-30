@@ -248,7 +248,11 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
     // The reader finishes once the tokenizer stops reading from the channel, aborting the rest of
     // the response.
     if let Err(error) = reader.await {
-        warn!(url.full = %RedactedUrl::from_url(url), %error, "reader task failed");
+        warn!(
+            url.full = %RedactedUrl::from_url(url),
+            exception.message = %error,
+            "reader task failed"
+        );
     }
 
     Ok(metadata)

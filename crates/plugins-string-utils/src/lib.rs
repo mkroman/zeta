@@ -180,7 +180,7 @@ fn warm_unicode() {
             .name("unicode-init".into())
             .spawn(zeta_unicode::init);
         if let Err(error) = spawn {
-            tracing::warn!(%error, "failed to spawn the Unicode warm-up thread");
+            tracing::warn!(exception.message = %error, "failed to spawn the Unicode warm-up thread");
         }
     });
 }

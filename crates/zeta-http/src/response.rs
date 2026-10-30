@@ -1,16 +1,17 @@
 //! Status classification and JSON/text response parsing.
 //!
-//! [`parse_response`] and [`parse_text`] share one span, one status-handling path and one set of
-//! log lines, so a direct text read gets the same diagnostics as a JSON one. [`get_json`],
-//! [`get_json_or_404`] and [`get_text`] pair them with [`send`].
+//! [`parse_response`] and [`parse_text`] share one status-handling path and one set of log
+//! lines, so a direct text read gets the same diagnostics as a JSON one. [`get_json`],
+//! [`get_json_or_404`] and [`get_text`] pair them with [`send`], whose client span covers the
+//! request and the body read.
 
 use serde::de::DeserializeOwned;
-use tracing::{Span, debug, error, instrument};
+use tracing::{Instrument, Span, debug, error, warn};
 use zeta_url::RedactedUrl;
 use zeta_utils::text::Truncatable;
 
 use crate::RequestError;
-use crate::client::send;
+use crate::client::{ClientSpan, send};
 use crate::json;
 
 /// The errors produced when sending a request and parsing its JSON response.
@@ -51,11 +52,17 @@ fn log_status(status: reqwest::StatusCode, body: Option<&str>, record_error_type
         Span::current().record("error.type", status.as_u16().to_string().as_str());
     }
 
-    match (not_found, body) {
-        (true, Some(body)) => debug!(body = %body, "http response not found"),
-        (true, None) => debug!("http response not found"),
-        (false, Some(body)) => error!(body = %body, "http response carries an error status"),
-        (false, None) => error!("http response carries an error status"),
+    match (not_found, status.is_server_error(), body) {
+        (true, _, Some(body)) => debug!(http.response.body = %body, "http response not found"),
+        (true, _, None) => debug!("http response not found"),
+        (false, true, Some(body)) => {
+            error!(http.response.body = %body, "http response carries an error status");
+        }
+        (false, true, None) => error!("http response carries an error status"),
+        (false, false, Some(body)) => {
+            warn!(http.response.body = %body, "http response carries an error status");
+        }
+        (false, false, None) => warn!("http response carries an error status"),
     }
 }
 
@@ -76,52 +83,62 @@ async fn read_body(response: reqwest::Response) -> Result<String, ApiError> {
     response.text().await.map_err(body_error)
 }
 
-/// Reads the body of `response` in the span that records the HTTP client attributes, logs the
-/// status, and hands a successful body to `finish`.
+/// Reads the body of `response` inside the client span the request opened, logs the status, and
+/// hands a successful body to `finish`.
 ///
-/// Both [`parse_response`] and [`parse_text`] go through this, so the status handling, the log
-/// lines and the span are shared; `finish` runs inside the span, so a parse failure can record
-/// `error.type` on it. The span keeps the name `parse_response`, the one the JSON path always
-/// had, so existing traces and log lines stay unchanged.
-#[instrument(
-    name = "parse_response",
-    skip(response, finish),
-    fields(
-        url.full = %RedactedUrl::from_url(response.url()),
-        server.address = %response.url().host_str().unwrap_or_default(),
-        server.port = response.url().port_or_known_default(),
-        http.response.status_code = response.status().as_u16(),
-        error.type = tracing::field::Empty,
-    )
-)]
+/// Both [`parse_response`] and [`parse_text`] go through this, so the status handling and the
+/// log lines are shared; `finish` runs inside the span, so a parse failure records `error.type`
+/// on it. [`send`] stores its span in the response, so the body read stays in the span that
+/// covers the request: one span per HTTP call, with no gap between the headers and the body.
+/// A response that did not come through [`send`] (a caller that built it itself) gets a
+/// synthesized client span from its own attributes.
 async fn parse<T, F>(response: reqwest::Response, finish: F) -> Result<T, ApiError>
 where
     F: FnOnce(String) -> Result<T, ApiError>,
 {
-    let status = response.status();
+    let span = response.extensions().get::<ClientSpan>().map_or_else(
+        || {
+            tracing::info_span!(
+                "http.client",
+                otel.kind = "client",
+                url.full = %RedactedUrl::from_url(response.url()),
+                server.address = %response.url().host_str().unwrap_or_default(),
+                server.port = response.url().port_or_known_default(),
+                http.response.status_code = response.status().as_u16(),
+                error.type = tracing::field::Empty,
+            )
+        },
+        |client| client.0.clone(),
+    );
 
-    if !status.is_success() {
-        // Report the status even when its body cannot be read: the status is known before the
-        // read, and without this line the response would reach the logs only as span
-        // attributes. `body_error` records `error.type` first, so the event carries it too.
-        let body = match read_body(response).await {
-            Ok(body) => body,
-            Err(error) => {
-                log_status(status, None, false);
+    async move {
+        let status = response.status();
 
-                return Err(error);
-            }
-        };
-        let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
+        if !status.is_success() {
+            // Report the status even when its body cannot be read: the status is known before
+            // the read, and without this line the response would reach the logs only as span
+            // attributes. `body_error` records `error.type` first, so the event carries it too.
+            let body = match read_body(response).await {
+                Ok(body) => body,
+                Err(error) => {
+                    log_status(status, None, false);
 
-        log_status(status, Some(&logged), true);
+                    return Err(error);
+                }
+            };
+            let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
 
-        return Err(ApiError::Status { status, body });
+            log_status(status, Some(&logged), true);
+
+            return Err(ApiError::Status { status, body });
+        }
+
+        debug!("http response received");
+
+        finish(read_body(response).await?)
     }
-
-    debug!("http response received");
-
-    finish(read_body(response).await?)
+    .instrument(span)
+    .await
 }
 
 /// Parses the response's JSON body into `T`.
@@ -129,19 +146,15 @@ where
 /// Non-success statuses are reported as [`ApiError::Status`], carrying the response body; the
 /// response is only parsed as JSON when the status is a success.
 ///
-/// Everything the OpenTelemetry HTTP conventions define for an outbound request is recorded on
-/// the span opened for the response —
-/// <https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client-span> — rather
-/// than repeated per response: `url.full` (through [`RedactedUrl`], since these APIs carry
-/// their key in the query string), `server.address`, `server.port` and
-/// `http.response.status_code`, plus `error.type` when something goes wrong.
-/// `http.request.method` is missing on purpose — a `reqwest::Response` no longer exposes the
-/// request it belongs to — so the span is not a conformant client span; it exists to carry
-/// those attributes and the one line that reports the response: a `404` at debug level (it is
-/// the routine answer [`parse_response_or_404`] turns into `not_found`), every other
-/// non-success status at error level with the truncated body, which is the only place that
-/// body reaches the logs. [`parse_text`] opens the same span, so text responses get the same
-/// attributes and lines.
+/// The body read and the parse run inside the HTTP client span the request opened —
+/// <https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client-span> — which
+/// carries `otel.kind = "client"`, `http.request.method`, `url.full` (through [`RedactedUrl`],
+/// since these APIs carry their key in the query string), `server.address`, `server.port` and
+/// `http.response.status_code`, plus `error.type` when something goes wrong. The same span
+/// reports the response: a `404` at debug level (it is the routine answer
+/// [`parse_response_or_404`] turns into `not_found`), every other non-success status at error
+/// or warn level with the truncated body, which is the only place that body reaches the logs.
+/// [`parse_text`] shares the path, so text responses get the same attributes and lines.
 ///
 /// # Errors
 ///

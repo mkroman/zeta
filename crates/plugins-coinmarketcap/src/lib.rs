@@ -368,7 +368,7 @@ impl CoinMarketCap {
         // Unknown coins and unsupported currencies are user errors: they are replied to
         // verbatim, without logging. Anything else is unexpected and worth a warning.
         if !matches!(err, Error::NotFound | Error::InvalidCurrency(_)) {
-            warn!(error = %err, "coin lookup failed");
+            warn!(exception.message = %err, "coin lookup failed");
         }
 
         client.send_privmsg(channel, plain_reply(err.to_string()))?;
@@ -400,13 +400,16 @@ impl CoinMarketCap {
             .refresh(|| async {
                 let coins = self.client.coin_map().await?;
                 let count = coins.len();
-                debug!(count, "cached the top cryptocurrencies");
+                debug!(
+                    coinmarketcap.count = count,
+                    "cached the top cryptocurrencies"
+                );
 
                 Ok::<_, Error>(CoinCache::from(coins))
             })
             .await
         {
-            warn!(error = %err, "could not cache the top cryptocurrencies");
+            warn!(exception.message = %err, "could not cache the top cryptocurrencies");
         }
     }
 
@@ -420,13 +423,16 @@ impl CoinMarketCap {
             .refresh(|| async {
                 let fiats = self.client.fiat_map().await?;
                 let count = fiats.len();
-                debug!(count, "cached the supported fiat currencies");
+                debug!(
+                    coinmarketcap.count = count,
+                    "cached the supported fiat currencies"
+                );
 
                 Ok::<_, Error>(FiatCache::from(fiats))
             })
             .await
         {
-            warn!(error = %err, "could not cache the supported fiat currencies");
+            warn!(exception.message = %err, "could not cache the supported fiat currencies");
         }
     }
 

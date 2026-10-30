@@ -15,7 +15,7 @@ use std::{
 };
 
 use tokio::sync::mpsc;
-use tracing::{Instrument, debug, error, warn};
+use tracing::{Instrument, debug, error, trace, warn};
 use url::Url;
 
 use super::{
@@ -56,6 +56,8 @@ pub struct DownloadRequest {
     /// Called exactly once when the download finishes, successfully or not. On success it
     /// receives the public URL of the mirrored media.
     pub on_finish: OnFinish,
+    /// The span of the requester, linked from the download's own `media.download` span.
+    pub span: tracing::Span,
 }
 
 impl std::fmt::Debug for DownloadRequest {
@@ -99,6 +101,10 @@ impl DownloadManager {
     /// directories are removed at startup; the download directory is expected to be owned by
     /// this process and must not be shared between concurrently running instances.
     ///
+    /// The manager task itself has no span: its lifetime is the process, not a unit of work, so a
+    /// span for it would never be exported and would outlive whatever started it. Each download,
+    /// together with the upload that finishes it, runs in a `media.download` span instead.
+    ///
     /// # Panics
     ///
     /// Panics if called outside of a tokio runtime.
@@ -132,11 +138,7 @@ impl DownloadManager {
             next_id: 0,
         };
 
-        tokio::spawn(
-            manager
-                .run()
-                .instrument(tracing::info_span!("download_manager")),
-        );
+        tokio::spawn(manager.run());
 
         Self { requests }
     }
@@ -187,6 +189,9 @@ struct ActiveDownload {
     request: DownloadRequest,
     /// The temporary directory the media is downloaded into, removed when the download finishes.
     tempdir: tempfile::TempDir,
+    /// The download's `media.download` span, re-entered while the manager handles the download's
+    /// status and uploads its files, so those log lines and S3 spans stay in its unit of work.
+    span: tracing::Span,
 }
 
 impl Manager {
@@ -218,7 +223,7 @@ impl Manager {
             self.start_download(request);
         } else {
             debug!(
-                media_id = %request.id,
+                media.id = %request.id,
                 running = self.active.len(),
                 "queued download request"
             );
@@ -230,7 +235,7 @@ impl Manager {
     /// Starts a download task for the given request, creating its temporary download directory.
     fn start_download(&mut self, request: DownloadRequest) {
         if !is_identifier(&request.id, "_-") {
-            error!(id = %request.id, "rejecting download with an unsafe id");
+            warn!(media.id = %request.id, "rejecting download with an unsafe id");
 
             (request.on_finish)(Err(Error::InvalidId(request.id)));
 
@@ -244,8 +249,8 @@ impl Manager {
             Ok(tempdir) => tempdir,
             Err(err) => {
                 error!(
-                    media_id = %request.id,
-                    error = %err,
+                    media.id = %request.id,
+                    exception.message = %err,
                     "could not create a temporary download directory"
                 );
 
@@ -255,22 +260,29 @@ impl Manager {
             }
         };
 
-        debug!(
-            media_id = %request.id,
-            %id,
-            path = %tempdir.path().display(),
-            "starting download"
-        );
-
         let downloader = Arc::clone(&self.downloader);
         let task = DownloadTask::new(id, self.status_tx.clone());
         let url = request.url.clone();
         let media_id = request.id.clone();
         let path = tempdir.path().to_path_buf();
 
-        // The span carries the media id: the download runs in its own task, so without it the
-        // download and upload diagnostics below only ever reach stdout.
-        let span = tracing::info_span!("download_media", media_id = %media_id);
+        // The span carries the media id and covers the whole unit of work: the spawned download
+        // task runs in it, and the manager re-enters it while it uploads the result, so the
+        // download's status and upload diagnostics are exported as span events. The download
+        // outlives the message that requested it, so it is a root of its own that links back to
+        // the requester's span instead of being a child of it; a disabled requester span (as in
+        // tests) adds no link.
+        let span = tracing::info_span!(parent: None, "media.download", media.id = %media_id);
+        span.follows_from(&request.span);
+
+        span.in_scope(|| {
+            debug!(
+                media.id = %media_id,
+                zeta.download.id = %id,
+                file.path = %path.display(),
+                "starting download"
+            );
+        });
 
         tokio::spawn(
             async move {
@@ -288,23 +300,36 @@ impl Manager {
                     Err(error) => task.failed(error),
                 }
             }
-            .instrument(span),
+            .instrument(span.clone()),
         );
 
-        self.active.insert(id, ActiveDownload { request, tempdir });
+        self.active.insert(
+            id,
+            ActiveDownload {
+                request,
+                tempdir,
+                span,
+            },
+        );
     }
 
     /// Handles a status update reported by a download task.
+    ///
+    /// A final status finishes the download inside its `media.download` span; the next queued
+    /// download is started afterwards, outside that span, so it becomes a root of its own instead
+    /// of a child of the download that freed the slot.
     async fn on_status(&mut self, status: DownloadStatus) {
         let (id, result) = match status {
             DownloadStatus::Progress { id, progress } => {
                 if let Some(active) = self.active.get(&id) {
-                    debug!(
-                        media_id = %active.request.id,
-                        percent = ?progress.fraction().map(|fraction| format!("{:.0}%", fraction * 100.0)),
-                        ?progress,
-                        "download progress"
-                    );
+                    active.span.in_scope(|| {
+                        trace!(
+                            media.id = %active.request.id,
+                            percent = ?progress.fraction().map(|fraction| format!("{:.0}%", fraction * 100.0)),
+                            ?progress,
+                            "download progress"
+                        );
+                    });
                 }
 
                 return;
@@ -317,22 +342,31 @@ impl Manager {
             return;
         };
 
+        let span = active.span.clone();
+
         if let Err(error) = &result {
-            error!(
-                media_id = %active.request.id,
-                error = %error,
-                "could not download media"
-            );
+            span.in_scope(|| {
+                warn!(
+                    media.id = %active.request.id,
+                    exception.message = %error,
+                    "could not download media"
+                );
+            });
         }
 
-        self.finish(active, result).await;
+        Self::finish(&self.s3, active, result)
+            .instrument(span)
+            .await;
+
+        self.start_next();
     }
 
     /// Finishes a download: uploads the downloaded files to the bucket (if any), notifies the
-    /// requester of the result and removes the temporary download directory. Starts the next
-    /// queued download, if any.
+    /// requester of the result and removes the temporary download directory.
+    ///
+    /// The caller runs this inside the download's `media.download` span.
     async fn finish(
-        &mut self,
+        s3: &S3,
         active: ActiveDownload,
         result: Result<Vec<DownloadedFile>, ytdlp::Error>,
     ) {
@@ -346,18 +380,21 @@ impl Manager {
                     ..
                 },
             tempdir,
+            ..
         } = active;
 
         let result = match result {
-            Ok(files) => {
-                match Self::upload(&self.s3, &prefix, &public_url_base, &id, &files).await {
-                    Ok(link) => Ok(link),
-                    Err(err) => {
-                        error!(media_id = %id, error = %err, "could not upload the downloaded media");
-                        Err(Error::Upload(err))
-                    }
+            Ok(files) => match Self::upload(s3, &prefix, &public_url_base, &id, &files).await {
+                Ok(link) => Ok(link),
+                Err(err) => {
+                    error!(
+                        media.id = %id,
+                        exception.message = %err,
+                        "could not upload the downloaded media"
+                    );
+                    Err(Error::Upload(err))
                 }
-            }
+            },
             Err(err) => Err(Error::Download(err)),
         };
 
@@ -367,12 +404,14 @@ impl Manager {
         let tempdir_path = tempdir.path().to_path_buf();
 
         if let Err(err) = tempdir.close() {
-            error!(path = %tempdir_path.display(), error = %err, "could not remove the temporary download directory");
+            warn!(
+                file.path = %tempdir_path.display(),
+                exception.message = %err,
+                "could not remove the temporary download directory"
+            );
         }
 
         on_finish(result);
-
-        self.start_next();
     }
 
     /// Uploads the downloaded files to the bucket under `prefix` and returns the public URL of
@@ -394,7 +433,7 @@ impl Manager {
         for file in files {
             if file.is_unsupported_codec() {
                 warn!(
-                    media_id = id,
+                    media.id = id,
                     vcodec = ?file.vcodec,
                     "the media is in a format that isn't supported by browsers"
                 );
@@ -407,12 +446,12 @@ impl Manager {
             let key = object_key(prefix, &filename);
 
             if s3.object_exists(&key).await? {
-                debug!(%key, "skipping upload, object already exists");
+                debug!(aws.s3.key = %key, "skipping upload, object already exists");
                 continue;
             }
 
             s3.upload_file(&file.filepath, &key).await?;
-            debug!(%key, "uploaded media to s3");
+            debug!(aws.s3.key = %key, "uploaded media to s3");
         }
 
         Ok(public_url_for(public_url_base, id))
@@ -527,6 +566,7 @@ mod tests {
             on_finish: Box::new(move |result| {
                 let _ = results.send((index, result));
             }),
+            span: tracing::Span::none(),
         }
     }
 

@@ -12,10 +12,22 @@ use std::sync::Arc;
 
 use irc::proto::{Command, Message};
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{Span, debug, warn};
 use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent};
 use zeta_plugin::{CommandSpec, Event, EventKind, Filters, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrl};
+
+/// An event queued for a plugin together with the handler span it must run inside.
+///
+/// The span is created while the dispatch span is current, so it is a child of the IRC line's
+/// trace. It travels with the event because the plugin task has no inherited `tracing` context.
+#[derive(Debug)]
+pub struct Envelope {
+    /// The event to deliver.
+    pub event: Event,
+    /// The consumer span to enter while handling the event.
+    pub span: Span,
+}
 
 /// A delivery endpoint for events: the mailbox of one plugin's task.
 #[derive(Clone, Debug)]
@@ -23,14 +35,28 @@ struct Subscriber {
     /// The plugin's name, used for logging.
     name: &'static str,
     /// The mailbox events are queued on.
-    mailbox: mpsc::UnboundedSender<Event>,
+    mailbox: mpsc::UnboundedSender<Envelope>,
 }
 
 impl Subscriber {
     /// Queues `event` for the plugin, recording the plugin in `stopped` when its mailbox is
     /// closed (i.e. the plugin's task has stopped).
     fn send(&self, event: Event, stopped: &mut Vec<&'static str>) {
-        if self.mailbox.send(event).is_err() {
+        // Created here, while the dispatch span is current, so the handler joins the message's
+        // trace. The span also covers the time the event waits in the mailbox. `or_current`
+        // falls back to the dispatch span when the handler span is disabled by the filter, so
+        // the handler logs still have a trace context.
+        let span = tracing::info_span!(
+            "zeta.event.handle",
+            otel.kind = "consumer",
+            zeta.plugin.name = %self.name,
+            zeta.event.kind = event.kind_name(),
+            irc.channel = event.channel().unwrap_or_default(),
+        )
+        .or_current();
+        let envelope = Envelope { event, span };
+
+        if self.mailbox.send(envelope).is_err() {
             stopped.push(self.name);
         }
     }
@@ -65,14 +91,14 @@ impl EventIndex {
         &mut self,
         name: &'static str,
         subscriptions: &Subscriptions,
-        mailbox: mpsc::UnboundedSender<Event>,
+        mailbox: mpsc::UnboundedSender<Envelope>,
     ) {
         let subscriber = Subscriber { name, mailbox };
 
         for command in subscriptions.commands() {
             if command.trigger().contains(char::is_whitespace) {
                 warn!(
-                    plugin = %name,
+                    zeta.plugin.name = %name,
                     command = command.trigger(),
                     "command trigger contains whitespace; it cannot be dispatched"
                 );
@@ -120,16 +146,32 @@ impl EventIndex {
         let mut stopped = Vec::new();
 
         match &message.command {
-            Command::PRIVMSG(..) => self.dispatch_privmsg(filters, &message, &mut stopped),
+            Command::PRIVMSG(..) => {
+                self.dispatch_privmsg(filters, &message, &mut stopped);
+            }
             // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
             // ordinary notices are not an event kind.
-            Command::NOTICE(..) => self.deliver_kind(EventKind::Ctcp, &message, &mut stopped),
-            Command::JOIN(..) => self.deliver_kind(EventKind::Join, &message, &mut stopped),
-            Command::PART(..) => self.deliver_kind(EventKind::Part, &message, &mut stopped),
-            Command::QUIT(..) => self.deliver_kind(EventKind::Quit, &message, &mut stopped),
-            Command::NICK(..) => self.deliver_kind(EventKind::Nick, &message, &mut stopped),
-            Command::KICK(..) => self.deliver_kind(EventKind::Kick, &message, &mut stopped),
-            Command::Raw(..) => self.deliver_kind(EventKind::Raw, &message, &mut stopped),
+            Command::NOTICE(..) => {
+                self.deliver_kind(EventKind::Ctcp, &message, &mut stopped);
+            }
+            Command::JOIN(..) => {
+                self.deliver_kind(EventKind::Join, &message, &mut stopped);
+            }
+            Command::PART(..) => {
+                self.deliver_kind(EventKind::Part, &message, &mut stopped);
+            }
+            Command::QUIT(..) => {
+                self.deliver_kind(EventKind::Quit, &message, &mut stopped);
+            }
+            Command::NICK(..) => {
+                self.deliver_kind(EventKind::Nick, &message, &mut stopped);
+            }
+            Command::KICK(..) => {
+                self.deliver_kind(EventKind::Kick, &message, &mut stopped);
+            }
+            Command::Raw(..) => {
+                self.deliver_kind(EventKind::Raw, &message, &mut stopped);
+            }
             // Everything else is connection protocol the plugins have no events for.
             _ => {}
         }
@@ -225,7 +267,7 @@ impl EventIndex {
         // do not trigger, their messages are not delivered to message subscribers, and their
         // URLs are not dispatched.
         if filters.ignores(target, sender) {
-            debug!(channel = %target, "ignoring filtered sender");
+            debug!(irc.channel = %target, "ignoring filtered sender");
 
             return;
         }
@@ -282,6 +324,13 @@ impl EventIndex {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use tracing::Subscriber;
+    use tracing::span::{Attributes, Id};
+    use tracing_subscriber::layer::{Context, Layer};
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::registry::LookupSpan;
     use url::Url;
     use zeta_plugin::CtcpKind;
     use zeta_plugin::UrlFilter;
@@ -290,11 +339,11 @@ mod tests {
     use super::*;
 
     /// Collects every event a test subscriber received from its mailbox.
-    fn drain(mailbox: &mut mpsc::UnboundedReceiver<Event>) -> Vec<Event> {
+    fn drain(mailbox: &mut mpsc::UnboundedReceiver<Envelope>) -> Vec<Event> {
         let mut events = Vec::new();
 
-        while let Ok(event) = mailbox.try_recv() {
-            events.push(event);
+        while let Ok(envelope) = mailbox.try_recv() {
+            events.push(envelope.event);
         }
 
         events
@@ -323,7 +372,7 @@ mod tests {
         index: &mut EventIndex,
         name: &'static str,
         register: impl FnOnce(&mut Subscriptions),
-    ) -> mpsc::UnboundedReceiver<Event> {
+    ) -> mpsc::UnboundedReceiver<Envelope> {
         let mut subscriptions = Subscriptions::new();
         register(&mut subscriptions);
 
@@ -740,5 +789,116 @@ mod tests {
         let stopped = index.dispatch(&Filters::default(), privmsg(".dig https://example.com/x"));
 
         assert_eq!(stopped, ["dig"]);
+    }
+
+    /// The `(span name, parent span id)` pairs recorded in creation order; a root span has no
+    /// parent.
+    type RecordedSpans = Arc<Mutex<Vec<(String, Option<Id>)>>>;
+
+    /// Records every span created while it is installed, with the span that was current when it
+    /// was created as its parent.
+    #[derive(Clone, Default)]
+    struct SpanRecorder(RecordedSpans);
+
+    impl SpanRecorder {
+        /// Returns a copy of the spans recorded so far.
+        fn spans(&self) -> Vec<(String, Option<Id>)> {
+            self.0
+                .lock()
+                .expect("span recorder should not be poisoned")
+                .clone()
+        }
+    }
+
+    impl<S> Layer<S> for SpanRecorder
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
+        fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, ctx: Context<'_, S>) {
+            let parent = if attrs.is_contextual() {
+                ctx.lookup_current().map(|span| span.id())
+            } else {
+                None
+            };
+
+            let mut spans = self.0.lock().expect("span recorder should not be poisoned");
+            spans.push((attrs.metadata().name().to_owned(), parent));
+        }
+    }
+
+    /// Makes `tracing` consider every callsite enabled for the rest of the test process.
+    ///
+    /// `tracing` caches one interest value per callsite for the whole process, computed from the
+    /// dispatcher that was current when the callsite was first used. The other dispatch tests run
+    /// without a subscriber, so `zeta.event.handle` can already be cached as disabled before this
+    /// test installs its recorder; a thread-local subscriber cannot repair that cache. A global
+    /// no-op subscriber makes every registration and interest rebuild resolve to "enabled".
+    ///
+    /// The recorder itself stays thread-local, so the recorded spans are this test's only.
+    fn install_global_tracing_subscriber() {
+        static INSTALL: OnceLock<()> = OnceLock::new();
+
+        INSTALL.get_or_init(|| {
+            // Another global subscriber is fine as long as it is enabled; the test only needs
+            // the cache to stop reporting the callsites as disabled.
+            let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
+            tracing::callsite::rebuild_interest_cache();
+        });
+    }
+
+    /// The handler span is created by the dispatcher while the IRC line's dispatch span is
+    /// current; it must therefore be a child of that span, not a new trace root. The plugin
+    /// task relies on this when it instruments the handler with the envelope's span.
+    #[test]
+    fn handler_span_is_a_child_of_the_dispatch_span() {
+        install_global_tracing_subscriber();
+
+        let recorder = SpanRecorder::default();
+        let subscriber = tracing_subscriber::registry().with(recorder.clone());
+
+        tracing::subscriber::with_default(subscriber, || {
+            // The callsite may have been cached before this subscriber existed; re-evaluate it.
+            tracing::callsite::rebuild_interest_cache();
+
+            let dispatch = tracing::info_span!("irc.dispatch");
+            let dispatch_id = dispatch.id().expect("the dispatch span should be enabled");
+            let _entered = dispatch.enter();
+
+            let mut index = EventIndex::default();
+            let mut mailbox = subscribe(&mut index, "dig", |subscriptions| {
+                subscriptions.command(CommandSpec::new(".dig", "dig"));
+            });
+
+            let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
+            assert_empty!(stopped);
+
+            let envelope = mailbox.try_recv().expect("the event should be dispatched");
+            assert!(matches!(&envelope.event, Event::Command(..)));
+
+            let spans = recorder.spans();
+
+            let handler_parent = spans
+                .iter()
+                .find_map(|(name, parent)| (name == "zeta.event.handle").then_some(parent))
+                .unwrap_or_else(|| panic!("zeta.event.handle should be recorded: {spans:?}"));
+            assert_eq!(
+                handler_parent,
+                &Some(dispatch_id),
+                "zeta.event.handle must be a child of irc.dispatch, recorded: {spans:?}"
+            );
+            assert!(
+                handler_parent.is_some(),
+                "zeta.event.handle must not be a root span"
+            );
+
+            let dispatch_parent = spans
+                .iter()
+                .find_map(|(name, parent)| (name == "irc.dispatch").then_some(parent))
+                .expect("irc.dispatch should be recorded");
+            assert!(
+                dispatch_parent.is_none(),
+                "irc.dispatch must be a root span, recorded: {spans:?}"
+            );
+        });
     }
 }

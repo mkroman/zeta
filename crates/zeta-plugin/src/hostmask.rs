@@ -34,7 +34,10 @@ impl Hostmasks {
                  (set [irc] admin_hostmasks)"
             );
         } else {
-            debug!(count = patterns.len(), "loaded admin hostmasks");
+            debug!(
+                zeta.admin.hostmask.count = patterns.len(),
+                "loaded admin hostmasks"
+            );
         }
 
         Self(patterns)

@@ -186,13 +186,13 @@ impl Imdb {
     ) -> Result<(), ZetaError> {
         match classify_imdb_url(url) {
             Some(Link::Title(id)) => {
-                debug!(%id, "fetching details for posted title link");
+                debug!(imdb.title.id = %id, "fetching details for posted title link");
 
                 let lookup = self.client.title(&id).await;
                 Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
             }
             Some(Link::Name(id)) => {
-                debug!(%id, "fetching details for posted person link");
+                debug!(imdb.person.id = %id, "fetching details for posted person link");
 
                 let lookup = self.client.person(&id).await;
                 Self::reply(client, channel, lookup.map(|person| format_person(&person)))?;

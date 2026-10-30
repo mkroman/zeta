@@ -252,7 +252,7 @@ async fn graphql(
         }
         Ok(_) => Err(Error::Gated),
         Err(error) => {
-            debug!(%error, "the graphql response was not the expected json");
+            debug!(exception.message = %error, "the graphql response was not the expected json");
 
             Err(Error::Gated)
         }

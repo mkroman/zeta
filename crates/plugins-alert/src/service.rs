@@ -106,7 +106,7 @@ impl AlertService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "alert.load", skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
         self.scheduler.sync().await.map(|_| ())
     }
@@ -117,7 +117,7 @@ impl AlertService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the alert could not be inserted into the database.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "alert.create", skip_all, err)]
     pub async fn create(&self, alert: NewAlert) -> Result<Alert, Error> {
         self.scheduler.create(alert).await
     }
@@ -127,7 +127,7 @@ impl AlertService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "alert.pending", skip_all, err)]
     pub async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
         self.scheduler.pending_for(channel, nickname).await
     }
@@ -136,12 +136,9 @@ impl AlertService {
     pub fn start_scheduler(&self) {
         let scheduler = self.scheduler.clone();
 
-        tokio::spawn(
-            async move {
-                scheduler.run().await;
-            }
-            .instrument(tracing::info_span!("alert_scheduler")),
-        );
+        tokio::spawn(async move {
+            scheduler.run().await;
+        });
     }
 }
 
@@ -161,7 +158,7 @@ impl Scheduler {
         let alerts = self.repo.list_due_before(cutoff).await?;
         let count = alerts.len();
 
-        debug!(count, "synced alerts from database");
+        debug!(alert.count = count, "synced alerts from database");
 
         {
             let mut cache = self.cache.lock().await;
@@ -207,7 +204,9 @@ impl Scheduler {
     /// Runs the scheduler loop, syncing the window of upcoming alerts from the database every
     /// `sync_interval` and delivering each alert as it becomes due.
     async fn run(self) {
-        debug!("starting alert scheduler");
+        tracing::info_span!("alert.scheduler.start").in_scope(|| {
+            debug!("starting alert scheduler");
+        });
 
         // The window is synced once at startup through `load`, so the first in-loop sync is a
         // full sync interval away.
@@ -219,7 +218,9 @@ impl Scheduler {
                 // nothing can be delivered until the bot restarts.
                 Err(Error::Closed) => break,
                 Err(_) => {
-                    debug!("retrying scheduler tick shortly");
+                    tracing::info_span!("alert.scheduler.retry").in_scope(|| {
+                        debug!("retrying scheduler tick shortly");
+                    });
 
                     tokio::time::sleep(self.retry_delay).await;
                 }
@@ -227,9 +228,13 @@ impl Scheduler {
             }
 
             if tokio::time::Instant::now() >= next_sync {
-                if let Err(err) = self.sync().await {
-                    warn!(?err, "could not sync alerts from database");
+                async {
+                    if let Err(err) = self.sync().await {
+                        warn!(exception.message = ?err, "could not sync alerts from database");
+                    }
                 }
+                .instrument(tracing::info_span!("alert.scheduler.sync"))
+                .await;
 
                 next_sync = tokio::time::Instant::now() + self.sync_interval;
 
@@ -287,6 +292,7 @@ impl Scheduler {
     ///
     /// Returns the repository error if the alerts could not be deleted, or [`Error::Closed`] if
     /// the delivery channel is closed.
+    #[instrument(name = "alert.schedule", skip_all)]
     async fn tick(&self) -> Result<(), Error> {
         let due = self.pop_due(Utc::now()).await;
 
@@ -298,7 +304,7 @@ impl Scheduler {
             trace!(?alert, "delivering alert");
 
             if self.tx.send(alert.clone()).is_err() {
-                error!(alert_id = alert.id, "alert delivery channel is closed");
+                error!(alert.id = alert.id, "alert delivery channel is closed");
 
                 self.requeue(&due).await;
 
@@ -310,8 +316,8 @@ impl Scheduler {
 
         if let Err(err) = self.repo.delete_all(&sent).await {
             warn!(
-                ?err,
-                count = due.len(),
+                exception.message = ?err,
+                alert.count = due.len(),
                 "could not delete delivered alerts, they will be delivered again"
             );
 

@@ -97,11 +97,11 @@ impl OfnService {
                 network_id: origin.network.to_owned(),
             };
 
-            debug!(%video_id, "inserting youtube record");
+            debug!(media.id = %video_id, "inserting youtube record");
 
             return match self.repo.insert_youtube_video(&insert).await {
                 Ok(()) => {
-                    debug!(?origin, %video_id, "inserted youtube record");
+                    debug!(?origin, media.id = %video_id, "inserted youtube record");
 
                     Ok(Recorded::Inserted)
                 }

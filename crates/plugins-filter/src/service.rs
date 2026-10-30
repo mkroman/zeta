@@ -43,7 +43,7 @@ impl FilterService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the filters could not be fetched from the database.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "filter.load", skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
         let mut index = FilterIndex::default();
 
@@ -51,7 +51,7 @@ impl FilterService {
             index.insert(filter);
         }
 
-        debug!(count = index.len(), "loaded filters into index");
+        debug!(filter.count = index.len(), "loaded filters into index");
 
         self.index.store(Arc::new(index));
 
@@ -63,7 +63,7 @@ impl FilterService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the filter could not be inserted into the database.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "filter.add", skip_all, err)]
     pub async fn add(&self, filter: NewFilter) -> Result<Filter, Error> {
         let filter = self.repo.insert(filter).await?;
 
@@ -83,7 +83,7 @@ impl FilterService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the filters could not be deleted from the database.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "filter.delete", skip_all, err)]
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         let removed = self.repo.delete_all(ids).await?;
 

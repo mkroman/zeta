@@ -626,6 +626,38 @@ macro_rules! event_kind_flags {
                     $(Self::$kind(_) => Some(EventKind::$kind),)*
                 }
             }
+
+            /// Returns a low-cardinality name for the event kind, for telemetry.
+            #[must_use]
+            pub const fn kind_name(&self) -> &'static str {
+                match self {
+                    Self::Command(_) => "command",
+                    Self::Url(_) => "url",
+                    Self::Message(_) => "message",
+                    Self::Join(_) => "join",
+                    Self::Part(_) => "part",
+                    Self::Quit(_) => "quit",
+                    Self::Nick(_) => "nick",
+                    Self::Kick(_) => "kick",
+                    Self::Ctcp(_) => "ctcp",
+                    Self::Raw(_) => "raw",
+                }
+            }
+
+            /// Returns the channel the event belongs to, when it has one.
+            #[must_use]
+            pub fn channel(&self) -> Option<&str> {
+                match self {
+                    Self::Command(event) => Some(event.channel()),
+                    Self::Url(event) => Some(event.channel()),
+                    Self::Message(event) => Some(event.channel()),
+                    Self::Join(event) => Some(event.channel()),
+                    Self::Part(event) => Some(event.channel()),
+                    Self::Kick(event) => Some(event.channel()),
+                    Self::Ctcp(event) => Some(event.target()),
+                    Self::Quit(_) | Self::Nick(_) | Self::Raw(_) => None,
+                }
+            }
         }
 
         /// The kind of an event a plugin subscribes to with a plain flag — one per kind-specific

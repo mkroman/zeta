@@ -5,7 +5,7 @@
 //! channel, through the client.
 
 use irc::client::Client;
-use tracing::error;
+use tracing::warn;
 
 use zeta_mirror::MirrorHandle;
 use zeta_plugin::prelude::*;
@@ -56,7 +56,11 @@ pub async fn ensure_mirrored_and_reply(
         }
         Ok(None) => {}
         Err(error) => {
-            error!(%id, %error, "could not check if the media is already mirrored");
+            warn!(
+                media.id = %id,
+                exception.message = %error,
+                "could not check if the media is already mirrored"
+            );
         }
     }
 }

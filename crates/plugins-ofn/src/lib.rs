@@ -47,6 +47,7 @@ impl Ofn {
     /// here is recorded. A failed insert is logged by [`OfnService::record_url`] and left
     /// unannounced.
     #[tracing::instrument(
+        name = "ofn.record_url",
         skip_all,
         err,
         fields(

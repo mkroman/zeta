@@ -26,6 +26,10 @@ pub fn from_str<T: DeserializeOwned>(text: &str) -> Result<T, Error> {
     serde_path_to_error::deserialize(deserializer).inspect_err(|error| {
         let body = text.truncate_within(LOGGED_BODY_LENGTH, "…");
 
-        error!(?error, body = %body, "could not deserialize json response");
+        error!(
+            exception.message = %error,
+            http.response.body = %body,
+            "could not deserialize json response"
+        );
     })
 }

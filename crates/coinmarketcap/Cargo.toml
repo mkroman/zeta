@@ -29,8 +29,6 @@ brotli = ["reqwest/brotli"]
 deflate = ["reqwest/deflate"]
 # Decompression of responses compressed with zstd.
 zstd = ["reqwest/zstd"]
-# Log each failed request with its query-free URL.
-log = []
 
 [dependencies]
 reqwest = { workspace = true, features = ["json", "query"] }

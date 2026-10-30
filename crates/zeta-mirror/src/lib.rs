@@ -139,7 +139,7 @@ impl Mirror {
                     })
                     .inspect_err(|err| {
                         error!(
-                            error = %err,
+                            exception.message = %err,
                             "could not create a download directory, mirroring is disabled"
                         );
                     })
@@ -148,8 +148,8 @@ impl Mirror {
             |dir| {
                 if let Err(err) = std::fs::create_dir_all(&dir) {
                     error!(
-                        path = %dir.display(),
-                        error = %err,
+                        file.path = %dir.display(),
+                        exception.message = %err,
                         "could not create the download directory, mirroring is disabled"
                     );
 
@@ -231,26 +231,26 @@ impl Mirror {
         // not safe are never mirrored. It is validated here (before the fast-path check) and
         // again by the download manager before it reaches the file system.
         if !is_identifier(id, "_-") {
-            warn!(%id, "ignoring mirror request with an unsafe id");
+            warn!(media.id = %id, "ignoring mirror request with an unsafe id");
 
             return Ok(None);
         }
 
         if self.is_mirrored(prefix, id).await? {
             let link = public_url_for(public_url_base, id);
-            debug!(%id, %link, "media has already been mirrored");
+            debug!(media.id = %id, %link, "media has already been mirrored");
 
             return Ok(Some(link));
         }
 
         if !self.mark_in_flight(prefix, id) {
-            debug!(%id, "media is already being mirrored");
+            debug!(media.id = %id, "media is already being mirrored");
 
             return Ok(None);
         }
 
         let Some(manager) = self.download_manager() else {
-            warn!(%id, "download manager is not running");
+            warn!(media.id = %id, "download manager is not running");
             Self::clear_in_flight(&self.in_flight, prefix, id);
 
             return Ok(None);
@@ -261,6 +261,10 @@ impl Mirror {
         let id = id.to_string();
         let prefix = prefix.to_string();
         let public_url_base = public_url_base.clone();
+
+        // The download is asynchronous and outlives this handler, so capture the requester's
+        // span now: the manager links the download's own trace back to it.
+        let producer = tracing::Span::current();
 
         let request = DownloadRequest {
             url,
@@ -276,11 +280,12 @@ impl Mirror {
                     on_mirrored(link);
                 }
             }),
+            span: producer,
         };
 
         if let Err(request) = manager.submit(request) {
             error!(
-                id = %request.id,
+                media.id = %request.id,
                 "could not submit the download, the manager is not running"
             );
 

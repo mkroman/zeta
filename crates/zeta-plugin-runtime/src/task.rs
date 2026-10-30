@@ -1,13 +1,16 @@
 //! The long-lived task that runs one plugin.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use irc::client::Client;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{Instrument, debug, error, warn};
+use tracing::{Instrument, Span, debug, error, warn};
 
-use zeta_plugin::{Context, Event, Plugin, handle_event};
+use zeta_plugin::{Context, Plugin, handle_event};
+
+use crate::dispatch::Envelope;
 
 /// A plugin running in its own long-lived task.
 ///
@@ -34,54 +37,80 @@ impl PluginTask {
         mut plugin: Box<dyn Plugin>,
         ctx: Arc<Context>,
         client: Arc<Client>,
-        mut receiver: mpsc::UnboundedReceiver<Event>,
+        mut receiver: mpsc::UnboundedReceiver<Envelope>,
+        shutdown_span: Arc<OnceLock<Span>>,
     ) -> Self {
         let handle = tokio::spawn(async move {
-            debug!(plugin = %name, "plugin task started");
+            debug!(zeta.plugin.name = %name, "plugin task started");
 
             // The load and shutdown hooks run inside spans for the same reason the handler
             // does: without a span, their warnings only ever reach stdout — the `loaded` span
             // above closed before this one fires.
             let failed_to_load = async {
                 if let Err(error) = plugin.loaded(&ctx, &client).await {
-                    warn!(plugin = %name, %error, "plugin failed to load");
+                    warn!(
+                        zeta.plugin.name = %name,
+                        exception.message = %error,
+                        "plugin failed to load"
+                    );
 
                     true
                 } else {
                     false
                 }
             }
-            .instrument(tracing::info_span!("loaded", plugin = %name))
+            .instrument(tracing::info_span!(
+                "zeta.plugin.load",
+                zeta.plugin.name = %name
+            ))
             .await;
 
             if failed_to_load {
                 return;
             }
 
-            while let Some(event) = receiver.recv().await {
-                // The handler runs inside a span: the OpenTelemetry layer drops events that
-                // are not in the context of a span, so without it the plugin's logs would
-                // only ever reach stdout.
+            while let Some(envelope) = receiver.recv().await {
+                let Envelope { event, span } = envelope;
+
+                // The span was created by the dispatcher while the IRC line's dispatch span was
+                // current, so the handler joins the message's trace. It also covers the time the
+                // event waited in the mailbox.
                 async {
                     if let Err(error) = handle_event(plugin.as_ref(), &ctx, &client, &event).await {
-                        error!(plugin = %name, %error, "plugin error during event handling");
+                        error!(
+                            zeta.plugin.name = %name,
+                            exception.message = %error,
+                            "plugin error during event handling"
+                        );
                     }
                 }
-                .instrument(tracing::info_span!("handle_event", plugin = %name))
+                .instrument(span)
                 .await;
             }
 
             // The mailbox is closed: the bot is shutting down. The warning goes inside the
-            // span, for the same reason as the load one above.
+            // span, for the same reason as the load one above. The span links to the runtime's
+            // `zeta.shutdown` span when the shutdown came from there: it runs in a separate
+            // task, so it cannot be a child, but the link keeps the shutdown trace together.
+            let span = tracing::info_span!("zeta.plugin.shutdown", zeta.plugin.name = %name);
+
+            if let Some(shutdown) = shutdown_span.get() {
+                span.follows_from(shutdown);
+            }
+
             async {
                 if let Err(error) = plugin.shutdown(&ctx, &client).await {
-                    warn!(plugin = %name, %error, "plugin error during shutdown");
+                    warn!(
+                        zeta.plugin.name = %name,
+                        exception.message = %error,
+                        "plugin error during shutdown"
+                    );
                 }
             }
-            .instrument(tracing::info_span!("shutdown", plugin = %name))
+            .instrument(span)
             .await;
 
-            debug!(plugin = %name, "plugin task stopped");
+            debug!(zeta.plugin.name = %name, "plugin task stopped");
         });
 
         Self { name, handle }
@@ -130,6 +159,7 @@ mod tests {
             Arc::clone(&ctx),
             Arc::clone(&client),
             receiver,
+            Arc::new(OnceLock::new()),
         );
 
         for _ in 0..2 {
@@ -137,7 +167,10 @@ mod tests {
                 .expect("message should parse");
 
             sender
-                .send(Event::Message(MessageEvent::new(Arc::new(message))))
+                .send(Envelope {
+                    event: zeta_plugin::Event::Message(MessageEvent::new(Arc::new(message))),
+                    span: Span::none(),
+                })
                 .expect("task should be running");
         }
 

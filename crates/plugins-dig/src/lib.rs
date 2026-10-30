@@ -23,7 +23,7 @@ use hickory_resolver::{
 use miette::Diagnostic;
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
-use tracing::debug;
+use tracing::{Instrument, debug};
 
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
@@ -195,6 +195,10 @@ impl Dig {
         let lookup = self
             .resolver
             .lookup(name, record_type)
+            .instrument(tracing::info_span!(
+                "dns.lookup",
+                dns.question.name = %name
+            ))
             .await
             .map_err(Error::Resolve)?;
 

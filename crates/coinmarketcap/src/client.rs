@@ -198,7 +198,7 @@ impl Client {
             CoinQuery::Symbol(symbol) => query.push(("symbol", symbol)),
         }
 
-        debug!(?query, "requesting coin quote");
+        debug!(coinmarketcap.query = ?query, "requesting coin quote");
 
         let parsed: Envelope<HashMap<String, QuoteData>> = self
             .get_json("/v1/cryptocurrency/quotes/latest", &query)
@@ -240,23 +240,9 @@ impl Client {
     }
 }
 
-/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and, with the `log` feature,
-/// logs the failed request's URL without its query, so a logged error never carries a
-/// credential from the query string.
+/// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string.
 fn request_error(error: reqwest::Error) -> Error {
-    let error = RequestError::from(error);
-
-    #[cfg(feature = "log")]
-    if let Some(url) = error.url() {
-        tracing::error!(
-            url.full = %url,
-            error.type = error.error_type(),
-            error = %error.full(),
-            "request failed"
-        );
-    }
-
-    Error::Request(error)
+    Error::Request(RequestError::from(error))
 }
 
 /// Deserializes a value of type `T` from a JSON string.
@@ -273,7 +259,11 @@ fn decode<T: DeserializeOwned>(text: &str) -> Result<T, ParseError> {
     serde_path_to_error::deserialize(deserializer).inspect_err(|error| {
         let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
 
-        tracing::error!(?error, body = %body, "could not deserialize json response");
+        debug!(
+            exception.message = ?error,
+            http.response.body = %body,
+            "could not deserialize json response"
+        );
     })
 }
 

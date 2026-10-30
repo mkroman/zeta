@@ -20,7 +20,7 @@ pub use {
 
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
-use tracing::error;
+use tracing::{error, warn};
 
 use zeta_plugin::prelude::*;
 
@@ -161,7 +161,7 @@ impl NotificationPlugin {
                 ) {
                     Ok(()) => delivered += 1,
                     Err(err) => {
-                        error!(?err, "could not deliver notification");
+                        warn!(exception.message = ?err, "could not deliver notification");
 
                         break;
                     }
@@ -179,8 +179,8 @@ impl NotificationPlugin {
 
                 if let Err(err) = self.service.delete_all(&sent_ids).await {
                     error!(
-                        ?err,
-                        count = sent_ids.len(),
+                        exception.message = ?err,
+                        notification.count = sent_ids.len(),
                         "could not delete delivered notifications"
                     );
                 }
