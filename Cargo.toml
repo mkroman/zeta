@@ -79,5 +79,5 @@ unused_qualifications = "warn"
 lto = true
 strip = "debuginfo"
 panic = "unwind"
-opt-level = "z"
+opt-level = 3
 codegen-units = 1
