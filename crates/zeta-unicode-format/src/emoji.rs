@@ -135,6 +135,125 @@ impl Rule {
 
 const _: () = assert!(Rule::COUNT <= 1 << RULE_BITS);
 
+/// Supplies the table lookups a rule needs to render its name.
+///
+/// The runtime implements it over its decoded section and name lookup; the trainer implements
+/// it over its in-memory entry table. Keeping the renderer here means the wording of every rule
+/// has one implementation, so a trainer-verified name cannot drift from the runtime's replay.
+pub trait RuleContext {
+    /// The `DerivedName.txt` name of `cp`, if it has one.
+    fn ucd_name(&mut self, cp: u32) -> Option<String>;
+
+    /// The published name of the base sequence `cps`, if the table has that entry.
+    fn base_name(&mut self, cps: &[u32]) -> Option<String>;
+}
+
+/// Does materialising `rule` need the whole code-point sequence?
+///
+/// The first-code-point rules can answer from the runtime's cached first code point; only the
+/// rules that inspect or compare the sequence need it decoded.
+#[must_use]
+pub const fn rule_needs_sequence(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::GenderWoman
+            | Rule::GenderMan
+            | Rule::Facing
+            | Rule::Family
+            | Rule::Couple
+            | Rule::Kiss
+            | Rule::Pair
+    )
+}
+
+/// Materialises the name `rule` produces for `cps`, or `None` when its base is not in the table.
+///
+/// [`Rule::Literal`] returns `None`: its name comes from the literal-name arena, not a rule.
+pub fn rule_name<C: RuleContext>(rule: Rule, arg: u16, cps: &[u32], ctx: &mut C) -> Option<String> {
+    match rule {
+        Rule::Literal => None,
+        Rule::UcdMask | Rule::UcdMaskHyphen => {
+            let name = ctx.ucd_name(*cps.first()?)?;
+            Some(ucd_mask_name(
+                &name,
+                u8::try_from(arg).ok()?,
+                rule == Rule::UcdMaskHyphen,
+            ))
+        }
+        Rule::Keycap => Some(format!("KEYCAP {}", keycap_word(*cps.first()?)?)),
+        Rule::GenderWoman | Rule::GenderMan => {
+            let gender = if rule == Rule::GenderWoman {
+                "woman"
+            } else {
+                "man"
+            };
+            Some(swap_person(&gender_base(cps, ctx)?, gender))
+        }
+        Rule::Facing => {
+            let base = ctx.base_name(cps.get(..cps.len().checked_sub(2)?)?)?;
+            Some(format!("{base} facing right"))
+        }
+        Rule::Family => Some(format!("family: {}", join_family(cps, &[ZWJ]))),
+        Rule::Couple => Some(format!(
+            "couple with heart: {}",
+            join_family(cps, &[ZWJ, 0x2764, 0x1F48B])
+        )),
+        Rule::Kiss => Some(format!(
+            "kiss: {}",
+            join_family(cps, &[ZWJ, 0x2764, 0x1F48B])
+        )),
+        Rule::Pair => Some(format!(
+            "{} {}",
+            plural(*cps.first()?, *cps.get(4)?)?,
+            pair_phrase(*cps.get(2)?)?
+        )),
+        Rule::ToneComponent => {
+            let first = *cps.first()?;
+            let index = tone_index(first)?;
+            Some(TONE_NAMES[index].to_owned())
+        }
+        Rule::Clock => clock_name(&ctx.ucd_name(*cps.first()?)?),
+        Rule::Keycap10 => Some("keycap: 10".to_owned()),
+    }
+}
+
+/// The head code points a gender rule may rewrite to the `person` base.
+///
+/// The trainer only assigns a gender rule when its own rewrite check passed for a man or woman
+/// head (`gender_rule`/`role_rule` reject every other head), so the runtime mirrors that guard:
+/// a corrupt table then answers `None` instead of synthesising a base the trainer never
+/// verified.
+const fn gendered_head(cp: u32) -> bool {
+    matches!(cp, 0x1F468 | 0x1F469)
+}
+
+/// The first existing base name a gender rule applies to.
+pub fn gender_base<C: RuleContext>(cps: &[u32], ctx: &mut C) -> Option<String> {
+    let suffix = cps.len() >= 3
+        && cps.get(cps.len() - 2) == Some(&ZWJ)
+        && matches!(cps.last().copied(), Some(0x2640 | 0x2642));
+    if suffix {
+        if let Some(name) = ctx.base_name(cps.get(..cps.len() - 2)?) {
+            return Some(name);
+        }
+        if !cps.first().is_some_and(|&head| gendered_head(head)) {
+            return None;
+        }
+        let mut candidate = vec![0x1F9D1];
+        candidate.extend_from_slice(cps.get(1..cps.len() - 2)?);
+        return ctx.base_name(&candidate);
+    }
+    if cps.len() == 3
+        && cps.get(1) == Some(&ZWJ)
+        && cps.first().is_some_and(|&head| gendered_head(head))
+    {
+        let mut candidate = vec![0x1F9D1];
+        candidate.extend_from_slice(cps.get(1..)?);
+        return ctx.base_name(&candidate);
+    }
+    None
+}
+
 /// The index into [`TONES`] of `cp`, or `None` when `cp` is not a skin-tone component.
 #[must_use]
 pub const fn tone_index(cp: u32) -> Option<usize> {
@@ -520,5 +639,52 @@ mod tests {
             None,
             "an unknown rule id is rejected"
         );
+    }
+
+    /// A context that knows one UCD name and one base entry.
+    struct Context;
+
+    impl RuleContext for Context {
+        fn ucd_name(&mut self, cp: u32) -> Option<String> {
+            (cp == 0xA9).then(|| "COPYRIGHT SIGN".to_owned())
+        }
+
+        fn base_name(&mut self, cps: &[u32]) -> Option<String> {
+            (cps == [0x1F44D]).then(|| "thumbs up".to_owned())
+        }
+    }
+
+    #[test]
+    fn rules_render_the_shared_wording() {
+        let mut context = Context;
+        assert_eq!(
+            rule_name(Rule::UcdMask, 0b11, &[0xA9], &mut context).as_deref(),
+            Some("copyright sign")
+        );
+        assert_eq!(
+            rule_name(Rule::Keycap, 0, &[0x31], &mut context).as_deref(),
+            Some("KEYCAP DIGIT ONE")
+        );
+        assert_eq!(
+            rule_name(Rule::Family, 0, &[0x1F469, ZWJ, 0x1F466], &mut context).as_deref(),
+            Some("family: woman, boy")
+        );
+        assert_eq!(
+            rule_name(
+                Rule::Pair,
+                0,
+                &[0x1F469, ZWJ, 0x1F91D, ZWJ, 0x1F468],
+                &mut context
+            )
+            .as_deref(),
+            Some("woman and man holding hands")
+        );
+        assert_eq!(
+            rule_name(Rule::Facing, 0, &[0x1F44D, ZWJ, 0x27A1], &mut context).as_deref(),
+            Some("thumbs up facing right")
+        );
+        assert_eq!(rule_name(Rule::Literal, 0, &[0xA9], &mut context), None);
+        assert!(rule_needs_sequence(Rule::Pair));
+        assert!(!rule_needs_sequence(Rule::Keycap));
     }
 }

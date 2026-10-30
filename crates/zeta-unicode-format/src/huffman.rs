@@ -9,11 +9,15 @@
 //! Keeping one implementation means an encoder change cannot silently drift from the decoder
 //! the image is verified with.
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 /// The longest code a model may use.
 const MAX_BITS: usize = 32;
+
+/// The number of `u16` length counts in one model, including the unused zero entry.
+const CODE_LENGTH_SLOTS: usize = MAX_BITS + 1;
 
 /// A canonical Huffman code: its bit pattern and length.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -140,7 +144,7 @@ pub fn decode(stream: &[u8], raw_len: usize, order: u8) -> Option<Vec<u8>> {
     let mut at = 0usize;
     let context_count = usize::from(*stream.get(at)?);
     at += 1;
-    let mut models: Vec<Option<Model>> = Vec::new();
+    let mut models: Vec<Option<Model<'_>>> = Vec::new();
     models.resize_with(256, || None);
     for _ in 0..context_count {
         let context = usize::from(*stream.get(at)?);
@@ -158,7 +162,7 @@ pub fn decode(stream: &[u8], raw_len: usize, order: u8) -> Option<Vec<u8>> {
             }
             pairs.push((symbol, length));
         }
-        *models.get_mut(context)? = Some(Model::new(pairs)?);
+        *models.get_mut(context)? = Some(Model::from_pairs(&pairs)?);
     }
 
     let mut reader = BitReader::new(stream.get(at..)?);
@@ -176,51 +180,199 @@ pub fn decode(stream: &[u8], raw_len: usize, order: u8) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// A canonical Huffman model: bit-length counts and symbols in canonical order.
-struct Model {
-    counts: [u16; MAX_BITS + 1],
-    symbols: Vec<u8>,
-    max_bits: usize,
+/// A canonical Huffman codebook for one 256-symbol alphabet.
+///
+/// This is the write side of the codec: [`Self::new`] derives length-limited canonical code
+/// lengths from frequencies, [`Self::write`] serializes the model blob the name section stores,
+/// and [`Self::codes`] gives the encoder each symbol's code. The trainer and the runtime's
+/// model-area parser share the struct so the serialized layout cannot drift from the decoder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Codebook {
+    /// The longest code in the book.
+    pub max_bits: u8,
+    /// `counts[length]` is the number of symbols with that length (`counts[0] == 0`).
+    pub counts: [u16; CODE_LENGTH_SLOTS],
+    /// Symbols in canonical order.
+    pub symbols: Vec<u8>,
+    /// The canonical code per symbol.
+    pub codes: Vec<Code>,
 }
 
-impl Model {
-    /// Builds the decoder model from `(symbol, length)` pairs.
+impl Codebook {
+    /// Builds the canonical book for `frequencies`.
     ///
-    /// Returns `None` for a length outside the codec's limit or a codebook that is empty or
-    /// oversubscribed. The runtime's general-category and emoji parsers decode streams without
-    /// a separate codebook check, so validation has to happen here.
-    fn new(pairs: Vec<(u8, usize)>) -> Option<Self> {
-        let mut counts = [0u16; MAX_BITS + 1];
-        let mut max_bits = 0usize;
-        for &(_, length) in &pairs {
-            *counts.get_mut(length)? += 1;
-            max_bits = max_bits.max(length);
+    /// # Panics
+    ///
+    /// Panics only when the alphabet cannot fit a canonical code within the codec's 32-bit
+    /// limit, which the fixed 256-symbol alphabet never does.
+    #[must_use]
+    pub fn new(frequencies: &[u64; 256]) -> Self {
+        let lengths = code_lengths(
+            frequencies,
+            u8::try_from(MAX_BITS).expect("MAX_BITS fits in a byte"),
+        );
+        let mut counts = [0u16; CODE_LENGTH_SLOTS];
+        for &length in &lengths {
+            if length > 0 {
+                counts[usize::from(length)] += 1;
+            }
         }
-        if !valid_codebook(&counts, u8::try_from(max_bits).ok()?) {
-            return None;
-        }
-        let mut ordered = pairs;
-        ordered.sort_unstable_by_key(|&(symbol, length)| (length, symbol));
-        let symbols = ordered.into_iter().map(|(symbol, _)| symbol).collect();
-        Some(Self {
+        let mut pairs: Vec<(u8, u8)> = (0..=u8::MAX)
+            .filter(|&symbol| lengths[usize::from(symbol)] > 0)
+            .map(|symbol| (lengths[usize::from(symbol)], symbol))
+            .collect();
+        pairs.sort_unstable();
+        let symbols: Vec<u8> = pairs.iter().map(|&(_, symbol)| symbol).collect();
+        let max_bits = pairs.last().map_or(0, |&(length, _)| length);
+        let codes = canonical_codes(&lengths);
+        Self {
+            max_bits,
             counts,
             symbols,
+            codes,
+        }
+    }
+
+    /// Appends one model blob: max bits, length counts, then the symbols.
+    pub fn write(&self, out: &mut Vec<u8>) {
+        out.push(self.max_bits);
+        for &count in &self.counts[1..=usize::from(self.max_bits)] {
+            out.extend_from_slice(&count.to_le_bytes());
+        }
+        out.extend_from_slice(&self.symbols);
+    }
+
+    /// The number of bytes [`Self::write`] appends.
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        1 + 2 * usize::from(self.max_bits) + self.symbols.len()
+    }
+}
+
+/// A canonical Huffman model for decoding one 256-symbol alphabet.
+///
+/// The model borrows its symbol table when it is parsed from a name section and owns it when
+/// [`Self::from_pairs`] builds one from a codec stream. [`Self::symbol`] walks the canonical
+/// code bit by bit; [`Self::decode_prefix`] resolves a 32-bit window in one pass, which lets the
+/// runtime keep its fast table in front of the canonical fallback.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Model<'a> {
+    counts: [u16; CODE_LENGTH_SLOTS],
+    symbols: Cow<'a, [u8]>,
+    max_bits: u8,
+}
+
+impl<'a> Model<'a> {
+    /// Builds a decoder model from a serialized model's counts and symbols.
+    ///
+    /// `counts[length]` is the number of symbols with that length; `symbols` are the symbols in
+    /// canonical order. Returns `None` when `max_bits` is zero or over the codec limit, when the
+    /// symbol count does not match `symbols`, or when the counts are oversubscribed.
+    #[must_use]
+    pub fn new(max_bits: u8, counts: &[u16], symbols: &'a [u8]) -> Option<Self> {
+        let max = usize::from(max_bits);
+        if max == 0 || max > MAX_BITS {
+            return None;
+        }
+        let counts = counts.get(..=max)?;
+        let mut wide = [0u16; CODE_LENGTH_SLOTS];
+        wide[..=max].copy_from_slice(counts);
+        let symbol_count: usize = wide[1..=max].iter().map(|&count| usize::from(count)).sum();
+        if symbol_count == 0 || symbol_count > 256 || symbol_count != symbols.len() {
+            return None;
+        }
+        if !valid_codebook(&wide, max_bits) {
+            return None;
+        }
+        Some(Self {
+            counts: wide,
+            symbols: Cow::Borrowed(symbols),
             max_bits,
         })
     }
 
-    /// Decodes one symbol.
-    fn symbol(&self, reader: &mut BitReader<'_>) -> Option<u8> {
+    /// Builds the decoder model from `(symbol, length)` pairs.
+    ///
+    /// Returns `None` for a length outside the codec's limit or a codebook that is empty or
+    /// oversubscribed.
+    #[must_use]
+    pub fn from_pairs(pairs: &[(u8, usize)]) -> Option<Self> {
+        let mut counts = [0u16; CODE_LENGTH_SLOTS];
+        let mut max_bits = 0usize;
+        for &(_, length) in pairs {
+            *counts.get_mut(length)? += 1;
+            max_bits = max_bits.max(length);
+        }
+        let max_bits = u8::try_from(max_bits).ok()?;
+        if !valid_codebook(&counts, max_bits) {
+            return None;
+        }
+        let mut ordered = pairs.to_vec();
+        ordered.sort_unstable_by_key(|&(symbol, length)| (length, symbol));
+        let symbols = ordered.into_iter().map(|(symbol, _)| symbol).collect();
+        Some(Self {
+            counts,
+            symbols: Cow::Owned(symbols),
+            max_bits,
+        })
+    }
+
+    /// The longest code in the model.
+    #[must_use]
+    pub const fn max_bits(&self) -> u8 {
+        self.max_bits
+    }
+
+    /// The symbol count per code length, starting at length 0.
+    #[must_use]
+    pub const fn counts(&self) -> &[u16] {
+        &self.counts
+    }
+
+    /// The symbols in canonical order.
+    #[must_use]
+    pub fn symbols(&self) -> &[u8] {
+        &self.symbols
+    }
+
+    /// Decodes one symbol bit by bit.
+    pub fn symbol(&self, reader: &mut BitReader<'_>) -> Option<u8> {
         let mut code = 0usize;
         let mut first = 0usize;
         let mut index = 0usize;
-        for length in 1..=self.max_bits {
+        for length in 1..=usize::from(self.max_bits) {
             code = (code << 1) | usize::from(reader.bit()?);
             let count = usize::from(*self.counts.get(length)?);
             if code >= first && code - first < count {
                 return self.symbols.get(index + code - first).copied();
             }
             index += count;
+            first = (first + count) << 1;
+        }
+        None
+    }
+
+    /// Resolves the next symbol from a 32-bit peek, returning it with its code length.
+    ///
+    /// The caller must advance its reader by the returned length. Returns `None` when the
+    /// window does not start a code of at most `max_bits` bits.
+    #[must_use]
+    pub fn decode_prefix(&self, window: u32) -> Option<(u8, u8)> {
+        let max_bits = usize::from(self.max_bits);
+        let mut first = 0u32;
+        let mut offset = 0usize;
+        for (index, &count) in self.counts[1..=max_bits].iter().enumerate() {
+            let length = u32::try_from(index + 1).ok()?;
+            let code = window >> (32 - length);
+            let count = u32::from(count);
+            if code.wrapping_sub(first) < count {
+                let index = offset + usize::try_from(code - first).ok()?;
+                return Some((
+                    self.symbols.get(index).copied()?,
+                    u8::try_from(length).ok()?,
+                ));
+            }
+            offset += usize::try_from(count).ok()?;
             first = (first + count) << 1;
         }
         None
@@ -491,25 +643,89 @@ impl BitWriter {
     }
 }
 
-/// An MSB-first bit reader.
-struct BitReader<'a> {
+/// An MSB-first bit reader that peeks 32 bits at a time.
+///
+/// [`Self::bit`] is the general bit-by-bit path the codec and the build verifier use;
+/// [`Self::peek`] reads a 32-bit window so the runtime's fast table can resolve short codes
+/// without touching the buffer once per bit.
+#[derive(Clone, Debug)]
+pub struct BitReader<'a> {
+    /// The bitstream.
     data: &'a [u8],
+    /// The absolute bit position.
     position: usize,
 }
 
 impl<'a> BitReader<'a> {
-    /// Starts at the first bit of `data`.
-    const fn new(data: &'a [u8]) -> Self {
+    /// A reader starting at the first bit of `data`.
+    #[must_use]
+    pub const fn new(data: &'a [u8]) -> Self {
         Self { data, position: 0 }
     }
 
+    /// A reader starting at absolute bit `bit`.
+    #[must_use]
+    pub const fn at(data: &'a [u8], bit: usize) -> Self {
+        Self {
+            data,
+            position: bit,
+        }
+    }
+
+    /// The current absolute bit position.
+    #[must_use]
+    pub const fn position(&self) -> usize {
+        self.position
+    }
+
+    /// The first bit position past the stream's last byte.
+    #[must_use]
+    pub const fn limit(&self) -> usize {
+        self.data.len() * 8
+    }
+
+    /// Advances by `bits`.
+    pub const fn advance(&mut self, bits: usize) {
+        self.position += bits;
+    }
+
+    /// Returns the next 32 bits, most significant first, zero-filled past the end.
+    #[must_use]
+    pub fn peek(&self) -> u32 {
+        let byte = self.position >> 3;
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a bit offset within a byte is below eight"
+        )]
+        let skip = (self.position & 7) as u32;
+        let word = word_at(self.data, byte);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "the top half of a u64 always fits in a u32"
+        )]
+        let window = ((word << skip) >> 32) as u32;
+        window
+    }
+
     /// Reads one bit.
-    fn bit(&mut self) -> Option<u8> {
+    pub fn bit(&mut self) -> Option<u8> {
         let byte = self.data.get(self.position >> 3)?;
         let bit = (byte >> (7 - (self.position & 7))) & 1;
         self.position += 1;
         Some(bit)
     }
+}
+
+/// Reads eight big-endian bytes at `at`, zero-filling past the end.
+fn word_at(data: &[u8], at: usize) -> u64 {
+    if let Some(bytes) = data.get(at..at + 8) {
+        return u64::from_be_bytes(bytes.try_into().expect("eight bytes"));
+    }
+    let mut word = 0u64;
+    for index in 0..8 {
+        word = (word << 8) | u64::from(data.get(at + index).copied().unwrap_or(0));
+    }
+    word
 }
 
 #[cfg(test)]
