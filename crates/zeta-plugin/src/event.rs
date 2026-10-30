@@ -264,6 +264,16 @@ impl UrlEvent {
         &self.url
     }
 
+    /// Returns a handle to the URL, sharing the event's allocation.
+    ///
+    /// Cloning the returned [`Arc`] only bumps its reference count, unlike cloning the [`Url`],
+    /// which copies the URL's serialized string. Handlers that move the URL into a spawned task
+    /// should use this.
+    #[must_use]
+    pub fn url_arc(&self) -> Arc<Url> {
+        Arc::clone(&self.url)
+    }
+
     /// Returns the channel the URL was posted in.
     #[must_use]
     pub fn channel(&self) -> &str {
@@ -918,6 +928,28 @@ mod tests {
         assert_eq!(event.url().as_str(), "https://x.example/");
         assert_eq!(event.repaired_from, Some("ttps"));
         assert_eq!(event.text(), "see ttps://x.example");
+    }
+
+    #[test]
+    fn url_event_shares_its_url() {
+        let message = message(
+            "nick!user@host",
+            "PRIVMSG",
+            &["#test", "see https://x.example"],
+        );
+        let event = UrlEvent::new(
+            message,
+            Arc::new("https://x.example".parse().expect("url")),
+            None,
+        );
+
+        let first = event.url_arc();
+        let cloned = event.clone();
+        let second = cloned.url_arc();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(event.url(), first.as_ref());
+        assert_eq!(first.as_str(), "https://x.example/");
     }
 
     #[test]

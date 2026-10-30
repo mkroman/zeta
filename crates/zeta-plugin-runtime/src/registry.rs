@@ -43,6 +43,9 @@ impl Registry {
     /// Called once after all plugins have been registered, so plugins can discover each other
     /// through the catalog. The catalog is derived from the registered plugins' subscriptions,
     /// so it cannot drift from them.
+    ///
+    /// Plugins may cache the handle to keep shared-state lookups out of their hot paths, so a
+    /// catalog published later would not reach every plugin.
     pub fn publish_catalog(&self, ctx: &Context) {
         let entries = self
             .plugins
