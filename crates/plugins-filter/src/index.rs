@@ -6,6 +6,7 @@
 //! and host-agnostic entries are considered. All wildcard patterns are compiled once when a
 //! filter is inserted, not on every check.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -216,15 +217,27 @@ impl HostIndex {
     }
 }
 
+/// Returns the index key of `channel`: its lowercased name, borrowed when the channel is plain
+/// ASCII without uppercase letters, which is the common case.
+fn channel_key(channel: &str) -> Cow<'_, str> {
+    if channel.bytes().any(|byte| byte.is_ascii_uppercase()) || !channel.is_ascii() {
+        Cow::Owned(channel.to_lowercase())
+    } else {
+        Cow::Borrowed(channel)
+    }
+}
+
 /// All filters, indexed by channel.
 ///
-/// The index is keyed by the lowercased channel name; the `None` key holds the filters that
-/// apply to all channels. A lookup consults both the channel's bucket and the all-channels
-/// bucket, and never touches the filters of other channels.
+/// The index is keyed by the lowercased channel name; [`all_channels`](Self::all_channels)
+/// holds the filters that apply to all channels. A lookup consults both, and never touches the
+/// filters of other channels.
 #[derive(Debug, Default, Clone)]
 pub struct FilterIndex {
     /// The channel buckets, keyed by lowercased channel name.
-    channels: HashMap<Option<String>, HostIndex>,
+    channels: HashMap<String, HostIndex>,
+    /// The filters that apply to all channels.
+    all_channels: HostIndex,
     /// The number of filters in the index, kept exact by [`FilterIndex::insert`] and
     /// [`FilterIndex::remove_ids`] so [`FilterIndex::len`] and [`FilterIndex::is_empty`] are
     /// constant-time.
@@ -237,13 +250,17 @@ impl FilterIndex {
         let channel = filter.channel.as_deref().map(str::to_lowercase);
         let entry = Arc::new(Entry::new(filter));
 
-        self.channels.entry(channel).or_default().insert(entry);
+        match channel {
+            Some(channel) => self.channels.entry(channel).or_default().insert(entry),
+            None => self.all_channels.insert(entry),
+        }
+
         self.count += 1;
     }
 
     /// Removes the filters with the given ids, dropping channel buckets that become empty.
     pub(super) fn remove_ids(&mut self, ids: &[i32]) {
-        let mut removed = 0;
+        let mut removed = self.all_channels.remove_ids(ids);
 
         self.channels.retain(|_, bucket| {
             removed += bucket.remove_ids(ids);
@@ -269,6 +286,7 @@ impl FilterIndex {
         let mut filters: Vec<Filter> = self
             .channels
             .values()
+            .chain(std::iter::once(&self.all_channels))
             .flat_map(HostIndex::filters)
             .cloned()
             .collect();
@@ -281,9 +299,10 @@ impl FilterIndex {
     /// The buckets a lookup in `channel` consults: the channel's own filters and the filters
     /// applying to all channels.
     fn buckets(&self, channel: &str) -> impl Iterator<Item = &HostIndex> {
-        let key = channel.to_lowercase();
+        let key = channel_key(channel);
+        let all_channels = (!self.all_channels.is_empty()).then_some(&self.all_channels);
 
-        [self.channels.get(&Some(key)), self.channels.get(&None)]
+        [self.channels.get(key.as_ref()), all_channels]
             .into_iter()
             .flatten()
     }
@@ -294,11 +313,12 @@ impl FilterIndex {
             return false;
         }
 
-        let host = url.host_str().map(str::to_lowercase);
+        // `Url::host_str` is already lowercased for http(s) URLs, so it is used as-is.
+        let host = url.host_str();
 
         if self
             .buckets(channel)
-            .any(|bucket| bucket.matches(host.as_deref(), sender, url))
+            .any(|bucket| bucket.matches(host, sender, url))
         {
             trace!(url.full = %RedactedUrl::from_url(url), "message matches a filter");
 
@@ -431,6 +451,57 @@ mod tests {
 
         assert!(matches(&all_channels, "#foo", "https://dr.dk"));
         assert!(matches(&all_channels, "#bar", "https://dr.dk"));
+    }
+
+    #[test]
+    fn uppercase_channel_lookups_match_case_insensitively() {
+        let url: Url = "https://dr.dk".parse().unwrap();
+        let sender = Some(Sender::new("nick", "user", "host.example"));
+
+        let index = index_with(&[
+            NewFilter {
+                nickname: Some("nick".into()),
+                ..new_filter(Some("#MixedCase"), None)
+            },
+            new_filter(Some("#MIXEDCASE"), Some("dr.dk")),
+        ]);
+
+        for channel in ["#mixedcase", "#MIXEDCASE", "#MixedCase"] {
+            assert!(index.matches(channel, sender, &url), "for {channel}");
+            assert!(index.ignores(channel, sender), "for {channel}");
+        }
+
+        assert!(!index.matches("#other", sender, &url));
+        assert!(!index.ignores("#other", sender));
+    }
+
+    #[test]
+    fn uppercase_url_hosts_match_without_lowercasing() {
+        let exact = index_with(&[new_filter(None, Some("imdb.com"))]);
+
+        assert!(exact.matches(
+            "#chan",
+            None,
+            &"https://IMDB.COM/title/tt1".parse().unwrap()
+        ));
+        assert!(exact.matches(
+            "#chan",
+            None,
+            &"HTTPS://ImDb.CoM/title/tt1".parse().unwrap()
+        ));
+
+        let wildcard = index_with(&[new_filter(None, Some("*.IMDB.com"))]);
+
+        assert!(wildcard.matches(
+            "#chan",
+            None,
+            &"https://WWW.IMDB.COM/title/tt1".parse().unwrap()
+        ));
+        assert!(!wildcard.matches(
+            "#chan",
+            None,
+            &"https://WWW.EXAMPLE.COM/title/tt1".parse().unwrap()
+        ));
     }
 
     #[test]
@@ -726,8 +797,12 @@ mod tests {
 
         let url: Url = "https://unmatched.example/some/path".parse().unwrap();
         let sender = Sender::new("someone", "user", "host.example");
-        let matches = measure(|| index.matches("#chan-0", Some(sender), &url));
-        let ignores = measure(|| index.ignores("#chan-0", Some(sender)));
+        // Keep the inputs opaque: with literals the compiler can constant-fold the lowercasing
+        // a real lookup does, hiding the allocation the benchmark is meant to measure.
+        let channel = black_box("#chan-0");
+        let url = black_box(&url);
+        let matches = measure(|| index.matches(channel, Some(sender), url));
+        let ignores = measure(|| index.ignores(channel, Some(sender)));
 
         println!(
             "{} channels, {} filters: matches {matches:.0} ns/op, ignores {ignores:.0} ns/op",
