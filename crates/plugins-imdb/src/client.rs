@@ -139,9 +139,9 @@ impl GraphQlClient {
     ///
     /// Returns [`Error::NotFound`] if no title exists with the given id, and request or
     /// deserialization errors as appropriate.
-    #[instrument(name = "imdb.title", skip(self), fields(imdb.title.id = %id))]
+    #[instrument(name = "imdb.title", skip_all, fields(imdb.title.id = %id))]
     pub async fn title(&self, id: &str) -> Result<Title, Error> {
-        debug!(imdb.title.id = %id, "fetching title details");
+        debug!("fetching title details");
 
         let data: TitleData = self
             .execute(GET_TITLE_QUERY, json!({ "id": id }), "GetTitle")
@@ -156,9 +156,9 @@ impl GraphQlClient {
     ///
     /// Returns [`Error::NotFound`] if no person exists with the given id, and request or
     /// deserialization errors as appropriate.
-    #[instrument(name = "imdb.person", skip(self), fields(imdb.person.id = %id))]
+    #[instrument(name = "imdb.person", skip_all, fields(imdb.person.id = %id))]
     pub async fn person(&self, id: &str) -> Result<Person, Error> {
-        debug!(imdb.person.id = %id, "fetching person details");
+        debug!("fetching person details");
 
         let data: NameData = self
             .execute(GET_NAME_QUERY, json!({ "id": id }), "GetName")
@@ -175,9 +175,9 @@ impl GraphQlClient {
     /// # Errors
     ///
     /// Returns request or deserialization errors as appropriate.
-    #[instrument(name = "imdb.search", skip(self), fields(search.query = %query))]
+    #[instrument(name = "imdb.search", skip_all, fields(search.query = %query))]
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, Error> {
-        debug!(search.query = %query, search.limit = %limit, "searching for titles");
+        debug!(search.limit = %limit, "searching for titles");
 
         let data: SearchData = self
             .execute(

@@ -434,7 +434,6 @@ impl Unwall {
                     }
                     Err(error) => {
                         warn!(
-                            url.full = %RedactedUrl::from_url(&article),
                             exception.message = %error,
                             "could not unwall the article"
                         );

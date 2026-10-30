@@ -106,7 +106,10 @@ impl OfnService {
                     Ok(Recorded::Inserted)
                 }
                 Err(error) => {
-                    error!("could not insert youtube record: {error}");
+                    error!(
+                        exception.message = %error,
+                        "could not insert youtube record"
+                    );
 
                     Ok(Recorded::Failed)
                 }
@@ -123,12 +126,15 @@ impl OfnService {
 
         match self.repo.insert_url(&insert).await {
             Ok(()) => {
-                debug!(?origin, url.full = %RedactedUrl::from_url(url), "inserted url record");
+                debug!(url.full = %RedactedUrl::from_url(url), "inserted url record");
 
                 Ok(Recorded::Inserted)
             }
             Err(error) => {
-                error!("could not insert url record: {error}");
+                error!(
+                    exception.message = %error,
+                    "could not insert url record"
+                );
 
                 Ok(Recorded::Failed)
             }

@@ -17,7 +17,6 @@ use url::Url;
 
 use zeta_http as http;
 use zeta_http::emulated::ResponseError;
-use zeta_url::RedactedUrl;
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
@@ -249,7 +248,6 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
     // the response.
     if let Err(error) = reader.await {
         warn!(
-            url.full = %RedactedUrl::from_url(url),
             exception.message = %error,
             "reader task failed"
         );

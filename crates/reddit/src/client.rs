@@ -111,7 +111,7 @@ impl Client {
             .build()
             .map_err(|error| Error::BuildClient(error.into()))?;
 
-        debug!("using client id {client_id}");
+        debug!(reddit.client.id = %client_id, "using client id");
 
         Ok(Self {
             http,
@@ -156,7 +156,7 @@ impl Client {
         Ok(new_token)
     }
 
-    #[instrument(name = "reddit.auth", skip(self))]
+    #[instrument(name = "reddit.auth", skip_all)]
     async fn request_access_token(&self) -> Result<AccessTokenResponse, Error> {
         let request = self
             .http
@@ -249,9 +249,9 @@ impl Client {
     ///
     /// Returns an error if the access token cannot be obtained, the request fails, the
     /// submission does not exist, or the response cannot be parsed as a submission.
-    #[instrument(name = "reddit.submission", skip(self))]
+    #[instrument(name = "reddit.submission", skip_all, fields(reddit.submission.id = %article))]
     pub async fn submission(&self, article: &str) -> Result<Submission, Error> {
-        debug!(reddit.submission.id = %article, "requesting submission");
+        debug!("requesting submission");
 
         let request = self.authorized_get(&format!("/by_id/t3_{article}")).await?;
         let item = self
@@ -279,16 +279,15 @@ impl Client {
     /// Returns [`Error::VideoRedirect`] if the video link does not redirect,
     /// [`Error::VideoRedirectsToNonSubmission`] if it redirects to something other than a
     /// submission, or any error from fetching the submission itself.
-    #[instrument(name = "reddit.video", skip(self))]
+    #[instrument(name = "reddit.video", skip_all, fields(media.id = %id))]
     pub async fn video(&self, id: &str) -> Result<Submission, Error> {
-        debug!(media.id = %id, "requesting video redirect location");
+        debug!("requesting video redirect location");
 
         let url = self
             .get_redirect_location(&format!("{BASE_URL}/video/{id}"))
             .await
             .inspect_err(|error| {
                 debug!(
-                    media.id = %id,
                     exception.message = %error,
                     "the video link did not redirect"
                 );
@@ -307,9 +306,9 @@ impl Client {
     ///
     /// Returns an error if the access token cannot be obtained, the request fails, the
     /// subreddit does not exist, or the response cannot be parsed as a subreddit.
-    #[instrument(name = "reddit.subreddit", skip(self))]
+    #[instrument(name = "reddit.subreddit", skip_all, fields(reddit.subreddit.name = %name))]
     pub async fn subreddit_about_info(&self, name: &str) -> Result<Subreddit, Error> {
-        debug!(reddit.subreddit.name = %name, "requesting subreddit details");
+        debug!("requesting subreddit details");
 
         let request = self.authorized_get(&format!("/r/{name}/about")).await?;
         let item = self

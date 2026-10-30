@@ -153,7 +153,7 @@ impl AlertPlugin {
                         &alert.channel,
                         format!("{}: {}", alert.nickname, alert.message),
                     ) {
-                        error!(exception.message = ?err, alert.id = alert.id, "could not deliver alert");
+                        error!(exception.message = ?err, "could not deliver alert");
                     }
                 }
                 .instrument(span)

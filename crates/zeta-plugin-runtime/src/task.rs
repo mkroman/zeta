@@ -48,11 +48,7 @@ impl PluginTask {
             // above closed before this one fires.
             let failed_to_load = async {
                 if let Err(error) = plugin.loaded(&ctx, &client).await {
-                    warn!(
-                        zeta.plugin.name = %name,
-                        exception.message = %error,
-                        "plugin failed to load"
-                    );
+                    warn!(exception.message = %error, "plugin failed to load");
 
                     true
                 } else {
@@ -77,6 +73,9 @@ impl PluginTask {
                 // event waited in the mailbox.
                 async {
                     if let Err(error) = handle_event(plugin.as_ref(), &ctx, &client, &event).await {
+                        // The handler span is `.or_current()`: when it is filtered out, the
+                        // fallback `irc.dispatch` span does not carry the plugin name, so the
+                        // error event keeps it.
                         error!(
                             zeta.plugin.name = %name,
                             exception.message = %error,
@@ -100,11 +99,7 @@ impl PluginTask {
 
             async {
                 if let Err(error) = plugin.shutdown(&ctx, &client).await {
-                    warn!(
-                        zeta.plugin.name = %name,
-                        exception.message = %error,
-                        "plugin error during shutdown"
-                    );
+                    warn!(exception.message = %error, "plugin error during shutdown");
                 }
             }
             .instrument(span)

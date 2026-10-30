@@ -207,7 +207,7 @@ impl S3 {
 
     /// Issues the signed `HEAD` request [`object_exists`](Self::object_exists) is built on.
     async fn head_object(&self, key: &str) -> Result<bool, Error> {
-        debug!(aws.s3.key = %key, "checking if object exists");
+        debug!("checking if object exists");
 
         let url = self.object_url(key)?;
         let headers = self.signing_headers("HEAD", &url, SignableBody::empty())?;
@@ -257,11 +257,7 @@ impl S3 {
 
     /// Issues the signed `PUT` request [`upload_file`](Self::upload_file) is built on.
     async fn put_file(&self, path: &Path, key: &str) -> Result<(), Error> {
-        debug!(
-            aws.s3.key = %key,
-            file.path = %path.display(),
-            "uploading file to s3"
-        );
+        debug!("uploading file to s3");
 
         let length = tokio::fs::metadata(path).await?.len();
         let digest = sha256_file(path).await?;

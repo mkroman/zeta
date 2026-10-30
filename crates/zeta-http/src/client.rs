@@ -84,15 +84,20 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
 /// Logs a failed request once, when the error names its URL, and returns the error.
 fn log_request_failure(error: RequestError) -> RequestError {
     if let Some(url) = error.url() {
-        log_request_error(&error, url, "request failed");
+        log_request_error(&error, url);
     }
 
     error
 }
 
 /// Logs a failed request once, with its redacted URL and error type.
-fn log_request_error(error: &RequestError, url: &RedactedUrl, message: &str) {
-    error!(url.full = %url, error.type = error.error_type(), exception.message = %error.full(), "{message}");
+fn log_request_error(error: &RequestError, url: &RedactedUrl) {
+    error!(
+        url.full = %url,
+        error.type = error.error_type(),
+        exception.message = %error.full(),
+        "request failed"
+    );
 }
 
 /// Returns a default HTTP client configured by [`HttpConfig`].

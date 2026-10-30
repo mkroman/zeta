@@ -267,7 +267,7 @@ impl EventIndex {
         // do not trigger, their messages are not delivered to message subscribers, and their
         // URLs are not dispatched.
         if filters.ignores(target, sender) {
-            debug!(irc.channel = %target, "ignoring filtered sender");
+            debug!("ignoring filtered sender");
 
             return;
         }

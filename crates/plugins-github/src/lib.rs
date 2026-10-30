@@ -98,7 +98,7 @@ impl GitHubPlugin {
         let channel = command.channel();
         let query = command.args().trim();
 
-        debug!(search.query = %query, irc.channel = %channel, "searching github");
+        debug!(search.query = %query, "searching github");
 
         reply_lookup(
             client,

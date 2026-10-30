@@ -277,7 +277,6 @@ impl Manager {
 
         span.in_scope(|| {
             debug!(
-                media.id = %media_id,
                 zeta.download.id = %id,
                 file.path = %path.display(),
                 "starting download"
@@ -324,7 +323,6 @@ impl Manager {
                 if let Some(active) = self.active.get(&id) {
                     active.span.in_scope(|| {
                         trace!(
-                            media.id = %active.request.id,
                             percent = ?progress.fraction().map(|fraction| format!("{:.0}%", fraction * 100.0)),
                             ?progress,
                             "download progress"
@@ -347,7 +345,6 @@ impl Manager {
         if let Err(error) = &result {
             span.in_scope(|| {
                 warn!(
-                    media.id = %active.request.id,
                     exception.message = %error,
                     "could not download media"
                 );
@@ -388,7 +385,6 @@ impl Manager {
                 Ok(link) => Ok(link),
                 Err(err) => {
                     error!(
-                        media.id = %id,
                         exception.message = %err,
                         "could not upload the downloaded media"
                     );
@@ -433,7 +429,6 @@ impl Manager {
         for file in files {
             if file.is_unsupported_codec() {
                 warn!(
-                    media.id = id,
                     vcodec = ?file.vcodec,
                     "the media is in a format that isn't supported by browsers"
                 );

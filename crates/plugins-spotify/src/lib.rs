@@ -219,7 +219,7 @@ impl Spotify {
                     .await
             }
             _ => {
-                debug!("Unsupported spotify type: {}", type_str);
+                debug!(spotify.resource.type = %type_str, "unsupported spotify type");
                 Ok(())
             }
         }
@@ -405,7 +405,7 @@ impl Spotify {
 }
 
 fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), ZetaError> {
-    warn!("Spotify error: {}", error);
+    warn!(exception.message = %error, "spotify error");
     if let http::ApiError::Status { status, .. } = error
         && *status == reqwest::StatusCode::NOT_FOUND
     {

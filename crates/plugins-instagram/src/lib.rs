@@ -331,8 +331,9 @@ impl Instagram {
             Err(error) => {
                 debug!(
                     instagram.media.id = %id,
+                    instagram.resource = %label,
                     exception.message = %error,
-                    "could not fetch {label} details"
+                    "could not fetch details"
                 );
 
                 None
@@ -443,8 +444,9 @@ impl Instagram {
             Err(error) => {
                 debug!(
                     instagram.media.id = %id,
+                    instagram.resource = %context,
                     exception.message = %error,
-                    "the {context} request failed"
+                    "instagram request failed"
                 );
 
                 *failed = true;

@@ -175,7 +175,6 @@ impl Titles {
                     Ok(metadata) => metadata,
                     Err(error) => {
                         warn!(
-                            url.full = %RedactedUrl::from_url(&url),
                             exception.message = %error,
                             "could not fetch page metadata"
                         );
