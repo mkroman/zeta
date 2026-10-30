@@ -45,7 +45,8 @@ impl PluginTask {
 
             // The load and shutdown hooks run inside spans for the same reason the handler
             // does: without a span, their warnings only ever reach stdout — the `loaded` span
-            // above closed before this one fires.
+            // above closed before this one fires. The exported name carries the plugin name so
+            // one span per plugin stays readable in the trace view.
             let failed_to_load = async {
                 if let Err(error) = plugin.loaded(&ctx, &client).await {
                     warn!(exception.message = %error, "plugin failed to load");
@@ -57,6 +58,7 @@ impl PluginTask {
             }
             .instrument(tracing::info_span!(
                 "zeta.plugin.load",
+                otel.name = %format!("zeta.plugin.load {name}"),
                 zeta.plugin.name = %name
             ))
             .await;
@@ -93,11 +95,18 @@ impl PluginTask {
             // in the plugin's own task, but the explicit parent keeps the shutdown in one
             // trace.
             let span = shutdown_span.get().map_or_else(
-                || tracing::info_span!("zeta.plugin.shutdown", zeta.plugin.name = %name),
+                || {
+                    tracing::info_span!(
+                        "zeta.plugin.shutdown",
+                        otel.name = %format!("zeta.plugin.shutdown {name}"),
+                        zeta.plugin.name = %name
+                    )
+                },
                 |shutdown| {
                     tracing::info_span!(
                         parent: shutdown,
                         "zeta.plugin.shutdown",
+                        otel.name = %format!("zeta.plugin.shutdown {name}"),
                         zeta.plugin.name = %name
                     )
                 },

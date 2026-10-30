@@ -46,8 +46,15 @@ impl Subscriber {
         // trace. The span also covers the time the event waits in the mailbox. `or_current`
         // falls back to the dispatch span when the handler span is disabled by the filter, so
         // the handler logs still have a trace context.
+        //
+        // The exported name carries the bounded discriminator — plugin and event kind — so a
+        // trace with one handler span per subscriber stays readable without opening each span.
+        // The `tracing` name stays `zeta.event.handle` for filtering and metrics.
+        let name = format!("zeta.event.handle {} {}", self.name, event.kind_name());
+
         let span = tracing::info_span!(
             "zeta.event.handle",
+            otel.name = %name,
             otel.kind = "consumer",
             zeta.plugin.name = %self.name,
             zeta.event.kind = event.kind_name(),
@@ -332,6 +339,7 @@ mod tests {
     use std::sync::{Arc, Mutex, OnceLock};
 
     use tracing::Subscriber;
+    use tracing::field::{Field, Visit};
     use tracing::span::{Attributes, Id};
     use tracing_subscriber::layer::{Context, Layer};
     use tracing_subscriber::prelude::*;
@@ -796,22 +804,46 @@ mod tests {
         assert_eq!(stopped, ["dig"]);
     }
 
-    /// The `(span name, parent span id)` pairs recorded in creation order; a root span has no
-    /// parent.
-    type RecordedSpans = Arc<Mutex<Vec<(String, Option<Id>)>>>;
+    /// One span as the recorder observed it.
+    #[derive(Clone, Debug)]
+    struct RecordedSpan {
+        /// The span's static name.
+        name: String,
+        /// The span that was current when this one was created; a root has no parent.
+        parent: Option<Id>,
+        /// The span's `otel.name` field, when it declared one.
+        otel_name: Option<String>,
+    }
 
-    /// Records every span created while it is installed, with the span that was current when it
-    /// was created as its parent.
+    /// Records every span created while it is installed.
     #[derive(Clone, Default)]
-    struct SpanRecorder(RecordedSpans);
+    struct SpanRecorder(Arc<Mutex<Vec<RecordedSpan>>>);
 
     impl SpanRecorder {
         /// Returns a copy of the spans recorded so far.
-        fn spans(&self) -> Vec<(String, Option<Id>)> {
+        fn spans(&self) -> Vec<RecordedSpan> {
             self.0
                 .lock()
                 .expect("span recorder should not be poisoned")
                 .clone()
+        }
+    }
+
+    /// Collects the `otel.name` field of a span, rendered as its exported name.
+    #[derive(Default)]
+    struct OtelName(Option<String>);
+
+    impl Visit for OtelName {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            if field.name() == "otel.name" {
+                self.0 = Some(value.to_owned());
+            }
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "otel.name" {
+                self.0 = Some(format!("{value:?}"));
+            }
         }
     }
 
@@ -826,8 +858,15 @@ mod tests {
                 None
             };
 
+            let mut otel_name = OtelName::default();
+            attrs.record(&mut otel_name);
+
             let mut spans = self.0.lock().expect("span recorder should not be poisoned");
-            spans.push((attrs.metadata().name().to_owned(), parent));
+            spans.push(RecordedSpan {
+                name: attrs.metadata().name().to_owned(),
+                parent,
+                otel_name: otel_name.0,
+            });
         }
     }
 
@@ -882,23 +921,26 @@ mod tests {
 
             let spans = recorder.spans();
 
-            let handler_parent = spans
+            let handler = spans
                 .iter()
-                .find_map(|(name, parent)| (name == "zeta.event.handle").then_some(parent))
+                .find(|span| span.name == "zeta.event.handle")
                 .unwrap_or_else(|| panic!("zeta.event.handle should be recorded: {spans:?}"));
             assert_eq!(
-                handler_parent,
-                &Some(dispatch_id),
+                handler.parent,
+                Some(dispatch_id),
                 "zeta.event.handle must be a child of irc.dispatch, recorded: {spans:?}"
             );
-            assert!(
-                handler_parent.is_some(),
-                "zeta.event.handle must not be a root span"
+            // The exported name carries the plugin and event kind, so the span is identifiable
+            // in the trace view without opening it.
+            assert_eq!(
+                handler.otel_name.as_deref(),
+                Some("zeta.event.handle dig command"),
+                "recorded: {spans:?}"
             );
 
             let dispatch_parent = spans
                 .iter()
-                .find_map(|(name, parent)| (name == "irc.dispatch").then_some(parent))
+                .find_map(|span| (span.name == "irc.dispatch").then_some(&span.parent))
                 .expect("irc.dispatch should be recorded");
             assert!(
                 dispatch_parent.is_none(),
