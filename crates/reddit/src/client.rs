@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{debug, instrument, trace};
 use url::Url;
 use zeta_url::RedactedUrl;
 
@@ -20,16 +20,18 @@ use crate::{
     Submission, Subreddit, TOKEN_URL, USER_AGENT,
 };
 
-/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
-/// URL without its query, so a logged error never carries a credential from the query string.
+/// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string.
+///
+/// The failed request is logged once with its redacted URL and error type: the caller reports
+/// the short rendering, so this is the only line that names the request.
 fn request_error(error: reqwest::Error) -> RequestError {
     let error = RequestError::from(error);
 
     if let Some(url) = error.url() {
-        error!(
+        debug!(
             url.full = %url,
             error.type = error.error_type(),
-            error = %error.full(),
+            exception.message = %error.full(),
             "request failed"
         );
     }
@@ -123,7 +125,7 @@ impl Client {
             .build()
             .map_err(|error| Error::BuildClient(error.into()))?;
 
-        debug!("using client id {client_id}");
+        debug!(reddit.client.id = %client_id, "using client id");
 
         Ok(Self {
             http,
@@ -168,7 +170,7 @@ impl Client {
         Ok(new_token)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(name = "reddit.auth", skip_all)]
     async fn request_access_token(&self) -> Result<AccessTokenResponse, Error> {
         let request = self
             .http
@@ -182,11 +184,7 @@ impl Client {
         let access_token = response
             .json::<AccessTokenResponse>()
             .await
-            .map_err(|error| {
-                let error = RequestError::from(error);
-                error!("auth token response is invalid: {error}");
-                Error::InvalidAuthTokenResponse(error)
-            })?;
+            .map_err(|error| Error::InvalidAuthTokenResponse(RequestError::from(error)))?;
 
         Ok(access_token)
     }
@@ -223,7 +221,11 @@ impl Client {
                     .inspect_err(|err| {
                         let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
 
-                        error!(?err, body = %body, "could not parse response");
+                        debug!(
+                            exception.message = ?err,
+                            http.response.body = %body,
+                            "could not parse response"
+                        );
                     })
                     .map_err(on_parse)?;
 
@@ -231,7 +233,7 @@ impl Client {
             }
             Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
                 let err = RequestError::from(err);
-                info!(%err, "resource not found");
+                debug!(exception.message = %err, "resource not found");
 
                 Ok(None)
             }
@@ -261,9 +263,9 @@ impl Client {
     ///
     /// Returns an error if the access token cannot be obtained, the request fails, the
     /// submission does not exist, or the response cannot be parsed as a submission.
-    #[instrument(skip(self))]
+    #[instrument(name = "reddit.submission", skip_all, fields(reddit.submission.id = %article))]
     pub async fn submission(&self, article: &str) -> Result<Submission, Error> {
-        debug!(%article, "requesting submission");
+        debug!("requesting submission");
 
         let request = self.authorized_get(&format!("/by_id/t3_{article}")).await?;
         let item = self
@@ -291,14 +293,19 @@ impl Client {
     /// Returns [`Error::VideoRedirect`] if the video link does not redirect,
     /// [`Error::VideoRedirectsToNonSubmission`] if it redirects to something other than a
     /// submission, or any error from fetching the submission itself.
-    #[instrument(skip(self))]
+    #[instrument(name = "reddit.video", skip_all, fields(media.id = %id))]
     pub async fn video(&self, id: &str) -> Result<Submission, Error> {
-        debug!(%id, "requesting video redirect location");
+        debug!("requesting video redirect location");
 
         let url = self
             .get_redirect_location(&format!("{BASE_URL}/video/{id}"))
             .await
-            .inspect_err(|error| debug!(%id, %error, "the video link did not redirect"))
+            .inspect_err(|error| {
+                debug!(
+                    exception.message = %error,
+                    "the video link did not redirect"
+                );
+            })
             .map_err(|_| Error::VideoRedirect)?;
 
         match classify_reddit_com_url(&url) {
@@ -313,9 +320,9 @@ impl Client {
     ///
     /// Returns an error if the access token cannot be obtained, the request fails, the
     /// subreddit does not exist, or the response cannot be parsed as a subreddit.
-    #[instrument(skip(self))]
+    #[instrument(name = "reddit.subreddit", skip_all, fields(reddit.subreddit.name = %name))]
     pub async fn subreddit_about_info(&self, name: &str) -> Result<Subreddit, Error> {
-        debug!(%name, "requesting subreddit details");
+        debug!("requesting subreddit details");
 
         let request = self.authorized_get(&format!("/r/{name}/about")).await?;
         let item = self
@@ -337,7 +344,11 @@ impl Client {
     /// Returns an error if the request fails, the link does not redirect, or the redirect
     /// target is not a comment or submission link.
     pub async fn resolve_shortened_link(&self, subreddit: &str, id: &str) -> Result<Link, Error> {
-        debug!(%subreddit, %id, "requesting short link to find redirect location");
+        debug!(
+            reddit.subreddit.name = %subreddit,
+            reddit.shortlink.id = %id,
+            "requesting short link to find redirect location"
+        );
         let url = self
             .get_redirect_location(&format!("{BASE_URL}/r/{subreddit}/s/{id}"))
             .await?;

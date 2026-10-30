@@ -97,16 +97,19 @@ impl OfnService {
                 network_id: origin.network.to_owned(),
             };
 
-            debug!(%video_id, "inserting youtube record");
+            debug!(media.id = %video_id, "inserting youtube record");
 
             return match self.repo.insert_youtube_video(&insert).await {
                 Ok(()) => {
-                    debug!(?origin, %video_id, "inserted youtube record");
+                    debug!(?origin, media.id = %video_id, "inserted youtube record");
 
                     Ok(Recorded::Inserted)
                 }
                 Err(error) => {
-                    error!("could not insert youtube record: {error}");
+                    error!(
+                        exception.message = %error,
+                        "could not insert youtube record"
+                    );
 
                     Ok(Recorded::Failed)
                 }
@@ -123,12 +126,15 @@ impl OfnService {
 
         match self.repo.insert_url(&insert).await {
             Ok(()) => {
-                debug!(?origin, url.full = %RedactedUrl::from_url(url), "inserted url record");
+                debug!(url.full = %RedactedUrl::from_url(url), "inserted url record");
 
                 Ok(Recorded::Inserted)
             }
             Err(error) => {
-                error!("could not insert url record: {error}");
+                error!(
+                    exception.message = %error,
+                    "could not insert url record"
+                );
 
                 Ok(Recorded::Failed)
             }

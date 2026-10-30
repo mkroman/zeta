@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use irc::client::prelude::Client;
-use tracing::{Instrument, debug, info, warn};
+use tracing::{Instrument, error, info, trace, warn};
 
 use crate::Error;
 use crate::config::Config;
@@ -60,7 +60,8 @@ async fn shutdown_signal() -> ShutdownSignal {
     }
 
     if tokio::signal::ctrl_c().await.is_err() {
-        warn!("failed to install the SIGINT listener; shutting down anyway");
+        tracing::warn_span!("zeta.signal.install")
+            .in_scope(|| warn!("failed to install the SIGINT listener; shutting down anyway"));
     }
 
     ShutdownSignal::Interrupt
@@ -84,16 +85,44 @@ fn drive_outgoing(client: &mut Client) -> tokio::task::JoinHandle<()> {
         .outgoing()
         .expect("the outgoing future is only available before the stream is taken");
 
-    // The span keeps the write-path failure visible: events outside a span are dropped by the
-    // OpenTelemetry layer.
-    tokio::spawn(
-        async move {
-            if let Err(error) = outgoing.await {
-                warn!(%error, "the IRC connection write path failed");
-            }
+    // The failure gets a short span of its own: a task-lifetime span would never be exported
+    // until shutdown, and the OpenTelemetry layer needs a current span for the message.
+    tokio::spawn(async move {
+        if let Err(error) = outgoing.await {
+            let span = tracing::error_span!("irc.outgoing.error");
+            span.in_scope(
+                || error!(exception.message = %error, "the IRC connection write path failed"),
+            );
         }
-        .instrument(tracing::info_span!("irc_outgoing")),
-    )
+    })
+}
+
+/// Returns the IRC command name for telemetry.
+fn command_name(command: &irc::proto::Command) -> &str {
+    match command {
+        irc::proto::Command::PRIVMSG(..) => "PRIVMSG",
+        irc::proto::Command::NOTICE(..) => "NOTICE",
+        irc::proto::Command::JOIN(..) => "JOIN",
+        irc::proto::Command::PART(..) => "PART",
+        irc::proto::Command::QUIT(..) => "QUIT",
+        irc::proto::Command::NICK(..) => "NICK",
+        irc::proto::Command::KICK(..) => "KICK",
+        irc::proto::Command::ERROR(..) => "ERROR",
+        irc::proto::Command::Raw(name, _) => name,
+        _ => "OTHER",
+    }
+}
+
+/// Returns the channel a message targets, when it has one.
+fn message_channel(command: &irc::proto::Command) -> Option<&str> {
+    match command {
+        irc::proto::Command::PRIVMSG(target, _)
+        | irc::proto::Command::NOTICE(target, _)
+        | irc::proto::Command::JOIN(target, ..)
+        | irc::proto::Command::PART(target, ..)
+        | irc::proto::Command::KICK(target, ..) => Some(target),
+        _ => None,
+    }
 }
 
 /// Dispatches incoming IRC messages as events to the plugins that registered interest, until
@@ -112,11 +141,37 @@ async fn dispatch_messages(
 
     while let Some(message) = stream.next().await.transpose()? {
         // Everything logged while this message is routed runs inside a span: the
-        // OpenTelemetry layer drops events that are not in the context of a span, so without
-        // it the routing logs would only ever reach stdout. The span is at info level, not
-        // debug, because the loop below logs warnings: an `info` filter must not be what
-        // keeps them out of the backend.
-        let _dispatch = tracing::info_span!("dispatch").entered();
+        // OpenTelemetry layer drops events that are not in the context of a span. Only the
+        // commands `EventIndex` routes get one — PING, PONG and numerics would otherwise
+        // produce a trace with no children. `ERROR` is included because the disconnect reason
+        // is logged below. The span is at info level, not debug, because the loop below logs
+        // warnings: an `info` filter must not be what keeps them out of the backend.
+        let routed = matches!(
+            &message.command,
+            irc::proto::Command::PRIVMSG(..)
+                | irc::proto::Command::NOTICE(..)
+                | irc::proto::Command::JOIN(..)
+                | irc::proto::Command::PART(..)
+                | irc::proto::Command::QUIT(..)
+                | irc::proto::Command::NICK(..)
+                | irc::proto::Command::KICK(..)
+                | irc::proto::Command::Raw(..)
+                | irc::proto::Command::ERROR(..)
+        );
+        let dispatch = routed.then(|| {
+            let span = tracing::info_span!(
+                "irc.dispatch",
+                irc.command = command_name(&message.command),
+                irc.channel = tracing::field::Empty,
+            );
+
+            if let Some(channel) = message_channel(&message.command) {
+                span.record("irc.channel", channel);
+            }
+
+            span
+        });
+        let _dispatch = dispatch.as_ref().map(tracing::Span::enter);
 
         // `ERROR` carries the server's reason for closing the connection. It is not a `Raw`
         // command, so without this check the reason would be dropped entirely.
@@ -128,12 +183,12 @@ async fn dispatch_messages(
             });
         }
 
-        debug!(payload = %message, "processing irc message");
+        trace!(irc.raw = %message, "processing irc message");
 
         runtime.dispatch(message);
     }
 
-    warn!("the IRC message stream ended");
+    tracing::warn_span!("irc.stream.ended").in_scope(|| warn!("the IRC message stream ended"));
 
     Err(Error::IrcDisconnected {
         reason: "the server closed the connection".to_owned(),
@@ -145,19 +200,15 @@ async fn dispatch_messages(
 /// The signal handlers stay installed after the first signal is received, so a second one
 /// resolves here instead of terminating the process with the default handler.
 fn exit_on_second_signal() {
-    tokio::spawn(
-        async move {
-            let signal = shutdown_signal().await;
+    tokio::spawn(async move {
+        let signal = shutdown_signal().await;
 
-            warn!(
-                signal = signal.name(),
-                "received a second shutdown signal; exiting now"
-            );
+        // The span closes as soon as the message is logged; the task then exits the process.
+        let span = tracing::warn_span!("zeta.signal.second", signal = signal.name());
+        span.in_scope(|| warn!("received a second shutdown signal; exiting now"));
 
-            std::process::exit(signal.exit_code());
-        }
-        .instrument(tracing::info_span!("second_signal")),
-    );
+        std::process::exit(signal.exit_code());
+    });
 }
 
 /// The main IRC bot struct that manages connection state and message handling.
@@ -200,7 +251,7 @@ impl Zeta {
                 context.shared.publish(Arc::new(mirror));
             }
             Err(error) => {
-                warn!(%error, "mirroring is disabled");
+                warn!(exception.message = %error, "mirroring is disabled");
             }
         }
 
@@ -265,7 +316,6 @@ impl Zeta {
     /// - [`Error::IrcRegistration`] - if user registration fails (e.g. if the nickname is already taken.)
     /// - [`Error::Irc`] - if a protocol or communication error occurred.
     /// - [`Error::IrcDisconnected`] - if the server closed the connection or sent `ERROR`.
-    #[tracing::instrument(name = "run", skip_all)]
     pub async fn run(mut self) -> Result<(), Error> {
         let mut client = Client::from_config((&self.config.irc).into())
             .await
@@ -301,7 +351,11 @@ impl Zeta {
                 }
             }
             signal = shutdown_signal() => {
-                info!(signal = signal.name(), "shutting down");
+                // `run` has no process-lifetime span of its own, and the OpenTelemetry layer
+                // drops events that are not in a span, so each one-off diagnostic gets a short
+                // span here.
+                tracing::info_span!("zeta.signal", signal = signal.name())
+                    .in_scope(|| info!("shutting down"));
                 shutting_down = true;
 
                 // Another signal during the grace period forces an immediate exit.
@@ -310,10 +364,10 @@ impl Zeta {
             result = &mut outgoing => {
                 outgoing_done = true;
 
-                match result {
+                tracing::warn_span!("irc.outgoing.stopped").in_scope(|| match result {
                     Ok(()) => warn!("the IRC connection write path stopped"),
-                    Err(error) => warn!(%error, "the IRC connection write path stopped"),
-                }
+                    Err(error) => warn!(exception.message = %error, "the IRC connection write path stopped"),
+                });
 
                 if dispatch_error.is_none() {
                     dispatch_error = Some(Error::IrcDisconnected {
@@ -335,10 +389,16 @@ impl Zeta {
         // dispatch future only borrows the runtime, so ending the `select!` above does not
         // close the mailboxes on its own. Draining before the QUIT lets those final replies
         // reach the server while the connection is still open.
-        runtime.shutdown(SHUTDOWN_GRACE).await;
+        // A short span for the drain; the per-plugin shutdown spans are children of this span
+        // (set explicitly from the plugin tasks), so the drain and every hook end up in one
+        // trace.
+        let shutdown = tracing::info_span!("zeta.shutdown");
+        runtime.shutdown(SHUTDOWN_GRACE).instrument(shutdown).await;
 
         if shutting_down && let Err(error) = client.send_quit(&self.config.irc.quit_message) {
-            warn!(%error, "failed to send the QUIT message");
+            tracing::warn_span!("irc.quit").in_scope(|| {
+                warn!(exception.message = %error, "failed to send the QUIT message");
+            });
         }
 
         // Dropping the stream closes the incoming half and its sender; dropping the last client
@@ -348,10 +408,15 @@ impl Zeta {
         drop(client);
 
         if shutting_down && !outgoing_done {
-            match tokio::time::timeout(QUIT_FLUSH_DELAY, &mut outgoing).await {
+            let flush = tracing::info_span!("irc.quit.flush");
+
+            match tokio::time::timeout(QUIT_FLUSH_DELAY, &mut outgoing)
+                .instrument(flush)
+                .await
+            {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    warn!(%error, "the IRC connection write path failed while flushing the QUIT message");
+                    warn!(exception.message = %error, "the IRC connection write path failed while flushing the QUIT message");
                 }
                 Err(_) => warn!("timed out flushing the QUIT message"),
             }

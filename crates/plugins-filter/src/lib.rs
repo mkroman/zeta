@@ -372,7 +372,7 @@ impl FilterPlugin {
             }
         }
 
-        debug!(count = total, "added filters");
+        debug!(filter.count = total, "added filters");
 
         client.send_privmsg(channel, changed_response("Filter", "Added", &added))?;
 

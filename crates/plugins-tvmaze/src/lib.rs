@@ -154,12 +154,12 @@ impl Tvmaze {
     ///
     /// Returns [`Error::NotFound`] if no show matches the search query, and an
     /// [`Error::Api`] if the request fails or the response cannot be handled.
-    #[instrument(skip(self))]
+    #[instrument(name = "tvmaze.search", skip_all, fields(search.query = %name))]
     pub async fn single_search(&self, name: &str) -> Result<Show, Error> {
         let url = Self::build_search_url(name);
         debug!(
             url.full = %RedactedUrl::from_url(&url),
-            "requesting single search for show: {name}"
+            "requesting single search"
         );
 
         let show = http::get_json_or_404(self.client.get(url), Error::NotFound).await?;

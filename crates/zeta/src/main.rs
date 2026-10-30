@@ -26,17 +26,17 @@ async fn main() -> miette::Result<()> {
     // Held until `main` returns so the shutdown flushes the tracer provider's batches.
     let _telemetry = telemetry::try_init(&config.tracing)?;
 
-    // Everything after telemetry initialization runs inside one span: the OpenTelemetry layer
-    // drops events outside a span, and startup is exactly when configuration and plugin
-    // diagnostics matter most.
+    // The startup span covers configuration, database setup and plugin construction only. The
+    // process lifetime is not a span: `run` intentionally has none, so each IRC line starts its
+    // own trace instead of hanging under a weeks-long root.
     let startup_span = tracing::info_span!(
-        "startup",
+        "zeta.startup",
         config.path = %config_path.display(),
         irc.hostname = %config.irc.hostname,
         irc.nickname = %config.irc.nickname,
     );
 
-    let startup = async {
+    let zeta = async {
         #[cfg(feature = "database")]
         let db = {
             use tracing::debug;
@@ -51,16 +51,16 @@ async fn main() -> miette::Result<()> {
             db
         };
 
-        Zeta::new(
+        Ok::<_, zeta::Error>(Zeta::new(
             config,
             #[cfg(feature = "database")]
             db,
-        )
-        .run()
-        .await
-    };
+        ))
+    }
+    .instrument(startup_span)
+    .await?;
 
-    startup.instrument(startup_span).await?;
+    zeta.run().await?;
 
     Ok(())
 }

@@ -12,6 +12,7 @@ use std::fmt::{self, Display};
 
 use dendanskeordbog::DictionaryDocument;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use zeta_plugin::prelude::*;
 
@@ -129,7 +130,10 @@ impl DenDanskeOrdbog {
                 }
                 .to_string()
             },
-            plain_reply,
+            |error| {
+                warn!(exception.message = %error, "ddo lookup failed");
+                plain_reply(error)
+            },
         )
         .await?;
 

@@ -10,18 +10,20 @@ use reqwest::redirect::Policy;
 
 use crate::{DictionaryDocument, Error, RequestError};
 
-/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and, with the `log` feature,
-/// logs the failed request's URL without its query, so a logged error never carries a
-/// credential from the query string.
+/// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string.
+///
+/// With the `log` feature the failed request is logged once with its redacted URL and error
+/// type: the caller reports the short rendering, so this is the only line that names the
+/// request.
 fn request_error(error: reqwest::Error) -> RequestError {
     let error = RequestError::from(error);
 
     #[cfg(feature = "log")]
     if let Some(url) = error.url() {
-        tracing::error!(
+        tracing::debug!(
             url.full = %url,
             error.type = error.error_type(),
-            error = %error.full(),
+            exception.message = %error.full(),
             "request failed"
         );
     }

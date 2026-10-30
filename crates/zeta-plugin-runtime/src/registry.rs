@@ -86,7 +86,11 @@ impl Registry {
             let error = plugin_err(std::io::Error::other(format!(
                 "duplicate plugin registration for `{name}`"
             )));
-            error!(plugin = %name, %error, "duplicate plugin registration");
+            error!(
+                zeta.plugin.name = %name,
+                exception.message = %error,
+                "duplicate plugin registration"
+            );
 
             if !self
                 .failed_plugins
@@ -101,7 +105,7 @@ impl Registry {
 
         match (registration.construct)(ctx, section) {
             Ok(loaded) => {
-                debug!(plugin = %loaded.name, "registered plugin");
+                debug!(zeta.plugin.name = %loaded.name, "registered plugin");
                 self.plugins.push(loaded);
 
                 true
@@ -112,7 +116,11 @@ impl Registry {
 
     /// Records a plugin initialization failure and reports it.
     fn fail(&mut self, name: &'static str, error: Error) -> bool {
-        warn!(plugin = %name, %error, "failed to initialize plugin");
+        warn!(
+            zeta.plugin.name = %name,
+            exception.message = %error,
+            "failed to initialize plugin"
+        );
         self.failed_plugins.push((name, error));
 
         false

@@ -123,7 +123,7 @@ impl Thingiverse {
                 Ok(thing) => labeled_reply("Thingiverse", thing.to_string()),
                 Err(Error::NotFound) => labeled_reply("Thingiverse", "Thing not found"),
                 Err(e) => {
-                    warn!(error = ?e, "thingiverse api error");
+                    warn!(exception.message = ?e, "thingiverse api error");
                     labeled_reply("Thingiverse", e)
                 }
             };

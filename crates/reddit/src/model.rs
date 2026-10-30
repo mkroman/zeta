@@ -242,7 +242,11 @@ mod tests {
                     .take(crate::LOGGED_BODY_LENGTH)
                     .collect::<String>();
 
-                error!(?err, body = %body, "could not parse comments response");
+                error!(
+                    exception.message = ?err,
+                    http.response.body = %body,
+                    "could not parse comments response"
+                );
             })?;
 
         // The response is the submission listing followed by the comment listing.

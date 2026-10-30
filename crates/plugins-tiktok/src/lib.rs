@@ -12,7 +12,7 @@ mod oembed;
 mod urls;
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error};
+use tracing::{debug, warn};
 use url::Url;
 
 use zeta_http as http;
@@ -114,7 +114,7 @@ impl Tiktok {
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
         if let Err(err) = self.process_url(url.url(), url.channel(), client).await {
-            error!("could not process url: {err}");
+            warn!(exception.message = %err, "could not process url");
         }
 
         Ok(())
@@ -125,12 +125,12 @@ impl Tiktok {
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
         match parse_tiktok_url(url) {
             Some(TiktokLink::Video { channel: slug, id }) => {
-                debug!(video_id = %id, "processing video");
+                debug!(media.id = %id, "processing video");
 
                 self.process_video_url(&slug, &id, channel, client).await?;
             }
             Some(TiktokLink::Shortened(short_id)) => {
-                debug!(%short_id, "resolving url for shortened url");
+                debug!(tiktok.short.id = %short_id, "resolving url for shortened url");
 
                 let resolved_url = self.resolve_redirect_url(&short_id).await?;
 
@@ -156,11 +156,11 @@ impl Tiktok {
         let url = video_url(slug, video_id);
 
         if !self.settings.post_summary && self.mirror.is_none() {
-            debug!(%video_id, "both summarizing and mirroring are disabled");
+            debug!(media.id = %video_id, "both summarizing and mirroring are disabled");
             return Ok(());
         }
 
-        debug!(%video_id, "fetching video details");
+        debug!(media.id = %video_id, "fetching video details");
         let embed = oembed::fetch(&self.client, &url).await?;
 
         if embed.is_privacy_restricted() {
@@ -187,7 +187,7 @@ impl Tiktok {
 
     /// Requests the redirect with the given id and returns the location it redirects to.
     async fn resolve_redirect_url(&self, id: &str) -> Result<Url, Error> {
-        debug!(%id, "fetching redirect url");
+        debug!(tiktok.short.id = %id, "fetching redirect url");
         let response = http::send(self.client.get(short_url(id))).await?;
 
         let location = response

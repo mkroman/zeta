@@ -70,7 +70,11 @@ impl AlertRepository {
     /// Returns [`Error::Load`] if the alerts could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "alerts")]
     pub async fn list_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
-        trace!(channel, nickname, "loading pending alerts from database");
+        trace!(
+            irc.channel = %channel,
+            irc.sender.nick = %nickname,
+            "loading pending alerts from database"
+        );
 
         sqlx::query_as(
             r"SELECT id, nickname, channel, message, time

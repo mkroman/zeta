@@ -15,6 +15,7 @@ use tracing::{debug, warn};
 
 use zeta_http as http;
 use zeta_plugin::prelude::*;
+use zeta_url::RedactedUrl;
 use zeta_utils::irc::unstyle_text;
 
 /// The base URL for the Trustpilot API.
@@ -132,7 +133,7 @@ impl Trustpilot {
             |error| match error {
                 Error::NotFound => plain_reply("No results found"),
                 Error::Api(error) => {
-                    warn!(?error, "trustpilot error");
+                    warn!(exception.message = ?error, "trustpilot error");
                     // The error is already safe for display.
                     plain_reply(error)
                 }
@@ -159,7 +160,11 @@ impl Trustpilot {
         let url = format!("{API_BASE_URL}/business-units/find");
         let params = [("name", query)];
 
-        debug!(%url, ?params, "searching trustpilot");
+        debug!(
+            url.full = %RedactedUrl::from_unparsed(&url),
+            ?params,
+            "searching trustpilot"
+        );
 
         let request = self
             .client

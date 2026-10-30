@@ -69,7 +69,7 @@ impl UnwallRepository {
     pub async fn record_fetch(&self, fetch: &NewFetch) -> Result<(), Error> {
         trace!(
             host = fetch.host,
-            channel = fetch.channel,
+            irc.channel = %fetch.channel,
             "recording the unwall fetch in database"
         );
 
@@ -144,7 +144,7 @@ impl UnwallRepository {
     #[instrument_database(operation = "DELETE", collection = "unwall_sites")]
     pub async fn delete_sites(&self, hosts: &[String]) -> Result<u64, Error> {
         trace!(
-            count = hosts.len(),
+            unwall.site.count = hosts.len(),
             "removing the unwalled sites from database"
         );
 

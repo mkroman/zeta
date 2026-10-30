@@ -221,7 +221,7 @@ impl OpenWeatherMap {
             Ok(weather) => format_weather(&weather, self.units),
             Err(Error::LocationNotFound) => plain_reply("Location not found"),
             Err(e) => {
-                warn!(error = ?e, "openweathermap error");
+                warn!(exception.message = ?e, "openweathermap error");
                 plain_reply(e)
             }
         };
@@ -245,7 +245,7 @@ impl OpenWeatherMap {
 
     /// Geocodes a location query to coordinates.
     async fn geocode(&self, query: &str) -> Result<GeocodingResult, Error> {
-        debug!(%query, "geocoding");
+        debug!(search.query = %query, "geocoding");
         let url = format!("{API_BASE_URL}/geo/1.0/direct");
         let params = [("q", query), ("limit", "1"), ("appid", &self.app_id)];
 
@@ -257,7 +257,11 @@ impl OpenWeatherMap {
 
     /// Fetches current weather data for specific coordinates.
     async fn current_weather(&self, lat: f64, lon: f64) -> Result<WeatherResponse, Error> {
-        debug!(lat, lon, "fetching current weather");
+        debug!(
+            geo.location.lat = lat,
+            geo.location.lon = lon,
+            "fetching current weather"
+        );
         let url = format!("{API_BASE_URL}/data/2.5/weather");
         let lat_s = lat.to_string();
         let lon_s = lon.to_string();

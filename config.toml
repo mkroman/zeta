@@ -469,3 +469,6 @@ name = "#zeta.dev"
 [tracing]
 # Toggle tracing
 enabled = true
+# The deployment environment reported as `deployment.environment.name`. Falls back to the
+# `ZETA_ENVIRONMENT` environment variable when unset.
+# environment = "production"

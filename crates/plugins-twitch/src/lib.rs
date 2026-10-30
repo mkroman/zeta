@@ -134,7 +134,7 @@ impl Twitch {
             };
 
             if let Err(e) = result {
-                warn!("Twitch plugin error: {}", e);
+                warn!(exception.message = %e, "twitch plugin error");
             }
         }
 

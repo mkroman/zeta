@@ -116,6 +116,11 @@ pub struct DbConfig {
 pub struct TracingConfig {
     /// Enable tracing
     pub enabled: bool,
+    /// The deployment environment reported as `deployment.environment.name`.
+    ///
+    /// Falls back to the `ZETA_ENVIRONMENT` environment variable when unset.
+    #[serde(default)]
+    pub environment: Option<String>,
 }
 
 /// Configuration for an individual IRC channel.

@@ -11,8 +11,6 @@
 //!   **`native-tls`** or **`native-tls-vendored`**.
 //! - **`gzip`**, **`brotli`**, **`deflate`**, **`zstd`** *(all enabled by default)*:
 //!   decompression of compressed responses.
-//! - **`log`**: logs each failed request with its query-free URL, so a logged error never
-//!   carries a credential.
 //!
 //! ## Quick Start
 //!

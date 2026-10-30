@@ -6,7 +6,7 @@ use scraper::{ElementRef, Html, Selector};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "log")]
-use tracing::warn;
+use tracing::debug;
 
 use crate::Error;
 use crate::parse::{FromHtml, Selectors};
@@ -166,7 +166,7 @@ impl DictionaryDocument {
                 Err(err) => {
                     // Log the error but continue processing other entries.
                     #[cfg(feature = "log")]
-                    warn!(?err, "failed to parse dictionary entry");
+                    debug!(exception.message = ?err, "failed to parse dictionary entry");
 
                     first_error.get_or_insert(err);
                 }

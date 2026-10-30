@@ -9,7 +9,7 @@ use reqwest::header::{
 use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Mutex;
-use tracing::{debug, error};
+use tracing::debug;
 
 use crate::{
     BASE_URL, ClientOptions, Error, ImageResult, RequestError, SearchResult,
@@ -19,17 +19,19 @@ use crate::{
     },
 };
 
-/// Wraps `error` in a [`RequestError`] — whose URL is redacted — and logs the failed request's
-/// URL without its query, so a logged error never carries a credential from the query string:
+/// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string:
 /// the login token is part of Kagi's query strings.
+///
+/// The failed request is logged once with its redacted URL and error type: the caller reports
+/// the short rendering, so this is the only line that names the request.
 fn request_error(error: reqwest::Error) -> RequestError {
     let error = RequestError::from(error);
 
     if let Some(url) = error.url() {
-        error!(
+        debug!(
             url.full = %url,
             error.type = error.error_type(),
-            error = %error.full(),
+            exception.message = %error.full(),
             "request failed"
         );
     }
@@ -167,7 +169,6 @@ impl Client {
             .await
             .map_err(|error| Error::RequestSession(request_error(error)))?;
         if !res.headers().contains_key(SET_COOKIE) {
-            error!("the response does not include set-cookie headers!");
             return Err(Error::SessionCookies);
         }
 

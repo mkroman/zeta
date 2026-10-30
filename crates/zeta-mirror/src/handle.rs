@@ -95,7 +95,11 @@ fn resolve_public_url_base(setting: Option<&str>, env: &str, default: &str) -> O
     match Url::parse(&value) {
         Ok(url) => Some(url),
         Err(error) => {
-            warn!(%error, %value, "invalid public url base, mirroring is disabled");
+            warn!(
+                exception.message = %error,
+                %value,
+                "invalid public url base, mirroring is disabled"
+            );
 
             None
         }

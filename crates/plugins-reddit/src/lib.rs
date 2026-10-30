@@ -10,7 +10,7 @@
 use reddit::{Link, Submission, Subreddit, URL_HOSTS};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
-use tracing::error;
+use tracing::warn;
 
 use zeta_mirror::{Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
@@ -100,7 +100,7 @@ impl Reddit {
             let _ = self
                 .process_url(link, url.channel(), client)
                 .await
-                .inspect_err(|e| error!("could not process url: {e}"));
+                .inspect_err(|e| warn!(exception.message = %e, "could not process url"));
         }
 
         Ok(())
@@ -139,7 +139,7 @@ impl Reddit {
                 match self.client.resolve_shortened_link(&subreddit, &id).await {
                     Ok(link) => {
                         if let Err(e) = Box::pin(self.process_url(link, channel, client)).await {
-                            error!("failed to process resolved link: {e}");
+                            warn!(exception.message = %e, "failed to process resolved link");
                         }
                     }
                     Err(err) => {

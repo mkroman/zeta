@@ -130,7 +130,7 @@ impl Titles {
             debug!(%scheme, url.full = %RedactedUrl::from_url(&url), "posting repaired url");
 
             if let Err(error) = client.send_privmsg(channel, plain_reply(&url)) {
-                warn!(%error, "could not send repaired url");
+                warn!(exception.message = %error, "could not send repaired url");
             }
         }
 
@@ -159,9 +159,17 @@ impl Titles {
         let settings = self.settings.clone();
 
         // The span carries the redacted URL: without it, this task's logs would only ever
-        // reach stdout.
-        let span =
-            tracing::info_span!("fetch_page_metadata", url.full = %RedactedUrl::from_url(&url));
+        // reach stdout. It is a child of the handler span, created while the handler is
+        // current, so the fetch stays in the message's trace even though the handler returns
+        // (and its span closes) first. The target stays under `zeta`: the span parents the
+        // HTTP client span, and disabling it with a plugin log filter would leave that span as
+        // a trace root of its own.
+        let span = tracing::info_span!(
+            target: "zeta.plugins",
+            parent: tracing::Span::current(),
+            "titles.fetch",
+            url.full = %RedactedUrl::from_url(&url)
+        );
 
         tokio::spawn(
             async move {
@@ -169,15 +177,14 @@ impl Titles {
                     Ok(metadata) => metadata,
                     Err(error) => {
                         warn!(
-                            url.full = %RedactedUrl::from_url(&url),
-                            %error,
+                            exception.message = %error,
                             "could not fetch page metadata"
                         );
 
                         if let Err(send_error) =
                             sender.send_privmsg(&channel, format!("{REPLY_MARKER} {error}"))
                         {
-                            warn!(%send_error, "could not send fetch error");
+                            warn!(exception.message = %send_error, "could not send fetch error");
                         }
 
                         return;
@@ -187,7 +194,7 @@ impl Titles {
                 if let Some(message) = format_page(&metadata, &url, &settings)
                     && let Err(error) = sender.send_privmsg(&channel, message)
                 {
-                    warn!(%error, "could not send page metadata");
+                    warn!(exception.message = %error, "could not send page metadata");
                 }
             }
             .instrument(span),

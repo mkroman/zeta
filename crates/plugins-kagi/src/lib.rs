@@ -143,9 +143,9 @@ impl KagiPlugin {
                     |(title, url)| labeled_reply("Kagi", format!("{title} - {url}")),
                 )
             },
-            |error| {
-                warn!(?error, "kagi search failed");
-                plain_reply(error)
+            |err| {
+                warn!(exception.message = %err, "kagi search failed");
+                plain_reply(err)
             },
         )
         .await?;

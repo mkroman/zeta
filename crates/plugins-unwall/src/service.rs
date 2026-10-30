@@ -17,7 +17,6 @@ use super::{
 };
 use zeta_cache::TtlMap;
 use zeta_plugin::database::Database;
-use zeta_url::RedactedUrl;
 
 /// How long a submitted article stays in the in-flight cache, collapsing a burst of the same
 /// article into a single submission.
@@ -61,11 +60,11 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the sites could not be fetched.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "unwall.load", skip_all, err)]
     pub async fn load(&self) -> Result<(), Error> {
         let covered = self.repo.sites().await?;
 
-        debug!(count = covered.len(), "loaded unwall sites");
+        debug!(unwall.site.count = covered.len(), "loaded unwall sites");
 
         self.covered.store(Arc::new(covered));
 
@@ -127,8 +126,7 @@ impl UnwallService {
                 // fatal to the submission.
                 if let Err(error) = self.repo.record_fetch(&fetch).await {
                     warn!(
-                        url.full = %RedactedUrl::from_unparsed(&fetch.url),
-                        %error,
+                        exception.message = %error,
                         "could not record the unwall fetch"
                     );
                 }
@@ -157,7 +155,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the sites could not be inserted or reloaded.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "unwall.site.add", skip_all, err)]
     pub async fn add_sites(&self, hosts: &[String], nickname: &str) -> Result<(), Error> {
         for host in hosts {
             self.repo.insert_site(host, nickname).await?;
@@ -173,7 +171,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the sites could not be deleted or reloaded.
-    #[instrument(skip_all, err, fields(pattern = %pattern))]
+    #[instrument(name = "unwall.site.remove", skip_all, err, fields(pattern = %pattern))]
     pub async fn remove_matching(&self, pattern: &str) -> Result<Vec<String>, Error> {
         let mut affected: Vec<String> = {
             let covered = self.covered.load();
@@ -207,7 +205,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the statistics could not be queried.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "unwall.statistics", skip_all, err)]
     pub async fn statistics(&self) -> Result<Statistics, Error> {
         self.repo.statistics(Utc::now().date_naive()).await
     }
@@ -217,7 +215,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the statistics could not be queried.
-    #[instrument(skip_all, err)]
+    #[instrument(name = "unwall.host.statistics", skip_all, err)]
     pub async fn host_statistics(&self, host: &str) -> Result<Option<HostStatistics>, Error> {
         self.repo
             .host_statistics(&host.to_lowercase(), Utc::now().date_naive())

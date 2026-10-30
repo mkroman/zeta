@@ -372,17 +372,19 @@ impl YouTube {
             Arc::clone(&self.video_categories),
         );
 
-        tokio::spawn(
-            async move {
+        tokio::spawn(async move {
+            tracing::info_span!("video_category.refresh.start").in_scope(|| {
                 debug!("starting video category refresh task");
+            });
 
-                // The first tick completes immediately, populating the cache at startup.
-                let mut interval = tokio::time::interval(CATEGORIES_CHECK_INTERVAL);
-                interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            // The first tick completes immediately, populating the cache at startup.
+            let mut interval = tokio::time::interval(CATEGORIES_CHECK_INTERVAL);
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-                loop {
-                    interval.tick().await;
+            loop {
+                interval.tick().await;
 
+                async {
                     let refreshed = cache
                         .refresh(|| async {
                             fetch_video_categories(&client, &api_key, &region_code).await
@@ -390,12 +392,18 @@ impl YouTube {
                         .await;
 
                     if let Err(error) = refreshed {
-                        warn!(%error, "could not refresh video categories");
+                        warn!(exception.message = %error, "could not refresh video categories");
                     }
                 }
+                // The target stays under `zeta`: the tick parents the HTTP calls, and a plugin
+                // log filter must not leave them as trace roots of their own.
+                .instrument(tracing::info_span!(
+                    target: "zeta.plugins",
+                    "video_category.refresh"
+                ))
+                .await;
             }
-            .instrument(tracing::info_span!("video_category_refresh")),
-        );
+        });
     }
 
     /// Processes a URL found in a message.
@@ -443,7 +451,7 @@ impl YouTube {
 
     /// Searches for videos using the given query.
     async fn search(&self, query: &str) -> Result<Vec<Search>, Error> {
-        debug!(%query, "searching for videos");
+        debug!(search.query = %query, "searching for videos");
 
         let params = [
             ("q", query),
@@ -468,7 +476,7 @@ impl YouTube {
     ///
     /// Returns `Err(Error::NoResults)` if no video is found with the given ID.
     async fn get_video(&self, video_id: &str) -> Result<Video, Error> {
-        debug!(%video_id, "fetching video metadata");
+        debug!(media.id = %video_id, "fetching video metadata");
 
         let params = [
             ("id", video_id),

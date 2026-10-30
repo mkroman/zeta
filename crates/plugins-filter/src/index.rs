@@ -277,7 +277,7 @@ impl FilterIndex {
             .buckets(channel)
             .any(|bucket| bucket.matches(host.as_deref(), sender, url))
         {
-            trace!(%channel, url.full = %RedactedUrl::from_url(url), "message matches a filter");
+            trace!(url.full = %RedactedUrl::from_url(url), "message matches a filter");
 
             true
         } else {
@@ -292,7 +292,7 @@ impl FilterIndex {
         }
 
         if self.buckets(channel).any(|bucket| bucket.ignores(sender)) {
-            trace!(%channel, "sender matches an ignore filter");
+            trace!("sender matches an ignore filter");
 
             true
         } else {

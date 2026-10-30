@@ -4,7 +4,7 @@ use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue, ORIGIN, REFERE
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
-use tracing::{debug, error, instrument};
+use tracing::{debug, instrument, warn};
 
 use super::Settings;
 use super::error::Error;
@@ -139,9 +139,9 @@ impl GraphQlClient {
     ///
     /// Returns [`Error::NotFound`] if no title exists with the given id, and request or
     /// deserialization errors as appropriate.
-    #[instrument(skip(self), fields(%id))]
+    #[instrument(name = "imdb.title", skip_all, fields(imdb.title.id = %id))]
     pub async fn title(&self, id: &str) -> Result<Title, Error> {
-        debug!(%id, "fetching title details");
+        debug!("fetching title details");
 
         let data: TitleData = self
             .execute(GET_TITLE_QUERY, json!({ "id": id }), "GetTitle")
@@ -156,9 +156,9 @@ impl GraphQlClient {
     ///
     /// Returns [`Error::NotFound`] if no person exists with the given id, and request or
     /// deserialization errors as appropriate.
-    #[instrument(skip(self), fields(%id))]
+    #[instrument(name = "imdb.person", skip_all, fields(imdb.person.id = %id))]
     pub async fn person(&self, id: &str) -> Result<Person, Error> {
-        debug!(%id, "fetching person details");
+        debug!("fetching person details");
 
         let data: NameData = self
             .execute(GET_NAME_QUERY, json!({ "id": id }), "GetName")
@@ -175,9 +175,9 @@ impl GraphQlClient {
     /// # Errors
     ///
     /// Returns request or deserialization errors as appropriate.
-    #[instrument(skip(self), fields(%query))]
+    #[instrument(name = "imdb.search", skip_all, fields(search.query = %query))]
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, Error> {
-        debug!(%query, %limit, "searching for titles");
+        debug!(search.limit = %limit, "searching for titles");
 
         let data: SearchData = self
             .execute(
@@ -227,7 +227,7 @@ impl GraphQlClient {
                 .map(|error| error.message.unwrap_or_else(|| "unknown error".to_string()))
                 .collect::<Vec<_>>()
                 .join("; ");
-            error!(%messages, "graphql query failed");
+            warn!(%messages, "graphql query failed");
 
             return Err(Error::GraphQL(messages));
         }

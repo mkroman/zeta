@@ -225,16 +225,18 @@ impl Rink {
         let (currency, url) = (Arc::clone(&self.currency), self.currency_url.clone());
         let (cmc, crypto_enabled) = (self.cmc.clone(), self.crypto_enabled);
 
-        self.refresh_task = Some(tokio::spawn(
-            async move {
+        self.refresh_task = Some(tokio::spawn(async move {
+            tracing::info_span!("currency.refresh.start").in_scope(|| {
                 debug!("starting currency refresh task");
+            });
 
-                let mut interval = tokio::time::interval(currency::CURRENCY_CHECK_INTERVAL);
-                interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            let mut interval = tokio::time::interval(currency::CURRENCY_CHECK_INTERVAL);
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-                loop {
-                    interval.tick().await;
+            loop {
+                interval.tick().await;
 
+                async {
                     let refreshed = currency
                         .refresh(|| {
                             refresh_data(
@@ -249,12 +251,18 @@ impl Rink {
                         .await;
 
                     if let Err(error) = refreshed {
-                        warn!(%error, "could not refresh currency data");
+                        warn!(exception.message = %error, "could not refresh currency data");
                     }
                 }
+                // The target stays under `zeta`: the tick parents the HTTP calls, and a plugin
+                // log filter must not leave them as trace roots of their own.
+                .instrument(tracing::info_span!(
+                    target: "zeta.plugins",
+                    "currency.refresh"
+                ))
+                .await;
             }
-            .instrument(tracing::info_span!("currency_refresh")),
-        ));
+        }));
     }
 
     /// Evaluates `line` and renders the result or error as a one-line IRC reply.
@@ -339,7 +347,7 @@ impl Rink {
         };
 
         if let Err(error) = refreshed {
-            warn!(%error, "could not refresh currency data");
+            warn!(exception.message = %error, "could not refresh currency data");
         }
     }
 

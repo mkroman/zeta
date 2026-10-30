@@ -18,7 +18,7 @@ use hickory_resolver::{
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, warn};
 use url::Host;
 
 use zeta_http as http;
@@ -147,7 +147,11 @@ impl GeoIp {
                 }
             }
             Err(err) => {
-                warn!(?err, name = %opts.name, "geoip lookup failed");
+                warn!(
+                    exception.message = ?err,
+                    geoip.lookup.name = %opts.name,
+                    "geoip lookup failed"
+                );
 
                 client.send_privmsg(channel, labeled_reply("GeoIP", err))?;
             }
@@ -206,9 +210,12 @@ impl GeoIp {
                 // asks for: https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
                 debug!(dns.question.name = %domain, "resolving domain");
 
+                let span = tracing::info_span!("dns.lookup", dns.question.name = %domain);
+
                 let lookup = self
                     .resolver
                     .lookup_ip(domain)
+                    .instrument(span)
                     .await
                     .map_err(Error::Resolve)?;
 
@@ -253,9 +260,15 @@ impl GeoIp {
             .await
             // `parse_response` already logs the status of a failed response; keeping the
             // looked-up name at debug avoids logging one failure three times over.
-            .inspect_err(|error| debug!(%name, %error, "error when querying for geoip"))?;
+            .inspect_err(|error| {
+                debug!(
+                    geoip.lookup.name = %name,
+                    exception.message = %error,
+                    "error when querying for geoip"
+                );
+            })?;
 
-        info!(ip = %info.ip, "resolved");
+        debug!(geoip.lookup.address = %info.ip, "resolved");
 
         Ok(LookupResult(info))
     }

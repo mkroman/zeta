@@ -161,8 +161,8 @@ pub fn register_bundled_plugins(
 
     for (plugin, key) in &plugins.unknown_setting_keys {
         tracing::warn!(
-            plugin = %plugin,
-            key = %key,
+            zeta.plugin.name = %plugin,
+            zeta.settings.key = %key,
             "unknown settings key (typo, or a setting removed in this version?)"
         );
     }
@@ -204,7 +204,7 @@ pub fn register_bundled_plugins(
     for registration in registrations {
         if previous == Some(registration.name) {
             tracing::error!(
-                plugin = registration.name,
+                zeta.plugin.name = registration.name,
                 "duplicate plugin registration; the later one is ignored"
             );
             continue;
@@ -222,7 +222,7 @@ pub fn register_bundled_plugins(
             registry.register_with(registration, ctx, section);
         } else {
             tracing::info!(
-                plugin = registration.name,
+                zeta.plugin.name = registration.name,
                 "plugin is disabled by configuration"
             );
         }

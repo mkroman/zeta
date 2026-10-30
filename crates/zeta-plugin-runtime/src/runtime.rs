@@ -7,12 +7,13 @@
 //! a sequence the host has to reproduce.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use irc::client::Client;
 use irc::proto::Message;
 use tokio::task::JoinHandle;
-use tracing::warn;
+use tracing::{Span, error, warn};
 
 use zeta_plugin::{Context, Filters, LoadedPlugin};
 
@@ -27,6 +28,10 @@ pub struct PluginRuntime {
     tasks: Vec<PluginTask>,
     /// The context shared with every plugin task, consulted for the current filters.
     context: Arc<Context>,
+    /// The runtime's `zeta.shutdown` span, used as the parent of each task's
+    /// `zeta.plugin.shutdown` span. The hooks run in the plugin tasks, so the parent is set
+    /// explicitly; it keeps the shutdown in one trace.
+    shutdown_span: Arc<OnceLock<Span>>,
 }
 
 impl PluginRuntime {
@@ -38,6 +43,7 @@ impl PluginRuntime {
     pub fn start(plugins: Vec<LoadedPlugin>, ctx: Arc<Context>, client: &Arc<Client>) -> Self {
         let mut index = EventIndex::default();
         let mut tasks = Vec::with_capacity(plugins.len());
+        let shutdown_span = Arc::new(OnceLock::new());
 
         for LoadedPlugin {
             name,
@@ -53,6 +59,7 @@ impl PluginRuntime {
                 Arc::clone(&ctx),
                 Arc::clone(client),
                 receiver,
+                Arc::clone(&shutdown_span),
             ));
             index.add(name, &subscriptions, sender);
         }
@@ -61,6 +68,7 @@ impl PluginRuntime {
             index,
             tasks,
             context: ctx,
+            shutdown_span,
         }
     }
 
@@ -71,7 +79,7 @@ impl PluginRuntime {
         let filters = Filters::from_context(&self.context);
 
         for stopped in self.index.dispatch(&filters, message) {
-            warn!(plugin = %stopped, "plugin task has stopped");
+            warn!(zeta.plugin.name = %stopped, "plugin task has stopped");
         }
     }
 
@@ -80,10 +88,20 @@ impl PluginRuntime {
     /// The tasks drain their queued events and run their shutdown hooks, sharing a deadline
     /// `grace` from now; any task still running when the deadline passes is aborted.
     pub async fn shutdown(self, grace: Duration) {
+        // Set before the mailboxes close: each task reads it when it opens its
+        // `zeta.plugin.shutdown` span, and parents that span to this one. Outside a span
+        // (tests), leave it unset so the hook span is a root.
+        let current = Span::current();
+
+        if current.id().is_some() {
+            let _ = self.shutdown_span.set(current);
+        }
+
         let Self {
             index,
             tasks,
             context: _,
+            shutdown_span: _,
         } = self;
 
         // Dropping the index closes every plugin mailbox: the tasks drain their queued events
@@ -120,10 +138,14 @@ async fn drain_tasks(mut handles: Vec<(&'static str, JoinHandle<()>)>, grace: Du
             // The task was cancelled by its own runtime (or this function, below).
             Ok(Err(error)) if error.is_cancelled() => {}
             Ok(Err(error)) => {
-                warn!(plugin = %name, %error, "plugin task panicked while shutting down");
+                error!(
+                    zeta.plugin.name = %name,
+                    exception.message = %error,
+                    "plugin task panicked while shutting down"
+                );
             }
             Err(_) => {
-                warn!(plugin = %name, "plugin task did not shut down in time; aborting");
+                warn!(zeta.plugin.name = %name, "plugin task did not shut down in time; aborting");
 
                 handle.abort();
             }
