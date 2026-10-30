@@ -13,14 +13,15 @@ database = ["zeta-plugin/database"]
 figment.workspace = true
 futures = "0.3.31"
 irc.workspace = true
+smallvec.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+url.workspace = true
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
-url.workspace = true
 zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["context"] }
 zeta-utils = { path = "../zeta-utils" }
 

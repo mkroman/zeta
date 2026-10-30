@@ -7,12 +7,14 @@
 //! matching events on each plugin's mailbox. A plugin is only woken for events it asked for;
 //! for the indexed kinds the lookup cost is independent of the number of plugins.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use irc::proto::{Command, Message};
+use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{Span, debug, warn};
+use url::Url;
 use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent};
 use zeta_plugin::{CommandSpec, Event, EventKind, Filters, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrl};
@@ -29,11 +31,73 @@ pub struct Envelope {
     pub span: Span,
 }
 
+/// The exported handler span names of one plugin, built once when it is added to the index.
+///
+/// Every handler span is named `zeta.event.handle` for filtering and metrics; the exported
+/// `otel.name` carries the bounded discriminator — plugin and event kind — so a trace with one
+/// handler span per subscriber stays readable without opening each span.
+#[derive(Debug)]
+struct SpanNames {
+    /// The name for command events.
+    command: Arc<str>,
+    /// The name for URL events.
+    url: Arc<str>,
+    /// The names for the flag-based kinds, in [`EventKind::ALL`] order.
+    kinds: [Arc<str>; EventKind::ALL.len()],
+}
+
+impl SpanNames {
+    /// Builds the handler span names for `plugin`.
+    fn new(plugin: &str) -> Self {
+        let composite = |kind: &str| Arc::<str>::from(format!("zeta.event.handle {plugin} {kind}"));
+
+        Self {
+            command: composite("command"),
+            url: composite("url"),
+            kinds: [
+                composite("message"),
+                composite("join"),
+                composite("part"),
+                composite("quit"),
+                composite("nick"),
+                composite("kick"),
+                composite("ctcp"),
+                composite("raw"),
+            ],
+        }
+    }
+
+    /// Returns the exported name for `event`.
+    fn event(&self, event: &Event) -> &str {
+        match event.kind() {
+            Some(kind) => &self.kinds[kind_slot(kind)],
+            None if matches!(event, Event::Command(_)) => &self.command,
+            None => &self.url,
+        }
+    }
+}
+
+/// Returns the slot of `kind` in [`SpanNames::kinds`], which follows [`EventKind::ALL`].
+const fn kind_slot(kind: EventKind) -> usize {
+    match kind {
+        EventKind::Message => 0,
+        EventKind::Join => 1,
+        EventKind::Part => 2,
+        EventKind::Quit => 3,
+        EventKind::Nick => 4,
+        EventKind::Kick => 5,
+        EventKind::Ctcp => 6,
+        EventKind::Raw => 7,
+    }
+}
+
 /// A delivery endpoint for events: the mailbox of one plugin's task.
 #[derive(Clone, Debug)]
 struct Subscriber {
     /// The plugin's name, used for logging.
     name: &'static str,
+    /// The precomputed handler span names of the plugin.
+    names: Arc<SpanNames>,
     /// The mailbox events are queued on.
     mailbox: mpsc::UnboundedSender<Envelope>,
 }
@@ -47,10 +111,9 @@ impl Subscriber {
         // falls back to the dispatch span when the handler span is disabled by the filter, so
         // the handler logs still have a trace context.
         //
-        // The exported name carries the bounded discriminator — plugin and event kind — so a
-        // trace with one handler span per subscriber stays readable without opening each span.
-        // The `tracing` name stays `zeta.event.handle` for filtering and metrics.
-        let name = format!("zeta.event.handle {} {}", self.name, event.kind_name());
+        // The name is precomputed: formatting it here would allocate on every event even when
+        // `tracing` is disabled and the macro never evaluates its fields.
+        let name = self.names.event(&event);
 
         let span = tracing::info_span!(
             "zeta.event.handle",
@@ -105,7 +168,11 @@ impl EventIndex {
         subscriptions: &Subscriptions,
         mailbox: mpsc::UnboundedSender<Envelope>,
     ) {
-        let subscriber = Subscriber { name, mailbox };
+        let subscriber = Subscriber {
+            name,
+            names: Arc::new(SpanNames::new(name)),
+            mailbox,
+        };
 
         for command in subscriptions.commands() {
             if command.trigger().contains(char::is_whitespace) {
@@ -304,10 +371,14 @@ impl EventIndex {
             return;
         }
 
-        let mut seen = HashSet::new();
+        // Deduplication shares the parsed URL with the event instead of hashing a deep copy
+        // into a set; a message rarely carries more than a handful of URLs.
+        let mut seen: SmallVec<[Arc<Url>; 4]> = SmallVec::new();
 
         for ExtractedUrl { url, repaired_from } in ExtractUrls::with_schemes(text, HTTP_SCHEMES) {
-            if !seen.insert(url.clone()) {
+            let url = Arc::new(url);
+
+            if seen.iter().any(|seen| seen.as_str() == url.as_str()) {
                 continue;
             }
 
@@ -317,10 +388,11 @@ impl EventIndex {
                 continue;
             }
 
-            let event = UrlEvent::new(Arc::clone(message), Arc::new(url), repaired_from);
+            seen.push(Arc::clone(&url));
+            let event = UrlEvent::new(Arc::clone(message), url, repaired_from);
 
             if let Some(host) = event.url().host_str()
-                && let Some(subscribers) = self.url_hosts.get(&host.to_ascii_lowercase())
+                && let Some(subscribers) = self.url_hosts.get(host)
             {
                 for subscriber in subscribers {
                     subscriber.send(Event::Url(event.clone()), stopped);
@@ -492,6 +564,20 @@ mod tests {
             2,
             "duplicate URLs are deduplicated"
         );
+    }
+
+    #[test]
+    fn url_hosts_are_lowercased_by_the_url_parser() {
+        let mut index = EventIndex::default();
+        let mut ipv6 = subscribe(&mut index, "ipv6", |subscriptions| {
+            subscriptions.urls(UrlScope::Hosts(&["[2001:db8::1]"]));
+        });
+
+        // The registered host is lowercased, and `Url::host_str` already returns the parsed,
+        // normalized host — hexadecimal IPv6 digits included — so the lookup needs no copy.
+        let _ = index.dispatch(&Filters::default(), privmsg("https://[2001:DB8::1]/x"));
+
+        assert_eq!(drain(&mut ipv6).len(), 1);
     }
 
     /// A filter that ignores the `ignored` nick entirely and matches every URL on the
@@ -802,6 +888,43 @@ mod tests {
         let stopped = index.dispatch(&Filters::default(), privmsg(".dig https://example.com/x"));
 
         assert_eq!(stopped, ["dig"]);
+    }
+
+    /// The precomputed handler span names must follow the event kinds: the array is ordered
+    /// like [`EventKind::ALL`] while the composite strings are written out by hand.
+    #[test]
+    fn span_names_match_the_event_kinds() {
+        let names = SpanNames::new("dig");
+        let message = Arc::new(privmsg(".dig example.com"));
+        let command = CommandEvent::new(Arc::clone(&message), CommandSpec::new(".dig", "dig"))
+            .expect("command should match");
+        let url = UrlEvent::new(
+            Arc::clone(&message),
+            Arc::new("https://example.com/".parse().expect("url")),
+            None,
+        );
+
+        assert_eq!(
+            names.event(&Event::Command(command)),
+            "zeta.event.handle dig command"
+        );
+        assert_eq!(names.event(&Event::Url(url)), "zeta.event.handle dig url");
+
+        for kind in EventKind::ALL {
+            // Only a CTCP event is conditional on the message; the other kinds wrap any of them.
+            let message = match kind {
+                EventKind::Ctcp => privmsg("\x01VERSION\x01"),
+                _ => privmsg("hello"),
+            };
+            let event = kind
+                .event(Arc::new(message))
+                .expect("every flag-based kind builds an event from its message");
+
+            assert_eq!(
+                names.event(&event),
+                format!("zeta.event.handle dig {}", event.kind_name())
+            );
+        }
     }
 
     /// One span as the recorder observed it.

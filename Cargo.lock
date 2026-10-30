@@ -6114,6 +6114,7 @@ dependencies = [
  "figment",
  "futures",
  "irc",
+ "smallvec",
  "tokio",
  "tracing",
  "tracing-subscriber",
