@@ -32,7 +32,12 @@ pub trait Truncatable: AsRef<str> {
         }
 
         let text_len = len.saturating_sub(suffix.chars().count());
-        let mut truncated: String = text.chars().take(text_len).collect();
+        let byte_len = text
+            .char_indices()
+            .nth(text_len)
+            .map_or(text.len(), |(index, _)| index);
+        let mut truncated = String::with_capacity(byte_len + suffix.len());
+        truncated.push_str(&text[..byte_len]);
         truncated.push_str(suffix);
         truncated
     }
@@ -301,6 +306,22 @@ mod tests {
         assert_eq!("hello".truncate_within(4, "..."), "h...");
         assert_eq!("hello".truncate_within(3, ""), "hel");
         assert_eq!("hello".truncate_within(5, ""), "hello");
+    }
+
+    #[test]
+    fn truncate_within_keeps_the_exact_character_budget() {
+        // Exactly at the budget, one over, and a suffix that fills the whole budget.
+        assert_eq!("hello".truncate_within(5, "!"), "hello");
+        assert_eq!("hello".truncate_within(6, "!"), "hello");
+        assert_eq!("hello world".truncate_within(5, "!"), "hell!");
+        assert_eq!("hello".truncate_within(1, "…"), "…");
+        assert_eq!("hello".truncate_within(0, ""), "");
+        assert_eq!("hello".truncate_within(0, "…"), "…");
+
+        // Multibyte text is sliced on a character boundary, not a byte offset.
+        assert_eq!("hæłlo".truncate_within(3, ""), "hæł");
+        assert_eq!("hæłlo".truncate_within(2, "…"), "h…");
+        assert_eq!("日本語です".truncate_within(4, "…"), "日本語…");
     }
 
     #[test]
