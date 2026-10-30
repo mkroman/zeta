@@ -10,8 +10,6 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
 
-use crate::text::collapse_whitespace;
-
 /// The teal color (mIRC color 10) used for plugin replies.
 pub const COLOR: &str = "\x0310";
 
@@ -105,18 +103,34 @@ pub fn strip_formatting(text: &str) -> String {
 /// terminate the IRC message, and formatting codes would restyle the rest of the reply.
 #[must_use]
 pub fn unstyle_text(text: &str) -> String {
-    let text: String = strip_formatting(text)
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect();
+    let mut visible = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+    let mut pending_space = false;
 
-    collapse_whitespace(&text)
+    while let Some(character) = characters.next() {
+        match character {
+            '\u{3}' => strip_mirc_color(&mut characters),
+            '\u{4}' => strip_hex_color(&mut characters),
+            // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
+            // underline) and the reset code.
+            '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
+            // Control characters and whitespace all separate visible words, so a run of them
+            // collapses into a single space without leaving one at either end.
+            character if character.is_control() || character.is_whitespace() => {
+                pending_space = !visible.is_empty();
+            }
+            character => {
+                if pending_space {
+                    visible.push(' ');
+                    pending_space = false;
+                }
+
+                visible.push(character);
+            }
+        }
+    }
+
+    visible
 }
 
 /// The shared implementation of [`strip_control_chars`] and [`strip_formatting`]: formatting
@@ -416,6 +430,60 @@ mod tests {
         assert_eq!(unstyle_text("first\nsecond"), "first second");
         assert_eq!(unstyle_text("  a \t b  "), "a b");
         assert_eq!(unstyle_text("plain"), "plain");
+    }
+
+    #[test]
+    fn unstyle_text_trims_formatting_at_both_ends() {
+        assert_eq!(unstyle_text("\x02\x0310> Title\x0f\x02"), "> Title");
+        assert_eq!(unstyle_text("\x1f\x04FF0000Title\x04"), "Title");
+        assert_eq!(unstyle_text("\x0310"), "");
+        assert_eq!(unstyle_text("ends with color \x0310"), "ends with color");
+    }
+
+    #[test]
+    fn unstyle_text_collapses_control_characters_and_whitespace() {
+        // Control characters become word separators, like the line breaks they replace.
+        assert_eq!(unstyle_text("a\x07\x07b"), "a b");
+        assert_eq!(unstyle_text("a\u{a0}\u{2003}b"), "a b");
+        assert_eq!(unstyle_text("\x00  leading"), "leading");
+        assert_eq!(unstyle_text("trailing \x00"), "trailing");
+        assert_eq!(unstyle_text("\x00\n\t "), "");
+    }
+
+    #[test]
+    fn unstyle_text_matches_the_staged_pipeline() {
+        use crate::text::collapse_whitespace;
+
+        let cases = [
+            "",
+            "plain",
+            "  a \t b  ",
+            "first\nsecond",
+            "\x0310Fake\nTitle\x0f",
+            "\x02bold\x02 text \x1ditalic\x1d",
+            "\x0310",
+            "ends with color \x0310",
+            "\x04FF0000red\x04",
+            "a\x07b\x00c",
+            "a\u{a0}\u{2003}b",
+            "\n\t ",
+        ];
+
+        for case in cases {
+            let staged: String = strip_formatting(case)
+                .chars()
+                .map(|character| {
+                    if character.is_control() {
+                        ' '
+                    } else {
+                        character
+                    }
+                })
+                .collect();
+            let staged = collapse_whitespace(&staged);
+
+            assert_eq!(unstyle_text(case), staged, "for {case:?}");
+        }
     }
 
     #[test]
