@@ -4,6 +4,7 @@
 //! title and OpenGraph metadata of the document head. Tokenization stops as soon as the head has
 //! ended, aborting the rest of the download.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::mpsc;
 
@@ -219,7 +220,7 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
             }
 
             let text = decode_chunk(&mut pending, &chunk);
-            queue.push_back(StrTendril::from(text));
+            queue.push_back(StrTendril::from_slice(&text));
 
             let _ = tokenizer.feed(&queue);
 
@@ -254,18 +255,18 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
 /// Converts `chunk` to UTF-8 text for the tokenizer, carrying incomplete multi-byte sequences in
 /// `pending` over to the next chunk.
 ///
+/// The text is borrowed from `chunk` when it is valid UTF-8 on its own and no bytes are pending;
+/// otherwise it is owned.
+///
 /// Invalid sequences are replaced with `U+FFFD`, as if the bytes were decoded lossily.
 #[must_use]
-fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
+fn decode_chunk<'a>(pending: &'a mut Vec<u8>, chunk: &'a [u8]) -> Cow<'a, str> {
     // The common case: the previous chunk ended on a character boundary and this one is valid
-    // UTF-8. Validating first avoids appending the chunk to `pending` only to copy it back out.
+    // UTF-8. Borrow it instead of copying it through `pending`.
     if pending.is_empty()
         && let Ok(valid) = std::str::from_utf8(chunk)
     {
-        let mut text = String::with_capacity(chunk.len());
-        text.push_str(valid);
-
-        return text;
+        return Cow::Borrowed(valid);
     }
 
     pending.extend_from_slice(chunk);
@@ -306,7 +307,7 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
         }
     }
 
-    text
+    Cow::Owned(text)
 }
 
 /// Returns the value of the named attribute of a tag.
