@@ -222,10 +222,20 @@ impl Route {
     }
 }
 
+/// A URL retained for dispatch: its shared handle, the broken scheme prefix it was repaired
+/// from, and the host subscribers it must reach, resolved before the URL was shared.
+type RetainedUrl<'a> = (Arc<Url>, Option<&'static str>, &'a [Subscriber]);
+
 /// The dispatch index of every registered plugin's subscriptions.
 pub struct EventIndex {
     /// Registered commands, indexed by their trigger — the first word of a message.
     commands: HashMap<&'static str, Vec<CommandTarget>>,
+    /// A bit per possible first byte of a command trigger, offset by `b' '`.
+    ///
+    /// Non-text bytes cannot start a command, so a message whose first byte has no bit set is
+    /// rejected before the first-word split and the command hash lookup. Stale bits left behind
+    /// by evicted plugins only cause a lookup that finds nothing.
+    command_initials: u128,
     /// Plugins subscribed to URLs on specific hosts, indexed by the lowercased host.
     url_hosts: HashMap<String, Vec<Subscriber>>,
     /// Plugins subscribed to every URL, including hosts other plugins handle.
@@ -238,6 +248,7 @@ impl Default for EventIndex {
     fn default() -> Self {
         Self {
             commands: HashMap::new(),
+            command_initials: 0,
             url_hosts: HashMap::new(),
             url_any: Vec::new(),
             kinds: std::array::from_fn(|_| Vec::new()),
@@ -280,6 +291,12 @@ impl EventIndex {
                     subscriber: subscriber.clone(),
                     spec: *command,
                 });
+
+            if let Some(&byte) = command.trigger().as_bytes().first()
+                && (b' '..0x80).contains(&byte)
+            {
+                self.command_initials |= 1 << (byte - b' ');
+            }
         }
 
         match subscriptions.url_scope() {
@@ -317,14 +334,26 @@ impl EventIndex {
 
         // A stopped plugin can match several of the message's events (and several commands or
         // URLs); report and evict it once.
-        stopped.sort_unstable();
-        stopped.dedup();
+        if !stopped.is_empty() {
+            stopped.sort_unstable();
+            stopped.dedup();
 
-        for name in &stopped {
-            self.evict(name);
+            self.evict_stopped(&stopped);
         }
 
         stopped
+    }
+
+    /// Removes the named stopped plugins from the index.
+    ///
+    /// Outlined from [`Self::dispatch`]: it is the rare path, and the eviction walks every
+    /// subscription map, which is not worth inlining into every dispatched line.
+    #[cold]
+    #[inline(never)]
+    fn evict_stopped(&mut self, stopped: &[&'static str]) {
+        for name in stopped {
+            self.evict(name);
+        }
     }
 
     /// Removes every trace of the named plugin from the index.
@@ -417,7 +446,8 @@ impl EventIndex {
         // Commands — matched by the first word of the message, verified with the exact
         // trigger semantics. Leading whitespace makes the first word non-matching, and checking
         // it before sharing keeps such a message allocation-free.
-        if let Some(word) = text.split_whitespace().next()
+        if self.may_start_command(text)
+            && let Some(word) = text.split_whitespace().next()
             && text.starts_with(word)
             && let Some(targets) = self.commands.get(word)
         {
@@ -438,6 +468,32 @@ impl EventIndex {
             return;
         }
 
+        self.dispatch_urls(filters, message, stopped);
+    }
+
+    /// Returns whether `text` can start a registered command, judging by its first byte alone.
+    ///
+    /// Bytes outside the trigger alphabet cannot start a command; they return `true` so they
+    /// still take the exact first-word path instead of being rejected.
+    #[inline]
+    fn may_start_command(&self, text: &str) -> bool {
+        match text.as_bytes().first() {
+            Some(&byte) if !(b' '..0x80).contains(&byte) => true,
+            Some(&byte) => (self.command_initials >> (byte - b' ')) & 1 != 0,
+            None => false,
+        }
+    }
+
+    /// Routes the URLs of a `PRIVMSG` to their host subscribers, then to the generic ones.
+    ///
+    /// Extracted from [`Self::dispatch_privmsg`] to keep the URL-free path of an IRC line small.
+    #[inline(never)]
+    fn dispatch_urls(
+        &self,
+        filters: &Filters,
+        message: &mut SharedMessage,
+        stopped: &mut Vec<&'static str>,
+    ) {
         let Command::PRIVMSG(target, text) = &message.get().command else {
             return;
         };
@@ -445,14 +501,13 @@ impl EventIndex {
 
         // The retained URLs are collected before the message is shared, so a `PRIVMSG` that
         // carries no URL (or only filtered ones) still does not allocate the shared message.
-        let mut seen: SmallVec<[(Arc<Url>, Option<&'static str>); 4]> = SmallVec::new();
+        // The subscriber list is resolved by borrowed host while the URL is still unshared.
+        let mut seen: SmallVec<[RetainedUrl<'_>; 4]> = SmallVec::new();
 
         // Deduplication shares the parsed URL with the event instead of hashing a deep copy
         // into a set; a message rarely carries more than a handful of URLs.
         for ExtractedUrl { url, repaired_from } in ExtractUrls::with_schemes(text, HTTP_SCHEMES) {
-            let url = Arc::new(url);
-
-            if seen.iter().any(|(seen, _)| seen.as_str() == url.as_str()) {
+            if seen.iter().any(|(seen, ..)| seen.as_str() == url.as_str()) {
                 continue;
             }
 
@@ -463,16 +518,16 @@ impl EventIndex {
             }
 
             // A URL nobody subscribed to is not an event; drop it before sharing the message.
-            let claimed = !self.url_any.is_empty()
-                || url
-                    .host_str()
-                    .is_some_and(|host| self.url_hosts.contains_key(host));
+            let subscribers: &[Subscriber] = url
+                .host_str()
+                .and_then(|host| self.url_hosts.get(host))
+                .map_or(&[], Vec::as_slice);
 
-            if !claimed {
+            if subscribers.is_empty() && self.url_any.is_empty() {
                 continue;
             }
 
-            seen.push((url, repaired_from));
+            seen.push((Arc::new(url), repaired_from, subscribers));
         }
 
         if seen.is_empty() {
@@ -481,15 +536,11 @@ impl EventIndex {
 
         let message = message.shared();
 
-        for (url, repaired_from) in seen {
+        for (url, repaired_from, subscribers) in seen {
             let event = UrlEvent::new(Arc::clone(&message), url, repaired_from);
 
-            if let Some(host) = event.url().host_str()
-                && let Some(subscribers) = self.url_hosts.get(host)
-            {
-                for subscriber in subscribers {
-                    subscriber.send(Event::Url(event.clone()), stopped);
-                }
+            for subscriber in subscribers {
+                subscriber.send(Event::Url(event.clone()), stopped);
             }
 
             for subscriber in &self.url_any {
@@ -701,6 +752,23 @@ mod tests {
 
             assert_empty!(drain(&mut mailbox), "`{text}` must not dispatch");
         }
+    }
+
+    /// Triggers whose first byte is outside the command-initial mask cannot be pre-filtered by
+    /// it; they must still take the exact first-word path.
+    #[test]
+    fn non_ascii_triggers_are_still_dispatched() {
+        let mut index = EventIndex::default();
+        let mut mailbox = subscribe(&mut index, "unicode", |subscriptions| {
+            subscriptions.command(CommandSpec::new("écho", "echo"));
+        });
+
+        let _ = index.dispatch(&Filters::default(), privmsg("écho bonjour"));
+
+        assert!(matches!(
+            drain(&mut mailbox)[..],
+            [Event::Command(ref command)] if command.args() == "bonjour"
+        ));
     }
 
     #[test]
