@@ -510,11 +510,9 @@ fn is_ctcp(message: &Message) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::System;
     use std::mem::size_of;
     use std::sync::{Arc, Mutex, OnceLock};
 
-    use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
     use tracing::Subscriber;
     use tracing::field::{Field, Visit};
     use tracing::span::{Attributes, Id};
@@ -528,35 +526,28 @@ mod tests {
 
     use super::*;
 
-    // The allocation test needs to observe the global heap. A safe allocator implementation does
-    // not require `unsafe` here; the counters are process-wide, so the test runs alone.
-    #[global_allocator]
-    static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
-
     /// Measures the allocations and requested bytes of one `dispatch` call.
-    fn measure(label: &str, index: &mut EventIndex, filters: &Filters, message: Message) -> Stats {
-        let mut region = Region::new(GLOBAL);
-
-        let _ = index.dispatch(filters, message);
-
-        let stats = region.change_and_reset();
+    fn measure(
+        label: &str,
+        index: &mut EventIndex,
+        filters: &Filters,
+        message: Message,
+    ) -> allocation_counter::AllocationInfo {
+        let info = allocation_counter::measure(|| {
+            let stopped = index.dispatch(filters, message);
+            std::hint::black_box(&stopped);
+        });
 
         println!(
             "dispatch_allocations: {label}: allocations={} bytes_allocated={}",
-            stats.allocations, stats.bytes_allocated
+            info.count_total, info.bytes_total
         );
 
-        stats
+        info
     }
 
     /// Dispatching a message that produces no event must not touch the heap.
-    ///
-    /// The allocator counters are process-wide, so this test is ignored by default and must be
-    /// run alone:
-    ///
-    /// `cargo test -p zeta-plugin-runtime --lib --all-features -- --ignored --test-threads=1 dispatch_without_events`
     #[test]
-    #[ignore = "process-wide allocator counters; run with --ignored --test-threads=1"]
     fn dispatch_without_events_does_not_allocate() {
         println!(
             "sizes: EventIndex={} Message={} Arc<Message>={} ArcInner<Message>-equivalent={}",
@@ -605,15 +596,15 @@ mod tests {
             privmsg("no link here"),
         );
 
-        for (label, stats) in [
+        for (label, info) in [
             ("unhandled privmsg", unhandled),
             ("numeric 001", numeric),
             ("join", join),
             ("plain notice", plain_notice),
             ("url-less privmsg", urlless_privmsg),
         ] {
-            assert_eq!(stats.allocations, 0, "{label} allocated");
-            assert_eq!(stats.bytes_allocated, 0, "{label} allocated bytes");
+            assert_eq!(info.count_total, 0, "{label} allocated");
+            assert_eq!(info.bytes_total, 0, "{label} allocated bytes");
         }
     }
 
