@@ -20,8 +20,10 @@ http = [
 ]
 # The transport-error wrapper alone (used by the mirror crate without the HTTP stack).
 request = ["dep:reqwest"]
+# Redaction of an `http::Uri`, without the browser-emulated stack.
+uri = ["dep:http"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
-emulated = ["dep:thiserror", "dep:wreq", "dep:wreq-util"]
+emulated = ["dep:thiserror", "dep:wreq", "dep:wreq-util", "uri"]
 # OAuth2 client-credentials token caching.
 oauth = ["http", "dep:zeta-cache"]
 native-tls = ["reqwest?/native-tls"]
@@ -41,6 +43,7 @@ wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "
 wreq-util = { version = "0.2.0", optional = true }
 
 [dependencies]
+http = { version = "1", optional = true }
 humantime-serde.workspace = true
 reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"], optional = true }
 serde.workspace = true

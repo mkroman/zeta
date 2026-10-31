@@ -259,4 +259,47 @@ mod tests {
         );
         assert!(!format!("{redacted:?}").contains("secret"));
     }
+
+    #[test]
+    #[ignore = "performance measurement"]
+    fn bench_redacted_url_formatting() {
+        use std::fmt::Write as _;
+        use std::time::Instant;
+
+        const FORMATS: u64 = 10_000_000;
+
+        let url =
+            Url::parse("https://user:secret@api.example.com:8443/v1/weather?appid=secret#frag")
+                .unwrap();
+        let mut out = String::with_capacity(256);
+
+        // Warm up both paths before measuring them.
+        write!(out, "{}", RedactedUrl::from_url(&url)).unwrap();
+        write!(out, "{}", RedactedUrlRef::from_url(&url)).unwrap();
+        out.clear();
+
+        let start = Instant::now();
+
+        for _ in 0..FORMATS {
+            write!(out, "{}", RedactedUrlRef::from_url(&url)).unwrap();
+            out.clear();
+        }
+
+        let borrowed = start.elapsed();
+        let start = Instant::now();
+
+        for _ in 0..FORMATS {
+            write!(out, "{}", RedactedUrl::from_url(&url)).unwrap();
+            out.clear();
+        }
+
+        let owned = start.elapsed();
+
+        println!(
+            "RedactedUrl: {FORMATS} formats, borrowed {borrowed:?} ({} ns/format), \
+             owned {owned:?} ({} ns/format)",
+            borrowed.as_nanos() / u128::from(FORMATS),
+            owned.as_nanos() / u128::from(FORMATS),
+        );
+    }
 }

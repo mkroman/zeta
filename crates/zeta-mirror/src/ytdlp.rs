@@ -692,6 +692,44 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "performance measurement"]
+    async fn bench_read_output_progress_lines() {
+        use std::{fmt::Write as _, time::Instant};
+
+        const UPDATES: usize = 100_000;
+        const RUNS: usize = 20;
+
+        let mut stdout = String::with_capacity(UPDATES * 32);
+
+        for downloaded in 0..UPDATES {
+            writeln!(stdout, "zeta-dl {downloaded} {UPDATES} NA 1024 0")
+                .expect("writing to a string cannot fail");
+        }
+
+        let mut updates = Vec::with_capacity(UPDATES);
+        let start = Instant::now();
+
+        for _ in 0..RUNS {
+            updates.clear();
+
+            let json = read_output(stdout.as_bytes(), &mut |progress| updates.push(progress))
+                .await
+                .expect("reading stdout should not fail");
+
+            assert!(json.is_none());
+            assert_eq!(updates.len(), UPDATES);
+        }
+
+        let elapsed = start.elapsed();
+        let lines = u128::from((UPDATES * RUNS) as u64);
+
+        println!(
+            "yt-dlp read_output: {lines} lines in {elapsed:?} ({} ns/line)",
+            elapsed.as_nanos() / lines,
+        );
+    }
+
+    #[tokio::test]
     async fn verify_paths_keeps_files_inside_the_output_directory() {
         let output_dir = tempfile::tempdir().unwrap();
         let inside = output_dir.path().join("123.mp4");
