@@ -43,7 +43,7 @@ enum HostMatcher {
 #[derive(Debug)]
 struct Entry {
     /// The raw filter.
-    filter: Arc<Filter>,
+    filter: Filter,
     /// The compiled host pattern, if any.
     host: Option<HostMatcher>,
     /// The compiled URL path pattern.
@@ -59,7 +59,6 @@ struct Entry {
 impl Entry {
     /// Compiles `filter` into an entry.
     fn new(filter: Filter) -> Self {
-        let filter = Arc::new(filter);
         let host = non_blank(filter.host.as_deref()).map(|host| {
             if is_wildcard(host) {
                 HostMatcher::Wild(Pattern::compile(Some(host), Case::Insensitive))
@@ -67,14 +66,18 @@ impl Entry {
                 HostMatcher::Exact(host.to_lowercase())
             }
         });
+        let path = Pattern::compile(filter.path.as_deref(), Case::Sensitive);
+        let nickname = Pattern::compile(filter.nickname.as_deref(), Case::Insensitive);
+        let username = Pattern::compile(filter.username.as_deref(), Case::Insensitive);
+        let hostname = Pattern::compile(filter.hostname.as_deref(), Case::Insensitive);
 
         Self {
-            path: Pattern::compile(filter.path.as_deref(), Case::Sensitive),
-            nickname: Pattern::compile(filter.nickname.as_deref(), Case::Insensitive),
-            username: Pattern::compile(filter.username.as_deref(), Case::Insensitive),
-            hostname: Pattern::compile(filter.hostname.as_deref(), Case::Insensitive),
-            host,
             filter,
+            host,
+            path,
+            nickname,
+            username,
+            hostname,
         }
     }
 
@@ -102,18 +105,17 @@ impl Entry {
             && self.hostname.matches(Some(sender.hostname))
     }
 
-    /// Whether the entry matches `host`, `sender` and `url`. The host check is repeated for
-    /// wildcard entries only; exact entries are already routed by host.
+    /// Whether the entry matches `host`, `sender` and `url`.
+    ///
+    /// Only wildcard entries need this: exact entries are routed by their host and hostless
+    /// entries pass the host check unconditionally, so both use [`Entry::matches_after_host`].
     fn matches(&self, host: Option<&str>, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        if !self.host_matches(host) {
-            return false;
-        }
+        self.host_matches(host) && self.matches_after_host(sender, url)
+    }
 
-        if !self.path.matches(Some(url.path())) {
-            return false;
-        }
-
-        self.sender_matches(sender)
+    /// Whether the entry matches `sender` and `url` once its host is already known to match.
+    fn matches_after_host(&self, sender: Option<Sender<'_>>, url: &Url) -> bool {
+        self.path.matches(Some(url.path())) && self.sender_matches(sender)
     }
 
     /// Whether the entry ignores `sender` entirely: it has no URL criteria (host and path
@@ -194,7 +196,7 @@ impl HostIndex {
             .flatten()
             .chain(&self.wildcard)
             .chain(&self.any_host)
-            .map(|entry| entry.filter.as_ref())
+            .map(|entry| &entry.filter)
     }
 
     /// Whether any entry in the bucket matches `host`, `sender` and `url`.
@@ -205,9 +207,15 @@ impl HostIndex {
 
         exact
             .iter()
-            .chain(&self.wildcard)
-            .chain(&self.any_host)
-            .any(|entry| entry.matches(host, sender, url))
+            .any(|entry| entry.matches_after_host(sender, url))
+            || self
+                .wildcard
+                .iter()
+                .any(|entry| entry.matches(host, sender, url))
+            || self
+                .any_host
+                .iter()
+                .any(|entry| entry.matches_after_host(sender, url))
     }
 
     /// Whether any sender-only filter in the bucket ignores `sender` entirely. Only the
@@ -720,39 +728,13 @@ mod tests {
         assert!(!index.is_empty());
     }
 
-    /// Measures the hot lookup paths over a populated fifty-channel index.
+    /// Returns the fifty-channel, 650-filter index used by the benchmarks.
     ///
-    /// Ignored by default; run with
-    /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_matches_and_ignores`.
-    #[test]
-    #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
-    fn benchmark_matches_and_ignores() {
-        use std::hint::black_box;
-        use std::time::Instant;
-
+    /// The exact-host entries carry a path that does not match the benchmark URL, so a lookup
+    /// visits all eight entries of the exact bucket before falling through to the wildcard and
+    /// host-agnostic buckets.
+    fn benchmark_index() -> FilterIndex {
         const CHANNELS: usize = 50;
-
-        #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
-        fn measure(mut operation: impl FnMut() -> bool) -> f64 {
-            const ITERATIONS: usize = 100_000;
-            const RUNS: usize = 5;
-
-            let mut best = f64::MAX;
-
-            for _ in 0..RUNS {
-                let start = Instant::now();
-
-                for _ in 0..ITERATIONS {
-                    black_box(operation());
-                }
-
-                let nanos = start.elapsed().as_secs_f64() * 1e9;
-
-                best = best.min(nanos / ITERATIONS as f64);
-            }
-
-            best
-        }
 
         let mut index = FilterIndex::default();
         let mut id = 1;
@@ -766,6 +748,7 @@ mod tests {
                     NewFilter {
                         channel: Some(name.clone()),
                         host: Some(format!("site-{channel}-{host}.example")),
+                        path: Some("/wanted/*".into()),
                         ..new_filter(None, None)
                     },
                 ));
@@ -795,7 +778,43 @@ mod tests {
             }
         }
 
-        let url: Url = "https://unmatched.example/some/path".parse().unwrap();
+        index
+    }
+
+    /// Measures the hot lookup paths over a populated fifty-channel index.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_matches_and_ignores`.
+    #[test]
+    #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
+    fn benchmark_matches_and_ignores() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
+        fn measure(mut operation: impl FnMut() -> bool) -> f64 {
+            const ITERATIONS: usize = 100_000;
+            const RUNS: usize = 5;
+
+            let mut best = f64::MAX;
+
+            for _ in 0..RUNS {
+                let start = Instant::now();
+
+                for _ in 0..ITERATIONS {
+                    black_box(operation());
+                }
+
+                let nanos = start.elapsed().as_secs_f64() * 1e9;
+
+                best = best.min(nanos / ITERATIONS as f64);
+            }
+
+            best
+        }
+
+        let index = benchmark_index();
+        let url: Url = "https://site-0-0.example/some/path".parse().unwrap();
         let sender = Sender::new("someone", "user", "host.example");
         // Keep the inputs opaque: with literals the compiler can constant-fold the lowercasing
         // a real lookup does, hiding the allocation the benchmark is meant to measure.
@@ -805,9 +824,38 @@ mod tests {
         let ignores = measure(|| index.ignores(channel, Some(sender)));
 
         println!(
-            "{} channels, {} filters: matches {matches:.0} ns/op, ignores {ignores:.0} ns/op",
-            CHANNELS,
+            "{} filters: matches {matches:.0} ns/op, ignores {ignores:.0} ns/op",
             index.len()
+        );
+    }
+
+    /// Measures the allocations performed while building a populated index.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_index_build_bytes`.
+    #[test]
+    #[ignore = "measurement: run explicitly with --ignored --nocapture"]
+    fn benchmark_index_build_bytes() {
+        use std::hint::black_box;
+
+        let mut filters = 0;
+        let info = allocation_counter::measure(|| {
+            let index = benchmark_index();
+            filters = index.len();
+            black_box(index);
+        });
+        #[allow(clippy::cast_precision_loss)] // the index is far below 2^52 bytes
+        let per_filter = info.bytes_total as f64 / filters as f64;
+
+        println!(
+            "{filters} filters: count_total {} allocations, bytes_total {} B \
+             ({per_filter:.1} B/filter), count_max {} allocations, bytes_max {} B; \
+             size_of::<Filter>() = {} B",
+            info.count_total,
+            info.bytes_total,
+            info.count_max,
+            info.bytes_max,
+            size_of::<Filter>(),
         );
     }
 }

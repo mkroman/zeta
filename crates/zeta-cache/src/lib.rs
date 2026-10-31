@@ -240,6 +240,9 @@ impl<T> TtlCache<T> {
 /// The default number of entries a [`TtlMap`] holds before evicting.
 const DEFAULT_TTL_MAP_CAPACITY: usize = 256;
 
+/// The number of concurrent refreshes a [`TtlMap`] preallocates room for.
+const DEFAULT_FLIGHT_CAPACITY: usize = 16;
+
 /// A keyed cache whose entries expire individually after a time-to-live.
 ///
 /// Entries cache both values and *negative* results: a refresh that produces no value stores a
@@ -271,8 +274,10 @@ where
     #[must_use]
     pub fn with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
         Self {
-            entries: RwLock::new(HashMap::new()),
-            flights: tokio::sync::Mutex::new(HashMap::new()),
+            entries: RwLock::new(HashMap::with_capacity(capacity)),
+            flights: tokio::sync::Mutex::new(HashMap::with_capacity(
+                capacity.min(DEFAULT_FLIGHT_CAPACITY),
+            )),
             ttl,
             negative_ttl,
             capacity,
@@ -301,12 +306,23 @@ where
     where
         V: Clone,
     {
+        self.peek_arc(key)
+            .map(|entry| entry.map(|value| (*value).clone()))
+    }
+
+    /// Returns the cached entry for `key` when it has not expired, as a shared value.
+    ///
+    /// `Some(None)` is a cached negative result; `None` means nothing is cached for `key`.
+    /// Only the [`Arc`] is cloned while the read guard is held, so cloning `V` happens after
+    /// the guard is released.
+    #[allow(clippy::option_option)] // the outer option separates a miss from a negative entry
+    fn peek_arc(&self, key: &K) -> Option<Option<Arc<V>>> {
         let entries = self.entries.read().unwrap_or_else(PoisonError::into_inner);
 
         entries
             .get(key)
             .filter(|entry| entry.is_fresh())
-            .map(|entry| entry.value.as_deref().cloned())
+            .map(|entry| entry.value.clone())
     }
 
     /// Returns the cached entry for `key` when fresh, refreshing through `refresh` otherwise.
@@ -328,8 +344,8 @@ where
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<Option<V>, E>> + Send,
     {
-        if let Some(cached) = self.peek(&key) {
-            return Ok(cached);
+        if let Some(cached) = self.peek_arc(&key) {
+            return Ok(cached.map(|value| (*value).clone()));
         }
 
         let flight = {
@@ -341,9 +357,9 @@ where
 
         // No `?` before the release below: every exit — including a failing refresh and the
         // double-check — has to give the flight entry a chance to be cleaned up.
-        let outcome = match self.peek(&key) {
+        let outcome = match self.peek_arc(&key) {
             // Another task refreshed the key while this one waited for the flight lock.
-            Some(cached) => Ok(cached),
+            Some(cached) => Ok(cached.map(|value| (*value).clone())),
             None => match refresh().await {
                 Ok(value) => {
                     self.insert(key.clone(), value.clone());
@@ -382,8 +398,8 @@ where
         }
     }
 
-    /// Inserts an entry for `key`, evicting expired and closest-to-expiring entries first when
-    /// the cache is at capacity.
+    /// Inserts an entry for `key`, evicting expired entries and, when still at capacity, the
+    /// closest-to-expiring entry first.
     fn insert(&self, key: K, value: Option<V>) {
         let ttl = if value.is_some() {
             self.ttl
@@ -404,23 +420,23 @@ where
         entries.insert(key, entry);
     }
 
-    /// Makes room for a new entry by removing expired entries, then the entries closest to
-    /// expiring, until at least one slot is free.
+    /// Makes room for a new entry by removing expired entries and, when the cache is still at
+    /// capacity, the single closest-to-expiring entry.
     fn evict(entries: &mut HashMap<K, Entry<Option<Arc<V>>>>, capacity: usize) {
         let now = Instant::now();
 
         entries.retain(|_, entry| entry.expires_at > now);
 
-        while entries.len() >= capacity {
-            let oldest = entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.expires_at)
-                .map(|(key, _)| key.clone());
+        if entries.len() < capacity {
+            return;
+        }
 
-            let Some(oldest) = oldest else {
-                break;
-            };
+        let oldest = entries
+            .iter()
+            .min_by_key(|(_, entry)| entry.expires_at)
+            .map(|(key, _)| key.clone());
 
+        if let Some(oldest) = oldest {
             entries.remove(&oldest);
         }
     }
@@ -619,6 +635,56 @@ mod ttl_map_tests {
     }
 
     #[tokio::test]
+    async fn peek_arc_preserves_positive_and_negative_entries() {
+        let cache = ttl_map(Duration::from_mins(1));
+
+        cache
+            .get_or_refresh("present".to_string(), || async { Ok::<_, ()>(Some(7)) })
+            .await
+            .unwrap();
+        cache
+            .get_or_refresh("missing".to_string(), || async { Ok::<_, ()>(None) })
+            .await
+            .unwrap();
+
+        let present = cache
+            .peek_arc(&"present".to_string())
+            .expect("positive entry is cached")
+            .expect("positive entry has a value");
+
+        assert_eq!(*present, 7);
+        assert!(
+            cache
+                .peek_arc(&"missing".to_string())
+                .is_some_and(|entry| entry.is_none())
+        );
+        assert!(cache.peek_arc(&"absent".to_string()).is_none());
+
+        // The returned value shares the cached allocation instead of copying it.
+        let stored = cache
+            .entries
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&"present".to_string())
+            .unwrap()
+            .value
+            .clone()
+            .unwrap();
+
+        assert!(Arc::ptr_eq(&present, &stored));
+
+        cache
+            .entries
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&"present".to_string())
+            .unwrap()
+            .expires_at = Instant::now();
+
+        assert!(cache.peek_arc(&"present".to_string()).is_none());
+    }
+
+    #[tokio::test]
     async fn errors_are_not_cached() {
         let cache = ttl_map(Duration::from_mins(1));
         let mut refreshes = 0;
@@ -638,6 +704,123 @@ mod ttl_map_tests {
         // A failing refresh must not leave its flight entry behind: unlike `entries`, the
         // flight map is neither bounded nor expired.
         assert_empty!(cache.flights.lock().await);
+    }
+
+    /// Measures inserts into a full cache, where every insert evicts an entry.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p zeta-cache --lib -- --ignored --nocapture benchmark_inserts_into_a_full_map`.
+    #[test]
+    #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
+    fn benchmark_inserts_into_a_full_map() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        const CAPACITY: usize = 256;
+        const INSERTS: u64 = 10_000;
+
+        let cache: TtlMap<u64, u8> =
+            TtlMap::with_negative_ttl(Duration::from_hours(1), Duration::from_mins(1), CAPACITY);
+
+        for key in 0..CAPACITY as u64 {
+            cache.insert(key, None);
+        }
+
+        let start = Instant::now();
+
+        for key in CAPACITY as u64..CAPACITY as u64 + INSERTS {
+            cache.insert(black_box(key), None);
+        }
+
+        let nanos = start.elapsed().as_secs_f64() * 1e9;
+
+        #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
+        let per_insert = nanos / INSERTS as f64;
+
+        assert_eq!(
+            cache
+                .entries
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .len(),
+            CAPACITY
+        );
+        println!("{CAPACITY}-entry cache: {per_insert:.0} ns/insert");
+    }
+
+    /// Measures writer insert latency while four readers clone 64 KiB values through `peek`.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p zeta-cache --lib -- --ignored --nocapture benchmark_reader_contention`.
+    #[test]
+    #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
+    fn benchmark_reader_contention() {
+        use std::hint::black_box;
+        use std::sync::Barrier;
+        use std::time::Instant;
+
+        const READERS: usize = 4;
+        const READS_PER_READER: usize = 25_000;
+        const INSERTS: u64 = 10_000;
+        const CAPACITY: usize = 256;
+        const VALUE_LEN: usize = 64 * 1024;
+
+        let cache: TtlMap<u64, Vec<u8>> =
+            TtlMap::with_negative_ttl(Duration::from_hours(1), Duration::from_hours(1), CAPACITY);
+
+        for key in 0..CAPACITY as u64 {
+            cache.insert(key, Some(vec![0; VALUE_LEN]));
+        }
+
+        // Keep the readers' key in place while the writer churns through new keys.
+        cache
+            .entries
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&0)
+            .unwrap()
+            .expires_at = Instant::now() + Duration::from_hours(100);
+
+        let barrier = Barrier::new(READERS + 1);
+        let mut start = None;
+        let mut latencies = Vec::with_capacity(usize::try_from(INSERTS).unwrap());
+
+        std::thread::scope(|scope| {
+            for _ in 0..READERS {
+                scope.spawn(|| {
+                    barrier.wait();
+
+                    for _ in 0..READS_PER_READER {
+                        black_box(cache.peek(&0));
+                    }
+                });
+            }
+
+            barrier.wait();
+            start = Some(Instant::now());
+
+            for key in CAPACITY as u64..CAPACITY as u64 + INSERTS {
+                let value = vec![0; VALUE_LEN];
+                let insert_start = Instant::now();
+                cache.insert(key, Some(value));
+                latencies.push(insert_start.elapsed());
+            }
+        });
+
+        let elapsed = start.expect("writer started").elapsed();
+        latencies.sort_unstable();
+        let median = latencies[latencies.len() / 2];
+        let p95 = latencies[latencies.len() * 95 / 100];
+        let max = latencies.last().copied().unwrap_or_default();
+
+        println!(
+            "{READERS} readers x {READS_PER_READER} reads, {INSERTS} inserts: \
+             median insert {:.0} ns, p95 {:.0} ns, max {:.0} ns, total {:.1} ms",
+            median.as_secs_f64() * 1e9,
+            p95.as_secs_f64() * 1e9,
+            max.as_secs_f64() * 1e9,
+            elapsed.as_secs_f64() * 1e3,
+        );
     }
 
     #[tokio::test]
@@ -672,6 +855,59 @@ mod ttl_map_tests {
 
         assert_eq!(len, 4);
         assert!(contains_e);
+    }
+
+    #[tokio::test]
+    async fn evicts_one_closest_to_expiring_entry_per_insert_at_capacity() {
+        // New entries outlive the seeded ones, so each insert evicts the seed it follows.
+        let cache = TtlMap::with_negative_ttl(Duration::from_hours(10), Duration::from_hours(1), 4);
+
+        // Give every entry a distinct expiry so the oldest is unambiguous.
+        for (key, hours) in [("a", 1), ("b", 2), ("c", 3), ("d", 4)] {
+            cache.insert(key.to_string(), Some(7));
+            cache
+                .entries
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get_mut(&key.to_string())
+                .unwrap()
+                .expires_at = Instant::now() + Duration::from_hours(hours);
+        }
+
+        let keys = || {
+            let mut keys: Vec<_> = cache
+                .entries
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .keys()
+                .cloned()
+                .collect();
+            keys.sort_unstable();
+
+            keys
+        };
+
+        // One insert evicts only the closest-to-expiring entry.
+        cache.insert("e".to_string(), Some(7));
+
+        assert_eq!(keys(), ["b", "c", "d", "e"]);
+
+        // The next insert evicts the next-closest entry.
+        cache.insert("f".to_string(), Some(7));
+
+        assert_eq!(keys(), ["c", "d", "e", "f"]);
+
+        // An expired entry is retained away without evicting a fresh one.
+        cache
+            .entries
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&"c".to_string())
+            .unwrap()
+            .expires_at = Instant::now();
+        cache.insert("g".to_string(), Some(7));
+
+        assert_eq!(keys(), ["d", "e", "f", "g"]);
     }
 }
 
