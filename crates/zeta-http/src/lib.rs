@@ -44,16 +44,17 @@ pub use response::{
     parse_text,
 };
 
+/// Unit tests for the log lines and error wrappers.
+///
+/// The `http.client` span recorder tests live in `tests/client_spans.rs`: `tracing` caches callsite
+/// interest for the whole process, so a callsite first used on a thread without a subscriber is
+/// disabled for every later test. Keeping those tests in their own binary, where every test
+/// installs its recorder before touching the client, keeps the callsite enabled without a global
+/// subscriber.
 #[cfg(all(test, feature = "http"))]
 mod tests {
-    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
 
-    use tracing::Instrument;
-    use tracing::field::{Field, Visit};
-    use tracing::span::{Attributes, Id};
-    use tracing_subscriber::layer::{Context as LayerContext, Layer};
     use tracing_subscriber::prelude::*;
 
     use super::*;
@@ -96,117 +97,6 @@ mod tests {
         );
 
         (buffer, tracing::subscriber::set_default(subscriber))
-    }
-
-    /// One span as the recorder observed it: its name, its fields and when it closed.
-    #[derive(Clone, Debug)]
-    struct RecordedSpan {
-        /// The span's id, used to match field updates and the close to the span.
-        id: Id,
-        /// The span's name.
-        name: &'static str,
-        /// The span that was current when this one was created.
-        parent: Option<Id>,
-        /// Every field with its last recorded value, rendered as text.
-        fields: BTreeMap<String, String>,
-        /// When the span was created.
-        opened: Instant,
-        /// When the span was dropped, if it has been.
-        closed: Option<Instant>,
-    }
-
-    impl RecordedSpan {
-        /// Returns the rendered value of `field`, or `None` when it was never recorded.
-        fn field(&self, field: &str) -> Option<&str> {
-            self.fields.get(field).map(String::as_str)
-        }
-
-        /// Returns how long the span was open, or `None` when it has not closed.
-        fn duration(&self) -> Option<Duration> {
-            self.closed
-                .map(|closed| closed.saturating_duration_since(self.opened))
-        }
-    }
-
-    /// Collects every span created while it is the active subscriber's layer, so a test can
-    /// assert on the attributes of a span that logs no event of its own.
-    #[derive(Clone, Default)]
-    struct SpanRecorder(Arc<Mutex<Vec<RecordedSpan>>>);
-
-    impl SpanRecorder {
-        /// Returns the spans named `name`, in creation order.
-        fn named(&self, name: &str) -> Vec<RecordedSpan> {
-            self.0
-                .lock()
-                .expect("span recorder lock")
-                .iter()
-                .filter(|span| span.name == name)
-                .cloned()
-                .collect()
-        }
-    }
-
-    /// Renders a span's fields as text: strings raw, integers as written, everything else
-    /// through `Debug` (`%` display values delegate to it).
-    struct FieldVisitor<'a>(&'a mut BTreeMap<String, String>);
-
-    impl Visit for FieldVisitor<'_> {
-        fn record_str(&mut self, field: &Field, value: &str) {
-            self.0.insert(field.name().to_owned(), value.to_owned());
-        }
-
-        fn record_u64(&mut self, field: &Field, value: u64) {
-            self.0.insert(field.name().to_owned(), value.to_string());
-        }
-
-        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-            self.0.insert(field.name().to_owned(), format!("{value:?}"));
-        }
-    }
-
-    impl<S> Layer<S> for SpanRecorder
-    where
-        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
-    {
-        fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: LayerContext<'_, S>) {
-            let mut fields = BTreeMap::new();
-
-            attrs.record(&mut FieldVisitor(&mut fields));
-
-            let parent = if attrs.is_contextual() {
-                ctx.lookup_current().map(|span| span.id())
-            } else {
-                None
-            };
-
-            self.0
-                .lock()
-                .expect("span recorder lock")
-                .push(RecordedSpan {
-                    id: id.clone(),
-                    name: attrs.metadata().name(),
-                    parent,
-                    fields,
-                    opened: Instant::now(),
-                    closed: None,
-                });
-        }
-
-        fn on_record(&self, id: &Id, values: &tracing::span::Record<'_>, _: LayerContext<'_, S>) {
-            let mut spans = self.0.lock().expect("span recorder lock");
-
-            if let Some(span) = spans.iter_mut().find(|span| span.id == *id) {
-                values.record(&mut FieldVisitor(&mut span.fields));
-            }
-        }
-
-        fn on_close(&self, id: Id, _: LayerContext<'_, S>) {
-            let mut spans = self.0.lock().expect("span recorder lock");
-
-            if let Some(span) = spans.iter_mut().find(|span| span.id == id) {
-                span.closed = Some(Instant::now());
-            }
-        }
     }
 
     #[tokio::test]
@@ -364,111 +254,5 @@ mod tests {
         assert!(logged.contains("url.full"), "{logged}");
         assert!(logged.contains("http.response.status_code"), "{logged}");
         assert!(logged.contains("http response received"), "{logged}");
-    }
-
-    #[tokio::test]
-    async fn get_json_opens_a_client_span_covering_the_whole_request() {
-        let server = MockServer::start().await;
-
-        Mock::given(any())
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(r#"{"hello":"world"}"#)
-                    .set_delay(Duration::from_millis(100)),
-            )
-            .mount(&server)
-            .await;
-
-        let recorder = SpanRecorder::default();
-        let subscriber = tracing_subscriber::registry().with(recorder.clone());
-        let _guard = tracing::subscriber::set_default(subscriber);
-
-        // The client span is created inside the calling operation, so the trace shows the API
-        // call under it instead of as a root of its own.
-        let operation = tracing::info_span!("test.operation");
-        let operation_id = operation
-            .id()
-            .expect("the operation span should be enabled");
-
-        let value: serde_json::Value = async {
-            get_json(reqwest::Client::new().get(format!("{}/endpoint?key=secret", server.uri())))
-                .await
-        }
-        .instrument(operation)
-        .await
-        .expect("200 response");
-
-        assert_eq!(value["hello"], "world");
-
-        let spans = recorder.named("http.client");
-        assert_eq!(spans.len(), 1, "{spans:?}");
-
-        let span = &spans[0];
-
-        assert_eq!(span.name, "http.client");
-        assert_eq!(span.parent, Some(operation_id));
-        assert_eq!(span.field("otel.kind"), Some("client"));
-        assert_eq!(span.field("http.request.method"), Some("GET"));
-        assert_eq!(span.field("http.response.status_code"), Some("200"));
-        assert_eq!(
-            span.field("url.full"),
-            Some(format!("{}/endpoint", server.uri()).as_str())
-        );
-        assert_eq!(span.field("server.address"), Some("127.0.0.1"));
-        assert_eq!(
-            span.field("server.port"),
-            Some(server.address().port().to_string().as_str())
-        );
-        assert_eq!(span.field("error.type"), None);
-
-        // The span is open while the server holds the response: it covers the request, not only
-        // the moment the response headers were handed over.
-        assert!(
-            span.duration().expect("the client span closed") >= Duration::from_millis(90),
-            "{span:?}"
-        );
-
-        // Redaction covers the span attributes, not only the log line: the API key travels in
-        // the query string.
-        assert!(
-            !span.fields.values().any(|value| value.contains("secret")),
-            "{span:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_refused_connection_still_produces_a_client_span_with_an_error_type() {
-        let address = refused_address();
-
-        let recorder = SpanRecorder::default();
-        let subscriber = tracing_subscriber::registry().with(recorder.clone());
-        let _guard = tracing::subscriber::set_default(subscriber);
-
-        let error = send(reqwest::Client::new().get(format!("http://{address}/?key=secret")))
-            .await
-            .expect_err("nothing listens on that address");
-
-        let spans = recorder.named("http.client");
-        assert_eq!(spans.len(), 1, "{spans:?}");
-
-        let span = &spans[0];
-
-        assert_eq!(span.field("otel.kind"), Some("client"));
-        assert_eq!(span.field("http.request.method"), Some("GET"));
-        assert_eq!(span.field("error.type"), Some("connection_error"));
-        assert_eq!(span.field("http.response.status_code"), None);
-        assert_eq!(
-            span.field("url.full"),
-            Some(format!("http://{address}/").as_str())
-        );
-
-        // The failed span closes too, so it is exported instead of leaking until the process
-        // exits; and the error stays redacted.
-        assert!(span.duration().is_some(), "{span:?}");
-        assert!(
-            !span.fields.values().any(|value| value.contains("secret")),
-            "{span:?}"
-        );
-        assert!(!error.full().contains("secret"), "{error}");
     }
 }
