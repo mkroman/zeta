@@ -33,7 +33,7 @@ pub const PLAIN_REPLY_PREFIX: &str = "\x0310> ";
 /// `> Twitch: <message>`.
 #[must_use]
 pub fn labeled_reply(label: &str, message: impl fmt::Display) -> String {
-    format!("{}{}", labeled_reply_prefix(label), message)
+    format!("{REPLY_MARKER}{RESET}{BOLD} {label}:{BOLD}{COLOR} {message}")
 }
 
 /// Returns the bold-label prefix that [`labeled_reply`] starts its replies with.
@@ -108,25 +108,21 @@ pub fn unstyle_text(text: &str) -> String {
     let mut pending_space = false;
 
     while let Some(character) = characters.next() {
-        match character {
-            '\u{3}' => strip_mirc_color(&mut characters),
-            '\u{4}' => strip_hex_color(&mut characters),
-            // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
-            // underline) and the reset code.
-            '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
-            // Control characters and whitespace all separate visible words, so a run of them
-            // collapses into a single space without leaving one at either end.
-            character if character.is_control() || character.is_whitespace() => {
-                pending_space = !visible.is_empty();
-            }
-            character => {
-                if pending_space {
-                    visible.push(' ');
-                    pending_space = false;
-                }
+        if skip_formatting_code(character, &mut characters) {
+            continue;
+        }
 
-                visible.push(character);
+        // Control characters and whitespace all separate visible words, so a run of them
+        // collapses into a single space without leaving one at either end.
+        if character.is_control() || character.is_whitespace() {
+            pending_space = !visible.is_empty();
+        } else {
+            if pending_space {
+                visible.push(' ');
+                pending_space = false;
             }
+
+            visible.push(character);
         }
     }
 
@@ -140,18 +136,35 @@ fn strip_formatting_where(text: &str, keep: impl Fn(char) -> bool) -> String {
     let mut characters = text.chars().peekable();
 
     while let Some(character) = characters.next() {
-        match character {
-            '\u{3}' => strip_mirc_color(&mut characters),
-            '\u{4}' => strip_hex_color(&mut characters),
-            // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
-            // underline) and the reset code.
-            '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => {}
-            character if keep(character) => visible.push(character),
-            _ => {}
+        if skip_formatting_code(character, &mut characters) {
+            continue;
+        }
+
+        if keep(character) {
+            visible.push(character);
         }
     }
 
     visible
+}
+
+/// Consumes `character` when it is an IRC formatting code, including any parameters, and
+/// reports whether it was one.
+fn skip_formatting_code(character: char, characters: &mut Peekable<Chars<'_>>) -> bool {
+    match character {
+        '\u{3}' => {
+            strip_mirc_color(characters);
+            true
+        }
+        '\u{4}' => {
+            strip_hex_color(characters);
+            true
+        }
+        // The formatting toggles (bold, monospace, reverse, italics, strikethrough, and
+        // underline) and the reset code.
+        '\u{2}' | '\u{f}' | '\u{11}' | '\u{16}' | '\u{1d}' | '\u{1e}' | '\u{1f}' => true,
+        _ => false,
+    }
 }
 
 /// The number of hex digits in one hex-color component.
@@ -308,6 +321,18 @@ mod tests {
         assert_eq!(
             labeled_reply("Twitch", "hello"),
             "\x0310>\x0f\x02 Twitch:\x02\x0310 hello"
+        );
+    }
+
+    #[test]
+    fn labeled_reply_is_its_prefix_followed_by_the_message() {
+        assert_eq!(
+            labeled_reply("Twitch", "hello"),
+            format!("{}{}", labeled_reply_prefix("Twitch"), "hello")
+        );
+        assert_eq!(
+            labeled_reply("", ""),
+            format!("{}{}", labeled_reply_prefix(""), "")
         );
     }
 
