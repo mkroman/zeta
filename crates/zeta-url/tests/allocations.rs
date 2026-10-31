@@ -1,70 +1,74 @@
 //! Heap-allocation regression test for [`path_segments`].
 //!
-//! The allocator counters are process-wide, so the cases live in a single test: tests in one
-//! binary run in parallel, and a second test allocating between the snapshots would inflate the
-//! counts.
+//! `allocation-counter` tallies allocations per thread, so this test runs alongside the rest of
+//! the suite without interference. Linking the crate installs its counting allocator; the test
+//! needs no `#[global_allocator]` of its own.
 
-use std::alloc::System;
+use std::hint::black_box;
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 use url::Url;
 
 use zeta_url::path_segments;
 
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
-
-/// Returns the allocations and allocated bytes `f` performs.
-fn measure(f: impl FnOnce()) -> Stats {
-    let mut region = Region::new(GLOBAL);
-
-    f();
-
-    region.change_and_reset()
+/// Returns the allocation statistics `f` performs on this thread.
+fn measure(f: impl FnOnce()) -> allocation_counter::AllocationInfo {
+    allocation_counter::measure(f)
 }
 
 #[test]
 fn path_segments_keeps_typical_urls_off_the_heap() {
     let typical = Url::parse("https://www.example.com/a/b").expect("valid URL");
 
-    let typical_stats = measure(|| {
+    let info = measure(|| {
         let segments = path_segments(&typical).expect("the URL has segments");
 
         assert_eq!(segments.as_slice(), ["a", "b"]);
+        black_box(&segments);
     });
 
     // On main this collected into a `Vec<&str>`: one allocation of 64 bytes (a two-element
     // vector reserves four 16-byte slots).
-    assert_eq!(typical_stats.allocations, 0, "the segments live inline");
-    assert_eq!(typical_stats.bytes_allocated, 0, "nothing reaches the heap");
+    assert_eq!(info.count_total, 0, "the segments live inline");
+    assert_eq!(info.bytes_total, 0, "nothing reaches the heap");
+    assert_eq!(info.bytes_max, 0);
 
     // Six segments — a reddit comment permalink — still fit inline.
     let six = Url::parse("https://www.example.com/a/b/c/d/e/f").expect("valid URL");
 
-    let six_stats = measure(|| {
+    let info = measure(|| {
         let segments = path_segments(&six).expect("the URL has segments");
 
         assert_eq!(segments.len(), 6);
+        black_box(&segments);
     });
 
-    assert_eq!(six_stats.allocations, 0, "six segments live inline");
-    assert_eq!(six_stats.bytes_allocated, 0, "nothing reaches the heap");
+    assert_eq!(info.count_total, 0, "six segments live inline");
+    assert_eq!(info.bytes_total, 0, "nothing reaches the heap");
+    assert_eq!(info.bytes_max, 0);
 
-    // Twelve segments overflow the inline buffer: it spills to eight slots, then grows to
-    // sixteen. The total matches the `Vec` on main, but grows in one reallocation instead of
-    // two.
+    // Twelve segments overflow the inline buffer: one allocation spills it to eight slots, then
+    // the grow reallocates to sixteen. `allocation-counter` does not override `realloc`, so the
+    // default implementation counts the grow as a second allocation operation (allocate the new
+    // buffer, copy, free the old one) and adds both requested buffers to the byte total.
     let deep = Url::parse("https://www.example.com/a/b/c/d/e/f/g/h/i/j/k/l").expect("valid URL");
 
-    let deep_stats = measure(|| {
+    let info = measure(|| {
         let segments = path_segments(&deep).expect("the URL has segments");
 
         assert_eq!(segments.len(), 12);
+        black_box(&segments);
     });
 
-    assert_eq!(deep_stats.allocations, 1, "the inline buffer spills once");
-    assert_eq!(deep_stats.reallocations, 1, "then grows once");
     assert_eq!(
-        deep_stats.bytes_allocated, 256,
-        "sixteen 16-byte slots in total"
+        info.count_total, 2,
+        "one spill allocation plus the reallocation"
+    );
+    assert_eq!(
+        info.bytes_total, 384,
+        "128 B for eight slots, then 256 B for sixteen"
+    );
+    assert_eq!(
+        info.bytes_max, 384,
+        "the old and new buffers are both live during the grow"
     );
 }
