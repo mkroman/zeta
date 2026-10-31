@@ -33,16 +33,14 @@ pub struct Health;
 impl Health {
     /// Replies to `.health` commands with a snapshot of the process telemetry.
     #[command(".health", HEALTH_DESCRIPTION)]
-    async fn health(
-        &self,
-        _ctx: &Context,
-        client: &Client,
-        channel: &str,
-    ) -> Result<(), ZetaError> {
+    async fn health(&self, ctx: &Context, client: &Client, channel: &str) -> Result<(), ZetaError> {
+        #[cfg(not(feature = "database"))]
+        let _ = ctx;
+
         if let Some(snapshot) = Snapshot::capture() {
             #[cfg(feature = "database")]
             let snapshot = Snapshot {
-                db: Some(PoolStats::capture(&_ctx.db)),
+                db: Some(PoolStats::capture(&ctx.db)),
                 ..snapshot
             };
 
