@@ -351,7 +351,7 @@ async fn read_output(
 }
 
 /// Drains the given stderr stream, retaining only its last [`STDERR_MESSAGE_LENGTH`] characters
-/// for the error message.
+/// for the error message, with CRLF line endings normalized to `\n`.
 ///
 /// The tail is kept in a bounded byte ring rather than collecting the whole stream: a verbose or
 /// failing `yt-dlp` run must not be able to grow the bot's memory without bound. The ring holds
@@ -383,6 +383,13 @@ async fn drain_stderr(mut stderr: impl AsyncRead + Unpin) -> String {
     // replaces the partial boundary character, which the trimming below drops when the tail is
     // longer than the retained character count.
     let text = String::from_utf8_lossy(tail.make_contiguous());
+    // Match the line-based reader this replaced: a CRLF line ending is rendered as `\n`, so a
+    // failure message from a CRLF-producing `yt-dlp` does not keep a stray `\r`.
+    let text = if text.contains("\r\n") {
+        std::borrow::Cow::Owned(text.replace("\r\n", "\n"))
+    } else {
+        text
+    };
     let start = text
         .char_indices()
         .rev()
@@ -729,6 +736,40 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "performance measurement"]
+    fn bench_read_output_progress_lines_allocations() {
+        use std::fmt::Write as _;
+
+        const UPDATES: usize = 100_000;
+
+        let mut stdout = String::with_capacity(UPDATES * 32);
+
+        for downloaded in 0..UPDATES {
+            writeln!(stdout, "zeta-dl {downloaded} {UPDATES} NA 1024 0")
+                .expect("writing to a string cannot fail");
+        }
+
+        let mut updates = Vec::with_capacity(UPDATES);
+        let info = allocation_counter::measure(|| {
+            updates.clear();
+
+            let json =
+                futures::executor::block_on(read_output(stdout.as_bytes(), &mut |progress| {
+                    updates.push(progress);
+                }))
+                .expect("reading stdout should not fail");
+
+            assert!(json.is_none());
+            assert_eq!(updates.len(), UPDATES);
+        });
+
+        println!(
+            "yt-dlp read_output allocations: {UPDATES} lines, {} allocations, {} B",
+            info.count_total, info.bytes_total,
+        );
+    }
+
     #[tokio::test]
     async fn verify_paths_keeps_files_inside_the_output_directory() {
         let output_dir = tempfile::tempdir().unwrap();
@@ -791,5 +832,29 @@ mod tests {
         // The tail is cut by characters, not bytes: a multi-byte character is never split.
         assert_eq!(stderr.chars().count(), STDERR_MESSAGE_LENGTH);
         assert!(text.ends_with(&stderr));
+    }
+
+    #[tokio::test]
+    async fn stderr_retains_the_last_characters_of_a_long_multibyte_tail() {
+        // Longer than the internal byte ring, and ending with a two-byte character, so the ring
+        // starts in the middle of a four-byte character.
+        let text = format!("{}é", "😀".repeat(STDERR_MESSAGE_LENGTH + 1));
+        let stderr = drain_stderr(text.as_bytes()).await;
+
+        assert_eq!(stderr.chars().count(), STDERR_MESSAGE_LENGTH);
+        assert!(text.ends_with(&stderr));
+    }
+
+    #[tokio::test]
+    async fn stderr_normalizes_crlf_line_endings() {
+        let stderr = drain_stderr(&b"first line\r\nsecond line\r\n"[..]).await;
+
+        assert_eq!(stderr, "first line\nsecond line\n");
+
+        let long = "a\r\n".repeat(STDERR_MESSAGE_LENGTH * 2);
+        let stderr = drain_stderr(long.as_bytes()).await;
+
+        assert_eq!(stderr.chars().count(), STDERR_MESSAGE_LENGTH);
+        assert!(!stderr.contains('\r'));
     }
 }

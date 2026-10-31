@@ -267,6 +267,7 @@ mod tests {
         use std::time::Instant;
 
         const FORMATS: u64 = 10_000_000;
+        const ALLOCATION_FORMATS: u64 = 1_000_000;
 
         let url =
             Url::parse("https://user:secret@api.example.com:8443/v1/weather?appid=secret#frag")
@@ -300,6 +301,28 @@ mod tests {
              owned {owned:?} ({} ns/format)",
             borrowed.as_nanos() / u128::from(FORMATS),
             owned.as_nanos() / u128::from(FORMATS),
+        );
+
+        let borrowed_allocations = allocation_counter::measure(|| {
+            for _ in 0..ALLOCATION_FORMATS {
+                write!(out, "{}", RedactedUrlRef::from_url(&url)).unwrap();
+                out.clear();
+            }
+        });
+        let owned_allocations = allocation_counter::measure(|| {
+            for _ in 0..ALLOCATION_FORMATS {
+                write!(out, "{}", RedactedUrl::from_url(&url)).unwrap();
+                out.clear();
+            }
+        });
+
+        println!(
+            "RedactedUrl allocations: {ALLOCATION_FORMATS} formats, borrowed {} ({} B), \
+             owned {} ({} B)",
+            borrowed_allocations.count_total,
+            borrowed_allocations.bytes_total,
+            owned_allocations.count_total,
+            owned_allocations.bytes_total,
         );
     }
 }
