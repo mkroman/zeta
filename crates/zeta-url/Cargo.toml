@@ -7,7 +7,11 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/mkroman/zeta"
 
 [dependencies]
+smallvec.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+allocation-counter = "=0.8.1"
 
 [lints]
 workspace = true

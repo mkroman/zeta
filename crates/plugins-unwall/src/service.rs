@@ -1,5 +1,6 @@
 //! Unwall service: the covered-site set, the URL cache, and the submissions.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -74,10 +75,18 @@ impl UnwallService {
     /// Whether `host` is covered.
     #[must_use]
     pub fn covers(&self, host: &str) -> bool {
-        let host = host.to_lowercase();
+        let covered = self.covered.load();
 
-        self.covered
-            .load()
+        // Most deployments cover nothing, so skip the lookup — and its normalization — entirely.
+        if covered.is_empty() {
+            return false;
+        }
+
+        // HTTP(S) hosts are already lowercase (`Url::host_str`), so this only allocates when a
+        // direct caller passes an uppercase host.
+        let host = lowercase_host(host);
+
+        covered
             .iter()
             .any(|site| sites::matches_site(&host, &site.host))
     }
@@ -223,6 +232,18 @@ impl UnwallService {
     }
 }
 
+/// Returns `host` lowercased when it contains an uppercase ASCII byte, borrowing it otherwise.
+///
+/// Hostnames are ASCII (internationalized ones reach `Url::host_str` as punycode), so the ASCII
+/// predicate covers every host that comes from a URL.
+fn lowercase_host(host: &str) -> Cow<'_, str> {
+    if host.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Cow::Owned(host.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(host)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +280,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn lowercases_hosts_only_when_needed() {
+        // A lowercase host is borrowed, so the lookup stays allocation-free.
+        assert!(matches!(lowercase_host("example.com"), Cow::Borrowed(_)));
+        assert_eq!(lowercase_host("WWW.Bloomberg.com"), "www.bloomberg.com");
+    }
+
     #[sqlx::test(migrations = "../plugins/migrations")]
     async fn nothing_is_covered_before_an_admin_adds_a_site(db: sqlx::PgPool) {
         let service = db_service(db);
@@ -284,6 +312,10 @@ mod tests {
         assert!(service.covers("bloomberg.com"));
         assert!(service.covers("www.bloomberg.com"));
         assert!(!service.covers("api.bloomberg.com"));
+
+        // Direct callers may pass the host in any ASCII case.
+        assert!(service.covers("BLOOMBERG.COM"));
+        assert!(service.covers("WWW.Bloomberg.com"));
 
         service
             .add_sites(&["*.bloomberg.com".to_owned()], "admin")

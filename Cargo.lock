@@ -6176,6 +6176,8 @@ version = "0.0.0"
 name = "zeta-url"
 version = "0.0.0"
 dependencies = [
+ "allocation-counter",
+ "smallvec",
  "url",
 ]
 

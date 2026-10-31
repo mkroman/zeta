@@ -21,7 +21,7 @@ use wreq::redirect::Policy;
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_plugin::prelude::*;
-use zeta_url::{RedactedUrl, path_segments, strip_www};
+use zeta_url::{RedactedUrl, last_path_segment, strip_www};
 use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
@@ -281,14 +281,21 @@ fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
 /// Whether the path of `url` looks like binary content.
 #[must_use]
 fn is_binary_url(url: &Url) -> bool {
-    path_segments(url)
-        .and_then(|segments| segments.last().copied())
-        .is_some_and(|segment| {
-            let segment = segment.to_ascii_lowercase();
-            BINARY_EXTENSIONS
-                .iter()
-                .any(|extension| segment.ends_with(extension))
-        })
+    last_path_segment(url).is_some_and(|segment| {
+        BINARY_EXTENSIONS
+            .iter()
+            .any(|extension| ends_with_ignore_ascii_case(segment, extension))
+    })
+}
+
+/// Whether `haystack` ends with `needle`, ignoring ASCII case and without allocating.
+#[must_use]
+fn ends_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let Some(start) = haystack.len().checked_sub(needle.len()) else {
+        return false;
+    };
+
+    haystack.as_bytes()[start..].eq_ignore_ascii_case(needle.as_bytes())
 }
 
 /// Formats the metadata of a page as an IRC message.
@@ -532,6 +539,9 @@ mod tests {
             &Url::parse("https://maero.dk/photo.JPG").unwrap()
         ));
         assert!(is_binary_url(
+            &Url::parse("https://maero.dk/photo.Jpg").unwrap()
+        ));
+        assert!(is_binary_url(
             &Url::parse("https://maero.dk/archive.tar.gz").unwrap()
         ));
         assert!(is_binary_url(
@@ -540,11 +550,31 @@ mod tests {
         assert!(is_binary_url(
             &Url::parse("https://maero.dk/photo.JPG/").unwrap()
         ));
+        // Trailing slashes are skipped, so the extension is still found after a double slash.
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/photo.JPG//").unwrap()
+        ));
 
+        // Extensionless paths and the root path are pages, not binaries.
         assert!(!is_binary_url(
             &Url::parse("https://maero.dk/page.html").unwrap()
         ));
         assert!(!is_binary_url(&Url::parse("https://maero.dk").unwrap()));
+        assert!(!is_binary_url(&Url::parse("https://maero.dk/").unwrap()));
+        assert!(!is_binary_url(
+            &Url::parse("https://maero.dk/photo").unwrap()
+        ));
+    }
+
+    #[test]
+    fn compares_extension_suffixes_without_allocating() {
+        assert!(ends_with_ignore_ascii_case("photo.JPG", ".jpg"));
+        assert!(ends_with_ignore_ascii_case("photo.jpg", ".JPG"));
+        assert!(ends_with_ignore_ascii_case("archive.tar.gz", ".tar.gz"));
+        assert!(!ends_with_ignore_ascii_case("photo.jpeg", ".jpg"));
+        // A needle longer than the haystack never matches, and must not panic.
+        assert!(!ends_with_ignore_ascii_case("", ".jpg"));
+        assert!(!ends_with_ignore_ascii_case(".jp", ".jpg"));
     }
 
     #[test]

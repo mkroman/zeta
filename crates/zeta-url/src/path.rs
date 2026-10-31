@@ -1,20 +1,43 @@
 //! Path-segment and query helpers the per-plugin URL matchers build on.
 
+use smallvec::SmallVec;
 use url::Url;
 
+/// The number of path segments kept on the stack by [`path_segments`].
+///
+/// Six covers the common shapes — a two-segment reddit or YouTube path, the three-segment
+/// TikTok and Twitch paths, and the four-segment Instagram embeds and six-segment reddit
+/// comment permalinks — while keeping the returned buffer small enough that the two-segment
+/// case stays faster than collecting into a `Vec`. Deeper paths spill gracefully.
+const INLINE_SEGMENTS: usize = 6;
+
 /// Returns the path segments of `url`, with the empty segment a trailing slash produces removed.
+///
+/// The segments are borrowed from `url`, and up to six of them live inline in the returned
+/// buffer, so a typical URL does not allocate.
 ///
 /// The `url` crate keeps path segments percent-encoded, and a trailing slash shows up as an empty
 /// final segment, which otherwise has to be special-cased in every path parser.
 #[must_use]
-pub fn path_segments(url: &Url) -> Option<Vec<&str>> {
-    let mut segments: Vec<&str> = url.path_segments()?.collect();
+pub fn path_segments(url: &Url) -> Option<SmallVec<[&str; INLINE_SEGMENTS]>> {
+    let mut segments: SmallVec<[&str; INLINE_SEGMENTS]> = url.path_segments()?.collect();
 
     if segments.last() == Some(&"") {
         segments.pop();
     }
 
     Some(segments)
+}
+
+/// Returns the last non-empty path segment of `url`, without allocating.
+///
+/// Trailing slashes produce empty segments; they are skipped, so `/a/b` and `/a/b/` both yield
+/// `b`.
+#[must_use]
+pub fn last_path_segment(url: &Url) -> Option<&str> {
+    url.path_segments()?
+        .rev()
+        .find(|segment| !segment.is_empty())
 }
 
 /// Returns the value of the first query parameter named `name`, if `url` has one.
@@ -70,11 +93,35 @@ mod tests {
     fn path_segments_should_drop_the_trailing_slash_segment() {
         let url = Url::parse("https://example.com/a/b/").unwrap();
 
-        assert_eq!(path_segments(&url), Some(vec!["a", "b"]));
+        assert_eq!(path_segments(&url).unwrap().as_slice(), ["a", "b"]);
 
         let url = Url::parse("https://example.com/").unwrap();
 
-        assert_eq!(path_segments(&url), Some(Vec::new()));
+        assert!(path_segments(&url).unwrap().is_empty());
+    }
+
+    #[test]
+    fn last_path_segment_should_skip_trailing_slashes() {
+        for url in [
+            "https://example.com/a/b",
+            "https://example.com/a/b/",
+            "https://example.com/a/b//",
+        ] {
+            assert_eq!(
+                last_path_segment(&Url::parse(url).unwrap()),
+                Some("b"),
+                "{url}"
+            );
+        }
+
+        assert_eq!(
+            last_path_segment(&Url::parse("https://example.com").unwrap()),
+            None
+        );
+        assert_eq!(
+            last_path_segment(&Url::parse("https://example.com/").unwrap()),
+            None
+        );
     }
 
     #[test]
