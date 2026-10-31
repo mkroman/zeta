@@ -14,6 +14,7 @@ use std::sync::{Arc, OnceLock};
 
 use irc::client::Client;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use tracing::{Instrument, debug, warn};
 use url::Url;
 use wreq::redirect::Policy;
@@ -32,6 +33,12 @@ const BINARY_EXTENSIONS: &[&str] = &[
     ".png", ".jpg", ".bmp", ".gif", ".avi", ".mpg", ".flv", ".3gp", ".mp4", ".exe", ".msi", ".mp3",
     ".flac", ".tar", ".tar.gz", ".tar.bz2", ".zip",
 ];
+
+/// The maximum number of page fetches that run at once.
+///
+/// Every fetch streams a response and parks a blocking thread for its HTML tokenizer, so an
+/// unbounded number of URLs posted in quick succession would exhaust the blocking pool.
+const FETCH_CONCURRENCY: usize = 8;
 
 /// Settings for the titles plugin, from its `[plugins.titles]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -84,6 +91,10 @@ pub struct Titles {
     /// for the process lifetime. Once a handle is cached, a replacement published later is not
     /// observed.
     catalog: OnceLock<Arc<PluginCatalog>>,
+    /// Bounds how many fetches are in flight at once.
+    ///
+    /// Shared rather than cloned per URL: the permits are the plugin's concurrency budget.
+    fetches: Arc<Semaphore>,
 }
 
 #[plugin(name = "titles", settings = Settings, urls(any))]
@@ -100,6 +111,7 @@ impl Titles {
             client,
             settings: Arc::new(settings.clone()),
             catalog: OnceLock::new(),
+            fetches: Arc::new(Semaphore::new(FETCH_CONCURRENCY)),
         })
     }
 
@@ -179,11 +191,15 @@ impl Titles {
 
     /// Processes a single extracted URL by spawning a task that fetches the page and posts its
     /// metadata to the channel.
+    ///
+    /// The task is spawned immediately, but its fetch waits for one of [`FETCH_CONCURRENCY`]
+    /// permits, so a burst of URLs cannot run an unbounded number of fetches at once.
     fn process_url(&self, url: Arc<Url>, channel: &str, client: &Client) {
         let http_client = self.client.clone();
         let sender = client.sender();
         let channel = channel.to_string();
         let settings = Arc::clone(&self.settings);
+        let fetches = Arc::clone(&self.fetches);
 
         // The span carries the redacted URL: without it, this task's logs would only ever
         // reach stdout. It is a child of the handler span, created while the handler is
@@ -200,6 +216,14 @@ impl Titles {
 
         tokio::spawn(
             async move {
+                // The permit is held for the whole task and released by its drop, on success,
+                // error and cancellation alike. Only polling waits here: the task and its span
+                // already exist, so the fetch stays in the message's trace.
+                let _permit = fetches
+                    .acquire_owned()
+                    .await
+                    .expect("the fetch semaphore is never closed");
+
                 let metadata = match fetch_metadata(&http_client, &url).await {
                     Ok(metadata) => metadata,
                     Err(error) => {
@@ -359,10 +383,75 @@ fn host_name(url: &Url) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
     use super::*;
     use zeta_plugin::CatalogEntry;
     use zeta_test_support::{assert_empty, settings_tests};
     use zeta_utils::irc::strip_formatting;
+
+    /// Starts a minimal HTTP server that answers each request after `delay`, returning its
+    /// address, the most connections it ever had open at once, and the number it answered.
+    ///
+    /// A connection counts as open from the moment it is accepted until its response is started,
+    /// so two fetches that overlap show up as two open connections; answering the request is no
+    /// longer part of the overlap window.
+    async fn delayed_page_server(
+        delay: Duration,
+    ) -> (SocketAddr, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind the test server");
+        let address = listener.local_addr().expect("the server has an address");
+        let open = Arc::new(AtomicUsize::new(0));
+        let most_open = Arc::new(AtomicUsize::new(0));
+        let answered = Arc::new(AtomicUsize::new(0));
+
+        tokio::spawn({
+            let open = Arc::clone(&open);
+            let most_open = Arc::clone(&most_open);
+            let answered = Arc::clone(&answered);
+
+            async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let open = Arc::clone(&open);
+                    let most_open = Arc::clone(&most_open);
+                    let answered = Arc::clone(&answered);
+
+                    tokio::spawn(async move {
+                        let now_open = open.fetch_add(1, Ordering::SeqCst) + 1;
+                        most_open.fetch_max(now_open, Ordering::SeqCst);
+
+                        tokio::time::sleep(delay).await;
+
+                        let mut request = [0_u8; 1024];
+                        let _ = stream.read(&mut request).await;
+
+                        // Leave the overlap window before the response can release the fetch's
+                        // permit, so a fetch that starts next never overlaps this one.
+                        open.fetch_sub(1, Ordering::SeqCst);
+
+                        let body = "<html><head><title>Hello</title></head></html>";
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+
+                        let _ = stream.write_all(response.as_bytes()).await;
+                        let _ = stream.shutdown().await;
+                        answered.fetch_add(1, Ordering::SeqCst);
+                    });
+                }
+            }
+        });
+
+        (address, most_open, answered)
+    }
 
     /// Returns a catalog whose only entry declares `hosts`.
     fn catalog_with(name: &str, hosts: &'static [&'static str]) -> PluginCatalog {
@@ -431,6 +520,46 @@ mod tests {
             &Url::parse("https://youtu.be/dQw4w9WgXcQ").unwrap(),
             Some(catalog)
         ));
+    }
+
+    #[tokio::test]
+    async fn bounds_concurrent_fetches() {
+        let ctx = zeta_test_support::test_context();
+        let mut titles = Titles::new(&ctx, &Settings::default()).expect("titles plugin builds");
+
+        // One permit: a second fetch may only start once the first one is done.
+        titles.fetches = Arc::new(Semaphore::new(1));
+
+        let client = Client::from_config(irc::client::data::Config {
+            nickname: Some("zeta-test".to_owned()),
+            server: Some("mock".to_owned()),
+            use_mock_connection: true,
+            mock_initial_value: Some(String::new()),
+            ..Default::default()
+        })
+        .await
+        .expect("mock irc client");
+
+        let (address, most_open, answered) = delayed_page_server(Duration::from_millis(300)).await;
+
+        for path in ["/one", "/two"] {
+            let url = Arc::new(Url::parse(&format!("http://{address}{path}")).expect("valid url"));
+            titles.process_url(url, "#test", &client);
+        }
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while answered.load(Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("both fetches finish");
+
+        assert_eq!(
+            most_open.load(Ordering::SeqCst),
+            1,
+            "more than one fetch was in flight at a time"
+        );
     }
 
     #[tokio::test]
