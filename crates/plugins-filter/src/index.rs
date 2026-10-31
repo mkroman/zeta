@@ -354,8 +354,14 @@ impl FilterIndex {
 
 #[cfg(test)]
 mod tests {
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+    use std::alloc::System;
+
     use super::super::model::NewFilter;
     use super::*;
+
+    #[global_allocator]
+    static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
     fn filter(id: i32, criteria: NewFilter) -> Filter {
         Filter::from_new_filter(id, criteria)
@@ -728,39 +734,13 @@ mod tests {
         assert!(!index.is_empty());
     }
 
-    /// Measures the hot lookup paths over a populated fifty-channel index.
+    /// Returns the fifty-channel, 650-filter index used by the benchmarks.
     ///
-    /// Ignored by default; run with
-    /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_matches_and_ignores`.
-    #[test]
-    #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
-    fn benchmark_matches_and_ignores() {
-        use std::hint::black_box;
-        use std::time::Instant;
-
+    /// The exact-host entries carry a path that does not match the benchmark URL, so a lookup
+    /// visits all eight entries of the exact bucket before falling through to the wildcard and
+    /// host-agnostic buckets.
+    fn benchmark_index() -> FilterIndex {
         const CHANNELS: usize = 50;
-
-        #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
-        fn measure(mut operation: impl FnMut() -> bool) -> f64 {
-            const ITERATIONS: usize = 100_000;
-            const RUNS: usize = 5;
-
-            let mut best = f64::MAX;
-
-            for _ in 0..RUNS {
-                let start = Instant::now();
-
-                for _ in 0..ITERATIONS {
-                    black_box(operation());
-                }
-
-                let nanos = start.elapsed().as_secs_f64() * 1e9;
-
-                best = best.min(nanos / ITERATIONS as f64);
-            }
-
-            best
-        }
 
         let mut index = FilterIndex::default();
         let mut id = 1;
@@ -774,6 +754,7 @@ mod tests {
                     NewFilter {
                         channel: Some(name.clone()),
                         host: Some(format!("site-{channel}-{host}.example")),
+                        path: Some("/wanted/*".into()),
                         ..new_filter(None, None)
                     },
                 ));
@@ -803,7 +784,43 @@ mod tests {
             }
         }
 
-        let url: Url = "https://unmatched.example/some/path".parse().unwrap();
+        index
+    }
+
+    /// Measures the hot lookup paths over a populated fifty-channel index.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_matches_and_ignores`.
+    #[test]
+    #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
+    fn benchmark_matches_and_ignores() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
+        fn measure(mut operation: impl FnMut() -> bool) -> f64 {
+            const ITERATIONS: usize = 100_000;
+            const RUNS: usize = 5;
+
+            let mut best = f64::MAX;
+
+            for _ in 0..RUNS {
+                let start = Instant::now();
+
+                for _ in 0..ITERATIONS {
+                    black_box(operation());
+                }
+
+                let nanos = start.elapsed().as_secs_f64() * 1e9;
+
+                best = best.min(nanos / ITERATIONS as f64);
+            }
+
+            best
+        }
+
+        let index = benchmark_index();
+        let url: Url = "https://site-0-0.example/some/path".parse().unwrap();
         let sender = Sender::new("someone", "user", "host.example");
         // Keep the inputs opaque: with literals the compiler can constant-fold the lowercasing
         // a real lookup does, hiding the allocation the benchmark is meant to measure.
@@ -813,9 +830,41 @@ mod tests {
         let ignores = measure(|| index.ignores(channel, Some(sender)));
 
         println!(
-            "{} channels, {} filters: matches {matches:.0} ns/op, ignores {ignores:.0} ns/op",
-            CHANNELS,
+            "{} filters: matches {matches:.0} ns/op, ignores {ignores:.0} ns/op",
             index.len()
         );
+    }
+
+    /// Measures the heap bytes retained by a populated index.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_index_build_bytes`.
+    #[test]
+    #[ignore = "measurement: run explicitly with --ignored --nocapture"]
+    fn benchmark_index_build_bytes() {
+        use std::hint::black_box;
+
+        let region = Region::new(GLOBAL);
+        let index = benchmark_index();
+        let stats = region.change();
+        let allocated = isize::try_from(stats.bytes_allocated).unwrap();
+        let deallocated = isize::try_from(stats.bytes_deallocated).unwrap();
+        let live = allocated - deallocated + stats.bytes_reallocated;
+        #[allow(clippy::cast_precision_loss)] // the index is far below 2^52 bytes
+        let per_filter = live as f64 / index.len() as f64;
+
+        println!(
+            "{} filters: allocated {} B, deallocated {} B, reallocated {} B, live {} B \
+             ({per_filter:.1} B/filter), {} allocations; size_of::<Filter>() = {} B",
+            index.len(),
+            stats.bytes_allocated,
+            stats.bytes_deallocated,
+            stats.bytes_reallocated,
+            live,
+            stats.allocations,
+            size_of::<Filter>(),
+        );
+
+        black_box(index);
     }
 }

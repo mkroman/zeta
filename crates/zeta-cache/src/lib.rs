@@ -748,6 +748,81 @@ mod ttl_map_tests {
         println!("{CAPACITY}-entry cache: {per_insert:.0} ns/insert");
     }
 
+    /// Measures writer insert latency while four readers clone 64 KiB values through `peek`.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p zeta-cache --lib -- --ignored --nocapture benchmark_reader_contention`.
+    #[test]
+    #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
+    fn benchmark_reader_contention() {
+        use std::hint::black_box;
+        use std::sync::Barrier;
+        use std::time::Instant;
+
+        const READERS: usize = 4;
+        const READS_PER_READER: usize = 25_000;
+        const INSERTS: u64 = 10_000;
+        const CAPACITY: usize = 256;
+        const VALUE_LEN: usize = 64 * 1024;
+
+        let cache: TtlMap<u64, Vec<u8>> =
+            TtlMap::with_negative_ttl(Duration::from_hours(1), Duration::from_hours(1), CAPACITY);
+
+        for key in 0..CAPACITY as u64 {
+            cache.insert(key, Some(vec![0; VALUE_LEN]));
+        }
+
+        // Keep the readers' key in place while the writer churns through new keys.
+        cache
+            .entries
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&0)
+            .unwrap()
+            .expires_at = Instant::now() + Duration::from_hours(100);
+
+        let barrier = Barrier::new(READERS + 1);
+        let mut start = None;
+        let mut latencies = Vec::with_capacity(usize::try_from(INSERTS).unwrap());
+
+        std::thread::scope(|scope| {
+            for _ in 0..READERS {
+                scope.spawn(|| {
+                    barrier.wait();
+
+                    for _ in 0..READS_PER_READER {
+                        black_box(cache.peek(&0));
+                    }
+                });
+            }
+
+            barrier.wait();
+            start = Some(Instant::now());
+
+            for key in CAPACITY as u64..CAPACITY as u64 + INSERTS {
+                let value = vec![0; VALUE_LEN];
+                let insert_start = Instant::now();
+                cache.insert(key, Some(value));
+                latencies.push(insert_start.elapsed());
+            }
+        });
+
+        let elapsed = start.expect("writer started").elapsed();
+        latencies.sort_unstable();
+        let median = latencies[latencies.len() / 2];
+        let p95 = latencies[latencies.len() * 95 / 100];
+        let max = latencies.last().copied().unwrap_or_default();
+
+        println!(
+            "{READERS} readers x {READS_PER_READER} reads, {INSERTS} inserts: \
+             median insert {:.0} ns, p95 {:.0} ns, max {:.0} ns, total {:.1} ms",
+            median.as_secs_f64() * 1e9,
+            p95.as_secs_f64() * 1e9,
+            max.as_secs_f64() * 1e9,
+            elapsed.as_secs_f64() * 1e3,
+        );
+    }
+
     #[tokio::test]
     async fn evicts_when_full() {
         let cache = ttl_map(Duration::from_hours(1));
