@@ -8,7 +8,7 @@
 #[cfg(feature = "http")]
 use tracing::Span;
 use tracing::{Instrument, error, info_span};
-use zeta_url::RedactedUrl;
+use zeta_url::{RedactedUrl, RedactedUrlRef};
 
 #[cfg(feature = "http")]
 use crate::HttpConfig;
@@ -60,7 +60,7 @@ pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
         "http.client",
         otel.kind = "client",
         http.request.method = %method,
-        url.full = %RedactedUrl::from_url(request.url()),
+        url.full = %RedactedUrlRef::from_url(request.url()),
         server.address = %request.url().host_str().unwrap_or_default(),
         server.port = request.url().port_or_known_default(),
         http.response.status_code = tracing::field::Empty,

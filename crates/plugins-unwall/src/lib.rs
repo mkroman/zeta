@@ -50,7 +50,7 @@ use tracing::{Instrument, debug, warn};
 
 use zeta_http as http;
 use zeta_plugin::prelude::*;
-use zeta_url::RedactedUrl;
+use zeta_url::RedactedUrlRef;
 use zeta_utils::{
     duration::TimeInWords,
     irc::{MAX_LISTING_LENGTH, append_entries_with_more},
@@ -419,7 +419,7 @@ impl Unwall {
             target: "zeta.plugins",
             parent: tracing::Span::current(),
             "unwall.resolve",
-            url.full = %RedactedUrl::from_url(&article)
+            url.full = %RedactedUrlRef::from_url(&article)
         );
 
         tokio::spawn(

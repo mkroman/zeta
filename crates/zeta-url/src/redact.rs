@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use url::Url;
+use url::{Position, Url};
 
 /// A URL rendered for logs and error messages, without its query string, fragment, or userinfo.
 ///
@@ -97,6 +97,59 @@ impl fmt::Display for RedactedUrl {
     }
 }
 
+/// A borrowed [`RedactedUrl`], for rendering a URL without owning a `String`.
+///
+/// [`RedactedUrl`] owns its rendering because an error message carries it past the call that
+/// built it. A span field or log line only needs the value while the field is recorded, so this
+/// wrapper renders the same redacted form — scheme, host, non-default port and path, without the
+/// userinfo, query or fragment — straight from the URL's components, without cloning or
+/// re-serializing it:
+///
+/// ```
+/// # use url::Url;
+/// # use zeta_url::{RedactedUrl, RedactedUrlRef};
+/// let url = Url::parse("https://user:secret@example.com/path?token=secret").unwrap();
+///
+/// assert_eq!(
+///     RedactedUrlRef::from_url(&url).to_string(),
+///     RedactedUrl::from_url(&url).as_str()
+/// );
+/// ```
+#[derive(Clone, Copy)]
+pub struct RedactedUrlRef<'a>(&'a Url);
+
+impl<'a> RedactedUrlRef<'a> {
+    /// Returns `url` as it may be logged: without its query string, fragment, or userinfo.
+    #[must_use]
+    pub const fn from_url(url: &'a Url) -> Self {
+        Self(url)
+    }
+}
+
+impl fmt::Display for RedactedUrlRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let url = self.0;
+
+        // Write the serialization piecewise, skipping the pieces `RedactedUrl` clears. The slice
+        // between the scheme and the username is `://` for a URL with an authority and `:`
+        // otherwise; the host slice keeps IPv6 brackets, and the slice up to the port's end is
+        // empty unless the URL carries a non-default port — exactly as `Url` serializes them.
+        f.write_str(&url[Position::BeforeScheme..Position::AfterScheme])?;
+        f.write_str(&url[Position::AfterScheme..Position::BeforeUsername])?;
+        f.write_str(&url[Position::BeforeHost..Position::AfterHost])?;
+        f.write_str(&url[Position::AfterHost..Position::AfterPort])?;
+        f.write_str(&url[Position::BeforePath..Position::AfterPath])
+    }
+}
+
+impl fmt::Debug for RedactedUrlRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RedactedUrlRef(\"")?;
+        fmt::Display::fmt(self, f)?;
+        f.write_str("\")")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +222,41 @@ mod tests {
             RedactedUrl::from_unparsed("//user:secret@example.com/path?token=secret").as_str(),
             "//example.com/path"
         );
+    }
+
+    #[test]
+    fn redacted_url_ref_should_match_the_owned_form() {
+        let urls = [
+            "https://api.example.com/v1/weather?q=horsens&appid=secret",
+            "https://user:secret@example.com:8443/path?token=secret",
+            "https://example.com/path#access_token=secret",
+            "http://[::1]:8080/path?token=secret",
+            "https://example.com:443/path?token=secret",
+            "https://example.com",
+            "file:///tmp/with%20space",
+            "mailto:user@example.com?subject=secret",
+        ];
+
+        for raw in urls {
+            let url = Url::parse(raw).unwrap();
+            let borrowed = RedactedUrlRef::from_url(&url);
+            let owned = RedactedUrl::from_url(&url);
+
+            assert_eq!(borrowed.to_string(), owned.as_str(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn redacted_url_ref_should_drop_the_secrets_from_display_and_debug() {
+        let url =
+            Url::parse("https://user:secret@example.com:8443/path?token=secret#fragment").unwrap();
+        let redacted = RedactedUrlRef::from_url(&url);
+
+        assert_eq!(redacted.to_string(), "https://example.com:8443/path");
+        assert_eq!(
+            format!("{redacted:?}"),
+            r#"RedactedUrlRef("https://example.com:8443/path")"#
+        );
+        assert!(!format!("{redacted:?}").contains("secret"));
     }
 }

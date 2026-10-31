@@ -21,7 +21,7 @@ use wreq::redirect::Policy;
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_plugin::prelude::*;
-use zeta_url::{RedactedUrl, last_path_segment, strip_www};
+use zeta_url::{RedactedUrl, RedactedUrlRef, last_path_segment, strip_www};
 use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
@@ -195,7 +195,7 @@ impl Titles {
             target: "zeta.plugins",
             parent: tracing::Span::current(),
             "titles.fetch",
-            url.full = %RedactedUrl::from_url(&url)
+            url.full = %RedactedUrlRef::from_url(&url)
         );
 
         tokio::spawn(

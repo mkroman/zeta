@@ -4,9 +4,10 @@
 //! them regardless of headers. Built behind the `emulated` feature, which the anti-bot-protected
 //! plugins enable.
 
+use std::fmt;
+
 use tracing::{Instrument, Span, info_span};
 use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, InvalidHeaderValue, USER_AGENT};
-use zeta_url::RedactedUrl;
 
 use crate::WreqError;
 
@@ -14,6 +15,67 @@ use crate::WreqError;
 /// span that covers the request. The last clone is dropped when the response is consumed.
 #[derive(Clone, Debug)]
 pub struct ClientSpan(Span);
+
+/// A request URI rendered for span attributes and logs, without its query string or userinfo.
+///
+/// [`zeta_url::RedactedUrl`] owns its rendering; a span field only needs the value while the
+/// field is recorded, so this wrapper writes the URI's scheme, host, non-default port and path
+/// directly from its components, without `Uri::to_string` or a URL parse.
+#[derive(Clone, Copy)]
+pub struct RedactedUriRef<'a>(&'a wreq::Uri);
+
+impl<'a> RedactedUriRef<'a> {
+    /// Returns `uri` as it may be logged: without its query string or userinfo.
+    #[must_use]
+    pub const fn from_uri(uri: &'a wreq::Uri) -> Self {
+        Self(uri)
+    }
+}
+
+impl fmt::Display for RedactedUriRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let uri = self.0;
+
+        if let Some(scheme) = uri.scheme_str() {
+            f.write_str(scheme)?;
+            f.write_str(if uri.authority().is_some() {
+                "://"
+            } else {
+                ":"
+            })?;
+        }
+
+        if let Some(authority) = uri.authority() {
+            // `Authority::host` excludes the userinfo the URI may carry.
+            f.write_str(authority.host())?;
+
+            if let Some(port) = uri.port_u16()
+                && Some(port) != default_port(uri.scheme_str())
+            {
+                write!(f, ":{port}")?;
+            }
+        }
+
+        f.write_str(uri.path())
+    }
+}
+
+impl fmt::Debug for RedactedUriRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RedactedUriRef(")?;
+        fmt::Display::fmt(self, f)?;
+        f.write_str(")")
+    }
+}
+
+/// Returns the default port of `scheme`, which the URL serialization omits.
+fn default_port(scheme: Option<&str>) -> Option<u16> {
+    match scheme {
+        Some("http") => Some(80),
+        Some("https") => Some(443),
+        _ => None,
+    }
+}
 
 /// Sends `request` inside an `http.client` span and returns the response only when the server
 /// answered with a success status.
@@ -32,7 +94,7 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
     let (client, request) = request.build_split();
     let request = request?;
     let method = request.method().clone();
-    let uri = request.uri().clone();
+    let uri = request.uri();
     let port = uri.port_u16().or_else(|| match uri.scheme_str() {
         Some("https") => Some(443),
         Some("http") => Some(80),
@@ -43,7 +105,7 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
         "http.client",
         otel.kind = "client",
         http.request.method = %method,
-        url.full = %RedactedUrl::from_unparsed(&uri.to_string()),
+        url.full = %RedactedUriRef::from_uri(uri),
         server.address = %uri.host().unwrap_or_default(),
         server.port = port,
         http.response.status_code = tracing::field::Empty,
@@ -165,8 +227,42 @@ pub fn builder(user_agent: Option<&str>) -> Result<wreq::ClientBuilder, InvalidH
 mod tests {
     use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate};
     use zeta_test_support::{assert_redactions, refused_address};
+    use zeta_url::RedactedUrl;
 
-    use super::{ResponseError, send, text};
+    use super::{RedactedUriRef, ResponseError, send, text};
+
+    #[test]
+    fn redacted_uri_ref_matches_the_owned_form() {
+        let uris = [
+            "https://user:secret@api.example.com:8443/v1/weather?appid=secret",
+            "https://example.com/path#fragment",
+            "http://[::1]:8080/path?token=secret",
+            "https://example.com:443/path?token=secret",
+            "https://example.com/path/to/thing?access_token=secret",
+            "/ddo/query?q=secret",
+        ];
+
+        for raw in uris {
+            let uri: wreq::Uri = raw.parse().unwrap();
+            let borrowed = RedactedUriRef::from_uri(&uri);
+            let owned = RedactedUrl::from_unparsed(&uri.to_string());
+
+            assert_eq!(borrowed.to_string(), owned.as_str(), "{raw}");
+            assert!(!format!("{borrowed:?}").contains("secret"), "{raw}");
+        }
+    }
+
+    #[test]
+    fn redacted_uri_ref_drops_the_userinfo() {
+        let uri: wreq::Uri = "https://user:secret@example.com:8443/path?token=secret"
+            .parse()
+            .unwrap();
+
+        assert_eq!(
+            RedactedUriRef::from_uri(&uri).to_string(),
+            "https://example.com:8443/path"
+        );
+    }
 
     /// Builds the browser-emulated client the helpers are exercised with.
     fn client() -> wreq::Client {
