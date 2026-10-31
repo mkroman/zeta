@@ -330,11 +330,8 @@ impl Zeta {
 
         // Each plugin gets its own long-lived task with an unbounded mailbox, so a slow or
         // failing plugin cannot block the IRC connection or the other plugins.
-        let mut runtime = PluginRuntime::start(
-            self.registry.take_plugins(),
-            Arc::clone(&self.context),
-            &client,
-        );
+        let mut runtime =
+            PluginRuntime::start(self.registry.take_plugins(), &self.context, &client);
 
         // Dispatching incoming IRC messages as events to the plugins that registered interest,
         // until the stream ends, the write path stops, or a shutdown signal arrives.

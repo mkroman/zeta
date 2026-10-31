@@ -26,8 +26,13 @@ pub struct PluginRuntime {
     index: EventIndex,
     /// The long-lived task of every running plugin.
     tasks: Vec<PluginTask>,
-    /// The context shared with every plugin task, consulted for the current filters.
-    context: Arc<Context>,
+    /// The shared filters, resolved once after every plugin was constructed.
+    ///
+    /// The filter plugin publishes its handle from its constructor, so the handle exists by the
+    /// time the runtime starts. The runtime keeps this handle for its lifetime; a later publish
+    /// would not reach the dispatcher. Keeping it out of the per-message path avoids a
+    /// shared-state lookup on every IRC line.
+    filters: Filters,
     /// The runtime's `zeta.shutdown` span, used as the parent of each task's
     /// `zeta.plugin.shutdown` span. The hooks run in the plugin tasks, so the parent is set
     /// explicitly; it keeps the shutdown in one trace.
@@ -39,8 +44,16 @@ impl PluginRuntime {
     ///
     /// Each task gets an unbounded mailbox, so a slow or failing plugin cannot block the IRC
     /// connection or the other plugins.
+    ///
+    /// The shared filters are resolved before the tasks are spawned: every plugin is already
+    /// constructed, and the filter plugin publishes its handle from its constructor.
     #[must_use]
-    pub fn start(plugins: Vec<LoadedPlugin>, ctx: Arc<Context>, client: &Arc<Client>) -> Self {
+    pub fn start(plugins: Vec<LoadedPlugin>, ctx: &Arc<Context>, client: &Arc<Client>) -> Self {
+        // The plugins are already constructed: the filter plugin published its handle from its
+        // constructor, and nothing replaces it later. Resolve it once, before any task can
+        // dispatch a message.
+        let filters = Filters::from_context(ctx);
+
         let mut index = EventIndex::default();
         let mut tasks = Vec::with_capacity(plugins.len());
         let shutdown_span = Arc::new(OnceLock::new());
@@ -56,7 +69,7 @@ impl PluginRuntime {
             tasks.push(PluginTask::spawn(
                 name,
                 plugin,
-                Arc::clone(&ctx),
+                Arc::clone(ctx),
                 Arc::clone(client),
                 receiver,
                 Arc::clone(&shutdown_span),
@@ -67,7 +80,7 @@ impl PluginRuntime {
         Self {
             index,
             tasks,
-            context: ctx,
+            filters,
             shutdown_span,
         }
     }
@@ -76,9 +89,7 @@ impl PluginRuntime {
     ///
     /// A plugin whose task has stopped is logged and removed from the index.
     pub fn dispatch(&mut self, message: Message) {
-        let filters = Filters::from_context(&self.context);
-
-        for stopped in self.index.dispatch(&filters, message) {
+        for stopped in self.index.dispatch(&self.filters, message) {
             warn!(zeta.plugin.name = %stopped, "plugin task has stopped");
         }
     }
@@ -100,7 +111,7 @@ impl PluginRuntime {
         let Self {
             index,
             tasks,
-            context: _,
+            filters: _,
             shutdown_span: _,
         } = self;
 
@@ -155,7 +166,59 @@ async fn drain_tasks(mut handles: Vec<(&'static str, JoinHandle<()>)>, grace: Du
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
+    use zeta_plugin::{Sender, UrlFilter};
+
     use super::*;
+
+    /// A filter that ignores messages from one nick and never filters a URL.
+    struct IgnoresNick(&'static str);
+
+    impl UrlFilter for IgnoresNick {
+        fn is_filtered(&self, _channel: &str, _sender: Option<Sender<'_>>, _url: &Url) -> bool {
+            false
+        }
+
+        fn ignores(&self, _channel: &str, sender: Option<Sender<'_>>) -> bool {
+            sender.is_some_and(|sender| sender.nick == self.0)
+        }
+    }
+
+    /// Builds a client on the `irc` crate's mock connection, so the test needs no server.
+    async fn mock_client() -> Arc<Client> {
+        let config = irc::client::prelude::Config {
+            use_mock_connection: true,
+            ..irc::client::prelude::Config::default()
+        };
+
+        Arc::new(
+            Client::from_config(config)
+                .await
+                .expect("a mock connection should be created"),
+        )
+    }
+
+    /// The runtime resolves the handle the filter plugin published from its constructor, and
+    /// keeps it: filtering changes go through the service, not through another `publish`.
+    #[tokio::test]
+    async fn start_resolves_the_filters_published_by_the_constructors() {
+        let ctx = Arc::new(zeta_test_support::test_context());
+        ctx.shared
+            .publish(Arc::new(Filters::new(Arc::new(IgnoresNick("ignored")))));
+
+        let client = mock_client().await;
+        let runtime = PluginRuntime::start(Vec::new(), &ctx, &client);
+        let sender = |nick| Some(Sender::new(nick, "user", "host.example"));
+
+        assert!(runtime.filters.ignores("#test", sender("ignored")));
+
+        // A later publish does not replace the handle the dispatcher already holds.
+        ctx.shared
+            .publish(Arc::new(Filters::new(Arc::new(IgnoresNick("later")))));
+
+        assert!(runtime.filters.ignores("#test", sender("ignored")));
+        assert!(!runtime.filters.ignores("#test", sender("later")));
+    }
 
     #[tokio::test]
     async fn drain_tasks_aborts_stragglers() {
