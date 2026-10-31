@@ -34,6 +34,12 @@ const MAX_SEND_ATTEMPTS: u32 = 3;
 /// The delay before the first retry of a transient failure; it doubles for each subsequent retry.
 const RETRY_DELAY: Duration = Duration::from_millis(250);
 
+/// The maximum time the presence check [`S3::object_exists`] may take, including its retries.
+///
+/// A `HEAD` runs once per file before the upload, so an unresponsive endpoint must not hold the
+/// upload for the generous per-request timeout, let alone across every retry of it.
+const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Errors that can occur while talking to S3.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -212,12 +218,23 @@ impl S3 {
         let url = self.object_url(key)?;
         let headers = self.signing_headers("HEAD", &url, SignableBody::empty())?;
 
-        let response = send_with_retry(|| async {
-            let request = apply_headers(self.client.head(url.clone()), &headers);
+        // The timeout wraps the whole retry chain, not a single attempt, so a retrying endpoint
+        // cannot extend the check past its bound.
+        let response = tokio::time::timeout(
+            HEAD_TIMEOUT,
+            send_with_retry(|| async {
+                let request = apply_headers(self.client.head(url.clone()), &headers);
 
-            zeta_http::send(request).await.map_err(Error::from)
-        })
-        .await?;
+                zeta_http::send(request).await.map_err(Error::from)
+            }),
+        )
+        .await
+        .map_err(|_| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "s3 head timed out",
+            ))
+        })??;
 
         match response.status() {
             status if status.is_success() => Ok(true),
@@ -473,6 +490,30 @@ mod tests {
                 endpoint: Some(Url::parse(endpoint).expect("valid endpoint")),
             }
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_presence_check_is_bounded() {
+        use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
+
+        // An endpoint that accepts the request but never answers it: only the presence check's
+        // own timeout can end the wait.
+        let server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_mins(60)))
+            .mount(&server)
+            .await;
+
+        let s3 = S3::with_endpoint(&format!("http://{}", server.address()));
+        let error = s3
+            .object_exists("tiktok/123.mp4")
+            .await
+            .expect_err("the presence check must time out");
+
+        assert!(
+            matches!(&error, Error::Io(error) if error.kind() == std::io::ErrorKind::TimedOut),
+            "{error:?}"
+        );
     }
 
     #[test]
