@@ -145,7 +145,7 @@ mod tests {
     #[derive(Debug, Default, Deserialize)]
     struct TestSettings {
         /// Deserialized only: the tests assert on the registration's diagnostics.
-        #[allow(dead_code)]
+        #[expect(dead_code, reason = "deserialized only; asserted through diagnostics")]
         value: Option<u32>,
     }
 

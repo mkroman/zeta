@@ -693,7 +693,7 @@ fn validate_command(args: &CommandArgs, method: &ImplItemFn) -> syn::Result<bool
     let channel = if args.event {
         if typed
             .get(index)
-            .is_some_and(|parameter| is_str(parameter.ty.as_ref()))
+            .is_some_and(|parameter| is_reference_to(parameter.ty.as_ref(), "str"))
         {
             index += 1;
 
@@ -711,7 +711,7 @@ fn validate_command(args: &CommandArgs, method: &ImplItemFn) -> syn::Result<bool
     } else {
         if !typed
             .get(index)
-            .is_some_and(|parameter| is_str(parameter.ty.as_ref()))
+            .is_some_and(|parameter| is_reference_to(parameter.ty.as_ref(), "str"))
         {
             return Err(signature_error());
         }
@@ -767,11 +767,12 @@ fn command_signature(args: &CommandArgs) -> String {
     )
 }
 
-/// Whether `ty` is an immutable `&str`, the optional channel parameter's type.
+/// Whether `ty` is an immutable reference to a type whose last path segment is `expected`.
 ///
-/// Accepts qualified paths such as `&std::primitive::str` but not `&&str`: the generated call
-/// passes a `&str`.
-fn is_str(ty: &Type) -> bool {
+/// The reference must be the only one: the generated call passes a `&T`, so `&&T` does not
+/// match and is reported as a signature error. Qualified paths such as `&std::primitive::str`
+/// are accepted.
+fn is_reference_to(ty: &Type, expected: &str) -> bool {
     matches!(
         ty,
         Type::Reference(reference)
@@ -783,20 +784,8 @@ fn is_str(ty: &Type) -> bool {
                             .path
                             .segments
                             .last()
-                            .is_some_and(|segment| segment.ident == "str")
+                            .is_some_and(|segment| segment.ident == expected)
                 )
-    )
-}
-
-/// Whether `ty` is an immutable reference to a type whose last path segment is `expected`.
-///
-/// Looks through nested references, like [`expect_borrowed`].
-fn is_reference_to(ty: &Type, expected: &str) -> bool {
-    matches!(
-        ty,
-        Type::Reference(reference)
-            if reference.mutability.is_none()
-                && last_path_ident(&reference.elem).is_some_and(|ident| ident == expected)
     )
 }
 
@@ -1179,7 +1168,7 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
 }
 
 /// The module-level `CommandSpec` constants, one per `#[command]` method.
-fn command_constants(plugin: &Plugin) -> impl Iterator<Item = TokenStream> + '_ {
+fn command_constants(plugin: &Plugin) -> impl Iterator<Item = TokenStream> {
     plugin.commands.iter().map(|command| {
         let spec = &command.spec;
         let cfg = &command.cfg;
@@ -1713,6 +1702,55 @@ mod tests {
         .expect("the channel must be `&str`, not a reference to another type");
 
         assert!(error.to_string().contains("channel: &str"), "{error}");
+    }
+
+    #[test]
+    fn double_reference_channels_are_rejected() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc")]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &&str,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("the channel is passed as `&str`, not `&&str`");
+
+        assert!(error.to_string().contains("channel: &str"), "{error}");
+    }
+
+    #[test]
+    fn double_reference_events_are_rejected() {
+        let error = classify_source(
+            r#"
+            impl Plugin {
+                #[command(".test", "desc", event)]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &&CommandEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+            "#,
+        )
+        .err()
+        .expect("the event is passed as `&CommandEvent`, not `&&CommandEvent`");
+
+        assert!(
+            error.to_string().contains("command: &CommandEvent"),
+            "{error}"
+        );
     }
 
     #[test]

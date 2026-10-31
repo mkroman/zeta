@@ -124,10 +124,6 @@ pub struct NameStats {
     /// The `u32` bit offset of every block (block-local layout only).
     pub offset_bytes: usize,
     /// The bits spent on in-stream checkpoint names (global only).
-    #[allow(
-        dead_code,
-        reason = "reported by the layout study's tests, not read by `train`"
-    )]
     pub checkpoint_bits: usize,
     /// The rounded byte cost of [`Self::checkpoint_bits`] (global only; part of `stream_bytes`).
     pub checkpoint_bytes: usize,

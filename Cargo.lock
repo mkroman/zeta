@@ -3622,7 +3622,6 @@ dependencies = [
  "zeta-http",
  "zeta-plugin",
  "zeta-test-support",
- "zeta-url",
  "zeta-utils",
 ]
 

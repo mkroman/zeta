@@ -58,7 +58,6 @@ pub struct QuoteData {
 /// The endpoint response carries further auxiliary fields (`tags`, `platform`, supply
 /// breakdowns), which the plugin does not use.
 #[derive(Clone, Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct Listing {
     /// The CoinMarketCap id of the coin.
     pub id: u64,
@@ -93,7 +92,6 @@ pub struct Listing {
 /// The endpoint response carries further volume and change fields, which the plugin does not
 /// use.
 #[derive(Clone, Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct ListingQuote {
     /// The CoinMarketCap id of the conversion currency.
     pub id: u64,
