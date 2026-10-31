@@ -17,6 +17,14 @@ use super::model::{Case, Filter, Pattern};
 use zeta_plugin::Sender;
 use zeta_url::RedactedUrl;
 
+/// A hash map for the hot filter-index lookups, keyed by lowercased channel and host names.
+///
+/// `foldhash::fast` hashes these short keys faster than the std hasher. It is not
+/// DoS-resistant: every key is inserted from operator-configured filters, and URL text is only
+/// ever used to look an existing key up. If untrusted keys are ever inserted, this must switch
+/// to `foldhash::quality` or the std `RandomState`.
+type IndexMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
+
 /// Whether `pattern` contains wildcards.
 pub fn is_wildcard(pattern: &str) -> bool {
     pattern.contains('*') || pattern.contains('?')
@@ -173,7 +181,7 @@ impl Entry {
 #[derive(Debug, Default, Clone)]
 struct HostIndex {
     /// Filters with an exact host pattern, keyed by the lowercased host.
-    exact: HashMap<String, Vec<Arc<Entry>>>,
+    exact: IndexMap<String, Vec<Arc<Entry>>>,
     /// Filters with a wildcard or `*.suffix` host pattern.
     wildcard: Vec<Arc<Entry>>,
     /// Filters without a host pattern.
@@ -277,7 +285,7 @@ fn channel_key(channel: &str) -> Cow<'_, str> {
 #[derive(Debug, Default, Clone)]
 pub struct FilterIndex {
     /// The channel buckets, keyed by lowercased channel name.
-    channels: HashMap<String, HostIndex>,
+    channels: IndexMap<String, HostIndex>,
     /// The filters that apply to all channels.
     all_channels: HostIndex,
     /// The number of filters in the index, kept exact by [`FilterIndex::insert`] and
