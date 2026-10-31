@@ -354,14 +354,14 @@ impl FilterIndex {
 
 #[cfg(test)]
 mod tests {
-    use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+    use alloc_count::{AllocCounter, AllocSnapshot};
     use std::alloc::System;
 
     use super::super::model::NewFilter;
     use super::*;
 
     #[global_allocator]
-    static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+    static GLOBAL: AllocCounter<System> = AllocCounter(System);
 
     fn filter(id: i32, criteria: NewFilter) -> Filter {
         Filter::from_new_filter(id, criteria)
@@ -835,7 +835,7 @@ mod tests {
         );
     }
 
-    /// Measures the heap bytes retained by a populated index.
+    /// Measures the allocations performed while building a populated index.
     ///
     /// Ignored by default; run with
     /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_index_build_bytes`.
@@ -844,24 +844,23 @@ mod tests {
     fn benchmark_index_build_bytes() {
         use std::hint::black_box;
 
-        let region = Region::new(GLOBAL);
+        let snapshot = AllocSnapshot::now();
         let index = benchmark_index();
-        let stats = region.change();
-        let allocated = isize::try_from(stats.bytes_allocated).unwrap();
-        let deallocated = isize::try_from(stats.bytes_deallocated).unwrap();
-        let live = allocated - deallocated + stats.bytes_reallocated;
+        let stats = snapshot.elapsed();
+        let filters = index.len();
         #[allow(clippy::cast_precision_loss)] // the index is far below 2^52 bytes
-        let per_filter = live as f64 / index.len() as f64;
+        let per_filter = stats.bytes_allocated as f64 / filters as f64;
 
         println!(
-            "{} filters: allocated {} B, deallocated {} B, reallocated {} B, live {} B \
-             ({per_filter:.1} B/filter), {} allocations; size_of::<Filter>() = {} B",
-            index.len(),
+            "{filters} filters: alloc_calls {}, bytes_allocated {} B ({per_filter:.1} B/filter), \
+             realloc_calls {}, bytes_reallocated {} B, dealloc_calls {}, bytes_deallocated {} B; \
+             size_of::<Filter>() = {} B",
+            stats.alloc_calls,
             stats.bytes_allocated,
-            stats.bytes_deallocated,
+            stats.realloc_calls,
             stats.bytes_reallocated,
-            live,
-            stats.allocations,
+            stats.dealloc_calls,
+            stats.bytes_deallocated,
             size_of::<Filter>(),
         );
 
