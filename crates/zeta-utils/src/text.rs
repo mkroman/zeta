@@ -27,7 +27,7 @@ pub trait Truncatable: AsRef<str> {
     fn truncate_within(&self, len: usize, suffix: &str) -> String {
         let text = self.as_ref();
 
-        if text.chars().count() <= len {
+        if text.char_indices().nth(len).is_none() {
             return text.to_string();
         }
 
@@ -169,7 +169,9 @@ pub fn join_with_and<S: AsRef<str>>(items: &[S]) -> String {
         return String::new();
     };
 
-    let mut joined = String::new();
+    let mut joined = String::with_capacity(
+        items.iter().map(|item| item.as_ref().len()).sum::<usize>() + 5 * rest.len(),
+    );
 
     for (index, item) in rest.iter().enumerate() {
         if index > 0 {

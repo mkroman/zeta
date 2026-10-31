@@ -201,20 +201,28 @@ pub fn format_duration(duration: Duration) -> String {
     // A duration of more than `i64::MAX` seconds would outlive the universe several times over;
     // saturate rather than wrap.
     let total_seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
-    let parts = split_into_units(total_seconds, UNITS);
+    let mut remainder = total_seconds;
+    let mut formatted = String::with_capacity(32);
+    let mut first = true;
 
-    if parts.is_empty() {
-        return "0s".to_string();
-    }
+    for &(unit_seconds, suffix) in UNITS {
+        let count = remainder / unit_seconds;
+        remainder %= unit_seconds;
 
-    let mut formatted = String::with_capacity(8 * parts.len());
+        if count == 0 {
+            continue;
+        }
 
-    for (index, (count, suffix)) in parts.iter().enumerate() {
-        if index > 0 {
+        if !first {
             formatted.push(' ');
         }
 
         let _ = write!(formatted, "{count}{suffix}");
+        first = false;
+    }
+
+    if formatted.is_empty() {
+        return "0s".to_string();
     }
 
     formatted
