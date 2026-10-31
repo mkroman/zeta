@@ -801,10 +801,10 @@ fn gender_base(cps: &[u32], entries: &[EmojiEntry]) -> Option<usize> {
     let suffix = cps.len() >= 3
         && cps.get(cps.len() - 2) == Some(&ZWJ)
         && matches!(cps.last().copied(), Some(0x2640 | 0x2642));
+    if suffix && let Some(base) = find_entry(cps.get(..cps.len() - 2)?, entries) {
+        return Some(base);
+    }
     if suffix {
-        if let Some(base) = find_entry(cps.get(..cps.len() - 2)?, entries) {
-            return Some(base);
-        }
         let mut candidate = vec![0x1F9D1];
         candidate.extend_from_slice(cps.get(1..cps.len() - 2)?);
         return find_entry(&candidate, entries);
