@@ -21,6 +21,7 @@ zeta-plugin = { path = "../zeta-plugin", default-features = false }
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]
+stats_alloc = "0.1.10"
 tracing-subscriber.workspace = true
 zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["context"] }
 zeta-utils = { path = "../zeta-utils" }
