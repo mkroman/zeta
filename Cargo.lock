@@ -48,10 +48,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloc_count"
-version = "0.4.0"
+name = "allocation-counter"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51fe56e86b038b77a66d2da32c558cbc8f220b68c4e2e5add34232157defbd36"
+checksum = "beb9e990c0a33699f1984d85a6abead615ccc72dd8130bf3e15dcabe2ca149c9"
 
 [[package]]
 name = "allocator-api2"
@@ -3125,7 +3125,7 @@ dependencies = [
 name = "plugins-filter"
 version = "0.0.0"
 dependencies = [
- "alloc_count",
+ "allocation-counter",
  "arc-swap",
  "clap",
  "sqlx",

@@ -354,14 +354,8 @@ impl FilterIndex {
 
 #[cfg(test)]
 mod tests {
-    use alloc_count::{AllocCounter, AllocSnapshot};
-    use std::alloc::System;
-
     use super::super::model::NewFilter;
     use super::*;
-
-    #[global_allocator]
-    static GLOBAL: AllocCounter<System> = AllocCounter(System);
 
     fn filter(id: i32, criteria: NewFilter) -> Filter {
         Filter::from_new_filter(id, criteria)
@@ -844,26 +838,24 @@ mod tests {
     fn benchmark_index_build_bytes() {
         use std::hint::black_box;
 
-        let snapshot = AllocSnapshot::now();
-        let index = benchmark_index();
-        let stats = snapshot.elapsed();
-        let filters = index.len();
+        let mut filters = 0;
+        let info = allocation_counter::measure(|| {
+            let index = benchmark_index();
+            filters = index.len();
+            black_box(index);
+        });
         #[allow(clippy::cast_precision_loss)] // the index is far below 2^52 bytes
-        let per_filter = stats.bytes_allocated as f64 / filters as f64;
+        let per_filter = info.bytes_total as f64 / filters as f64;
 
         println!(
-            "{filters} filters: alloc_calls {}, bytes_allocated {} B ({per_filter:.1} B/filter), \
-             realloc_calls {}, bytes_reallocated {} B, dealloc_calls {}, bytes_deallocated {} B; \
+            "{filters} filters: count_total {} allocations, bytes_total {} B \
+             ({per_filter:.1} B/filter), count_max {} allocations, bytes_max {} B; \
              size_of::<Filter>() = {} B",
-            stats.alloc_calls,
-            stats.bytes_allocated,
-            stats.realloc_calls,
-            stats.bytes_reallocated,
-            stats.dealloc_calls,
-            stats.bytes_deallocated,
+            info.count_total,
+            info.bytes_total,
+            info.count_max,
+            info.bytes_max,
             size_of::<Filter>(),
         );
-
-        black_box(index);
     }
 }
