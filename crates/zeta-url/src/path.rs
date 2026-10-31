@@ -5,13 +5,15 @@ use url::Url;
 
 /// The number of path segments kept on the stack by [`path_segments`].
 ///
-/// Posted URLs rarely carry more than a handful of segments, so the buffer stays off the heap
-/// for the common case and spills gracefully for deep paths.
-const INLINE_SEGMENTS: usize = 8;
+/// Six covers the common shapes — a two-segment reddit or YouTube path, the three-segment
+/// TikTok and Twitch paths, and the four-segment Instagram embeds and six-segment reddit
+/// comment permalinks — while keeping the returned buffer small enough that the two-segment
+/// case stays faster than collecting into a `Vec`. Deeper paths spill gracefully.
+const INLINE_SEGMENTS: usize = 6;
 
 /// Returns the path segments of `url`, with the empty segment a trailing slash produces removed.
 ///
-/// The segments are borrowed from `url`, and up to eight of them live inline in the returned
+/// The segments are borrowed from `url`, and up to six of them live inline in the returned
 /// buffer, so a typical URL does not allocate.
 ///
 /// The `url` crate keeps path segments percent-encoded, and a trailing slash shows up as an empty

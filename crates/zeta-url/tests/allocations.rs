@@ -1,6 +1,6 @@
 //! Heap-allocation regression test for [`path_segments`].
 //!
-//! The allocator counters are process-wide, so both cases live in a single test: tests in one
+//! The allocator counters are process-wide, so the cases live in a single test: tests in one
 //! binary run in parallel, and a second test allocating between the snapshots would inflate the
 //! counts.
 
@@ -38,7 +38,21 @@ fn path_segments_keeps_typical_urls_off_the_heap() {
     assert_eq!(typical_stats.allocations, 0, "the segments live inline");
     assert_eq!(typical_stats.bytes_allocated, 0, "nothing reaches the heap");
 
-    // Twelve segments overflow the inline buffer, which spills to the heap exactly once.
+    // Six segments — a reddit comment permalink — still fit inline.
+    let six = Url::parse("https://www.example.com/a/b/c/d/e/f").expect("valid URL");
+
+    let six_stats = measure(|| {
+        let segments = path_segments(&six).expect("the URL has segments");
+
+        assert_eq!(segments.len(), 6);
+    });
+
+    assert_eq!(six_stats.allocations, 0, "six segments live inline");
+    assert_eq!(six_stats.bytes_allocated, 0, "nothing reaches the heap");
+
+    // Twelve segments overflow the inline buffer: it spills to eight slots, then grows to
+    // sixteen. The total matches the `Vec` on main, but grows in one reallocation instead of
+    // two.
     let deep = Url::parse("https://www.example.com/a/b/c/d/e/f/g/h/i/j/k/l").expect("valid URL");
 
     let deep_stats = measure(|| {
@@ -47,9 +61,10 @@ fn path_segments_keeps_typical_urls_off_the_heap() {
         assert_eq!(segments.len(), 12);
     });
 
-    // The spilled vector reserves sixteen 16-byte slots, the same 256 bytes the `Vec` allocated
-    // on main — but it spills once instead of growing through two reallocations.
     assert_eq!(deep_stats.allocations, 1, "the inline buffer spills once");
-    assert_eq!(deep_stats.reallocations, 0, "one spill, no growth");
-    assert_eq!(deep_stats.bytes_allocated, 256, "sixteen 16-byte slots");
+    assert_eq!(deep_stats.reallocations, 1, "then grows once");
+    assert_eq!(
+        deep_stats.bytes_allocated, 256,
+        "sixteen 16-byte slots in total"
+    );
 }
