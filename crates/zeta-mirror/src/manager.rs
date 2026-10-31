@@ -3,12 +3,20 @@
 //! A long-running task that owns the full lifecycle of a mirror: download requests are submitted
 //! through an unbounded mpsc channel, every accepted request runs as its own `yt-dlp` task that
 //! logs its progress to its own span and reports only its final result to the manager over a
-//! second mpsc channel, and completed downloads are uploaded to S3 inline before the requester is
-//! notified with the public link.
+//! second mpsc channel, and completed downloads are handed to a bounded upload pipeline that
+//! uploads them to S3 before the requester is notified with the public link.
 //!
 //! At most the configured number of downloads run at a time; further requests are queued and
 //! started in order as running downloads finish. A download's slot is released before its files
-//! are uploaded, so one upload may overlap the downloads that follow it.
+//! are uploaded, so uploads never keep the download queue from draining and the manager never
+//! awaits an upload itself.
+//!
+//! Uploads are bounded explicitly: at most [`UPLOAD_CONCURRENCY`] run at once and at most
+//! [`UPLOAD_BACKLOG`] completed downloads wait for a slot. When the backlog is full, no new
+//! download is started until an upload finishes; requests keep being accepted and queued, so the
+//! manager stays responsive without letting finished downloads accumulate without bound. The
+//! downloads that were already running when the backlog filled can still complete, so the queue
+//! may briefly exceed its cap by at most their number.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -16,7 +24,7 @@ use std::{
     sync::Arc,
 };
 
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, debug, error, trace, warn};
 use url::Url;
 
@@ -27,6 +35,16 @@ use super::{
     ytdlp::{self, DownloadedFile, Downloader, Progress},
 };
 use zeta_url::is_identifier;
+
+/// The maximum number of uploads that run at the same time.
+const UPLOAD_CONCURRENCY: usize = 2;
+
+/// The maximum number of completed downloads waiting for an upload slot.
+///
+/// Together with [`UPLOAD_CONCURRENCY`] this bounds the temporary directories held by finished
+/// downloads. Downloads already running when the queue fills may still complete and add to it, so
+/// the queue can exceed this by at most `max_concurrent`.
+const UPLOAD_BACKLOG: usize = 8;
 
 /// Errors that can occur while mirroring a download request.
 #[derive(thiserror::Error, Debug)]
@@ -40,6 +58,9 @@ pub enum Error {
     /// The upload of a downloaded file failed.
     #[error("upload error: {0}")]
     Upload(#[from] super::s3::Error),
+    /// The upload task was cancelled or panicked before it could report a result.
+    #[error("upload was cancelled")]
+    UploadCancelled,
     /// The download id is not safe to use in file names and object keys.
     #[error("invalid download id: {0}")]
     InvalidId(String),
@@ -106,6 +127,11 @@ impl DownloadManager {
     /// directories are removed at startup; the download directory is expected to be owned by
     /// this process and must not be shared between concurrently running instances.
     ///
+    /// Completed downloads are uploaded by a bounded pipeline: at most [`UPLOAD_CONCURRENCY`]
+    /// uploads run at once and at most [`UPLOAD_BACKLOG`] wait. When the backlog is full the
+    /// manager stops starting downloads until an upload finishes, so finished media cannot pile
+    /// up without bound.
+    ///
     /// The manager task itself has no span: its lifetime is the process, not a unit of work, so a
     /// span for it would never be exported and would outlive whatever started it. Each download,
     /// together with the upload that finishes it, runs in a `media.download` span instead.
@@ -140,6 +166,8 @@ impl DownloadManager {
             status: status_rx,
             active: HashMap::new(),
             queue: VecDeque::new(),
+            uploads: JoinSet::new(),
+            upload_queue: VecDeque::new(),
             next_id: 0,
         };
 
@@ -184,6 +212,10 @@ struct Manager {
     active: HashMap<u64, ActiveDownload>,
     /// The requests waiting for a download slot.
     queue: VecDeque<DownloadRequest>,
+    /// The uploads currently running; completed uploads are reaped from the join set.
+    uploads: JoinSet<()>,
+    /// Completed downloads waiting for an upload slot, in completion order.
+    upload_queue: VecDeque<Upload>,
     /// The id to assign to the next download.
     next_id: u64,
 }
@@ -195,8 +227,111 @@ struct ActiveDownload {
     /// The temporary directory the media is downloaded into, removed when the download finishes.
     tempdir: tempfile::TempDir,
     /// The download's `media.download` span, re-entered while the manager handles the download's
-    /// status and uploads its files, so those log lines and S3 spans stay in its unit of work.
+    /// failure and by the upload task that carries its completed files, so those log lines and
+    /// S3 spans stay in its unit of work.
     span: tracing::Span,
+}
+
+/// A completed download whose files are waiting for, or running through, their upload.
+struct Upload {
+    /// The id the files are named after and the public link is built from.
+    id: String,
+    /// The key prefix the files are uploaded under.
+    prefix: String,
+    /// The base URL the public link is built from, with the id as its fragment.
+    public_url_base: Url,
+    /// The downloaded files to upload.
+    files: Vec<DownloadedFile>,
+    /// The callback and temporary directory, torn down exactly once whichever way the upload ends.
+    completion: UploadCompletion,
+    /// The download's `media.download` span, kept for the upload's logs and S3 spans.
+    span: tracing::Span,
+}
+
+impl Upload {
+    /// Uploads the files to the bucket and reports the result to the requester.
+    async fn run(self, s3: S3) {
+        let Self {
+            id,
+            prefix,
+            public_url_base,
+            files,
+            completion,
+            ..
+        } = self;
+
+        let result = match Manager::upload(&s3, &prefix, &public_url_base, &id, &files).await {
+            Ok(link) => Ok(link),
+            Err(err) => {
+                error!(
+                    exception.message = %err,
+                    "could not upload the downloaded media"
+                );
+                Err(Error::Upload(err))
+            }
+        };
+
+        completion.complete(result);
+    }
+}
+
+/// Removes an upload's temporary directory and notifies its requester exactly once.
+///
+/// The completion is owned by the [`Upload`] (or by its running task), so dropping it without
+/// completing it — because the task was cancelled or panicked — still runs the callback and
+/// removes the files.
+struct UploadCompletion {
+    /// The requester callback, taken when it is invoked so it can never run twice.
+    on_finish: Option<OnFinish>,
+    /// The temporary download directory, taken when it is removed.
+    tempdir: Option<tempfile::TempDir>,
+}
+
+impl UploadCompletion {
+    /// Creates the completion state for an upload.
+    fn new(on_finish: OnFinish, tempdir: tempfile::TempDir) -> Self {
+        Self {
+            on_finish: Some(on_finish),
+            tempdir: Some(tempdir),
+        }
+    }
+
+    /// Removes the temporary directory and reports `result` to the requester.
+    fn complete(mut self, result: Result<String, Error>) {
+        self.close_tempdir();
+
+        if let Some(on_finish) = self.on_finish.take() {
+            on_finish(result);
+        }
+    }
+
+    /// Removes the temporary directory, if it has not been removed yet.
+    fn close_tempdir(&mut self) {
+        let Some(tempdir) = self.tempdir.take() else {
+            return;
+        };
+
+        // The path is captured before `close`, since it is no longer valid afterwards.
+        let tempdir_path = tempdir.path().to_path_buf();
+
+        if let Err(err) = tempdir.close() {
+            warn!(
+                file.path = %tempdir_path.display(),
+                exception.message = %err,
+                "could not remove the temporary download directory"
+            );
+        }
+    }
+}
+
+impl Drop for UploadCompletion {
+    fn drop(&mut self) {
+        self.close_tempdir();
+
+        if let Some(on_finish) = self.on_finish.take() {
+            on_finish(Err(Error::UploadCancelled));
+        }
+    }
 }
 
 impl Manager {
@@ -205,6 +340,10 @@ impl Manager {
         debug!("download manager started");
 
         loop {
+            // Computed outside the `select!` so the `join_next` branch can be disabled without
+            // borrowing the join set twice; an empty `JoinSet` always resolves immediately.
+            let has_uploads = !self.uploads.is_empty();
+
             tokio::select! {
                 request = self.requests.recv() => {
                     let Some(request) = request else { break };
@@ -214,22 +353,34 @@ impl Manager {
                     // The sending end lives in `self`, so the status channel cannot close
                     // while the manager runs; the match only makes the select total.
                     let Some(status) = status else { break };
-                    self.on_status(status).await;
+                    self.on_status(status);
+                }
+                upload = self.uploads.join_next(), if has_uploads => {
+                    self.on_upload_finished(upload);
                 }
             }
         }
+
+        // Completed downloads that never started their upload still own a callback and a
+        // temporary directory; dropping them runs the completion. Running uploads are aborted
+        // and drained so their completion runs too, instead of waiting for the process to exit.
+        self.uploads.abort_all();
+        while self.uploads.join_next().await.is_some() {}
+        self.upload_queue.clear();
 
         debug!("download manager stopped");
     }
 
     /// Handles an incoming download request, starting it or queueing it for later.
     fn on_request(&mut self, request: DownloadRequest) {
-        if self.active.len() < self.max_concurrent {
+        if self.active.len() < self.max_concurrent && !self.upload_backlog_full() {
             self.start_download(request);
         } else {
             debug!(
                 media.id = %request.id,
                 running = self.active.len(),
+                uploads = self.uploads.len(),
+                uploads_waiting = self.upload_queue.len(),
                 "queued download request"
             );
 
@@ -273,8 +424,8 @@ impl Manager {
 
         // The span was opened when the request was queued, so it covers the wait as well as the
         // download and the upload. Re-entering it here keeps the pre-start diagnostics in it;
-        // the spawned download task and the manager re-enter it for the rest of the unit of
-        // work.
+        // the spawned download task and the later upload task re-enter it for the rest of the
+        // unit of work.
         let span = request.span.clone();
 
         span.in_scope(|| {
@@ -311,14 +462,16 @@ impl Manager {
 
     /// Handles a final status reported by a download task.
     ///
-    /// The download's slot is released before its files are uploaded: the upload can take a
-    /// while, so the next queued download starts right away instead of waiting behind it. The
-    /// upload itself still runs inside the finished download's `media.download` span, still
-    /// serialized on the manager task, and the next download starts outside that span so it
-    /// becomes a root of its own rather than a child of the download that freed the slot. The
-    /// cost is that at most `max_concurrent` downloads plus one upload run at a time, i.e. one
-    /// extra temporary download directory.
-    async fn on_status(&mut self, status: DownloadStatus) {
+    /// The download's slot is released before its files are uploaded. A completed download is
+    /// only queued for the upload pipeline — never uploaded here — so a stalled or slow upload
+    /// cannot stop the manager from accepting requests or handling the other downloads'
+    /// statuses. A failed download has nothing to upload and is reported inline after its
+    /// temporary directory is removed, as before.
+    ///
+    /// The upload task re-enters the finished download's `media.download` span, while starting
+    /// the next download happens outside it, so that download remains the root of its own trace
+    /// instead of becoming a child of the download that freed the slot.
+    fn on_status(&mut self, status: DownloadStatus) {
         let (id, result) = match status {
             DownloadStatus::Completed { id, files } => (id, Ok(files)),
             DownloadStatus::Failed { id, error } => (id, Err(error)),
@@ -328,33 +481,46 @@ impl Manager {
             return;
         };
 
-        let span = active.span.clone();
+        match result {
+            Ok(files) => {
+                // Queueing first lets the backpressure check in `start_next` see the finished
+                // download: the slot is free, but the upload pipeline may not be.
+                self.enqueue_upload(active, files);
+                self.start_next();
+            }
+            Err(error) => {
+                let span = active.span.clone();
 
-        if let Err(error) = &result {
-            span.in_scope(|| {
-                warn!(
-                    exception.message = %error,
-                    "could not download media"
-                );
-            });
+                span.in_scope(|| {
+                    warn!(
+                        exception.message = %error,
+                        "could not download media"
+                    );
+                });
+
+                self.start_next();
+                Self::fail_download(active, error);
+            }
         }
-
-        self.start_next();
-
-        Self::finish(&self.s3, active, result)
-            .instrument(span)
-            .await;
     }
 
-    /// Finishes a download: uploads the downloaded files to the bucket (if any), notifies the
-    /// requester of the result and removes the temporary download directory.
+    /// Reports a failed download after removing its temporary directory.
     ///
-    /// The caller runs this inside the download's `media.download` span.
-    async fn finish(
-        s3: &S3,
-        active: ActiveDownload,
-        result: Result<Vec<DownloadedFile>, ytdlp::Error>,
-    ) {
+    /// A failed download has nothing to upload, so its callback runs inline; the slot has
+    /// already been released by the caller, keeping the queue draining.
+    fn fail_download(active: ActiveDownload, error: ytdlp::Error) {
+        let ActiveDownload {
+            request: DownloadRequest { on_finish, .. },
+            tempdir,
+            ..
+        } = active;
+
+        UploadCompletion::new(on_finish, tempdir).complete(Err(Error::Download(error)));
+    }
+
+    /// Queues a completed download for upload and starts as many queued uploads as the
+    /// pipeline allows.
+    fn enqueue_upload(&mut self, active: ActiveDownload, files: Vec<DownloadedFile>) {
         let ActiveDownload {
             request:
                 DownloadRequest {
@@ -365,37 +531,68 @@ impl Manager {
                     ..
                 },
             tempdir,
-            ..
+            span,
         } = active;
 
-        let result = match result {
-            Ok(files) => match Self::upload(s3, &prefix, &public_url_base, &id, &files).await {
-                Ok(link) => Ok(link),
-                Err(err) => {
-                    error!(
-                        exception.message = %err,
-                        "could not upload the downloaded media"
-                    );
-                    Err(Error::Upload(err))
-                }
-            },
-            Err(err) => Err(Error::Download(err)),
-        };
+        self.upload_queue.push_back(Upload {
+            id,
+            prefix,
+            public_url_base,
+            files,
+            completion: UploadCompletion::new(on_finish, tempdir),
+            span,
+        });
 
-        // The temporary directory and everything in it are removed here, both on success and on
-        // failure, so that downloaded files never outlive the download. The path is captured
-        // before `close`, since it is no longer valid afterwards.
-        let tempdir_path = tempdir.path().to_path_buf();
+        self.pump_uploads();
+    }
 
-        if let Err(err) = tempdir.close() {
-            warn!(
-                file.path = %tempdir_path.display(),
-                exception.message = %err,
-                "could not remove the temporary download directory"
-            );
+    /// Starts queued uploads until the upload pipeline is full or the queue is empty.
+    fn pump_uploads(&mut self) {
+        while self.uploads.len() < UPLOAD_CONCURRENCY {
+            let Some(upload) = self.upload_queue.pop_front() else {
+                break;
+            };
+
+            self.start_upload(upload);
+        }
+    }
+
+    /// Spawns the task that uploads `upload` inside its download's `media.download` span.
+    fn start_upload(&mut self, upload: Upload) {
+        let s3 = self.s3.clone();
+        let span = upload.span.clone();
+
+        self.uploads.spawn(
+            async move {
+                upload.run(s3).await;
+            }
+            .instrument(span),
+        );
+    }
+
+    /// Handles a finished upload task, then refills the upload pipeline and the download slots
+    /// the completed upload may have unblocked.
+    fn on_upload_finished(&mut self, joined: Option<Result<(), tokio::task::JoinError>>) {
+        if let Some(Err(error)) = joined {
+            // The upload's completion guard has already reported the cancellation or panic.
+            if error.is_panic() {
+                error!(exception.message = %error, "upload task panicked");
+            } else {
+                warn!(exception.message = %error, "upload task was cancelled");
+            }
         }
 
-        on_finish(result);
+        self.pump_uploads();
+        self.start_next();
+    }
+
+    /// Returns whether the upload pipeline has no room for another completed download.
+    ///
+    /// A queued upload is drained into a free slot immediately, so a non-empty queue means every
+    /// upload slot is busy. Downloads already running when this becomes true may still finish
+    /// and queue their uploads; their number is bounded by `max_concurrent`.
+    fn upload_backlog_full(&self) -> bool {
+        self.upload_queue.len() >= UPLOAD_BACKLOG
     }
 
     /// Uploads the downloaded files to the bucket under `prefix` and returns the public URL of
@@ -440,13 +637,14 @@ impl Manager {
         Ok(public_url_for(public_url_base, id))
     }
 
-    /// Starts queued downloads until every slot is busy or the queue is empty.
+    /// Starts queued downloads until every slot is busy, the upload backlog is full or the
+    /// queue is empty.
     ///
     /// A request that [`start_download`](Self::start_download) rejects early — an unsafe id or a
     /// temporary directory that could not be created — never becomes active, so draining the
     /// queue here keeps a rejected request from stranding every request behind it.
     fn start_next(&mut self) {
-        while self.active.len() < self.max_concurrent {
+        while self.active.len() < self.max_concurrent && !self.upload_backlog_full() {
             let Some(request) = self.queue.pop_front() else {
                 break;
             };

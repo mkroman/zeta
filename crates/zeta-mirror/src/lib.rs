@@ -7,10 +7,10 @@
 //! non-mirroring behavior.
 //!
 //! The actual mirroring is managed by a long-running download manager task that downloads media
-//! (streaming progress status back), uploads it to the bucket and notifies the requester with the
-//! public link. Downloads happen inside temporary directories that are owned by the manager and
-//! removed when the download finishes; directories left behind by a killed or crashed process
-//! are removed on startup.
+//! (streaming progress status back), uploads it to the bucket in a bounded upload pipeline and
+//! notifies the requester with the public link. Downloads happen inside temporary directories
+//! that are owned by the manager and removed when the download finishes; directories left behind
+//! by a killed or crashed process are removed on startup.
 //!
 //! Plugins access the shared mirror through a [`MirrorHandle`],
 //! which carries the key prefix and the public URL base used for their links, and is resolved
