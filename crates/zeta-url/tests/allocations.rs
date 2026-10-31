@@ -5,6 +5,7 @@
 //! needs no `#[global_allocator]` of its own.
 
 use std::hint::black_box;
+use std::mem::size_of;
 
 use url::Url;
 
@@ -46,10 +47,9 @@ fn path_segments_keeps_typical_urls_off_the_heap() {
     assert_eq!(info.bytes_total, 0, "nothing reaches the heap");
     assert_eq!(info.bytes_max, 0);
 
-    // Twelve segments overflow the inline buffer: one allocation spills it to eight slots, then
-    // the grow reallocates to sixteen. `allocation-counter` does not override `realloc`, so the
-    // default implementation counts the grow as a second allocation operation (allocate the new
-    // buffer, copy, free the old one) and adds both requested buffers to the byte total.
+    // Twelve segments overflow the inline buffer, so the buffer must spill to the heap. The exact
+    // growth policy belongs to `SmallVec`; assert only that the spill happens and reserves room
+    // for all twelve borrowed segments, so the test does not pin dependency internals.
     let deep = Url::parse("https://www.example.com/a/b/c/d/e/f/g/h/i/j/k/l").expect("valid URL");
 
     let info = measure(|| {
@@ -59,16 +59,16 @@ fn path_segments_keeps_typical_urls_off_the_heap() {
         black_box(&segments);
     });
 
-    assert_eq!(
-        info.count_total, 2,
-        "one spill allocation plus the reallocation"
+    let required = u64::try_from(12 * size_of::<&str>())
+        .expect("the inline buffer size fits in the allocation counter's u64");
+
+    assert!(info.count_total > 0, "the deep path must spill to the heap");
+    assert!(
+        info.bytes_total >= required,
+        "the spilled buffer holds twelve references"
     );
-    assert_eq!(
-        info.bytes_total, 384,
-        "128 B for eight slots, then 256 B for sixteen"
-    );
-    assert_eq!(
-        info.bytes_max, 384,
-        "the old and new buffers are both live during the grow"
+    assert!(
+        info.bytes_max >= required,
+        "the peak allocation holds twelve references"
     );
 }

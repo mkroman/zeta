@@ -550,8 +550,12 @@ mod tests {
         assert!(is_binary_url(
             &Url::parse("https://maero.dk/photo.JPG/").unwrap()
         ));
+        // Trailing slashes are skipped, so the extension is still found after a double slash.
+        assert!(is_binary_url(
+            &Url::parse("https://maero.dk/photo.JPG//").unwrap()
+        ));
 
-        // Extensionless paths and trailing slashes are pages, not binaries.
+        // Extensionless paths and the root path are pages, not binaries.
         assert!(!is_binary_url(
             &Url::parse("https://maero.dk/page.html").unwrap()
         ));
