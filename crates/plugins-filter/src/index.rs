@@ -32,8 +32,21 @@ fn non_blank(pattern: Option<&str>) -> Option<&str> {
 enum HostMatcher {
     /// An exact host, matched for equality.
     Exact(String),
+    /// An ASCII `*.suffix` host pattern, matched against the host tail.
+    Suffix(String),
     /// A wildcard host pattern.
     Wild(Pattern),
+}
+
+/// Returns the literal suffix of an ASCII `*.suffix` host pattern.
+///
+/// The suffix must be non-empty and free of further wildcards; every other wildcard host
+/// pattern keeps the general [`HostMatcher::Wild`] matcher. This applies to URL host patterns
+/// only: sender hostname patterns always use [`Pattern`].
+fn host_suffix(host: &str) -> Option<&str> {
+    let suffix = host.strip_prefix("*.")?;
+
+    (!suffix.is_empty() && suffix.is_ascii() && !is_wildcard(suffix)).then_some(suffix)
 }
 
 /// A filter with its wildcard patterns precompiled for matching.
@@ -60,11 +73,16 @@ impl Entry {
     /// Compiles `filter` into an entry.
     fn new(filter: Filter) -> Self {
         let host = non_blank(filter.host.as_deref()).map(|host| {
-            if is_wildcard(host) {
-                HostMatcher::Wild(Pattern::compile(Some(host), Case::Insensitive))
-            } else {
-                HostMatcher::Exact(host.to_lowercase())
-            }
+            host_suffix(host).map_or_else(
+                || {
+                    if is_wildcard(host) {
+                        HostMatcher::Wild(Pattern::compile(Some(host), Case::Insensitive))
+                    } else {
+                        HostMatcher::Exact(host.to_lowercase())
+                    }
+                },
+                |suffix| HostMatcher::Suffix(suffix.to_ascii_lowercase()),
+            )
         });
         let path = Pattern::compile(filter.path.as_deref(), Case::Sensitive);
         let nickname = Pattern::compile(filter.nickname.as_deref(), Case::Insensitive);
@@ -81,12 +99,19 @@ impl Entry {
         }
     }
 
-    /// Whether the host pattern of the entry matches `host` (already lowercased). Hostless URLs
-    /// match wildcard patterns as if their host were empty, so `*` matches every URL.
+    /// Whether the host pattern of the entry matches `host` (already lowercased).
+    ///
+    /// Hostless URLs match wildcard patterns as if their host were empty, so `*` matches every
+    /// URL; exact and suffix patterns never match them.
     fn host_matches(&self, host: Option<&str>) -> bool {
         match &self.host {
             None => true,
             Some(HostMatcher::Exact(expected)) => host == Some(expected.as_str()),
+            Some(HostMatcher::Suffix(suffix)) => host.is_some_and(|host| {
+                host.len() > suffix.len()
+                    && host.as_bytes()[host.len() - suffix.len() - 1] == b'.'
+                    && host[host.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+            }),
             Some(HostMatcher::Wild(pattern)) => pattern.matches(Some(host.unwrap_or(""))),
         }
     }
@@ -107,31 +132,40 @@ impl Entry {
 
     /// Whether the entry matches `host`, `sender` and `url`.
     ///
-    /// Only wildcard entries need this: exact entries are routed by their host and hostless
-    /// entries pass the host check unconditionally, so both use [`Entry::matches_after_host`].
+    /// Only wildcard and suffix entries need this: exact entries are routed by their host and
+    /// hostless entries pass the host check unconditionally, so both use
+    /// [`Entry::matches_after_host`].
     fn matches(&self, host: Option<&str>, sender: Option<Sender<'_>>, url: &Url) -> bool {
         self.host_matches(host) && self.matches_after_host(sender, url)
     }
 
     /// Whether the entry matches `sender` and `url` once its host is already known to match.
     fn matches_after_host(&self, sender: Option<Sender<'_>>, url: &Url) -> bool {
+        // The dispatcher consults `ignores` before filtering any URL, so a sender-only entry
+        // whose sender matches never reaches this point; one whose sender does not match
+        // cannot match the message either.
+        if self.sender_only() {
+            return false;
+        }
+
         self.path.matches(Some(url.path())) && self.sender_matches(sender)
     }
 
-    /// Whether the entry ignores `sender` entirely: it has no URL criteria (host and path
-    /// unset) and at least one sender criterion, which matches. The sender-criteria
-    /// requirement keeps a criteria-less filter — which the command cannot create — from
-    /// ignoring everyone.
+    /// Whether the entry has no URL criteria (host and path unset) and at least one sender
+    /// criterion.
+    ///
+    /// These entries are handled entirely by [`Entry::ignores`]. A criteria-less filter is not
+    /// sender-only and keeps matching every URL.
+    const fn sender_only(&self) -> bool {
+        self.host.is_none()
+            && self.path.is_unset()
+            && (!self.nickname.is_unset() || !self.username.is_unset() || !self.hostname.is_unset())
+    }
+
+    /// Whether the entry ignores `sender` entirely: it is sender-only and its sender criteria
+    /// match.
     fn ignores(&self, sender: Option<Sender<'_>>) -> bool {
-        if self.host.is_some() || !self.path.is_unset() {
-            return false;
-        }
-
-        if self.nickname.is_unset() && self.username.is_unset() && self.hostname.is_unset() {
-            return false;
-        }
-
-        self.sender_matches(sender)
+        self.sender_only() && self.sender_matches(sender)
     }
 }
 
@@ -140,7 +174,7 @@ impl Entry {
 struct HostIndex {
     /// Filters with an exact host pattern, keyed by the lowercased host.
     exact: HashMap<String, Vec<Arc<Entry>>>,
-    /// Filters with a wildcard host pattern.
+    /// Filters with a wildcard or `*.suffix` host pattern.
     wildcard: Vec<Arc<Entry>>,
     /// Filters without a host pattern.
     any_host: Vec<Arc<Entry>>,
@@ -153,7 +187,7 @@ impl HostIndex {
             Some(HostMatcher::Exact(host)) => {
                 self.exact.entry(host.clone()).or_default().push(entry);
             }
-            Some(HostMatcher::Wild(_)) => self.wildcard.push(entry),
+            Some(HostMatcher::Wild(_) | HostMatcher::Suffix(_)) => self.wildcard.push(entry),
             None => self.any_host.push(entry),
         }
     }
@@ -446,6 +480,44 @@ mod tests {
 
             assert_eq!(matches(&index, "#chan", url), expected, "for {case}");
         }
+    }
+
+    #[test]
+    fn suffix_host_patterns_match_subdomains_only() {
+        let index = index_with(&[new_filter(None, Some("*.example.com"))]);
+
+        assert!(matches(&index, "#chan", "https://www.example.com/page"));
+        assert!(matches(&index, "#chan", "https://a.b.example.com/page"));
+        assert!(!matches(&index, "#chan", "https://example.com/page"));
+        assert!(!matches(&index, "#chan", "https://evilexample.com/page"));
+
+        // Hostless URLs never match a host pattern, including a suffix one.
+        assert!(!index.matches(
+            "#chan",
+            None,
+            &Url::parse("mailto:someone@example.com").unwrap()
+        ));
+
+        let uppercase = index_with(&[new_filter(None, Some("*.EXAMPLE.COM"))]);
+
+        assert!(matches(&uppercase, "#chan", "https://WWW.EXAMPLE.COM/page"));
+    }
+
+    #[test]
+    fn other_wildcard_host_patterns_keep_wildcard_matching() {
+        let wild = index_with(&[new_filter(None, Some("*"))]);
+        let nested = index_with(&[new_filter(None, Some("*.*.com"))]);
+        let middle = index_with(&[new_filter(None, Some("*.com*"))]);
+
+        assert!(wild.matches(
+            "#chan",
+            None,
+            &Url::parse("mailto:someone@example.com").unwrap()
+        ));
+        assert!(matches(&nested, "#chan", "https://a.b.com/page"));
+        assert!(!matches(&nested, "#chan", "https://b.com/page"));
+        assert!(matches(&middle, "#chan", "https://reuters.com/page"));
+        assert!(matches(&middle, "#chan", "https://reuters.comx"));
     }
 
     #[test]

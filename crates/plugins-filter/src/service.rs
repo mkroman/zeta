@@ -19,7 +19,7 @@ use zeta_plugin::{Sender, UrlFilter};
 ///
 /// The database is the source of truth; the index is rebuilt from it on [`load`](Self::load) and
 /// kept in sync by [`add`](Self::add) and [`delete_ids`](Self::delete_ids). The hot lookup path
-/// ([`is_filtered`](Self::is_filtered)) only touches the index and never the database, so filters are
+/// ([`UrlFilter::is_filtered`]) only touches the index and never the database, so filters are
 /// loaded once at launch and the service is shared through `SharedState`.
 pub struct FilterService {
     /// The filter repository.
@@ -114,19 +114,6 @@ impl FilterService {
             .filter(|filter| criteria.matches(filter))
             .collect()
     }
-
-    /// Whether `url`, posted by `sender` in `channel`, matches any filter.
-    #[must_use]
-    pub fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        self.index.load().matches(channel, sender, url)
-    }
-
-    /// Whether messages from `sender` in `channel` are ignored entirely: the index holds a
-    /// filter without URL criteria whose sender criteria match.
-    #[must_use]
-    pub fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
-        self.index.load().ignores(channel, sender)
-    }
 }
 
 /// Exposes the service as the shared URL filter: the plugin publishes it wrapped in
@@ -134,11 +121,11 @@ impl FilterService {
 /// same facade before delivering URL events and messages from ignored senders.
 impl UrlFilter for FilterService {
     fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        self.is_filtered(channel, sender, url)
+        self.index.load().matches(channel, sender, url)
     }
 
     fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
-        self.ignores(channel, sender)
+        self.index.load().ignores(channel, sender)
     }
 }
 
