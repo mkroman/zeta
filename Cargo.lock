@@ -6036,6 +6036,8 @@ dependencies = [
 name = "zeta-http"
 version = "0.0.0"
 dependencies = [
+ "allocation-counter",
+ "http",
  "humantime-serde",
  "reqwest",
  "serde",
@@ -6057,6 +6059,7 @@ dependencies = [
 name = "zeta-mirror"
 version = "0.0.0"
 dependencies = [
+ "allocation-counter",
  "aws-credential-types",
  "aws-sigv4",
  "aws-smithy-runtime-api",

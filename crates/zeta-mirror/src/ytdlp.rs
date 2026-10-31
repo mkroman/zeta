@@ -14,7 +14,7 @@ use std::{
 
 use serde::Deserialize;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader},
     process::Command,
 };
 use tracing::{debug, warn};
@@ -325,13 +325,24 @@ async fn read_output(
     stdout: impl AsyncRead + Unpin,
     on_progress: &mut impl FnMut(Progress),
 ) -> Result<Option<JsonDump>, Error> {
-    let mut lines = BufReader::new(stdout).lines();
+    let mut lines = BufReader::new(stdout);
+    let mut line = String::new();
     let mut json = None;
 
-    while let Some(line) = lines.next_line().await? {
-        if let Some(progress) = parse_progress_line(&line) {
+    loop {
+        line.clear();
+
+        if lines.read_line(&mut line).await? == 0 {
+            break;
+        }
+
+        // `read_line` keeps the line terminator that `Lines::next_line` stripped.
+        let output = line.strip_suffix('\n').unwrap_or(&line);
+        let output = output.strip_suffix('\r').unwrap_or(output);
+
+        if let Some(progress) = parse_progress_line(output) {
             on_progress(progress);
-        } else if let Ok(dump) = serde_json::from_str::<JsonDump>(&line) {
+        } else if let Ok(dump) = serde_json::from_str::<JsonDump>(output) {
             json = Some(dump);
         }
     }
@@ -340,25 +351,52 @@ async fn read_output(
 }
 
 /// Drains the given stderr stream, retaining only its last [`STDERR_MESSAGE_LENGTH`] characters
-/// for the error message.
+/// for the error message, with CRLF line endings normalized to `\n`.
 ///
-/// The tail is kept in a bounded queue rather than collecting the whole stream: a verbose or
-/// failing `yt-dlp` run must not be able to grow the bot's memory without bound.
-async fn drain_stderr(stderr: impl AsyncRead + Unpin) -> String {
-    let mut tail = VecDeque::with_capacity(STDERR_MESSAGE_LENGTH);
-    let mut lines = BufReader::new(stderr).lines();
+/// The tail is kept in a bounded byte ring rather than collecting the whole stream: a verbose or
+/// failing `yt-dlp` run must not be able to grow the bot's memory without bound. The ring holds
+/// enough bytes for four-byte characters, so trimming it to characters at the end still keeps
+/// the full tail.
+async fn drain_stderr(mut stderr: impl AsyncRead + Unpin) -> String {
+    /// Enough bytes to retain [`STDERR_MESSAGE_LENGTH`] four-byte characters.
+    const TAIL_BYTES: usize = STDERR_MESSAGE_LENGTH * 4;
 
-    while let Ok(Some(line)) = lines.next_line().await {
-        for character in line.chars().chain(std::iter::once('\n')) {
-            if tail.len() == STDERR_MESSAGE_LENGTH {
+    let mut tail = VecDeque::with_capacity(TAIL_BYTES);
+    let mut chunk = [0_u8; 4096];
+
+    loop {
+        let read = match stderr.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => read,
+        };
+
+        for byte in &chunk[..read] {
+            if tail.len() == TAIL_BYTES {
                 tail.pop_front();
             }
 
-            tail.push_back(character);
+            tail.push_back(*byte);
         }
     }
 
-    tail.into_iter().collect()
+    // The ring can start (and, mid-stream, end) inside a character; the lossy conversion only
+    // replaces the partial boundary character, which the trimming below drops when the tail is
+    // longer than the retained character count.
+    let text = String::from_utf8_lossy(tail.make_contiguous());
+    // Match the line-based reader this replaced: a CRLF line ending is rendered as `\n`, so a
+    // failure message from a CRLF-producing `yt-dlp` does not keep a stray `\r`.
+    let text = if text.contains("\r\n") {
+        std::borrow::Cow::Owned(text.replace("\r\n", "\n"))
+    } else {
+        text
+    };
+    let start = text
+        .char_indices()
+        .rev()
+        .nth(STDERR_MESSAGE_LENGTH - 1)
+        .map_or(0, |(index, _)| index);
+
+    text[start..].to_owned()
 }
 
 /// Builds the `yt-dlp` arguments for downloading `url` into `output_dir`, naming the downloaded
@@ -615,6 +653,124 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_output_handles_many_progress_updates_with_one_json_dump() {
+        use std::fmt::Write as _;
+
+        const UPDATES: usize = 100_000;
+
+        let mut stdout = String::with_capacity(UPDATES * 32 + 256);
+
+        for downloaded in 0..UPDATES {
+            writeln!(stdout, "zeta-dl {downloaded} {UPDATES} NA 1024 0")
+                .expect("writing to a string cannot fail");
+        }
+
+        writeln!(
+            stdout,
+            r#"{{"id": "123", "requested_downloads": [{{"filepath": "/downloads/123.mp4", "id": "123", "ext": "mp4", "vcodec": "h264"}}]}}"#
+        )
+        .expect("writing to a string cannot fail");
+
+        let mut updates = Vec::with_capacity(UPDATES);
+
+        let json = read_output(stdout.as_bytes(), &mut |progress| updates.push(progress))
+            .await
+            .expect("reading stdout should not fail");
+
+        assert_eq!(updates.len(), UPDATES);
+        assert_eq!(updates[0].downloaded, Some(0));
+        assert_eq!(
+            updates[UPDATES - 1],
+            Progress {
+                downloaded: Some(UPDATES as u64 - 1),
+                total: Some(UPDATES as u64),
+                speed: Some(1024),
+                eta: Some(0),
+            }
+        );
+
+        let download = json
+            .expect("the json dump should be captured")
+            .requested_downloads
+            .pop()
+            .expect("the json dump should report the download");
+
+        assert_eq!(download.filename().as_deref(), Some("123.mp4"));
+    }
+
+    #[tokio::test]
+    #[ignore = "performance measurement"]
+    async fn bench_read_output_progress_lines() {
+        use std::{fmt::Write as _, time::Instant};
+
+        const UPDATES: usize = 100_000;
+        const RUNS: usize = 20;
+
+        let mut stdout = String::with_capacity(UPDATES * 32);
+
+        for downloaded in 0..UPDATES {
+            writeln!(stdout, "zeta-dl {downloaded} {UPDATES} NA 1024 0")
+                .expect("writing to a string cannot fail");
+        }
+
+        let mut updates = Vec::with_capacity(UPDATES);
+        let start = Instant::now();
+
+        for _ in 0..RUNS {
+            updates.clear();
+
+            let json = read_output(stdout.as_bytes(), &mut |progress| updates.push(progress))
+                .await
+                .expect("reading stdout should not fail");
+
+            assert!(json.is_none());
+            assert_eq!(updates.len(), UPDATES);
+        }
+
+        let elapsed = start.elapsed();
+        let lines = u128::from((UPDATES * RUNS) as u64);
+
+        println!(
+            "yt-dlp read_output: {lines} lines in {elapsed:?} ({} ns/line)",
+            elapsed.as_nanos() / lines,
+        );
+    }
+
+    #[test]
+    #[ignore = "performance measurement"]
+    fn bench_read_output_progress_lines_allocations() {
+        use std::fmt::Write as _;
+
+        const UPDATES: usize = 100_000;
+
+        let mut stdout = String::with_capacity(UPDATES * 32);
+
+        for downloaded in 0..UPDATES {
+            writeln!(stdout, "zeta-dl {downloaded} {UPDATES} NA 1024 0")
+                .expect("writing to a string cannot fail");
+        }
+
+        let mut updates = Vec::with_capacity(UPDATES);
+        let info = allocation_counter::measure(|| {
+            updates.clear();
+
+            let json =
+                futures::executor::block_on(read_output(stdout.as_bytes(), &mut |progress| {
+                    updates.push(progress);
+                }))
+                .expect("reading stdout should not fail");
+
+            assert!(json.is_none());
+            assert_eq!(updates.len(), UPDATES);
+        });
+
+        println!(
+            "yt-dlp read_output allocations: {UPDATES} lines, {} allocations, {} B",
+            info.count_total, info.bytes_total,
+        );
+    }
+
+    #[tokio::test]
     async fn verify_paths_keeps_files_inside_the_output_directory() {
         let output_dir = tempfile::tempdir().unwrap();
         let inside = output_dir.path().join("123.mp4");
@@ -666,5 +822,39 @@ mod tests {
 
         assert_eq!(stderr.chars().count(), STDERR_MESSAGE_LENGTH);
         assert!(stderr.ends_with('\n'));
+    }
+
+    #[tokio::test]
+    async fn stderr_retains_the_last_characters_of_a_multibyte_tail() {
+        let text = "é".repeat(STDERR_MESSAGE_LENGTH + 20);
+        let stderr = drain_stderr(text.as_bytes()).await;
+
+        // The tail is cut by characters, not bytes: a multi-byte character is never split.
+        assert_eq!(stderr.chars().count(), STDERR_MESSAGE_LENGTH);
+        assert!(text.ends_with(&stderr));
+    }
+
+    #[tokio::test]
+    async fn stderr_retains_the_last_characters_of_a_long_multibyte_tail() {
+        // Longer than the internal byte ring, and ending with a two-byte character, so the ring
+        // starts in the middle of a four-byte character.
+        let text = format!("{}é", "😀".repeat(STDERR_MESSAGE_LENGTH + 1));
+        let stderr = drain_stderr(text.as_bytes()).await;
+
+        assert_eq!(stderr.chars().count(), STDERR_MESSAGE_LENGTH);
+        assert!(text.ends_with(&stderr));
+    }
+
+    #[tokio::test]
+    async fn stderr_normalizes_crlf_line_endings() {
+        let stderr = drain_stderr(&b"first line\r\nsecond line\r\n"[..]).await;
+
+        assert_eq!(stderr, "first line\nsecond line\n");
+
+        let long = "a\r\n".repeat(STDERR_MESSAGE_LENGTH * 2);
+        let stderr = drain_stderr(long.as_bytes()).await;
+
+        assert_eq!(stderr.chars().count(), STDERR_MESSAGE_LENGTH);
+        assert!(!stderr.contains('\r'));
     }
 }

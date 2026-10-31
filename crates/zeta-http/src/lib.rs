@@ -16,6 +16,8 @@ mod config;
 mod error;
 #[cfg(feature = "http")]
 mod response;
+#[cfg(feature = "uri")]
+mod uri;
 
 #[cfg(feature = "emulated")]
 pub mod emulated;
@@ -29,6 +31,8 @@ pub use config::HttpConfig;
 pub use error::RequestError;
 #[cfg(feature = "emulated")]
 pub use error::WreqError;
+#[cfg(feature = "uri")]
+pub use uri::RedactedUriRef;
 
 #[cfg(any(feature = "request", feature = "http"))]
 pub use client::send;

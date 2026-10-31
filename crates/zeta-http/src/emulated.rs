@@ -6,9 +6,8 @@
 
 use tracing::{Instrument, Span, info_span};
 use wreq::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue, InvalidHeaderValue, USER_AGENT};
-use zeta_url::RedactedUrl;
 
-use crate::WreqError;
+use crate::{RedactedUriRef, WreqError};
 
 /// The client span of a response, carried in its extensions so a body read stays inside the
 /// span that covers the request. The last clone is dropped when the response is consumed.
@@ -32,7 +31,7 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
     let (client, request) = request.build_split();
     let request = request?;
     let method = request.method().clone();
-    let uri = request.uri().clone();
+    let uri = request.uri();
     let port = uri.port_u16().or_else(|| match uri.scheme_str() {
         Some("https") => Some(443),
         Some("http") => Some(80),
@@ -43,7 +42,7 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
         "http.client",
         otel.kind = "client",
         http.request.method = %method,
-        url.full = %RedactedUrl::from_unparsed(&uri.to_string()),
+        url.full = %RedactedUriRef::from_uri(uri),
         server.address = %uri.host().unwrap_or_default(),
         server.port = port,
         http.response.status_code = tracing::field::Empty,

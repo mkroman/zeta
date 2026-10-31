@@ -18,4 +18,4 @@ pub use path::{
     is_identifier, is_numeric_segment, is_prefixed_numeric_id, last_path_segment, path_segments,
     query_param, strip_www,
 };
-pub use redact::RedactedUrl;
+pub use redact::{RedactedUrl, RedactedUrlRef};
