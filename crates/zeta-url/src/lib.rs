@@ -15,7 +15,7 @@ mod redact;
 
 pub use extract::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, SchemeMap};
 pub use path::{
-    is_identifier, is_numeric_segment, is_prefixed_numeric_id, path_segments, query_param,
-    strip_www,
+    is_identifier, is_numeric_segment, is_prefixed_numeric_id, last_path_segment, path_segments,
+    query_param, strip_www,
 };
 pub use redact::RedactedUrl;
