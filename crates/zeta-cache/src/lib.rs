@@ -424,17 +424,27 @@ where
     /// capacity, the single closest-to-expiring entry.
     fn evict(entries: &mut HashMap<K, Entry<Option<Arc<V>>>>, capacity: usize) {
         let now = Instant::now();
+        let mut expired = 0usize;
+        let mut oldest: Option<(&K, Instant)> = None;
 
-        entries.retain(|_, entry| entry.expires_at > now);
-
-        if entries.len() < capacity {
-            return;
+        for (key, entry) in entries.iter() {
+            if entry.expires_at <= now {
+                expired += 1;
+            } else if oldest.is_none_or(|(_, oldest_expiry)| entry.expires_at < oldest_expiry) {
+                // A strict comparison keeps the first of equally old entries, like `min_by_key`.
+                oldest = Some((key, entry.expires_at));
+            }
         }
 
-        let oldest = entries
-            .iter()
-            .min_by_key(|(_, entry)| entry.expires_at)
-            .map(|(key, _)| key.clone());
+        let oldest = if entries.len() - expired >= capacity {
+            oldest.map(|(key, _)| key.clone())
+        } else {
+            None
+        };
+
+        if expired > 0 {
+            entries.retain(|_, entry| entry.expires_at > now);
+        }
 
         if let Some(oldest) = oldest {
             entries.remove(&oldest);
