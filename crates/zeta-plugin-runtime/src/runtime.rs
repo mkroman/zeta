@@ -26,8 +26,13 @@ pub struct PluginRuntime {
     index: EventIndex,
     /// The long-lived task of every running plugin.
     tasks: Vec<PluginTask>,
-    /// The context shared with every plugin task, consulted for the current filters.
-    context: Arc<Context>,
+    /// The shared filters, resolved once after every plugin was constructed.
+    ///
+    /// The filter plugin publishes its handle from its constructor, so the handle exists by the
+    /// time the runtime starts. The runtime keeps this handle for its lifetime; a later publish
+    /// would not reach the dispatcher. Keeping it out of the per-message path avoids a
+    /// shared-state lookup on every IRC line.
+    filters: Filters,
     /// The runtime's `zeta.shutdown` span, used as the parent of each task's
     /// `zeta.plugin.shutdown` span. The hooks run in the plugin tasks, so the parent is set
     /// explicitly; it keeps the shutdown in one trace.
@@ -39,8 +44,16 @@ impl PluginRuntime {
     ///
     /// Each task gets an unbounded mailbox, so a slow or failing plugin cannot block the IRC
     /// connection or the other plugins.
+    ///
+    /// The shared filters are resolved before the tasks are spawned: every plugin is already
+    /// constructed, and the filter plugin publishes its handle from its constructor.
     #[must_use]
-    pub fn start(plugins: Vec<LoadedPlugin>, ctx: Arc<Context>, client: &Arc<Client>) -> Self {
+    pub fn start(plugins: Vec<LoadedPlugin>, ctx: &Arc<Context>, client: &Arc<Client>) -> Self {
+        // The plugins are already constructed: the filter plugin published its handle from its
+        // constructor, and nothing replaces it later. Resolve it once, before any task can
+        // dispatch a message.
+        let filters = Filters::from_context(ctx);
+
         let mut index = EventIndex::default();
         let mut tasks = Vec::with_capacity(plugins.len());
         let shutdown_span = Arc::new(OnceLock::new());
@@ -56,7 +69,7 @@ impl PluginRuntime {
             tasks.push(PluginTask::spawn(
                 name,
                 plugin,
-                Arc::clone(&ctx),
+                Arc::clone(ctx),
                 Arc::clone(client),
                 receiver,
                 Arc::clone(&shutdown_span),
@@ -67,7 +80,7 @@ impl PluginRuntime {
         Self {
             index,
             tasks,
-            context: ctx,
+            filters,
             shutdown_span,
         }
     }
@@ -76,9 +89,7 @@ impl PluginRuntime {
     ///
     /// A plugin whose task has stopped is logged and removed from the index.
     pub fn dispatch(&mut self, message: Message) {
-        let filters = Filters::from_context(&self.context);
-
-        for stopped in self.index.dispatch(&filters, message) {
+        for stopped in self.index.dispatch(&self.filters, message) {
             warn!(zeta.plugin.name = %stopped, "plugin task has stopped");
         }
     }
@@ -100,7 +111,7 @@ impl PluginRuntime {
         let Self {
             index,
             tasks,
-            context: _,
+            filters: _,
             shutdown_span: _,
         } = self;
 

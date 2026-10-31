@@ -38,6 +38,11 @@ pub trait UrlFilter: Send + Sync {
 /// A cloneable, type-erased wrapper around [`UrlFilter`], so the handle can travel through the
 /// type-keyed shared state. With no filter plugin loaded, the handle is empty and matches
 /// nothing.
+///
+/// The handle is resolved once, after every plugin has been constructed — the filter plugin
+/// publishes it from its constructor — and the dispatcher keeps that handle for its lifetime. A
+/// later [`SharedState::publish`](crate::SharedState::publish) does not replace the handle the
+/// dispatcher already holds.
 #[derive(Clone, Default)]
 pub struct Filters {
     inner: Option<Arc<dyn UrlFilter>>,
@@ -60,6 +65,7 @@ impl Filters {
     }
 
     /// Whether `url`, posted by `sender` in `channel`, matches any filter and should be ignored.
+    #[inline]
     #[must_use]
     pub fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
         self.inner
@@ -68,6 +74,7 @@ impl Filters {
     }
 
     /// Whether messages from `sender` in `channel` are ignored entirely.
+    #[inline]
     #[must_use]
     pub fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
         self.inner

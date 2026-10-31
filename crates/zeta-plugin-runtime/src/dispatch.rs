@@ -144,8 +144,85 @@ struct CommandTarget {
     spec: CommandSpec,
 }
 
+/// The IRC message being dispatched, shared with the events only when one is delivered.
+///
+/// Most incoming lines produce no event: no plugin subscribed to them, a `PRIVMSG` carries no
+/// command or URL, or a `NOTICE` is not a CTCP message. Moving the message into an [`Arc`] on
+/// the first delivery, instead of before routing, keeps those lines allocation-free; every
+/// further event from the same line clones the shared handle.
+struct SharedMessage {
+    /// The message, until the first event needs it.
+    message: Option<Message>,
+    /// The shared message, once an event needed it.
+    shared: Option<Arc<Message>>,
+}
+
+impl SharedMessage {
+    /// Wraps `message` without allocating.
+    const fn new(message: Message) -> Self {
+        Self {
+            message: Some(message),
+            shared: None,
+        }
+    }
+
+    /// Returns the message, whether or not it has been shared.
+    fn get(&self) -> &Message {
+        self.shared
+            .as_deref()
+            .or(self.message.as_ref())
+            .expect("the message is either unshared or shared")
+    }
+
+    /// Returns a handle to the shared message, allocating it on first use.
+    fn shared(&mut self) -> Arc<Message> {
+        if let Some(shared) = &self.shared {
+            return Arc::clone(shared);
+        }
+
+        let shared = Arc::new(
+            self.message
+                .take()
+                .expect("the message is shared at most once"),
+        );
+        self.shared = Some(Arc::clone(&shared));
+
+        shared
+    }
+}
+
+/// What [`EventIndex::dispatch`] should do with a message's IRC command.
+#[derive(Clone, Copy)]
+enum Route {
+    /// A channel message: commands, messages, or URLs may match.
+    Privmsg,
+    /// A flag-based event kind.
+    Kind(EventKind),
+    /// Connection protocol or another command no plugin can observe.
+    Ignore,
+}
+
+impl Route {
+    /// Classifies `message` by the events its command can produce.
+    const fn of(message: &Message) -> Self {
+        match &message.command {
+            Command::PRIVMSG(..) => Self::Privmsg,
+            // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
+            // ordinary notices are not an event kind.
+            Command::NOTICE(..) => Self::Kind(EventKind::Ctcp),
+            Command::JOIN(..) => Self::Kind(EventKind::Join),
+            Command::PART(..) => Self::Kind(EventKind::Part),
+            Command::QUIT(..) => Self::Kind(EventKind::Quit),
+            Command::NICK(..) => Self::Kind(EventKind::Nick),
+            Command::KICK(..) => Self::Kind(EventKind::Kick),
+            Command::Raw(..) => Self::Kind(EventKind::Raw),
+            // Everything else is connection protocol the plugins have no events for.
+            _ => Self::Ignore,
+        }
+    }
+}
+
 /// The dispatch index of every registered plugin's subscriptions.
-#[derive(Default)]
 pub struct EventIndex {
     /// Registered commands, indexed by their trigger — the first word of a message.
     commands: HashMap<&'static str, Vec<CommandTarget>>,
@@ -153,8 +230,19 @@ pub struct EventIndex {
     url_hosts: HashMap<String, Vec<Subscriber>>,
     /// Plugins subscribed to every URL, including hosts other plugins handle.
     url_any: Vec<Subscriber>,
-    /// Plugins subscribed to plain-interest event kinds, keyed by the kind.
-    kinds: HashMap<EventKind, Vec<Subscriber>>,
+    /// Plugins subscribed to plain-interest event kinds, indexed by [`kind_slot`].
+    kinds: [Vec<Subscriber>; EventKind::ALL.len()],
+}
+
+impl Default for EventIndex {
+    fn default() -> Self {
+        Self {
+            commands: HashMap::new(),
+            url_hosts: HashMap::new(),
+            url_any: Vec::new(),
+            kinds: std::array::from_fn(|_| Vec::new()),
+        }
+    }
 }
 
 impl EventIndex {
@@ -208,10 +296,7 @@ impl EventIndex {
         }
 
         for kind in subscriptions.events() {
-            self.kinds
-                .entry(*kind)
-                .or_default()
-                .push(subscriber.clone());
+            self.kinds[kind_slot(*kind)].push(subscriber.clone());
         }
     }
 
@@ -221,38 +306,13 @@ impl EventIndex {
     /// They are already evicted from the index, so the caller only needs to report them.
     #[must_use]
     pub fn dispatch(&mut self, filters: &Filters, message: Message) -> Vec<&'static str> {
-        let message = Arc::new(message);
+        let mut message = SharedMessage::new(message);
         let mut stopped = Vec::new();
 
-        match &message.command {
-            Command::PRIVMSG(..) => {
-                self.dispatch_privmsg(filters, &message, &mut stopped);
-            }
-            // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
-            // ordinary notices are not an event kind.
-            Command::NOTICE(..) => {
-                self.deliver_kind(EventKind::Ctcp, &message, &mut stopped);
-            }
-            Command::JOIN(..) => {
-                self.deliver_kind(EventKind::Join, &message, &mut stopped);
-            }
-            Command::PART(..) => {
-                self.deliver_kind(EventKind::Part, &message, &mut stopped);
-            }
-            Command::QUIT(..) => {
-                self.deliver_kind(EventKind::Quit, &message, &mut stopped);
-            }
-            Command::NICK(..) => {
-                self.deliver_kind(EventKind::Nick, &message, &mut stopped);
-            }
-            Command::KICK(..) => {
-                self.deliver_kind(EventKind::Kick, &message, &mut stopped);
-            }
-            Command::Raw(..) => {
-                self.deliver_kind(EventKind::Raw, &message, &mut stopped);
-            }
-            // Everything else is connection protocol the plugins have no events for.
-            _ => {}
+        match Route::of(message.get()) {
+            Route::Privmsg => self.dispatch_privmsg(filters, &mut message, &mut stopped),
+            Route::Kind(kind) => self.deliver_kind(kind, &mut message, &mut stopped),
+            Route::Ignore => {}
         }
 
         // A stopped plugin can match several of the message's events (and several commands or
@@ -284,31 +344,34 @@ impl EventIndex {
         });
         self.url_any.retain(|subscriber| other(subscriber));
 
-        self.kinds.retain(|_, subscribers| {
+        for subscribers in &mut self.kinds {
             subscribers.retain(|subscriber| other(subscriber));
-            !subscribers.is_empty()
-        });
+        }
     }
 
-    /// Returns the subscriber list of a plain-interest event kind, if any are registered.
-    fn subscribers(&self, kind: EventKind) -> Option<&[Subscriber]> {
-        self.kinds.get(&kind).map(Vec::as_slice)
+    /// Returns the subscriber list of a plain-interest event kind.
+    fn subscribers(&self, kind: EventKind) -> &[Subscriber] {
+        &self.kinds[kind_slot(kind)]
     }
 
     /// Delivers `message` as an event of `kind` to its subscribers, if any are registered.
     ///
-    /// The event is built only when a subscriber exists: most messages match no subscription,
-    /// and some kinds (CTCP) cannot be built from every message.
+    /// The event, and the shared message it needs, is built only when a subscriber exists and
+    /// the message actually carries the event: most messages match no subscription, and CTCP
+    /// events only come from CTCP text.
     fn deliver_kind(
         &self,
         kind: EventKind,
-        message: &Arc<Message>,
+        message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
-        let Some(subscribers) = self.subscribers(kind) else {
+        let subscribers = self.subscribers(kind);
+
+        if subscribers.is_empty() || (kind == EventKind::Ctcp && !is_ctcp(message.get())) {
             return;
-        };
-        let Some(event) = kind.event(Arc::clone(message)) else {
+        }
+
+        let Some(event) = kind.event(message.shared()) else {
             return;
         };
 
@@ -326,10 +389,10 @@ impl EventIndex {
     fn dispatch_privmsg(
         &self,
         filters: &Filters,
-        message: &Arc<Message>,
+        message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
-        let Command::PRIVMSG(target, text) = &message.command else {
+        let Command::PRIVMSG(target, text) = &message.get().command else {
             return;
         };
 
@@ -340,7 +403,7 @@ impl EventIndex {
             return;
         }
 
-        let sender = Sender::from_message(message);
+        let sender = Sender::from_message(message.get());
 
         // Senders matching a filter without URL criteria are ignored entirely: their commands
         // do not trigger, their messages are not delivered to message subscribers, and their
@@ -352,12 +415,16 @@ impl EventIndex {
         }
 
         // Commands — matched by the first word of the message, verified with the exact
-        // trigger semantics.
+        // trigger semantics. Leading whitespace makes the first word non-matching, and checking
+        // it before sharing keeps such a message allocation-free.
         if let Some(word) = text.split_whitespace().next()
+            && text.starts_with(word)
             && let Some(targets) = self.commands.get(word)
         {
+            let message = message.shared();
+
             for target in targets {
-                if let Some(event) = CommandEvent::new(Arc::clone(message), target.spec) {
+                if let Some(event) = CommandEvent::new(Arc::clone(&message), target.spec) {
                     target.subscriber.send(Event::Command(event), stopped);
                 }
             }
@@ -371,14 +438,21 @@ impl EventIndex {
             return;
         }
 
+        let Command::PRIVMSG(target, text) = &message.get().command else {
+            return;
+        };
+        let sender = Sender::from_message(message.get());
+
+        // The retained URLs are collected before the message is shared, so a `PRIVMSG` that
+        // carries no URL (or only filtered ones) still does not allocate the shared message.
+        let mut seen: SmallVec<[(Arc<Url>, Option<&'static str>); 4]> = SmallVec::new();
+
         // Deduplication shares the parsed URL with the event instead of hashing a deep copy
         // into a set; a message rarely carries more than a handful of URLs.
-        let mut seen: SmallVec<[Arc<Url>; 4]> = SmallVec::new();
-
         for ExtractedUrl { url, repaired_from } in ExtractUrls::with_schemes(text, HTTP_SCHEMES) {
             let url = Arc::new(url);
 
-            if seen.iter().any(|seen| seen.as_str() == url.as_str()) {
+            if seen.iter().any(|(seen, _)| seen.as_str() == url.as_str()) {
                 continue;
             }
 
@@ -388,8 +462,27 @@ impl EventIndex {
                 continue;
             }
 
-            seen.push(Arc::clone(&url));
-            let event = UrlEvent::new(Arc::clone(message), url, repaired_from);
+            // A URL nobody subscribed to is not an event; drop it before sharing the message.
+            let claimed = !self.url_any.is_empty()
+                || url
+                    .host_str()
+                    .is_some_and(|host| self.url_hosts.contains_key(host));
+
+            if !claimed {
+                continue;
+            }
+
+            seen.push((url, repaired_from));
+        }
+
+        if seen.is_empty() {
+            return;
+        }
+
+        let message = message.shared();
+
+        for (url, repaired_from) in seen {
+            let event = UrlEvent::new(Arc::clone(&message), url, repaired_from);
 
             if let Some(host) = event.url().host_str()
                 && let Some(subscribers) = self.url_hosts.get(host)
@@ -404,6 +497,15 @@ impl EventIndex {
             }
         }
     }
+}
+
+/// Whether `message` carries a CTCP payload: a `PRIVMSG` or `NOTICE` whose text is
+/// `\x01`-wrapped.
+fn is_ctcp(message: &Message) -> bool {
+    matches!(
+        &message.command,
+        Command::PRIVMSG(_, text) | Command::NOTICE(_, text) if text.starts_with('\x01')
+    )
 }
 
 #[cfg(test)]
@@ -1070,5 +1172,71 @@ mod tests {
                 "irc.dispatch must be a root span, recorded: {spans:?}"
             );
         });
+    }
+
+    /// Prints the per-dispatch cost of representative messages against a small index.
+    ///
+    /// The numbers are only comparable with another run in the same profile (debug by default):
+    ///
+    /// `cargo test -p zeta-plugin-runtime --lib --all-features -- --ignored --nocapture dispatch_benchmark`
+    #[test]
+    #[ignore = "benchmark; run with --ignored --nocapture"]
+    fn dispatch_benchmark() {
+        const DISPATCHES: usize = 100_000;
+
+        let mut index = EventIndex::default();
+        let _dig = subscribe(&mut index, "dig", |subscriptions| {
+            subscriptions.command(CommandSpec::new(".dig", "dig"));
+        });
+        let _joiner = subscribe(&mut index, "joiner", |subscriptions| {
+            subscriptions.receive_join();
+        });
+        let _ctcp = subscribe(&mut index, "ctcp", |subscriptions| {
+            subscriptions.receive_ctcp();
+        });
+
+        let filters = Filters::default();
+
+        benchmark(
+            "unhandled privmsg",
+            DISPATCHES,
+            &mut index,
+            &filters,
+            || privmsg("hello there"),
+        );
+        benchmark("handled command", DISPATCHES, &mut index, &filters, || {
+            privmsg(".dig example.com")
+        });
+        benchmark("join", DISPATCHES, &mut index, &filters, || {
+            message("nick!u@h", "JOIN", &["#test"])
+        });
+    }
+
+    /// Times `dispatches` calls to [`EventIndex::dispatch`] with pre-built messages.
+    ///
+    /// The messages are built before the timer starts, so the measurement covers dispatch only.
+    fn benchmark(
+        label: &str,
+        dispatches: usize,
+        index: &mut EventIndex,
+        filters: &Filters,
+        make: impl Fn() -> Message,
+    ) {
+        let messages: Vec<Message> = (0..dispatches).map(|_| make()).collect();
+        let start = std::time::Instant::now();
+
+        for message in messages {
+            let stopped = index.dispatch(filters, message);
+            std::hint::black_box(&stopped);
+        }
+
+        let elapsed = start.elapsed();
+        let count = f64::from(u32::try_from(dispatches).expect("dispatch count fits in u32"));
+        let ns_per_dispatch = elapsed.as_secs_f64() * 1_000_000_000.0 / count;
+
+        println!(
+            "dispatch_benchmark: {label}: {dispatches} dispatches in {elapsed:?} \
+             ({ns_per_dispatch:.1} ns/dispatch)"
+        );
     }
 }
