@@ -719,9 +719,11 @@ mod tests {
     use std::collections::VecDeque;
     use std::path::Path;
     use std::sync::Mutex;
+    use std::time::Duration;
 
     use futures::future::BoxFuture;
     use tokio::sync::oneshot;
+    use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
 
     use super::*;
     use crate::tempdir::TEMP_DIR_PREFIX;
@@ -734,6 +736,122 @@ mod tests {
             .filter(crate::tempdir::is_temp_download_dir)
             .map(|entry| entry.path())
             .collect()
+    }
+
+    /// Waits until `server` has received at least one request, i.e. an upload reached its
+    /// endpoint and is stalled there.
+    async fn wait_for_s3_request(server: &MockServer) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let requests = server
+                    .received_requests()
+                    .await
+                    .expect("the server tracks requests");
+
+                if !requests.is_empty() {
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the upload should reach s3");
+    }
+
+    /// A minimal S3 endpoint whose presence checks block until [`release`](Self::release) is
+    /// called, then every request answers `404 Not Found`.
+    ///
+    /// This lets a test stall every upload, prove the backlog bound and then free all of them at
+    /// once; a fixed wiremock delay cannot release a request that is already waiting.
+    struct StalledS3 {
+        /// The address the endpoint listens on.
+        address: std::net::SocketAddr,
+        /// Notified once per request received.
+        arrived: mpsc::UnboundedReceiver<()>,
+        /// Whether stalled presence checks may answer.
+        release: tokio::sync::watch::Sender<bool>,
+        /// The task accepting requests.
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl StalledS3 {
+        /// Starts the endpoint on a random local port.
+        async fn start() -> Self {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind the stalled s3 endpoint");
+            let address = listener.local_addr().expect("read the stalled s3 address");
+            let (arrived, arrived_rx) = mpsc::unbounded_channel();
+            let (release, release_rx) = tokio::sync::watch::channel(false);
+
+            let task = tokio::spawn(async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let arrived = arrived.clone();
+                    let mut release_rx = release_rx.clone();
+
+                    tokio::spawn(async move {
+                        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+                        let mut request = Vec::new();
+                        let mut buffer = [0_u8; 1024];
+
+                        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                            let Ok(read) = stream.read(&mut buffer).await else {
+                                return;
+                            };
+
+                            if read == 0 {
+                                return;
+                            }
+
+                            request.extend_from_slice(&buffer[..read]);
+                        }
+
+                        let _ = arrived.send(());
+
+                        if request.starts_with(b"HEAD ") {
+                            let _ = release_rx.wait_for(|released| *released).await;
+                        }
+
+                        let _ = stream
+                            .write_all(
+                                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            )
+                            .await;
+                        let _ = stream.shutdown().await;
+                    });
+                }
+            });
+
+            Self {
+                address,
+                arrived: arrived_rx,
+                release,
+                task,
+            }
+        }
+
+        /// Waits until `count` requests reached the endpoint.
+        async fn wait_for_requests(&mut self, count: usize) {
+            for _ in 0..count {
+                tokio::time::timeout(Duration::from_secs(5), self.arrived.recv())
+                    .await
+                    .expect("the upload should reach s3")
+                    .expect("the endpoint keeps receiving");
+            }
+        }
+
+        /// Lets every stalled presence check answer `404 Not Found`.
+        fn release(&self) {
+            self.release.send(true).expect("the endpoint is listening");
+        }
+    }
+
+    impl Drop for StalledS3 {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
     }
 
     /// Returns a request that reports its result on the given channel.
@@ -821,6 +939,37 @@ mod tests {
             let files = vec![DownloadedFile {
                 filepath,
                 vcodec: Some("avc1.640029".to_string()),
+            }];
+
+            Box::pin(async { Ok(files) })
+        }
+    }
+
+    /// A downloader fake that completes every download while reporting each start, so a test can
+    /// tell an admitted download from one held behind the upload backlog.
+    struct SignallingCompletingDownloader {
+        /// The media ids of the downloads as they start, in order.
+        started: mpsc::UnboundedSender<String>,
+    }
+
+    impl Downloader for SignallingCompletingDownloader {
+        fn download<'a>(
+            &'a self,
+            _url: &'a str,
+            id: &'a str,
+            output_dir: &'a Path,
+            _on_progress: Box<dyn FnMut(Progress) + Send + 'a>,
+        ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, ytdlp::Error>> {
+            self.started
+                .send(id.to_string())
+                .expect("the test listens for starts");
+
+            let filepath = output_dir.join(format!("{id}.mp4"));
+            std::fs::write(&filepath, b"junk").expect("write the fake download");
+
+            let files = vec![DownloadedFile {
+                filepath,
+                vcodec: None,
             }];
 
             Box::pin(async { Ok(files) })
@@ -1007,10 +1156,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_slot_is_released_before_the_upload() {
-        use std::time::Duration;
-
-        use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
-
         // The presence check of the first download's upload never answers within the test, so
         // only releasing the slot before the upload lets the second download start.
         let server = MockServer::start().await;
@@ -1047,10 +1192,175 @@ mod tests {
 
         drop(gate);
 
-        // The first download's callback is still serialized behind its upload.
+        // The second download's failure is handled while the first upload is still stalled, so
+        // only its callback arrives; the first request still waits for its upload.
+        let (index, result) = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the second download should be reported while the first is uploading")
+            .expect("the second request should finish");
+        assert_eq!(index, 1);
+        assert!(matches!(result, Err(Error::Download(_))));
+
         assert!(
             rx.try_recv().is_err(),
             "the first request was reported before its upload finished"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stalled_upload_does_not_block_request_intake() {
+        // The first download's upload stalls on its presence check. A request submitted once it
+        // is stuck there must still be admitted and start, and its status must still be handled.
+        let server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(404).set_delay(Duration::from_mins(60)))
+            .mount(&server)
+            .await;
+
+        let s3 = S3::with_endpoint(&format!("http://{}", server.address()));
+        let (started, mut started_rx) = mpsc::unbounded_channel();
+        let (gate, gate_rx) = oneshot::channel();
+        let downloader = Arc::new(MixedDownloader {
+            started,
+            gate: Mutex::new(Some(gate_rx)),
+        });
+        let (_download_dir, manager) = start_manager(downloader, s3, 1);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        manager
+            .submit(request("0", "first", results.clone(), 0))
+            .expect("manager is running");
+
+        assert_eq!(started_rx.recv().await.as_deref(), Some("first"));
+        wait_for_s3_request(&server).await;
+
+        manager
+            .submit(request("0", "second", results, 1))
+            .expect("manager is running");
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), started_rx.recv())
+                .await
+                .expect("a request submitted during a stalled upload should start")
+                .as_deref(),
+            Some("second")
+        );
+
+        drop(gate);
+
+        let (index, result) = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the second download's status should be handled during the upload")
+            .expect("the second request should finish");
+        assert_eq!(index, 1);
+        assert!(matches!(result, Err(Error::Download(_))));
+
+        assert!(
+            rx.try_recv().is_err(),
+            "the first request was reported before its upload finished"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_upload_backlog_is_bounded_and_frees_the_queue() {
+        // Every upload stalls on its presence check, so completed downloads accumulate until the
+        // pipeline is full and backpressure stops the download queue.
+        let mut server = StalledS3::start().await;
+        let s3 = S3::with_endpoint(&format!("http://{}", server.address));
+        let (started, mut started_rx) = mpsc::unbounded_channel();
+        let (_download_dir, manager) =
+            start_manager(Arc::new(SignallingCompletingDownloader { started }), s3, 1);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        let capacity = UPLOAD_CONCURRENCY + UPLOAD_BACKLOG;
+
+        for index in 0..capacity {
+            manager
+                .submit(request(
+                    "0",
+                    &format!("fill{index}"),
+                    results.clone(),
+                    index,
+                ))
+                .expect("manager is running");
+        }
+
+        // Every fill fits: with a single download slot they still all start because the upload
+        // pipeline holds `UPLOAD_CONCURRENCY` running uploads and `UPLOAD_BACKLOG` waiting ones.
+        for index in 0..capacity {
+            let expected = format!("fill{index}");
+            let started_id = tokio::time::timeout(Duration::from_secs(5), started_rx.recv())
+                .await
+                .expect("every fill should be admitted")
+                .expect("the started channel stays open");
+
+            assert_eq!(started_id, expected);
+        }
+
+        // Both upload slots are now stalled on their presence check, so the backlog below is
+        // held by the upload pipeline rather than by connections still being opened.
+        server.wait_for_requests(UPLOAD_CONCURRENCY).await;
+
+        // The last fill completes shortly after it starts and fills the backlog, so a request
+        // submitted now is accepted but must not start while the uploads are stalled.
+        manager
+            .submit(request("0", "overflow", results, capacity))
+            .expect("manager is running");
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), started_rx.recv())
+                .await
+                .is_err(),
+            "a download started while the upload backlog was full"
+        );
+
+        // Free the stalled uploads: the backlog drains, the queued request starts and every
+        // request is reported exactly once.
+        server.release();
+
+        let started_id = tokio::time::timeout(Duration::from_secs(10), started_rx.recv())
+            .await
+            .expect("the queued request should start once the upload backlog drains")
+            .expect("the started channel stays open");
+        assert_eq!(started_id, "overflow");
+
+        let mut callbacks = Vec::new();
+
+        for _ in 0..=capacity {
+            let (index, result) = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+                .await
+                .expect("every request should be reported")
+                .expect("the result channel stays open");
+
+            assert!(matches!(result, Err(Error::Upload(_))), "{result:?}");
+            callbacks.push(index);
+        }
+
+        callbacks.sort_unstable();
+        assert_eq!(callbacks, (0..=capacity).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn test_cancelled_upload_reports_once_and_cleans_up() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().to_path_buf();
+        let (results, mut rx) = mpsc::unbounded_channel();
+        let completion = UploadCompletion::new(
+            Box::new(move |result| {
+                let _ = results.send(result);
+            }),
+            tempdir,
+        );
+
+        // Dropping without completing stands in for a cancelled or panicking upload task.
+        drop(completion);
+
+        let result = rx.try_recv().expect("the callback runs on cancellation");
+        assert!(matches!(result, Err(Error::UploadCancelled)));
+        assert!(rx.try_recv().is_err(), "the callback must run exactly once");
+        assert!(
+            !path.exists(),
+            "the temporary download directory was not removed"
         );
     }
 
