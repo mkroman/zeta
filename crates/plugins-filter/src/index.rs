@@ -43,7 +43,7 @@ enum HostMatcher {
 #[derive(Debug)]
 struct Entry {
     /// The raw filter.
-    filter: Arc<Filter>,
+    filter: Filter,
     /// The compiled host pattern, if any.
     host: Option<HostMatcher>,
     /// The compiled URL path pattern.
@@ -59,7 +59,6 @@ struct Entry {
 impl Entry {
     /// Compiles `filter` into an entry.
     fn new(filter: Filter) -> Self {
-        let filter = Arc::new(filter);
         let host = non_blank(filter.host.as_deref()).map(|host| {
             if is_wildcard(host) {
                 HostMatcher::Wild(Pattern::compile(Some(host), Case::Insensitive))
@@ -67,14 +66,18 @@ impl Entry {
                 HostMatcher::Exact(host.to_lowercase())
             }
         });
+        let path = Pattern::compile(filter.path.as_deref(), Case::Sensitive);
+        let nickname = Pattern::compile(filter.nickname.as_deref(), Case::Insensitive);
+        let username = Pattern::compile(filter.username.as_deref(), Case::Insensitive);
+        let hostname = Pattern::compile(filter.hostname.as_deref(), Case::Insensitive);
 
         Self {
-            path: Pattern::compile(filter.path.as_deref(), Case::Sensitive),
-            nickname: Pattern::compile(filter.nickname.as_deref(), Case::Insensitive),
-            username: Pattern::compile(filter.username.as_deref(), Case::Insensitive),
-            hostname: Pattern::compile(filter.hostname.as_deref(), Case::Insensitive),
-            host,
             filter,
+            host,
+            path,
+            nickname,
+            username,
+            hostname,
         }
     }
 
@@ -102,18 +105,17 @@ impl Entry {
             && self.hostname.matches(Some(sender.hostname))
     }
 
-    /// Whether the entry matches `host`, `sender` and `url`. The host check is repeated for
-    /// wildcard entries only; exact entries are already routed by host.
+    /// Whether the entry matches `host`, `sender` and `url`.
+    ///
+    /// Only wildcard entries need this: exact entries are routed by their host and hostless
+    /// entries pass the host check unconditionally, so both use [`Entry::matches_after_host`].
     fn matches(&self, host: Option<&str>, sender: Option<Sender<'_>>, url: &Url) -> bool {
-        if !self.host_matches(host) {
-            return false;
-        }
+        self.host_matches(host) && self.matches_after_host(sender, url)
+    }
 
-        if !self.path.matches(Some(url.path())) {
-            return false;
-        }
-
-        self.sender_matches(sender)
+    /// Whether the entry matches `sender` and `url` once its host is already known to match.
+    fn matches_after_host(&self, sender: Option<Sender<'_>>, url: &Url) -> bool {
+        self.path.matches(Some(url.path())) && self.sender_matches(sender)
     }
 
     /// Whether the entry ignores `sender` entirely: it has no URL criteria (host and path
@@ -194,7 +196,7 @@ impl HostIndex {
             .flatten()
             .chain(&self.wildcard)
             .chain(&self.any_host)
-            .map(|entry| entry.filter.as_ref())
+            .map(|entry| &entry.filter)
     }
 
     /// Whether any entry in the bucket matches `host`, `sender` and `url`.
@@ -205,9 +207,15 @@ impl HostIndex {
 
         exact
             .iter()
-            .chain(&self.wildcard)
-            .chain(&self.any_host)
-            .any(|entry| entry.matches(host, sender, url))
+            .any(|entry| entry.matches_after_host(sender, url))
+            || self
+                .wildcard
+                .iter()
+                .any(|entry| entry.matches(host, sender, url))
+            || self
+                .any_host
+                .iter()
+                .any(|entry| entry.matches_after_host(sender, url))
     }
 
     /// Whether any sender-only filter in the bucket ignores `sender` entirely. Only the
