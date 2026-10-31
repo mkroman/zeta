@@ -245,14 +245,6 @@ impl HowLongToBeat {
 }
 
 impl HowLongToBeat {
-    /// Acquires a valid API search token.
-    ///
-    /// Returns the cached token if it exists, otherwise requests a new one from the
-    /// initialization endpoint.
-    async fn get_auth(&self) -> Result<String, Error> {
-        self.auth.get_or_refresh(|| self.fetch_auth()).await
-    }
-
     /// Fetches a fresh search token from the initialization endpoint.
     ///
     /// The token binds the caller's IP address and User-Agent, so it is only valid for
@@ -277,7 +269,7 @@ impl HowLongToBeat {
     /// If the request returns a `403 Forbidden`, it assumes the token has expired,
     /// refreshes the credentials, and automatically retries the request once.
     async fn search(&self, query: &str) -> Result<Vec<Game>, Error> {
-        let token = self.get_auth().await?;
+        let token = self.auth.get_or_refresh(|| self.fetch_auth()).await?;
 
         match self.perform_search_request(&token, query).await {
             Ok(results) => Ok(results),
@@ -289,7 +281,7 @@ impl HowLongToBeat {
                 let new_token = self.auth.force_refresh(|| self.fetch_auth()).await?;
                 self.perform_search_request(&new_token, query).await
             }
-            Err(e) => Err(e),
+            result => result,
         }
     }
 

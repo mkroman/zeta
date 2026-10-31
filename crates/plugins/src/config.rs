@@ -15,23 +15,6 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use zeta_plugin::inventory;
 
-/// Splits one raw section into its resolved `enabled` toggle and its settings.
-fn split_enabled(
-    mut section: Dict,
-    enabled_by_default: bool,
-) -> Result<(bool, Value), Box<figment::Error>> {
-    let enabled = match section.remove("enabled") {
-        Some(value) => bool::deserialize(&value).map_err(|error| {
-            Box::new(figment::Error::custom(format!(
-                "invalid `enabled` key: {error}"
-            )))
-        })?,
-        None => enabled_by_default,
-    };
-
-    Ok((enabled, Value::from(section)))
-}
-
 /// One raw `[plugins.<name>]` section.
 ///
 /// The settings stay a [`figment::value::Value`] until the plugin's registration deserializes
@@ -59,10 +42,20 @@ impl PluginSection {
     /// Returns an error when the section is not a TOML table, or when `enabled` is not a
     /// boolean.
     fn parse(value: &Value, enabled_by_default: bool) -> Result<Self, Box<figment::Error>> {
-        let section = Dict::deserialize(value).map_err(Box::new)?;
-        let (enabled, settings) = split_enabled(section, enabled_by_default)?;
+        let mut section = Dict::deserialize(value).map_err(Box::new)?;
+        let enabled = match section.remove("enabled") {
+            Some(value) => bool::deserialize(&value).map_err(|error| {
+                Box::new(figment::Error::custom(format!(
+                    "invalid `enabled` key: {error}"
+                )))
+            })?,
+            None => enabled_by_default,
+        };
 
-        Ok(Self { enabled, settings })
+        Ok(Self {
+            enabled,
+            settings: Value::from(section),
+        })
     }
 }
 
@@ -161,7 +154,7 @@ impl<'de> Deserialize<'de> for PluginsConfig {
 
                 unknown_setting_keys
                     .extend(unknown_keys.into_iter().map(|key| (name.clone(), key)));
-            } else if is_unknown_section(&name) {
+            } else if !crate::BUNDLED_PLUGIN_NAMES.contains(&name.as_str()) {
                 // The section names no bundled plugin at all, so it is a likely typo. A bundled
                 // plugin compiled out of this build is known and stays out of `unknown`.
                 unknown.insert(name.clone());
@@ -179,15 +172,6 @@ impl<'de> Deserialize<'de> for PluginsConfig {
     }
 }
 
-/// Whether a section name belongs to no bundled plugin at all, and is therefore a likely typo.
-///
-/// A bundled plugin whose cargo feature is disabled has no registration in this build, so it
-/// reaches this check; its name is in [`BUNDLED_PLUGIN_NAMES`](crate::BUNDLED_PLUGIN_NAMES) and
-/// the section is left out of [`PluginsConfig::unknown`].
-fn is_unknown_section(name: &str) -> bool {
-    !crate::BUNDLED_PLUGIN_NAMES.contains(&name)
-}
-
 #[cfg(test)]
 mod tests {
     use figment::{
@@ -195,7 +179,6 @@ mod tests {
         providers::{Format, Toml},
     };
 
-    use super::*;
     use crate::PluginsConfig;
     #[cfg(feature = "dig")]
     use serde::de::DeserializeOwned;
@@ -369,9 +352,9 @@ enabled = false
     fn bundled_plugins_without_a_registration_are_known() {
         // The feature-gated plugin modules are declared whether or not their cargo feature is
         // enabled, so their sections are only unknown when the name itself is misspelled.
-        assert!(!is_unknown_section("youtube"));
-        assert!(!is_unknown_section("urban_dictionary"));
-        assert!(is_unknown_section("youtub"));
+        assert!(crate::BUNDLED_PLUGIN_NAMES.contains(&"youtube"));
+        assert!(crate::BUNDLED_PLUGIN_NAMES.contains(&"urban_dictionary"));
+        assert!(!crate::BUNDLED_PLUGIN_NAMES.contains(&"youtub"));
     }
 
     #[test]

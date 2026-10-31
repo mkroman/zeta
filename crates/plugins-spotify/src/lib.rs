@@ -193,6 +193,7 @@ impl Spotify {
             .form(&[("grant_type", "client_credentials")])
     }
 
+    #[allow(clippy::too_many_lines)] // inlined per-type renders keep the reply bytes obvious
     async fn handle_spotify_resource(
         &self,
         channel: &str,
@@ -203,20 +204,113 @@ impl Spotify {
     ) -> Result<(), ZetaError> {
         match type_str {
             "track" => {
-                self.send_track_details(channel, id_str, include_url, client)
-                    .await
+                self.send_details(
+                    &format!("tracks/{id_str}"),
+                    channel,
+                    include_url,
+                    client,
+                    |track: &Track, include_url| {
+                        let name = unstyle_text(&track.name);
+                        let artists = join_artists(&track.artists);
+                        let album = unstyle_text(&track.album.name);
+
+                        let mut msg = format!("\x0f{name}\x0310 is a track by {artists}\x0310");
+                        let _ = write!(msg, " from the album \x0f{album}\x0310");
+
+                        if include_url {
+                            let _ = write!(msg, " - {}", track.external_urls.spotify);
+                        }
+
+                        msg
+                    },
+                )
+                .await
             }
             "album" => {
-                self.send_album_details(channel, id_str, include_url, client)
-                    .await
+                self.send_details(
+                    &format!("albums/{id_str}"),
+                    channel,
+                    include_url,
+                    client,
+                    |album: &Album, include_url| {
+                        let name = unstyle_text(&album.name);
+                        let artists = join_artists(&album.artists);
+
+                        let mut msg = format!("\x0f{name}\x0310 is an album by {artists}");
+
+                        if include_url {
+                            let _ = write!(msg, " - {}", album.external_urls.spotify);
+                        }
+
+                        msg
+                    },
+                )
+                .await
             }
             "artist" => {
-                self.send_artist_details(channel, id_str, include_url, client)
-                    .await
+                self.send_details(
+                    &format!("artists/{id_str}"),
+                    channel,
+                    include_url,
+                    client,
+                    |artist: &Artist, include_url| {
+                        let name = unstyle_text(&artist.name);
+                        let genres = join_with_and(&artist.genres);
+                        let followers = artist.followers.total.to_formatted_string(&Locale::en);
+
+                        let mut msg = format!("\x0f{name}\x0310 is");
+                        if artist.genres.is_empty() {
+                            let _ = write!(msg, " an");
+                        } else {
+                            let article = indefinite_article_only(&genres);
+                            let _ = write!(msg, " {article} {genres}");
+                        }
+                        let _ = write!(msg, " artist with \x0f{followers}\x0310 followers");
+
+                        if include_url {
+                            let _ = write!(msg, " - {}", artist.external_urls.spotify);
+                        }
+
+                        msg
+                    },
+                )
+                .await
             }
             "playlist" => {
-                self.send_playlist_details(channel, id_str, include_url, client)
-                    .await
+                self.send_details(
+                    &format!("playlists/{id_str}"),
+                    channel,
+                    include_url,
+                    client,
+                    |playlist: &Playlist, include_url| {
+                        let name = unstyle_text(&playlist.name);
+                        let total_tracks = playlist.tracks.total;
+                        let owner = unstyle_text(
+                            playlist
+                                .owner
+                                .display_name
+                                .as_deref()
+                                .unwrap_or(&playlist.owner.id),
+                        );
+                        let followers = playlist.followers.total;
+
+                        let mut msg = format!(
+                            "\x0f{name}\x0310 is a playlist with\x0f {total_tracks}\x0310 tracks curated by\x0f {owner}\x0310"
+                        );
+
+                        if followers > 0 {
+                            let followers_fmt = followers.to_formatted_string(&Locale::en);
+                            let _ = write!(msg, " with \x0f{followers_fmt}\x0310 followers");
+                        }
+
+                        if include_url {
+                            let _ = write!(msg, " - {}", playlist.external_urls.spotify);
+                        }
+
+                        msg
+                    },
+                )
+                .await
             }
             _ => {
                 debug!(spotify.resource.type = %type_str, "unsupported spotify type");
@@ -264,143 +358,6 @@ impl Spotify {
         }
 
         Ok(())
-    }
-
-    async fn send_track_details(
-        &self,
-        channel: &str,
-        id: &str,
-        include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        self.send_details(
-            &format!("tracks/{id}"),
-            channel,
-            include_url,
-            client,
-            |track: &Track, include_url| {
-                let name = unstyle_text(&track.name);
-                let artists = join_artists(&track.artists);
-                let album = unstyle_text(&track.album.name);
-
-                let mut msg = format!("\x0f{name}\x0310 is a track by {artists}\x0310");
-                let _ = write!(msg, " from the album \x0f{album}\x0310");
-
-                if include_url {
-                    let _ = write!(msg, " - {}", track.external_urls.spotify);
-                }
-
-                msg
-            },
-        )
-        .await
-    }
-
-    async fn send_album_details(
-        &self,
-        channel: &str,
-        id: &str,
-        include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        self.send_details(
-            &format!("albums/{id}"),
-            channel,
-            include_url,
-            client,
-            |album: &Album, include_url| {
-                let name = unstyle_text(&album.name);
-                let artists = join_artists(&album.artists);
-
-                let mut msg = format!("\x0f{name}\x0310 is an album by {artists}");
-
-                if include_url {
-                    let _ = write!(msg, " - {}", album.external_urls.spotify);
-                }
-
-                msg
-            },
-        )
-        .await
-    }
-
-    async fn send_artist_details(
-        &self,
-        channel: &str,
-        id: &str,
-        include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        self.send_details(
-            &format!("artists/{id}"),
-            channel,
-            include_url,
-            client,
-            |artist: &Artist, include_url| {
-                let name = unstyle_text(&artist.name);
-                let genres = join_with_and(&artist.genres);
-                let followers = artist.followers.total.to_formatted_string(&Locale::en);
-
-                let mut msg = format!("\x0f{name}\x0310 is");
-                if artist.genres.is_empty() {
-                    let _ = write!(msg, " an");
-                } else {
-                    let article = indefinite_article_only(&genres);
-                    let _ = write!(msg, " {article} {genres}");
-                }
-                let _ = write!(msg, " artist with \x0f{followers}\x0310 followers");
-
-                if include_url {
-                    let _ = write!(msg, " - {}", artist.external_urls.spotify);
-                }
-
-                msg
-            },
-        )
-        .await
-    }
-
-    async fn send_playlist_details(
-        &self,
-        channel: &str,
-        id: &str,
-        include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        self.send_details(
-            &format!("playlists/{id}"),
-            channel,
-            include_url,
-            client,
-            |playlist: &Playlist, include_url| {
-                let name = unstyle_text(&playlist.name);
-                let total_tracks = playlist.tracks.total;
-                let owner = unstyle_text(
-                    playlist
-                        .owner
-                        .display_name
-                        .as_deref()
-                        .unwrap_or(&playlist.owner.id),
-                );
-                let followers = playlist.followers.total;
-
-                let mut msg = format!(
-                    "\x0f{name}\x0310 is a playlist with\x0f {total_tracks}\x0310 tracks curated by\x0f {owner}\x0310"
-                );
-
-                if followers > 0 {
-                    let followers_fmt = followers.to_formatted_string(&Locale::en);
-                    let _ = write!(msg, " with \x0f{followers_fmt}\x0310 followers");
-                }
-
-                if include_url {
-                    let _ = write!(msg, " - {}", playlist.external_urls.spotify);
-                }
-
-                msg
-            },
-        )
-        .await
     }
 }
 
