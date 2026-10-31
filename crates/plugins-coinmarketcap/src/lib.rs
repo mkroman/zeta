@@ -18,8 +18,8 @@
 //! the plugin is skipped at startup. The `default_currency` (USD), `cache_ttl` (24 hours), and
 //! `max_name_typos` (2) settings tune quoting and fuzzy name lookups.
 
+use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,7 +31,7 @@ use zeta_cache::TtlCache;
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::strip_control_chars;
 
-use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat, QuoteData};
+use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat};
 use coinmarketcap::{Client as CmcClient, Config, Error};
 
 mod format;
@@ -175,8 +175,6 @@ impl CoinCache {
 /// expires.
 #[derive(Debug)]
 struct FiatCache {
-    /// The valid fiat currency symbols (e.g. `USD`).
-    symbols: HashSet<String>,
     /// The currency sign of each symbol (e.g. `USD` maps to `$`).
     signs: HashMap<String, String>,
 }
@@ -184,7 +182,6 @@ struct FiatCache {
 impl From<Vec<Fiat>> for FiatCache {
     fn from(fiats: Vec<Fiat>) -> Self {
         Self {
-            symbols: fiats.iter().map(|fiat| fiat.symbol.clone()).collect(),
             signs: fiats
                 .into_iter()
                 .map(|fiat| (fiat.symbol, fiat.sign))
@@ -353,26 +350,12 @@ impl CoinMarketCap {
         };
 
         let quote = self.client.get_quote(query, &currency).await;
+        let sign = self.fiat_sign(&currency);
 
-        Self::reply_quote(
-            client,
-            channel,
-            quote,
-            &currency,
-            self.fiat_sign(&currency).as_deref(),
-        )
-    }
-
-    /// Replies with the result of a coin quote lookup.
-    fn reply_quote(
-        client: &Client,
-        channel: &str,
-        quote: Result<QuoteData, Error>,
-        currency: &str,
-        sign: Option<&str>,
-    ) -> Result<(), ZetaError> {
         match quote {
-            Ok(quote) => client.send_privmsg(channel, format_quote(&quote, currency, sign))?,
+            Ok(quote) => {
+                client.send_privmsg(channel, format_quote(&quote, &currency, sign.as_deref()))?;
+            }
             Err(err) => Self::reply_error(client, channel, &err)?,
         }
 
@@ -459,7 +442,7 @@ impl CoinMarketCap {
     /// the API.
     fn is_valid_currency(&self, currency: &str) -> bool {
         self.fiat.read(|cache| {
-            cache.is_none_or(|cache| cache.symbols.is_empty() || cache.symbols.contains(currency))
+            cache.is_none_or(|cache| cache.signs.is_empty() || cache.signs.contains_key(currency))
         })
     }
 

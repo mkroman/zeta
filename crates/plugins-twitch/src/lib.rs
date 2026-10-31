@@ -129,8 +129,31 @@ impl Twitch {
         if let Some(kind) = parse_twitch_url(url.url()) {
             let result = match kind {
                 UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
-                UrlKind::Clip(id) => self.handle_clip(channel, &id, client).await,
-                UrlKind::Video(id) => self.handle_video(channel, &id, client).await,
+                UrlKind::Clip(id) => {
+                    self.handle_first("clips", &[("id", &id)], channel, client, |clip: &Clip| {
+                        let title = unstyle_text(&clip.title);
+                        let broadcaster = unstyle_text(&clip.broadcaster_name);
+                        let creator = unstyle_text(&clip.creator_name);
+                        let views = clip.view_count.to_formatted_string(&Locale::en);
+
+                        format!(
+                            "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 views"
+                        )
+                    })
+                    .await
+                }
+                UrlKind::Video(id) => {
+                    self.handle_first("videos", &[("id", &id)], channel, client, |video: &Video| {
+                        let title = &video.title;
+                        let user = &video.user_name;
+                        let views = video.view_count.to_formatted_string(&Locale::en);
+
+                        format!(
+                            "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 views"
+                        )
+                    })
+                    .await
+                }
             };
 
             if let Err(e) = result {
@@ -223,45 +246,6 @@ impl Twitch {
         client.send_privmsg(channel, message)?;
 
         Ok(())
-    }
-
-    /// Fetches clip information and sends a message to the channel.
-    async fn handle_clip(
-        &self,
-        channel: &str,
-        clip_id: &str,
-        client: &Client,
-    ) -> Result<(), Error> {
-        self.handle_first("clips", &[("id", clip_id)], channel, client, |clip: &Clip| {
-            let title = unstyle_text(&clip.title);
-            let broadcaster = unstyle_text(&clip.broadcaster_name);
-            let creator = unstyle_text(&clip.creator_name);
-            let views = clip.view_count.to_formatted_string(&Locale::en);
-
-            format!(
-                "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 views"
-            )
-        })
-        .await
-    }
-
-    /// Fetches video information and sends a message to the channel.
-    async fn handle_video(
-        &self,
-        channel: &str,
-        video_id: &str,
-        client: &Client,
-    ) -> Result<(), Error> {
-        self.handle_first("videos", &[("id", video_id)], channel, client, |video: &Video| {
-            let title = &video.title;
-            let user = &video.user_name;
-            let views = video.view_count.to_formatted_string(&Locale::en);
-
-            format!(
-                "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 views"
-            )
-        })
-        .await
     }
 }
 

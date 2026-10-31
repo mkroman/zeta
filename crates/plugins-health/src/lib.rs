@@ -33,9 +33,18 @@ pub struct Health;
 impl Health {
     /// Replies to `.health` commands with a snapshot of the process telemetry.
     #[command(".health", HEALTH_DESCRIPTION)]
-    async fn health(&self, ctx: &Context, client: &Client, channel: &str) -> Result<(), ZetaError> {
-        if let Some(mut snapshot) = Snapshot::capture() {
-            capture_pool_stats(&mut snapshot, ctx);
+    async fn health(
+        &self,
+        _ctx: &Context,
+        client: &Client,
+        channel: &str,
+    ) -> Result<(), ZetaError> {
+        if let Some(snapshot) = Snapshot::capture() {
+            #[cfg(feature = "database")]
+            let snapshot = Snapshot {
+                db: Some(PoolStats::capture(&_ctx.db)),
+                ..snapshot
+            };
 
             client.send_privmsg(channel, labeled_reply("Health", snapshot))?;
         }
@@ -88,16 +97,6 @@ impl PoolStats {
     }
 }
 
-/// Attaches database connection pool statistics to the snapshot.
-#[cfg(feature = "database")]
-fn capture_pool_stats(snapshot: &mut Snapshot, ctx: &Context) {
-    snapshot.db = Some(PoolStats::capture(&ctx.db));
-}
-
-/// Does nothing when the database feature is disabled.
-#[cfg(not(feature = "database"))]
-fn capture_pool_stats(_: &mut Snapshot, _: &Context) {}
-
 impl Snapshot {
     /// Captures a snapshot of the process' memory usage and runtime task stats.
     ///
@@ -106,29 +105,27 @@ impl Snapshot {
     #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn capture() -> Option<Self> {
-        if let Some(memory) = memory_stats::memory_stats() {
-            // Capture memory information
-            let phys_mem = memory.physical_mem as f64 / 1024.0 / 1024.0;
-            let virt_mem = memory.virtual_mem as f64 / 1024.0 / 1024.0;
+        let memory = memory_stats::memory_stats()?;
 
-            // Capture tokio runtime information
-            let metrics = Handle::current().metrics();
-            let num_workers = metrics.num_workers();
-            let num_alive_tasks = metrics.num_alive_tasks();
-            let global_queue_depth = metrics.global_queue_depth();
+        // Capture memory information
+        let phys_mem = memory.physical_mem as f64 / 1024.0 / 1024.0;
+        let virt_mem = memory.virtual_mem as f64 / 1024.0 / 1024.0;
 
-            return Some(Self {
-                phys_mem,
-                virt_mem,
-                global_queue_depth,
-                num_alive_tasks,
-                num_workers,
-                #[cfg(feature = "database")]
-                db: None,
-            });
-        }
+        // Capture tokio runtime information
+        let metrics = Handle::current().metrics();
+        let num_workers = metrics.num_workers();
+        let num_alive_tasks = metrics.num_alive_tasks();
+        let global_queue_depth = metrics.global_queue_depth();
 
-        None
+        Some(Self {
+            phys_mem,
+            virt_mem,
+            global_queue_depth,
+            num_alive_tasks,
+            num_workers,
+            #[cfg(feature = "database")]
+            db: None,
+        })
     }
 }
 
