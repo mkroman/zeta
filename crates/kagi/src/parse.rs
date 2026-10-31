@@ -1,6 +1,6 @@
 //! Parsing of Kagi stream payloads and result HTML fragments.
 
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use htmlize::unescape;
 use scraper::{ElementRef, Html, Node, Selector};
@@ -217,9 +217,9 @@ impl Selectors {
 
 /// Returns the pre-compiled result selectors.
 fn selectors() -> &'static Selectors {
-    static SELECTORS: OnceLock<Selectors> = OnceLock::new();
+    static SELECTORS: LazyLock<Selectors> = LazyLock::new(Selectors::new);
 
-    SELECTORS.get_or_init(Selectors::new)
+    &SELECTORS
 }
 
 fn parse_search_results_html(html: &str) -> Vec<SearchResult> {
