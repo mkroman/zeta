@@ -23,6 +23,9 @@ use crate::event::Sender;
 /// [`Filters`] handle.
 pub trait UrlFilter: Send + Sync {
     /// Whether `url`, posted by `sender` in `channel`, matches any filter and should be ignored.
+    ///
+    /// Called after [`UrlFilter::ignores`], which handles sender-only filters; those never
+    /// match URLs here.
     fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool;
 
     /// Whether messages from `sender` in `channel` are ignored entirely.

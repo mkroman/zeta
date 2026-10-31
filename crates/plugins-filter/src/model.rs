@@ -58,13 +58,30 @@ pub enum Case {
     Insensitive,
 }
 
+/// The compiled matcher of a [`Pattern`].
+#[derive(Debug, Clone, Default)]
+enum Matcher {
+    /// The pattern is unset or blank, and matches everything.
+    #[default]
+    Unset,
+    /// A literal pattern without wildcards.
+    Literal {
+        /// The pattern text; lowercased for case-insensitive patterns.
+        text: String,
+        /// Whether the comparison is case-sensitive.
+        sensitive: bool,
+    },
+    /// A wildcard pattern.
+    Wild(WildMatch),
+}
+
 /// A wildcard pattern compiled once for repeated matching.
 ///
 /// A missing or blank pattern is unset and matches everything, mirroring the filter semantics.
 #[derive(Debug, Clone, Default)]
 pub struct Pattern {
-    /// The compiled matcher, or `None` when the pattern is unset or blank.
-    matcher: Option<WildMatch>,
+    /// The compiled matcher.
+    matcher: Matcher,
 }
 
 impl Pattern {
@@ -74,9 +91,21 @@ impl Pattern {
         let matcher = raw
             .map(str::trim)
             .filter(|pattern| !pattern.is_empty())
-            .map(|pattern| match case {
-                Case::Sensitive => WildMatch::new(pattern),
-                Case::Insensitive => WildMatch::new_case_insensitive(pattern),
+            .map_or(Matcher::Unset, |pattern| {
+                if pattern.is_ascii() && !pattern.contains('*') && !pattern.contains('?') {
+                    Matcher::Literal {
+                        text: match case {
+                            Case::Sensitive => pattern.to_owned(),
+                            Case::Insensitive => pattern.to_ascii_lowercase(),
+                        },
+                        sensitive: matches!(case, Case::Sensitive),
+                    }
+                } else {
+                    Matcher::Wild(match case {
+                        Case::Sensitive => WildMatch::new(pattern),
+                        Case::Insensitive => WildMatch::new_case_insensitive(pattern),
+                    })
+                }
             });
 
         Self { matcher }
@@ -85,15 +114,32 @@ impl Pattern {
     /// Whether the pattern is unset.
     #[must_use]
     pub const fn is_unset(&self) -> bool {
-        self.matcher.is_none()
+        matches!(&self.matcher, Matcher::Unset)
     }
 
     /// Whether the pattern matches `value`, or is unset (an unset criterion matches anything).
     #[must_use]
     pub fn matches(&self, value: Option<&str>) -> bool {
-        self.matcher
-            .as_ref()
-            .is_none_or(|pattern| value.is_some_and(|value| pattern.matches(value)))
+        let Some(value) = value else {
+            return self.is_unset();
+        };
+
+        match &self.matcher {
+            Matcher::Unset => true,
+            Matcher::Literal { text, sensitive } => {
+                if *sensitive {
+                    value == text.as_str()
+                } else if value.is_ascii() {
+                    value.eq_ignore_ascii_case(text)
+                } else {
+                    // `WildMatch` lowercases Unicode character-wise, so an ASCII pattern can
+                    // match non-ASCII input (the Kelvin sign lowercases to `k`); mirror that
+                    // instead of comparing ASCII only.
+                    value.to_lowercase() == text.as_str()
+                }
+            }
+            Matcher::Wild(pattern) => pattern.matches(value),
+        }
     }
 }
 
@@ -141,14 +187,6 @@ impl Criteria {
             username: Pattern::compile(self.username.as_deref(), Case::Insensitive),
             hostname: Pattern::compile(self.hostname.as_deref(), Case::Insensitive),
         }
-    }
-
-    /// Whether the criteria select `filter`.
-    ///
-    /// Compiles the patterns on every call; use [`Criteria::compile`] when matching a list.
-    #[must_use]
-    pub fn matches(&self, filter: &Filter) -> bool {
-        self.compile().matches(filter)
     }
 }
 
@@ -252,7 +290,7 @@ mod tests {
         ];
 
         for (case, criteria, filter, expected) in cases {
-            assert_eq!(criteria.matches(&filter), expected, "for {case}");
+            assert_eq!(criteria.compile().matches(&filter), expected, "for {case}");
         }
     }
 
@@ -271,8 +309,55 @@ mod tests {
             ..Criteria::default()
         };
 
-        assert!(!upper_path.matches(&filter(None, Some("/title/*"))));
-        assert!(lower_path.matches(&filter(None, Some("/title/*"))));
-        assert!(upper_host.matches(&filter(Some("dr.dk"), None)));
+        assert!(
+            !upper_path
+                .compile()
+                .matches(&filter(None, Some("/title/*")))
+        );
+        assert!(
+            lower_path
+                .compile()
+                .matches(&filter(None, Some("/title/*")))
+        );
+        assert!(upper_host.compile().matches(&filter(Some("dr.dk"), None)));
+    }
+
+    #[test]
+    fn literal_patterns_match_without_wildcards() {
+        let insensitive = Pattern::compile(Some("IMDB.com"), Case::Insensitive);
+
+        assert!(insensitive.matches(Some("imdb.com")));
+        assert!(insensitive.matches(Some("IMDB.COM")));
+        assert!(!insensitive.matches(Some("www.imdb.com")));
+        assert!(!insensitive.matches(None));
+
+        let sensitive = Pattern::compile(Some("/Title"), Case::Sensitive);
+
+        assert!(sensitive.matches(Some("/Title")));
+        assert!(!sensitive.matches(Some("/title")));
+    }
+
+    #[test]
+    fn literal_patterns_fold_non_ascii_input_like_wildmatch() {
+        // U+212A KELVIN SIGN lowercases to `k`, so a case-insensitive wildcard pattern matches
+        // it; the literal fast path has to fold non-ASCII input the same way.
+        let pattern = Pattern::compile(Some("kelvin"), Case::Insensitive);
+
+        assert!(pattern.matches(Some("Kelvin")));
+        assert!(pattern.matches(Some("\u{212A}elvin")));
+        assert!(!pattern.matches(Some("kelvi")));
+    }
+
+    #[test]
+    fn wildcard_patterns_keep_wildcard_matching() {
+        let pattern = Pattern::compile(Some("a?c"), Case::Insensitive);
+
+        assert!(pattern.matches(Some("abc")));
+        assert!(pattern.matches(Some("a?c")));
+        assert!(!pattern.matches(Some("ac")));
+
+        let non_ascii = Pattern::compile(Some("İ*"), Case::Insensitive);
+
+        assert!(non_ascii.matches(Some("İstanbul")));
     }
 }
