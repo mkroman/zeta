@@ -3486,6 +3486,7 @@ dependencies = [
 name = "plugins-titles"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "futures",
  "html5ever",
  "irc",

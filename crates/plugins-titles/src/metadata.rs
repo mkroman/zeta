@@ -4,6 +4,7 @@
 //! title and OpenGraph metadata of the document head. Tokenization stops as soon as the head has
 //! ended, aborting the rest of the download.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::mpsc;
 
@@ -189,18 +190,13 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
     // The HTML tokenizer is not `Send`, so the response body is streamed through a channel and
     // tokenized on a blocking thread. The channel is bounded so that the reader stalls — and the
     // download is throttled — once the tokenizer falls behind.
-    let (sender, receiver) = mpsc::sync_channel::<Result<Vec<u8>, wreq::Error>>(4);
+    let (sender, receiver) = mpsc::sync_channel::<Result<bytes::Bytes, wreq::Error>>(4);
 
     let reader = tokio::spawn(async move {
         let mut stream = response.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
-            let sent = match chunk {
-                Ok(chunk) => sender.send(Ok(chunk.to_vec())).is_ok(),
-                Err(error) => sender.send(Err(error)).is_ok(),
-            };
-
-            if !sent {
+            if sender.send(chunk).is_err() {
                 break;
             }
         }
@@ -259,14 +255,26 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
 /// Converts `chunk` to UTF-8 text for the tokenizer, carrying incomplete multi-byte sequences in
 /// `pending` over to the next chunk.
 ///
+/// The text is borrowed from `chunk` when it is valid UTF-8 on its own and no bytes are pending;
+/// otherwise it is owned.
+///
 /// Invalid sequences are replaced with `U+FFFD`, as if the bytes were decoded lossily.
 #[must_use]
-fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
+fn decode_chunk<'a>(pending: &'a mut Vec<u8>, chunk: &'a [u8]) -> Cow<'a, str> {
+    // The common case: the previous chunk ended on a character boundary and this one is valid
+    // UTF-8. Borrow it instead of copying it through `pending`.
+    if pending.is_empty()
+        && let Ok(valid) = std::str::from_utf8(chunk)
+    {
+        return Cow::Borrowed(valid);
+    }
+
     pending.extend_from_slice(chunk);
-    let mut text = String::new();
+    let mut text = String::with_capacity(pending.len());
+    let mut offset = 0;
 
     loop {
-        match std::str::from_utf8(pending) {
+        match std::str::from_utf8(&pending[offset..]) {
             Ok(valid) => {
                 text.push_str(valid);
                 pending.clear();
@@ -278,7 +286,7 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 
                 if valid > 0 {
                     // The prefix is valid UTF-8 by construction.
-                    if let Ok(prefix) = std::str::from_utf8(&pending[..valid]) {
+                    if let Ok(prefix) = std::str::from_utf8(&pending[offset..offset + valid]) {
                         text.push_str(prefix);
                     }
                 }
@@ -286,20 +294,20 @@ fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
                 match error.error_len() {
                     // An incomplete sequence at the end of the chunk is carried over as-is.
                     None => {
-                        pending.drain(..valid);
+                        pending.drain(..offset + valid);
 
                         break;
                     }
                     Some(invalid_len) => {
                         text.push('\u{fffd}');
-                        pending.drain(..valid + invalid_len);
+                        offset += valid + invalid_len;
                     }
                 }
             }
         }
     }
 
-    text
+    Cow::Owned(text)
 }
 
 /// Returns the value of the named attribute of a tag.
