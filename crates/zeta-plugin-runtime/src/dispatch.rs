@@ -546,7 +546,11 @@ mod tests {
         info
     }
 
-    /// Dispatching a message that produces no event must not touch the heap.
+    /// Dispatching a message that produces no event must not touch the heap, whether or not a
+    /// filter handle is published.
+    ///
+    /// A posted URL is excluded: extraction parses and allocates it before the filter can drop
+    /// it, so URL filtering is covered by [`filtered_urls_are_not_dispatched`] instead.
     #[test]
     fn dispatch_without_events_does_not_allocate() {
         println!(
@@ -557,20 +561,25 @@ mod tests {
             size_of::<Message>() + 2 * size_of::<usize>(),
         );
 
-        let filters = Filters::default();
+        let no_filters = Filters::default();
         let mut index = EventIndex::default();
 
-        let unhandled = measure("unhandled privmsg", &mut index, &filters, privmsg("hello"));
+        let unhandled = measure(
+            "unhandled privmsg",
+            &mut index,
+            &no_filters,
+            privmsg("hello"),
+        );
         let numeric = measure(
             "numeric 001",
             &mut index,
-            &filters,
+            &no_filters,
             message("server.example", "001", &["zeta", "Welcome"]),
         );
         let join = measure(
             "join",
             &mut index,
-            &filters,
+            &no_filters,
             message("nick!u@h", "JOIN", &["#test"]),
         );
 
@@ -581,7 +590,7 @@ mod tests {
         let plain_notice = measure(
             "plain notice",
             &mut ctcp_index,
-            &filters,
+            &no_filters,
             message("server.example", "NOTICE", &["zeta", "maintenance"]),
         );
 
@@ -592,8 +601,18 @@ mod tests {
         let urlless_privmsg = measure(
             "url-less privmsg",
             &mut url_index,
-            &filters,
+            &no_filters,
             privmsg("no link here"),
+        );
+
+        // A published filter handle is consulted before routing; an ignored sender still takes
+        // the allocation-free path out of dispatch.
+        let filters = Filters::new(Arc::new(TestFilter));
+        let ignored = measure(
+            "ignored sender",
+            &mut url_index,
+            &filters,
+            privmsg_from("ignored", ".dig https://example.com/x"),
         );
 
         for (label, info) in [
@@ -602,6 +621,7 @@ mod tests {
             ("join", join),
             ("plain notice", plain_notice),
             ("url-less privmsg", urlless_privmsg),
+            ("ignored sender", ignored),
         ] {
             assert_eq!(info.count_total, 0, "{label} allocated");
             assert_eq!(info.bytes_total, 0, "{label} allocated bytes");

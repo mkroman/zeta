@@ -518,6 +518,9 @@ impl FilterPlugin {
         subscriptions.command(FILTER);
         let service = Arc::new(FilterService::new(ctx.db.clone()));
 
+        // The host resolves this handle once, when it starts the runtime, so it must be
+        // published here rather than from the `loaded` hook: a later publication never reaches
+        // the dispatcher. Filter changes go through the service's own index instead.
         ctx.shared.publish(Arc::new(Filters::new(service.clone())));
 
         let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");

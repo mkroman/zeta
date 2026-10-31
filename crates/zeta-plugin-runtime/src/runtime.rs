@@ -166,7 +166,59 @@ async fn drain_tasks(mut handles: Vec<(&'static str, JoinHandle<()>)>, grace: Du
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
+    use zeta_plugin::{Sender, UrlFilter};
+
     use super::*;
+
+    /// A filter that ignores messages from one nick and never filters a URL.
+    struct IgnoresNick(&'static str);
+
+    impl UrlFilter for IgnoresNick {
+        fn is_filtered(&self, _channel: &str, _sender: Option<Sender<'_>>, _url: &Url) -> bool {
+            false
+        }
+
+        fn ignores(&self, _channel: &str, sender: Option<Sender<'_>>) -> bool {
+            sender.is_some_and(|sender| sender.nick == self.0)
+        }
+    }
+
+    /// Builds a client on the `irc` crate's mock connection, so the test needs no server.
+    async fn mock_client() -> Arc<Client> {
+        let config = irc::client::prelude::Config {
+            use_mock_connection: true,
+            ..irc::client::prelude::Config::default()
+        };
+
+        Arc::new(
+            Client::from_config(config)
+                .await
+                .expect("a mock connection should be created"),
+        )
+    }
+
+    /// The runtime resolves the handle the filter plugin published from its constructor, and
+    /// keeps it: filtering changes go through the service, not through another `publish`.
+    #[tokio::test]
+    async fn start_resolves_the_filters_published_by_the_constructors() {
+        let ctx = Arc::new(zeta_test_support::test_context());
+        ctx.shared
+            .publish(Arc::new(Filters::new(Arc::new(IgnoresNick("ignored")))));
+
+        let client = mock_client().await;
+        let runtime = PluginRuntime::start(Vec::new(), &ctx, &client);
+        let sender = |nick| Some(Sender::new(nick, "user", "host.example"));
+
+        assert!(runtime.filters.ignores("#test", sender("ignored")));
+
+        // A later publish does not replace the handle the dispatcher already holds.
+        ctx.shared
+            .publish(Arc::new(Filters::new(Arc::new(IgnoresNick("later")))));
+
+        assert!(runtime.filters.ignores("#test", sender("ignored")));
+        assert!(!runtime.filters.ignores("#test", sender("later")));
+    }
 
     #[tokio::test]
     async fn drain_tasks_aborts_stragglers() {
