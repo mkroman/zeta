@@ -3128,6 +3128,7 @@ dependencies = [
  "allocation-counter",
  "arc-swap",
  "clap",
+ "foldhash",
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
