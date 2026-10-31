@@ -576,6 +576,16 @@ const fn gendered_head(cp: u32) -> bool {
     matches!(cp, 0x1F468 | 0x1F469)
 }
 
+/// Builds the `person` base for a gendered sequence: `U+1F9D1` and `cps[1..end]`.
+fn person_base(cps: &[u32], end: usize) -> Option<Cps> {
+    let rest = cps.get(1..end)?;
+    let mut data = [0u32; MAX_CPS];
+    *data.first_mut()? = 0x1F9D1;
+    let len = 1 + rest.len();
+    data.get_mut(1..len)?.copy_from_slice(rest);
+    Some(Cps { data, len })
+}
+
 /// The first existing base a gender rule applies to.
 fn gender_base(cps: &[u32], emoji: &Emoji) -> Option<usize> {
     let suffix = cps.len() >= 3
@@ -588,17 +598,15 @@ fn gender_base(cps: &[u32], emoji: &Emoji) -> Option<usize> {
         if !cps.first().is_some_and(|&head| gendered_head(head)) {
             return None;
         }
-        let mut candidate = vec![0x1F9D1];
-        candidate.extend_from_slice(cps.get(1..cps.len() - 2)?);
-        return emoji.find_key(&candidate);
+        let candidate = person_base(cps, cps.len() - 2)?;
+        return emoji.find_key(candidate.as_slice());
     }
     if cps.len() == 3
         && cps.get(1) == Some(&ZWJ)
         && cps.first().is_some_and(|&head| gendered_head(head))
     {
-        let mut candidate = vec![0x1F9D1];
-        candidate.extend_from_slice(cps.get(1..)?);
-        return emoji.find_key(&candidate);
+        let candidate = person_base(cps, cps.len())?;
+        return emoji.find_key(candidate.as_slice());
     }
     None
 }

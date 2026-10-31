@@ -459,11 +459,12 @@ fn write_checkpoint(writer: &mut BitWriter, name: &[u8], checkpoint_book: &Codeb
 }
 
 /// The predecessor a name is front-coded against.
-#[allow(
-    clippy::missing_const_for_fn,
-    reason = "slice indexing is not allowed in a const fn"
-)]
-fn predecessor(entries: &[(u32, String)], id: usize, block_size: usize, global: bool) -> &[u8] {
+const fn predecessor(
+    entries: &[(u32, String)],
+    id: usize,
+    block_size: usize,
+    global: bool,
+) -> &[u8] {
     if id == 0 || (!global && id.is_multiple_of(block_size)) {
         &[]
     } else {
@@ -487,11 +488,7 @@ fn common_suffix(previous: &[u8], name: &[u8], prefix: usize) -> usize {
 }
 
 /// The context of the first byte after `prefix` in a name.
-#[allow(
-    clippy::missing_const_for_fn,
-    reason = "slice indexing is not allowed in a const fn"
-)]
-fn context_of(previous: &[u8], prefix: usize) -> u8 {
+const fn context_of(previous: &[u8], prefix: usize) -> u8 {
     if prefix == 0 { 0 } else { previous[prefix - 1] }
 }
 
