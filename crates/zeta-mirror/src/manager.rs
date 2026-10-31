@@ -2,11 +2,13 @@
 //!
 //! A long-running task that owns the full lifecycle of a mirror: download requests are submitted
 //! through an unbounded mpsc channel, every accepted request runs as its own `yt-dlp` task that
-//! streams progress status back to the manager over a second mpsc channel, and completed downloads
-//! are uploaded to S3 inline before the requester is notified with the public link.
+//! logs its progress to its own span and reports only its final result to the manager over a
+//! second mpsc channel, and completed downloads are uploaded to S3 inline before the requester is
+//! notified with the public link.
 //!
 //! At most the configured number of downloads run at a time; further requests are queued and
-//! started in order as running downloads finish.
+//! started in order as running downloads finish. A download's slot is released before its files
+//! are uploaded, so one upload may overlap the downloads that follow it.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -76,11 +78,12 @@ impl std::fmt::Debug for DownloadRequest {
 /// The callback invoked when a download request finishes.
 type OnFinish = Box<dyn FnOnce(Result<String, Error>) + Send>;
 
-/// A status update sent from a download task to the manager.
+/// A final status sent from a download task to the manager.
+///
+/// Progress does not cross this channel: it is per-line detail that the download task logs
+/// inside its own span, so the manager only ever sees the outcome.
 #[derive(Debug)]
 enum DownloadStatus {
-    /// The download made progress.
-    Progress { id: u64, progress: Progress },
     /// The download finished and the files are ready for upload.
     Completed { id: u64, files: Vec<DownloadedFile> },
     /// The download failed.
@@ -285,12 +288,7 @@ impl Manager {
         tokio::spawn(
             async move {
                 let result = downloader
-                    .download(
-                        &url,
-                        &media_id,
-                        &path,
-                        Box::new(|progress| task.progress(progress)),
-                    )
+                    .download(&url, &media_id, &path, Box::new(DownloadTask::progress))
                     .await;
 
                 match result {
@@ -311,26 +309,17 @@ impl Manager {
         );
     }
 
-    /// Handles a status update reported by a download task.
+    /// Handles a final status reported by a download task.
     ///
-    /// A final status finishes the download inside its `media.download` span; the next queued
-    /// download is started afterwards, outside that span, so it becomes a root of its own instead
-    /// of a child of the download that freed the slot.
+    /// The download's slot is released before its files are uploaded: the upload can take a
+    /// while, so the next queued download starts right away instead of waiting behind it. The
+    /// upload itself still runs inside the finished download's `media.download` span, still
+    /// serialized on the manager task, and the next download starts outside that span so it
+    /// becomes a root of its own rather than a child of the download that freed the slot. The
+    /// cost is that at most `max_concurrent` downloads plus one upload run at a time, i.e. one
+    /// extra temporary download directory.
     async fn on_status(&mut self, status: DownloadStatus) {
         let (id, result) = match status {
-            DownloadStatus::Progress { id, progress } => {
-                if let Some(active) = self.active.get(&id) {
-                    active.span.in_scope(|| {
-                        trace!(
-                            percent = ?progress.fraction().map(|fraction| format!("{:.0}%", fraction * 100.0)),
-                            ?progress,
-                            "download progress"
-                        );
-                    });
-                }
-
-                return;
-            }
             DownloadStatus::Completed { id, files } => (id, Ok(files)),
             DownloadStatus::Failed { id, error } => (id, Err(error)),
         };
@@ -350,11 +339,11 @@ impl Manager {
             });
         }
 
+        self.start_next();
+
         Self::finish(&self.s3, active, result)
             .instrument(span)
             .await;
-
-        self.start_next();
     }
 
     /// Finishes a download: uploads the downloaded files to the bucket (if any), notifies the
@@ -486,12 +475,16 @@ impl DownloadTask {
         }
     }
 
-    /// Reports a progress update of the download.
-    fn progress(&self, progress: Progress) {
-        self.send(DownloadStatus::Progress {
-            id: self.id,
-            progress,
-        });
+    /// Logs a progress update of the download.
+    ///
+    /// Progress is per-line detail, so it is logged by the download task — inside its
+    /// `media.download` span — instead of crossing the manager's status channel.
+    fn progress(progress: Progress) {
+        trace!(
+            percent = progress.fraction().map(|fraction| fraction * 100.0),
+            ?progress,
+            "download progress"
+        );
     }
 
     /// Reports the download as completed, disarming the guard.
@@ -672,6 +665,54 @@ mod tests {
         }
     }
 
+    /// A downloader fake that completes every download except a gated one, so a test can hold
+    /// the queue's next download open while the previous one is uploading.
+    struct MixedDownloader {
+        /// The media ids of the downloads as they start, in order.
+        started: mpsc::UnboundedSender<String>,
+        /// The gate the gated download waits on.
+        gate: Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    impl Downloader for MixedDownloader {
+        fn download<'a>(
+            &'a self,
+            _url: &'a str,
+            id: &'a str,
+            output_dir: &'a Path,
+            _on_progress: Box<dyn FnMut(Progress) + Send + 'a>,
+        ) -> BoxFuture<'a, Result<Vec<DownloadedFile>, ytdlp::Error>> {
+            self.started
+                .send(id.to_string())
+                .expect("the test listens for starts");
+
+            if id == "second" {
+                let gate = self
+                    .gate
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("the second download starts once");
+
+                return Box::pin(async move {
+                    gate.await.expect("the gate should not be dropped");
+
+                    Err(ytdlp::Error::NoDownloads)
+                });
+            }
+
+            let filepath = output_dir.join(format!("{id}.mp4"));
+            std::fs::write(&filepath, b"junk").expect("write the fake download");
+
+            let files = vec![DownloadedFile {
+                filepath,
+                vcodec: None,
+            }];
+
+            Box::pin(async { Ok(files) })
+        }
+    }
+
     #[tokio::test]
     async fn test_invalid_id_is_rejected() {
         let downloader = Arc::new(RecordingDownloader::default());
@@ -767,6 +808,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_download_slot_is_released_before_the_upload() {
+        use std::time::Duration;
+
+        use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
+
+        // The presence check of the first download's upload never answers within the test, so
+        // only releasing the slot before the upload lets the second download start.
+        let server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(404).set_delay(Duration::from_mins(60)))
+            .mount(&server)
+            .await;
+
+        let s3 = S3::with_endpoint(&format!("http://{}", server.address()));
+        let (started, mut started_rx) = mpsc::unbounded_channel();
+        let (gate, gate_rx) = oneshot::channel();
+        let downloader = Arc::new(MixedDownloader {
+            started,
+            gate: Mutex::new(Some(gate_rx)),
+        });
+        let (_download_dir, manager) = start_manager(downloader, s3, 1);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        manager
+            .submit(request("0", "first", results.clone(), 0))
+            .expect("manager is running");
+        manager
+            .submit(request("0", "second", results, 1))
+            .expect("manager is running");
+
+        assert_eq!(started_rx.recv().await.as_deref(), Some("first"));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), started_rx.recv())
+                .await
+                .expect("the second download should start while the first is uploading")
+                .as_deref(),
+            Some("second")
+        );
+
+        drop(gate);
+
+        // The first download's callback is still serialized behind its upload.
+        assert!(
+            rx.try_recv().is_err(),
+            "the first request was reported before its upload finished"
+        );
+    }
+
+    #[tokio::test]
     async fn test_requests_run_serially_when_capped() {
         let (started, mut started_rx) = mpsc::unbounded_channel();
         let (gate_0, gate_rx_0) = oneshot::channel();
@@ -854,15 +944,19 @@ mod tests {
 
         drop(gate_2);
 
+        // The slot is released before the upload, so the queue drains ahead of the finished
+        // request's callback; match outcomes by request index rather than arrival order.
         let mut outcomes = Vec::new();
 
         for _ in 0..3 {
-            outcomes.push(rx.recv().await.expect("every request finishes").1);
+            outcomes.push(rx.recv().await.expect("every request finishes"));
         }
 
-        assert!(matches!(outcomes[0], Err(Error::Download(_))));
-        assert!(matches!(outcomes[1], Err(Error::InvalidId(_))));
-        assert!(matches!(outcomes[2], Err(Error::Download(_))));
+        outcomes.sort_by_key(|(index, _)| *index);
+
+        assert!(matches!(outcomes[0].1, Err(Error::Download(_))));
+        assert!(matches!(outcomes[1].1, Err(Error::InvalidId(_))));
+        assert!(matches!(outcomes[2].1, Err(Error::Download(_))));
     }
 
     #[test]
