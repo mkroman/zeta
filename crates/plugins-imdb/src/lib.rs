@@ -158,7 +158,7 @@ impl Imdb {
                 let lookup = self.client.title(&id).await;
                 Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
             }
-            Some(Link::Name(id)) => {
+            Some(Link::Person(id)) => {
                 debug!(imdb.person.id = %id, "fetching details for posted person link");
 
                 let lookup = self.client.person(&id).await;

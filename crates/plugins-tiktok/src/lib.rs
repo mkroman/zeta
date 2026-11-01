@@ -24,7 +24,7 @@ use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
 use self::oembed::OEmbed;
-use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};
+use self::urls::{TikTokLink, parse_tiktok_url, short_url, video_url};
 
 /// Settings for the tiktok plugin, from its `[plugins.tiktok]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -65,7 +65,7 @@ impl Default for Settings {
 }
 
 /// The TikTok plugin: summarizes and mirrors TikTok video links.
-pub struct Tiktok {
+pub struct TikTok {
     client: reqwest::Client,
     mirror: Option<MirrorHandle>,
     settings: Settings,
@@ -86,7 +86,7 @@ pub enum Error {
 }
 
 #[plugin(name = "tiktok", settings = Settings, urls(hosts = urls::URL_HOSTS))]
-impl Tiktok {
+impl TikTok {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let mirror = if settings.mirror {
             MirrorHandle::resolve(
@@ -121,20 +121,20 @@ impl Tiktok {
     }
 }
 
-impl Tiktok {
+impl TikTok {
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
         match parse_tiktok_url(url) {
-            Some(TiktokLink::Video { channel: slug, id }) => {
+            Some(TikTokLink::Video { channel: slug, id }) => {
                 debug!(media.id = %id, "processing video");
 
                 self.process_video_url(&slug, &id, channel, client).await?;
             }
-            Some(TiktokLink::Shortened(short_id)) => {
+            Some(TikTokLink::Shortened(short_id)) => {
                 debug!(tiktok.short.id = %short_id, "resolving url for shortened url");
 
                 let resolved_url = self.resolve_redirect_url(&short_id).await?;
 
-                if let Some(TiktokLink::Video { channel: slug, id }) =
+                if let Some(TikTokLink::Video { channel: slug, id }) =
                     parse_tiktok_url(&resolved_url)
                 {
                     self.process_video_url(&slug, &id, channel, client).await?;

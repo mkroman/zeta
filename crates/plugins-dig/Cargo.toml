@@ -15,7 +15,6 @@ native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 [dependencies]
 clap.workspace = true
 hickory-resolver.workspace = true
-miette.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

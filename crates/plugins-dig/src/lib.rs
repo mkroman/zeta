@@ -20,7 +20,6 @@ use hickory_resolver::{
     net::{NetError, runtime::TokioRuntimeProvider},
     proto::{rr::RecordType, serialize::binary::DecodeError},
 };
-use miette::Diagnostic;
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use tracing::{Instrument, debug};
@@ -77,7 +76,7 @@ pub struct Opts {
 }
 
 /// Errors that can occur while resolving DNS records.
-#[derive(Error, Debug, Diagnostic)]
+#[derive(Error, Debug)]
 pub enum Error {
     /// The domain could not be resolved through the configured nameservers.
     #[error("could not resolve domain: {0}")]

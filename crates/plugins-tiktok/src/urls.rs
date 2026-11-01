@@ -18,7 +18,7 @@ pub const URL_HOSTS: &[&str] = &[TIKTOK_STANDARD_HOST, TIKTOK_SHORT_HOST, TIKTOK
 
 /// A TikTok link, identified by what it points at.
 #[derive(Eq, PartialEq, Debug)]
-pub enum TiktokLink {
+pub enum TikTokLink {
     /// A video link, identified by its channel slug and video id.
     Video {
         /// The channel slug, e.g. `@dailymail`, or the anonymous bare `@` that short links
@@ -45,10 +45,10 @@ pub fn short_url(id: &str) -> String {
     format!("https://{TIKTOK_SHORT_HOST}/{id}/")
 }
 
-/// Parses the given `url` into a [`TiktokLink`], returning `None` if it isn't a TikTok link or
+/// Parses the given `url` into a [`TikTokLink`], returning `None` if it isn't a TikTok link or
 /// contains invalid components.
 #[must_use]
-pub fn parse_tiktok_url(url: &Url) -> Option<TiktokLink> {
+pub fn parse_tiktok_url(url: &Url) -> Option<TikTokLink> {
     match url.host_str()? {
         TIKTOK_STANDARD_HOST | TIKTOK_WWW_HOST => parse_tiktok_com_url(url),
         TIKTOK_SHORT_HOST => parse_shortened_tiktok_url(url),
@@ -57,26 +57,26 @@ pub fn parse_tiktok_url(url: &Url) -> Option<TiktokLink> {
 }
 
 /// Parses vm.tiktok.com URLs.
-fn parse_shortened_tiktok_url(url: &Url) -> Option<TiktokLink> {
+fn parse_shortened_tiktok_url(url: &Url) -> Option<TikTokLink> {
     match path_segments(url)?.as_slice() {
-        [id] if is_valid_short_id(id) => Some(TiktokLink::Shortened((*id).to_string())),
+        [id] if is_valid_short_id(id) => Some(TikTokLink::Shortened((*id).to_string())),
         _ => None,
     }
 }
 
 /// Parses tiktok.com URLs
-fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
+fn parse_tiktok_com_url(url: &Url) -> Option<TikTokLink> {
     match path_segments(url)?.as_slice() {
         // `/@somechannel`
         [channel] if is_valid_channel_slug(channel) => {
-            Some(TiktokLink::Channel((*channel).to_string()))
+            Some(TikTokLink::Channel((*channel).to_string()))
         }
         // `/@somechannel/video/7551110927479754006`, or `/@/video/7551110927479754006` — the
         // anonymous form short links redirect to when they do not carry the author.
         [channel, "video", video_id]
             if is_valid_video_channel_slug(channel) && is_numeric_segment(video_id) =>
         {
-            Some(TiktokLink::Video {
+            Some(TikTokLink::Video {
                 channel: (*channel).to_string(),
                 id: (*video_id).to_string(),
             })
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn test_parse_urls() {
         let video = |channel: &str, id: &str| {
-            Some(TiktokLink::Video {
+            Some(TikTokLink::Video {
                 channel: channel.to_string(),
                 id: id.to_string(),
             })
@@ -124,11 +124,11 @@ mod tests {
                 // Channels.
                 (
                     "https://www.tiktok.com/@dailymail",
-                    Some(TiktokLink::Channel("@dailymail".to_string())),
+                    Some(TikTokLink::Channel("@dailymail".to_string())),
                 ),
                 (
                     "https://tiktok.com/@user123",
-                    Some(TiktokLink::Channel("@user123".to_string())),
+                    Some(TikTokLink::Channel("@user123".to_string())),
                 ),
                 // Videos.
                 (
@@ -156,11 +156,11 @@ mod tests {
                 // Shortened links.
                 (
                     "https://vm.tiktok.com/ZNdgoKow7/",
-                    Some(TiktokLink::Shortened("ZNdgoKow7".to_string())),
+                    Some(TikTokLink::Shortened("ZNdgoKow7".to_string())),
                 ),
                 (
                     "https://vm.tiktok.com/ZNdgoKow7",
-                    Some(TiktokLink::Shortened("ZNdgoKow7".to_string())),
+                    Some(TikTokLink::Shortened("ZNdgoKow7".to_string())),
                 ),
                 // Invalid URLs.
                 ("https://www.tiktok.com/@", None),
@@ -190,7 +190,7 @@ mod tests {
         let url = Url::parse(&video_url("@dailymail", "7541501431543532814")).unwrap();
         assert_eq!(
             parse_tiktok_url(&url),
-            Some(TiktokLink::Video {
+            Some(TikTokLink::Video {
                 channel: "@dailymail".to_string(),
                 id: "7541501431543532814".to_string(),
             })
@@ -200,7 +200,7 @@ mod tests {
         let url = Url::parse(&video_url("@", "7551042261212056854")).unwrap();
         assert_eq!(
             parse_tiktok_url(&url),
-            Some(TiktokLink::Video {
+            Some(TikTokLink::Video {
                 channel: "@".to_string(),
                 id: "7551042261212056854".to_string(),
             })

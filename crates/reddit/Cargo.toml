@@ -22,7 +22,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_path_to_error.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 
@@ -30,6 +29,7 @@ zeta-http = { path = "../zeta-http", default-features = false, features = ["oaut
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]
+tokio.workspace = true
 zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["http"] }
 
 [lints]
