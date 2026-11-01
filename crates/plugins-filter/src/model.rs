@@ -544,4 +544,82 @@ mod tests {
             assert!(pattern.matches(None), "for {raw:?}");
         }
     }
+
+    /// Times literal, affix, and general wildcard patterns.
+    ///
+    /// Ignored by default; run with
+    /// `cargo test -p plugins-filter --lib -- --ignored --nocapture benchmark_affix_patterns`.
+    /// The numbers are only meaningful in a release build; a debug run shows that every case
+    /// executes, not how fast it is.
+    #[test]
+    #[ignore = "benchmark; run with --ignored --nocapture"]
+    fn benchmark_affix_patterns() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
+        fn measure(mut operation: impl FnMut() -> bool) -> f64 {
+            const ITERATIONS: usize = 100_000;
+            const RUNS: usize = 5;
+
+            let mut best = f64::MAX;
+
+            for _ in 0..RUNS {
+                let start = Instant::now();
+
+                for _ in 0..ITERATIONS {
+                    black_box(operation());
+                }
+
+                let nanos = start.elapsed().as_secs_f64() * 1e9;
+
+                best = best.min(nanos / ITERATIONS as f64);
+            }
+
+            best
+        }
+
+        let cases = [
+            (
+                "literal",
+                Pattern::compile(Some("someone"), Case::Insensitive),
+                "someone",
+            ),
+            (
+                "suffix affix",
+                Pattern::compile(Some("*bot"), Case::Insensitive),
+                "mybot",
+            ),
+            (
+                "prefix affix",
+                Pattern::compile(Some("bot*"), Case::Insensitive),
+                "botx",
+            ),
+            (
+                "affix miss",
+                Pattern::compile(Some("*bot"), Case::Insensitive),
+                "someone",
+            ),
+            (
+                "general wildcard",
+                Pattern::compile(Some("a*b"), Case::Insensitive),
+                "axxb",
+            ),
+            (
+                "non-ascii fallback",
+                Pattern::compile(Some("*k"), Case::Insensitive),
+                "\u{212A}",
+            ),
+        ];
+
+        for (label, pattern, value) in cases {
+            // Keep the inputs opaque: with literals the compiler can constant-fold the matching
+            // a real lookup does, hiding the work the benchmark is meant to measure.
+            let pattern = black_box(&pattern);
+            let value = black_box(value);
+            let nanos = measure(|| pattern.matches(Some(value)));
+
+            println!("affix benchmark: {label}: {value:?}: {nanos:.1} ns/op");
+        }
+    }
 }
