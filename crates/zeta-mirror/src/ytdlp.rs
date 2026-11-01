@@ -35,6 +35,9 @@ const FORMAT: &str = "bestvideo*[vcodec=h264]+bestaudio*/(bv*+ba/b)";
 /// The maximum number of characters to include of `yt-dlp`'s stderr in error messages.
 const STDERR_MESSAGE_LENGTH: usize = 300;
 
+/// How long the failure path waits for the child's stderr to reach EOF before giving up.
+const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// The marker prefixing the progress lines emitted with [`PROGRESS_TEMPLATE`], used to tell them
 /// apart from `yt-dlp`'s other output.
 const PROGRESS_PREFIX: &str = "zeta-dl";
@@ -252,8 +255,13 @@ impl YtDlp {
         })??;
 
         if !output.status.success() {
-            // The child has exited, so its stderr will reach EOF shortly.
-            let stderr = stderr_task.await.unwrap_or_default();
+            // The child has exited, so its stderr reaches EOF shortly; a grandchild that inherited
+            // the pipe must not hold the slot past the download timeout.
+            let stderr = tokio::time::timeout(STDERR_DRAIN_TIMEOUT, stderr_task)
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
 
             return Err(Error::Failure(stderr.trim_end().to_string()));
         }

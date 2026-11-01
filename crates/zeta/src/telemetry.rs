@@ -38,9 +38,11 @@ fn otel_resource_detectors() -> Vec<Box<dyn ResourceDetector>> {
 /// every `SdkTracer` holds a provider clone, and the tracer lives in the global subscriber,
 /// which is a static. The explicit shutdown is therefore required.
 ///
-/// `shutdown` blocks while the batch processor flushes. The multi-thread runtime this binary
-/// uses runs the exporter on another worker meanwhile; on a current-thread runtime, shut down
-/// from `tokio::task::spawn_blocking` instead to avoid deadlocking with the exporter task.
+/// `shutdown` blocks while the batch processor flushes. A multi-thread runtime with spare workers
+/// runs the exporter on another worker meanwhile, and [`tokio::task::block_in_place`] covers the
+/// case where it has only one — `available_parallelism() == 1`, common in one-vCPU containers —
+/// by handing that worker's core to another thread. On a current-thread runtime the flush blocks
+/// the only thread, as documented on the type.
 #[must_use = "dropping the guard immediately shuts the tracer provider down"]
 pub struct TelemetryGuard {
     /// The provider to shut down, or `None` when OpenTelemetry is disabled.
@@ -53,8 +55,21 @@ impl Drop for TelemetryGuard {
             return;
         };
 
-        if let Err(error) = provider.shutdown() {
-            eprintln!("could not shut down the OpenTelemetry tracer provider: {error}");
+        let shutdown = move || {
+            if let Err(error) = provider.shutdown() {
+                eprintln!("could not shut down the OpenTelemetry tracer provider: {error}");
+            }
+        };
+
+        // `shutdown` blocks on a oneshot the batch processor (an async task on this runtime)
+        // answers after exporting. `block_in_place` hands this worker's core to another thread,
+        // so a runtime with one worker cannot deadlock. A current-thread runtime still blocks,
+        // as documented on the type.
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(shutdown);
+            }
+            _ => shutdown(),
         }
     }
 }

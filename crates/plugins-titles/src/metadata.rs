@@ -6,7 +6,8 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::sync::mpsc;
+
+use tokio::sync::mpsc;
 
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{
@@ -188,15 +189,16 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
     let response = http::emulated::send(client.get(url.as_str())).await?;
 
     // The HTML tokenizer is not `Send`, so the response body is streamed through a channel and
-    // tokenized on a blocking thread. The channel is bounded so that the reader stalls — and the
-    // download is throttled — once the tokenizer falls behind.
-    let (sender, receiver) = mpsc::sync_channel::<Result<bytes::Bytes, wreq::Error>>(4);
+    // tokenized on a blocking thread. The bounded tokio channel provides backpressure: the reader
+    // awaits a free slot instead of parking a tokio worker once the tokenizer falls behind, which
+    // also throttles the download.
+    let (sender, mut receiver) = mpsc::channel::<Result<bytes::Bytes, wreq::Error>>(4);
 
     let reader = tokio::spawn(async move {
         let mut stream = response.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
-            if sender.send(chunk).is_err() {
+            if sender.send(chunk).await.is_err() {
                 break;
             }
         }
@@ -208,7 +210,7 @@ pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMeta
         let mut pending: Vec<u8> = Vec::new();
         let mut total = 0_u64;
 
-        while let Ok(chunk) = receiver.recv() {
+        while let Some(chunk) = receiver.blocking_recv() {
             // A stream error before the head has been tokenized fails the fetch. Errors after
             // that point are never observed — the tokenizer stops as soon as it is done.
             let chunk = chunk.map_err(Error::from)?;
