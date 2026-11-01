@@ -3908,6 +3908,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "zeta-http",
  "zeta-test-support",
  "zeta-url",
 ]
