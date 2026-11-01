@@ -379,7 +379,11 @@ impl Unwall {
 
     /// Submits a covered article to unwall.app in a task of its own, replying with the reader
     /// link once the mirror is warm — or from the cache, when the article is known.
-    fn submit(&self, client: &Client, event: &UrlEvent) {
+    ///
+    /// Waits for one of [`SUBMIT_CONCURRENCY`] permits before the task is spawned, so a message
+    /// with many covered links queues in the handler instead of spawning an unbounded number of
+    /// tasks.
+    async fn submit(&self, client: &Client, event: &UrlEvent) {
         let url = event.url();
 
         if !matches!(url.scheme(), "http" | "https") {
@@ -418,6 +422,14 @@ impl Unwall {
         let irc = client.sender();
         let channel = event.channel().to_owned();
 
+        // The permit is acquired before the task exists, so only a bounded number of tasks are
+        // alive at once. It is moved into the task and released by its drop, on success, error,
+        // and cancellation alike.
+        let permit = submits
+            .acquire_owned()
+            .await
+            .expect("the submission semaphore is never closed");
+
         // The span carries the redacted URL: without it, this task's logs would only ever
         // reach stdout. It is a child of the handler span, created while the handler is
         // current, so the resolution stays in the message's trace even though the handler
@@ -433,12 +445,7 @@ impl Unwall {
 
         tokio::spawn(
             async move {
-                // Held for the whole submission and released by its drop, on success, error,
-                // and cancellation alike.
-                let _permit = submits
-                    .acquire_owned()
-                    .await
-                    .expect("the submission semaphore is never closed");
+                let _permit = permit;
 
                 match service.resolve(&article, fetch).await {
                     Ok(cached) => {
@@ -568,7 +575,7 @@ impl Unwall {
         client: &Client,
         event: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        self.submit(client, event);
+        self.submit(client, event).await;
 
         Ok(())
     }
