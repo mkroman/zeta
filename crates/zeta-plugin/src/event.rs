@@ -16,7 +16,6 @@
 //! plugin authors) can build events to exercise handlers directly.
 
 use std::collections::BTreeSet;
-use std::ops::Range;
 use std::sync::Arc;
 
 use irc::proto::{Command, Message};
@@ -152,8 +151,8 @@ pub struct CommandEvent {
     message: Arc<Message>,
     /// The command specification that matched.
     pub spec: CommandSpec,
-    /// The byte range of the arguments within the message text.
-    args: Range<usize>,
+    /// The byte offset of the arguments within the message text.
+    args_start: usize,
 }
 
 impl CommandEvent {
@@ -167,12 +166,12 @@ impl CommandEvent {
             return None;
         };
 
-        let args = spec.parse_range(text)?;
+        let args_start = spec.parse_range(text)?.start;
 
         Some(Self {
             message,
             spec,
-            args,
+            args_start,
         })
     }
 
@@ -186,7 +185,7 @@ impl CommandEvent {
     /// (empty when the command was invoked without arguments).
     #[must_use]
     pub fn args(&self) -> &str {
-        &privmsg(&self.message).1[self.args.clone()]
+        &privmsg(&self.message).1[self.args_start..]
     }
 
     event_sender!();
