@@ -189,7 +189,10 @@ pub async fn refused_get(query: &str) -> (reqwest::Error, SocketAddr) {
 /// Panics if the request fails with anything but a timeout.
 #[cfg(feature = "http")]
 pub async fn timeout_error() -> (reqwest::Error, SocketAddr) {
-    let server = wiremock::MockServer::start().await;
+    // The server is exclusive: the delayed response keeps the request in flight after the
+    // client times out and the test returns. A pooled server would be recycled with that late
+    // request still on the wire, and the next test to borrow it would record it as its own.
+    let server = wiremock::MockServer::builder().start().await;
 
     wiremock::Mock::given(wiremock::matchers::any())
         .respond_with(wiremock::ResponseTemplate::new(200).set_delay(LATE_RESPONSE))
