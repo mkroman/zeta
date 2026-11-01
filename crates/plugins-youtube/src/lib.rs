@@ -41,8 +41,12 @@ use zeta_utils::irc::unstyle_text;
 
 pub use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
 
-/// YouTube Data API v3 base endpoint URL.
-const BASE_URL: &str = "https://www.googleapis.com/youtube/v3";
+/// The endpoint videos are searched against.
+const SEARCH_URL: &str = "https://www.googleapis.com/youtube/v3/search";
+/// The endpoint video details are fetched from.
+const VIDEOS_URL: &str = "https://www.googleapis.com/youtube/v3/videos";
+/// The endpoint video categories are fetched from.
+const VIDEO_CATEGORIES_URL: &str = "https://www.googleapis.com/youtube/v3/videoCategories";
 
 /// The time-to-live of the cached video categories.
 const CATEGORIES_TTL: Duration = Duration::from_hours(24);
@@ -461,7 +465,7 @@ impl YouTube {
             ("safeSearch", self.safe_search.as_str()),
         ];
 
-        let request = self.client.get(format!("{BASE_URL}/search")).query(&params);
+        let request = self.client.get(SEARCH_URL).query(&params);
 
         let result: SearchListResponse = http::get_json(request).await?;
 
@@ -486,7 +490,7 @@ impl YouTube {
                 "snippet,statistics,contentDetails,liveStreamingDetails",
             ),
         ];
-        let request = self.client.get(format!("{BASE_URL}/videos")).query(&params);
+        let request = self.client.get(VIDEOS_URL).query(&params);
         let list: VideosResponse = http::get_json(request).await?;
 
         debug!("fetched metadata for video");
@@ -513,9 +517,7 @@ async fn fetch_video_categories(
         ("part", "snippet"),
         ("regionCode", region_code),
     ];
-    let request = client
-        .get(format!("{BASE_URL}/videoCategories"))
-        .query(&params);
+    let request = client.get(VIDEO_CATEGORIES_URL).query(&params);
     let list: CategoriesResponse = http::get_json(request).await?;
 
     debug!("fetched video category list");

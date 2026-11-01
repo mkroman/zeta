@@ -16,9 +16,8 @@ use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
-/// The usage line sent for empty `.ud` queries.
-/// The Urban Dictionary API base URL.
-pub const BASE_URL: &str = "https://api.urbandictionary.com";
+/// The endpoint definitions are looked up against.
+const DEFINE_URL: &str = "https://api.urbandictionary.com/v0/define";
 
 /// Settings for the `urban_dictionary` plugin, from its `[plugins.urban_dictionary]` configuration
 /// section.
@@ -163,10 +162,7 @@ impl UrbanDictionary {
     pub async fn definitions(&self, term: &str) -> Result<Definitions, Error> {
         debug!(%term, "requesting definitions");
         let params = [("term", term)];
-        let request = self
-            .client
-            .get(format!("{BASE_URL}/v0/define"))
-            .query(&params);
+        let request = self.client.get(DEFINE_URL).query(&params);
         let definitions: Definitions = http::get_json(request).await?;
         debug!(num_definitions = %definitions.list.len(), "fetched definitions");
 
