@@ -39,7 +39,8 @@ pub async fn delete_ids(
 }
 
 /// A failed database operation, naming the affected entity.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("could not {stage} {entity}: {source}")]
 pub struct DbError {
     stage: &'static str,
     entity: &'static str,
@@ -72,22 +73,6 @@ impl DbError {
             entity,
             source,
         }
-    }
-}
-
-impl std::fmt::Display for DbError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "could not {} {}: {}",
-            self.stage, self.entity, self.source
-        )
-    }
-}
-
-impl std::error::Error for DbError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 
@@ -152,3 +137,4 @@ macro_rules! impl_repository_error {
         }
     };
 }
+
