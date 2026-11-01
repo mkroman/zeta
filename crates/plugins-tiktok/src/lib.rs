@@ -17,7 +17,7 @@ use url::Url;
 
 use zeta_http as http;
 use zeta_http::RequestError;
-use zeta_mirror::{Mirror, MirrorHandle};
+use zeta_mirror::{MediaId, Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
 use zeta_utils::irc::unstyle_text;
@@ -173,10 +173,16 @@ impl Tiktok {
             let _ = client.send_privmsg(channel, plain_reply(&summary));
         }
 
+        let Ok(id) = MediaId::parse(video_id) else {
+            warn!(media.id = %video_id, "ignoring mirror request with an unsafe id");
+
+            return Ok(());
+        };
+
         plugins_shared::mirror::ensure_mirrored_if_configured(
             self.mirror.as_ref(),
             &url,
-            video_id,
+            &id,
             channel,
             client,
         )

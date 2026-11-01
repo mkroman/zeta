@@ -43,7 +43,7 @@ use zeta_cache::{TtlCache, TtlMap};
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_http::emulated::ResponseError;
-use zeta_mirror::{Mirror, MirrorHandle};
+use zeta_mirror::{MediaId, Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
 use zeta_utils::irc::unstyle_text;
@@ -347,10 +347,16 @@ impl Instagram {
             let _ = client.send_privmsg(channel, plain_reply(&summary));
         }
 
+        let Ok(media_id) = MediaId::parse(id) else {
+            warn!(media.id = %id, "ignoring mirror request with an unsafe id");
+
+            return Ok(());
+        };
+
         plugins_shared::mirror::ensure_mirrored_if_configured(
             self.mirror.as_ref(),
             url,
-            id,
+            &media_id,
             channel,
             client,
         )

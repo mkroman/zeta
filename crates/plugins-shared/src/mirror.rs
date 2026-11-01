@@ -9,7 +9,7 @@ use std::sync::Arc;
 use irc::client::Client;
 use tracing::warn;
 
-use zeta_mirror::MirrorHandle;
+use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::prelude::*;
 
 /// Mirrors the media at `url` and replies with the mirrored file's link, when the plugin has a
@@ -23,7 +23,7 @@ use zeta_plugin::prelude::*;
 pub async fn ensure_mirrored_if_configured(
     mirror: Option<&MirrorHandle>,
     url: &str,
-    id: &str,
+    id: &MediaId,
     channel: &str,
     client: &Client,
 ) {

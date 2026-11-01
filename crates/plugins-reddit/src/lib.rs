@@ -12,7 +12,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use zeta_mirror::{Mirror, MirrorHandle};
+use zeta_mirror::{MediaId, Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
@@ -209,10 +209,16 @@ impl Reddit {
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
         if let Some(url) = submission.video_url() {
+            let Ok(media_id) = MediaId::parse(id) else {
+                warn!(media.id = %id, "ignoring mirror request with an unsafe id");
+
+                return Ok(());
+            };
+
             plugins_shared::mirror::ensure_mirrored_if_configured(
                 self.mirror.as_ref(),
                 url,
-                id,
+                &media_id,
                 channel,
                 client,
             )
