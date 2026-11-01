@@ -3018,7 +3018,7 @@ dependencies = [
  "plugins-youtube",
  "serde",
  "serde_json",
- "syn 2.0.119",
+ "syn 3.0.9",
  "tracing",
  "zeta-plugin",
  "zeta-plugin-runtime",
@@ -6114,7 +6114,7 @@ dependencies = [
  "clap",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
  "zeta-plugin",
 ]
 
