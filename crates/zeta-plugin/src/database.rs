@@ -39,7 +39,8 @@ pub async fn delete_ids(
 }
 
 /// A failed database operation, naming the affected entity.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("could not {stage} {entity}: {source}")]
 pub struct DbError {
     stage: &'static str,
     entity: &'static str,
@@ -72,22 +73,6 @@ impl DbError {
             entity,
             source,
         }
-    }
-}
-
-impl std::fmt::Display for DbError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "could not {} {}: {}",
-            self.stage, self.entity, self.source
-        )
-    }
-}
-
-impl std::error::Error for DbError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 
@@ -151,4 +136,34 @@ macro_rules! impl_repository_error {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn db_error_display_and_source_match_the_manual_impl() {
+        let cases = [
+            ("load", DbError::load("alert", sqlx::Error::RowNotFound)),
+            ("insert", DbError::insert("alert", sqlx::Error::RowNotFound)),
+            ("delete", DbError::delete("alert", sqlx::Error::RowNotFound)),
+        ];
+
+        for (stage, error) in cases {
+            // The manual `Display` wrote `could not {stage} {entity}: {source}`.
+            assert_eq!(
+                error.to_string(),
+                format!("could not {stage} alert: {}", error.source)
+            );
+
+            // A field named `source` is the error's source, as the manual impl returned it.
+            let source = std::error::Error::source(&error).expect("the sqlx error is the source");
+
+            assert!(std::ptr::addr_eq(
+                &raw const *source,
+                &raw const error.source,
+            ));
+        }
+    }
 }

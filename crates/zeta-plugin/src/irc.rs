@@ -13,7 +13,7 @@ use std::future::Future;
 use clap::Parser;
 use irc::client::Client;
 
-use crate::command::{ArgsError, ArgsMode};
+use crate::command::ArgsMode;
 use crate::event::CommandEvent;
 
 pub use zeta_utils::irc::{
@@ -21,30 +21,12 @@ pub use zeta_utils::irc::{
     plain_reply, unstyle_text,
 };
 
-/// Sends the output of a failed argument parse to `channel`, one message per non-empty line.
+/// Parses the trailing arguments of `command` with the tokenization selected by `mode`,
+/// replying with the usage lines to the command's channel when the parse fails.
 ///
 /// Parse failures produce the command's usage or help output, which spans multiple lines; IRC
 /// messages cannot contain line breaks, so each line is sent as its own `PRIVMSG`, formatted by
 /// `format` (e.g. by wrapping it in [`labeled_reply`] with the plugin's label).
-///
-/// # Errors
-///
-/// Returns any error produced while sending the messages.
-fn reply_usage_lines(
-    client: &Client,
-    channel: &str,
-    error: &ArgsError,
-    format: impl Fn(&str) -> String,
-) -> Result<(), irc::error::Error> {
-    for line in error.to_string().lines().filter(|line| !line.is_empty()) {
-        client.send_privmsg(channel, format(line))?;
-    }
-
-    Ok(())
-}
-
-/// Parses the trailing arguments of `command` with the tokenization selected by `mode`,
-/// replying with the usage lines to the command's channel when the parse fails.
 ///
 /// Returns `Ok(None)` when the usage was replied to and the command should be abandoned.
 ///
@@ -57,12 +39,16 @@ pub fn parse_or_usage<T: Parser + 'static>(
     mode: ArgsMode,
     format: impl Fn(&str) -> String,
 ) -> Result<Option<T>, irc::error::Error> {
-    reply_parse_result(
-        command.spec.parse_with(command.args(), mode),
-        client,
-        command.channel(),
-        format,
-    )
+    match command.spec.parse_with(command.args(), mode) {
+        Ok(args) => Ok(Some(args)),
+        Err(error) => {
+            for line in error.to_string().lines().filter(|line| !line.is_empty()) {
+                client.send_privmsg(command.channel(), format(line))?;
+            }
+
+            Ok(None)
+        }
+    }
 }
 
 /// Awaits a lookup and replies with its outcome to `channel`.
@@ -88,20 +74,83 @@ pub async fn reply_lookup<T, E>(
     client.send_privmsg(channel, message)
 }
 
-/// Replies `error`'s usage lines through `format` and yields `None` for the caller to abandon
-/// the command with, or passes a successful parse result through.
-fn reply_parse_result<T>(
-    result: Result<T, ArgsError>,
-    client: &Client,
-    channel: &str,
-    format: impl Fn(&str) -> String,
-) -> Result<Option<T>, irc::error::Error> {
-    match result {
-        Ok(args) => Ok(Some(args)),
-        Err(error) => {
-            reply_usage_lines(client, channel, &error, format)?;
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::sync::Arc;
 
-            Ok(None)
-        }
+    use clap::Parser;
+    use irc::proto::Message;
+
+    use super::*;
+    use crate::command::CommandSpec;
+
+    /// Options whose required positional argument makes an empty invocation fail.
+    #[derive(Debug, Parser)]
+    /// Test options.
+    struct Opts {
+        /// the name to greet
+        name: String,
+    }
+
+    const COMMAND: CommandSpec = CommandSpec::with_args::<Opts>(".greet", "Greet someone");
+
+    /// Returns a client whose sends are accepted and discarded.
+    async fn mock_client() -> Client {
+        Client::from_config(irc::client::data::Config {
+            nickname: Some("zeta-test".to_owned()),
+            server: Some("mock".to_owned()),
+            use_mock_connection: true,
+            mock_initial_value: Some(String::new()),
+            ..Default::default()
+        })
+        .await
+        .expect("mock irc client")
+    }
+
+    /// Returns a command event invoking [`COMMAND`] with `args` in `#test`.
+    fn command(args: &str) -> CommandEvent {
+        let text = if args.is_empty() {
+            COMMAND.trigger().to_owned()
+        } else {
+            format!("{} {args}", COMMAND.trigger())
+        };
+        let message = Message::new(Some("#test"), "PRIVMSG", vec!["#test", text.as_str()])
+            .expect("message should parse");
+
+        CommandEvent::new(Arc::new(message), COMMAND).expect("the message should match the command")
+    }
+
+    /// Returns the non-empty lines of the usage output for `args`.
+    fn usage_lines(args: &str) -> Vec<String> {
+        COMMAND
+            .parse_with::<Opts>(args, ArgsMode::Shell)
+            .expect_err("the required argument is missing")
+            .to_string()
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn replies_with_each_non_empty_usage_line_in_order() {
+        let client = mock_client().await;
+        let command = command("");
+        let sent = RefCell::new(Vec::new());
+
+        let result = parse_or_usage::<Opts>(&client, &command, ArgsMode::Shell, |line| {
+            sent.borrow_mut().push(line.to_owned());
+
+            format!("> {line}")
+        })
+        .expect("the mock client accepts the messages");
+
+        assert!(result.is_none(), "a failed parse abandons the command");
+        assert_eq!(
+            *sent.borrow(),
+            usage_lines(""),
+            "one message per non-empty line"
+        );
     }
 }
