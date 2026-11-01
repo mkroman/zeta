@@ -28,7 +28,6 @@ zeta-http = { path = "../zeta-http", default-features = false, features = ["http
 zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["http"] }
 
 [dev-dependencies]
-serde_json.workspace = true
 zeta-test-support = { path = "../zeta-test-support" }
 
 [lints]
