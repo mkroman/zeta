@@ -60,7 +60,7 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
 
                 Ok(response)
             } else {
-                span.record("error.type", status.as_u16().to_string().as_str());
+                span.record("error.type", tracing::field::display(status.as_u16()));
 
                 Err(ResponseError::Status(status))
             }
