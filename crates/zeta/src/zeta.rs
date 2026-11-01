@@ -211,6 +211,21 @@ fn exit_on_second_signal() {
     });
 }
 
+/// Starts the download manager of the shared mirror, when one is published.
+///
+/// The mirror is published to the context's shared state during construction; plugins pick up
+/// their handles from there, and the host starts the manager so the first mirrored URL does not
+/// pay for the manager's synchronous filesystem setup.
+///
+/// Returns whether the manager is running; this is `false` when no mirror is published or its
+/// download directory could not be created, in which case mirroring stays disabled.
+#[cfg(feature = "mirror")]
+fn start_mirror(shared: &zeta_plugin::SharedState) -> bool {
+    shared
+        .get::<zeta_mirror::Mirror>()
+        .is_some_and(|mirror| mirror.start())
+}
+
 /// The main IRC bot struct that manages connection state and message handling.
 pub struct Zeta {
     /// The complete configuration loaded from file or environment
@@ -317,6 +332,14 @@ impl Zeta {
     /// - [`Error::Irc`] - if a protocol or communication error occurred.
     /// - [`Error::IrcDisconnected`] - if the server closed the connection or sent `ERROR`.
     pub async fn run(mut self) -> Result<(), Error> {
+        // The shared mirror's download manager is started here, before the IRC connection is
+        // established: building it sweeps stale download directories and creates the download
+        // directory, synchronous filesystem work that would otherwise block a runtime worker
+        // while the first mirrored URL is handled. Nothing is dispatched yet either, because the
+        // plugin tasks only start below.
+        #[cfg(feature = "mirror")]
+        start_mirror(&self.context.shared);
+
         let mut client = Client::from_config((&self.config.irc).into())
             .await
             .map_err(Error::IrcClient)?;
@@ -426,6 +449,42 @@ impl Zeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mirror whose manager can be started without network access.
+    #[cfg(feature = "mirror")]
+    fn test_mirror(download_dir: &std::path::Path) -> Arc<zeta_mirror::Mirror> {
+        let config = zeta_mirror::MirrorConfig {
+            download_dir: Some(download_dir.to_path_buf()),
+            s3_access_key_id: Some("access".to_string()),
+            s3_secret_access_key: Some("secret".to_string()),
+            s3_bucket_name: Some("bucket".to_string()),
+            ..zeta_mirror::MirrorConfig::default()
+        };
+
+        Arc::new(
+            zeta_mirror::Mirror::from_config(&config)
+                .expect("the test configuration should be valid"),
+        )
+    }
+
+    #[cfg(feature = "mirror")]
+    #[tokio::test]
+    async fn start_mirror_starts_the_published_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = zeta_plugin::SharedState::new();
+
+        // Nothing is published, so there is nothing to start.
+        assert!(!start_mirror(&shared));
+
+        shared.publish(test_mirror(dir.path()));
+        assert!(
+            start_mirror(&shared),
+            "startup should start the published mirror's manager"
+        );
+
+        // A second startup call is a no-op.
+        assert!(start_mirror(&shared));
+    }
 
     #[cfg(unix)]
     #[tokio::test]

@@ -46,7 +46,7 @@ use zeta_url::is_identifier;
 /// The media currently being mirrored, keyed by `(prefix, id)`.
 type InFlight = Mutex<HashSet<(String, String)>>;
 
-/// The state of the download manager, initialized on the first mirror request.
+/// The state of the download manager, initialized at startup or on the first mirror request.
 enum ManagerState {
     /// The manager is running.
     Running(DownloadManager),
@@ -70,8 +70,8 @@ pub struct Mirror {
     max_concurrent: usize,
     /// The set of media that is currently being mirrored, by (prefix, id).
     in_flight: Arc<InFlight>,
-    /// The download manager, initialized on the first mirror request; empty until then, and
-    /// [`ManagerState::Failed`] when it could not be built.
+    /// The download manager, started by the host during startup with [`Mirror::start`]; empty
+    /// until then, and [`ManagerState::Failed`] when it could not be built.
     manager: OnceLock<ManagerState>,
 }
 
@@ -113,6 +113,29 @@ impl Mirror {
             in_flight: Arc::default(),
             manager: OnceLock::new(),
         }
+    }
+
+    /// Starts the download manager, if it is not running yet.
+    ///
+    /// The host calls this during startup, before the IRC connection is established, so the
+    /// manager's synchronous setup — sweeping stale download directories and creating the
+    /// download directory — does not block a runtime worker on the first mirrored URL.
+    ///
+    /// Subsequent calls are no-ops. A mirror used without an explicit startup call (as the unit
+    /// tests do) still starts its manager lazily on the first mirror request, so this only moves
+    /// the work earlier; it is never required for mirroring to work.
+    ///
+    /// Returns whether the manager is running. This is `false` when the download directory could
+    /// not be created, in which case mirroring stays disabled and the failure is cached so later
+    /// calls do not retry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called outside of a Tokio runtime, because the download manager spawns its task
+    /// on one.
+    #[must_use]
+    pub fn start(&self) -> bool {
+        self.download_manager().is_some()
     }
 
     /// Builds the download manager, creating its download directory.
@@ -196,9 +219,9 @@ impl Mirror {
 
     /// Returns the download manager, starting it on first use.
     ///
-    /// Starting here rather than from a plugin's `loaded` hook closes the startup window in
-    /// which the dispatcher could already deliver a URL: before the manager existed, that
-    /// request was dropped with only a warning.
+    /// The host starts the manager during startup with [`Mirror::start`], so normally it is
+    /// already initialized here. The lazy path remains for mirrors used without that startup
+    /// call, so the first request still works instead of being dropped with only a warning.
     fn download_manager(&self) -> Option<&DownloadManager> {
         match self.manager.get_or_init(|| self.build_manager()) {
             ManagerState::Running(manager) => Some(manager),
@@ -366,6 +389,47 @@ mod tests {
 
         Mirror::clear_in_flight(&mirror.in_flight, "reddit", "123");
         assert!(mirror.mark_in_flight("reddit", "123"));
+    }
+
+    #[tokio::test]
+    async fn test_start_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let download_dir = dir.path().join("downloads");
+        let mirror = Mirror::new(
+            S3::for_test(),
+            YtDlp::with_command("false"),
+            Some(download_dir.clone()),
+            2,
+        );
+
+        assert!(mirror.manager.get().is_none());
+        assert!(mirror.start(), "the manager should start");
+        assert!(mirror.manager.get().is_some());
+
+        // A second start is a no-op: rebuilding the manager would recreate the removed
+        // directory.
+        std::fs::remove_dir(&download_dir).unwrap();
+        assert!(mirror.start());
+        assert!(
+            !download_dir.exists(),
+            "the second start rebuilt the download manager"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_start_disables_mirroring_when_the_directory_cannot_be_created() {
+        let mirror = Mirror::new(
+            S3::for_test(),
+            YtDlp::with_command("false"),
+            Some(PathBuf::from("/dev/null/downloads")),
+            2,
+        );
+
+        assert!(!mirror.start(), "the manager should not start");
+        assert!(matches!(mirror.manager.get(), Some(ManagerState::Failed)));
+        // The failure is cached, so a later call does not retry.
+        assert!(!mirror.start());
     }
 
     /// Returns a mirror whose S3 endpoint answers every request with a 404, so that the
