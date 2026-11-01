@@ -2,14 +2,15 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use secrecy::SecretString;
+use serde::Deserialize;
 
 /// Configuration for the shared media mirror, from the `[mirror]` configuration section.
 ///
 /// Unlike the plugin sections, unknown keys here are rejected (`deny_unknown_fields`): this is a
 /// top-level section shared by all media plugins, and a typo'd or removed key is a hard
 /// configuration mistake worth failing fast on.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MirrorConfig {
     /// The directory that downloads are buffered in.
@@ -31,7 +32,8 @@ pub struct MirrorConfig {
     /// The command used to run `yt-dlp`.
     ///
     /// Falls back to the `ZETA_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
-    /// neither is set.
+    /// neither is set. Empty values count as unset, so a blank command does not override the
+    /// environment or the default.
     pub ytdlp_command: Option<String>,
     /// The S3 access key id used for mirroring.
     ///
@@ -41,7 +43,7 @@ pub struct MirrorConfig {
     /// The S3 secret access key used for mirroring.
     ///
     /// Falls back to the `S3_SECRET_ACCESS_KEY` environment variable when unset.
-    pub s3_secret_access_key: Option<String>,
+    pub s3_secret_access_key: Option<SecretString>,
     /// The bucket that mirrored media is uploaded to.
     ///
     /// Falls back to the `S3_BUCKET_NAME` environment variable when unset.
@@ -49,8 +51,9 @@ pub struct MirrorConfig {
     /// The S3 region.
     ///
     /// Falls back to the `S3_REGION` environment variable, and to `auto` when neither is set.
-    /// `auto` is only meaningful for S3-compatible endpoints (such as R2 or MinIO) — against AWS
-    /// proper, a real region should be set.
+    /// Empty values count as unset, so a blank region does not override the environment or the
+    /// default. `auto` is only meaningful for S3-compatible endpoints (such as R2 or MinIO) —
+    /// against AWS proper, a real region should be set.
     pub s3_region: Option<String>,
     /// The endpoint URL for S3-compatible services.
     ///
@@ -93,6 +96,8 @@ impl Default for MirrorConfig {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    use secrecy::ExposeSecret;
 
     use super::*;
 
@@ -140,7 +145,13 @@ mod tests {
             Some("/usr/local/bin/yt-dlp")
         );
         assert_eq!(config.s3_access_key_id.as_deref(), Some("access"));
-        assert_eq!(config.s3_secret_access_key.as_deref(), Some("secret"));
+        assert_eq!(
+            config
+                .s3_secret_access_key
+                .as_ref()
+                .map(ExposeSecret::expose_secret),
+            Some("secret")
+        );
         assert_eq!(config.s3_bucket_name.as_deref(), Some("bucket"));
         assert_eq!(config.s3_region.as_deref(), Some("auto"));
         assert_eq!(config.s3_endpoint.as_deref(), Some("https://example.com"));
@@ -153,5 +164,24 @@ mod tests {
                 .is_err(),
             "typo'd key should be rejected"
         );
+    }
+
+    #[test]
+    fn debug_output_redacts_the_secret_access_key() {
+        let config = MirrorConfig {
+            s3_access_key_id: Some("access-key".to_string()),
+            s3_secret_access_key: Some("secret-key".into()),
+            s3_bucket_name: Some("bucket".to_string()),
+            ..MirrorConfig::default()
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(!debug.contains("secret-key"), "{debug}");
+        // Everything else stays visible, including whether the secret is set.
+        assert!(debug.contains("REDACTED"), "{debug}");
+        assert!(debug.contains("access-key"), "{debug}");
+        assert!(debug.contains("bucket"), "{debug}");
+        assert!(debug.contains("500M"), "{debug}");
     }
 }

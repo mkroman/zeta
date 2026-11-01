@@ -1,14 +1,16 @@
 //! Configuration loading and validation.
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::{collections::HashMap, fmt, time::Duration};
 
 use figment::{
     Figment,
     providers::{Env, Format, Toml},
 };
 use miette::{IntoDiagnostic, WrapErr};
-use serde::{Deserialize, Serialize};
+use secrecy::{ExposeSecret, SecretString};
+use serde::Deserialize;
+use url::Url;
+use zeta_url::RedactedUrl;
 
 use crate::consts;
 
@@ -27,7 +29,7 @@ impl From<&Config> for zeta_plugin::config::HostConfig {
 }
 
 /// Main application configuration structure.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     /// Database configuration
     pub database: DbConfig,
@@ -91,7 +93,7 @@ impl Config {
 }
 
 /// Database connection configuration.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize)]
 pub struct DbConfig {
     /// Connection URL
     pub url: String,
@@ -111,8 +113,36 @@ pub struct DbConfig {
     pub max_lifetime: Duration,
 }
 
+// Manual implementation so the password embedded in the connection URL is never printed.
+impl fmt::Debug for DbConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DbConfig")
+            .field("url", &RedactedDbUrl(&self.url))
+            .field("min_connections", &self.min_connections)
+            .field("max_connections", &self.max_connections)
+            .field("idle_timeout", &self.idle_timeout)
+            .field("max_lifetime", &self.max_lifetime)
+            .finish()
+    }
+}
+
+/// Renders a connection URL through the shared URL redaction.
+///
+/// A connection string that is not a URL (libpq's `host=... password=...` form) cannot be
+/// redacted structurally, so it is hidden entirely rather than risking a leaked password.
+struct RedactedDbUrl<'a>(&'a str);
+
+impl fmt::Debug for RedactedDbUrl<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match Url::parse(self.0) {
+            Ok(url) => fmt::Debug::fmt(&RedactedUrl::from_url(&url), f),
+            Err(_) => f.write_str("<redacted>"),
+        }
+    }
+}
+
 /// Tracing and logging configuration.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct TracingConfig {
     /// Enable tracing
     pub enabled: bool,
@@ -124,23 +154,23 @@ pub struct TracingConfig {
 }
 
 /// Configuration for an individual IRC channel.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct IrcChannelConfig {
     /// Name of the channel.
     pub name: String,
     /// The shared key to access the channel.
-    pub key: Option<String>,
+    pub key: Option<SecretString>,
 }
 
 /// TLS configuration for IRC connection.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
 pub struct IrcTlsConfig {
     /// Toggle TLS.
     pub enabled: bool,
 }
 
 /// IRC client configuration.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct IrcConfig {
     /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
     /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.
@@ -158,11 +188,11 @@ pub struct IrcConfig {
     /// The hostname of the server to connect to.
     pub hostname: String,
     /// The client’s NICKSERV password.
-    pub nick_password: Option<String>,
+    pub nick_password: Option<SecretString>,
     /// The client's nickname.
     pub nickname: String,
     /// The password to connect to the server.
-    pub password: Option<String>,
+    pub password: Option<SecretString>,
     /// The port number of the server to connect to.
     pub port: Option<u16>,
     /// The client's real name.
@@ -206,7 +236,7 @@ impl IrcConfig {
     /// Returns the port number to use for this IRC connection: the configured port, or the TLS
     /// or plaintext port depending on whether TLS is enabled.
     #[must_use]
-    pub fn port(&self) -> u16 {
+    pub fn resolved_port(&self) -> u16 {
         self.port.unwrap_or_else(|| {
             if self.tls.as_ref().is_some_and(|tls| tls.enabled) {
                 consts::DEFAULT_IRC_TLS_PORT
@@ -219,14 +249,16 @@ impl IrcConfig {
 
 impl From<&IrcConfig> for irc::client::data::Config {
     fn from(config: &IrcConfig) -> Self {
-        let port = config.port();
-        let use_tls = config.tls.as_ref().map(|tls| tls.enabled);
+        let port = config.resolved_port();
+        // `irc` treats `None` as TLS enabled, which would pair TLS with the plaintext port the
+        // omitted `[irc.tls]` section implies; the default must be spelled out explicitly.
+        let use_tls = Some(config.tls.as_ref().is_some_and(|tls| tls.enabled));
         let mut channels = Vec::with_capacity(config.channels.len());
         let mut channel_keys = HashMap::new();
 
         for channel in &config.channels {
             if let Some(key) = &channel.key {
-                channel_keys.insert(channel.name.clone(), key.clone());
+                channel_keys.insert(channel.name.clone(), key.expose_secret().to_owned());
             }
 
             channels.push(channel.name.clone());
@@ -234,12 +266,18 @@ impl From<&IrcConfig> for irc::client::data::Config {
 
         Self {
             nickname: Some(config.nickname.clone()),
-            nick_password: config.nick_password.clone(),
+            nick_password: config
+                .nick_password
+                .as_ref()
+                .map(|password| password.expose_secret().to_owned()),
             username: config.username.clone(),
             realname: config.realname.clone(),
             server: Some(config.hostname.clone()),
             port: Some(port),
-            password: config.password.clone(),
+            password: config
+                .password
+                .as_ref()
+                .map(|password| password.expose_secret().to_owned()),
             encoding: config.encoding.clone(),
             use_tls,
             channels,
@@ -369,7 +407,7 @@ channels = []
             channels: vec![
                 IrcChannelConfig {
                     name: "#zeta".to_string(),
-                    key: Some("channel-secret".to_string()),
+                    key: Some("channel-secret".into()),
                 },
                 IrcChannelConfig {
                     name: "#other".to_string(),
@@ -378,9 +416,9 @@ channels = []
             ],
             encoding: Some("utf-8".to_string()),
             hostname: "irc.example.com".to_string(),
-            nick_password: Some("nickserv-secret".to_string()),
+            nick_password: Some("nickserv-secret".into()),
             nickname: "zeta".to_string(),
-            password: Some("server-secret".to_string()),
+            password: Some("server-secret".into()),
             port: Some(7000),
             realname: Some("Zeta".to_string()),
             should_ghost: true,
@@ -407,6 +445,100 @@ channels = []
         );
         assert_eq!(config.alt_nicks, ["zeta_"]);
         assert!(config.should_ghost);
+    }
+
+    #[test]
+    fn omitted_tls_section_is_plaintext() {
+        let config: IrcConfig = Figment::new()
+            .merge(Toml::string(
+                "nickname = \"zeta\"\nhostname = \"localhost\"\nalt_nicks = []\nchannels = []\n",
+            ))
+            .extract()
+            .expect("could not parse irc configuration");
+
+        // An omitted section means plaintext, and the conversion must say so explicitly: `irc`
+        // would otherwise treat `None` as TLS enabled and pair TLS with the plaintext port.
+        assert_eq!(config.resolved_port(), consts::DEFAULT_IRC_PORT);
+
+        let converted = irc::client::data::Config::from(&config);
+
+        assert_eq!(converted.use_tls, Some(false));
+        assert_eq!(converted.port, Some(consts::DEFAULT_IRC_PORT));
+
+        let config: IrcConfig = Figment::new()
+            .merge(Toml::string(
+                "nickname = \"zeta\"\nhostname = \"localhost\"\nalt_nicks = []\nchannels = []\n[ tls ]\nenabled = true\n",
+            ))
+            .extract()
+            .expect("could not parse irc configuration");
+
+        assert_eq!(config.resolved_port(), consts::DEFAULT_IRC_TLS_PORT);
+
+        let converted = irc::client::data::Config::from(&config);
+
+        assert_eq!(converted.use_tls, Some(true));
+        assert_eq!(converted.port, Some(consts::DEFAULT_IRC_TLS_PORT));
+    }
+
+    #[test]
+    fn debug_output_redacts_secrets() {
+        let config: Config = Figment::new()
+            .merge(Toml::string(
+                r##"
+[database]
+url = "postgresql://zeta:db-secret@localhost/zeta_test"
+
+[tracing]
+enabled = false
+
+[irc]
+nickname = "zeta"
+hostname = "localhost"
+alt_nicks = []
+channels = [{ name = "#zeta", key = "channel-secret" }]
+nick_password = "nickserv-secret"
+password = "server-secret"
+"##,
+            ))
+            .extract()
+            .expect("configuration should parse");
+
+        let debug = format!("{config:?}");
+
+        for secret in [
+            "nickserv-secret",
+            "server-secret",
+            "channel-secret",
+            "db-secret",
+        ] {
+            assert!(!debug.contains(secret), "`{secret}` leaked: {debug}");
+        }
+
+        // Non-secret fields stay visible, and the database URL keeps its host.
+        assert!(debug.contains("localhost"), "{debug}");
+        assert!(debug.contains("#zeta"), "{debug}");
+        assert!(
+            debug.contains("postgresql://localhost/zeta_test"),
+            "{debug}"
+        );
+        assert!(debug.contains("REDACTED"), "{debug}");
+    }
+
+    #[test]
+    fn database_url_uses_the_shared_redaction() {
+        assert_eq!(
+            format!(
+                "{:?}",
+                RedactedDbUrl("postgresql://zeta:secret@localhost/zeta_test")
+            ),
+            r#"RedactedUrl("postgresql://localhost/zeta_test")"#
+        );
+        // The URL redaction drops userinfo, query and fragment. A connection string that is not
+        // a URL cannot be redacted structurally and is hidden instead.
+        assert_eq!(
+            format!("{:?}", RedactedDbUrl("host=localhost password=secret")),
+            "<redacted>"
+        );
     }
 
     /// The repository `config.toml` must parse into the full configuration: a broken edit has

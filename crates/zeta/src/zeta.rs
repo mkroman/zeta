@@ -489,7 +489,7 @@ mod tests {
         let config = zeta_mirror::MirrorConfig {
             download_dir: Some(download_dir.to_path_buf()),
             s3_access_key_id: Some("access".to_string()),
-            s3_secret_access_key: Some("secret".to_string()),
+            s3_secret_access_key: Some("secret".into()),
             s3_bucket_name: Some("bucket".to_string()),
             ..zeta_mirror::MirrorConfig::default()
         };
