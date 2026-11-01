@@ -19,8 +19,11 @@ use zeta_http::RequestError;
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
 
-/// Base URL for the OpenWeatherMap API.
-const API_BASE_URL: &str = "https://api.openweathermap.org";
+/// The direct-geocoding endpoint location names are resolved against.
+const GEOCODING_URL: &str = "https://api.openweathermap.org/geo/1.0/direct";
+
+/// The current-weather endpoint coordinates are fetched from.
+const WEATHER_URL: &str = "https://api.openweathermap.org/data/2.5/weather";
 
 /// The unit system used for temperatures and wind speeds.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -246,12 +249,12 @@ impl OpenWeatherMap {
     /// Geocodes a location query to coordinates.
     async fn geocode(&self, query: &str) -> Result<GeocodingResult, Error> {
         debug!(search.query = %query, "geocoding");
-        let url = format!("{API_BASE_URL}/geo/1.0/direct");
         let params = [("q", query), ("limit", "1"), ("appid", &self.app_id)];
 
-        let results: Vec<GeocodingResult> = http::get_json(self.client.get(&url).query(&params))
-            .await
-            .map_err(|error| contextual_api_error("geocoding failed", error))?;
+        let results: Vec<GeocodingResult> =
+            http::get_json(self.client.get(GEOCODING_URL).query(&params))
+                .await
+                .map_err(|error| contextual_api_error("geocoding failed", error))?;
         results.into_iter().next().ok_or(Error::LocationNotFound)
     }
 
@@ -262,7 +265,6 @@ impl OpenWeatherMap {
             geo.location.lon = lon,
             "fetching current weather"
         );
-        let url = format!("{API_BASE_URL}/data/2.5/weather");
         let lat_s = lat.to_string();
         let lon_s = lon.to_string();
         let mut params = vec![
@@ -276,7 +278,7 @@ impl OpenWeatherMap {
             params.push(("lang", language));
         }
 
-        http::get_json(self.client.get(&url).query(&params))
+        http::get_json(self.client.get(WEATHER_URL).query(&params))
             .await
             .map_err(|error| contextual_api_error("weather fetch failed", error))
     }
