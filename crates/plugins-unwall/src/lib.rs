@@ -34,9 +34,6 @@ mod repository;
 mod service;
 mod sites;
 
-// The module types are re-exported as part of the module's API surface, even though the plugin
-// itself only handles them by value.
-#[allow(unused_imports)]
 pub use error::Error;
 pub use model::{CachedUrl, HostStatistics, Site, Statistics};
 pub use service::UnwallService;

@@ -10,8 +10,8 @@ reverse-engineered from the [official DDO app][ddo app].
 
 ## Features
 
-* Efficiently reuse data structures (CSS selectors are parsed and cached during
-  each invocation)
+* Efficiently reuse data structures (CSS selectors are cached process-wide in a
+  `LazyLock`)
 * Optional `client` feature for Client HTTP API
 * Optional `serde` feature for serialization/deserialization.
 

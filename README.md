@@ -12,9 +12,11 @@ leaf crates below both.
 
 | Crate | Purpose |
 | --- | --- |
-| `zeta` | The IRC bot: client loop, event dispatching, configuration, migrations. |
-| `plugins` | The bundled plugins, one feature per plugin, plus their shared repository helpers. |
+| `zeta` | The IRC bot: client loop, configuration, tracing, migrations. |
+| `plugins` | The bundled plugins facade: one feature per plugin, plus the plugin-name list and feature graph. |
 | `zeta-plugin` | The plugin contract: trait, events, commands, context, reply conventions. |
+| `zeta-plugin-runtime` | Plugin registry, event dispatch and grace-bounded shutdown. |
+| `plugins-shared` | The few helpers used by more than one bundled plugin (URL matchers, mirror replies). |
 | `zeta-http` | HTTP wrappers, browser emulation, OAuth2, transport-error redaction. |
 | `zeta-mirror` | Media mirroring: `yt-dlp` downloads uploaded to S3. |
 | `zeta-cache` | TTL cache and keyed cache APIs. |

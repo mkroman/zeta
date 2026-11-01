@@ -18,7 +18,6 @@ clap.workspace = true
 foldhash.workspace = true
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }
 thiserror.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 wildmatch.workspace = true
@@ -28,6 +27,7 @@ zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
 allocation-counter = "=0.8.1"
+tokio.workspace = true
 zeta-test-support = { path = "../zeta-test-support" }
 
 [lints]

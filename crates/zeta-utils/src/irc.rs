@@ -57,7 +57,7 @@ pub fn plain_reply(message: impl fmt::Display) -> String {
 /// Plugins that react to being addressed use this to unwrap the mention and handle only the
 /// text following it.
 #[must_use]
-pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &'a str) -> Option<&'a str> {
+pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &str) -> Option<&'a str> {
     s.strip_prefix(current_nickname).and_then(|s| {
         if s.starts_with(", ") || s.starts_with(": ") {
             Some(&s[2..])
@@ -378,6 +378,16 @@ mod tests {
     fn plain_reply_prefix_extends_the_reply_marker_by_one_space() {
         assert!(PLAIN_REPLY_PREFIX.starts_with(REPLY_MARKER));
         assert_eq!(PLAIN_REPLY_PREFIX.len(), REPLY_MARKER.len() + 1);
+    }
+
+    #[test]
+    fn strip_nick_prefix_borrows_only_the_message() {
+        // The nickname is only compared against, so a temporary `String` can be passed and the
+        // returned slice still borrows the message instead of the nickname.
+        let message = String::from("zeta: hello");
+        let stripped = strip_nick_prefix(&message, &String::from("zeta"));
+
+        assert_eq!(stripped, Some("hello"));
     }
 
     #[test]

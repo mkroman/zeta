@@ -358,19 +358,15 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
     let title = title.as_deref().unwrap_or_default();
     let description = description.as_deref().unwrap_or_default();
 
-    let capacity = title.len()
-        + description.len()
-        + if title.is_empty() || description.is_empty() {
-            0
-        } else {
-            CONTENT_SEPARATOR.len()
-        };
+    let separator = (!title.is_empty() && !description.is_empty()).then_some(CONTENT_SEPARATOR);
+
+    let capacity = title.len() + description.len() + separator.map_or(0, str::len);
 
     let mut content = String::with_capacity(capacity);
     content.push_str(title);
 
-    if !title.is_empty() && !description.is_empty() {
-        content.push_str(CONTENT_SEPARATOR);
+    if let Some(separator) = separator {
+        content.push_str(separator);
     }
 
     content.push_str(description);

@@ -16,7 +16,7 @@ mod config;
 mod error;
 #[cfg(feature = "http")]
 mod response;
-#[cfg(feature = "uri")]
+#[cfg(feature = "emulated")]
 mod uri;
 
 /// A boxed, `Send` future: the return type of the outlined HTTP state machines.
@@ -39,8 +39,8 @@ pub use config::HttpConfig;
 pub use error::RequestError;
 #[cfg(feature = "emulated")]
 pub use error::WreqError;
-#[cfg(feature = "uri")]
-pub use uri::RedactedUriRef;
+#[cfg(feature = "emulated")]
+pub(crate) use uri::RedactedUriRef;
 
 #[cfg(any(feature = "request", feature = "http"))]
 pub use client::send;
