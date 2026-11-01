@@ -46,15 +46,6 @@ use zeta_url::is_identifier;
 /// The media currently being mirrored, keyed by `(prefix, id)`.
 type InFlight = Mutex<HashSet<(String, String)>>;
 
-/// The state of the download manager, initialized at startup or on the first mirror request.
-enum ManagerState {
-    /// The manager is running.
-    Running(DownloadManager),
-    /// The download directory could not be created, so mirroring is disabled; the failure is
-    /// cached so later calls do not retry.
-    Failed,
-}
-
 /// Mirrors media: downloads it with `yt-dlp` and uploads it to S3.
 ///
 /// A single instance is shared by all plugins; it is created from [`MirrorConfig`] at startup and
@@ -71,8 +62,8 @@ pub struct Mirror {
     /// The set of media that is currently being mirrored, by (prefix, id).
     in_flight: Arc<InFlight>,
     /// The download manager, started by the host during startup with [`Mirror::start`]; empty
-    /// until then, and [`ManagerState::Failed`] when it could not be built.
-    manager: OnceLock<ManagerState>,
+    /// until then, and `Some(None)` when it could not be built.
+    manager: OnceLock<Option<DownloadManager>>,
 }
 
 impl Mirror {
@@ -140,9 +131,9 @@ impl Mirror {
 
     /// Builds the download manager, creating its download directory.
     ///
-    /// Returns [`ManagerState::Failed`] when the directory cannot be created, in which case
-    /// mirroring stays disabled.
-    fn build_manager(&self) -> ManagerState {
+    /// Returns `None` when the directory cannot be created, in which case mirroring stays
+    /// disabled.
+    fn build_manager(&self) -> Option<DownloadManager> {
         // When no download directory is configured, a random subdirectory of the system
         // temporary directory is used and kept alive for as long as the manager runs; if it
         // cannot be created, mirroring stays disabled rather than writing into the system
@@ -183,11 +174,9 @@ impl Mirror {
             },
         );
 
-        let Some((download_dir, base_dir)) = dirs else {
-            return ManagerState::Failed;
-        };
+        let (download_dir, base_dir) = dirs?;
 
-        ManagerState::Running(DownloadManager::start(
+        Some(DownloadManager::start(
             Arc::new(self.ytdlp.clone()),
             self.s3.clone(),
             download_dir,
@@ -223,10 +212,7 @@ impl Mirror {
     /// already initialized here. The lazy path remains for mirrors used without that startup
     /// call, so the first request still works instead of being dropped with only a warning.
     fn download_manager(&self) -> Option<&DownloadManager> {
-        match self.manager.get_or_init(|| self.build_manager()) {
-            ManagerState::Running(manager) => Some(manager),
-            ManagerState::Failed => None,
-        }
+        self.manager.get_or_init(|| self.build_manager()).as_ref()
     }
 
     /// Mirrors the media at `url` unless it has already been mirrored or a mirror of it is
@@ -427,7 +413,7 @@ mod tests {
         );
 
         assert!(!mirror.start(), "the manager should not start");
-        assert!(matches!(mirror.manager.get(), Some(ManagerState::Failed)));
+        assert!(matches!(mirror.manager.get(), Some(None)));
         // The failure is cached, so a later call does not retry.
         assert!(!mirror.start());
     }
