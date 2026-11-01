@@ -1,5 +1,7 @@
 //! Path-segment and query helpers the per-plugin URL matchers build on.
 
+use std::borrow::Cow;
+
 use smallvec::SmallVec;
 use url::Url;
 
@@ -41,11 +43,14 @@ pub fn last_path_segment(url: &Url) -> Option<&str> {
 }
 
 /// Returns the value of the first query parameter named `name`, if `url` has one.
+///
+/// The value is borrowed from the URL unless it carries percent-encoded bytes that need
+/// decoding, which `form_urlencoded` returns as an owned string.
 #[must_use]
-pub fn query_param(url: &Url, name: &str) -> Option<String> {
+pub fn query_param<'a>(url: &'a Url, name: &str) -> Option<Cow<'a, str>> {
     url.query_pairs()
         .find(|(key, _)| key == name)
-        .map(|(_, value)| value.into_owned())
+        .map(|(_, value)| value)
 }
 
 /// Returns `host` without its leading `www.` label, if it has one.

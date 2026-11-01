@@ -4,6 +4,8 @@
 //! IRC-facing glue every mirroring plugin uses: replying with the mirrored file's link, in the
 //! channel, through the client.
 
+use std::sync::Arc;
+
 use irc::client::Client;
 use tracing::warn;
 
@@ -41,10 +43,10 @@ pub async fn ensure_mirrored_and_reply(
     client: &Client,
 ) {
     let sender = client.sender();
-    let channel = channel.to_string();
+    let channel: Arc<str> = Arc::from(channel);
 
     let on_mirrored = {
-        let channel = channel.clone();
+        let channel = Arc::clone(&channel);
         move |link: String| {
             let _ = sender.send_privmsg(&channel, plain_reply(link));
         }

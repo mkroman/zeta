@@ -89,7 +89,7 @@ impl OfnService {
             }
 
             let insert = InsertYouTubeRecord {
-                video_id,
+                video_id: video_id.into_owned(),
                 nickname: origin.nickname.to_owned(),
                 username: origin.username.to_owned(),
                 hostname: origin.hostname.to_owned(),
