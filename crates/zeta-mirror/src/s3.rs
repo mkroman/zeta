@@ -497,8 +497,10 @@ mod tests {
         use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
 
         // An endpoint that accepts the request but never answers it: only the presence check's
-        // own timeout can end the wait.
-        let server = MockServer::start().await;
+        // own timeout can end the wait. The server must not come from wiremock's pool: the
+        // test ends with the request still in flight, and a pooled server would be borrowed by
+        // another test, which then records this request as one of its own.
+        let server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_mins(60)))
             .mount(&server)

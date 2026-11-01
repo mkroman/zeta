@@ -1157,8 +1157,10 @@ mod tests {
     #[tokio::test]
     async fn test_download_slot_is_released_before_the_upload() {
         // The presence check of the first download's upload never answers within the test, so
-        // only releasing the slot before the upload lets the second download start.
-        let server = MockServer::start().await;
+        // only releasing the slot before the upload lets the second download start. The server
+        // is exclusive: the test ends with the request in flight, and a pooled server would be
+        // borrowed by another test, which then records this request as one of its own.
+        let server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(404).set_delay(Duration::from_mins(60)))
             .mount(&server)
@@ -1211,7 +1213,9 @@ mod tests {
     async fn test_stalled_upload_does_not_block_request_intake() {
         // The first download's upload stalls on its presence check. A request submitted once it
         // is stuck there must still be admitted and start, and its status must still be handled.
-        let server = MockServer::start().await;
+        // The server is exclusive: the test ends with the request in flight, and a pooled server
+        // would be borrowed by another test, which then records this request as its own.
+        let server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(404).set_delay(Duration::from_mins(60)))
             .mount(&server)
