@@ -14,7 +14,7 @@ use url::Url;
 
 use super::model::{Case, Filter, Pattern};
 use zeta_plugin::Sender;
-use zeta_url::RedactedUrl;
+use zeta_url::RedactedUrlRef;
 
 /// A hash map for the hot filter-index lookups, keyed by lowercased channel and host names.
 ///
@@ -402,7 +402,7 @@ impl FilterIndex {
             self.buckets(key)
                 .any(|bucket| bucket.matches(host, sender, url))
         }) {
-            trace!(url.full = %RedactedUrl::from_url(url), "message matches a filter");
+            trace!(url.full = %RedactedUrlRef::from_url(url), "message matches a filter");
 
             true
         } else {
