@@ -10,9 +10,9 @@ use tracing::{Instrument, Span, debug, error, warn};
 use zeta_url::RedactedUrl;
 use zeta_utils::text::Truncatable;
 
-use crate::RequestError;
 use crate::client::{ClientSpan, send};
 use crate::json;
+use crate::{BoxFuture, RequestError};
 
 /// The errors produced when sending a request and parsing its JSON response.
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +79,11 @@ fn body_error(error: reqwest::Error) -> ApiError {
 }
 
 /// Reads the body of `response`, reporting a failed read as an [`ApiError::Request`].
+///
+/// Outlined on purpose: every `parse_response::<T>` instantiation awaits this, and with LTO
+/// the compiler otherwise clones the body-read coroutine poll into each one. The caller
+/// (`read_success`) is boxed, so this poll is reached from one place and stays a single copy.
+#[inline(never)]
 async fn read_body(response: reqwest::Response) -> Result<String, ApiError> {
     response.text().await.map_err(body_error)
 }
@@ -97,7 +102,13 @@ async fn read_body(response: reqwest::Response) -> Result<String, ApiError> {
 ///
 /// Returns an [`ApiError`] if the status is not a success or the body cannot be read; the span
 /// is closed before the error is returned.
-async fn read_success(response: reqwest::Response) -> Result<(String, Span), ApiError> {
+///
+/// Outlined on purpose, like [`read_body`]: the status handling is type-independent, and
+/// LTO would otherwise clone this poll into every `parse_response::<T>`.
+#[inline(never)]
+fn read_success(
+    response: reqwest::Response,
+) -> BoxFuture<'static, Result<(String, Span), ApiError>> {
     let span = response.extensions().get::<ClientSpan>().map_or_else(
         || {
             tracing::info_span!(
@@ -114,38 +125,39 @@ async fn read_success(response: reqwest::Response) -> Result<(String, Span), Api
     );
     let instrument = span.clone();
 
-    async move {
-        let status = response.status();
+    Box::pin(
+        async move {
+            let status = response.status();
 
-        if !status.is_success() {
-            // Report the status even when its body cannot be read: the status is known before
-            // the read, and without this line the response would reach the logs only as span
-            // attributes. `body_error` records `error.type` first, so the event carries it too.
-            let body = match read_body(response).await {
-                Ok(body) => body,
-                Err(error) => {
-                    log_status(status, None, false);
+            if !status.is_success() {
+                // Report the status even when its body cannot be read: the status is known before
+                // the read, and without this line the response would reach the logs only as span
+                // attributes. `body_error` records `error.type` first, so the event carries it too.
+                let body = match read_body(response).await {
+                    Ok(body) => body,
+                    Err(error) => {
+                        log_status(status, None, false);
 
-                    return Err(error);
-                }
-            };
-            let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
+                        return Err(error);
+                    }
+                };
+                let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
 
-            log_status(status, Some(logged.as_ref()), true);
+                log_status(status, Some(logged.as_ref()), true);
 
-            return Err(ApiError::Status { status, body });
+                return Err(ApiError::Status { status, body });
+            }
+
+            debug!("http response received");
+
+            // The caller re-enters the same span for the parse; cloning the handle keeps it open
+            // until then without running an await while it is entered.
+            let body = read_body(response).await?;
+
+            Ok((body, span))
         }
-
-        debug!("http response received");
-
-        // The caller re-enters the same span for the parse; cloning the handle keeps it open
-        // until then without running an await while it is entered.
-        let body = read_body(response).await?;
-
-        Ok((body, span))
-    }
-    .instrument(instrument)
-    .await
+        .instrument(instrument),
+    )
 }
 
 /// Parses the response's JSON body into `T`.
