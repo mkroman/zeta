@@ -59,7 +59,7 @@ impl fmt::Debug for RedactedUriRef<'_> {
 }
 
 /// Returns the default port of `scheme`, which the URL serialization omits.
-fn default_port(scheme: Option<&str>) -> Option<u16> {
+pub fn default_port(scheme: Option<&str>) -> Option<u16> {
     match scheme {
         Some("http" | "ws") => Some(80),
         Some("https" | "wss") => Some(443),

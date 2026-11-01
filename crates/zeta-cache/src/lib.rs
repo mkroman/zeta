@@ -11,10 +11,11 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
+use zeta_utils::sync;
 
 /// A single-slot cache holding a value until its time-to-live expires.
 ///
@@ -317,7 +318,7 @@ where
     /// the guard is released.
     #[allow(clippy::option_option)] // the outer option separates a miss from a negative entry
     fn peek_arc(&self, key: &K) -> Option<Option<Arc<V>>> {
-        let entries = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        let entries = sync::read(&self.entries);
 
         entries
             .get(key)
@@ -349,7 +350,7 @@ where
         }
 
         let flight = {
-            let mut flights = self.flights.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut flights = sync::lock(&self.flights);
 
             Arc::clone(flights.entry(key.clone()).or_default())
         };
@@ -390,7 +391,7 @@ where
             expires_at: Instant::now() + ttl,
         };
 
-        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = sync::write(&self.entries);
 
         if entries.len() >= self.capacity && !entries.contains_key(&key) {
             Self::evict(&mut entries, self.capacity);
@@ -441,7 +442,7 @@ struct FlightRelease<'a, K: Eq + Hash> {
 
 impl<K: Eq + Hash> Drop for FlightRelease<'_, K> {
     fn drop(&mut self) {
-        let mut flights = self.flights.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut flights = sync::lock(self.flights);
 
         // A task that is still queued on the flight keeps its clone and cleans up when it in
         // turn releases, so the entry survives at most until its last holder drops this.
@@ -490,7 +491,7 @@ mod ttl_map_tests {
         assert_eq!(cache.get(&"a".to_string()), Some(7));
 
         // The uncontended flight entry is cleaned up afterwards.
-        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
+        assert_empty!(sync::lock(&cache.flights));
     }
 
     #[tokio::test]
@@ -528,7 +529,7 @@ mod ttl_map_tests {
 
         // The last flight holder cleaned up, even though every waiter went through the
         // double-check instead of refreshing.
-        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
+        assert_empty!(sync::lock(&cache.flights));
     }
 
     #[tokio::test]
@@ -563,7 +564,7 @@ mod ttl_map_tests {
         // released its flight — and every one of them released its own afterwards.
         assert_eq!(attempts.load(Ordering::SeqCst), 8);
         assert_eq!(cache.get(&"a".to_string()), None);
-        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
+        assert_empty!(sync::lock(&cache.flights));
     }
 
     #[tokio::test]
@@ -579,7 +580,7 @@ mod ttl_map_tests {
         .await;
 
         assert!(cancelled.is_err(), "the refresh should time out");
-        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
+        assert_empty!(sync::lock(&cache.flights));
     }
 
     #[tokio::test]
@@ -596,10 +597,7 @@ mod ttl_map_tests {
             .unwrap();
 
         // Expire only `a`'s entry.
-        cache
-            .entries
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
+        sync::write(&cache.entries)
             .get_mut(&"a".to_string())
             .unwrap()
             .expires_at = Instant::now();
@@ -646,10 +644,7 @@ mod ttl_map_tests {
 
         // Negative results expire before values do.
         let entry_expires_at = |key: &str| {
-            cache
-                .entries
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
+            sync::read(&cache.entries)
                 .get(key)
                 .map(|entry| entry.expires_at)
         };
@@ -689,10 +684,7 @@ mod ttl_map_tests {
         assert!(cache.peek_arc(&"absent".to_string()).is_none());
 
         // The returned value shares the cached allocation instead of copying it.
-        let stored = cache
-            .entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        let stored = sync::read(&cache.entries)
             .get(&"present".to_string())
             .unwrap()
             .value
@@ -701,10 +693,7 @@ mod ttl_map_tests {
 
         assert!(Arc::ptr_eq(&present, &stored));
 
-        cache
-            .entries
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
+        sync::write(&cache.entries)
             .get_mut(&"present".to_string())
             .unwrap()
             .expires_at = Instant::now();
@@ -731,7 +720,7 @@ mod ttl_map_tests {
 
         // A failing refresh must not leave its flight entry behind: unlike `entries`, the
         // flight map is neither bounded nor expired.
-        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
+        assert_empty!(sync::lock(&cache.flights));
     }
 
     /// Measures inserts into a full cache, where every insert evicts an entry.
@@ -765,14 +754,7 @@ mod ttl_map_tests {
         #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
         let per_insert = nanos / INSERTS as f64;
 
-        assert_eq!(
-            cache
-                .entries
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .len(),
-            CAPACITY
-        );
+        assert_eq!(sync::read(&cache.entries).len(), CAPACITY);
         println!("{CAPACITY}-entry cache: {per_insert:.0} ns/insert");
     }
 
@@ -801,13 +783,8 @@ mod ttl_map_tests {
         }
 
         // Keep the readers' key in place while the writer churns through new keys.
-        cache
-            .entries
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_mut(&0)
-            .unwrap()
-            .expires_at = Instant::now() + Duration::from_hours(100);
+        sync::write(&cache.entries).get_mut(&0).unwrap().expires_at =
+            Instant::now() + Duration::from_hours(100);
 
         let barrier = Barrier::new(READERS + 1);
         let mut start = None;
@@ -861,14 +838,7 @@ mod ttl_map_tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(
-            cache
-                .entries
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .len(),
-            4
-        );
+        assert_eq!(sync::read(&cache.entries).len(), 4);
 
         // A fifth entry evicts the closest-to-expiring one, keeping the cache bounded.
         cache
@@ -877,7 +847,7 @@ mod ttl_map_tests {
             .unwrap();
 
         let (len, contains_e) = {
-            let entries = cache.entries.read().unwrap_or_else(PoisonError::into_inner);
+            let entries = sync::read(&cache.entries);
             (entries.len(), entries.contains_key(&"e".to_string()))
         };
 
@@ -893,23 +863,14 @@ mod ttl_map_tests {
         // Give every entry a distinct expiry so the oldest is unambiguous.
         for (key, hours) in [("a", 1), ("b", 2), ("c", 3), ("d", 4)] {
             cache.insert(key.to_string(), Some(7));
-            cache
-                .entries
-                .write()
-                .unwrap_or_else(PoisonError::into_inner)
+            sync::write(&cache.entries)
                 .get_mut(&key.to_string())
                 .unwrap()
                 .expires_at = Instant::now() + Duration::from_hours(hours);
         }
 
         let keys = || {
-            let mut keys: Vec<_> = cache
-                .entries
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .keys()
-                .cloned()
-                .collect();
+            let mut keys: Vec<_> = sync::read(&cache.entries).keys().cloned().collect();
             keys.sort_unstable();
 
             keys
@@ -926,10 +887,7 @@ mod ttl_map_tests {
         assert_eq!(keys(), ["c", "d", "e", "f"]);
 
         // An expired entry is retained away without evicting a fresh one.
-        cache
-            .entries
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
+        sync::write(&cache.entries)
             .get_mut(&"c".to_string())
             .unwrap()
             .expires_at = Instant::now();

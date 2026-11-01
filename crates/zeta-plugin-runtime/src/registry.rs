@@ -11,7 +11,6 @@ use std::sync::Arc;
 use figment::value::Value;
 use tracing::{debug, error, warn};
 
-use zeta_plugin::prelude::plugin_err;
 use zeta_plugin::{CatalogEntry, Context, Error, LoadedPlugin, PluginCatalog, PluginRegistration};
 
 /// Plugin registry.
@@ -85,9 +84,7 @@ impl Registry {
             .any(|(failed, _)| *failed == name);
 
         if already_failed || self.plugins.iter().any(|plugin| plugin.name == name) {
-            let error = plugin_err(std::io::Error::other(format!(
-                "duplicate plugin registration for `{name}`"
-            )));
+            let error = Error::Message(format!("duplicate plugin registration for `{name}`"));
             error!(
                 zeta.plugin.name = %name,
                 exception.message = %error,
