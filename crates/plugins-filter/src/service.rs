@@ -85,7 +85,7 @@ impl FilterService {
     /// Returns [`Error::Database`] if the filters could not be deleted from the database.
     #[instrument(name = "filter.delete", skip_all, err)]
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
-        let removed = self.repo.delete_all(ids).await?;
+        let removed = self.repo.delete_ids(ids).await?;
 
         self.index.rcu(|index| {
             let mut next = (**index).clone();
@@ -115,12 +115,7 @@ impl FilterService {
     /// [`list`](Self::list) snapshot, which clones every filter.
     #[must_use]
     pub fn find(&self, id: i32) -> Option<Filter> {
-        self.index
-            .load()
-            .sorted_filters()
-            .into_iter()
-            .find(|filter| filter.id == id)
-            .cloned()
+        self.index.load().find(id).cloned()
     }
 
     /// Returns a snapshot of the filters matching `criteria`, in id order.

@@ -14,19 +14,6 @@ use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
 use zeta_plugin::database::Database;
 use zeta_url::RedactedUrl;
 
-/// The result of recording one URL in the database.
-// The enum only lives for the duration of one URL's processing; boxing the full row in
-// `Found` would only add an allocation on the common repost path.
-#[allow(clippy::large_enum_variant)]
-pub enum Recorded {
-    /// The resource was already known.
-    Found(Resource),
-    /// A new record was inserted.
-    Inserted,
-    /// The insert failed; the error has been logged.
-    Failed,
-}
-
 /// A URL history resource from the database, either a YouTube video or a generic URL record.
 pub enum Resource {
     /// A YouTube video.
@@ -71,8 +58,8 @@ impl OfnService {
     /// a new one — YouTube video links are tracked by video id in the dedicated table,
     /// everything else in the url records table.
     ///
-    /// A failed insert is logged and reported as [`Recorded::Failed`]; a failed lookup is
-    /// returned as an error.
+    /// A failed insert is logged and reported as `None`; a failed lookup is returned as an
+    /// error.
     ///
     /// # Errors
     ///
@@ -82,10 +69,10 @@ impl OfnService {
         &self,
         origin: &ChannelMessageOrigin<'_>,
         url: &Url,
-    ) -> Result<Recorded, Error> {
+    ) -> Result<Option<Resource>, Error> {
         if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
             if let Some(video) = self.find_youtube_video(origin, &video_id).await? {
-                return Ok(Recorded::Found(Resource::YouTubeRecord(video)));
+                return Ok(Some(Resource::YouTubeRecord(video)));
             }
 
             let insert = InsertYouTubeRecord {
@@ -99,46 +86,36 @@ impl OfnService {
 
             debug!(media.id = %insert.video_id, "inserting youtube record");
 
-            return match self.repo.insert_youtube_video(&insert).await {
-                Ok(()) => {
-                    debug!(?origin, media.id = %insert.video_id, "inserted youtube record");
+            if let Err(error) = self.repo.insert_youtube_video(&insert).await {
+                error!(
+                    exception.message = %error,
+                    "could not insert youtube record"
+                );
+            } else {
+                debug!(?origin, media.id = %insert.video_id, "inserted youtube record");
+            }
 
-                    Ok(Recorded::Inserted)
-                }
-                Err(error) => {
-                    error!(
-                        exception.message = %error,
-                        "could not insert youtube record"
-                    );
-
-                    Ok(Recorded::Failed)
-                }
-            };
+            return Ok(None);
         }
 
         let insert = url_record(origin, url)?;
 
         if let Some(record) = self.repo.find_url(&insert).await? {
-            return Ok(Recorded::Found(Resource::UrlRecord(record)));
+            return Ok(Some(Resource::UrlRecord(record)));
         }
 
         debug!("inserting url into database");
 
-        match self.repo.insert_url(&insert).await {
-            Ok(()) => {
-                debug!(url.full = %RedactedUrl::from_url(url), "inserted url record");
-
-                Ok(Recorded::Inserted)
-            }
-            Err(error) => {
-                error!(
-                    exception.message = %error,
-                    "could not insert url record"
-                );
-
-                Ok(Recorded::Failed)
-            }
+        if let Err(error) = self.repo.insert_url(&insert).await {
+            error!(
+                exception.message = %error,
+                "could not insert url record"
+            );
+        } else {
+            debug!(url.full = %RedactedUrl::from_url(url), "inserted url record");
         }
+
+        Ok(None)
     }
 
     /// Returns statistics about the number of rows in the database.
