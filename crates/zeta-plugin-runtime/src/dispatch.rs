@@ -1268,6 +1268,45 @@ mod tests {
         benchmark("join", DISPATCHES, &mut index, &filters, || {
             message("nick!u@h", "JOIN", &["#test"])
         });
+
+        // The index above has no URL subscribers, so all of its cases return before extraction.
+        // This second index reaches the scheme-colon gate and, past it, the URL scan: a generic
+        // subscriber like `titles` and a host-scoped one like `youtube`.
+        let mut url_index = EventIndex::default();
+        let _url_dig = subscribe(&mut url_index, "dig", |subscriptions| {
+            subscriptions.command(CommandSpec::new(".dig", "dig"));
+        });
+        let _titles = subscribe(&mut url_index, "titles", |subscriptions| {
+            subscriptions.urls(UrlScope::Any);
+        });
+        let _example = subscribe(&mut url_index, "example", |subscriptions| {
+            subscriptions.urls(UrlScope::Hosts(&["example.com"]));
+        });
+
+        benchmark(
+            "unhandled privmsg, url subscriber",
+            DISPATCHES,
+            &mut url_index,
+            &filters,
+            || privmsg("hello there"),
+        );
+        benchmark(
+            "colon but no url",
+            DISPATCHES,
+            &mut url_index,
+            &filters,
+            || privmsg("note: no link here"),
+        );
+        benchmark("one url", DISPATCHES, &mut url_index, &filters, || {
+            privmsg("look at https://example.com/page")
+        });
+        benchmark(
+            "non-ascii initial, ascii triggers",
+            DISPATCHES,
+            &mut url_index,
+            &filters,
+            || privmsg("æble grød"),
+        );
     }
 
     /// Times `dispatches` calls to [`EventIndex::dispatch`] with pre-built messages.
