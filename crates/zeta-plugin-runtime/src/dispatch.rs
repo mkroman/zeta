@@ -226,10 +226,17 @@ impl Route {
 /// from, and the host subscribers it must reach, resolved before the URL was shared.
 type RetainedUrl<'a> = (Arc<Url>, Option<&'static str>, &'a [Subscriber]);
 
+/// A hash map for the per-message dispatch lookups, keyed by command trigger and URL host.
+///
+/// `foldhash::fast` hashes these short keys faster than the std hasher. It is not
+/// DoS-resistant: every key is inserted from plugin declarations, and message text is only
+/// ever used to look an existing key up.
+type IndexMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
+
 /// The dispatch index of every registered plugin's subscriptions.
 pub struct EventIndex {
     /// Registered commands, indexed by their trigger — the first word of a message.
-    commands: HashMap<&'static str, Vec<CommandTarget>>,
+    commands: IndexMap<&'static str, Vec<CommandTarget>>,
     /// A bit per possible first byte of a command trigger, offset by `b' '`.
     ///
     /// Non-text bytes cannot start a command, so a message whose first byte has no bit set is
@@ -237,7 +244,7 @@ pub struct EventIndex {
     /// by evicted plugins only cause a lookup that finds nothing.
     command_initials: u128,
     /// Plugins subscribed to URLs on specific hosts, indexed by the lowercased host.
-    url_hosts: HashMap<String, Vec<Subscriber>>,
+    url_hosts: IndexMap<String, Vec<Subscriber>>,
     /// Plugins subscribed to every URL, including hosts other plugins handle.
     url_any: Vec<Subscriber>,
     /// Plugins subscribed to plain-interest event kinds, indexed by [`kind_slot`].
@@ -247,9 +254,9 @@ pub struct EventIndex {
 impl Default for EventIndex {
     fn default() -> Self {
         Self {
-            commands: HashMap::new(),
+            commands: IndexMap::default(),
             command_initials: 0,
-            url_hosts: HashMap::new(),
+            url_hosts: IndexMap::default(),
             url_any: Vec::new(),
             kinds: std::array::from_fn(|_| Vec::new()),
         }
@@ -497,6 +504,14 @@ impl EventIndex {
         let Command::PRIVMSG(target, text) = &message.get().command else {
             return;
         };
+
+        // An extracted URL always carries a scheme, and a scheme is terminated by `:`; text
+        // without one cannot yield a URL. Skipping the word scan here keeps the link-free
+        // message — the overwhelming majority of channel traffic — free of it.
+        if !text.contains(':') {
+            return;
+        }
+
         let sender = Sender::from_message(message.get());
 
         // The retained URLs are collected before the message is shared, so a `PRIVMSG` that
