@@ -162,19 +162,6 @@ pub struct IrcChannelConfig {
     pub key: Option<SecretString>,
 }
 
-impl PartialEq for IrcChannelConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && secret_eq(self.key.as_ref(), other.key.as_ref())
-    }
-}
-
-impl Eq for IrcChannelConfig {}
-
-/// Compares two optional secrets without exposing them outside this module.
-fn secret_eq(left: Option<&SecretString>, right: Option<&SecretString>) -> bool {
-    left.map(ExposeSecret::expose_secret) == right.map(ExposeSecret::expose_secret)
-}
-
 /// TLS configuration for IRC connection.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
 pub struct IrcTlsConfig {
@@ -244,27 +231,6 @@ impl Default for IrcConfig {
         }
     }
 }
-
-impl PartialEq for IrcConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.admin_hostmasks == other.admin_hostmasks
-            && self.alt_nicks == other.alt_nicks
-            && self.channels == other.channels
-            && self.encoding == other.encoding
-            && self.hostname == other.hostname
-            && secret_eq(self.nick_password.as_ref(), other.nick_password.as_ref())
-            && self.nickname == other.nickname
-            && secret_eq(self.password.as_ref(), other.password.as_ref())
-            && self.port == other.port
-            && self.realname == other.realname
-            && self.should_ghost == other.should_ghost
-            && self.quit_message == other.quit_message
-            && self.tls == other.tls
-            && self.username == other.username
-    }
-}
-
-impl Eq for IrcConfig {}
 
 impl IrcConfig {
     /// Returns the port number to use for this IRC connection: the configured port, or the TLS
