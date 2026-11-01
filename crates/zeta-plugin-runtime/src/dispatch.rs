@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{Span, debug, warn};
 use url::Url;
-use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent};
+use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent, is_ctcp};
 use zeta_plugin::{CommandSpec, Event, EventKind, FilterHandle, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrlRef};
 
@@ -42,7 +42,7 @@ struct SpanNames {
     command: Arc<str>,
     /// The name for URL events.
     url: Arc<str>,
-    /// The names for the flag-based kinds, in [`EventKind::ALL`] order.
+    /// The names for the flag-based kinds, indexed like [`EventKind::ALL`].
     kinds: [Arc<str>; EventKind::ALL.len()],
 }
 
@@ -54,43 +54,17 @@ impl SpanNames {
         Self {
             command: composite("command"),
             url: composite("url"),
-            kinds: [
-                composite("message"),
-                composite("join"),
-                composite("part"),
-                composite("quit"),
-                composite("nick"),
-                composite("kick"),
-                composite("ctcp"),
-                composite("raw"),
-            ],
+            kinds: std::array::from_fn(|index| composite(EventKind::ALL[index].name())),
         }
     }
 
     /// Returns the exported name for `event`.
     fn event(&self, event: &Event) -> &str {
         match event.kind() {
-            Some(kind) => &self.kinds[kind_slot(kind)],
+            Some(kind) => &self.kinds[kind.index()],
             None if matches!(event, Event::Command(_)) => &self.command,
             None => &self.url,
         }
-    }
-}
-
-/// Returns the slot of `kind` in [`SpanNames::kinds`], which follows [`EventKind::ALL`].
-const fn kind_slot(kind: EventKind) -> usize {
-    match kind {
-        EventKind::Message => 0,
-        EventKind::Join => 1,
-        EventKind::Part => 2,
-        EventKind::Quit => 3,
-        EventKind::Nick => 4,
-        EventKind::Kick => 5,
-        EventKind::Ctcp => 6,
-        EventKind::Raw => 7,
-        // A kind added after this runtime was written has no preallocated slot; registration
-        // and dispatch must be extended together.
-        _ => panic!("unhandled event kind"),
     }
 }
 
@@ -255,7 +229,7 @@ pub struct EventIndex {
     url_hosts: IndexMap<String, Vec<Subscriber>>,
     /// Plugins subscribed to every URL, including hosts other plugins handle.
     url_any: Vec<Subscriber>,
-    /// Plugins subscribed to plain-interest event kinds, indexed by [`kind_slot`].
+    /// Plugins subscribed to plain-interest event kinds, indexed by [`EventKind::index`].
     kinds: [Vec<Subscriber>; EventKind::ALL.len()],
 }
 
@@ -275,8 +249,8 @@ impl Default for EventIndex {
 impl EventIndex {
     /// Adds a plugin to the index with the `subscriptions` it declared and its `mailbox`.
     ///
-    /// Command triggers containing whitespace cannot be matched by the first-word index and
-    /// are skipped with a warning.
+    /// Empty command triggers, and triggers containing whitespace, cannot be matched by the
+    /// first-word index and are skipped with a warning.
     pub fn add(
         &mut self,
         name: &'static str,
@@ -290,11 +264,11 @@ impl EventIndex {
         };
 
         for command in subscriptions.commands() {
-            if command.trigger().contains(char::is_whitespace) {
+            if command.trigger().is_empty() || command.trigger().contains(char::is_whitespace) {
                 warn!(
                     zeta.plugin.name = %name,
                     command = command.trigger(),
-                    "command trigger contains whitespace; it cannot be dispatched"
+                    "command trigger is empty or contains whitespace; it cannot be dispatched"
                 );
 
                 continue;
@@ -333,7 +307,7 @@ impl EventIndex {
         }
 
         for kind in subscriptions.events() {
-            self.kinds[kind_slot(*kind)].push(subscriber.clone());
+            self.kinds[kind.index()].push(subscriber.clone());
         }
     }
 
@@ -400,7 +374,7 @@ impl EventIndex {
 
     /// Returns the subscriber list of a plain-interest event kind.
     fn subscribers(&self, kind: EventKind) -> &[Subscriber] {
-        &self.kinds[kind_slot(kind)]
+        &self.kinds[kind.index()]
     }
 
     /// Delivers `message` as an event of `kind` to its subscribers, if any are registered.
@@ -446,7 +420,7 @@ impl EventIndex {
         };
 
         // CTCP messages are their own event kind and are routed to nothing else.
-        if text.starts_with('\x01') {
+        if is_ctcp(message.get()) {
             self.deliver_kind(EventKind::Ctcp, message, stopped);
 
             return;
@@ -576,15 +550,6 @@ impl EventIndex {
             }
         }
     }
-}
-
-/// Whether `message` carries a CTCP payload: a `PRIVMSG` or `NOTICE` whose text is
-/// `\x01`-wrapped.
-fn is_ctcp(message: &Message) -> bool {
-    matches!(
-        &message.command,
-        Command::PRIVMSG(_, text) | Command::NOTICE(_, text) if text.starts_with('\x01')
-    )
 }
 
 #[cfg(test)]
@@ -774,6 +739,18 @@ mod tests {
 
             assert_empty!(drain(&mut mailbox), "`{text}` must not dispatch");
         }
+    }
+
+    #[test]
+    fn empty_and_whitespace_triggers_are_not_indexed() {
+        let mut index = EventIndex::default();
+        let _ = subscribe(&mut index, "invalid", |subscriptions| {
+            subscriptions
+                .command(CommandSpec::new("", "empty"))
+                .command(CommandSpec::new(".two words", "whitespace"));
+        });
+
+        assert_empty!(index.commands);
     }
 
     /// Triggers whose first byte is outside the command-initial mask cannot be pre-filtered by
@@ -1221,8 +1198,8 @@ mod tests {
         assert_eq!(stopped, ["dig"]);
     }
 
-    /// The precomputed handler span names must follow the event kinds: the array is ordered
-    /// like [`EventKind::ALL`] while the composite strings are written out by hand.
+    /// The precomputed handler span names must follow the event kinds: the array is derived
+    /// from [`EventKind::ALL`], so it cannot drift from the enum.
     #[test]
     fn span_names_match_the_event_kinds() {
         let names = SpanNames::new("dig");
