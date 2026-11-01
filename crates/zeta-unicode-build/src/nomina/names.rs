@@ -84,14 +84,13 @@
 //! measurement entry points; training calls [`encode_global_corpus`] after parsing the corpus
 //! once. The `*_with_block_shift` forms return the size breakdown the layout study reports.
 
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 
-use zeta_unicode_format::huffman::{BitWriter, Code, canonical_codes, code_lengths};
+use zeta_unicode_format::huffman::{BitReader, BitWriter, Codebook};
 use zeta_unicode_format::{
-    HANGUL_COUNT, HANGUL_END, HANGUL_START, MAX_CODE_BITS, MAX_NAME_BYTES, MAX_NAME_MODELS,
-    NAME_CONTEXT_MAP_LEN, NAME_INDEX_HEADER_LEN, NAME_MODEL_COUNT_LEN,
+    HANGUL_COUNT, HANGUL_END, HANGUL_START, MAX_NAME_BYTES, MAX_NAME_MODELS, NAME_INDEX_HEADER_LEN,
     NAME_MODEL_DIRECTORY_ENTRY_LEN, NAME_PAGE_COUNT, NAME_PAGE_DIRECTORY_ENTRY_LEN,
-    NAME_PAGE_SHIFT, NAME_RUN_LEN, UNICODE_END, write_hangul, write_pattern_name,
+    NAME_PAGE_SHIFT, NAME_RUN_LEN, NameIndex, NameModels, write_hangul, write_pattern_name,
 };
 
 use crate::ucd::Inputs;
@@ -103,8 +102,6 @@ pub use zeta_unicode_format::{
 /// The default block shift of the unparameterized helpers (32 names).
 #[cfg(test)]
 pub const NAME_BLOCK_SHIFT: u8 = 5;
-/// The number of `u16` length counts in one model, including the unused zero entry.
-const CODE_LENGTH_SLOTS: usize = MAX_CODE_BITS as usize + 1;
 
 /// The statistic and size breakdown of one encoded name section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -550,63 +547,12 @@ fn page_directory(runs: &[(u32, u32, u32)]) -> Vec<u16> {
     directory
 }
 
-/// A canonical Huffman codebook for one 256-symbol alphabet.
-#[derive(Clone)]
-struct Codebook {
-    /// The longest code in the book.
-    max_bits: u8,
-    /// `counts[length]` is the number of symbols with that length (`counts[0] == 0`).
-    counts: [u16; CODE_LENGTH_SLOTS],
-    /// Symbols in canonical order.
-    symbols: Vec<u8>,
-    /// The canonical code per symbol.
-    codes: Vec<Code>,
-}
-
-impl Codebook {
-    /// Builds the canonical book for `frequencies`.
-    fn new(frequencies: &[u64; 256]) -> Self {
-        let lengths = code_lengths(frequencies, MAX_CODE_BITS);
-        let mut counts = [0u16; CODE_LENGTH_SLOTS];
-        for &length in &lengths {
-            if length > 0 {
-                counts[usize::from(length)] += 1;
-            }
-        }
-        let mut pairs: Vec<(u8, u8)> = (0..=u8::MAX)
-            .filter(|&symbol| lengths[usize::from(symbol)] > 0)
-            .map(|symbol| (lengths[usize::from(symbol)], symbol))
-            .collect();
-        pairs.sort_unstable();
-        let symbols: Vec<u8> = pairs.iter().map(|&(_, symbol)| symbol).collect();
-        let max_bits = pairs.last().map_or(0, |&(length, _)| length);
-        let codes = canonical_codes(&lengths);
-        Self {
-            max_bits,
-            counts,
-            symbols,
-            codes,
-        }
-    }
-
-    /// Appends one model blob: max bits, length counts, then the symbols.
-    fn write(&self, out: &mut Vec<u8>) {
-        out.push(self.max_bits);
-        for &count in &self.counts[1..=usize::from(self.max_bits)] {
-            out.put_u16_le(count);
-        }
-        out.extend_from_slice(&self.symbols);
-    }
-
-    /// The number of bytes [`Self::write`] appends.
-    fn encoded_len(&self) -> usize {
-        1 + 2 * usize::from(self.max_bits) + self.symbols.len()
-    }
-}
-
 /// Appends `symbol`'s canonical code to `writer`.
 fn write_symbol(writer: &mut BitWriter, book: &Codebook, symbol: u8) {
-    let code = book.codes[usize::from(symbol)];
+    let code = *book
+        .codes
+        .get(usize::from(symbol))
+        .expect("the code table covers every symbol");
     assert!(code.len > 0, "symbol {symbol} is absent from the model");
     writer.push(code.bits, usize::from(code.len));
 }
@@ -910,7 +856,7 @@ pub fn verify_global_corpus(section: &[u8], corpus: &Corpus, block_shift: u8) {
 pub fn verify_corpus(section: &[u8], corpus: &Corpus, block_shift: u8, layout: NameLayout) {
     let mut decoded = Decoded::new(section, block_shift, layout);
     assert_eq!(
-        decoded.name_count,
+        decoded.index.name_count,
         corpus.entries.len(),
         "the section's name count"
     );
@@ -962,29 +908,20 @@ fn pattern_name(pattern: &crate::nomina::patterns::Pattern, cp: u32) -> Option<S
     Some(name)
 }
 
-/// A decoder used only by the build-time verifier. It is deliberately independent of the
-/// runtime decoder so a format disagreement cannot pass verification.
+/// A decoder used only by the build-time verifier.
+///
+/// It shares the section's structural parse with the runtime but keeps its own front-coding
+/// reconstruction: every prefix and suffix is replayed with explicit assertions, so a format
+/// disagreement in the entry encoding cannot pass verification.
 struct Decoded<'a> {
-    /// Number of names the section describes.
-    name_count: usize,
-    /// First bit of each block (the checkpoint entry for global blocks after the first).
-    block_bits: &'a [u8],
+    /// The validated run index and block offsets.
+    index: NameIndex<'a>,
+    /// The validated context models and bitstream.
+    models: NameModels<'a>,
     /// The name layout.
     layout: NameLayout,
     /// The name-block shift.
     shift: u32,
-    /// The page directory.
-    page_dir: &'a [u8],
-    /// The run records.
-    runs: &'a [u8],
-    /// Number of runs.
-    run_count: usize,
-    /// Previous-byte to model-id map.
-    context_model: [u8; 256],
-    /// The canonical models, in id order.
-    books: Vec<Book<'a>>,
-    /// The MSB-first bitstream.
-    stream: &'a [u8],
     /// Scratch space for the current chain.
     scratch: Vec<u8>,
     /// Scratch for the shared suffix, copied before the middle overwrites it.
@@ -997,135 +934,22 @@ struct Decoded<'a> {
     cache_len: usize,
 }
 
-/// One canonical Huffman model viewed as raw bytes.
-struct Book<'a> {
-    /// The longest code.
-    max_bits: u8,
-    /// `u16` counts by length, starting at length 1.
-    counts: &'a [u8],
-    /// Symbols in canonical order.
-    symbols: &'a [u8],
-}
-
 impl<'a> Decoded<'a> {
     /// Parses and validates a name section.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "header, runs, checkpoints and models are one parse"
-    )]
     fn new(section: &'a [u8], block_shift: u8, layout: NameLayout) -> Self {
         assert!(
             (MIN_BLOCK_SHIFT..=MAX_BLOCK_SHIFT).contains(&block_shift),
             "block shift {block_shift} is outside the supported range"
         );
-        let mut header = section;
-        let name_count =
-            usize::try_from(header.try_get_u32_le().expect("name count: truncated u32"))
-                .expect("name count fits");
-        let block_count =
-            usize::try_from(header.try_get_u32_le().expect("block count: truncated u32"))
-                .expect("block count fits");
-        let run_count = usize::from(header.try_get_u16_le().expect("run count: truncated u16"));
-        let page_count = usize::from(header.try_get_u16_le().expect("page count: truncated u16"));
-        assert_eq!(page_count, NAME_PAGE_COUNT, "the page directory size");
-        let block_size = 1usize << block_shift;
-        assert_eq!(
-            block_count,
-            name_count.div_ceil(block_size),
-            "the block count"
-        );
-
-        let page_dir_at = NAME_INDEX_HEADER_LEN;
-        let runs_at = page_dir_at + page_count * NAME_PAGE_DIRECTORY_ENTRY_LEN;
-        let runs_end = runs_at + run_count * NAME_RUN_LEN;
-        assert!(runs_end <= section.len(), "the run records are truncated");
-        let starts_at = (runs_end + 3) & !3;
-        let starts_end = starts_at + block_count * 4;
-        assert!(
-            starts_end <= section.len(),
-            "the block starts are truncated"
-        );
-
-        let block_bits = &section[starts_at..starts_end];
-        let models_at = starts_end;
-
-        let context_model = section
-            .get(models_at..models_at + NAME_CONTEXT_MAP_LEN)
-            .expect("the context map is truncated");
-        let count_at = models_at + NAME_CONTEXT_MAP_LEN;
-        let mut count_bytes = section.get(count_at..).expect("model count: truncated u16");
-        let model_count = usize::from(
-            count_bytes
-                .try_get_u16_le()
-                .expect("model count: truncated u16"),
-        );
-        assert!(model_count > 0, "no models");
-        let directory_at = models_at + NAME_CONTEXT_MAP_LEN + NAME_MODEL_COUNT_LEN;
-        let blobs_at = directory_at + model_count * NAME_MODEL_DIRECTORY_ENTRY_LEN;
-        assert!(
-            blobs_at <= section.len(),
-            "the model directory is truncated"
-        );
-
-        let mut books = Vec::with_capacity(model_count);
-        let mut expected = 0usize;
-        for index in 0..model_count {
-            let offset_at = directory_at + index * NAME_MODEL_DIRECTORY_ENTRY_LEN;
-            let mut offset_bytes = section
-                .get(offset_at..)
-                .expect("model offset: truncated u16");
-            let relative = usize::from(
-                offset_bytes
-                    .try_get_u16_le()
-                    .expect("model offset: truncated u16"),
-            );
-            assert_eq!(relative, expected, "model {index} is not contiguous");
-            let at = blobs_at + relative;
-            let max_bits = *section.get(at).expect("a model max-bits byte");
-            assert!(
-                max_bits > 0 && max_bits <= MAX_CODE_BITS,
-                "model {index} has {max_bits} maximum bits"
-            );
-            let model_counts_at = at + 1;
-            let symbols_at = model_counts_at + usize::from(max_bits) * 2;
-            let mut symbols = 0usize;
-            for length in 0..usize::from(max_bits) {
-                let length_at = model_counts_at + length * 2;
-                let mut length_bytes = section
-                    .get(length_at..)
-                    .expect("code counts: truncated u16");
-                symbols += usize::from(
-                    length_bytes
-                        .try_get_u16_le()
-                        .expect("code counts: truncated u16"),
-                );
-            }
-            let symbols_end = symbols_at + symbols;
-            assert!(symbols_end <= section.len(), "model {index} is truncated");
-            books.push(Book {
-                max_bits,
-                counts: &section[model_counts_at..symbols_at],
-                symbols: &section[symbols_at..symbols_end],
-            });
-            expected = symbols_end - blobs_at;
-        }
-        let stream_at = blobs_at + expected;
-        assert!(stream_at <= section.len(), "the bitstream is truncated");
-        let context_model = context_model
-            .try_into()
-            .expect("the context map is 256 bytes");
-
+        let index = NameIndex::parse(section, block_shift)
+            .expect("the name section's header, runs or block offsets are invalid");
+        let models = NameModels::parse(section, index.models_at)
+            .expect("the name section's model area is invalid");
         Self {
-            name_count,
-            block_bits,
+            index,
+            models,
             layout,
             shift: u32::from(block_shift),
-            page_dir: &section[page_dir_at..runs_at],
-            runs: &section[runs_at..runs_end],
-            run_count,
-            context_model,
-            books,
-            stream: &section[stream_at..],
             scratch: vec![0; MAX_NAME_BYTES],
             suffix_scratch: vec![0; MAX_NAME_BYTES],
             cache_id: usize::MAX,
@@ -1136,43 +960,14 @@ impl<'a> Decoded<'a> {
 
     /// The id of `cp`, using the page directory and runs.
     fn entry_id(&self, cp: u32) -> Option<usize> {
-        if cp > UNICODE_END {
-            return None;
-        }
-        let page = usize::try_from(cp >> NAME_PAGE_SHIFT).expect("page fits in usize");
-        let mut page_bytes = self
-            .page_dir
-            .get(page * 2..)
-            .expect("page directory: truncated u16");
-        let mut run = usize::from(
-            page_bytes
-                .try_get_u16_le()
-                .expect("page directory: truncated u16"),
-        );
-        loop {
-            if run >= self.run_count {
-                return None;
-            }
-            let at = run * 8;
-            let mut record = self.runs.get(at..).expect("run record: truncated");
-            let first = record
-                .try_get_u32_le()
-                .expect("run first code point: truncated u32");
-            if cp < first {
-                return None;
-            }
-            let length = u32::from(record.try_get_u16_le().expect("run length: truncated u16"));
-            if cp - first < length {
-                let base = u32::from(record.try_get_u16_le().expect("run base id: truncated u16"));
-                return Some(usize::try_from(base + (cp - first)).expect("id fits"));
-            }
-            run += 1;
-        }
+        self.index
+            .id_of(cp)
+            .map(|id| usize::try_from(id).expect("a name id fits in usize"))
     }
 
     /// Decodes name `id`.
     fn name_by_id(&mut self, id: usize) -> Option<String> {
-        if id >= self.name_count {
+        if id >= self.index.name_count {
             return None;
         }
         if self.cache_id == id {
@@ -1190,20 +985,23 @@ impl<'a> Decoded<'a> {
             (self.cache_id + 1, self.cache_bit)
         } else {
             let bit_at = block * 4;
-            let mut bit_bytes = self
+            let bit_bytes = self
+                .index
                 .block_bits
                 .get(bit_at..)
                 .expect("block bit offset: truncated u32");
-            let bit = usize::try_from(
+            let bit = usize::try_from(u32::from_le_bytes(
                 bit_bytes
-                    .try_get_u32_le()
-                    .expect("block bit offset: truncated u32"),
-            )
+                    .get(..4)
+                    .expect("block bit offset: truncated u32")
+                    .try_into()
+                    .expect("four bytes"),
+            ))
             .expect("bit offset fits in usize");
             (block * block_size, bit)
         };
         let mut length = if resume { self.cache_len } else { 0 };
-        let mut bits = Bits::new(self.stream, bit);
+        let mut bits = BitReader::at(self.models.stream, bit);
         if global && !resume && block > 0 {
             length = self.decode_checkpoint(&mut bits)?;
         }
@@ -1211,14 +1009,14 @@ impl<'a> Decoded<'a> {
             length = self.decode_entry(&mut bits, length, global)?;
         }
         self.cache_id = id;
-        self.cache_bit = bits.pos;
+        self.cache_bit = bits.position();
         self.cache_len = length;
         String::from_utf8(self.scratch[..length].to_vec()).ok()
     }
 
     /// Decodes the in-stream checkpoint name of a global block.
-    fn decode_checkpoint(&mut self, bits: &mut Bits<'_>) -> Option<usize> {
-        let model = self.books.len().checked_sub(1)?;
+    fn decode_checkpoint(&mut self, bits: &mut BitReader<'_>) -> Option<usize> {
+        let model = self.models.models.len().checked_sub(1)?;
         let mut length = 0usize;
         loop {
             let byte = self.symbol(model, bits)?;
@@ -1232,7 +1030,12 @@ impl<'a> Decoded<'a> {
     }
 
     /// Decodes one front-coded entry, returning the new name length.
-    fn decode_entry(&mut self, bits: &mut Bits<'_>, length: usize, global: bool) -> Option<usize> {
+    fn decode_entry(
+        &mut self,
+        bits: &mut BitReader<'_>,
+        length: usize,
+        global: bool,
+    ) -> Option<usize> {
         let prefix = usize::from(self.symbol(0, bits)?);
         assert!(prefix <= length, "prefix length {prefix} exceeds the name");
         let suffix = if global {
@@ -1255,7 +1058,7 @@ impl<'a> Decoded<'a> {
             *self.scratch.get(prefix - 1)?
         };
         loop {
-            let model = usize::from(self.context_model[usize::from(context)]);
+            let model = usize::from(self.models.context[usize::from(context)]);
             let byte = self.symbol(model, bits)?;
             if byte == 0 {
                 break;
@@ -1281,62 +1084,17 @@ impl<'a> Decoded<'a> {
     }
 
     /// Decodes one canonical symbol.
-    fn symbol(&self, model: usize, bits: &mut Bits<'_>) -> Option<u8> {
-        let book = self.books.get(model)?;
-        let mut code = 0u32;
-        let mut first = 0u32;
-        let mut index = 0usize;
-        for length in 1..=book.max_bits {
-            code = (code << 1) | u32::from(bits.bit()?);
-            let at = usize::from(length - 1) * 2;
-            let mut count_bytes = book.counts.get(at..)?;
-            let count = u32::from(count_bytes.try_get_u16_le().ok()?);
-            if code >= first && code - first < count {
-                let offset = usize::try_from(code - first).expect("offset fits");
-                return book.symbols.get(index + offset).copied();
-            }
-            index += usize::try_from(count).expect("count fits");
-            first = (first + count) << 1;
-        }
-        None
-    }
-}
-
-/// An MSB-first bit reader for the verifier.
-struct Bits<'a> {
-    /// The stream.
-    data: &'a [u8],
-    /// The absolute bit position.
-    pos: usize,
-    /// The maximum position, in bits.
-    limit: usize,
-}
-
-impl<'a> Bits<'a> {
-    /// A reader starting at `bit`.
-    const fn new(data: &'a [u8], bit: usize) -> Self {
-        Self {
-            data,
-            pos: bit,
-            limit: data.len() * 8,
-        }
-    }
-
-    /// Reads one bit.
-    fn bit(&mut self) -> Option<u8> {
-        if self.pos >= self.limit {
-            return None;
-        }
-        let byte = *self.data.get(self.pos >> 3)?;
-        let value = (byte >> (7 - (self.pos & 7))) & 1;
-        self.pos += 1;
-        Some(value)
+    fn symbol(&self, model: usize, bits: &mut BitReader<'_>) -> Option<u8> {
+        self.models.models.get(model)?.symbol(bits)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+
+    use zeta_unicode_format::MAX_CODE_BITS;
+    use zeta_unicode_format::huffman::code_lengths;
 
     use super::*;
 
@@ -1524,6 +1282,7 @@ mod tests {
                 .counts
                 .iter()
                 .enumerate()
+                .take(usize::from(MAX_CODE_BITS) + 1)
                 .skip(1)
                 .map(|(length, &count)| {
                     u64::from(count)
