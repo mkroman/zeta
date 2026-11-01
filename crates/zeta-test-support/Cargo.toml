@@ -15,6 +15,7 @@ http = ["dep:reqwest", "dep:wiremock"]
 
 [dependencies]
 reqwest = { workspace = true, optional = true }
+serde_json.workspace = true
 # The test context carries an unreachable (lazily connected) database pool; the plugin
 # interface is needed to construct the context at all.
 sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio"], optional = true }

@@ -21,6 +21,15 @@ use url::Url;
 #[cfg(feature = "http")]
 pub use wiremock;
 
+/// Implementation details the exported test macros resolve through `$crate`.
+///
+/// Kept public so the macros work from any crate in the workspace; not part of the supported
+/// API.
+#[doc(hidden)]
+pub mod __private {
+    pub use serde_json;
+}
+
 /// Constructs a plugin [`Context`](zeta_plugin::Context) for tests: a default configuration
 /// and an unreachable (lazily connected) database pool.
 ///
@@ -338,6 +347,9 @@ pub fn assert_parses<T: std::fmt::Debug + PartialEq>(
 /// `settings_deserialize` test deserializing the given JSON object before asserting on it, and
 /// a `settings_ignore_unknown_keys` test pinning that unknown keys are ignored instead of
 /// rejected — removing a setting must never crash deployments that still name it.
+///
+/// The expansion resolves `serde_json` through `$crate`, so a consuming crate does not need a
+/// `serde_json` dev-dependency of its own.
 #[macro_export]
 macro_rules! settings_tests {
     (
@@ -354,7 +366,10 @@ macro_rules! settings_tests {
 
         #[test]
         fn settings_deserialize() {
-            let $settings: $ty = serde_json::from_value(serde_json::json!({ $($json)* }))
+            let $settings: $ty =
+                $crate::__private::serde_json::from_value(
+                    $crate::__private::serde_json::json!({ $($json)* })
+                )
                 .expect("could not deserialize settings");
 
             $($assert)*
@@ -362,13 +377,16 @@ macro_rules! settings_tests {
 
         #[test]
         fn settings_ignore_unknown_keys() {
-            let mut value = serde_json::json!({ $($json)* });
+            let mut value = $crate::__private::serde_json::json!({ $($json)* });
             value
                 .as_object_mut()
                 .expect("the settings fixture should be an object")
-                .insert("setting_removed_in_this_version".to_owned(), serde_json::Value::Bool(true));
+                .insert(
+                    "setting_removed_in_this_version".to_owned(),
+                    $crate::__private::serde_json::Value::Bool(true),
+                );
 
-            serde_json::from_value::<$ty>(value)
+            $crate::__private::serde_json::from_value::<$ty>(value)
                 .expect("unknown settings keys must be ignored, never rejected");
         }
     };

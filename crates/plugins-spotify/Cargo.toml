@@ -30,7 +30,6 @@ zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
-serde_json.workspace = true
 similar-asserts = "=2.0.0"
 zeta-test-support = { path = "../zeta-test-support" }
 

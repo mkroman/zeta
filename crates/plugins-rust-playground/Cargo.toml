@@ -25,7 +25,6 @@ zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
-serde_json.workspace = true
 zeta-test-support = { path = "../zeta-test-support" }
 
 [lints]

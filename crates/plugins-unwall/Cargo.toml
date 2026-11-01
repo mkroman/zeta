@@ -38,7 +38,6 @@ zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils", features = ["chrono"] }
 
 [dev-dependencies]
-serde_json.workspace = true
 zeta-test-support = { path = "../zeta-test-support" }
 
 [lints]
