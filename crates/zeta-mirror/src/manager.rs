@@ -185,6 +185,7 @@ impl DownloadManager {
             uploads: JoinSet::new(),
             upload_queue: VecDeque::new(),
             next_id: 0,
+            queue_full_warned: false,
         };
 
         tokio::spawn(manager.run());
@@ -234,6 +235,12 @@ struct Manager {
     upload_queue: VecDeque<Upload>,
     /// The id to assign to the next download.
     next_id: u64,
+    /// Whether the current full-queue episode has already produced its warning.
+    ///
+    /// A sustained outage rejects many requests; logging every rejection at `warn` would flood
+    /// the log. The first rejection warns, subsequent ones are debug-level, and the flag clears
+    /// once the queue drains so the next episode warns again.
+    queue_full_warned: bool,
 }
 
 /// A running download and the state the manager keeps around it.
@@ -435,11 +442,21 @@ impl Manager {
         if self.active.len() < self.max_concurrent && !self.upload_backlog_full() {
             self.start_download(request).await;
         } else if self.queue.len() >= MAX_QUEUED_REQUESTS {
-            warn!(
-                media.id = %request.id,
-                queued = self.queue.len(),
-                "rejecting download request, the queue is full"
-            );
+            if self.queue_full_warned {
+                debug!(
+                    media.id = %request.id,
+                    queued = self.queue.len(),
+                    "rejecting download request, the queue is full"
+                );
+            } else {
+                warn!(
+                    media.id = %request.id,
+                    queued = self.queue.len(),
+                    "download queue is full; shedding load until a slot frees"
+                );
+
+                self.queue_full_warned = true;
+            }
 
             (request.on_finish)(Err(Error::Busy));
         } else {
@@ -747,6 +764,10 @@ impl Manager {
             };
 
             self.start_download(request).await;
+        }
+
+        if self.queue.is_empty() {
+            self.queue_full_warned = false;
         }
     }
 }
