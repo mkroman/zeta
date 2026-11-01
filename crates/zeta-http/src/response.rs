@@ -49,7 +49,7 @@ fn log_status(status: reqwest::StatusCode, body: Option<&str>, record_error_type
     let not_found = status == reqwest::StatusCode::NOT_FOUND;
 
     if !not_found && record_error_type {
-        Span::current().record("error.type", status.as_u16().to_string().as_str());
+        Span::current().record("error.type", tracing::field::display(status.as_u16()));
     }
 
     match (not_found, status.is_server_error(), body) {
@@ -83,19 +83,21 @@ async fn read_body(response: reqwest::Response) -> Result<String, ApiError> {
     response.text().await.map_err(body_error)
 }
 
-/// Reads the body of `response` inside the client span the request opened, logs the status, and
-/// hands a successful body to `finish`.
+/// Reads the body of `response` inside the client span the request opened and returns it with
+/// that span still open.
 ///
 /// Both [`parse_response`] and [`parse_text`] go through this, so the status handling and the
-/// log lines are shared; `finish` runs inside the span, so a parse failure records `error.type`
-/// on it. [`send`] stores its span in the response, so the body read stays in the span that
-/// covers the request: one span per HTTP call, with no gap between the headers and the body.
-/// A response that did not come through [`send`] (a caller that built it itself) gets a
-/// synthesized client span from its own attributes.
-async fn parse<T, F>(response: reqwest::Response, finish: F) -> Result<T, ApiError>
-where
-    F: FnOnce(String) -> Result<T, ApiError>,
-{
+/// log lines are shared, and the type-independent part is compiled once instead of once per
+/// response type. The body read stays in the span that covers the request: one span per HTTP
+/// call, with no gap between the headers and the body. [`send`] stores its span in the
+/// response; a response that did not come through [`send`] (a caller that built it itself)
+/// gets a synthesized client span from its own attributes.
+///
+/// # Errors
+///
+/// Returns an [`ApiError`] if the status is not a success or the body cannot be read; the span
+/// is closed before the error is returned.
+async fn read_success(response: reqwest::Response) -> Result<(String, Span), ApiError> {
     let span = response.extensions().get::<ClientSpan>().map_or_else(
         || {
             tracing::info_span!(
@@ -110,6 +112,7 @@ where
         },
         |client| client.0.clone(),
     );
+    let instrument = span.clone();
 
     async move {
         let status = response.status();
@@ -135,9 +138,13 @@ where
 
         debug!("http response received");
 
-        finish(read_body(response).await?)
+        // The caller re-enters the same span for the parse; cloning the handle keeps it open
+        // until then without running an await while it is entered.
+        let body = read_body(response).await?;
+
+        Ok((body, span))
     }
-    .instrument(span)
+    .instrument(instrument)
     .await
 }
 
@@ -163,14 +170,14 @@ where
 pub async fn parse_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ApiError> {
-    parse(response, |text| {
-        json::from_str(&text).map_err(|error| {
-            Span::current().record("error.type", "invalid_json");
+    let (body, span) = read_success(response).await?;
+    let _entered = span.enter();
 
-            ApiError::Deserialize(error)
-        })
+    json::from_str(&body).map_err(|error| {
+        Span::current().record("error.type", "invalid_json");
+
+        ApiError::Deserialize(error)
     })
-    .await
 }
 
 /// Reads the body of a successful response as text.
@@ -184,7 +191,9 @@ pub async fn parse_response<T: DeserializeOwned>(
 ///
 /// Returns an [`ApiError`] if the status is not a success or the body cannot be read.
 pub async fn parse_text(response: reqwest::Response) -> Result<String, ApiError> {
-    parse(response, Ok).await
+    let (body, _span) = read_success(response).await?;
+
+    Ok(body)
 }
 
 /// Parses a JSON response like [`parse_response`], mapping a `404` status to `not_found`.
