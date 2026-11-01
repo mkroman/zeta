@@ -41,43 +41,32 @@ pub async fn delete_ids(
 /// A failed database operation, naming the affected entity.
 #[derive(Debug)]
 pub struct DbError {
-    stage: Stage,
+    stage: &'static str,
     entity: &'static str,
     source: sqlx::Error,
-}
-
-/// The stage of a database operation that failed.
-#[derive(Debug, Clone, Copy)]
-enum Stage {
-    /// Loading rows from the database.
-    Load,
-    /// Inserting a row into the database.
-    Insert,
-    /// Deleting rows from the database.
-    Delete,
 }
 
 impl DbError {
     /// Constructs the error for a failed load of `entity` rows.
     #[must_use]
     pub const fn load(entity: &'static str, source: sqlx::Error) -> Self {
-        Self::new(Stage::Load, entity, source)
+        Self::new("load", entity, source)
     }
 
     /// Constructs the error for a failed insert of an `entity` row.
     #[must_use]
     pub const fn insert(entity: &'static str, source: sqlx::Error) -> Self {
-        Self::new(Stage::Insert, entity, source)
+        Self::new("insert", entity, source)
     }
 
     /// Constructs the error for a failed delete of `entity` rows.
     #[must_use]
     pub const fn delete(entity: &'static str, source: sqlx::Error) -> Self {
-        Self::new(Stage::Delete, entity, source)
+        Self::new("delete", entity, source)
     }
 
     /// Constructs the error from its parts.
-    const fn new(stage: Stage, entity: &'static str, source: sqlx::Error) -> Self {
+    const fn new(stage: &'static str, entity: &'static str, source: sqlx::Error) -> Self {
         Self {
             stage,
             entity,
@@ -88,11 +77,11 @@ impl DbError {
 
 impl std::fmt::Display for DbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.stage {
-            Stage::Load => write!(f, "could not load {}: {}", self.entity, self.source),
-            Stage::Insert => write!(f, "could not insert {}: {}", self.entity, self.source),
-            Stage::Delete => write!(f, "could not delete {}: {}", self.entity, self.source),
-        }
+        write!(
+            f,
+            "could not {} {}: {}",
+            self.stage, self.entity, self.source
+        )
     }
 }
 

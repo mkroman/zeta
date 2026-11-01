@@ -57,7 +57,12 @@ pub fn parse_or_usage<T: Parser + 'static>(
     mode: ArgsMode,
     format: impl Fn(&str) -> String,
 ) -> Result<Option<T>, irc::error::Error> {
-    reply_parse_result(command.parse_with(mode), client, command.channel(), format)
+    reply_parse_result(
+        command.spec.parse_with(command.args(), mode),
+        client,
+        command.channel(),
+        format,
+    )
 }
 
 /// Awaits a lookup and replies with its outcome to `channel`.

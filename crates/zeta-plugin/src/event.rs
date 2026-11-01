@@ -19,11 +19,10 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::Arc;
 
-use clap::Parser;
 use irc::proto::{Command, Message};
 use url::Url;
 
-use crate::command::{ArgsError, ArgsMode, CommandSpec};
+use crate::command::CommandSpec;
 
 /// Destructures a message into its `PRIVMSG` target and text.
 ///
@@ -188,43 +187,6 @@ impl CommandEvent {
     #[must_use]
     pub fn args(&self) -> &str {
         &privmsg(&self.message).1[self.args.clone()]
-    }
-
-    /// Parses the trailing arguments into a [`Parser`]-derived struct.
-    ///
-    /// See [`CommandSpec::parse_args`] for the tokenization and error behavior.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ArgsError::Quoting`] if the arguments could not be tokenized, or
-    /// [`ArgsError::Usage`] if `clap` rejected the arguments.
-    pub fn parse_args<T: Parser + 'static>(&self) -> Result<T, ArgsError> {
-        self.spec.parse_args(self.args())
-    }
-
-    /// Parses the trailing arguments into a [`Parser`]-derived struct, splitting them on
-    /// whitespace.
-    ///
-    /// See [`CommandSpec::parse_words`] for the tokenization and error behavior.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ArgsError::Usage`] if `clap` rejected the arguments.
-    pub fn parse_words<T: Parser + 'static>(&self) -> Result<T, ArgsError> {
-        self.spec.parse_words(self.args())
-    }
-
-    /// Parses the trailing arguments with the tokenization selected by `mode`.
-    ///
-    /// See [`CommandSpec::parse_with`](super::CommandSpec::parse_with) for the tokenization and
-    /// error behavior.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ArgsError::Quoting`] when shell tokenization fails, or [`ArgsError::Usage`] if
-    /// `clap` rejected the arguments.
-    pub fn parse_with<T: Parser + 'static>(&self, mode: ArgsMode) -> Result<T, ArgsError> {
-        self.spec.parse_with(self.args(), mode)
     }
 
     event_sender!();
