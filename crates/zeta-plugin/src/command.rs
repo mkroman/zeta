@@ -924,6 +924,24 @@ mod tests {
     }
 
     #[test]
+    fn the_command_cache_initializes_each_command_once() {
+        #[derive(Parser, Debug)]
+        /// Test options.
+        struct Opts {
+            /// the query
+            query: String,
+        }
+
+        let first = cached_command::<Opts>(".once");
+        let second = cached_command::<Opts>(".once");
+
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "the configured command is reused"
+        );
+    }
+
+    #[test]
     fn different_command_types_do_not_share_a_cache_entry() {
         #[derive(Parser, Debug, PartialEq)]
         /// Test options.

@@ -74,3 +74,83 @@ pub async fn reply_lookup<T, E>(
     client.send_privmsg(channel, message)
 }
 
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::sync::Arc;
+
+    use clap::Parser;
+    use irc::proto::Message;
+
+    use super::*;
+    use crate::command::CommandSpec;
+
+    /// Options whose required positional argument makes an empty invocation fail.
+    #[derive(Debug, Parser)]
+    /// Test options.
+    struct Opts {
+        /// the name to greet
+        name: String,
+    }
+
+    const COMMAND: CommandSpec = CommandSpec::with_args::<Opts>(".greet", "Greet someone");
+
+    /// Returns a client whose sends are accepted and discarded.
+    async fn mock_client() -> Client {
+        Client::from_config(irc::client::data::Config {
+            nickname: Some("zeta-test".to_owned()),
+            server: Some("mock".to_owned()),
+            use_mock_connection: true,
+            mock_initial_value: Some(String::new()),
+            ..Default::default()
+        })
+        .await
+        .expect("mock irc client")
+    }
+
+    /// Returns a command event invoking [`COMMAND`] with `args` in `#test`.
+    fn command(args: &str) -> CommandEvent {
+        let text = if args.is_empty() {
+            COMMAND.trigger().to_owned()
+        } else {
+            format!("{} {args}", COMMAND.trigger())
+        };
+        let message = Message::new(Some("#test"), "PRIVMSG", vec!["#test", text.as_str()])
+            .expect("message should parse");
+
+        CommandEvent::new(Arc::new(message), COMMAND).expect("the message should match the command")
+    }
+
+    /// Returns the non-empty lines of the usage output for `args`.
+    fn usage_lines(args: &str) -> Vec<String> {
+        COMMAND
+            .parse_with::<Opts>(args, ArgsMode::Shell)
+            .expect_err("the required argument is missing")
+            .to_string()
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn replies_with_each_non_empty_usage_line_in_order() {
+        let client = mock_client().await;
+        let command = command("");
+        let sent = RefCell::new(Vec::new());
+
+        let result = parse_or_usage::<Opts>(&client, &command, ArgsMode::Shell, |line| {
+            sent.borrow_mut().push(line.to_owned());
+
+            format!("> {line}")
+        })
+        .expect("the mock client accepts the messages");
+
+        assert!(result.is_none(), "a failed parse abandons the command");
+        assert_eq!(
+            *sent.borrow(),
+            usage_lines(""),
+            "one message per non-empty line"
+        );
+    }
+}

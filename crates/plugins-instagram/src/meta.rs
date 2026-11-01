@@ -281,6 +281,21 @@ mod tests {
     }
 
     #[test]
+    fn selectors_initialize_once() {
+        // `LazyLock` parses on first deref and hands out that same instance afterwards, so each
+        // selector is parsed once per process — the property the `OnceLock` accessors provided.
+        let title = &raw const *OG_TITLE_SELECTOR;
+        let description = &raw const *OG_DESCRIPTION_SELECTOR;
+
+        assert!(std::ptr::addr_eq(title, &raw const *OG_TITLE_SELECTOR));
+        assert!(std::ptr::addr_eq(
+            description,
+            &raw const *OG_DESCRIPTION_SELECTOR
+        ));
+        assert!(!std::ptr::addr_eq(title, description), "distinct selectors");
+    }
+
+    #[test]
     fn test_shortcode_to_media_pk() {
         // The media pk of the shortcode, as computed independently.
         assert_eq!(
