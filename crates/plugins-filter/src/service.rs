@@ -103,16 +103,36 @@ impl FilterService {
         self.index.load().filters()
     }
 
+    /// Whether the index holds no filters at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.index.load().is_empty()
+    }
+
+    /// Returns the filter with the given `id`, if it exists.
+    ///
+    /// Scans the index by reference and clones only the matching filter, unlike a
+    /// [`list`](Self::list) snapshot, which clones every filter.
+    #[must_use]
+    pub fn find(&self, id: i32) -> Option<Filter> {
+        self.index
+            .load()
+            .sorted_filters()
+            .into_iter()
+            .find(|filter| filter.id == id)
+            .cloned()
+    }
+
     /// Returns a snapshot of the filters matching `criteria`, in id order.
     #[must_use]
     pub fn select(&self, criteria: &Criteria) -> Vec<Filter> {
         // Compile once for the whole listing, not once per filter.
         let criteria = criteria.compile();
 
-        self.list()
-            .into_iter()
-            .filter(|filter| criteria.matches(filter))
-            .collect()
+        let mut filters = self.list();
+        filters.retain(|filter| criteria.matches(filter));
+
+        filters
     }
 }
 
@@ -179,6 +199,12 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(
+            service.find(added.id).map(|filter| filter.id),
+            Some(added.id)
+        );
+        assert!(!service.is_empty());
+
         let removed = service.delete_ids(&[added.id]).await.unwrap();
 
         assert_eq!(removed, 1);
@@ -194,6 +220,8 @@ mod tests {
         service.load().await.unwrap();
 
         assert!(!service.list().iter().any(|f| f.id == added.id));
+        assert!(service.find(added.id).is_none());
+        assert!(service.is_empty());
     }
 
     #[sqlx::test(migrations = "../plugins/migrations")]

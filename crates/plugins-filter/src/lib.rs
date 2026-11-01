@@ -371,7 +371,7 @@ impl FilterPlugin {
         let filters = self.service.select(&opts.criteria());
 
         let response = if filters.is_empty() {
-            if self.service.list().is_empty() {
+            if self.service.is_empty() {
                 labeled_reply("Filter", "No filters are configured.")
             } else {
                 labeled_reply("Filter", "No filters match your criteria.")
@@ -409,12 +409,7 @@ impl FilterPlugin {
 
             // The removed filter is named in the reply, and an unknown id is answered without
             // touching the database.
-            let Some(filter) = self
-                .service
-                .list()
-                .into_iter()
-                .find(|filter| filter.id == id)
-            else {
+            let Some(filter) = self.service.find(id) else {
                 client.send_privmsg(
                     channel,
                     labeled_reply("Filter", format!("No filter with id {id}.")),
