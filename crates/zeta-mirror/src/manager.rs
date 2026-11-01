@@ -83,6 +83,20 @@ pub enum Error {
     Busy,
 }
 
+/// Flattens a blocking task's join result into the task's own I/O result.
+///
+/// A join error — the blocking task panicked or was cancelled — becomes an [`std::io::Error`], so
+/// callers handle both failure modes in one place. After a join error the temporary directory may
+/// or may not exist, but the request cannot proceed either way.
+fn flatten_join<T>(
+    result: Result<std::io::Result<T>, tokio::task::JoinError>,
+) -> std::io::Result<T> {
+    match result {
+        Ok(result) => result,
+        Err(err) => Err(std::io::Error::other(err)),
+    }
+}
+
 /// A request to download the media at `url` and mirror it to the bucket.
 pub struct DownloadRequest {
     /// The URL to download.
@@ -366,18 +380,9 @@ impl UploadCompletion {
         // The path is captured before `close`, since it is no longer valid afterwards.
         let tempdir_path = tempdir.path().to_path_buf();
 
-        match tokio::task::spawn_blocking(move || tempdir.close()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                warn!(
-                    file.path = %tempdir_path.display(),
-                    exception.message = %err,
-                    "could not remove the temporary download directory"
-                );
-            }
+        match flatten_join(tokio::task::spawn_blocking(move || tempdir.close()).await) {
+            Ok(()) => {}
             Err(err) => {
-                let err = std::io::Error::other(err);
-
                 warn!(
                     file.path = %tempdir_path.display(),
                     exception.message = %err,
@@ -513,38 +518,22 @@ impl Manager {
         self.next_id += 1;
 
         let download_dir = self.download_dir.clone();
-        let tempdir =
-            match tokio::task::spawn_blocking(move || tempdir_builder().tempdir_in(&download_dir))
-                .await
-            {
-                Ok(Ok(tempdir)) => tempdir,
-                Ok(Err(err)) => {
-                    error!(
-                        media.id = %request.id,
-                        exception.message = %err,
-                        "could not create a temporary download directory"
-                    );
+        let tempdir = match flatten_join(
+            tokio::task::spawn_blocking(move || tempdir_builder().tempdir_in(&download_dir)).await,
+        ) {
+            Ok(tempdir) => tempdir,
+            Err(err) => {
+                error!(
+                    media.id = %request.id,
+                    exception.message = %err,
+                    "could not create a temporary download directory"
+                );
 
-                    (request.on_finish)(Err(Error::TempDir(err)));
+                (request.on_finish)(Err(Error::TempDir(err)));
 
-                    return;
-                }
-                Err(err) => {
-                    // A join error means the blocking task panicked or was cancelled; the directory
-                    // may or may not exist, but the request cannot proceed.
-                    let err = std::io::Error::other(err);
-
-                    error!(
-                        media.id = %request.id,
-                        exception.message = %err,
-                        "could not create a temporary download directory"
-                    );
-
-                    (request.on_finish)(Err(Error::TempDir(err)));
-
-                    return;
-                }
-            };
+                return;
+            }
+        };
 
         let downloader = Arc::clone(&self.downloader);
         let task = DownloadTask::new(id, self.status_tx.clone());

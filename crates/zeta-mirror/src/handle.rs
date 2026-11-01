@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tracing::warn;
 use url::Url;
 
-use crate::{Mirror, MirrorError};
+use crate::{MediaId, Mirror, MirrorError};
 
 /// A plugin's handle to the shared [`Mirror`].
 ///
@@ -73,7 +73,7 @@ impl MirrorHandle {
     pub async fn ensure_mirrored<F>(
         &self,
         url: &str,
-        id: &str,
+        id: &MediaId,
         on_mirrored: F,
     ) -> Result<Option<String>, MirrorError>
     where

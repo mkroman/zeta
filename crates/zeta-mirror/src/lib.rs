@@ -19,6 +19,7 @@
 mod config;
 mod handle;
 mod manager;
+mod media_id;
 mod s3;
 mod tempdir;
 mod ytdlp;
@@ -39,9 +40,8 @@ use ytdlp::{YtDlp, YtDlpOptions};
 
 pub use config::MirrorConfig;
 pub use handle::MirrorHandle;
+pub use media_id::{InvalidMediaId, MediaId};
 pub use s3::Error as MirrorError;
-
-use zeta_url::is_identifier;
 
 /// The media currently being mirrored, keyed by `(prefix, id)`.
 type InFlight = Mutex<HashSet<(String, String)>>;
@@ -222,6 +222,9 @@ impl Mirror {
     /// is submitted to the download manager, which calls `on_mirrored` with the public link once
     /// it has been downloaded and uploaded, and `None` is returned.
     ///
+    /// The id is a [`MediaId`], so it is already safe for file names, object keys and URL
+    /// fragments; the download manager validates it again before it reaches the file system.
+    ///
     /// # Errors
     ///
     /// Returns an error if it could not be checked whether the media has already been mirrored.
@@ -230,29 +233,20 @@ impl Mirror {
         prefix: &str,
         public_url_base: &Url,
         url: &str,
-        id: &str,
+        id: &MediaId,
         on_mirrored: F,
     ) -> Result<Option<String>, MirrorError>
     where
         F: FnOnce(String) + Send + 'static,
     {
-        // The id ends up in file names, object keys and the public link fragment; ids that are
-        // not safe are never mirrored. It is validated here (before the fast-path check) and
-        // again by the download manager before it reaches the file system.
-        if !is_identifier(id, "_-") {
-            warn!(media.id = %id, "ignoring mirror request with an unsafe id");
-
-            return Ok(None);
-        }
-
-        if self.is_mirrored(prefix, id).await? {
-            let link = public_url_for(public_url_base, id);
+        if self.is_mirrored(prefix, id.as_str()).await? {
+            let link = public_url_for(public_url_base, id.as_str());
             debug!(media.id = %id, %link, "media has already been mirrored");
 
             return Ok(Some(link));
         }
 
-        if !self.mark_in_flight(prefix, id) {
+        if !self.mark_in_flight(prefix, id.as_str()) {
             debug!(media.id = %id, "media is already being mirrored");
 
             return Ok(None);
@@ -260,14 +254,14 @@ impl Mirror {
 
         let Some(manager) = self.download_manager() else {
             warn!(media.id = %id, "download manager is not running");
-            Self::clear_in_flight(&self.in_flight, prefix, id);
+            Self::clear_in_flight(&self.in_flight, prefix, id.as_str());
 
             return Ok(None);
         };
 
         let in_flight = Arc::clone(&self.in_flight);
         let url = url.to_string();
-        let id = id.to_string();
+        let id = id.as_str().to_string();
         let prefix = prefix.to_string();
         let public_url_base = public_url_base.clone();
 
@@ -435,38 +429,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ensure_mirrored_rejects_unsafe_id() {
-        let mirror = mirror_for_test();
-        let base = Url::parse("https://pub.rwx.im/reddit").unwrap();
-
-        // The request is rejected before any S3 request is made.
-        let result = mirror
-            .ensure_mirrored(
-                "reddit",
-                &base,
-                "https://v.redd.it/../evil",
-                "../evil",
-                |_| {},
-            )
-            .await
-            .expect("the rejection should not be an error");
-
-        assert!(result.is_none());
-        // The media was not marked as in-flight, so a later mirror can be requested.
-        assert!(mirror.mark_in_flight("reddit", "../evil"));
-    }
-
-    #[tokio::test]
     async fn test_ensure_mirrored_starts_the_download_manager() {
         let (mirror, _server) = mirror_with_missing_objects().await;
         let base = Url::parse("https://pub.rwx.im/reddit").unwrap();
+        let id = MediaId::parse("123").expect("the id is valid");
 
         // The manager is not started by a `loaded` hook anymore: the first request must start
         // it, or a URL delivered before `loaded` runs would be dropped.
         assert!(mirror.manager.get().is_none());
 
         let result = mirror
-            .ensure_mirrored("reddit", &base, "https://v.redd.it/123", "123", |_| {})
+            .ensure_mirrored("reddit", &base, "https://v.redd.it/123", &id, |_| {})
             .await
             .expect("the fast-path check should succeed");
 
