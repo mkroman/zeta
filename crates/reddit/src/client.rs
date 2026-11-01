@@ -1,17 +1,16 @@
 //! Client for the Reddit API.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION};
 use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
 use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
-use tokio::sync::RwLock;
 use tracing::{debug, instrument, trace};
 use url::Url;
+use zeta_http::oauth::{TokenCache, TokenResponse};
 use zeta_url::RedactedUrl;
 
 use crate::urls::classify_reddit_com_url;
@@ -39,17 +38,6 @@ fn request_error(error: reqwest::Error) -> RequestError {
     error
 }
 
-struct TokenCache {
-    access_token: String,
-    expires_at: Instant,
-}
-
-#[derive(Deserialize)]
-struct AccessTokenResponse {
-    pub access_token: String,
-    pub expires_in: u64,
-}
-
 /// Reddit client.
 // The fields keep Reddit's official OAuth2 `client_id`/`client_secret` terminology, which
 // necessarily repeats the struct's name; `http` is the house name for the HTTP client.
@@ -61,14 +49,8 @@ pub struct Client {
     client_id: String,
     /// Reddit application client secret.
     client_secret: SecretString,
-    /// Current authentication token state.
-    token_state: RwLock<Option<TokenCache>>,
-}
-
-impl TokenCache {
-    pub fn is_valid(&self) -> bool {
-        self.expires_at > Instant::now() + Duration::from_secs(30)
-    }
+    /// Current authentication token, refreshed shortly before it expires.
+    token: TokenCache,
 }
 
 /// Options for building a Reddit [`Client`].
@@ -116,7 +98,6 @@ impl Client {
     ) -> Result<Self, Error> {
         let client_id = client_id.into();
         let client_secret = client_secret.into();
-        let token_state = RwLock::new(None);
         let user_agent = options.user_agent.unwrap_or_else(|| USER_AGENT.to_string());
         let http = reqwest::ClientBuilder::new()
             .redirect(Policy::none())
@@ -131,47 +112,18 @@ impl Client {
             http,
             client_id,
             client_secret,
-            token_state,
+            token: TokenCache::new(),
         })
     }
 
-    // The write guard is deliberately held across the token request — that is what
-    // serializes concurrent misses into a single token request.
-    #[allow(clippy::significant_drop_tightening)]
     async fn get_valid_token(&self) -> Result<String, Error> {
-        {
-            let read = self.token_state.read().await;
-
-            if let Some(cache) = read.as_ref().filter(|state| state.is_valid()) {
-                return Ok(cache.access_token.clone());
-            }
-        }
-
-        let new_token = {
-            let mut guard = self.token_state.write().await;
-
-            // Double check and return the current session if it was changed while we were waiting
-            // for the lock.
-            if let Some(cache) = guard.as_ref().filter(|state| state.is_valid()) {
-                return Ok(cache.access_token.clone());
-            }
-
-            debug!("access token expired or missing, requesting new token");
-            let auth_token = self.request_access_token().await?;
-
-            *guard = Some(TokenCache {
-                access_token: auth_token.access_token.clone(),
-                expires_at: Instant::now() + Duration::from_secs(auth_token.expires_in),
-            });
-
-            auth_token.access_token
-        };
-
-        Ok(new_token)
+        self.token.get(|| self.request_access_token()).await
     }
 
     #[instrument(name = "reddit.auth", skip_all)]
-    async fn request_access_token(&self) -> Result<AccessTokenResponse, Error> {
+    async fn request_access_token(&self) -> Result<TokenResponse, Error> {
+        debug!("access token expired or missing, requesting new token");
+
         let request = self
             .http
             .post(TOKEN_URL)
@@ -182,7 +134,7 @@ impl Client {
             .await
             .map_err(|error| Error::RequestAuthToken(request_error(error)))?;
         let access_token = response
-            .json::<AccessTokenResponse>()
+            .json::<TokenResponse>()
             .await
             .map_err(|error| Error::InvalidAuthTokenResponse(RequestError::from(error)))?;
 
