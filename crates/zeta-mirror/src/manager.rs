@@ -11,6 +11,10 @@
 //! are uploaded, so uploads never keep the download queue from draining and the manager never
 //! awaits an upload itself.
 //!
+//! The accepted-request queue is bounded by [`MAX_QUEUED_REQUESTS`]: a request that arrives while
+//! the queue is full is rejected with [`Error::Busy`] instead of being retained, so a stalled
+//! upload pipeline cannot grow the manager's in-memory queue without bound.
+//!
 //! Uploads are bounded explicitly: at most [`UPLOAD_CONCURRENCY`] run at once and at most
 //! [`UPLOAD_BACKLOG`] completed downloads wait for a slot. When the backlog is full, no new
 //! download is started until an upload finishes; requests keep being accepted and queued, so the
@@ -46,6 +50,14 @@ const UPLOAD_CONCURRENCY: usize = 2;
 /// the queue can exceed this by at most `max_concurrent`.
 const UPLOAD_BACKLOG: usize = 8;
 
+/// The maximum number of accepted download requests waiting for a download slot and upload
+/// capacity.
+///
+/// A request that arrives while the queue is full is rejected with [`Error::Busy`]. Without this
+/// bound a stalled upload pipeline would let the queue grow with every request for as long as the
+/// stall lasts.
+const MAX_QUEUED_REQUESTS: usize = 64;
+
 /// Errors that can occur while mirroring a download request.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -64,6 +76,9 @@ pub enum Error {
     /// The download id is not safe to use in file names and object keys.
     #[error("invalid download id: {0}")]
     InvalidId(String),
+    /// The accepted-request queue is full.
+    #[error("download queue is full")]
+    Busy,
 }
 
 /// A request to download the media at `url` and mirror it to the bucket.
@@ -130,7 +145,8 @@ impl DownloadManager {
     /// Completed downloads are uploaded by a bounded pipeline: at most [`UPLOAD_CONCURRENCY`]
     /// uploads run at once and at most [`UPLOAD_BACKLOG`] wait. When the backlog is full the
     /// manager stops starting downloads until an upload finishes, so finished media cannot pile
-    /// up without bound.
+    /// up without bound. At most [`MAX_QUEUED_REQUESTS`] accepted requests wait for a download
+    /// slot; further requests are rejected with [`Error::Busy`].
     ///
     /// The manager task itself has no span: its lifetime is the process, not a unit of work, so a
     /// span for it would never be exported and would outlive whatever started it. Each download,
@@ -271,15 +287,16 @@ impl Upload {
             }
         };
 
-        completion.complete(result);
+        completion.complete(result).await;
     }
 }
 
 /// Removes an upload's temporary directory and notifies its requester exactly once.
 ///
-/// The completion is owned by the [`Upload`] (or by its running task), so dropping it without
-/// completing it — because the task was cancelled or panicked — still runs the callback and
-/// removes the files.
+/// Completion removes the directory on the blocking pool and only then invokes the callback, so
+/// the callback never observes a directory that is still being removed. The completion is owned
+/// by the [`Upload`] (or by its running task), so dropping it without completing it — because the
+/// task was cancelled or panicked — still runs the callback and removes the files synchronously.
 struct UploadCompletion {
     /// The requester callback, taken when it is invoked so it can never run twice.
     on_finish: Option<OnFinish>,
@@ -296,16 +313,54 @@ impl UploadCompletion {
         }
     }
 
-    /// Removes the temporary directory and reports `result` to the requester.
-    fn complete(mut self, result: Result<String, Error>) {
-        self.close_tempdir();
+    /// Removes the temporary directory on the blocking pool and reports `result` to the
+    /// requester.
+    ///
+    /// A cleanup failure is logged but does not change the result the requester receives.
+    async fn complete(mut self, result: Result<String, Error>) {
+        self.close_tempdir_async().await;
 
         if let Some(on_finish) = self.on_finish.take() {
             on_finish(result);
         }
     }
 
-    /// Removes the temporary directory, if it has not been removed yet.
+    /// Removes the temporary directory on the blocking pool, if it has not been removed yet.
+    ///
+    /// A failure is logged; it does not change the primary result reported to the requester.
+    async fn close_tempdir_async(&mut self) {
+        let Some(tempdir) = self.tempdir.take() else {
+            return;
+        };
+
+        // The path is captured before `close`, since it is no longer valid afterwards.
+        let tempdir_path = tempdir.path().to_path_buf();
+
+        match tokio::task::spawn_blocking(move || tempdir.close()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                warn!(
+                    file.path = %tempdir_path.display(),
+                    exception.message = %err,
+                    "could not remove the temporary download directory"
+                );
+            }
+            Err(err) => {
+                let err = std::io::Error::other(err);
+
+                warn!(
+                    file.path = %tempdir_path.display(),
+                    exception.message = %err,
+                    "could not remove the temporary download directory"
+                );
+            }
+        }
+    }
+
+    /// Removes the temporary directory synchronously, if it has not been removed yet.
+    ///
+    /// This is the fallback for a cancelled or panicking upload task, where there is no async
+    /// context left to await the blocking pool.
     fn close_tempdir(&mut self) {
         let Some(tempdir) = self.tempdir.take() else {
             return;
@@ -347,16 +402,16 @@ impl Manager {
             tokio::select! {
                 request = self.requests.recv() => {
                     let Some(request) = request else { break };
-                    self.on_request(request);
+                    self.on_request(request).await;
                 }
                 status = self.status.recv() => {
                     // The sending end lives in `self`, so the status channel cannot close
                     // while the manager runs; the match only makes the select total.
                     let Some(status) = status else { break };
-                    self.on_status(status);
+                    self.on_status(status).await;
                 }
                 upload = self.uploads.join_next(), if has_uploads => {
-                    self.on_upload_finished(upload);
+                    self.on_upload_finished(upload).await;
                 }
             }
         }
@@ -372,9 +427,21 @@ impl Manager {
     }
 
     /// Handles an incoming download request, starting it or queueing it for later.
-    fn on_request(&mut self, request: DownloadRequest) {
+    ///
+    /// A request that arrives while [`MAX_QUEUED_REQUESTS`] are already waiting is rejected with
+    /// [`Error::Busy`] instead of growing the queue, so a stalled upload pipeline cannot retain
+    /// accepted requests without bound.
+    async fn on_request(&mut self, request: DownloadRequest) {
         if self.active.len() < self.max_concurrent && !self.upload_backlog_full() {
-            self.start_download(request);
+            self.start_download(request).await;
+        } else if self.queue.len() >= MAX_QUEUED_REQUESTS {
+            warn!(
+                media.id = %request.id,
+                queued = self.queue.len(),
+                "rejecting download request, the queue is full"
+            );
+
+            (request.on_finish)(Err(Error::Busy));
         } else {
             debug!(
                 media.id = %request.id,
@@ -388,8 +455,12 @@ impl Manager {
         }
     }
 
-    /// Starts a download task for the given request, creating its temporary download directory.
-    fn start_download(&mut self, request: DownloadRequest) {
+    /// Starts a download task for the given request, creating its temporary download directory on
+    /// the blocking pool.
+    ///
+    /// The directory exists before the download task is spawned, and a failure to create it is
+    /// reported to the requester instead of starting the download.
+    async fn start_download(&mut self, request: DownloadRequest) {
         if !is_identifier(&request.id, "_-") {
             warn!(media.id = %request.id, "rejecting download with an unsafe id");
 
@@ -401,20 +472,39 @@ impl Manager {
         let id = self.next_id;
         self.next_id += 1;
 
-        let tempdir = match tempdir_builder().tempdir_in(&self.download_dir) {
-            Ok(tempdir) => tempdir,
-            Err(err) => {
-                error!(
-                    media.id = %request.id,
-                    exception.message = %err,
-                    "could not create a temporary download directory"
-                );
+        let download_dir = self.download_dir.clone();
+        let tempdir =
+            match tokio::task::spawn_blocking(move || tempdir_builder().tempdir_in(&download_dir))
+                .await
+            {
+                Ok(Ok(tempdir)) => tempdir,
+                Ok(Err(err)) => {
+                    error!(
+                        media.id = %request.id,
+                        exception.message = %err,
+                        "could not create a temporary download directory"
+                    );
 
-                (request.on_finish)(Err(Error::TempDir(err)));
+                    (request.on_finish)(Err(Error::TempDir(err)));
 
-                return;
-            }
-        };
+                    return;
+                }
+                Err(err) => {
+                    // A join error means the blocking task panicked or was cancelled; the directory
+                    // may or may not exist, but the request cannot proceed.
+                    let err = std::io::Error::other(err);
+
+                    error!(
+                        media.id = %request.id,
+                        exception.message = %err,
+                        "could not create a temporary download directory"
+                    );
+
+                    (request.on_finish)(Err(Error::TempDir(err)));
+
+                    return;
+                }
+            };
 
         let downloader = Arc::clone(&self.downloader);
         let task = DownloadTask::new(id, self.status_tx.clone());
@@ -471,7 +561,7 @@ impl Manager {
     /// The upload task re-enters the finished download's `media.download` span, while starting
     /// the next download happens outside it, so that download remains the root of its own trace
     /// instead of becoming a child of the download that freed the slot.
-    fn on_status(&mut self, status: DownloadStatus) {
+    async fn on_status(&mut self, status: DownloadStatus) {
         let (id, result) = match status {
             DownloadStatus::Completed { id, files } => (id, Ok(files)),
             DownloadStatus::Failed { id, error } => (id, Err(error)),
@@ -486,7 +576,7 @@ impl Manager {
                 // Queueing first lets the backpressure check in `start_next` see the finished
                 // download: the slot is free, but the upload pipeline may not be.
                 self.enqueue_upload(active, files);
-                self.start_next();
+                self.start_next().await;
             }
             Err(error) => {
                 let span = active.span.clone();
@@ -498,24 +588,26 @@ impl Manager {
                     );
                 });
 
-                self.start_next();
-                Self::fail_download(active, error);
+                self.start_next().await;
+                Self::fail_download(active, error).await;
             }
         }
     }
 
-    /// Reports a failed download after removing its temporary directory.
+    /// Reports a failed download after removing its temporary directory on the blocking pool.
     ///
-    /// A failed download has nothing to upload, so its callback runs inline; the slot has
-    /// already been released by the caller, keeping the queue draining.
-    fn fail_download(active: ActiveDownload, error: ytdlp::Error) {
+    /// A failed download has nothing to upload, so its callback runs inline once the removal has
+    /// completed; the slot has already been released by the caller, keeping the queue draining.
+    async fn fail_download(active: ActiveDownload, error: ytdlp::Error) {
         let ActiveDownload {
             request: DownloadRequest { on_finish, .. },
             tempdir,
             ..
         } = active;
 
-        UploadCompletion::new(on_finish, tempdir).complete(Err(Error::Download(error)));
+        UploadCompletion::new(on_finish, tempdir)
+            .complete(Err(Error::Download(error)))
+            .await;
     }
 
     /// Queues a completed download for upload and starts as many queued uploads as the
@@ -572,7 +664,7 @@ impl Manager {
 
     /// Handles a finished upload task, then refills the upload pipeline and the download slots
     /// the completed upload may have unblocked.
-    fn on_upload_finished(&mut self, joined: Option<Result<(), tokio::task::JoinError>>) {
+    async fn on_upload_finished(&mut self, joined: Option<Result<(), tokio::task::JoinError>>) {
         if let Some(Err(error)) = joined {
             // The upload's completion guard has already reported the cancellation or panic.
             if error.is_panic() {
@@ -583,7 +675,7 @@ impl Manager {
         }
 
         self.pump_uploads();
-        self.start_next();
+        self.start_next().await;
     }
 
     /// Returns whether the upload pipeline has no room for another completed download.
@@ -643,13 +735,13 @@ impl Manager {
     /// A request that [`start_download`](Self::start_download) rejects early — an unsafe id or a
     /// temporary directory that could not be created — never becomes active, so draining the
     /// queue here keeps a rejected request from stranding every request behind it.
-    fn start_next(&mut self) {
+    async fn start_next(&mut self) {
         while self.active.len() < self.max_concurrent && !self.upload_backlog_full() {
             let Some(request) = self.queue.pop_front() else {
                 break;
             };
 
-            self.start_download(request);
+            self.start_download(request).await;
         }
     }
 }
@@ -1342,6 +1434,72 @@ mod tests {
 
         callbacks.sort_unstable();
         assert_eq!(callbacks, (0..=capacity).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn test_full_queue_rejects_with_busy_and_preserves_admission_order() {
+        let (started, mut started_rx) = mpsc::unbounded_channel();
+        let (gate_0, gate_rx_0) = oneshot::channel();
+        let (_gate_1, gate_rx_1) = oneshot::channel();
+
+        // Only the active download and the first queued download ever reach the downloader; the
+        // rest stay queued until this test ends.
+        let downloader = Arc::new(GatedDownloader {
+            started,
+            gates: Mutex::new(VecDeque::from([gate_rx_0, gate_rx_1])),
+        });
+        let (_download_dir, manager) = start_manager(downloader, S3::for_test(), 1);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        manager
+            .submit(request("0", "first", results.clone(), 0))
+            .expect("manager is running");
+
+        assert_eq!(started_rx.recv().await.as_deref(), Some("first"));
+
+        // The active download holds the only slot, so these fill the accepted-request queue.
+        for index in 0..MAX_QUEUED_REQUESTS {
+            manager
+                .submit(request(
+                    "0",
+                    &format!("queued{index}"),
+                    results.clone(),
+                    index + 1,
+                ))
+                .expect("manager is running");
+        }
+
+        manager
+            .submit(request(
+                "0",
+                "overflow",
+                results.clone(),
+                MAX_QUEUED_REQUESTS + 1,
+            ))
+            .expect("manager is running");
+
+        // The request over the cap is rejected immediately rather than retained.
+        let (index, result) = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the overflowing request should be rejected while the queue is full")
+            .expect("the result channel stays open");
+
+        assert_eq!(index, MAX_QUEUED_REQUESTS + 1);
+        assert!(matches!(result, Err(Error::Busy)), "{result:?}");
+        assert!(
+            rx.try_recv().is_err(),
+            "only the overflowing request should have finished"
+        );
+
+        // Releasing the active download admits the oldest queued request, not the new one.
+        drop(gate_0);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), started_rx.recv())
+                .await
+                .expect("the queued request should start once the slot is free")
+                .as_deref(),
+            Some("queued0")
+        );
     }
 
     #[tokio::test]
