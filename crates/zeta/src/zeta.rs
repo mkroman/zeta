@@ -97,9 +97,12 @@ fn drive_outgoing(client: &mut Client) -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// Returns the IRC command name for telemetry.
-fn command_name(command: &irc::proto::Command) -> &str {
-    match command {
+/// Returns the IRC command name when the event index routes it, for telemetry.
+///
+/// `PING`, `PONG` and numerics are not routed and get no `irc.dispatch` span; `ERROR` is
+/// included because its disconnect reason is logged inside the span.
+fn routed_command_name(command: &irc::proto::Command) -> Option<&str> {
+    let name = match command {
         irc::proto::Command::PRIVMSG(..) => "PRIVMSG",
         irc::proto::Command::NOTICE(..) => "NOTICE",
         irc::proto::Command::JOIN(..) => "JOIN",
@@ -109,8 +112,10 @@ fn command_name(command: &irc::proto::Command) -> &str {
         irc::proto::Command::KICK(..) => "KICK",
         irc::proto::Command::ERROR(..) => "ERROR",
         irc::proto::Command::Raw(name, _) => name,
-        _ => "OTHER",
-    }
+        _ => return None,
+    };
+
+    Some(name)
 }
 
 /// Returns the channel a message targets, when it has one.
@@ -146,22 +151,10 @@ async fn dispatch_messages(
         // produce a trace with no children. `ERROR` is included because the disconnect reason
         // is logged below. The span is at info level, not debug, because the loop below logs
         // warnings: an `info` filter must not be what keeps them out of the backend.
-        let routed = matches!(
-            &message.command,
-            irc::proto::Command::PRIVMSG(..)
-                | irc::proto::Command::NOTICE(..)
-                | irc::proto::Command::JOIN(..)
-                | irc::proto::Command::PART(..)
-                | irc::proto::Command::QUIT(..)
-                | irc::proto::Command::NICK(..)
-                | irc::proto::Command::KICK(..)
-                | irc::proto::Command::Raw(..)
-                | irc::proto::Command::ERROR(..)
-        );
-        let dispatch = routed.then(|| {
+        let dispatch = routed_command_name(&message.command).map(|command| {
             let span = tracing::info_span!(
                 "irc.dispatch",
-                irc.command = command_name(&message.command),
+                irc.command = command,
                 irc.channel = tracing::field::Empty,
             );
 
@@ -456,6 +449,39 @@ impl Zeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routed_command_name_matches_the_event_index() {
+        use irc::proto::{Command, Response};
+
+        let cases = [
+            (
+                Command::PRIVMSG("#zeta".to_owned(), "hello".to_owned()),
+                Some("PRIVMSG"),
+            ),
+            (
+                Command::NOTICE("#zeta".to_owned(), "hello".to_owned()),
+                Some("NOTICE"),
+            ),
+            (Command::JOIN("#zeta".to_owned(), None, None), Some("JOIN")),
+            (Command::PART("#zeta".to_owned(), None), Some("PART")),
+            (Command::QUIT(None), Some("QUIT")),
+            (Command::NICK("zeta".to_owned()), Some("NICK")),
+            (
+                Command::KICK("#zeta".to_owned(), "nick".to_owned(), None),
+                Some("KICK"),
+            ),
+            (Command::Raw("BATCH".to_owned(), Vec::new()), Some("BATCH")),
+            (Command::ERROR("closing link".to_owned()), Some("ERROR")),
+            (Command::PING("server".to_owned(), None), None),
+            (Command::PONG("server".to_owned(), None), None),
+            (Command::Response(Response::RPL_WELCOME, Vec::new()), None),
+        ];
+
+        for (command, expected) in cases {
+            assert_eq!(routed_command_name(&command), expected, "{command:?}");
+        }
+    }
 
     /// A mirror whose manager can be started without network access.
     #[cfg(feature = "mirror")]

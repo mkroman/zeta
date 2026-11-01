@@ -15,9 +15,6 @@ mod model;
 mod repository;
 mod service;
 
-// The module types are re-exported as part of the module's API surface, even though the plugin
-// itself only handles them by value.
-#[allow(unused_imports)]
 pub use {
     error::Error,
     model::{Alert, NewAlert},
@@ -133,6 +130,39 @@ pub struct AlertPlugin {
 }
 
 impl AlertPlugin {
+    /// Replies to `.alert -l` with the sender's pending alerts in `channel`.
+    async fn list_alerts(
+        &self,
+        client: &Client,
+        channel: &str,
+        nickname: &str,
+        opts: &Opts,
+    ) -> Result<(), ZetaError> {
+        if !opts.args.is_empty() {
+            client.send_privmsg(channel, labeled_reply("Alert", USAGE))?;
+
+            return Ok(());
+        }
+
+        let pending = match self.service.pending_for(channel, nickname).await {
+            Ok(pending) => pending,
+            Err(err) => {
+                error!(exception.message = ?err, "could not list pending alerts");
+
+                client.send_privmsg(
+                    channel,
+                    labeled_reply("Alert", "could not list your pending alerts"),
+                )?;
+
+                return Ok(());
+            }
+        };
+
+        client.send_privmsg(channel, format_pending(&pending))?;
+
+        Ok(())
+    }
+
     /// Spawns the delivery task that sends due alerts over IRC as they are delivered by the
     /// scheduler.
     fn start_delivery(
@@ -251,29 +281,7 @@ impl AlertPlugin {
         };
 
         if opts.list {
-            if !opts.args.is_empty() {
-                client.send_privmsg(channel, labeled_reply("Alert", USAGE))?;
-
-                return Ok(());
-            }
-
-            let pending = match self.service.pending_for(channel, nickname).await {
-                Ok(pending) => pending,
-                Err(err) => {
-                    error!(exception.message = ?err, "could not list pending alerts");
-
-                    client.send_privmsg(
-                        channel,
-                        labeled_reply("Alert", "could not list your pending alerts"),
-                    )?;
-
-                    return Ok(());
-                }
-            };
-
-            client.send_privmsg(channel, format_pending(&pending))?;
-
-            return Ok(());
+            return self.list_alerts(client, channel, nickname, &opts).await;
         }
 
         let input = opts.input();
