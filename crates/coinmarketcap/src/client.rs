@@ -265,12 +265,10 @@ fn request_error(error: reqwest::Error) -> Error {
 ///
 /// # Errors
 ///
-/// Returns the parse error, including the path to the offending part of the document, if
-/// `text` is not valid JSON for `T`.
+/// Returns the parse error, including the line and column of the offending part of the
+/// document, if `text` is not valid JSON for `T`.
 fn decode<T: DeserializeOwned>(text: &str) -> Result<T, ParseError> {
-    let deserializer = &mut serde_json::Deserializer::from_str(text);
-
-    serde_path_to_error::deserialize(deserializer).inspect_err(|error| {
+    serde_json::from_str(text).inspect_err(|error| {
         let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
 
         debug!(

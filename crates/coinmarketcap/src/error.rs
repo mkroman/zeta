@@ -153,7 +153,7 @@ const fn classify(timeout: bool, connect: bool) -> &'static str {
 }
 
 /// The JSON response body could not be parsed.
-pub type ParseError = serde_path_to_error::Error<serde_json::Error>;
+pub type ParseError = serde_json::Error;
 
 /// Errors that can occur during coin lookups.
 ///
