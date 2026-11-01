@@ -243,6 +243,11 @@ pub struct EventIndex {
     /// rejected before the first-word split and the command hash lookup. Stale bits left behind
     /// by evicted plugins only cause a lookup that finds nothing.
     command_initials: u128,
+    /// Whether any registered command trigger starts with a byte outside the ASCII bitmap.
+    ///
+    /// Stale `true` left behind by an evicted plugin only causes a lookup that finds nothing,
+    /// like a stale bitmap bit.
+    command_initials_non_ascii: bool,
     /// Plugins subscribed to URLs on specific hosts, indexed by the lowercased host.
     url_hosts: IndexMap<String, Vec<Subscriber>>,
     /// Plugins subscribed to every URL, including hosts other plugins handle.
@@ -256,6 +261,7 @@ impl Default for EventIndex {
         Self {
             commands: IndexMap::default(),
             command_initials: 0,
+            command_initials_non_ascii: false,
             url_hosts: IndexMap::default(),
             url_any: Vec::new(),
             kinds: std::array::from_fn(|_| Vec::new()),
@@ -299,10 +305,12 @@ impl EventIndex {
                     spec: *command,
                 });
 
-            if let Some(&byte) = command.trigger().as_bytes().first()
-                && (b' '..0x80).contains(&byte)
-            {
-                self.command_initials |= 1 << (byte - b' ');
+            match command.trigger().as_bytes().first() {
+                Some(&byte) if (b' '..0x80).contains(&byte) => {
+                    self.command_initials |= 1 << (byte - b' ');
+                }
+                Some(_) => self.command_initials_non_ascii = true,
+                None => {}
             }
         }
 
@@ -480,12 +488,12 @@ impl EventIndex {
 
     /// Returns whether `text` can start a registered command, judging by its first byte alone.
     ///
-    /// Bytes outside the trigger alphabet cannot start a command; they return `true` so they
-    /// still take the exact first-word path instead of being rejected.
+    /// The bitmap has no bit for a byte ≥ 0x80; only a trigger starting with one can match such
+    /// a message, so the index tracks whether any such trigger exists.
     #[inline]
     fn may_start_command(&self, text: &str) -> bool {
         match text.as_bytes().first() {
-            Some(&byte) if !(b' '..0x80).contains(&byte) => true,
+            Some(&byte) if !(b' '..0x80).contains(&byte) => self.command_initials_non_ascii,
             Some(&byte) => (self.command_initials >> (byte - b' ')) & 1 != 0,
             None => false,
         }
@@ -778,6 +786,21 @@ mod tests {
             drain(&mut mailbox)[..],
             [Event::Command(ref command)] if command.args() == "bonjour"
         ));
+    }
+
+    /// Without a trigger starting outside the ASCII bitmap, a non-ASCII message must not take
+    /// the first-word split and command hash lookup at all.
+    #[test]
+    fn non_ascii_messages_are_rejected_without_non_ascii_triggers() {
+        let mut index = EventIndex::default();
+        let _dig = subscribe(&mut index, "dig", |subscriptions| {
+            subscriptions.command(CommandSpec::new(".dig", "dig"));
+        });
+
+        assert!(!index.may_start_command("æble grød"));
+        assert!(!index.may_start_command("🦀 rust"));
+        assert!(!index.may_start_command(""));
+        assert!(index.may_start_command(".dig example.com"));
     }
 
     #[test]
