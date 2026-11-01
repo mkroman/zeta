@@ -19,7 +19,6 @@ use tracing_subscriber::layer::{Context as LayerContext, Layer};
 use tracing_subscriber::prelude::*;
 
 use zeta_http::{get_json, send};
-use zeta_test_support::refused_address;
 use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
 
 /// One span as the recorder observed it: its name, its fields and when it closed.
@@ -203,16 +202,21 @@ async fn get_json_opens_a_client_span_covering_the_whole_request() {
 }
 
 #[tokio::test]
-async fn a_refused_connection_still_produces_a_client_span_with_an_error_type() {
-    let address = refused_address();
+async fn a_failed_send_still_produces_a_client_span_with_an_error_type() {
+    // `ftp` is not an HTTP scheme: the client rejects the request before the connector runs,
+    // so this is a real failed send that never opens a socket — nothing can answer the port
+    // between the test starting and the request, which is what a dropped listener could not
+    // promise. The span wiring is the same for every failure; the connection-specific
+    // `error.type` value is the wrapper's, covered by the refused-connection log tests.
+    let url = reqwest::Url::parse("ftp://example.invalid/?key=secret").expect("parse the url");
 
     let recorder = SpanRecorder::default();
     let subscriber = tracing_subscriber::registry().with(recorder.clone());
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    let error = send(reqwest::Client::new().get(format!("http://{address}/?key=secret")))
+    let error = send(reqwest::Client::new().get(url))
         .await
-        .expect_err("nothing listens on that address");
+        .expect_err("the client rejects the scheme");
 
     let spans = recorder.named("http.client");
     assert_eq!(spans.len(), 1, "{spans:?}");
@@ -221,12 +225,9 @@ async fn a_refused_connection_still_produces_a_client_span_with_an_error_type() 
 
     assert_eq!(span.field("otel.kind"), Some("client"));
     assert_eq!(span.field("http.request.method"), Some("GET"));
-    assert_eq!(span.field("error.type"), Some("connection_error"));
+    assert_eq!(span.field("error.type"), Some("other"));
     assert_eq!(span.field("http.response.status_code"), None);
-    assert_eq!(
-        span.field("url.full"),
-        Some(format!("http://{address}/").as_str())
-    );
+    assert_eq!(span.field("url.full"), Some("ftp://example.invalid/"));
 
     // The failed span closes too, so it is exported instead of leaking until the process
     // exits; and the error stays redacted.
