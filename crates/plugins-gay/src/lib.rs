@@ -2028,7 +2028,7 @@ impl Gay {
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
-        let opts = match command.parse_args::<Opts>() {
+        let opts = match command.spec.parse_args::<Opts>(command.args()) {
             Ok(opts) => opts,
             Err(err) => {
                 client.send_privmsg(channel, err.to_string())?;

@@ -13,9 +13,8 @@
 //! # Features
 //!
 //! `all` (the default) enables every bundled plugin. Each plugin also has a feature named after
-//! it (`titles`, `youtube`, `unwall`, ...); the shared `database`, `http`, `emulated`, `mirror`
-//! and `time` features group the capabilities the plugin crates need. See `Cargo.toml` for the
-//! exact graph.
+//! it (`titles`, `youtube`, `unwall`, ...); the shared `database` and `http` features group the
+//! capabilities the plugin crates need. See `Cargo.toml` for the exact graph.
 
 use std::collections::BTreeSet;
 
@@ -23,121 +22,61 @@ pub mod config;
 
 pub use config::{PluginSection, PluginsConfig};
 
-// Re-export the enabled plugin crates so their `inventory` registrations are linked into the
-// facade and any binary that uses it. An unreferenced optional dependency is not necessarily
-// linked, which would silently drop its plugin.
-#[cfg(feature = "alert")]
-pub use plugins_alert as alert;
-#[cfg(feature = "chaturbate")]
-pub use plugins_chaturbate as chaturbate;
-#[cfg(feature = "choices")]
-pub use plugins_choices as choices;
-#[cfg(feature = "coinmarketcap")]
-pub use plugins_coinmarketcap as coinmarketcap;
-#[cfg(feature = "dendanskeordbog")]
-pub use plugins_dendanskeordbog as dendanskeordbog;
-#[cfg(feature = "dig")]
-pub use plugins_dig as dig;
-#[cfg(feature = "filter")]
-pub use plugins_filter as filter;
-#[cfg(feature = "gay")]
-pub use plugins_gay as gay;
-#[cfg(feature = "geoip")]
-pub use plugins_geoip as geoip;
-#[cfg(feature = "github")]
-pub use plugins_github as github;
-#[cfg(feature = "health")]
-pub use plugins_health as health;
-#[cfg(feature = "help")]
-pub use plugins_help as help;
-#[cfg(feature = "howlongtobeat")]
-pub use plugins_howlongtobeat as howlongtobeat;
-#[cfg(feature = "imdb")]
-pub use plugins_imdb as imdb;
-#[cfg(feature = "instagram")]
-pub use plugins_instagram as instagram;
-#[cfg(feature = "isitopen")]
-pub use plugins_isitopen as isitopen;
-#[cfg(feature = "kagi")]
-pub use plugins_kagi as kagi;
-#[cfg(feature = "notification")]
-pub use plugins_notification as notification;
-#[cfg(feature = "ofn")]
-pub use plugins_ofn as ofn;
-#[cfg(feature = "openweathermap")]
-pub use plugins_openweathermap as openweathermap;
-#[cfg(feature = "pornhub")]
-pub use plugins_pornhub as pornhub;
-#[cfg(feature = "reddit")]
-pub use plugins_reddit as reddit;
-#[cfg(feature = "rink")]
-pub use plugins_rink as rink;
-#[cfg(feature = "rust-playground")]
-pub use plugins_rust_playground as rust_playground;
-#[cfg(feature = "spotify")]
-pub use plugins_spotify as spotify;
-#[cfg(feature = "string-utils")]
-pub use plugins_string_utils as string_utils;
-#[cfg(feature = "thingiverse")]
-pub use plugins_thingiverse as thingiverse;
-#[cfg(feature = "tiktok")]
-pub use plugins_tiktok as tiktok;
-#[cfg(feature = "titles")]
-pub use plugins_titles as titles;
-#[cfg(feature = "trustpilot")]
-pub use plugins_trustpilot as trustpilot;
-#[cfg(feature = "tvmaze")]
-pub use plugins_tvmaze as tvmaze;
-#[cfg(feature = "twitch")]
-pub use plugins_twitch as twitch;
-#[cfg(feature = "unwall")]
-pub use plugins_unwall as unwall;
-#[cfg(feature = "urban-dictionary")]
-pub use plugins_urban_dictionary as urban_dictionary;
-#[cfg(feature = "youtube")]
-pub use plugins_youtube as youtube;
+// Declares each bundled plugin crate once: the re-export that links it (and with it the
+// crate's `inventory` registration) and its entry in `BUNDLED_PLUGIN_NAMES`. An unreferenced
+// optional dependency is not necessarily linked, which would silently drop its plugin.
+macro_rules! bundled_plugins {
+    ($($feature:literal => $krate:ident as $name:ident),+ $(,)?) => {
+        $(
+            #[cfg(feature = $feature)]
+            pub use $krate as $name;
+        )+
 
-/// The names of every bundled plugin, whether or not its cargo feature is enabled.
-///
-/// Configuration sections for these names describe a plugin that was compiled out, not a typo,
-/// so the host can report the two cases differently.
-pub(crate) const BUNDLED_PLUGIN_NAMES: &[&str] = &[
-    "alert",
-    "chaturbate",
-    "choices",
-    "coinmarketcap",
-    "dendanskeordbog",
-    "dig",
-    "filter",
-    "gay",
-    "geoip",
-    "github",
-    "health",
-    "help",
-    "howlongtobeat",
-    "imdb",
-    "instagram",
-    "isitopen",
-    "kagi",
-    "notification",
-    "ofn",
-    "openweathermap",
-    "pornhub",
-    "reddit",
-    "rink",
-    "rust_playground",
-    "spotify",
-    "string_utils",
-    "thingiverse",
-    "tiktok",
-    "titles",
-    "trustpilot",
-    "tvmaze",
-    "twitch",
-    "unwall",
-    "urban_dictionary",
-    "youtube",
-];
+        /// The names of every bundled plugin, whether or not its cargo feature is enabled.
+        ///
+        /// Configuration sections for these names describe a plugin that was compiled out,
+        /// not a typo, so the host can report the two cases differently.
+        pub(crate) const BUNDLED_PLUGIN_NAMES: &[&str] = &[$(stringify!($name)),+];
+    };
+}
+
+bundled_plugins! {
+    "alert" => plugins_alert as alert,
+    "chaturbate" => plugins_chaturbate as chaturbate,
+    "choices" => plugins_choices as choices,
+    "coinmarketcap" => plugins_coinmarketcap as coinmarketcap,
+    "dendanskeordbog" => plugins_dendanskeordbog as dendanskeordbog,
+    "dig" => plugins_dig as dig,
+    "filter" => plugins_filter as filter,
+    "gay" => plugins_gay as gay,
+    "geoip" => plugins_geoip as geoip,
+    "github" => plugins_github as github,
+    "health" => plugins_health as health,
+    "help" => plugins_help as help,
+    "howlongtobeat" => plugins_howlongtobeat as howlongtobeat,
+    "imdb" => plugins_imdb as imdb,
+    "instagram" => plugins_instagram as instagram,
+    "isitopen" => plugins_isitopen as isitopen,
+    "kagi" => plugins_kagi as kagi,
+    "notification" => plugins_notification as notification,
+    "ofn" => plugins_ofn as ofn,
+    "openweathermap" => plugins_openweathermap as openweathermap,
+    "pornhub" => plugins_pornhub as pornhub,
+    "reddit" => plugins_reddit as reddit,
+    "rink" => plugins_rink as rink,
+    "rust-playground" => plugins_rust_playground as rust_playground,
+    "spotify" => plugins_spotify as spotify,
+    "string-utils" => plugins_string_utils as string_utils,
+    "thingiverse" => plugins_thingiverse as thingiverse,
+    "tiktok" => plugins_tiktok as tiktok,
+    "titles" => plugins_titles as titles,
+    "trustpilot" => plugins_trustpilot as trustpilot,
+    "tvmaze" => plugins_tvmaze as tvmaze,
+    "twitch" => plugins_twitch as twitch,
+    "unwall" => plugins_unwall as unwall,
+    "urban-dictionary" => plugins_urban_dictionary as urban_dictionary,
+    "youtube" => plugins_youtube as youtube,
+}
 
 /// Registers every compiled-in bundled plugin that its configuration enables.
 ///
@@ -431,12 +370,8 @@ mod tests {
             }
 
             assert!(
-                lib.contains(&format!("pub use plugins_{snake} as {snake};")),
-                "`{plugin}` is missing its re-export in crates/plugins/src/lib.rs"
-            );
-            assert!(
-                lib.contains(&format!("\"{snake}\",")),
-                "`{plugin}` is missing from BUNDLED_PLUGIN_NAMES"
+                lib.contains(&format!("\"{plugin}\" => plugins_{snake} as {snake},")),
+                "`{plugin}` is missing from the `bundled_plugins!` list"
             );
         }
     }
