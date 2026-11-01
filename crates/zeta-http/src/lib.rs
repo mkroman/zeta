@@ -19,6 +19,14 @@ mod response;
 #[cfg(feature = "uri")]
 mod uri;
 
+/// A boxed, `Send` future: the return type of the outlined HTTP state machines.
+///
+/// `send` and `read_success` are type-erased so that their coroutine polls are compiled once
+/// instead of once per caller; passing the future through a `Box` keeps it out of the caller's
+/// generic instantiation.
+#[cfg(any(feature = "request", feature = "http"))]
+pub(crate) type BoxFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 #[cfg(feature = "emulated")]
 pub mod emulated;
 #[cfg(feature = "http")]

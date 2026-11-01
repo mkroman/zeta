@@ -12,7 +12,7 @@ use zeta_url::{RedactedUrl, RedactedUrlRef};
 
 #[cfg(feature = "http")]
 use crate::HttpConfig;
-use crate::RequestError;
+use crate::{BoxFuture, RequestError};
 
 /// The client span of a response, carried in its extensions so the body read and the parse run
 /// inside the span the request opened.
@@ -46,48 +46,57 @@ pub struct ClientSpan(pub(crate) Span);
 /// # Errors
 ///
 /// Returns the [`RequestError`] of the failed send, with its URL redacted.
-pub async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response, RequestError> {
-    let (client, request) = request.build_split();
-    let request = match request {
-        Ok(request) => request,
-        // A request that cannot be built never reaches the network, so there is nothing for a
-        // client span to measure; the log still names the URL when the error carries one.
-        Err(error) => return Err(log_request_failure(RequestError::from(error))),
-    };
-    let method = request.method().clone();
+///
+/// Outlined on purpose: every API plugin reaches this through its own response type, and with
+/// LTO the compiler otherwise clones the request-build and span state machine into each caller.
+/// The box allocates once per request, which is negligible next to the round trip it awaits.
+#[inline(never)]
+pub fn send(
+    request: reqwest::RequestBuilder,
+) -> BoxFuture<'static, Result<reqwest::Response, RequestError>> {
+    Box::pin(async move {
+        let (client, request) = request.build_split();
+        let request = match request {
+            Ok(request) => request,
+            // A request that cannot be built never reaches the network, so there is nothing for a
+            // client span to measure; the log still names the URL when the error carries one.
+            Err(error) => return Err(log_request_failure(RequestError::from(error))),
+        };
+        let method = request.method().clone();
 
-    let span = info_span!(
-        "http.client",
-        otel.kind = "client",
-        http.request.method = %method,
-        url.full = %RedactedUrlRef::from_url(request.url()),
-        server.address = %request.url().host_str().unwrap_or_default(),
-        server.port = request.url().port_or_known_default(),
-        http.response.status_code = tracing::field::Empty,
-        error.type = tracing::field::Empty,
-    );
+        let span = info_span!(
+            "http.client",
+            otel.kind = "client",
+            http.request.method = %method,
+            url.full = %RedactedUrlRef::from_url(request.url()),
+            server.address = %request.url().host_str().unwrap_or_default(),
+            server.port = request.url().port_or_known_default(),
+            http.response.status_code = tracing::field::Empty,
+            error.type = tracing::field::Empty,
+        );
 
-    match client.execute(request).instrument(span.clone()).await {
-        Ok(response) => {
-            span.record("http.response.status_code", response.status().as_u16());
+        match client.execute(request).instrument(span.clone()).await {
+            Ok(response) => {
+                span.record("http.response.status_code", response.status().as_u16());
 
-            // The body helpers read the span back; without the `http` feature there is no body
-            // helper, so the span ends with the response headers.
-            #[cfg(feature = "http")]
-            let response = attach_span(response, span);
+                // The body helpers read the span back; without the `http` feature there is no body
+                // helper, so the span ends with the response headers.
+                #[cfg(feature = "http")]
+                let response = attach_span(response, span);
 
-            Ok(response)
+                Ok(response)
+            }
+            Err(error) => {
+                let error = RequestError::from(error);
+
+                span.record("error.type", error.error_type());
+
+                // Logged inside the span: the event marks the span as failed and is exported with
+                // its attributes, also when the caller has no enabled span of its own.
+                Err(span.in_scope(|| log_request_failure(error)))
+            }
         }
-        Err(error) => {
-            let error = RequestError::from(error);
-
-            span.record("error.type", error.error_type());
-
-            // Logged inside the span: the event marks the span as failed and is exported with
-            // its attributes, also when the caller has no enabled span of its own.
-            Err(span.in_scope(|| log_request_failure(error)))
-        }
-    }
+    })
 }
 
 /// Attaches the client span to `response`, so the body read stays in the span the request
