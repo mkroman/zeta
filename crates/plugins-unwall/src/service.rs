@@ -227,7 +227,7 @@ impl UnwallService {
     #[instrument(name = "unwall.host.statistics", skip_all, err)]
     pub async fn host_statistics(&self, host: &str) -> Result<Option<HostStatistics>, Error> {
         self.repo
-            .host_statistics(&host.to_lowercase(), Utc::now().date_naive())
+            .host_statistics(&host.trim().to_ascii_lowercase(), Utc::now().date_naive())
             .await
     }
 }

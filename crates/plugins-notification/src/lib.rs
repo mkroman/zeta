@@ -143,8 +143,8 @@ impl NotificationPlugin {
             let mut delivered = 0;
 
             for notification in &pending {
-                let message = &notification.message;
-                let creator = &notification.nickname;
+                let message = unstyle_text(&notification.message);
+                let creator = unstyle_text(&notification.nickname);
                 let created_at = notification
                     .created_at
                     .with_timezone(&Local)
@@ -174,7 +174,7 @@ impl NotificationPlugin {
                     .map(|notification| notification.id)
                     .collect::<Vec<_>>();
 
-                if let Err(err) = self.service.delete_all(&sent_ids).await {
+                if let Err(err) = self.service.delete_ids(&sent_ids).await {
                     error!(
                         exception.message = ?err,
                         notification.count = sent_ids.len(),

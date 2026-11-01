@@ -45,7 +45,6 @@ use std::time::Duration;
 use clap::Parser;
 use tracing::{Instrument, debug, warn};
 
-use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrlRef;
 use zeta_utils::{
@@ -347,9 +346,7 @@ impl Unwall {
 
     /// Replies with the statistics of one host.
     async fn info(&self, client: &Client, channel: &str, host: &str) -> Result<(), ZetaError> {
-        let host = host.trim().to_lowercase();
-
-        let response = match self.service.host_statistics(&host).await {
+        let response = match self.service.host_statistics(host).await {
             Ok(Some(stats)) => labeled_reply(
                 NAME,
                 format!(
@@ -503,11 +500,7 @@ impl Unwall {
 
         let api_base = client::base_url(&settings.api_base).map_err(plugin_err)?;
         let reader_base = client::base_url(&settings.reader_base).map_err(plugin_err)?;
-        let client = UnwallClient::new(
-            http::build_client(&ctx.config.http),
-            settings.submit_timeout,
-            api_base,
-        );
+        let client = UnwallClient::new(ctx.http().clone(), settings.submit_timeout, api_base);
 
         let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage unwall sites");
 
