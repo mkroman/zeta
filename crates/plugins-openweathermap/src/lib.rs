@@ -290,6 +290,7 @@ fn contextual_api_error(context: &str, error: http::ApiError) -> Error {
         http::ApiError::Status { status, .. } => Error::Api(format!("{context}: {status}")),
         http::ApiError::Request(error) => Error::Request(error),
         http::ApiError::Deserialize(error) => Error::Api(error.to_string()),
+        other => Error::Api(other.to_string()),
     }
 }
 
