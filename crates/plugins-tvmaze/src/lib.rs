@@ -138,8 +138,16 @@ impl Tvmaze {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        self.handle_show_search(command.args(), command.channel(), client)
-            .await
+        reply_lookup(
+            client,
+            command.channel(),
+            self.single_search(command.args()),
+            |show| Self::format_show_message(&show),
+            |error| Self::format_error_message(&error),
+        )
+        .await?;
+
+        Ok(())
     }
 }
 
@@ -167,23 +175,6 @@ impl Tvmaze {
         debug!(?show, "finished parsing show");
 
         Ok(show)
-    }
-
-    /// Handles the search response and parses the show data.
-    async fn handle_show_search(
-        &self,
-        name: &str,
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        let message = match self.single_search(name).await {
-            Ok(show) => Self::format_show_message(&show),
-            Err(err) => Self::format_error_message(&err),
-        };
-
-        client.send_privmsg(channel, message)?;
-
-        Ok(())
     }
 
     /// Formats a show message based on whether there's a next episode.

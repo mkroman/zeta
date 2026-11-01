@@ -161,9 +161,9 @@ pub fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResul
                 .items
                 .into_iter()
                 .map(|item| SearchResult {
-                    title: unescape(&item.title).into_owned(),
+                    title: unescape(item.title).into_owned(),
                     url: item.url,
-                    description: unescape(&item.snippet).into_owned(),
+                    description: unescape(item.snippet).into_owned(),
                 })
                 .collect();
         }
@@ -238,7 +238,7 @@ fn parse_search_results_html(html: &str) -> Vec<SearchResult> {
             let url = title.attr("href").unwrap_or("").to_string();
 
             results.push(SearchResult {
-                title: title.text().collect::<String>().trim().to_owned(),
+                title: collect_trimmed_text(&title),
                 url,
                 description: extract_topmost_text(&description),
             });
@@ -307,6 +307,22 @@ fn parse_image_results_html(html: &str) -> Vec<ImageResult> {
     }
 
     results
+}
+
+/// Collects an element's text nodes into one allocation, trimmed.
+fn collect_trimmed_text(elem: &ElementRef<'_>) -> String {
+    let mut text = String::with_capacity(elem.text().map(str::len).sum());
+
+    for node in elem.text() {
+        text.push_str(node);
+    }
+
+    let start = text.len() - text.trim_start().len();
+    let end = start + text[start..].trim_end().len();
+    text.truncate(end);
+    text.drain(..start);
+
+    text
 }
 
 fn extract_topmost_text(elem: &ElementRef<'_>) -> String {
