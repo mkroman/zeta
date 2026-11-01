@@ -20,7 +20,7 @@ http = [
 ]
 # The transport-error wrapper alone (used by the mirror crate without the HTTP stack).
 request = ["dep:reqwest"]
-# Redaction of an `http::Uri`, without the browser-emulated stack.
+# Internal plumbing for the browser-emulated stack: redaction of an `http::Uri`.
 uri = ["dep:http"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.
 emulated = ["dep:thiserror", "dep:wreq", "dep:wreq-util", "uri"]

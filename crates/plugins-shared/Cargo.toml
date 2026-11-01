@@ -9,14 +9,14 @@ repository = "https://github.com/mkroman/zeta"
 [features]
 default = []
 # The reply flow shared by the plugins that mirror media.
-mirror = ["dep:zeta-mirror"]
+mirror = ["dep:zeta-mirror", "dep:irc", "dep:tracing", "dep:zeta-plugin"]
 
 [dependencies]
-irc.workspace = true
-tracing.workspace = true
+irc = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 url.workspace = true
 zeta-mirror = { path = "../zeta-mirror", optional = true }
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-plugin = { path = "../zeta-plugin", default-features = false, optional = true }
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]

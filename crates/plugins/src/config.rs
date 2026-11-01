@@ -174,23 +174,18 @@ impl<'de> Deserialize<'de> for PluginsConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
+
     use figment::{
         Error, Figment,
         providers::{Format, Toml},
     };
-
-    use crate::PluginsConfig;
-    #[cfg(feature = "dig")]
     use serde::de::DeserializeOwned;
-
-    #[cfg(feature = "dig")]
-    use std::net::IpAddr;
-
-    #[cfg(feature = "dig")]
     use zeta_test_support::assert_empty;
 
+    use crate::PluginsConfig;
+
     /// The base configuration the full-config tests start from.
-    #[cfg(feature = "dig")]
     const FULL_BASE: &str = r#"
 [database]
 url = "postgresql://localhost/zeta_test"
@@ -225,7 +220,6 @@ channels = []
 
     /// Deserializes the settings of the plugin named `name`, or its defaults when the section is
     /// omitted.
-    #[cfg(feature = "dig")]
     fn settings<S: Default + DeserializeOwned>(plugins: &PluginsConfig, name: &str) -> S {
         plugins
             .sections
@@ -238,7 +232,6 @@ channels = []
             })
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn parses_plugin_sections() {
         let plugins = extract(
@@ -267,7 +260,6 @@ enabled = false
         assert_empty!(plugins.unknown);
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn missing_plugins_section_defaults_to_enabled() {
         let plugins = extract("").expect("could not parse configuration");
@@ -291,7 +283,6 @@ enabled = false
         assert!(enabled(&plugins, "health"));
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn enabled_by_default_false_opts_plugins_in() {
         let plugins = extract(
@@ -365,7 +356,6 @@ enabled = false
         assert!(error.to_string().contains("enabled"), "{error}");
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn invalid_settings_type_is_rejected() {
         let error = extract("[plugins.dig]\nnameservers = \"1.1.1.1\"\n")
@@ -374,7 +364,6 @@ enabled = false
         assert!(error.to_string().contains("dig"), "{error}");
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn invalid_ip_address_is_rejected() {
         let error = extract("[plugins.dig]\nnameservers = [\"not-an-ip\"]\n")
@@ -383,7 +372,6 @@ enabled = false
         assert!(error.to_string().contains("dig"), "{error}");
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn empty_nameservers_are_rejected() {
         let error = extract("[plugins.dig]\nnameservers = []\n")
@@ -392,7 +380,6 @@ enabled = false
         assert!(error.to_string().contains("dig"), "{error}");
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn invalid_settings_are_rejected_for_disabled_plugins() {
         let error = extract("[plugins.dig]\nenabled = false\nnameservers = \"1.1.1.1\"\n")
@@ -423,7 +410,6 @@ enabled = false
         );
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn unknown_settings_keys_are_ignored() {
         let plugins = extract("[plugins.dig]\nnameserverss = [\"1.1.1.1\"]\n")
@@ -459,7 +445,6 @@ enabled = false
 
     /// The plugin sections of the repository `config.toml` must keep parsing and hold the
     /// values the documentation quotes.
-    #[cfg(feature = "dig")]
     #[test]
     fn repository_plugin_sections_parse() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config.toml");
@@ -485,7 +470,6 @@ enabled = false
         assert_empty!(config.unknown_setting_keys);
     }
 
-    #[cfg(feature = "dig")]
     #[test]
     fn full_config_without_plugins_section_parses() {
         let config = Figment::new()

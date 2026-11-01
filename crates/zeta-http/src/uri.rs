@@ -1,8 +1,8 @@
 //! Redaction of request URIs for span attributes and logs.
 //!
 //! [`RedactedUriRef`] renders an [`http::Uri`] in place, without the `to_string` and URL parse
-//! the owned [`zeta_url::RedactedUrl`] needs. It lives outside the `emulated` module so a
-//! benchmark or another client can use it without building the browser-emulated stack.
+//! the owned [`zeta_url::RedactedUrl`] needs. It is internal plumbing for the `emulated`
+//! client's spans, so it is only re-exported inside the crate.
 
 use std::fmt;
 
