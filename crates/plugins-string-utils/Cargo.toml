@@ -13,13 +13,13 @@ native-tls = ["zeta-plugin/native-tls"]
 native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
-tokio.workspace = true
 tracing.workspace = true
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
 zeta-unicode = { path = "../zeta-unicode" }
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
+tokio.workspace = true
 zeta-test-support = { path = "../zeta-test-support" }
 
 [lints]
