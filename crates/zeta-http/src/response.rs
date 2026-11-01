@@ -128,7 +128,7 @@ where
             };
             let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
 
-            log_status(status, Some(&logged), true);
+            log_status(status, Some(logged.as_ref()), true);
 
             return Err(ApiError::Status { status, body });
         }

@@ -6,6 +6,7 @@
 //! reply; one without is a plain reply. The helpers here produce those byte sequences so the
 //! exact escape codes are written down in one place.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
@@ -101,8 +102,14 @@ pub fn strip_formatting(text: &str) -> String {
 /// spaces, and runs of whitespace are collapsed. This is the form callers want before echoing a
 /// page title, an API description, or any other text they do not control: a line break would
 /// terminate the IRC message, and formatting codes would restyle the rest of the reply.
+///
+/// Text that needs no change is borrowed from `text`.
 #[must_use]
-pub fn unstyle_text(text: &str) -> String {
+pub fn unstyle_text(text: &str) -> Cow<'_, str> {
+    if is_plain_line(text) {
+        return Cow::Borrowed(text);
+    }
+
     let mut visible = String::with_capacity(text.len());
     let mut characters = text.chars().peekable();
     let mut pending_space = false;
@@ -126,7 +133,27 @@ pub fn unstyle_text(text: &str) -> String {
         }
     }
 
-    visible
+    Cow::Owned(visible)
+}
+
+/// Whether [`unstyle_text`] would return `text` unchanged: no control characters, no leading
+/// or trailing whitespace, no whitespace run, and no non-space whitespace to normalize.
+fn is_plain_line(text: &str) -> bool {
+    let mut start_of_line = true;
+    let mut previous_space = false;
+
+    for character in text.chars() {
+        if character.is_control()
+            || (character.is_whitespace() && (start_of_line || previous_space || character != ' '))
+        {
+            return false;
+        }
+
+        start_of_line = false;
+        previous_space = character.is_whitespace();
+    }
+
+    !previous_space
 }
 
 /// The shared implementation of [`strip_control_chars`] and [`strip_formatting`]: formatting
@@ -455,6 +482,17 @@ mod tests {
         assert_eq!(unstyle_text("first\nsecond"), "first second");
         assert_eq!(unstyle_text("  a \t b  "), "a b");
         assert_eq!(unstyle_text("plain"), "plain");
+    }
+
+    #[test]
+    fn unstyle_text_borrows_only_text_that_needs_no_change() {
+        assert!(matches!(unstyle_text("plain"), Cow::Borrowed(_)));
+        assert!(matches!(unstyle_text(""), Cow::Borrowed(_)));
+        assert!(matches!(unstyle_text("a\u{a0}b"), Cow::Owned(_)));
+        assert!(matches!(unstyle_text(" a"), Cow::Owned(_)));
+        assert!(matches!(unstyle_text("a "), Cow::Owned(_)));
+        assert!(matches!(unstyle_text("a  b"), Cow::Owned(_)));
+        assert!(matches!(unstyle_text("a\tb"), Cow::Owned(_)));
     }
 
     #[test]

@@ -24,11 +24,18 @@ pub trait Truncatable: AsRef<str> {
     /// appended when truncation happens.
     ///
     /// A suffix longer than `len` is kept whole, so the result can exceed `len` in that case.
-    fn truncate_within(&self, len: usize, suffix: &str) -> String {
+    /// Text that fits is borrowed from `self`.
+    fn truncate_within(&self, len: usize, suffix: &str) -> Cow<'_, str> {
         let text = self.as_ref();
 
+        // One character is at least one byte, so text within `len` bytes holds at most `len`
+        // characters: the common short reply needs no scan at all.
+        if text.len() <= len {
+            return Cow::Borrowed(text);
+        }
+
         if text.char_indices().nth(len).is_none() {
-            return text.to_string();
+            return Cow::Borrowed(text);
         }
 
         let text_len = len.saturating_sub(suffix.chars().count());
@@ -39,7 +46,7 @@ pub trait Truncatable: AsRef<str> {
         let mut truncated = String::with_capacity(byte_len + suffix.len());
         truncated.push_str(&text[..byte_len]);
         truncated.push_str(suffix);
-        truncated
+        Cow::Owned(truncated)
     }
 }
 
@@ -308,6 +315,16 @@ mod tests {
         assert_eq!("hello".truncate_within(4, "..."), "h...");
         assert_eq!("hello".truncate_within(3, ""), "hel");
         assert_eq!("hello".truncate_within(5, ""), "hello");
+    }
+
+    #[test]
+    fn truncate_within_borrows_only_when_the_text_fits() {
+        let s: &str = "this is a very long string";
+
+        // should not copy when length exceeds str
+        assert!(matches!(s.truncate_within(250, "…"), Cow::Borrowed(_)));
+        // should copy when truncating
+        assert!(matches!(s.truncate_within(10, "…"), Cow::Owned(_)));
     }
 
     #[test]
