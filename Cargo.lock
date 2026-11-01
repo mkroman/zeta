@@ -1979,15 +1979,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indefinite"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7a2447d0e617bef5c153002265e3b264712c07efdb6d2cbc24948883ecc8dd8"
-dependencies = [
- "regex",
-]
-
-[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3414,7 +3405,6 @@ name = "plugins-spotify"
 version = "0.0.0"
 dependencies = [
  "base64 0.23.1",
- "indefinite",
  "num-format",
  "reqwest",
  "serde",
@@ -3592,7 +3582,6 @@ name = "plugins-youtube"
 version = "0.0.0"
 dependencies = [
  "htmlize",
- "indefinite",
  "num-format",
  "plugins-shared",
  "reqwest",

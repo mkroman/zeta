@@ -15,7 +15,6 @@
 use std::fmt::Write;
 
 use base64::prelude::*;
-use indefinite::indefinite_article_only;
 use num_format::{Locale, ToFormattedString};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
@@ -27,7 +26,7 @@ use zeta_http::oauth::Credentials;
 use zeta_plugin::prelude::*;
 use zeta_url::path_segments;
 use zeta_utils::irc::unstyle_text;
-use zeta_utils::text::join_with_and;
+use zeta_utils::text::{indefinite_article, join_with_and};
 
 /// The Spotify hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["open.spotify.com", "play.spotify.com"];
@@ -262,7 +261,7 @@ impl Spotify {
                         if artist.genres.is_empty() {
                             let _ = write!(msg, " an");
                         } else {
-                            let article = indefinite_article_only(&genres);
+                            let article = indefinite_article(&genres);
                             let _ = write!(msg, " {article} {genres}");
                         }
                         let _ = write!(msg, " artist with \x0f{followers}\x0310 followers");

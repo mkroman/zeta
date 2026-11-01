@@ -2,6 +2,10 @@
 
 use std::borrow::Cow;
 
+mod article;
+
+pub use article::indefinite_article;
+
 /// Helpers for truncating text.
 pub trait Truncatable: AsRef<str> {
     /// Truncates the text to at most `len` characters, appending `suffix` when truncation

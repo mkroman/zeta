@@ -25,7 +25,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use indefinite::indefinite_article_only;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tokio::time::MissedTickBehavior;
@@ -38,6 +37,7 @@ use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_utils::duration::{format_duration, parse_iso8601_duration};
 use zeta_utils::irc::unstyle_text;
+use zeta_utils::text::indefinite_article;
 
 pub use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
 
@@ -549,7 +549,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         snippet.is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
 
     if is_live_stream {
-        let article = indefinite_article_only(&category);
+        let article = indefinite_article(&category);
 
         if let Some(viewers) = video
             .live_streaming_details
@@ -575,7 +575,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         .as_ref()
         .and_then(|details| parse_iso8601_duration(&details.duration))
         .map_or_else(|| "unknown duration".to_string(), format_duration);
-    let article = indefinite_article_only(&duration);
+    let article = indefinite_article(&duration);
 
     plain_reply(format!(
         "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
