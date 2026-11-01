@@ -312,26 +312,7 @@ impl YouTube {
             client,
             channel,
             self.search(args),
-            |results| {
-                results
-                    .iter()
-                    .find_map(|result| {
-                        let id = result.id.video_id.as_deref()?;
-
-                        Some((result, id))
-                    })
-                    .map_or_else(
-                        || plain_reply("No results"),
-                        |(result, id)| {
-                            let title = sanitize_html(&result.snippet.title);
-
-                            labeled_reply(
-                                "YouTube",
-                                format!("{title} - https://www.youtube.com/watch?v={id}"),
-                            )
-                        },
-                    )
-            },
+            search_reply,
             plain_reply,
         )
         .await?;
@@ -348,38 +329,21 @@ impl YouTube {
     ) -> Result<(), ZetaError> {
         let (url, channel) = (url.url(), url.channel());
 
-        if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
-            match self.get_video(&video_id).await {
-                Ok(video) => {
-                    let snippet = video.snippet.as_ref();
-                    let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
+        let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url)
+        else {
+            return Ok(());
+        };
 
-                    // The map is refreshed by the task started on load; the read is
-                    // stale-tolerant, so an unavailable API keeps serving the last known
-                    // categories.
-                    let category = self.video_categories.read(|cache| {
-                        cache
-                            .and_then(|categories| categories.get(&category_id))
-                            .map_or_else(
-                                || "unknown category".to_string(),
-                                |category| category.snippet.title.clone(),
-                            )
-                    });
+        let video = match self.get_video(&video_id).await {
+            Ok(video) => video,
+            Err(error) => {
+                client.send_privmsg(channel, plain_reply(error))?;
 
-                    let view_count = video
-                        .statistics
-                        .as_ref()
-                        .and_then(|s| str::parse::<u64>(&s.view_count).ok())
-                        .unwrap_or(0);
-
-                    let message = format_video_message(&video, &category, view_count);
-                    client.send_privmsg(channel, message)?;
-                }
-                Err(e) => {
-                    client.send_privmsg(channel, plain_reply(e))?;
-                }
+                return Ok(());
             }
-        }
+        };
+
+        client.send_privmsg(channel, self.video_reply(&video))?;
 
         Ok(())
     }
@@ -395,6 +359,32 @@ fn is_youtube_url(text: &str) -> bool {
 }
 
 impl YouTube {
+    /// Formats the reply for `video`, resolving its category and view count.
+    fn video_reply(&self, video: &Video) -> String {
+        let snippet = video.snippet.as_ref();
+        let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
+
+        // The map is refreshed by the task started on load; the read is
+        // stale-tolerant, so an unavailable API keeps serving the last known
+        // categories.
+        let category = self.video_categories.read(|cache| {
+            cache
+                .and_then(|categories| categories.get(&category_id))
+                .map_or_else(
+                    || "unknown category".to_string(),
+                    |category| category.snippet.title.clone(),
+                )
+        });
+
+        let view_count = video
+            .statistics
+            .as_ref()
+            .and_then(|s| str::parse::<u64>(&s.view_count).ok())
+            .unwrap_or(0);
+
+        format_video_message(video, &category, view_count)
+    }
+
     /// Spawns the task that periodically refreshes the cached video categories.
     ///
     /// The task ticks once per [`CATEGORIES_CHECK_INTERVAL`], skipping missed ticks: a tick is
@@ -528,6 +518,28 @@ async fn fetch_video_categories(
 /// videos responses.
 fn sanitize_html(text: &str) -> String {
     unstyle_text(&htmlize::unescape(text)).into_owned()
+}
+
+/// Formats the reply for the top video in a `.yt` search.
+fn search_reply(results: Vec<Search>) -> String {
+    results
+        .into_iter()
+        .find_map(|result| {
+            let id = result.id.video_id?;
+
+            Some((result.snippet, id))
+        })
+        .map_or_else(
+            || plain_reply("No results"),
+            |(snippet, id)| {
+                let title = sanitize_html(&snippet.title);
+
+                labeled_reply(
+                    "YouTube",
+                    format!("{title} - https://www.youtube.com/watch?v={id}"),
+                )
+            },
+        )
 }
 
 /// Formats the message describing `video`, using the resolved `category` and `view_count`.

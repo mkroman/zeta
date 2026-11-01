@@ -16,6 +16,7 @@ use crate::{BoxFuture, RequestError};
 
 /// The errors produced when sending a request and parsing its JSON response.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ApiError {
     /// The request could not be sent, or the response body could not be read.
     ///
@@ -129,32 +130,32 @@ fn read_success(
         async move {
             let status = response.status();
 
-            if !status.is_success() {
-                // Report the status even when its body cannot be read: the status is known before
-                // the read, and without this line the response would reach the logs only as span
-                // attributes. `body_error` records `error.type` first, so the event carries it too.
-                let body = match read_body(response).await {
-                    Ok(body) => body,
-                    Err(error) => {
-                        log_status(status, None, false);
+            if status.is_success() {
+                debug!("http response received");
 
-                        return Err(error);
-                    }
-                };
-                let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
+                // The caller re-enters the same span for the parse; cloning the handle keeps it
+                // open until then without running an await while it is entered.
+                let body = read_body(response).await?;
 
-                log_status(status, Some(logged.as_ref()), true);
-
-                return Err(ApiError::Status { status, body });
+                return Ok((body, span));
             }
 
-            debug!("http response received");
+            // Report the status even when its body cannot be read: the status is known before
+            // the read, and without this line the response would reach the logs only as span
+            // attributes. `body_error` records `error.type` first, so the event carries it too.
+            let body = match read_body(response).await {
+                Ok(body) => body,
+                Err(error) => {
+                    log_status(status, None, false);
 
-            // The caller re-enters the same span for the parse; cloning the handle keeps it open
-            // until then without running an await while it is entered.
-            let body = read_body(response).await?;
+                    return Err(error);
+                }
+            };
+            let logged = body.truncate_within(LOGGED_BODY_LENGTH, "…");
 
-            Ok((body, span))
+            log_status(status, Some(logged.as_ref()), true);
+
+            Err(ApiError::Status { status, body })
         }
         .instrument(instrument),
     )
