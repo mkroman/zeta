@@ -35,7 +35,7 @@ impl SharedState {
     ///
     /// Returns the previously published state of the same type, if any.
     // `rcu` may retry its closure, so the state cannot be moved into it.
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub fn publish<T: Send + Sync + 'static>(&self, state: Arc<T>) -> Option<Arc<T>> {
         let previous = self.states.rcu(|states| {
             let mut next = (**states).clone();

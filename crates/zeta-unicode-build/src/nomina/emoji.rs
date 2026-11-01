@@ -947,7 +947,7 @@ mod tests {
 
     /// The canonical emoji table, rebuilt here from the vendored files without calling the
     /// encoder's own parser.
-    #[allow(
+    #[expect(
         clippy::too_many_lines,
         reason = "a direct transcription of the shipped table's tone splitting"
     )]

@@ -52,52 +52,56 @@ const UNITS_TO_MINUTES: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES];
 /// Duration units from hours down to minutes.
 pub const HOURS_AND_MINUTES: &[(i64, &str)] = &[HOURS, MINUTES];
 
-/// Splits `total_seconds` into its non-zero `(count, unit)` parts, walking `units` from
-/// largest to smallest and spending the remainder of each unit on the next smaller one.
-fn split_into_units(total_seconds: i64, units: &[(i64, &'static str)]) -> Vec<(i64, &'static str)> {
-    let mut parts = Vec::new();
-    let mut remainder = total_seconds;
-
-    for &(unit_seconds, unit) in units {
-        let count = remainder / unit_seconds;
-        remainder %= unit_seconds;
-
-        if count > 0 {
-            parts.push((count, unit));
-        }
-    }
-
-    parts
-}
-
 /// Formats a duration of `total_seconds` in words using the given unit table, e.g.
 /// `"1 year, 2 weeks, and 3 days"`.
 ///
 /// Non-positive durations are formatted as `"0 minutes"`.
 #[must_use]
 pub fn format_seconds_in_words(total_seconds: i64, units: &[(i64, &'static str)]) -> String {
-    // Sub-year remainders cap each non-leading count (weeks < 52, days < 7, ...) and large counts
-    // only occur for years, so 24 bytes per part never needs a reallocation.
-    let parts = split_into_units(total_seconds.max(0), units);
+    let total = total_seconds.max(0);
 
-    if parts.is_empty() {
+    // Count the non-zero parts first: the separators depend on how many there are, and counting
+    // keeps the parts off the heap entirely.
+    let mut remainder = total;
+    let mut num_parts = 0;
+
+    for &(unit_seconds, _) in units {
+        if remainder / unit_seconds > 0 {
+            num_parts += 1;
+        }
+
+        remainder %= unit_seconds;
+    }
+
+    if num_parts == 0 {
         return "0 minutes".to_string();
     }
 
-    let num_parts = parts.len();
+    // Sub-year remainders cap each non-leading count (weeks < 52, days < 7, ...) and large counts
+    // only occur for years, so 24 bytes per part never needs a reallocation.
     let last_separator = if num_parts > 2 { ", and " } else { " and " };
     let mut buf = String::with_capacity(24 * num_parts);
+    let mut remainder = total;
+    let mut written = 0;
 
-    for (index, (count, unit)) in parts.iter().enumerate() {
-        if index > 0 {
-            buf.push_str(if index == num_parts - 1 {
+    for &(unit_seconds, unit) in units {
+        let count = remainder / unit_seconds;
+        remainder %= unit_seconds;
+
+        if count == 0 {
+            continue;
+        }
+
+        if written > 0 {
+            buf.push_str(if written == num_parts - 1 {
                 last_separator
             } else {
                 ", "
             });
         }
 
-        let _ = write!(buf, "{count} {unit}{}", if *count == 1 { "" } else { "s" });
+        let _ = write!(buf, "{count} {unit}{}", if count == 1 { "" } else { "s" });
+        written += 1;
     }
 
     buf

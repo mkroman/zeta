@@ -31,14 +31,14 @@ pub fn read_varint(bytes: &[u8]) -> Option<(u32, usize)> {
 /// written.
 pub fn write_varint(mut value: u32, out: &mut Vec<u8>) {
     while value >= 0x80 {
-        #[allow(
+        #[expect(
             clippy::cast_possible_truncation,
             reason = "the low seven bits are kept and the continuation bit is added"
         )]
         out.push((value as u8 & 0x7F) | 0x80);
         value >>= 7;
     }
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         reason = "the loop leaves a value below 0x80"
     )]

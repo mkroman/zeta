@@ -203,24 +203,17 @@ impl Default for IrcConfig {
 }
 
 impl IrcConfig {
-    /// Returns the port number to use for this IRC connection.
+    /// Returns the port number to use for this IRC connection: the configured port, or the TLS
+    /// or plaintext port depending on whether TLS is enabled.
     #[must_use]
     pub fn port(&self) -> u16 {
-        self.port.unwrap_or_else(|| self.fallback_port())
-    }
-
-    /// Returns whether TLS is enabled for this IRC connection.
-    fn is_tls_enabled(&self) -> bool {
-        self.tls.as_ref().is_some_and(|x| x.enabled)
-    }
-
-    /// Return the port number to use based on whether the connection requires TLS or not.
-    fn fallback_port(&self) -> u16 {
-        if self.is_tls_enabled() {
-            consts::DEFAULT_IRC_TLS_PORT
-        } else {
-            consts::DEFAULT_IRC_PORT
-        }
+        self.port.unwrap_or_else(|| {
+            if self.tls.as_ref().is_some_and(|tls| tls.enabled) {
+                consts::DEFAULT_IRC_TLS_PORT
+            } else {
+                consts::DEFAULT_IRC_PORT
+            }
+        })
     }
 }
 
@@ -255,12 +248,6 @@ impl From<&IrcConfig> for irc::client::data::Config {
             should_ghost: config.should_ghost,
             ..Default::default()
         }
-    }
-}
-
-impl From<IrcConfig> for irc::client::data::Config {
-    fn from(config: IrcConfig) -> Self {
-        Self::from(&config)
     }
 }
 
@@ -402,7 +389,7 @@ channels = []
             ..IrcConfig::default()
         };
 
-        let config = irc::client::data::Config::from(config);
+        let config = irc::client::data::Config::from(&config);
 
         assert_eq!(config.nickname.as_deref(), Some("zeta"));
         assert_eq!(config.nick_password.as_deref(), Some("nickserv-secret"));
