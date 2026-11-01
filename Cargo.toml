@@ -18,7 +18,7 @@ irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-r
 miette = { version = "7.2.0", default-features = false, features = ["derive", "fancy-no-backtrace"] }
 proc-macro2 = "1"
 quote = "1"
-reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
+reqwest = { version = "0.13.1", default-features = false, features = ["charset", "system-proxy", "json", "query"] }
 scraper = "0.29.0"
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.215", features = ["derive"] }
