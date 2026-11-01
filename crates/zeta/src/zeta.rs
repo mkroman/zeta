@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use irc::client::prelude::Client;
-use tracing::{Instrument, error, info, trace, warn};
+use tracing::{Instrument, debug, error, info, trace, warn};
 
 use crate::Error;
 use crate::config::Config;
@@ -421,9 +421,10 @@ impl Zeta {
             });
         }
 
-        // Dropping the stream closes the incoming half and its sender; dropping the last client
-        // handle closes the outgoing channel, so the write task can flush the queued QUIT and
-        // finish.
+        // Dropping the stream closes the incoming half. The outgoing task cannot finish from the
+        // sender side: the `irc` crate's transport (and its pinger) holds a clone of the outgoing
+        // sender, so the receiver never observes a closed channel. The wait below is therefore a
+        // flush grace for the queued QUIT, not a completion wait; abort the task afterwards.
         drop(stream);
         drop(client);
 
@@ -438,7 +439,13 @@ impl Zeta {
                 Ok(Err(error)) => {
                     warn!(exception.message = %error, "the IRC connection write path failed while flushing the QUIT message");
                 }
-                Err(_) => warn!("timed out flushing the QUIT message"),
+                Err(_) => {
+                    // The QUIT has had the full grace to reach the socket. Abort the write task
+                    // so it does not outlive the shutdown; the process is about to exit.
+                    outgoing.abort();
+                    let _ = outgoing.await;
+                    debug!("outgoing task still running after the QUIT flush grace; aborted");
+                }
             }
         }
 
