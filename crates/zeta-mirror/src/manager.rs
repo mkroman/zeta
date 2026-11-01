@@ -11,6 +11,10 @@
 //! are uploaded, so uploads never keep the download queue from draining and the manager never
 //! awaits an upload itself.
 //!
+//! The accepted-request queue is bounded by [`MAX_QUEUED_REQUESTS`]: a request that arrives while
+//! the queue is full is rejected with [`Error::Busy`] instead of being retained, so a stalled
+//! upload pipeline cannot grow the manager's in-memory queue without bound.
+//!
 //! Uploads are bounded explicitly: at most [`UPLOAD_CONCURRENCY`] run at once and at most
 //! [`UPLOAD_BACKLOG`] completed downloads wait for a slot. When the backlog is full, no new
 //! download is started until an upload finishes; requests keep being accepted and queued, so the
@@ -46,6 +50,14 @@ const UPLOAD_CONCURRENCY: usize = 2;
 /// the queue can exceed this by at most `max_concurrent`.
 const UPLOAD_BACKLOG: usize = 8;
 
+/// The maximum number of accepted download requests waiting for a download slot and upload
+/// capacity.
+///
+/// A request that arrives while the queue is full is rejected with [`Error::Busy`]. Without this
+/// bound a stalled upload pipeline would let the queue grow with every request for as long as the
+/// stall lasts.
+const MAX_QUEUED_REQUESTS: usize = 64;
+
 /// Errors that can occur while mirroring a download request.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -64,6 +76,9 @@ pub enum Error {
     /// The download id is not safe to use in file names and object keys.
     #[error("invalid download id: {0}")]
     InvalidId(String),
+    /// The accepted-request queue is full.
+    #[error("download queue is full")]
+    Busy,
 }
 
 /// A request to download the media at `url` and mirror it to the bucket.
@@ -130,7 +145,8 @@ impl DownloadManager {
     /// Completed downloads are uploaded by a bounded pipeline: at most [`UPLOAD_CONCURRENCY`]
     /// uploads run at once and at most [`UPLOAD_BACKLOG`] wait. When the backlog is full the
     /// manager stops starting downloads until an upload finishes, so finished media cannot pile
-    /// up without bound.
+    /// up without bound. At most [`MAX_QUEUED_REQUESTS`] accepted requests wait for a download
+    /// slot; further requests are rejected with [`Error::Busy`].
     ///
     /// The manager task itself has no span: its lifetime is the process, not a unit of work, so a
     /// span for it would never be exported and would outlive whatever started it. Each download,
@@ -411,9 +427,21 @@ impl Manager {
     }
 
     /// Handles an incoming download request, starting it or queueing it for later.
+    ///
+    /// A request that arrives while [`MAX_QUEUED_REQUESTS`] are already waiting is rejected with
+    /// [`Error::Busy`] instead of growing the queue, so a stalled upload pipeline cannot retain
+    /// accepted requests without bound.
     async fn on_request(&mut self, request: DownloadRequest) {
         if self.active.len() < self.max_concurrent && !self.upload_backlog_full() {
             self.start_download(request).await;
+        } else if self.queue.len() >= MAX_QUEUED_REQUESTS {
+            warn!(
+                media.id = %request.id,
+                queued = self.queue.len(),
+                "rejecting download request, the queue is full"
+            );
+
+            (request.on_finish)(Err(Error::Busy));
         } else {
             debug!(
                 media.id = %request.id,
@@ -1406,6 +1434,72 @@ mod tests {
 
         callbacks.sort_unstable();
         assert_eq!(callbacks, (0..=capacity).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn test_full_queue_rejects_with_busy_and_preserves_admission_order() {
+        let (started, mut started_rx) = mpsc::unbounded_channel();
+        let (gate_0, gate_rx_0) = oneshot::channel();
+        let (_gate_1, gate_rx_1) = oneshot::channel();
+
+        // Only the active download and the first queued download ever reach the downloader; the
+        // rest stay queued until this test ends.
+        let downloader = Arc::new(GatedDownloader {
+            started,
+            gates: Mutex::new(VecDeque::from([gate_rx_0, gate_rx_1])),
+        });
+        let (_download_dir, manager) = start_manager(downloader, S3::for_test(), 1);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        manager
+            .submit(request("0", "first", results.clone(), 0))
+            .expect("manager is running");
+
+        assert_eq!(started_rx.recv().await.as_deref(), Some("first"));
+
+        // The active download holds the only slot, so these fill the accepted-request queue.
+        for index in 0..MAX_QUEUED_REQUESTS {
+            manager
+                .submit(request(
+                    "0",
+                    &format!("queued{index}"),
+                    results.clone(),
+                    index + 1,
+                ))
+                .expect("manager is running");
+        }
+
+        manager
+            .submit(request(
+                "0",
+                "overflow",
+                results.clone(),
+                MAX_QUEUED_REQUESTS + 1,
+            ))
+            .expect("manager is running");
+
+        // The request over the cap is rejected immediately rather than retained.
+        let (index, result) = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the overflowing request should be rejected while the queue is full")
+            .expect("the result channel stays open");
+
+        assert_eq!(index, MAX_QUEUED_REQUESTS + 1);
+        assert!(matches!(result, Err(Error::Busy)), "{result:?}");
+        assert!(
+            rx.try_recv().is_err(),
+            "only the overflowing request should have finished"
+        );
+
+        // Releasing the active download admits the oldest queued request, not the new one.
+        drop(gate_0);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), started_rx.recv())
+                .await
+                .expect("the queued request should start once the slot is free")
+                .as_deref(),
+            Some("queued0")
+        );
     }
 
     #[tokio::test]
