@@ -160,6 +160,10 @@ mod tests {
         // The boundary line carries the classified failure, the redacted URL and the cause.
         assert!(logged.contains("error.type"), "{logged}");
         assert!(logged.contains("connection_error"), "{logged}");
+        // The span's event carries the source chain's cross-platform connect link; the OS
+        // wording below it differs per kernel.
+        assert!(logged.contains("client error (Connect)"), "{logged}");
+        #[cfg(target_os = "linux")]
         assert!(logged.contains("refused"), "{logged}");
 
         assert!(!error.to_string().contains("secret"), "{error}");
