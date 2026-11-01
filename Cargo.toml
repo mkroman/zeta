@@ -78,7 +78,7 @@ unused_qualifications = "warn"
 
 [profile.release]
 lto = true
-strip = "debuginfo"
+strip = "symbols"
 panic = "unwind"
 opt-level = 3
 codegen-units = 1
