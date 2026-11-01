@@ -529,6 +529,15 @@ event_kind! {
     }
 }
 
+/// Returns whether `message` carries a CTCP payload.
+///
+/// The dispatcher and [`CtcpEvent::new`] share this predicate, so the rule for which
+/// `PRIVMSG`/`NOTICE` texts are CTCP messages cannot drift between routing and construction.
+#[must_use]
+pub fn is_ctcp(message: &Message) -> bool {
+    message_text(message).is_some_and(|(_, text)| parse_ctcp(text).is_some())
+}
+
 /// Splits the payload of a CTCP message into its command and arguments.
 ///
 /// The text is `\x01`-wrapped (e.g. `"\x01ACTION slaps\x01"`); a missing trailing `\x01` is
@@ -566,8 +575,9 @@ pub enum UrlScope {
 /// [`Subscriptions::receive_*`] registration methods from a single table — the enum, the list
 /// and the registration methods cannot drift apart.
 ///
-/// Each entry pairs the `EventKind` variant with its `Subscriptions::receive_*` method and the
-/// doc fragments of both (the variant summary and "Registers interest in *…*.").
+/// Each entry pairs the `EventKind` variant with its `Subscriptions::receive_*` method, the
+/// doc fragments of both (the variant summary and "Registers interest in *…*."), and the
+/// low-cardinality name the dispatcher puts in `otel.name` and `zeta.event.kind`.
 ///
 /// The per-kind `Plugin::handle_*` defaults in `zeta-plugin/src/plugin.rs` are deliberately
 /// *not* generated from this table: `#[async_trait]` expands before the trait body's macro
@@ -575,7 +585,10 @@ pub enum UrlScope {
 /// every `#[async_trait]`-generated impl.
 macro_rules! event_kind_flags {
     ($(
-        $kind:ident($event:ident, $receive:ident, $kind_doc:literal, $receive_doc:literal $(,)?)
+        $kind:ident(
+            $event:ident, $receive:ident, $kind_doc:literal, $receive_doc:literal, $name:literal
+            $(,)?
+        )
     ),* $(,)?) => {
         /// An event delivered to a plugin.
         ///
@@ -615,14 +628,7 @@ macro_rules! event_kind_flags {
                 match self {
                     Self::Command(_) => "command",
                     Self::Url(_) => "url",
-                    Self::Message(_) => "message",
-                    Self::Join(_) => "join",
-                    Self::Part(_) => "part",
-                    Self::Quit(_) => "quit",
-                    Self::Nick(_) => "nick",
-                    Self::Kick(_) => "kick",
-                    Self::Ctcp(_) => "ctcp",
-                    Self::Raw(_) => "raw",
+                    $(Self::$kind(_) => EventKind::$kind.name(),)*
                 }
             }
 
@@ -649,6 +655,7 @@ macro_rules! event_kind_flags {
         /// [`UrlScope`]) instead of a plain flag.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[non_exhaustive]
+        #[repr(usize)]
         pub enum EventKind {
             $(
                 #[doc = $kind_doc]
@@ -657,8 +664,25 @@ macro_rules! event_kind_flags {
         }
 
         impl EventKind {
-            /// Every kind, in declaration order.
+            /// Every kind, in declaration and discriminator order.
             pub const ALL: &'static [Self] = &[$(Self::$kind,)*];
+
+            /// Returns the kind's low-cardinality name, for telemetry.
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$kind => $name,)*
+                }
+            }
+
+            /// Returns the kind's position in [`EventKind::ALL`].
+            ///
+            /// The discriminators are the declaration order, so an index into the dispatcher's
+            /// per-kind arrays follows [`EventKind::ALL`] without a hand-written mapping.
+            #[must_use]
+            pub const fn index(self) -> usize {
+                self as usize
+            }
 
             /// Builds the event of this kind from `message`, or [`None`] when the message does
             /// not carry one (a `NOTICE` that is not a CTCP message).
@@ -691,21 +715,21 @@ macro_rules! event_kind_flags {
 
 event_kind_flags! {
     Message(MessageEvent, receive_message, "Channel messages ([`MessageEvent`]).",
-        "every channel message, whether or not it matches a registered command"),
+        "every channel message, whether or not it matches a registered command", "message"),
     Join(JoinEvent, receive_join, "Users joining channels ([`JoinEvent`]).",
-        "users joining channels"),
+        "users joining channels", "join"),
     Part(PartEvent, receive_part, "Users leaving channels ([`PartEvent`]).",
-        "users leaving channels"),
+        "users leaving channels", "part"),
     Quit(QuitEvent, receive_quit, "Users quitting the network ([`QuitEvent`]).",
-        "users quitting the network"),
+        "users quitting the network", "quit"),
     Nick(NickEvent, receive_nick, "Nickname changes ([`NickEvent`]).",
-        "nickname changes"),
+        "nickname changes", "nick"),
     Kick(KickEvent, receive_kick, "Users kicked from channels ([`KickEvent`]).",
-        "users kicked from channels"),
+        "users kicked from channels", "kick"),
     Ctcp(CtcpEvent, receive_ctcp, "CTCP messages ([`CtcpEvent`]).",
-        "CTCP messages"),
+        "CTCP messages", "ctcp"),
     Raw(RawEvent, receive_raw, "Raw, unmodeled IRC commands ([`RawEvent`]).",
-        "raw, unmodeled IRC commands"),
+        "raw, unmodeled IRC commands", "raw"),
 }
 
 /// The events a plugin registers interest in during initialization.
@@ -1092,5 +1116,12 @@ mod tests {
         assert_empty!(subscriptions.commands());
         assert_eq!(subscriptions.url_scope(), UrlScope::None);
         assert_empty!(subscriptions.events());
+    }
+
+    #[test]
+    fn event_kind_indices_follow_the_all_list() {
+        for (index, kind) in EventKind::ALL.iter().enumerate() {
+            assert_eq!(kind.index(), index, "{kind:?}");
+        }
     }
 }
