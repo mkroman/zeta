@@ -6,7 +6,6 @@
 //! and host-agnostic entries are considered. All wildcard patterns are compiled once when a
 //! filter is inserted, not on every check.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -273,29 +272,36 @@ impl HostIndex {
 /// name fits on the hot path; longer names fall back to [`str::to_lowercase`].
 const CHANNEL_KEY_CAPACITY: usize = 64;
 
-/// Returns the lowercased index key of `channel`, lowercasing mixed-case ASCII names into
-/// `buffer`.
+/// Calls `f` with the lowercased index key of `channel`.
 ///
-/// Lowercase ASCII channels, the common case, stay borrowed without touching the buffer.
-/// Mixed-case ASCII channels are lowered into the caller-owned stack buffer without allocating.
-/// Non-ASCII channels (and ASCII names longer than [`CHANNEL_KEY_CAPACITY`]) keep
-/// [`str::to_lowercase`], which preserves the exact Unicode lowercase semantics the index is
-/// keyed by.
-fn channel_key<'a>(channel: &'a str, buffer: &'a mut [u8; CHANNEL_KEY_CAPACITY]) -> Cow<'a, str> {
-    if !channel.is_ascii() || channel.len() > CHANNEL_KEY_CAPACITY {
-        return Cow::Owned(channel.to_lowercase());
+/// Lowercase ASCII channels, the common case, are passed through without allocating or
+/// initializing a stack buffer. Mixed-case ASCII names are lowered into a stack buffer that is
+/// only created on that path, so they do not allocate either. Non-ASCII names (and names longer
+/// than [`CHANNEL_KEY_CAPACITY`]) keep [`str::to_lowercase`], which preserves the exact Unicode
+/// lowercase semantics the index is keyed by.
+fn with_channel_key<R>(channel: &str, f: impl FnOnce(&str) -> R) -> R {
+    // Names beyond the IRC limit keep the allocating fallback so the common path pays nothing.
+    if channel.len() > CHANNEL_KEY_CAPACITY {
+        return f(&channel.to_lowercase());
     }
 
-    if !channel.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        return Cow::Borrowed(channel);
+    if channel
+        .bytes()
+        .all(|byte| byte.is_ascii() && !byte.is_ascii_uppercase())
+    {
+        return f(channel);
     }
 
-    let key = &mut buffer[..channel.len()];
-    key.copy_from_slice(channel.as_bytes());
-    key.make_ascii_lowercase();
+    if channel.is_ascii() {
+        let mut buffer = [0u8; CHANNEL_KEY_CAPACITY];
+        let key = &mut buffer[..channel.len()];
+        key.copy_from_slice(channel.as_bytes());
+        key.make_ascii_lowercase();
 
-    // Every ASCII byte sequence is valid UTF-8.
-    Cow::Borrowed(std::str::from_utf8(key).expect("ASCII is valid UTF-8"))
+        return f(std::str::from_utf8(key).expect("ASCII is valid UTF-8"));
+    }
+
+    f(&channel.to_lowercase())
 }
 
 /// All filters, indexed by channel.
@@ -391,13 +397,11 @@ impl FilterIndex {
 
         // `Url::host_str` is already lowercased for http(s) URLs, so it is used as-is.
         let host = url.host_str();
-        let mut buffer = [0; CHANNEL_KEY_CAPACITY];
-        let key = channel_key(channel, &mut buffer);
 
-        if self
-            .buckets(key.as_ref())
-            .any(|bucket| bucket.matches(host, sender, url))
-        {
+        if with_channel_key(channel, |key| {
+            self.buckets(key)
+                .any(|bucket| bucket.matches(host, sender, url))
+        }) {
             trace!(url.full = %RedactedUrl::from_url(url), "message matches a filter");
 
             true
@@ -412,13 +416,9 @@ impl FilterIndex {
             return false;
         }
 
-        let mut buffer = [0; CHANNEL_KEY_CAPACITY];
-        let key = channel_key(channel, &mut buffer);
-
-        if self
-            .buckets(key.as_ref())
-            .any(|bucket| bucket.ignores(sender))
-        {
+        if with_channel_key(channel, |key| {
+            self.buckets(key).any(|bucket| bucket.ignores(sender))
+        }) {
             trace!("sender matches an ignore filter");
 
             true
