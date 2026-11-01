@@ -45,10 +45,6 @@ pub struct GeoIp {
     resolver: TokioResolver,
 }
 
-/// A successful geolocation lookup, formatting one reply line with the reported details.
-#[must_use]
-pub struct LookupResult(IpInfo);
-
 /// Errors that can occur while geolocating an address.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -141,8 +137,8 @@ impl GeoIp {
         opts: Opts,
     ) -> Result<(), ZetaError> {
         match self.resolve(&opts.name).await {
-            Ok(result) => {
-                for line in result.to_string().lines() {
+            Ok(info) => {
+                for line in reply(&info).lines() {
                     client.send_privmsg(channel, line)?;
                 }
             }
@@ -194,17 +190,13 @@ impl Display for IpInfo {
     }
 }
 
-impl Display for LookupResult {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let info = &self.0;
-        let ip = &info.ip;
-
-        write!(
-            fmt,
-            "{}({RESET}{ip}{COLOR}): {info}",
-            labeled_reply_prefix("GeoIP")
-        )
-    }
+/// Renders `info` as the labeled reply line the `.geoip` command sends.
+fn reply(info: &IpInfo) -> String {
+    format!(
+        "{}({RESET}{}{COLOR}): {info}",
+        labeled_reply_prefix("GeoIP"),
+        info.ip
+    )
 }
 
 impl GeoIp {
@@ -262,7 +254,7 @@ impl GeoIp {
     ///
     /// Returns an [`enum@Error`] when the input is neither a domain nor an IP address, the domain
     /// cannot be resolved, the request fails, or the response cannot be parsed.
-    pub async fn resolve(&self, name: &str) -> Result<LookupResult, Error> {
+    pub async fn resolve(&self, name: &str) -> Result<IpInfo, Error> {
         let ip = self.resolve_domain(name).await?;
         let params = [
             ("ip", ip.as_str()),
@@ -284,7 +276,7 @@ impl GeoIp {
 
         debug!(geoip.lookup.address = %info.ip, "resolved");
 
-        Ok(LookupResult(info))
+        Ok(info)
     }
 }
 
@@ -369,11 +361,11 @@ mod tests {
     }
 
     #[test]
-    fn lookup_result_wraps_the_location_in_a_labeled_reply() {
+    fn reply_wraps_the_location_in_a_labeled_reply() {
         let info = ip_info("Cloudflare", "13335", "Denmark", "", "");
 
         assert_eq!(
-            LookupResult(info).to_string(),
+            reply(&info),
             format!(
                 "{}({RESET}203.0.113.1{COLOR}): AS:{RESET} Cloudflare ASN:{RESET} 13335 \
                  Country:{RESET} Denmark",
