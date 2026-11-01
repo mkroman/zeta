@@ -25,7 +25,7 @@ const MANIFEST_STAGING_NAME: &str = "manifest.json.staging";
 struct Options {
     /// UCD directory (default: $ZETA_UNICODE_DATA_DIR, then ../zeta-unicode/data,
     /// crates/zeta-unicode/data or data)
-    #[allow(
+    #[expect(
         clippy::doc_markdown,
         reason = "the doc comment is the --help text, so backticks would render literally"
     )]

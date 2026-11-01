@@ -194,7 +194,7 @@ fn encode_layout(inputs: &Inputs, block_shift: u8, layout: NameLayout) -> Encode
 }
 
 /// Encodes a parsed corpus with an explicit block shift and layout.
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "the frequency, encode and serialize passes are one linear pipeline"
 )]

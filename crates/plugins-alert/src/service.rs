@@ -130,7 +130,7 @@ impl AlertService {
     /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
     #[instrument(name = "alert.pending", skip_all, err)]
     pub async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
-        self.scheduler.pending_for(channel, nickname).await
+        self.scheduler.repo.list_for(channel, nickname).await
     }
 
     /// Spawns the scheduler task, delivering due alerts until the runtime shuts down.
@@ -200,18 +200,6 @@ impl Scheduler {
         self.notify.notify_one();
 
         Ok(alert)
-    }
-
-    /// Returns the pending alerts of `nickname` in `channel`, ordered by the time they are due.
-    ///
-    /// The alerts are read from the database, as the cache only holds the window of alerts due
-    /// in the near future.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Database`] if the alerts could not be fetched from the database.
-    async fn pending_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
-        self.repo.list_for(channel, nickname).await
     }
 
     /// Runs the scheduler loop, syncing the window of upcoming alerts from the database every

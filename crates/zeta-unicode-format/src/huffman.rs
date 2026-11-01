@@ -623,7 +623,7 @@ impl BitWriter {
             self.accumulator = (self.accumulator << take) | chunk;
             self.bits += take;
             while self.bits >= 8 {
-                #[allow(clippy::cast_possible_truncation, reason = "the top byte")]
+                #[expect(clippy::cast_possible_truncation, reason = "the top byte")]
                 self.out.push((self.accumulator >> (self.bits - 8)) as u8);
                 self.bits -= 8;
             }
@@ -636,7 +636,7 @@ impl BitWriter {
     #[must_use]
     pub fn finish(mut self) -> Vec<u8> {
         if self.bits != 0 {
-            #[allow(clippy::cast_possible_truncation, reason = "the padded byte")]
+            #[expect(clippy::cast_possible_truncation, reason = "the padded byte")]
             self.out.push((self.accumulator << (8 - self.bits)) as u8);
         }
         self.out
@@ -693,7 +693,7 @@ impl<'a> BitReader<'a> {
     #[must_use]
     pub fn peek(&self) -> u32 {
         let byte = self.position >> 3;
-        #[allow(
+        #[expect(
             clippy::cast_possible_truncation,
             reason = "a bit offset within a byte is below eight"
         )]
