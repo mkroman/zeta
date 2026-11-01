@@ -370,6 +370,68 @@ async fn parse_response_logs_the_status_even_when_the_body_read_fails() {
 }
 
 #[tokio::test]
+async fn a_rate_limited_response_records_the_status_as_the_error_type() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(429).set_body_string("slow down"))
+        .mount(&server)
+        .await;
+
+    let recorder = SpanRecorder::default();
+    let subscriber = tracing_subscriber::registry().with(recorder.clone());
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let error = get_json::<serde_json::Value>(reqwest::Client::new().get(server.uri()))
+        .await
+        .expect_err("429 is not a success status");
+
+    match error {
+        ApiError::Status { status, body } => {
+            assert_eq!(status, reqwest::StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(body, "slow down");
+        }
+        other => panic!("expected a status error, got: {other:?}"),
+    }
+
+    let spans = recorder.named("http.client");
+    assert_eq!(spans.len(), 1, "{spans:?}");
+
+    // `error.type` is recorded with the rendered status code, without building a `String`
+    // for the record call.
+    assert_eq!(spans[0].field("http.response.status_code"), Some("429"));
+    assert_eq!(spans[0].field("error.type"), Some("429"));
+}
+
+#[tokio::test]
+async fn a_parse_failure_records_invalid_json_on_the_client_span() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html>not json</html>"))
+        .mount(&server)
+        .await;
+
+    let recorder = SpanRecorder::default();
+    let subscriber = tracing_subscriber::registry().with(recorder.clone());
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let error = get_json::<serde_json::Value>(reqwest::Client::new().get(server.uri()))
+        .await
+        .expect_err("the body is not JSON");
+
+    assert!(matches!(error, ApiError::Deserialize(_)), "{error:?}");
+
+    let spans = recorder.named("http.client");
+    assert_eq!(spans.len(), 1, "{spans:?}");
+
+    // The parse re-enters the span the body read returned, so its failure still lands on the
+    // span that covers the request.
+    assert_eq!(spans[0].field("http.response.status_code"), Some("200"));
+    assert_eq!(spans[0].field("error.type"), Some("invalid_json"));
+}
+
+#[tokio::test]
 async fn get_text_records_the_response_attributes_on_the_client_span() {
     let server = MockServer::start().await;
 
