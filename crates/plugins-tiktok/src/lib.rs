@@ -173,6 +173,10 @@ impl Tiktok {
             let _ = client.send_privmsg(channel, plain_reply(&summary));
         }
 
+        let Some(mirror) = self.mirror.as_ref() else {
+            return Ok(());
+        };
+
         let Ok(id) = MediaId::parse(video_id) else {
             warn!(media.id = %video_id, "ignoring mirror request with an unsafe id");
 
@@ -180,7 +184,7 @@ impl Tiktok {
         };
 
         plugins_shared::mirror::ensure_mirrored_if_configured(
-            self.mirror.as_ref(),
+            Some(mirror),
             &url,
             &id,
             channel,

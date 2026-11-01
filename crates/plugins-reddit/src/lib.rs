@@ -208,7 +208,9 @@ impl Reddit {
 
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
-        if let Some(url) = submission.video_url() {
+        if let Some(url) = submission.video_url()
+            && let Some(mirror) = self.mirror.as_ref()
+        {
             let Ok(media_id) = MediaId::parse(id) else {
                 warn!(media.id = %id, "ignoring mirror request with an unsafe id");
 
@@ -216,7 +218,7 @@ impl Reddit {
             };
 
             plugins_shared::mirror::ensure_mirrored_if_configured(
-                self.mirror.as_ref(),
+                Some(mirror),
                 url,
                 &media_id,
                 channel,
