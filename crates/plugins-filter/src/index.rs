@@ -267,14 +267,35 @@ impl HostIndex {
     }
 }
 
-/// Returns the index key of `channel`: its lowercased name, borrowed when the channel is plain
-/// ASCII without uppercase letters, which is the common case.
-fn channel_key(channel: &str) -> Cow<'_, str> {
-    if channel.bytes().any(|byte| byte.is_ascii_uppercase()) || !channel.is_ascii() {
-        Cow::Owned(channel.to_lowercase())
-    } else {
-        Cow::Borrowed(channel)
+/// The stack buffer capacity, in bytes, for lowercased ASCII channel keys.
+///
+/// RFC 2812 caps channel names at 50 bytes and common servers allow up to 64, so every valid
+/// name fits on the hot path; longer names fall back to [`str::to_lowercase`].
+const CHANNEL_KEY_CAPACITY: usize = 64;
+
+/// Returns the lowercased index key of `channel`, lowercasing mixed-case ASCII names into
+/// `buffer`.
+///
+/// Lowercase ASCII channels, the common case, stay borrowed without touching the buffer.
+/// Mixed-case ASCII channels are lowered into the caller-owned stack buffer without allocating.
+/// Non-ASCII channels (and ASCII names longer than [`CHANNEL_KEY_CAPACITY`]) keep
+/// [`str::to_lowercase`], which preserves the exact Unicode lowercase semantics the index is
+/// keyed by.
+fn channel_key<'a>(channel: &'a str, buffer: &'a mut [u8; CHANNEL_KEY_CAPACITY]) -> Cow<'a, str> {
+    if !channel.is_ascii() || channel.len() > CHANNEL_KEY_CAPACITY {
+        return Cow::Owned(channel.to_lowercase());
     }
+
+    if !channel.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return Cow::Borrowed(channel);
+    }
+
+    let key = &mut buffer[..channel.len()];
+    key.copy_from_slice(channel.as_bytes());
+    key.make_ascii_lowercase();
+
+    // Every ASCII byte sequence is valid UTF-8.
+    Cow::Borrowed(std::str::from_utf8(key).expect("ASCII is valid UTF-8"))
 }
 
 /// All filters, indexed by channel.
@@ -292,6 +313,12 @@ pub struct FilterIndex {
     /// [`FilterIndex::remove_ids`] so [`FilterIndex::len`] and [`FilterIndex::is_empty`] are
     /// constant-time.
     count: usize,
+    /// Whether any inserted filter was sender-only.
+    ///
+    /// A monotone fast-path flag mirroring `EventIndex::command_initials`: [`FilterIndex::insert`]
+    /// only ever sets it, and [`FilterIndex::remove_ids`] leaves it set. A stale `true` after a
+    /// deletion costs a bucket lookup, never a wrong answer.
+    has_sender_only: bool,
 }
 
 impl FilterIndex {
@@ -299,6 +326,8 @@ impl FilterIndex {
     pub(super) fn insert(&mut self, filter: Filter) {
         let channel = filter.channel.as_deref().map(str::to_lowercase);
         let entry = Arc::new(Entry::new(filter));
+
+        self.has_sender_only |= entry.sender_only();
 
         match channel {
             Some(channel) => self.channels.entry(channel).or_default().insert(entry),
@@ -346,15 +375,12 @@ impl FilterIndex {
         filters
     }
 
-    /// The buckets a lookup in `channel` consults: the channel's own filters and the filters
-    /// applying to all channels.
-    fn buckets(&self, channel: &str) -> impl Iterator<Item = &HostIndex> {
-        let key = channel_key(channel);
+    /// The buckets a lookup with the lowercased channel `key` consults: the channel's own
+    /// filters and the filters applying to all channels.
+    fn buckets(&self, key: &str) -> impl Iterator<Item = &HostIndex> {
         let all_channels = (!self.all_channels.is_empty()).then_some(&self.all_channels);
 
-        [self.channels.get(key.as_ref()), all_channels]
-            .into_iter()
-            .flatten()
+        [self.channels.get(key), all_channels].into_iter().flatten()
     }
 
     /// Whether any filter applies to `channel` and matches `sender` and `url`.
@@ -365,9 +391,11 @@ impl FilterIndex {
 
         // `Url::host_str` is already lowercased for http(s) URLs, so it is used as-is.
         let host = url.host_str();
+        let mut buffer = [0; CHANNEL_KEY_CAPACITY];
+        let key = channel_key(channel, &mut buffer);
 
         if self
-            .buckets(channel)
+            .buckets(key.as_ref())
             .any(|bucket| bucket.matches(host, sender, url))
         {
             trace!(url.full = %RedactedUrl::from_url(url), "message matches a filter");
@@ -380,11 +408,17 @@ impl FilterIndex {
 
     /// Whether any filter applies to `channel` that ignores `sender` entirely.
     pub(super) fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool {
-        if self.is_empty() {
+        if !self.has_sender_only {
             return false;
         }
 
-        if self.buckets(channel).any(|bucket| bucket.ignores(sender)) {
+        let mut buffer = [0; CHANNEL_KEY_CAPACITY];
+        let key = channel_key(channel, &mut buffer);
+
+        if self
+            .buckets(key.as_ref())
+            .any(|bucket| bucket.ignores(sender))
+        {
             trace!("sender matches an ignore filter");
 
             true
