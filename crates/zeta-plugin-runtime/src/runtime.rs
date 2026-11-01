@@ -15,7 +15,7 @@ use irc::proto::Message;
 use tokio::task::JoinHandle;
 use tracing::{Span, error, warn};
 
-use zeta_plugin::{Context, Filters, LoadedPlugin};
+use zeta_plugin::{Context, FilterHandle, LoadedPlugin};
 
 use crate::dispatch::EventIndex;
 use crate::task::PluginTask;
@@ -32,7 +32,7 @@ pub struct PluginRuntime {
     /// time the runtime starts. The runtime keeps this handle for its lifetime; a later publish
     /// would not reach the dispatcher. Keeping it out of the per-message path avoids a
     /// shared-state lookup on every IRC line.
-    filters: Filters,
+    filters: FilterHandle,
     /// The runtime's `zeta.shutdown` span, used as the parent of each task's
     /// `zeta.plugin.shutdown` span. The hooks run in the plugin tasks, so the parent is set
     /// explicitly; it keeps the shutdown in one trace.
@@ -52,7 +52,7 @@ impl PluginRuntime {
         // The plugins are already constructed: the filter plugin published its handle from its
         // constructor, and nothing replaces it later. Resolve it once, before any task can
         // dispatch a message.
-        let filters = Filters::from_context(ctx);
+        let filters = FilterHandle::from_context(ctx);
 
         let mut index = EventIndex::default();
         let mut tasks = Vec::with_capacity(plugins.len());
@@ -167,14 +167,14 @@ async fn drain_tasks(mut handles: Vec<(&'static str, JoinHandle<()>)>, grace: Du
 #[cfg(test)]
 mod tests {
     use url::Url;
-    use zeta_plugin::{Sender, UrlFilter};
+    use zeta_plugin::{EventFilter, Sender};
 
     use super::*;
 
     /// A filter that ignores messages from one nick and never filters a URL.
     struct IgnoresNick(&'static str);
 
-    impl UrlFilter for IgnoresNick {
+    impl EventFilter for IgnoresNick {
         fn is_filtered(&self, _channel: &str, _sender: Option<Sender<'_>>, _url: &Url) -> bool {
             false
         }
@@ -204,7 +204,9 @@ mod tests {
     async fn start_resolves_the_filters_published_by_the_constructors() {
         let ctx = Arc::new(zeta_test_support::test_context());
         ctx.shared
-            .publish(Arc::new(Filters::new(Arc::new(IgnoresNick("ignored")))));
+            .publish(Arc::new(FilterHandle::new(Arc::new(IgnoresNick(
+                "ignored",
+            )))));
 
         let client = mock_client().await;
         let runtime = PluginRuntime::start(Vec::new(), &ctx, &client);
@@ -214,7 +216,7 @@ mod tests {
 
         // A later publish does not replace the handle the dispatcher already holds.
         ctx.shared
-            .publish(Arc::new(Filters::new(Arc::new(IgnoresNick("later")))));
+            .publish(Arc::new(FilterHandle::new(Arc::new(IgnoresNick("later")))));
 
         assert!(runtime.filters.ignores("#test", sender("ignored")));
         assert!(!runtime.filters.ignores("#test", sender("later")));

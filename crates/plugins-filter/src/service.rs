@@ -13,13 +13,13 @@ use super::{
     repository::FilterRepository,
 };
 use zeta_plugin::database::Database;
-use zeta_plugin::{Sender, UrlFilter};
+use zeta_plugin::{EventFilter, Sender};
 
 /// Stores filters in the database and mirrors them in an in-memory index.
 ///
 /// The database is the source of truth; the index is rebuilt from it on [`load`](Self::load) and
 /// kept in sync by [`add`](Self::add) and [`delete_ids`](Self::delete_ids). The hot lookup path
-/// ([`UrlFilter::is_filtered`]) only touches the index and never the database, so filters are
+/// ([`EventFilter::is_filtered`]) only touches the index and never the database, so filters are
 /// loaded once at launch and the service is shared through `SharedState`.
 pub struct FilterService {
     /// The filter repository.
@@ -136,10 +136,10 @@ impl FilterService {
     }
 }
 
-/// Exposes the service as the shared URL filter: the plugin publishes it wrapped in
-/// [`Filters`](zeta_plugin::Filters) at construction, and the host consults it through the
-/// same facade before delivering URL events and messages from ignored senders.
-impl UrlFilter for FilterService {
+/// Exposes the service as the shared event filter: the plugin publishes it wrapped in
+/// [`FilterHandle`](zeta_plugin::FilterHandle) at construction, and the host consults it
+/// through the same handle before delivering URL events and messages from ignored senders.
+impl EventFilter for FilterService {
     fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool {
         self.index.load().matches(channel, sender, url)
     }
@@ -241,7 +241,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../plugins/migrations")]
-    async fn matches_and_ignores_through_the_url_filter_trait(db: sqlx::PgPool) {
+    async fn matches_and_ignores_through_the_event_filter_trait(db: sqlx::PgPool) {
         let url: Url = "https://imdb.com/title/tt0111161".parse().unwrap();
         let matching = Some(Sender::new("nick", "someuser", "host.example"));
         let other = Some(Sender::new("nick", "other", "host.example"));
@@ -253,10 +253,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(UrlFilter::is_filtered(&url_only, "#chan", matching, &url));
-        assert!(!UrlFilter::is_filtered(&url_only, "#chan", other, &url));
+        assert!(EventFilter::is_filtered(&url_only, "#chan", matching, &url));
+        assert!(!EventFilter::is_filtered(&url_only, "#chan", other, &url));
         // A filter with URL criteria filters those URLs without ignoring the sender entirely.
-        assert!(!UrlFilter::ignores(&url_only, "#chan", matching));
+        assert!(!EventFilter::ignores(&url_only, "#chan", matching));
 
         let sender_only = FilterService::new(db);
 
@@ -265,7 +265,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(UrlFilter::ignores(&sender_only, "#chan", matching));
-        assert!(!UrlFilter::ignores(&sender_only, "#chan", other));
+        assert!(EventFilter::ignores(&sender_only, "#chan", matching));
+        assert!(!EventFilter::ignores(&sender_only, "#chan", other));
     }
 }

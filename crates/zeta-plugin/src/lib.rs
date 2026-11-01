@@ -5,11 +5,11 @@
 //! corresponding per-kind handler methods. See the [`event`] module for the event vocabulary.
 //!
 //! Alongside the plugin vocabulary, this crate carries the machinery shared by the host and the
-//! bundled plugins: the plugin [`Context`], the plugin-facing configuration, the shared URL
-//! [`Filters`], the admin [`Hostmasks`] matcher, and the database helpers plugins persist their
-//! state through. The registry, plugin tasks, and event dispatch live in `zeta-plugin-runtime`.
-//! Further shared infrastructure lives in dedicated crates: `zeta-cache`, `zeta-http`,
-//! `zeta-mirror` and `zeta-utils`.
+//! bundled plugins: the plugin [`Context`], the plugin-facing configuration, the shared event
+//! [`FilterHandle`], the admin [`Hostmasks`] matcher, and the database helpers plugins persist
+//! their state through. The registry, plugin tasks, and event dispatch live in
+//! `zeta-plugin-runtime`. Further shared infrastructure lives in dedicated crates: `zeta-cache`,
+//! `zeta-http`, `zeta-mirror` and `zeta-utils`.
 
 pub mod command;
 pub mod event;
@@ -30,18 +30,19 @@ pub mod hostmask;
 
 pub use async_trait;
 pub use catalog::{CatalogEntry, PluginCatalog};
-pub use clap;
 pub use command::{ArgsError, ArgsMode, CommandSpec};
+pub use config::HostConfig;
 pub use context::{Context, SharedState};
 pub use error::Error;
 pub use event::{
     CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
     NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
 };
-pub use filtering::{Filters, UrlFilter};
+pub use filtering::{EventFilter, FilterHandle};
 pub use hostmask::Hostmasks;
 pub use inventory;
 pub use plugin::{Plugin, Registered, handle_event};
+#[doc(hidden)]
 pub use registration::{LoadedPlugin, PluginRegistration};
 #[cfg(feature = "database")]
 pub use sqlx;
@@ -68,13 +69,13 @@ pub mod prelude {
         CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
         NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
     };
-    pub use crate::filtering::{Filters, UrlFilter};
+    pub use crate::filtering::{EventFilter, FilterHandle};
     pub use crate::hostmask::Hostmasks;
     pub use crate::irc::{
         BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
         parse_or_usage, plain_reply, reply_lookup, unstyle_text,
     };
-    pub use crate::registration::{LoadedPlugin, PluginRegistration};
+    pub use crate::registration::PluginRegistration;
     pub use crate::types::NoSettings;
     pub use crate::{Context, Error, Plugin, Registered, SharedState};
     pub use ::irc::client::Client;

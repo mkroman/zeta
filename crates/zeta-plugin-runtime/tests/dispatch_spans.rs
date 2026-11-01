@@ -23,7 +23,7 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
 use zeta_plugin::event::Subscriptions;
-use zeta_plugin::{CommandSpec, Event, Filters};
+use zeta_plugin::{CommandSpec, Event, FilterHandle};
 use zeta_plugin_runtime::EventIndex;
 use zeta_test_support::assert_empty;
 
@@ -47,7 +47,7 @@ fn handler_span_is_a_child_of_the_dispatch_span() {
         let mut index = EventIndex::default();
         index.add("dig", &subscriptions, mailbox);
 
-        let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
+        let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig example.com"));
         assert_empty!(stopped);
 
         let envelope = receiver.try_recv().expect("the event should be dispatched");

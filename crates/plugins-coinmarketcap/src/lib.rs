@@ -281,7 +281,7 @@ impl CoinMarketCap {
 impl CoinMarketCap {
     /// Handles a `.cc` invocation, resolving `args` to a coin by symbol or fuzzy name.
     async fn handle_cc(&self, client: &Client, channel: &str, args: &str) -> Result<(), ZetaError> {
-        let opts = match CC.parse_args::<CoinOpts>(args) {
+        let opts = match CC.parse_shell::<CoinOpts>(args) {
             Ok(opts) if !opts.coin.trim().is_empty() => opts,
             _ => {
                 client.send_privmsg(channel, plain_reply(CC_USAGE))?;
@@ -312,7 +312,7 @@ impl CoinMarketCap {
         channel: &str,
         args: &str,
     ) -> Result<(), ZetaError> {
-        let Ok(opts) = command.parse_args::<QuoteOpts>(args) else {
+        let Ok(opts) = command.parse_shell::<QuoteOpts>(args) else {
             client.send_privmsg(
                 channel,
                 plain_reply(format!("Usage: {} \x0f[currency]", command.trigger())),
@@ -668,19 +668,19 @@ mod tests {
 
     #[test]
     fn parses_command_options() {
-        let opts: QuoteOpts = BTC.parse_args("").unwrap();
+        let opts: QuoteOpts = BTC.parse_shell("").unwrap();
         assert_eq!(opts.currency, None);
 
-        let opts: QuoteOpts = BTC.parse_args("eur").unwrap();
+        let opts: QuoteOpts = BTC.parse_shell("eur").unwrap();
         assert_eq!(opts.currency.as_deref(), Some("eur"));
 
-        let opts: CoinOpts = CC.parse_args("bitcoin eur").unwrap();
+        let opts: CoinOpts = CC.parse_shell("bitcoin eur").unwrap();
         assert_eq!(opts.coin, "bitcoin");
         assert_eq!(opts.currency.as_deref(), Some("eur"));
 
         // `.cc` requires a coin.
         assert!(matches!(
-            CC.parse_args::<CoinOpts>(""),
+            CC.parse_shell::<CoinOpts>(""),
             Err(ArgsError::Usage(_))
         ));
     }

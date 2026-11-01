@@ -19,9 +19,6 @@ mod model;
 mod repository;
 mod service;
 
-// Re-exported as part of the module's API surface, even though the plugin itself only handles
-// them by value.
-#[allow(unused_imports)]
 pub use {error::Error, model::Statistics, service::Resource};
 
 use clap::Parser;
@@ -106,7 +103,7 @@ impl Ofn {
         event: &UrlEvent,
     ) -> Result<(), ZetaError> {
         // Command invocations are handled in `run_stats` and are not recorded as history.
-        if OFN.parse(event.text()).is_some() {
+        if OFN.trailing_args(event.text()).is_some() {
             return Ok(());
         }
 

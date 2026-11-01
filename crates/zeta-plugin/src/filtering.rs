@@ -1,12 +1,12 @@
 //! Filtering facade for the events the host dispatches.
 //!
 //! The filter service itself lives in the `filter` plugin (in the `plugins` crate). This module
-//! is always compiled and exposes the [`Filters`] handle the host's dispatcher consults before
+//! is always compiled and exposes the [`FilterHandle`] the host's dispatcher consults before
 //! delivering events, so filtered URL events are dropped centrally and messages from ignored
 //! senders never reach the plugins: with the filter plugin not loaded, nothing ever matches.
 //!
-//! The bridge between the two crates is the [`UrlFilter`] trait: the filter plugin publishes a
-//! type-erased [`Filters`] handle of its service to the shared state, and this facade picks it
+//! The bridge between the two crates is the [`EventFilter`] trait: the filter plugin publishes a
+//! type-erased [`FilterHandle`] of its service to the shared state, and this facade picks it
 //! up — the host never needs to name the filter service, and the filter plugin never needs to
 //! depend on the host.
 
@@ -17,14 +17,15 @@ use url::Url;
 use crate::context::Context;
 use crate::event::Sender;
 
-/// The object-safe view of a shared URL filter service.
+/// The object-safe view of the shared event filter service.
 ///
 /// Implemented by the filter plugin's service; the host consults it through the
-/// [`Filters`] handle.
-pub trait UrlFilter: Send + Sync {
+/// [`FilterHandle`]. URL filters are checked in [`EventFilter::is_filtered`], while filters
+/// without URL criteria are checked in [`EventFilter::ignores`].
+pub trait EventFilter: Send + Sync {
     /// Whether `url`, posted by `sender` in `channel`, matches any filter and should be ignored.
     ///
-    /// Called after [`UrlFilter::ignores`], which handles sender-only filters; those never
+    /// Called after [`EventFilter::ignores`], which handles sender-only filters; those never
     /// match URLs here.
     fn is_filtered(&self, channel: &str, sender: Option<Sender<'_>>, url: &Url) -> bool;
 
@@ -32,13 +33,13 @@ pub trait UrlFilter: Send + Sync {
     ///
     /// Backed by filters without URL criteria (host and path unset): a matching sender's
     /// messages are not delivered to the message subscribers, their commands do not trigger,
-    /// and — through [`UrlFilter::is_filtered`] — their URLs are filtered too.
+    /// and — through [`EventFilter::is_filtered`] — their URLs are filtered too.
     fn ignores(&self, channel: &str, sender: Option<Sender<'_>>) -> bool;
 }
 
 /// The shared filter handle the filter plugin publishes to the shared state.
 ///
-/// A cloneable, type-erased wrapper around [`UrlFilter`], so the handle can travel through the
+/// A cloneable, type-erased wrapper around [`EventFilter`], so the handle can travel through the
 /// type-keyed shared state. With no filter plugin loaded, the handle is empty and matches
 /// nothing.
 ///
@@ -47,14 +48,14 @@ pub trait UrlFilter: Send + Sync {
 /// later [`SharedState::publish`](crate::SharedState::publish) does not replace the handle the
 /// dispatcher already holds.
 #[derive(Clone, Default)]
-pub struct Filters {
-    inner: Option<Arc<dyn UrlFilter>>,
+pub struct FilterHandle {
+    inner: Option<Arc<dyn EventFilter>>,
 }
 
-impl Filters {
+impl FilterHandle {
     /// Wraps a filter service into a publishable handle.
     #[must_use]
-    pub fn new(inner: Arc<dyn UrlFilter>) -> Self {
+    pub fn new(inner: Arc<dyn EventFilter>) -> Self {
         Self { inner: Some(inner) }
     }
 
