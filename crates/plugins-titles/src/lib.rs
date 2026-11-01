@@ -22,11 +22,14 @@ use wreq::redirect::Policy;
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_plugin::prelude::*;
-use zeta_url::{RedactedUrl, RedactedUrlRef, last_path_segment, strip_www};
+use zeta_url::{RedactedUrlRef, last_path_segment, strip_www};
 use zeta_utils::irc::unstyle_text;
 use zeta_utils::text::Truncatable;
 
 use metadata::{PageMetadata, fetch_metadata};
+
+/// The separator between a page's title and its description.
+const CONTENT_SEPARATOR: &str = " — ";
 
 /// File extensions that we avoid requesting to save time and bandwidth.
 const BINARY_EXTENSIONS: &[&str] = &[
@@ -138,7 +141,7 @@ impl Titles {
         let url = event.url();
 
         if let Some(scheme) = event.repaired_from {
-            debug!(%scheme, url.full = %RedactedUrl::from_url(url), "posting repaired url");
+            debug!(%scheme, url.full = %RedactedUrlRef::from_url(url), "posting repaired url");
 
             if let Err(error) = client.send_privmsg(event.channel(), plain_reply(url)) {
                 warn!(exception.message = %error, "could not send repaired url");
@@ -150,7 +153,7 @@ impl Titles {
 
         if is_ignored_host(url, &self.settings.ignored_hosts) || is_catalog_handled(url, catalog) {
             debug!(
-                url.full = %RedactedUrl::from_url(url),
+                url.full = %RedactedUrlRef::from_url(url),
                 "skipping url handled by another plugin"
             );
 
@@ -159,7 +162,7 @@ impl Titles {
 
         if is_binary_url(url) {
             debug!(
-                url.full = %RedactedUrl::from_url(url),
+                url.full = %RedactedUrlRef::from_url(url),
                 "skipping url that looks like binary content"
             );
 
@@ -340,23 +343,37 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .description
         .as_deref()
         .map(unstyle_text)
-        .filter(|description| !description.is_empty())
-        .map(|description| {
-            description
-                .truncate_within(settings.max_description_length, "…")
-                .into_owned()
-        });
+        .filter(|description| !description.is_empty());
 
     if title.is_none() && description.is_none() {
         return None;
     }
 
-    let content = title
+    // `truncate_within` borrows the description when it already fits, so it is copied into
+    // `content` directly instead of through an intermediate, truncated `String`.
+    let description = description
         .as_deref()
-        .into_iter()
-        .chain(description.as_deref())
-        .collect::<Vec<_>>()
-        .join(" — ");
+        .map(|description| description.truncate_within(settings.max_description_length, "…"));
+
+    let title = title.as_deref().unwrap_or_default();
+    let description = description.as_deref().unwrap_or_default();
+
+    let capacity = title.len()
+        + description.len()
+        + if title.is_empty() || description.is_empty() {
+            0
+        } else {
+            CONTENT_SEPARATOR.len()
+        };
+
+    let mut content = String::with_capacity(capacity);
+    content.push_str(title);
+
+    if !title.is_empty() && !description.is_empty() {
+        content.push_str(CONTENT_SEPARATOR);
+    }
+
+    content.push_str(description);
 
     let message = if has_open_graph(metadata) {
         let site = metadata
@@ -370,6 +387,12 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
     } else {
         plain_reply(&content)
     };
+
+    // `truncate_within` borrows the message when it already fits, so the byte-length check
+    // lets the common short reply skip the `Cow` clone its result would otherwise take.
+    if message.len() <= settings.max_message_length {
+        return Some(message);
+    }
 
     Some(
         message

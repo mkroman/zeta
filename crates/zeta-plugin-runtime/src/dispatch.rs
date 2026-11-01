@@ -17,7 +17,7 @@ use tracing::{Span, debug, warn};
 use url::Url;
 use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent};
 use zeta_plugin::{CommandSpec, Event, EventKind, Filters, UrlScope};
-use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrl};
+use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrlRef};
 
 /// An event queued for a plugin together with the handler span it must run inside.
 ///
@@ -535,7 +535,7 @@ impl EventIndex {
             }
 
             if filters.is_filtered(target, sender, &url) {
-                debug!(url.full = %RedactedUrl::from_url(&url), "skipping filtered url");
+                debug!(url.full = %RedactedUrlRef::from_url(&url), "skipping filtered url");
 
                 continue;
             }
