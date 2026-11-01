@@ -4,7 +4,7 @@
 //! the document head. Instagram serves a login wall to requests it scores as bot traffic, in which
 //! case the page carries no metadata — callers are expected to degrade gracefully.
 
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use scraper::{Html, Selector};
 use tracing::debug;
@@ -13,21 +13,13 @@ use zeta_http::emulated::ResponseError;
 use zeta_url::RedactedUrl;
 
 /// The CSS selector for the `og:title` meta tag.
-fn og_title_selector() -> &'static Selector {
-    static SELECTOR: OnceLock<Selector> = OnceLock::new();
-
-    SELECTOR
-        .get_or_init(|| Selector::parse(r#"meta[property="og:title"]"#).expect("a valid selector"))
-}
+static OG_TITLE_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse(r#"meta[property="og:title"]"#).expect("a valid selector"));
 
 /// The CSS selector for the `og:description` meta tag.
-fn og_description_selector() -> &'static Selector {
-    static SELECTOR: OnceLock<Selector> = OnceLock::new();
-
-    SELECTOR.get_or_init(|| {
-        Selector::parse(r#"meta[property="og:description"]"#).expect("a valid selector")
-    })
-}
+static OG_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(r#"meta[property="og:description"]"#).expect("a valid selector")
+});
 
 /// The OpenGraph metadata of an Instagram page.
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -155,8 +147,8 @@ fn extract(body: &str) -> PageMetadata {
     let html = Html::parse_document(body);
 
     PageMetadata {
-        og_title: meta_content(&html, og_title_selector()),
-        og_description: meta_content(&html, og_description_selector()),
+        og_title: meta_content(&html, &OG_TITLE_SELECTOR),
+        og_description: meta_content(&html, &OG_DESCRIPTION_SELECTOR),
     }
 }
 
