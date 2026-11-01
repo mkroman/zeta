@@ -296,7 +296,7 @@ impl IrcConfig {
     /// Returns the port number to use for this IRC connection: the configured port, or the TLS
     /// or plaintext port depending on whether TLS is enabled.
     #[must_use]
-    pub fn port(&self) -> u16 {
+    pub fn resolved_port(&self) -> u16 {
         self.port.unwrap_or_else(|| {
             if self.tls.as_ref().is_some_and(|tls| tls.enabled) {
                 consts::DEFAULT_IRC_TLS_PORT
@@ -309,7 +309,7 @@ impl IrcConfig {
 
 impl From<&IrcConfig> for irc::client::data::Config {
     fn from(config: &IrcConfig) -> Self {
-        let port = config.port();
+        let port = config.resolved_port();
         // `irc` treats `None` as TLS enabled, which would pair TLS with the plaintext port the
         // omitted `[irc.tls]` section implies; the default must be spelled out explicitly.
         let use_tls = Some(config.tls.as_ref().is_some_and(|tls| tls.enabled));
@@ -512,7 +512,7 @@ channels = []
 
         // An omitted section means plaintext, and the conversion must say so explicitly: `irc`
         // would otherwise treat `None` as TLS enabled and pair TLS with the plaintext port.
-        assert_eq!(config.port(), consts::DEFAULT_IRC_PORT);
+        assert_eq!(config.resolved_port(), consts::DEFAULT_IRC_PORT);
 
         let converted = irc::client::data::Config::from(&config);
 
@@ -526,7 +526,7 @@ channels = []
             .extract()
             .expect("could not parse irc configuration");
 
-        assert_eq!(config.port(), consts::DEFAULT_IRC_TLS_PORT);
+        assert_eq!(config.resolved_port(), consts::DEFAULT_IRC_TLS_PORT);
 
         let converted = irc::client::data::Config::from(&config);
 
