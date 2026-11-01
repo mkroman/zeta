@@ -17,6 +17,7 @@ const-hex = "1.19"
 futures = "0.3.31"
 humantime-serde.workspace = true
 reqwest = { workspace = true, features = ["stream", "json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"] }
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

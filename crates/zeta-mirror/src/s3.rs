@@ -14,6 +14,7 @@ use aws_sigv4::sign::v4;
 use aws_smithy_runtime_api::client::identity::Identity;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::{Body, Client, StatusCode};
+use secrecy::ExposeSecret;
 use sha2::{Digest, Sha256};
 use tracing::{Span, debug, instrument};
 use url::Url;
@@ -156,7 +157,10 @@ impl S3 {
     pub fn new(config: &MirrorConfig) -> Result<Self, Error> {
         let access_key_id = resolve_secret(config.s3_access_key_id.as_deref(), "S3_ACCESS_KEY_ID")?;
         let secret_access_key = resolve_secret(
-            config.s3_secret_access_key.as_deref(),
+            config
+                .s3_secret_access_key
+                .as_ref()
+                .map(ExposeSecret::expose_secret),
             "S3_SECRET_ACCESS_KEY",
         )?;
         let bucket = resolve_secret(config.s3_bucket_name.as_deref(), "S3_BUCKET_NAME")?;
@@ -528,7 +532,7 @@ mod tests {
     fn blank_region_falls_back_to_the_environment_then_auto() {
         let config = MirrorConfig {
             s3_access_key_id: Some("access".to_string()),
-            s3_secret_access_key: Some("secret".to_string()),
+            s3_secret_access_key: Some("secret".into()),
             s3_bucket_name: Some("bucket".to_string()),
             s3_endpoint: Some("http://127.0.0.1:9".to_string()),
             s3_region: Some("   ".to_string()),

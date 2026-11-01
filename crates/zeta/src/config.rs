@@ -7,7 +7,8 @@ use figment::{
     providers::{Env, Format, Toml},
 };
 use miette::{IntoDiagnostic, WrapErr};
-use serde::{Deserialize, Serialize};
+use secrecy::{ExposeSecret, SecretString};
+use serde::Deserialize;
 
 use crate::consts;
 
@@ -26,7 +27,7 @@ impl From<&Config> for zeta_plugin::config::HostConfig {
 }
 
 /// Main application configuration structure.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     /// Database configuration
     pub database: DbConfig,
@@ -89,23 +90,8 @@ impl Config {
     }
 }
 
-/// Renders a secret as `<redacted>` when it is set, and as `None` when it is not.
-///
-/// Configuration dumps still show whether a secret is configured, which is what operators need,
-/// without printing its value.
-struct Secret<'a>(Option<&'a str>);
-
-impl fmt::Debug for Secret<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(_) => f.write_str("<redacted>"),
-            None => f.write_str("None"),
-        }
-    }
-}
-
 /// Database connection configuration.
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize)]
 pub struct DbConfig {
     /// Connection URL
     pub url: String,
@@ -170,7 +156,7 @@ fn redact_url_password(url: &str) -> Cow<'_, str> {
 }
 
 /// Tracing and logging configuration.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct TracingConfig {
     /// Enable tracing
     pub enabled: bool,
@@ -182,33 +168,36 @@ pub struct TracingConfig {
 }
 
 /// Configuration for an individual IRC channel.
-#[derive(Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct IrcChannelConfig {
     /// Name of the channel.
     pub name: String,
     /// The shared key to access the channel.
-    pub key: Option<String>,
+    pub key: Option<SecretString>,
 }
 
-// Manual implementation so the channel key is never printed.
-impl fmt::Debug for IrcChannelConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("IrcChannelConfig")
-            .field("name", &self.name)
-            .field("key", &Secret(self.key.as_deref()))
-            .finish()
+impl PartialEq for IrcChannelConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && secret_eq(self.key.as_ref(), other.key.as_ref())
     }
 }
 
+impl Eq for IrcChannelConfig {}
+
+/// Compares two optional secrets without exposing them outside this module.
+fn secret_eq(left: Option<&SecretString>, right: Option<&SecretString>) -> bool {
+    left.map(ExposeSecret::expose_secret) == right.map(ExposeSecret::expose_secret)
+}
+
 /// TLS configuration for IRC connection.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
 pub struct IrcTlsConfig {
     /// Toggle TLS.
     pub enabled: bool,
 }
 
 /// IRC client configuration.
-#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct IrcConfig {
     /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
     /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.
@@ -226,11 +215,11 @@ pub struct IrcConfig {
     /// The hostname of the server to connect to.
     pub hostname: String,
     /// The client’s NICKSERV password.
-    pub nick_password: Option<String>,
+    pub nick_password: Option<SecretString>,
     /// The client's nickname.
     pub nickname: String,
     /// The password to connect to the server.
-    pub password: Option<String>,
+    pub password: Option<SecretString>,
     /// The port number of the server to connect to.
     pub port: Option<u16>,
     /// The client's real name.
@@ -270,27 +259,26 @@ impl Default for IrcConfig {
     }
 }
 
-// Manual implementation so the `NickServ` and server passwords are never printed.
-impl fmt::Debug for IrcConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("IrcConfig")
-            .field("admin_hostmasks", &self.admin_hostmasks)
-            .field("alt_nicks", &self.alt_nicks)
-            .field("channels", &self.channels)
-            .field("encoding", &self.encoding)
-            .field("hostname", &self.hostname)
-            .field("nick_password", &Secret(self.nick_password.as_deref()))
-            .field("nickname", &self.nickname)
-            .field("password", &Secret(self.password.as_deref()))
-            .field("port", &self.port)
-            .field("realname", &self.realname)
-            .field("should_ghost", &self.should_ghost)
-            .field("quit_message", &self.quit_message)
-            .field("tls", &self.tls)
-            .field("username", &self.username)
-            .finish()
+impl PartialEq for IrcConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.admin_hostmasks == other.admin_hostmasks
+            && self.alt_nicks == other.alt_nicks
+            && self.channels == other.channels
+            && self.encoding == other.encoding
+            && self.hostname == other.hostname
+            && secret_eq(self.nick_password.as_ref(), other.nick_password.as_ref())
+            && self.nickname == other.nickname
+            && secret_eq(self.password.as_ref(), other.password.as_ref())
+            && self.port == other.port
+            && self.realname == other.realname
+            && self.should_ghost == other.should_ghost
+            && self.quit_message == other.quit_message
+            && self.tls == other.tls
+            && self.username == other.username
     }
 }
+
+impl Eq for IrcConfig {}
 
 impl IrcConfig {
     /// Returns the port number to use for this IRC connection: the configured port, or the TLS
@@ -318,7 +306,7 @@ impl From<&IrcConfig> for irc::client::data::Config {
 
         for channel in &config.channels {
             if let Some(key) = &channel.key {
-                channel_keys.insert(channel.name.clone(), key.clone());
+                channel_keys.insert(channel.name.clone(), key.expose_secret().to_owned());
             }
 
             channels.push(channel.name.clone());
@@ -326,12 +314,18 @@ impl From<&IrcConfig> for irc::client::data::Config {
 
         Self {
             nickname: Some(config.nickname.clone()),
-            nick_password: config.nick_password.clone(),
+            nick_password: config
+                .nick_password
+                .as_ref()
+                .map(|password| password.expose_secret().to_owned()),
             username: config.username.clone(),
             realname: config.realname.clone(),
             server: Some(config.hostname.clone()),
             port: Some(port),
-            password: config.password.clone(),
+            password: config
+                .password
+                .as_ref()
+                .map(|password| password.expose_secret().to_owned()),
             encoding: config.encoding.clone(),
             use_tls,
             channels,
@@ -461,7 +455,7 @@ channels = []
             channels: vec![
                 IrcChannelConfig {
                     name: "#zeta".to_string(),
-                    key: Some("channel-secret".to_string()),
+                    key: Some("channel-secret".into()),
                 },
                 IrcChannelConfig {
                     name: "#other".to_string(),
@@ -470,9 +464,9 @@ channels = []
             ],
             encoding: Some("utf-8".to_string()),
             hostname: "irc.example.com".to_string(),
-            nick_password: Some("nickserv-secret".to_string()),
+            nick_password: Some("nickserv-secret".into()),
             nickname: "zeta".to_string(),
-            password: Some("server-secret".to_string()),
+            password: Some("server-secret".into()),
             port: Some(7000),
             realname: Some("Zeta".to_string()),
             should_ghost: true,
@@ -572,6 +566,7 @@ password = "server-secret"
         assert!(debug.contains("localhost"), "{debug}");
         assert!(debug.contains("#zeta"), "{debug}");
         assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains("REDACTED"), "{debug}");
     }
 
     #[test]

@@ -1,15 +1,16 @@
 //! Configuration for the shared media mirror.
 
-use std::{fmt, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use secrecy::SecretString;
+use serde::Deserialize;
 
 /// Configuration for the shared media mirror, from the `[mirror]` configuration section.
 ///
 /// Unlike the plugin sections, unknown keys here are rejected (`deny_unknown_fields`): this is a
 /// top-level section shared by all media plugins, and a typo'd or removed key is a hard
 /// configuration mistake worth failing fast on.
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MirrorConfig {
     /// The directory that downloads are buffered in.
@@ -42,7 +43,7 @@ pub struct MirrorConfig {
     /// The S3 secret access key used for mirroring.
     ///
     /// Falls back to the `S3_SECRET_ACCESS_KEY` environment variable when unset.
-    pub s3_secret_access_key: Option<String>,
+    pub s3_secret_access_key: Option<SecretString>,
     /// The bucket that mirrored media is uploaded to.
     ///
     /// Falls back to the `S3_BUCKET_NAME` environment variable when unset.
@@ -92,49 +93,11 @@ impl Default for MirrorConfig {
     }
 }
 
-/// Renders a secret as `<redacted>` when it is set, and as `None` when it is not.
-///
-/// Configuration dumps still show whether a secret is configured, which is what operators need,
-/// without printing its value.
-struct Secret<'a>(Option<&'a str>);
-
-impl fmt::Debug for Secret<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(_) => f.write_str("<redacted>"),
-            None => f.write_str("None"),
-        }
-    }
-}
-
-// Manual implementation so the secret access key is never printed. The access key id stays
-// visible: it identifies the credentials rather than granting access to them, and matches the
-// `S3` client's own `Debug` output.
-impl fmt::Debug for MirrorConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MirrorConfig")
-            .field("download_dir", &self.download_dir)
-            .field("max_filesize", &self.max_filesize)
-            .field("download_timeout", &self.download_timeout)
-            .field("max_concurrent_downloads", &self.max_concurrent_downloads)
-            .field("ytdlp_command", &self.ytdlp_command)
-            .field("s3_access_key_id", &self.s3_access_key_id)
-            .field(
-                "s3_secret_access_key",
-                &Secret(self.s3_secret_access_key.as_deref()),
-            )
-            .field("s3_bucket_name", &self.s3_bucket_name)
-            .field("s3_region", &self.s3_region)
-            .field("s3_endpoint", &self.s3_endpoint)
-            .field("s3_connect_timeout", &self.s3_connect_timeout)
-            .field("s3_request_timeout", &self.s3_request_timeout)
-            .finish()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    use secrecy::ExposeSecret;
 
     use super::*;
 
@@ -182,7 +145,13 @@ mod tests {
             Some("/usr/local/bin/yt-dlp")
         );
         assert_eq!(config.s3_access_key_id.as_deref(), Some("access"));
-        assert_eq!(config.s3_secret_access_key.as_deref(), Some("secret"));
+        assert_eq!(
+            config
+                .s3_secret_access_key
+                .as_ref()
+                .map(ExposeSecret::expose_secret),
+            Some("secret")
+        );
         assert_eq!(config.s3_bucket_name.as_deref(), Some("bucket"));
         assert_eq!(config.s3_region.as_deref(), Some("auto"));
         assert_eq!(config.s3_endpoint.as_deref(), Some("https://example.com"));
@@ -201,7 +170,7 @@ mod tests {
     fn debug_output_redacts_the_secret_access_key() {
         let config = MirrorConfig {
             s3_access_key_id: Some("access-key".to_string()),
-            s3_secret_access_key: Some("secret-key".to_string()),
+            s3_secret_access_key: Some("secret-key".into()),
             s3_bucket_name: Some("bucket".to_string()),
             ..MirrorConfig::default()
         };
@@ -210,7 +179,7 @@ mod tests {
 
         assert!(!debug.contains("secret-key"), "{debug}");
         // Everything else stays visible, including whether the secret is set.
-        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains("REDACTED"), "{debug}");
         assert!(debug.contains("access-key"), "{debug}");
         assert!(debug.contains("bucket"), "{debug}");
         assert!(debug.contains("500M"), "{debug}");
