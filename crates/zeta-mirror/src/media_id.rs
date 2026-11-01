@@ -2,10 +2,11 @@
 //!
 //! A media id ends up in downloaded file names, S3 object keys and the fragment of the public
 //! link, so it must be safe to use in all three. [`MediaId`] is the validated form: it can only be
-//! constructed through [`MediaId::parse`] (or its `TryFrom` implementations), which restrict it
-//! to the identifier alphabet.
+//! constructed through [`MediaId::parse`] (or its `FromStr` and `TryFrom` implementations), which
+//! restrict it to the identifier alphabet.
 
 use std::fmt;
+use std::str::FromStr;
 
 use zeta_url::is_identifier;
 
@@ -14,8 +15,8 @@ const ALLOWED: &str = "_-";
 
 /// A media id that is safe to use in file names, object keys and URL fragments.
 ///
-/// Construct one with [`MediaId::parse`] or the `TryFrom` implementations; there is no unchecked
-/// constructor.
+/// Construct one with [`MediaId::parse`], [`MediaId::from_str`], or the `TryFrom` implementations;
+/// there is no unchecked constructor.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MediaId(String);
 
@@ -56,6 +57,14 @@ impl fmt::Display for MediaId {
 impl AsRef<str> for MediaId {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl FromStr for MediaId {
+    type Err = InvalidMediaId;
+
+    fn from_str(id: &str) -> Result<Self, Self::Err> {
+        Self::parse(id)
     }
 }
 
