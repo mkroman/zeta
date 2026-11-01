@@ -75,6 +75,12 @@ const UNAUTHORIZED: &str = "You are not authorized to manage unwall sites.";
 // TODO: support multiple networks dynamically (as `.ofn` does).
 const NETWORK_ID: &str = "irc.rwx.im:6697";
 
+/// The maximum number of article submissions that run at once.
+///
+/// A first mirror runs server-side for up to `submit_timeout`, so one message with many covered
+/// links must not fan out into an unbounded number of requests against the rate-limited API.
+const SUBMIT_CONCURRENCY: usize = 4;
+
 /// Settings for the unwall plugin, from its `[plugins.unwall]` configuration section.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -165,6 +171,8 @@ pub struct Unwall {
     /// The compiled admin hostmasks; senders whose `nick!user@host` matches one of them are
     /// authorized to manage unwall sites.
     admins: Hostmasks,
+    /// Bounds the in-flight article submissions per message burst.
+    submits: Arc<tokio::sync::Semaphore>,
 }
 
 impl Unwall {
@@ -406,6 +414,7 @@ impl Unwall {
         };
 
         let service = Arc::clone(&self.service);
+        let submits = Arc::clone(&self.submits);
         let irc = client.sender();
         let channel = event.channel().to_owned();
 
@@ -424,6 +433,13 @@ impl Unwall {
 
         tokio::spawn(
             async move {
+                // Held for the whole submission and released by its drop, on success, error,
+                // and cancellation alike.
+                let _permit = submits
+                    .acquire_owned()
+                    .await
+                    .expect("the submission semaphore is never closed");
+
                 match service.resolve(&article, fetch).await {
                     Ok(cached) => {
                         // The link rides on the plain reply prefix, which colors the
@@ -494,6 +510,7 @@ impl Unwall {
         Ok(Self {
             service: Arc::new(UnwallService::new(ctx.db.clone(), client, reader_base)),
             admins,
+            submits: Arc::new(tokio::sync::Semaphore::new(SUBMIT_CONCURRENCY)),
         })
     }
 
