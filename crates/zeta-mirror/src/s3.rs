@@ -160,8 +160,11 @@ impl S3 {
             "S3_SECRET_ACCESS_KEY",
         )?;
         let bucket = resolve_secret(config.s3_bucket_name.as_deref(), "S3_BUCKET_NAME")?;
-        let region =
-            zeta_utils::settings::resolve_setting(config.s3_region.as_deref(), "S3_REGION", "auto");
+        let region = zeta_utils::settings::resolve_optional_setting(
+            config.s3_region.as_deref(),
+            "S3_REGION",
+        )
+        .unwrap_or_else(|| "auto".to_owned());
 
         let endpoint = zeta_utils::settings::resolve_optional_setting(
             config.s3_endpoint.as_deref(),
@@ -518,6 +521,44 @@ mod tests {
         assert!(
             matches!(&error, Error::Io(error) if error.kind() == std::io::ErrorKind::TimedOut),
             "{error:?}"
+        );
+    }
+
+    #[test]
+    fn blank_region_falls_back_to_the_environment_then_auto() {
+        let config = MirrorConfig {
+            s3_access_key_id: Some("access".to_string()),
+            s3_secret_access_key: Some("secret".to_string()),
+            s3_bucket_name: Some("bucket".to_string()),
+            s3_endpoint: Some("http://127.0.0.1:9".to_string()),
+            s3_region: Some("   ".to_string()),
+            ..MirrorConfig::default()
+        };
+
+        // A blank region counts as unset and resolves exactly like an omitted one. The test
+        // does not mutate the process environment; it computes the environment's contribution
+        // with the same helper the client uses.
+        let expected = zeta_utils::settings::resolve_optional_setting(Some(" "), "S3_REGION")
+            .unwrap_or_else(|| "auto".to_string());
+
+        assert_eq!(
+            S3::new(&config)
+                .expect("the configuration is complete")
+                .region,
+            expected
+        );
+
+        let config = MirrorConfig {
+            s3_region: Some("eu-west-1".to_string()),
+            ..config
+        };
+
+        // A configured region wins over the environment and the default.
+        assert_eq!(
+            S3::new(&config)
+                .expect("the configuration is complete")
+                .region,
+            "eu-west-1"
         );
     }
 

@@ -1,7 +1,6 @@
 //! Configuration loading and validation.
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::{borrow::Cow, collections::HashMap, fmt, time::Duration};
 
 use figment::{
     Figment,
@@ -90,8 +89,23 @@ impl Config {
     }
 }
 
+/// Renders a secret as `<redacted>` when it is set, and as `None` when it is not.
+///
+/// Configuration dumps still show whether a secret is configured, which is what operators need,
+/// without printing its value.
+struct Secret<'a>(Option<&'a str>);
+
+impl fmt::Debug for Secret<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(_) => f.write_str("<redacted>"),
+            None => f.write_str("None"),
+        }
+    }
+}
+
 /// Database connection configuration.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct DbConfig {
     /// Connection URL
     pub url: String,
@@ -111,6 +125,50 @@ pub struct DbConfig {
     pub max_lifetime: Duration,
 }
 
+// Manual implementation so the password embedded in the connection URL is never printed.
+impl fmt::Debug for DbConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DbConfig")
+            .field("url", &RedactedUrlPassword(&self.url))
+            .field("min_connections", &self.min_connections)
+            .field("max_connections", &self.max_connections)
+            .field("idle_timeout", &self.idle_timeout)
+            .field("max_lifetime", &self.max_lifetime)
+            .finish()
+    }
+}
+
+/// Renders a connection URL with its password redacted.
+struct RedactedUrlPassword<'a>(&'a str);
+
+impl fmt::Debug for RedactedUrlPassword<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&redact_url_password(self.0), f)
+    }
+}
+
+/// Replaces the password in a connection URL with `<redacted>`.
+///
+/// For example, `postgresql://zeta:secret@localhost/zeta` becomes
+/// `postgresql://zeta:<redacted>@localhost/zeta`. A value without the `scheme://userinfo@host`
+/// structure is redacted entirely, since there is no way to tell which part of it is the secret.
+fn redact_url_password(url: &str) -> Cow<'_, str> {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Cow::Borrowed("<redacted>");
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+
+    let Some((userinfo, host)) = authority.rsplit_once('@') else {
+        return Cow::Borrowed(url);
+    };
+    let Some((user, _password)) = userinfo.split_once(':') else {
+        return Cow::Borrowed(url);
+    };
+
+    Cow::Owned(format!("{scheme}://{user}:<redacted>@{host}{tail}"))
+}
+
 /// Tracing and logging configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TracingConfig {
@@ -124,12 +182,22 @@ pub struct TracingConfig {
 }
 
 /// Configuration for an individual IRC channel.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcChannelConfig {
     /// Name of the channel.
     pub name: String,
     /// The shared key to access the channel.
     pub key: Option<String>,
+}
+
+// Manual implementation so the channel key is never printed.
+impl fmt::Debug for IrcChannelConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IrcChannelConfig")
+            .field("name", &self.name)
+            .field("key", &Secret(self.key.as_deref()))
+            .finish()
+    }
 }
 
 /// TLS configuration for IRC connection.
@@ -140,7 +208,7 @@ pub struct IrcTlsConfig {
 }
 
 /// IRC client configuration.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IrcConfig {
     /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
     /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.
@@ -202,6 +270,28 @@ impl Default for IrcConfig {
     }
 }
 
+// Manual implementation so the `NickServ` and server passwords are never printed.
+impl fmt::Debug for IrcConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IrcConfig")
+            .field("admin_hostmasks", &self.admin_hostmasks)
+            .field("alt_nicks", &self.alt_nicks)
+            .field("channels", &self.channels)
+            .field("encoding", &self.encoding)
+            .field("hostname", &self.hostname)
+            .field("nick_password", &Secret(self.nick_password.as_deref()))
+            .field("nickname", &self.nickname)
+            .field("password", &Secret(self.password.as_deref()))
+            .field("port", &self.port)
+            .field("realname", &self.realname)
+            .field("should_ghost", &self.should_ghost)
+            .field("quit_message", &self.quit_message)
+            .field("tls", &self.tls)
+            .field("username", &self.username)
+            .finish()
+    }
+}
+
 impl IrcConfig {
     /// Returns the port number to use for this IRC connection: the configured port, or the TLS
     /// or plaintext port depending on whether TLS is enabled.
@@ -220,7 +310,9 @@ impl IrcConfig {
 impl From<&IrcConfig> for irc::client::data::Config {
     fn from(config: &IrcConfig) -> Self {
         let port = config.port();
-        let use_tls = config.tls.as_ref().map(|tls| tls.enabled);
+        // `irc` treats `None` as TLS enabled, which would pair TLS with the plaintext port the
+        // omitted `[irc.tls]` section implies; the default must be spelled out explicitly.
+        let use_tls = Some(config.tls.as_ref().is_some_and(|tls| tls.enabled));
         let mut channels = Vec::with_capacity(config.channels.len());
         let mut channel_keys = HashMap::new();
 
@@ -407,6 +499,93 @@ channels = []
         );
         assert_eq!(config.alt_nicks, ["zeta_"]);
         assert!(config.should_ghost);
+    }
+
+    #[test]
+    fn omitted_tls_section_is_plaintext() {
+        let config: IrcConfig = Figment::new()
+            .merge(Toml::string(
+                "nickname = \"zeta\"\nhostname = \"localhost\"\nalt_nicks = []\nchannels = []\n",
+            ))
+            .extract()
+            .expect("could not parse irc configuration");
+
+        // An omitted section means plaintext, and the conversion must say so explicitly: `irc`
+        // would otherwise treat `None` as TLS enabled and pair TLS with the plaintext port.
+        assert_eq!(config.port(), consts::DEFAULT_IRC_PORT);
+
+        let converted = irc::client::data::Config::from(&config);
+
+        assert_eq!(converted.use_tls, Some(false));
+        assert_eq!(converted.port, Some(consts::DEFAULT_IRC_PORT));
+
+        let config: IrcConfig = Figment::new()
+            .merge(Toml::string(
+                "nickname = \"zeta\"\nhostname = \"localhost\"\nalt_nicks = []\nchannels = []\n[ tls ]\nenabled = true\n",
+            ))
+            .extract()
+            .expect("could not parse irc configuration");
+
+        assert_eq!(config.port(), consts::DEFAULT_IRC_TLS_PORT);
+
+        let converted = irc::client::data::Config::from(&config);
+
+        assert_eq!(converted.use_tls, Some(true));
+        assert_eq!(converted.port, Some(consts::DEFAULT_IRC_TLS_PORT));
+    }
+
+    #[test]
+    fn debug_output_redacts_secrets() {
+        let config: Config = Figment::new()
+            .merge(Toml::string(
+                r##"
+[database]
+url = "postgresql://zeta:db-secret@localhost/zeta_test"
+
+[tracing]
+enabled = false
+
+[irc]
+nickname = "zeta"
+hostname = "localhost"
+alt_nicks = []
+channels = [{ name = "#zeta", key = "channel-secret" }]
+nick_password = "nickserv-secret"
+password = "server-secret"
+"##,
+            ))
+            .extract()
+            .expect("configuration should parse");
+
+        let debug = format!("{config:?}");
+
+        for secret in [
+            "nickserv-secret",
+            "server-secret",
+            "channel-secret",
+            "db-secret",
+        ] {
+            assert!(!debug.contains(secret), "`{secret}` leaked: {debug}");
+        }
+
+        // Non-secret fields stay visible, and the database URL keeps its host.
+        assert!(debug.contains("localhost"), "{debug}");
+        assert!(debug.contains("#zeta"), "{debug}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+    }
+
+    #[test]
+    fn database_url_password_is_redacted() {
+        assert_eq!(
+            redact_url_password("postgresql://zeta:secret@localhost/zeta_test").as_ref(),
+            "postgresql://zeta:<redacted>@localhost/zeta_test"
+        );
+        // A URL without a password is unchanged, and a value that is not a URL is hidden.
+        assert_eq!(
+            redact_url_password("postgresql://zeta@localhost/zeta_test").as_ref(),
+            "postgresql://zeta@localhost/zeta_test"
+        );
+        assert_eq!(redact_url_password("secret").as_ref(), "<redacted>");
     }
 
     /// The repository `config.toml` must parse into the full configuration: a broken edit has

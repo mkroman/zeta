@@ -172,7 +172,7 @@ pub struct YtDlpOptions {
     /// The command to execute.
     ///
     /// Falls back to the `ZETA_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
-    /// neither is set.
+    /// neither is set. Empty values count as unset.
     pub command: Option<String>,
     /// The maximum size of a video to download, as passed to `--max-filesize`.
     pub max_filesize: String,
@@ -185,11 +185,11 @@ impl YtDlp {
     #[must_use]
     pub fn new(options: YtDlpOptions) -> Self {
         Self {
-            command: zeta_utils::settings::resolve_setting(
+            command: zeta_utils::settings::resolve_optional_setting(
                 options.command.as_deref(),
                 COMMAND_ENV,
-                DEFAULT_COMMAND,
-            ),
+            )
+            .unwrap_or_else(|| DEFAULT_COMMAND.to_owned()),
             max_filesize: options.max_filesize,
             download_timeout: options.download_timeout,
         }
@@ -583,6 +583,30 @@ mod tests {
         );
         // The download size is capped.
         assert_eq!(value("--max-filesize"), Some("500M"));
+    }
+
+    #[test]
+    fn blank_command_falls_back_to_the_environment_then_the_default() {
+        let options = |command: Option<&str>| YtDlpOptions {
+            command: command.map(ToOwned::to_owned),
+            max_filesize: "500M".to_string(),
+            download_timeout: Duration::from_mins(10),
+        };
+
+        // A configured command wins over the environment and the default.
+        assert_eq!(
+            YtDlp::new(options(Some("/usr/local/bin/yt-dlp"))).command,
+            "/usr/local/bin/yt-dlp"
+        );
+
+        // A blank command counts as unset and resolves exactly like an omitted one. The test
+        // does not mutate the process environment; it computes the environment's contribution
+        // with the same helper the runner uses.
+        let expected = zeta_utils::settings::resolve_optional_setting(Some(" "), COMMAND_ENV)
+            .unwrap_or_else(|| DEFAULT_COMMAND.to_owned());
+
+        assert_eq!(YtDlp::new(options(Some("   "))).command, expected);
+        assert_eq!(YtDlp::new(options(None)).command, expected);
     }
 
     #[test]

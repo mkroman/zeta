@@ -1,6 +1,6 @@
 //! Configuration for the shared media mirror.
 
-use std::{path::PathBuf, time::Duration};
+use std::{fmt, path::PathBuf, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Unlike the plugin sections, unknown keys here are rejected (`deny_unknown_fields`): this is a
 /// top-level section shared by all media plugins, and a typo'd or removed key is a hard
 /// configuration mistake worth failing fast on.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MirrorConfig {
     /// The directory that downloads are buffered in.
@@ -31,7 +31,8 @@ pub struct MirrorConfig {
     /// The command used to run `yt-dlp`.
     ///
     /// Falls back to the `ZETA_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
-    /// neither is set.
+    /// neither is set. Empty values count as unset, so a blank command does not override the
+    /// environment or the default.
     pub ytdlp_command: Option<String>,
     /// The S3 access key id used for mirroring.
     ///
@@ -49,8 +50,9 @@ pub struct MirrorConfig {
     /// The S3 region.
     ///
     /// Falls back to the `S3_REGION` environment variable, and to `auto` when neither is set.
-    /// `auto` is only meaningful for S3-compatible endpoints (such as R2 or MinIO) — against AWS
-    /// proper, a real region should be set.
+    /// Empty values count as unset, so a blank region does not override the environment or the
+    /// default. `auto` is only meaningful for S3-compatible endpoints (such as R2 or MinIO) —
+    /// against AWS proper, a real region should be set.
     pub s3_region: Option<String>,
     /// The endpoint URL for S3-compatible services.
     ///
@@ -87,6 +89,46 @@ impl Default for MirrorConfig {
             s3_connect_timeout: Duration::from_secs(10),
             s3_request_timeout: Duration::from_mins(5),
         }
+    }
+}
+
+/// Renders a secret as `<redacted>` when it is set, and as `None` when it is not.
+///
+/// Configuration dumps still show whether a secret is configured, which is what operators need,
+/// without printing its value.
+struct Secret<'a>(Option<&'a str>);
+
+impl fmt::Debug for Secret<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(_) => f.write_str("<redacted>"),
+            None => f.write_str("None"),
+        }
+    }
+}
+
+// Manual implementation so the secret access key is never printed. The access key id stays
+// visible: it identifies the credentials rather than granting access to them, and matches the
+// `S3` client's own `Debug` output.
+impl fmt::Debug for MirrorConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MirrorConfig")
+            .field("download_dir", &self.download_dir)
+            .field("max_filesize", &self.max_filesize)
+            .field("download_timeout", &self.download_timeout)
+            .field("max_concurrent_downloads", &self.max_concurrent_downloads)
+            .field("ytdlp_command", &self.ytdlp_command)
+            .field("s3_access_key_id", &self.s3_access_key_id)
+            .field(
+                "s3_secret_access_key",
+                &Secret(self.s3_secret_access_key.as_deref()),
+            )
+            .field("s3_bucket_name", &self.s3_bucket_name)
+            .field("s3_region", &self.s3_region)
+            .field("s3_endpoint", &self.s3_endpoint)
+            .field("s3_connect_timeout", &self.s3_connect_timeout)
+            .field("s3_request_timeout", &self.s3_request_timeout)
+            .finish()
     }
 }
 
@@ -153,5 +195,24 @@ mod tests {
                 .is_err(),
             "typo'd key should be rejected"
         );
+    }
+
+    #[test]
+    fn debug_output_redacts_the_secret_access_key() {
+        let config = MirrorConfig {
+            s3_access_key_id: Some("access-key".to_string()),
+            s3_secret_access_key: Some("secret-key".to_string()),
+            s3_bucket_name: Some("bucket".to_string()),
+            ..MirrorConfig::default()
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(!debug.contains("secret-key"), "{debug}");
+        // Everything else stays visible, including whether the secret is set.
+        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains("access-key"), "{debug}");
+        assert!(debug.contains("bucket"), "{debug}");
+        assert!(debug.contains("500M"), "{debug}");
     }
 }
