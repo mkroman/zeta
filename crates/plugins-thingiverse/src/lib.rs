@@ -98,23 +98,8 @@ impl Thingiverse {
         client: &Client,
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        self.process_url(url.url(), url.channel(), client).await?;
+        let (url, channel) = (url.url(), url.channel());
 
-        Ok(())
-    }
-}
-
-impl Thingiverse {
-    /// Processes a single Thingiverse URL.
-    ///
-    /// Checks if the URL path matches the expected Thingiverse pattern, extracts the ID,
-    /// and fetches the data.
-    async fn process_url(
-        &self,
-        url: &Url,
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
         // Extract ID from path
         if let Some(thing_id) = thing_id(url) {
             debug!(%thing_id, "fetching thingiverse thing");
@@ -133,7 +118,9 @@ impl Thingiverse {
 
         Ok(())
     }
+}
 
+impl Thingiverse {
     /// Fetches details about a specific thing by ID from the Thingiverse API.
     async fn fetch_thing(&self, id: &str) -> Result<Thing, Error> {
         let url = format!("{API_BASE_URL}/things/{id}/");

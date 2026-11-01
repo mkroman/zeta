@@ -8,7 +8,6 @@
 //! `user_country` and `user_language` settings, and adult titles are included in searches when
 //! the `include_adult` setting is set (default). The plugin has no other settings.
 
-use ::url::Url;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -153,7 +152,23 @@ impl Imdb {
         client: &Client,
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        self.process_url(url.url(), url.channel(), client).await?;
+        let (url, channel) = (url.url(), url.channel());
+
+        match classify_imdb_url(url) {
+            Some(Link::Title(id)) => {
+                debug!(imdb.title.id = %id, "fetching details for posted title link");
+
+                let lookup = self.client.title(&id).await;
+                Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
+            }
+            Some(Link::Name(id)) => {
+                debug!(imdb.person.id = %id, "fetching details for posted person link");
+
+                let lookup = self.client.person(&id).await;
+                Self::reply(client, channel, lookup.map(|person| format_person(&person)))?;
+            }
+            None => {}
+        }
 
         Ok(())
     }
@@ -169,35 +184,6 @@ impl Imdb {
         match result {
             Ok(message) => client.send_privmsg(channel, message)?,
             Err(err) => client.send_privmsg(channel, format!("{} {err}", prefix()))?,
-        }
-
-        Ok(())
-    }
-
-    /// Processes a URL found in a message, printing details about any IMDb resource it points
-    /// at.
-    ///
-    /// URLs matching a filter — e.g. links to IMDb posted by another bot — are skipped.
-    async fn process_url(
-        &self,
-        url: &Url,
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        match classify_imdb_url(url) {
-            Some(Link::Title(id)) => {
-                debug!(imdb.title.id = %id, "fetching details for posted title link");
-
-                let lookup = self.client.title(&id).await;
-                Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
-            }
-            Some(Link::Name(id)) => {
-                debug!(imdb.person.id = %id, "fetching details for posted person link");
-
-                let lookup = self.client.person(&id).await;
-                Self::reply(client, channel, lookup.map(|person| format_person(&person)))?;
-            }
-            None => {}
         }
 
         Ok(())
