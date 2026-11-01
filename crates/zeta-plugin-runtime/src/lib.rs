@@ -11,5 +11,10 @@ mod registry;
 mod runtime;
 mod task;
 
+// Test-facing internals: the dispatch span test lives in its own test binary and drives the
+// index directly (`tests/dispatch_spans.rs`). Hidden from the documentation and not a stability
+// promise — the supported API is `PluginRuntime`.
+#[doc(hidden)]
+pub use dispatch::EventIndex;
 pub use registry::Registry;
 pub use runtime::PluginRuntime;
