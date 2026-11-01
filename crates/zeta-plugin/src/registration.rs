@@ -10,7 +10,6 @@ use figment::value::Value;
 use crate::Error;
 use crate::config::deserialize_with_unknown_keys;
 use crate::context::Context;
-use crate::error::plugin_err;
 use crate::event::Subscriptions;
 use crate::plugin::{Plugin, Registered};
 
@@ -111,10 +110,10 @@ where
         Some(value) => {
             let (settings, unknown_keys) =
                 deserialize_with_unknown_keys(value).map_err(|error| {
-                    plugin_err(std::io::Error::other(format!(
+                    Error::Message(format!(
                         "invalid settings for plugin `{}`: {error}",
                         P::NAME
-                    )))
+                    ))
                 })?;
 
             Ok((settings, unknown_keys))

@@ -376,10 +376,10 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
             .site_name
             .as_deref()
             .map(unstyle_text)
-            .filter(|site| !site.is_empty())
-            .unwrap_or_else(|| host_name(url).into());
+            .filter(|site| !site.is_empty());
+        let label = site.as_deref().unwrap_or_else(|| host_name(url));
 
-        labeled_reply(&site, &content)
+        labeled_reply(label, &content)
     } else {
         plain_reply(&content)
     };
@@ -405,9 +405,8 @@ const fn has_open_graph(metadata: &PageMetadata) -> bool {
 
 /// Returns the host of `url` without its `www.` prefix.
 #[must_use]
-fn host_name(url: &Url) -> String {
-    url.host_str()
-        .map_or_default(|host| strip_www(host).to_string())
+fn host_name(url: &Url) -> &str {
+    url.host_str().map_or("", strip_www)
 }
 
 #[cfg(test)]
@@ -521,15 +520,7 @@ mod tests {
         )));
 
         let mut titles = Titles::new(&ctx, &Settings::default()).expect("titles plugin builds");
-        let client = Client::from_config(irc::client::data::Config {
-            nickname: Some("zeta-test".to_owned()),
-            server: Some("mock".to_owned()),
-            use_mock_connection: true,
-            mock_initial_value: Some(String::new()),
-            ..Default::default()
-        })
-        .await
-        .expect("mock irc client");
+        let client = zeta_test_support::mock_client().await;
 
         titles.loaded(&ctx, &client).await.expect("plugin loads");
 
@@ -559,15 +550,7 @@ mod tests {
         // One permit: a second fetch may only start once the first one is done.
         titles.fetches = Arc::new(Semaphore::new(1));
 
-        let client = Client::from_config(irc::client::data::Config {
-            nickname: Some("zeta-test".to_owned()),
-            server: Some("mock".to_owned()),
-            use_mock_connection: true,
-            mock_initial_value: Some(String::new()),
-            ..Default::default()
-        })
-        .await
-        .expect("mock irc client");
+        let client = zeta_test_support::mock_client().await;
 
         let (address, most_open, answered) = delayed_page_server(Duration::from_millis(300)).await;
 
@@ -669,13 +652,7 @@ mod tests {
 
     #[test]
     fn ignores_hosts_declared_in_the_catalog() {
-        let catalog = PluginCatalog {
-            entries: vec![CatalogEntry {
-                name: "imdb".to_owned(),
-                commands: Vec::new(),
-                url_scope: UrlScope::Hosts(&["imdb.com", "www.imdb.com"]),
-            }],
-        };
+        let catalog = catalog_with("imdb", &["imdb.com", "www.imdb.com"]);
 
         assert!(is_catalog_handled(
             &Url::parse("https://www.imdb.com/title/tt1375666").unwrap(),
