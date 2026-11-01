@@ -299,11 +299,10 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
     let speed_unit = units.wind_speed();
 
     let name = unstyle_text(&w.name);
-    let location = w
-        .sys
-        .country
-        .as_ref()
-        .map_or_else(|| name.clone(), |c| format!("{name}, {}", unstyle_text(c)));
+    let location = w.sys.country.as_ref().map_or_else(
+        || name.to_string(),
+        |c| format!("{name}, {}", unstyle_text(c)),
+    );
 
     let conditions = if w.weather.is_empty() {
         "unknown conditions".to_string()

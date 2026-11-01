@@ -339,7 +339,11 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .as_deref()
         .map(unstyle_text)
         .filter(|description| !description.is_empty())
-        .map(|description| description.truncate_within(settings.max_description_length, "…"));
+        .map(|description| {
+            description
+                .truncate_within(settings.max_description_length, "…")
+                .into_owned()
+        });
 
     if title.is_none() && description.is_none() {
         return None;
@@ -358,14 +362,18 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
             .as_deref()
             .map(unstyle_text)
             .filter(|site| !site.is_empty())
-            .unwrap_or_else(|| host_name(url));
+            .unwrap_or_else(|| host_name(url).into());
 
         labeled_reply(&site, &content)
     } else {
         plain_reply(&content)
     };
 
-    Some(message.truncate_within(settings.max_message_length, "…"))
+    Some(
+        message
+            .truncate_within(settings.max_message_length, "…")
+            .into_owned(),
+    )
 }
 
 /// Whether any OpenGraph metadata was captured.

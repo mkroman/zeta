@@ -537,7 +537,7 @@ async fn fetch_video_categories(
 /// YouTube HTML-escapes titles, channel names, and category names in both the search and
 /// videos responses.
 fn sanitize_html(text: &str) -> String {
-    unstyle_text(&htmlize::unescape(text))
+    unstyle_text(&htmlize::unescape(text)).into_owned()
 }
 
 /// Formats the message describing `video`, using the resolved `category` and `view_count`.

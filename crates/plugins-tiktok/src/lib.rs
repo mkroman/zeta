@@ -289,7 +289,8 @@ mod tests {
     #[test]
     fn summaries_strip_formatting_and_collapse_whitespace() {
         let embed = oembed(Some("\x0310Fake\nTitle\x0f"), Some("author\x02"));
-        let summary = unstyle_text(&format_summary(&embed, 150).unwrap());
+        let summary = format_summary(&embed, 150).unwrap();
+        let summary = unstyle_text(&summary);
 
         assert_eq!(summary, "“Fake Title” is a TikTok video by author");
     }
