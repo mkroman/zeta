@@ -683,6 +683,11 @@ impl Manager {
     /// A queued upload is drained into a free slot immediately, so a non-empty queue means every
     /// upload slot is busy. Downloads already running when this becomes true may still finish
     /// and queue their uploads; their number is bounded by `max_concurrent`.
+    // `VecDeque::len` is not const on stable, so a `const fn` would not compile there.
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "VecDeque::len is not const on stable"
+    )]
     fn upload_backlog_full(&self) -> bool {
         self.upload_queue.len() >= UPLOAD_BACKLOG
     }
