@@ -26,7 +26,10 @@ use crate::config::MirrorConfig;
 const CREDENTIALS_PROVIDER_NAME: &str = "zeta-mirror";
 
 /// The size of the buffer used when hashing files.
-const HASH_BUFFER_SIZE: usize = 64 * 1024;
+///
+/// Each read is an async file operation that runs on the blocking pool, so a large buffer keeps
+/// hashing a multi-gigabyte upload from paying that round-trip once per 64 KiB.
+const HASH_BUFFER_SIZE: usize = 1024 * 1024;
 
 /// The maximum number of attempts for a request before giving up on transient failures.
 const MAX_SEND_ATTEMPTS: u32 = 3;

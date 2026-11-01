@@ -1,7 +1,7 @@
 //! Download manager for `yt-dlp`.
 //!
 //! A long-running task that owns the full lifecycle of a mirror: download requests are submitted
-//! through an unbounded mpsc channel, every accepted request runs as its own `yt-dlp` task that
+//! through a bounded mpsc channel, every accepted request runs as its own `yt-dlp` task that
 //! logs its progress to its own span and reports only its final result to the manager over a
 //! second mpsc channel, and completed downloads are handed to a bounded upload pipeline that
 //! uploads them to S3 before the requester is notified with the public link.
@@ -13,7 +13,9 @@
 //!
 //! The accepted-request queue is bounded by [`MAX_QUEUED_REQUESTS`]: a request that arrives while
 //! the queue is full is rejected with [`Error::Busy`] instead of being retained, so a stalled
-//! upload pipeline cannot grow the manager's in-memory queue without bound.
+//! upload pipeline cannot grow the manager's in-memory queue without bound. The intake channel
+//! itself is bounded as well, so a flood that outruns the manager is shed by the submitter
+//! instead of accumulating in the channel.
 //!
 //! Uploads are bounded explicitly: at most [`UPLOAD_CONCURRENCY`] run at once and at most
 //! [`UPLOAD_BACKLOG`] completed downloads wait for a slot. When the backlog is full, no new
@@ -126,21 +128,28 @@ enum DownloadStatus {
     Failed { id: u64, error: ytdlp::Error },
 }
 
+/// The capacity of the intake channel.
+///
+/// One slot beyond [`MAX_QUEUED_REQUESTS`] lets the manager keep accepting while its accepted
+/// queue is exactly full; anything past that is shed before it reaches the manager.
+const REQUEST_CHANNEL_CAPACITY: usize = MAX_QUEUED_REQUESTS + 1;
+
 /// A handle to the running download manager, used for submitting download requests.
 #[derive(Clone)]
 pub struct DownloadManager {
     /// The channel on which download requests are submitted to the manager task.
-    requests: mpsc::UnboundedSender<DownloadRequest>,
+    requests: mpsc::Sender<DownloadRequest>,
 }
 
 impl DownloadManager {
     /// Starts the download manager task and returns a handle for submitting requests to it.
     ///
-    /// At most `max_concurrent` downloads run at a time. Downloads are buffered in temporary
-    /// directories inside `download_dir`; `base_dir`, when given, is kept alive for as long as
-    /// the manager runs (used for a per-run random download directory). Stale temporary
-    /// directories are removed at startup; the download directory is expected to be owned by
-    /// this process and must not be shared between concurrently running instances.
+    /// At most `max_concurrent` downloads run at a time; a zero is clamped to one so the
+    /// manager can always make progress. Downloads are buffered in temporary directories inside
+    /// `download_dir`; `base_dir`, when given, is kept alive for as long as the manager runs
+    /// (used for a per-run random download directory). Stale temporary directories are removed
+    /// at startup; the download directory is expected to be owned by this process and must not
+    /// be shared between concurrently running instances.
     ///
     /// Completed downloads are uploaded by a bounded pipeline: at most [`UPLOAD_CONCURRENCY`]
     /// uploads run at once and at most [`UPLOAD_BACKLOG`] wait. When the backlog is full the
@@ -168,7 +177,12 @@ impl DownloadManager {
             debug!(removed, "cleaned up stale download directories");
         }
 
-        let (requests, request_rx) = mpsc::unbounded_channel();
+        if max_concurrent == 0 {
+            warn!("max_concurrent is 0; running one download at a time");
+        }
+
+        let max_concurrent = max_concurrent.max(1);
+        let (requests, request_rx) = mpsc::channel(REQUEST_CHANNEL_CAPACITY);
         let (status_tx, status_rx) = mpsc::unbounded_channel();
 
         let manager = Manager {
@@ -196,14 +210,23 @@ impl DownloadManager {
     /// Submits a download request to the manager.
     ///
     /// The request is handled asynchronously; its [`DownloadRequest::on_finish`] callback is
-    /// invoked when the download finishes.
+    /// invoked when the download finishes, or immediately with [`Error::Busy`] when the intake
+    /// channel is full. On that path the callback runs on the submitting thread.
     ///
     /// # Errors
     ///
     /// Returns the request back if the manager task is no longer running.
     #[allow(clippy::result_large_err)]
     pub fn submit(&self, request: DownloadRequest) -> Result<(), DownloadRequest> {
-        self.requests.send(request).map_err(|err| err.0)
+        match self.requests.try_send(request) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(request)) => {
+                (request.on_finish)(Err(Error::Busy));
+
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(request)) => Err(request),
+        }
     }
 }
 
@@ -220,7 +243,7 @@ struct Manager {
     /// The maximum number of downloads that may run concurrently.
     max_concurrent: usize,
     /// The channel download requests arrive on.
-    requests: mpsc::UnboundedReceiver<DownloadRequest>,
+    requests: mpsc::Receiver<DownloadRequest>,
     /// The channel used for sending statuses to newly spawned download tasks.
     status_tx: mpsc::UnboundedSender<DownloadStatus>,
     /// The channel download tasks report their status on.
@@ -1195,6 +1218,49 @@ mod tests {
 
         // The request was rejected before it reached the downloader.
         zeta_test_support::assert_empty!(downloader.started.lock().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_zero_concurrency_is_clamped_to_one() {
+        let (_download_dir, manager) =
+            start_manager(Arc::new(RecordingDownloader::default()), S3::for_test(), 0);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+        manager
+            .submit(request("0", "123", results, 0))
+            .expect("manager is running");
+
+        // A zero concurrency would leave the request queued forever; the clamp makes it run.
+        let (index, result) = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a zero-concurrency manager should still start the download")
+            .expect("the result channel stays open");
+
+        assert_eq!(index, 0);
+        assert!(matches!(result, Err(Error::Download(_))), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn test_full_intake_channel_sheds_on_the_submitter() {
+        let (_download_dir, manager) =
+            start_manager(Arc::new(RecordingDownloader::default()), S3::for_test(), 1);
+
+        let (results, mut rx) = mpsc::unbounded_channel();
+
+        // A current-thread runtime does not poll the manager task while this loop runs, so the
+        // channel is still full when the request past its capacity is submitted.
+        for index in 0..=REQUEST_CHANNEL_CAPACITY {
+            manager
+                .submit(request("0", &format!("{index}"), results.clone(), index))
+                .expect("a full channel is shed by submit, not returned");
+        }
+
+        let (index, result) = rx
+            .try_recv()
+            .expect("the request past the channel capacity is shed immediately");
+
+        assert_eq!(index, REQUEST_CHANNEL_CAPACITY);
+        assert!(matches!(result, Err(Error::Busy)), "{result:?}");
     }
 
     #[tokio::test]
