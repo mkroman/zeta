@@ -6,7 +6,7 @@
 //!
 //! The coin cache lower-cases every name once when it is built, so a lookup allocates only the
 //! lower-cased query and whatever `jaro_winkler` needs. The length prefilter and the dynamic
-//! program run on borrowed data.
+//! program run on borrowed data, and the program's scratch rows are reused across candidates.
 
 use coinmarketcap::model::Coin;
 use strsim::jaro_winkler;
@@ -17,13 +17,15 @@ use strsim::jaro_winkler;
 /// does not allocate.
 #[derive(Debug)]
 pub struct NamedCoin {
+    /// The CoinMarketCap id of the coin, returned for the best match.
+    id: u64,
     /// The coin's name, lower-cased for comparison with the lower-cased query.
     name: String,
     /// The number of characters in `name`, used for the length prefilter.
     char_count: usize,
     /// The byte length of the coin's original name, used to prefer shorter names on ties.
     original_len: usize,
-    /// The ticker symbol, which keys the coin in the cache.
+    /// The ticker symbol, used to break ties between equally long names.
     symbol: String,
 }
 
@@ -33,6 +35,7 @@ impl NamedCoin {
         let name = coin.name.to_lowercase();
 
         Self {
+            id: coin.id,
             char_count: name.chars().count(),
             original_len: coin.name.len(),
             name,
@@ -41,18 +44,14 @@ impl NamedCoin {
     }
 }
 
-/// Finds the symbol of the best fuzzy name match for `query` among `coins`, if any.
+/// Finds the id of the best fuzzy name match for `query` among `coins`, if any.
 ///
 /// A candidate matches when its name contains the query's characters in order, with at most
 /// `max_name_typos` of them left unmatched. Names containing the query verbatim are preferred
 /// (exact match first, then prefix, then substring); the rest are scored by Jaro-Winkler
 /// similarity, scaled below verbatim matches. The highest score wins, preferring the shorter
 /// name on ties (e.g. `Bitcoin` over `Bitcoin Cash` for the query `bitcoin`).
-pub fn find_by_name<'a>(
-    coins: &'a [NamedCoin],
-    query: &str,
-    max_name_typos: u16,
-) -> Option<&'a str> {
+pub fn find_by_name(coins: &[NamedCoin], query: &str, max_name_typos: u16) -> Option<u64> {
     let needle = query.trim().to_lowercase();
 
     if needle.is_empty() {
@@ -61,11 +60,13 @@ pub fn find_by_name<'a>(
 
     let needle_char_count = needle.chars().count();
     let max_typos = usize::from(max_name_typos);
+    let mut rows = DpRows::new();
 
     coins
         .iter()
         .filter_map(|coin| {
-            score_name(&needle, needle_char_count, coin, max_typos).map(|score| (score, coin))
+            score_name(&needle, needle_char_count, coin, max_typos, &mut rows)
+                .map(|score| (score, coin))
         })
         .max_by(|(a_score, a_coin), (b_score, b_coin)| {
             a_score
@@ -73,7 +74,7 @@ pub fn find_by_name<'a>(
                 .then_with(|| b_coin.original_len.cmp(&a_coin.original_len))
                 .then_with(|| a_coin.symbol.cmp(&b_coin.symbol))
         })
-        .map(|(_, coin)| coin.symbol.as_str())
+        .map(|(_, coin)| coin.id)
 }
 
 /// Scores how well `coin`'s name matches `needle` (both lower-cased), or `None` if it does not
@@ -89,6 +90,7 @@ fn score_name(
     needle_char_count: usize,
     coin: &NamedCoin,
     max_typos: usize,
+    rows: &mut DpRows,
 ) -> Option<f64> {
     let name = coin.name.as_str();
 
@@ -111,23 +113,75 @@ fn score_name(
         return None;
     }
 
-    matches_within(needle, name, max_typos).then(|| jaro_winkler(needle, name) * 0.85)
+    matches_within(needle, name, max_typos, rows).then(|| jaro_winkler(needle, name) * 0.85)
 }
 
 /// The number of dynamic-programming columns that fit in the stack rows.
 const ROW_WIDTH: usize = 128;
 
+/// The two rows of the longest-common-subsequence table.
+///
+/// One set is reused across all the candidate names of a lookup, so scanning the coin list
+/// allocates its heap rows at most once. The rows live on the stack unless the name is longer
+/// than [`ROW_WIDTH`] bytes.
+struct DpRows {
+    /// The row above the current one, for names that fit on the stack.
+    previous: [u16; ROW_WIDTH],
+    /// The row being written, for names that fit on the stack.
+    current: [u16; ROW_WIDTH],
+    /// The row above the current one, for longer names.
+    previous_long: Vec<u16>,
+    /// The row being written, for longer names.
+    current_long: Vec<u16>,
+}
+
+impl DpRows {
+    /// Creates empty scratch rows.
+    const fn new() -> Self {
+        Self {
+            previous: [0; ROW_WIDTH],
+            current: [0; ROW_WIDTH],
+            previous_long: Vec::new(),
+            current_long: Vec::new(),
+        }
+    }
+
+    /// Returns zeroed rows for a haystack of `haystack_len` bytes.
+    ///
+    /// Only the prefix the program uses is reset: values left behind by a longer candidate
+    /// would otherwise be read as matches.
+    fn for_haystack(&mut self, haystack_len: usize) -> (&mut [u16], &mut [u16]) {
+        let (previous, current): (&mut [u16], &mut [u16]) = if haystack_len < ROW_WIDTH {
+            (
+                &mut self.previous[..=haystack_len],
+                &mut self.current[..=haystack_len],
+            )
+        } else {
+            self.previous_long.resize(haystack_len + 1, 0);
+            self.current_long.resize(haystack_len + 1, 0);
+
+            (&mut self.previous_long, &mut self.current_long)
+        };
+
+        previous.fill(0);
+        current.fill(0);
+
+        (previous, current)
+    }
+}
+
 /// Returns whether `needle` can be matched in `haystack`, in order, with at most `max_typos`
 /// of its characters left unmatched.
 ///
 /// The rows of the longest-common-subsequence table live on the stack unless the haystack is
-/// longer than [`ROW_WIDTH`] bytes; no allocation is made on the common path.
+/// longer than [`ROW_WIDTH`] bytes; no allocation is made for short names, and the long-name
+/// rows are reused across the candidates of a lookup through `rows`.
 ///
 /// The program compares UTF-8 bytes: equal bytes imply equal characters, so a matching name is
 /// never rejected, but two different non-ASCII characters can share a byte and be counted as
 /// one match. The verbatim, prefix and substring checks in [`score_name`] are exact, so this
 /// only relaxes the tolerance filter before Jaro-Winkler.
-fn matches_within(needle: &str, haystack: &str, max_typos: usize) -> bool {
+fn matches_within(needle: &str, haystack: &str, max_typos: usize, rows: &mut DpRows) -> bool {
     let needle = needle.as_bytes();
     let haystack = haystack.as_bytes();
 
@@ -137,21 +191,7 @@ fn matches_within(needle: &str, haystack: &str, max_typos: usize) -> bool {
         return false;
     }
 
-    let mut previous_stack = [0u16; ROW_WIDTH];
-    let mut current_stack = [0u16; ROW_WIDTH];
-    let mut previous_heap = Vec::new();
-    let mut current_heap = Vec::new();
-
-    let (mut previous, mut current): (&mut [u16], &mut [u16]) = if haystack.len() < ROW_WIDTH {
-        (
-            &mut previous_stack[..=haystack.len()],
-            &mut current_stack[..=haystack.len()],
-        )
-    } else {
-        previous_heap.resize(haystack.len() + 1, 0);
-        current_heap.resize(haystack.len() + 1, 0);
-        (&mut previous_heap, &mut current_heap)
-    };
+    let (mut previous, mut current) = rows.for_haystack(haystack.len());
 
     // The number of unmatched needle bytes is the needle length minus the longest common
     // subsequence, computed with the usual row-by-row dynamic program.
@@ -176,21 +216,51 @@ fn matches_within(needle: &str, haystack: &str, max_typos: usize) -> bool {
 mod tests {
     use super::*;
 
+    /// Runs `matches_within` with fresh scratch, as a lookup's first candidate does.
+    fn within(needle: &str, haystack: &str, max_typos: usize) -> bool {
+        matches_within(needle, haystack, max_typos, &mut DpRows::new())
+    }
+
     #[test]
     fn fuzzy_matching_allows_missing_and_substituted_characters() {
-        assert!(matches_within("bitcoin", "bitcoin", 0));
-        assert!(matches_within("bitcon", "bitcoin", 0));
-        assert!(matches_within("bitkoin", "bitcoin", 1));
-        assert!(!matches_within("bitkoin", "bitcoin", 0));
-        assert!(!matches_within("dogecoin", "doge", 0));
+        assert!(within("bitcoin", "bitcoin", 0));
+        assert!(within("bitcon", "bitcoin", 0));
+        assert!(within("bitkoin", "bitcoin", 1));
+        assert!(!within("bitkoin", "bitcoin", 0));
+        assert!(!within("dogecoin", "doge", 0));
     }
 
     #[test]
     fn fuzzy_matching_uses_heap_rows_for_long_names() {
         let haystack = "a".repeat(2 * ROW_WIDTH);
 
-        assert!(matches_within("a", &haystack, 0));
-        assert!(!matches_within("b", &haystack, 0));
+        assert!(within("a", &haystack, 0));
+        assert!(!within("b", &haystack, 0));
+    }
+
+    #[test]
+    fn reused_rows_match_fresh_rows() {
+        // A reused lookup must reset the rows a shorter or longer candidate left behind.
+        let haystacks = [
+            "bitcoin".to_string(),
+            "bitcoin cash".to_string(),
+            "a".repeat(2 * ROW_WIDTH),
+            "b".repeat(3 * ROW_WIDTH / 2),
+            "bitcoin".repeat(30),
+            "doge".to_string(),
+        ];
+        let needles = ["bitcoin", "bitkoin", "doge", "b", "zz"];
+
+        let mut rows = DpRows::new();
+        for haystack in &haystacks {
+            for needle in needles {
+                assert_eq!(
+                    matches_within(needle, haystack, 2, &mut rows),
+                    within(needle, haystack, 2),
+                    "needle {needle:?} against {haystack:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -201,7 +271,7 @@ mod tests {
             symbol: "AE".to_string(),
         })];
 
-        assert_eq!(find_by_name(&coins, "æternity", 0), Some("AE"));
+        assert_eq!(find_by_name(&coins, "æternity", 0), Some(1));
     }
 
     /// Builds coin names for name matching tests.
@@ -230,14 +300,14 @@ mod tests {
     #[test]
     fn prefers_names_containing_the_query() {
         let coins = matching_coins();
-        let symbol = |query: &str| find_by_name(&coins, query, 2);
+        let id = |query: &str| find_by_name(&coins, query, 2);
 
-        assert_eq!(symbol("bitcoin"), Some("BTC"));
-        assert_eq!(symbol("bitkoin"), Some("BTC"));
-        assert_eq!(symbol("gold"), Some("PAXG"));
-        assert_eq!(symbol("swap"), Some("UNI"));
-        assert_eq!(symbol("graph"), Some("GRT"));
-        assert_eq!(symbol("inu"), Some("SHIB"));
+        assert_eq!(id("bitcoin"), Some(1));
+        assert_eq!(id("bitkoin"), Some(1));
+        assert_eq!(id("gold"), Some(3));
+        assert_eq!(id("swap"), Some(5));
+        assert_eq!(id("graph"), Some(7));
+        assert_eq!(id("inu"), Some(8));
     }
 
     /// Times fuzzy matching over a synthetic 5,000-coin corpus.
@@ -248,7 +318,6 @@ mod tests {
     #[test]
     #[ignore = "benchmark"]
     fn fuzzy_matching_benchmark() {
-        use std::collections::HashMap;
         use std::time::Instant;
 
         const WORDS: [&str; 12] = [
@@ -274,25 +343,16 @@ mod tests {
             })
             .collect();
         let names: Vec<NamedCoin> = coins.iter().map(NamedCoin::new).collect();
-        let by_symbol: HashMap<&str, &Coin> = coins
-            .iter()
-            .map(|coin| (coin.symbol.as_str(), coin))
-            .collect();
 
         let rounds = 200u32;
-        // Warm the allocator, the symbol map and the query's lowercase path before timing.
+        // Warm the allocator and the query's lowercase path before timing.
         std::hint::black_box(find_by_name(&names, "bitkoin", 2));
         let start = Instant::now();
         let mut sink = 0usize;
         for _ in 0..rounds {
-            // Resolve and clone like `CoinCache::find_by_name` plus its caller, so the
-            // benchmark covers the same work before and after the precomputation.
-            let found = find_by_name(&names, std::hint::black_box("bitkoin"), 2)
-                .and_then(|symbol| by_symbol.get(symbol))
-                .copied()
-                .cloned();
-            sink +=
-                std::hint::black_box(found).map_or(0, |coin| usize::try_from(coin.id).unwrap_or(0));
+            // Resolve like `resolve_coin`, so the benchmark covers the same work.
+            let found = find_by_name(&names, std::hint::black_box("bitkoin"), 2);
+            sink += std::hint::black_box(found).map_or(0, |id| usize::try_from(id).unwrap_or(0));
         }
         eprintln!(
             "fuzzy matching: {:?}/lookup (sink {sink})",
