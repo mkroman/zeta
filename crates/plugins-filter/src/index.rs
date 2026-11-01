@@ -368,13 +368,18 @@ impl FilterIndex {
 
     /// All filters in the index, ordered by id.
     pub(super) fn filters(&self) -> Vec<Filter> {
-        let mut filters: Vec<Filter> = self
-            .channels
-            .values()
-            .chain(std::iter::once(&self.all_channels))
-            .flat_map(HostIndex::filters)
-            .cloned()
-            .collect();
+        self.sorted_filters().into_iter().cloned().collect()
+    }
+
+    /// All filters in the index as references, ordered by id.
+    pub(super) fn sorted_filters(&self) -> Vec<&Filter> {
+        let mut filters: Vec<&Filter> = Vec::with_capacity(self.count);
+        filters.extend(
+            self.channels
+                .values()
+                .chain(std::iter::once(&self.all_channels))
+                .flat_map(HostIndex::filters),
+        );
 
         filters.sort_unstable_by_key(|filter| filter.id);
 
