@@ -79,13 +79,12 @@ impl Registry {
         section: Option<&Value>,
     ) -> bool {
         let name = registration.name;
-        let duplicate = self.plugins.iter().any(|plugin| plugin.name == name)
-            || self
-                .failed_plugins
-                .iter()
-                .any(|(failed, _)| *failed == name);
+        let already_failed = self
+            .failed_plugins
+            .iter()
+            .any(|(failed, _)| *failed == name);
 
-        if duplicate {
+        if already_failed || self.plugins.iter().any(|plugin| plugin.name == name) {
             let error = plugin_err(std::io::Error::other(format!(
                 "duplicate plugin registration for `{name}`"
             )));
@@ -95,11 +94,7 @@ impl Registry {
                 "duplicate plugin registration"
             );
 
-            if !self
-                .failed_plugins
-                .iter()
-                .any(|(failed, _)| *failed == name)
-            {
+            if !already_failed {
                 self.failed_plugins.push((name, error));
             }
 
