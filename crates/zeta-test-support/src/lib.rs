@@ -5,12 +5,14 @@
 //! external dependencies and to `zeta-plugin` (never the host crate itself). Everything that
 //! constructs a `zeta` host type stays in the consuming crate's own test module instead.
 //!
-//! The connection-refused helpers use a raw socket rather than wiremock on purpose: a mock
-//! server cannot refuse a connection while it is running, and dropping one before connecting
-//! would add a lifecycle to the redaction tests without buying any determinism. Wiremock is
-//! re-exported for everything else.
+//! The connection-refused helpers use a reserved local address rather than wiremock on purpose:
+//! a mock server cannot refuse a connection while it is running, and a listener dropped before
+//! connecting is racy — the kernel can hand the port to another test in between. TCP port 0 is
+//! reserved and can never have a listener (`bind` treats a zero port as "pick an ephemeral
+//! port"), so connecting to it always fails in the connect phase: Linux refuses it, while other
+//! kernels reject the address. Wiremock is re-exported for everything else.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(feature = "http")]
 use std::time::Duration;
 
@@ -140,23 +142,21 @@ const LATE_RESPONSE: Duration = Duration::from_secs(5);
 #[cfg(feature = "http")]
 const TIMEOUT_CLIENT: Duration = Duration::from_millis(50);
 
-/// Returns the address of a just-dropped local listener.
+/// Returns the local address whose connections are refused.
 ///
-/// Connections to the address are refused deterministically, while URLs built against it can
-/// still carry credential-looking queries.
+/// The address names TCP port 0: IANA reserves it ([RFC 6335]), and a zero port in `bind` means
+/// "pick an ephemeral port", so no listener can ever occupy it. A connection to it therefore
+/// always fails in the connect phase, without this helper holding a socket — while URLs built
+/// against the address can still carry credential-looking queries. A fixed nonzero port would
+/// only be free by convention and could belong to another test.
 ///
-/// # Panics
-///
-/// Panics if the listener cannot be bound or its address cannot be read.
+/// [RFC 6335]: https://www.rfc-editor.org/rfc/rfc6335#section-6
 #[must_use]
-pub fn refused_address() -> SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let address = listener.local_addr().expect("address");
-    drop(listener);
-    address
+pub const fn refused_address() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
 }
 
-/// Sends a GET with the given query string to a just-dropped local listener.
+/// Sends a GET with the given query string to [`refused_address`].
 ///
 /// Returns the transport error and the address: a real connection failure whose URL still
 /// carries a credential-looking query, for testing the wrappers' redaction guarantees.
@@ -173,7 +173,7 @@ pub async fn refused_get(query: &str) -> (reqwest::Error, SocketAddr) {
         .get(format!("http://{address}/?{query}"))
         .send()
         .await
-        .expect_err("nothing listens on that address");
+        .expect_err("port zero has no listener");
 
     // Sanity: reqwest attaches the request URL to the error — redacting it is on us.
     assert!(error.url().is_some(), "reqwest attaches the request url");
@@ -224,6 +224,12 @@ pub async fn timeout_error() -> (reqwest::Error, SocketAddr) {
 pub fn assert_redactions(message: &str, full: &str, debug: &str, address: &SocketAddr) {
     assert_common(message, full, debug, address, "could not connect");
 
+    // The source chain carries hyper's `client error (Connect)` link on every platform. The
+    // OS wording below it differs (Linux says "Connection refused", macOS says "Address not
+    // available" for the reserved port), so only Linux can assert on it.
+    assert!(full.contains("client error (Connect)"), "{full}");
+
+    #[cfg(target_os = "linux")]
     assert!(full.contains("refused"), "{full}");
 }
 
@@ -433,7 +439,19 @@ mod tests {
             "{}",
             error.url().unwrap()
         );
+        // The URL keeps the reserved port instead of normalizing it away: that is the whole
+        // refusal strategy.
+        assert!(
+            error
+                .url()
+                .unwrap()
+                .as_str()
+                .starts_with("http://127.0.0.1:0/"),
+            "{}",
+            error.url().unwrap()
+        );
         assert_eq!(address.ip().to_string(), "127.0.0.1");
+        assert_eq!(address.port(), 0);
     }
 
     #[cfg(feature = "http")]

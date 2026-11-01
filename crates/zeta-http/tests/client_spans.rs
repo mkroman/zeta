@@ -1,10 +1,10 @@
-//! The `http.client` span contract of the shared client, exercised in its own test binary.
+//! The `http.client` span and log contract of the shared client, exercised in its own test binary.
 //!
 //! `tracing` caches one interest value per callsite for the whole process, computed from the
 //! dispatcher that was current when the callsite was first used. A callsite first used on a thread
 //! without a subscriber is cached as disabled, and a later thread-local subscriber cannot repair
-//! it. Keeping these recorder tests in a binary of their own — with every test installing its
-//! recorder before it touches the client — means nothing else can register the callsite first.
+//! it. Keeping these telemetry tests in a binary of their own — with every test installing its
+//! subscriber before it touches the client — means nothing else can register the callsite first.
 
 #![cfg(feature = "http")]
 
@@ -18,9 +18,47 @@ use tracing::span::{Attributes, Id};
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
 use tracing_subscriber::prelude::*;
 
-use zeta_http::{get_json, send};
+use zeta_http::{ApiError, get_json, get_text, parse_response, send};
 use zeta_test_support::refused_address;
 use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
+
+/// A writer that collects everything logged through it, for assertions.
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("log buffer lock")
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// Captures tracing output emitted while the returned guard is alive.
+fn capture_logs() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+    let buffer = LogBuffer::default();
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(buffer.clone()),
+    );
+
+    (buffer, tracing::subscriber::set_default(subscriber))
+}
 
 /// One span as the recorder observed it: its name, its fields and when it closed.
 #[derive(Clone, Debug)]
@@ -236,4 +274,126 @@ async fn a_refused_connection_still_produces_a_client_span_with_an_error_type() 
         "{span:?}"
     );
     assert!(!error.full().contains("secret"), "{error}");
+}
+
+#[tokio::test]
+async fn send_logs_a_query_free_url_and_returns_a_redacted_error() {
+    let address = refused_address();
+    let request_url = format!("http://{address}/?key=secret");
+
+    let (buffer, guard) = capture_logs();
+
+    let error = send(reqwest::Client::new().get(&request_url))
+        .await
+        .expect_err("nothing listens on that address");
+    drop(guard);
+
+    let logged =
+        String::from_utf8(buffer.0.lock().expect("log buffer lock").clone()).expect("log is utf-8");
+
+    let query_free = format!("http://{address}/");
+    assert!(logged.contains("url.full"), "{logged}");
+    assert!(logged.contains(&query_free), "{logged}");
+    assert!(!logged.contains("key=secret"), "{logged}");
+
+    // The boundary line carries the classified failure, the redacted URL and the cause.
+    assert!(logged.contains("error.type"), "{logged}");
+    assert!(logged.contains("connection_error"), "{logged}");
+    // The span's event carries the source chain's cross-platform connect link; the OS
+    // wording below it differs per kernel.
+    assert!(logged.contains("client error (Connect)"), "{logged}");
+    #[cfg(target_os = "linux")]
+    assert!(logged.contains("refused"), "{logged}");
+
+    assert!(!error.to_string().contains("secret"), "{error}");
+    assert!(!error.full().contains("secret"), "{error}");
+    assert!(!format!("{error:?}").contains("secret"), "{error:?}");
+}
+
+#[tokio::test]
+async fn parse_response_logs_the_status_even_when_the_body_read_fails() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+
+    std::thread::spawn(move || {
+        use std::io::{Read as _, Write as _};
+
+        let (mut stream, _) = listener.accept().expect("accept");
+
+        // Drain the request before replying: closing a socket with unread bytes in its
+        // receive buffer sends an RST instead of a FIN, which would race with — and
+        // sometimes destroy — the response written below.
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 512];
+
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut chunk).expect("read");
+
+            if read == 0 {
+                break;
+            }
+
+            request.extend_from_slice(&chunk[..read]);
+        }
+
+        // Promise more bytes than are sent, then hang up: the body read fails mid-response.
+        let response = "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 1024\r\n\r\nshort";
+        stream.write_all(response.as_bytes()).expect("write");
+    });
+
+    let (buffer, guard) = capture_logs();
+
+    let response = reqwest::Client::new()
+        .get(format!("http://{address}/?key=secret"))
+        .send()
+        .await
+        .expect("response");
+    let error = parse_response::<serde_json::Value>(response)
+        .await
+        .expect_err("the body read must fail");
+    drop(guard);
+
+    assert!(matches!(error, ApiError::Request(_)), "{error:?}");
+
+    let logged =
+        String::from_utf8(buffer.0.lock().expect("log buffer lock").clone()).expect("log is utf-8");
+
+    // The status event fires before the body read gives up...
+    assert!(
+        logged.contains("http response carries an error status"),
+        "{logged}"
+    );
+    // ...`error.type` is recorded on the span before that event, so it is in the same line...
+    assert!(logged.contains("error.type"), "{logged}");
+    // ...and no credential from the query reaches the log.
+    assert!(!logged.contains("key=secret"), "{logged}");
+}
+
+#[tokio::test]
+async fn get_text_records_the_response_attributes_on_the_client_span() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html>hello</html>"))
+        .mount(&server)
+        .await;
+
+    let (buffer, guard) = capture_logs();
+
+    let body = get_text(reqwest::Client::new().get(server.uri()))
+        .await
+        .expect("200 response");
+    drop(guard);
+
+    assert_eq!(body, "<html>hello</html>");
+
+    let logged =
+        String::from_utf8(buffer.0.lock().expect("log buffer lock").clone()).expect("log is utf-8");
+
+    // A direct text read runs in the same span as a JSON read, so it carries the response
+    // attributes and the success line too.
+    assert!(logged.contains("http.client"), "{logged}");
+    assert!(logged.contains("url.full"), "{logged}");
+    assert!(logged.contains("http.response.status_code"), "{logged}");
+    assert!(logged.contains("http response received"), "{logged}");
 }
