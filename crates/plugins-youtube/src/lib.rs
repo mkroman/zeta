@@ -346,7 +346,40 @@ impl YouTube {
         client: &Client,
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        self.process_url(url.url(), url.channel(), client).await?;
+        let (url, channel) = (url.url(), url.channel());
+
+        if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
+            match self.get_video(&video_id).await {
+                Ok(video) => {
+                    let snippet = video.snippet.as_ref();
+                    let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
+
+                    // The map is refreshed by the task started on load; the read is
+                    // stale-tolerant, so an unavailable API keeps serving the last known
+                    // categories.
+                    let category = self.video_categories.read(|cache| {
+                        cache
+                            .and_then(|categories| categories.get(&category_id))
+                            .map_or_else(
+                                || "unknown category".to_string(),
+                                |category| category.snippet.title.clone(),
+                            )
+                    });
+
+                    let view_count = video
+                        .statistics
+                        .as_ref()
+                        .and_then(|s| str::parse::<u64>(&s.view_count).ok())
+                        .unwrap_or(0);
+
+                    let message = format_video_message(&video, &category, view_count);
+                    client.send_privmsg(channel, message)?;
+                }
+                Err(e) => {
+                    client.send_privmsg(channel, plain_reply(e))?;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -408,49 +441,6 @@ impl YouTube {
                 .await;
             }
         });
-    }
-
-    /// Processes a URL found in a message.
-    async fn process_url(
-        &self,
-        url: &Url,
-        channel: &str,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
-            match self.get_video(&video_id).await {
-                Ok(video) => {
-                    let snippet = video.snippet.as_ref();
-                    let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
-
-                    // The map is refreshed by the task started on load; the read is
-                    // stale-tolerant, so an unavailable API keeps serving the last known
-                    // categories.
-                    let category = self.video_categories.read(|cache| {
-                        cache
-                            .and_then(|categories| categories.get(&category_id))
-                            .map_or_else(
-                                || "unknown category".to_string(),
-                                |category| category.snippet.title.clone(),
-                            )
-                    });
-
-                    let view_count = video
-                        .statistics
-                        .as_ref()
-                        .and_then(|s| str::parse::<u64>(&s.view_count).ok())
-                        .unwrap_or(0);
-
-                    let message = format_video_message(&video, &category, view_count);
-                    client.send_privmsg(channel, message)?;
-                }
-                Err(e) => {
-                    client.send_privmsg(channel, plain_reply(e))?;
-                }
-            }
-        }
-
-        Ok(())
     }
 
     /// Searches for videos using the given query.

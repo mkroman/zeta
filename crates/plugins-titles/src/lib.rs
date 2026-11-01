@@ -166,7 +166,8 @@ impl Titles {
             return Ok(());
         }
 
-        self.process_url(event.url_arc(), event.channel(), client);
+        self.process_url(event.url_arc(), event.channel(), client)
+            .await;
 
         Ok(())
     }
@@ -192,14 +193,21 @@ impl Titles {
     /// Processes a single extracted URL by spawning a task that fetches the page and posts its
     /// metadata to the channel.
     ///
-    /// The task is spawned immediately, but its fetch waits for one of [`FETCH_CONCURRENCY`]
-    /// permits, so a burst of URLs cannot run an unbounded number of fetches at once.
-    fn process_url(&self, url: Arc<Url>, channel: &str, client: &Client) {
+    /// The caller waits for one of [`FETCH_CONCURRENCY`] permits before the task is spawned, so
+    /// a burst of URLs queues in the handler instead of spawning an unbounded number of tasks.
+    async fn process_url(&self, url: Arc<Url>, channel: &str, client: &Client) {
+        // The permit is acquired before the task exists, so only a bounded number of tasks are
+        // alive at once. It is moved into the task and released by its drop, on success, error
+        // and cancellation alike.
+        let permit = Arc::clone(&self.fetches)
+            .acquire_owned()
+            .await
+            .expect("the fetch semaphore is never closed");
+
         let http_client = self.client.clone();
         let sender = client.sender();
         let channel = channel.to_string();
         let settings = Arc::clone(&self.settings);
-        let fetches = Arc::clone(&self.fetches);
 
         // The span carries the redacted URL: without it, this task's logs would only ever
         // reach stdout. It is a child of the handler span, created while the handler is
@@ -216,13 +224,7 @@ impl Titles {
 
         tokio::spawn(
             async move {
-                // The permit is held for the whole task and released by its drop, on success,
-                // error and cancellation alike. Only polling waits here: the task and its span
-                // already exist, so the fetch stays in the message's trace.
-                let _permit = fetches
-                    .acquire_owned()
-                    .await
-                    .expect("the fetch semaphore is never closed");
+                let _permit = permit;
 
                 let metadata = match fetch_metadata(&http_client, &url).await {
                     Ok(metadata) => metadata,
@@ -550,10 +552,14 @@ mod tests {
 
         let (address, most_open, answered) = delayed_page_server(Duration::from_millis(300)).await;
 
-        for path in ["/one", "/two"] {
-            let url = Arc::new(Url::parse(&format!("http://{address}{path}")).expect("valid url"));
-            titles.process_url(url, "#test", &client);
-        }
+        let urls = ["/one", "/two"].map(|path| {
+            Arc::new(Url::parse(&format!("http://{address}{path}")).expect("valid url"))
+        });
+
+        tokio::join!(
+            titles.process_url(Arc::clone(&urls[0]), "#test", &client),
+            titles.process_url(Arc::clone(&urls[1]), "#test", &client),
+        );
 
         tokio::time::timeout(Duration::from_secs(5), async {
             while answered.load(Ordering::SeqCst) < 2 {
