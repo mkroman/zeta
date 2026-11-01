@@ -5995,6 +5995,7 @@ dependencies = [
  "zeta-plugin",
  "zeta-plugin-runtime",
  "zeta-test-support",
+ "zeta-url",
 ]
 
 [[package]]

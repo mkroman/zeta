@@ -1,6 +1,6 @@
 //! Configuration loading and validation.
 
-use std::{borrow::Cow, collections::HashMap, fmt, time::Duration};
+use std::{collections::HashMap, fmt, time::Duration};
 
 use figment::{
     Figment,
@@ -9,6 +9,8 @@ use figment::{
 use miette::{IntoDiagnostic, WrapErr};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use url::Url;
+use zeta_url::RedactedUrl;
 
 use crate::consts;
 
@@ -115,7 +117,7 @@ pub struct DbConfig {
 impl fmt::Debug for DbConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DbConfig")
-            .field("url", &RedactedUrlPassword(&self.url))
+            .field("url", &RedactedDbUrl(&self.url))
             .field("min_connections", &self.min_connections)
             .field("max_connections", &self.max_connections)
             .field("idle_timeout", &self.idle_timeout)
@@ -124,35 +126,19 @@ impl fmt::Debug for DbConfig {
     }
 }
 
-/// Renders a connection URL with its password redacted.
-struct RedactedUrlPassword<'a>(&'a str);
-
-impl fmt::Debug for RedactedUrlPassword<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&redact_url_password(self.0), f)
-    }
-}
-
-/// Replaces the password in a connection URL with `<redacted>`.
+/// Renders a connection URL through the shared URL redaction.
 ///
-/// For example, `postgresql://zeta:secret@localhost/zeta` becomes
-/// `postgresql://zeta:<redacted>@localhost/zeta`. A value without the `scheme://userinfo@host`
-/// structure is redacted entirely, since there is no way to tell which part of it is the secret.
-fn redact_url_password(url: &str) -> Cow<'_, str> {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return Cow::Borrowed("<redacted>");
-    };
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let (authority, tail) = rest.split_at(authority_end);
+/// A connection string that is not a URL (libpq's `host=... password=...` form) cannot be
+/// redacted structurally, so it is hidden entirely rather than risking a leaked password.
+struct RedactedDbUrl<'a>(&'a str);
 
-    let Some((userinfo, host)) = authority.rsplit_once('@') else {
-        return Cow::Borrowed(url);
-    };
-    let Some((user, _password)) = userinfo.split_once(':') else {
-        return Cow::Borrowed(url);
-    };
-
-    Cow::Owned(format!("{scheme}://{user}:<redacted>@{host}{tail}"))
+impl fmt::Debug for RedactedDbUrl<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match Url::parse(self.0) {
+            Ok(url) => fmt::Debug::fmt(&RedactedUrl::from_url(&url), f),
+            Err(_) => f.write_str("<redacted>"),
+        }
+    }
 }
 
 /// Tracing and logging configuration.
@@ -565,22 +551,28 @@ password = "server-secret"
         // Non-secret fields stay visible, and the database URL keeps its host.
         assert!(debug.contains("localhost"), "{debug}");
         assert!(debug.contains("#zeta"), "{debug}");
-        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(
+            debug.contains("postgresql://localhost/zeta_test"),
+            "{debug}"
+        );
         assert!(debug.contains("REDACTED"), "{debug}");
     }
 
     #[test]
-    fn database_url_password_is_redacted() {
+    fn database_url_uses_the_shared_redaction() {
         assert_eq!(
-            redact_url_password("postgresql://zeta:secret@localhost/zeta_test").as_ref(),
-            "postgresql://zeta:<redacted>@localhost/zeta_test"
+            format!(
+                "{:?}",
+                RedactedDbUrl("postgresql://zeta:secret@localhost/zeta_test")
+            ),
+            r#"RedactedUrl("postgresql://localhost/zeta_test")"#
         );
-        // A URL without a password is unchanged, and a value that is not a URL is hidden.
+        // The URL redaction drops userinfo, query and fragment. A connection string that is not
+        // a URL cannot be redacted structurally and is hidden instead.
         assert_eq!(
-            redact_url_password("postgresql://zeta@localhost/zeta_test").as_ref(),
-            "postgresql://zeta@localhost/zeta_test"
+            format!("{:?}", RedactedDbUrl("host=localhost password=secret")),
+            "<redacted>"
         );
-        assert_eq!(redact_url_password("secret").as_ref(), "<redacted>");
     }
 
     /// The repository `config.toml` must parse into the full configuration: a broken edit has
