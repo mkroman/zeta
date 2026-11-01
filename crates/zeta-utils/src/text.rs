@@ -34,19 +34,12 @@ pub trait Truncatable: AsRef<str> {
             return Cow::Borrowed(text);
         }
 
+        // The text exceeds the budget in bytes, but the budget counts characters.
         if text.char_indices().nth(len).is_none() {
             return Cow::Borrowed(text);
         }
 
-        let text_len = len.saturating_sub(suffix.chars().count());
-        let byte_len = text
-            .char_indices()
-            .nth(text_len)
-            .map_or(text.len(), |(index, _)| index);
-        let mut truncated = String::with_capacity(byte_len + suffix.len());
-        truncated.push_str(&text[..byte_len]);
-        truncated.push_str(suffix);
-        Cow::Owned(truncated)
+        self.truncate_with_suffix(len.saturating_sub(suffix.chars().count()), suffix)
     }
 }
 
