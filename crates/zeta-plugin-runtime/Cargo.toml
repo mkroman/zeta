@@ -11,6 +11,7 @@ database = ["zeta-plugin/database"]
 
 [dependencies]
 figment.workspace = true
+foldhash.workspace = true
 futures = "0.3.31"
 irc.workspace = true
 smallvec.workspace = true
