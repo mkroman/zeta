@@ -9,9 +9,6 @@ mod model;
 mod repository;
 mod service;
 
-// The module types are re-exported as part of the module's API surface, even though the plugin
-// itself only handles them by value.
-#[allow(unused_imports)]
 pub use {
     error::Error,
     model::{NewNotification, Notification},
@@ -137,7 +134,7 @@ impl NotificationPlugin {
 
         // Delivering is triggered by an ordinary message; command invocations are handled in
         // `handle_command` and do not deliver the invoker's pending notifications.
-        if NOTIFY.parse(event.text()).is_some() {
+        if NOTIFY.trailing_args(event.text()).is_some() {
             return Ok(());
         }
 

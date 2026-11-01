@@ -15,9 +15,9 @@
 //! The command is restricted to admins through `[irc] admin_hostmasks`, using the plugin API's
 //! shared [`Hostmasks`] matcher (also used by `.unwall`).
 //!
-//! The filter service is published to [`Context::shared`] as a type-erased [`Filters`] handle
-//! when the plugin is constructed; the host's dispatcher consults it through the [`Filters`]
-//! facade before delivering URL events, so filtered URLs never reach the URL plugins.
+//! The filter service is published to [`Context::shared`] as a type-erased [`FilterHandle`] when
+//! the plugin is constructed; the host's dispatcher consults it through the [`FilterHandle`]
+//! before delivering URL events, so filtered URLs never reach the URL plugins.
 
 mod error;
 mod index;
@@ -25,9 +25,6 @@ mod model;
 mod repository;
 mod service;
 
-// The module types are re-exported as part of the module's API surface, even though the plugin
-// itself only handles them by value.
-#[allow(unused_imports)]
 pub use error::Error;
 pub use model::{Criteria, Filter, NewFilter};
 pub use service::FilterService;
@@ -503,7 +500,8 @@ impl FilterPlugin {
         // The host resolves this handle once, when it starts the runtime, so it must be
         // published here rather than from the `loaded` hook: a later publication never reaches
         // the dispatcher. Filter changes go through the service's own index instead.
-        ctx.shared.publish(Arc::new(Filters::new(service.clone())));
+        ctx.shared
+            .publish(Arc::new(FilterHandle::new(service.clone())));
 
         let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");
 
@@ -602,15 +600,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publishes_a_url_filters_handle_for_the_host() {
-        // The host's dispatcher consults the `Filters` facade, which only sees the service
+    async fn publishes_a_filter_handle_for_the_host() {
+        // The host's dispatcher consults the `FilterHandle`, which only sees the service
         // through the type-erased handle published here — without it, no URL is ever filtered.
         let ctx = zeta_test_support::test_context();
         let mut subscriptions = Subscriptions::new();
 
         <FilterPlugin as Registered>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
 
-        assert!(ctx.shared.get::<Filters>().is_some());
+        assert!(ctx.shared.get::<FilterHandle>().is_some());
     }
 
     /// Parses `input` with the filter command spec and unpacks the `add` subcommand.

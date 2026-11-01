@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tracing::{Span, debug, warn};
 use url::Url;
 use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent};
-use zeta_plugin::{CommandSpec, Event, EventKind, Filters, UrlScope};
+use zeta_plugin::{CommandSpec, Event, EventKind, FilterHandle, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrlRef};
 
 /// An event queued for a plugin together with the handler span it must run inside.
@@ -88,6 +88,9 @@ const fn kind_slot(kind: EventKind) -> usize {
         EventKind::Kick => 5,
         EventKind::Ctcp => 6,
         EventKind::Raw => 7,
+        // A kind added after this runtime was written has no preallocated slot; registration
+        // and dispatch must be extended together.
+        _ => panic!("unhandled event kind"),
     }
 }
 
@@ -315,7 +318,6 @@ impl EventIndex {
         }
 
         match subscriptions.url_scope() {
-            UrlScope::None => {}
             UrlScope::Hosts(hosts) => {
                 for host in hosts {
                     self.url_hosts
@@ -325,6 +327,9 @@ impl EventIndex {
                 }
             }
             UrlScope::Any => self.url_any.push(subscriber.clone()),
+            // `None`, and scopes added after this runtime was written, are not routed; a
+            // plugin using a newer scope needs a runtime that understands it.
+            _ => {}
         }
 
         for kind in subscriptions.events() {
@@ -337,7 +342,7 @@ impl EventIndex {
     /// Returns the names of the plugins whose mailboxes are closed — their tasks have stopped.
     /// They are already evicted from the index, so the caller only needs to report them.
     #[must_use]
-    pub fn dispatch(&mut self, filters: &Filters, message: Message) -> Vec<&'static str> {
+    pub fn dispatch(&mut self, filters: &FilterHandle, message: Message) -> Vec<&'static str> {
         let mut message = SharedMessage::new(message);
         let mut stopped = Vec::new();
 
@@ -432,7 +437,7 @@ impl EventIndex {
     /// Routes a `PRIVMSG` to the plugins whose subscriptions match.
     fn dispatch_privmsg(
         &self,
-        filters: &Filters,
+        filters: &FilterHandle,
         message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
@@ -505,7 +510,7 @@ impl EventIndex {
     #[inline(never)]
     fn dispatch_urls(
         &self,
-        filters: &Filters,
+        filters: &FilterHandle,
         message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
@@ -589,7 +594,7 @@ mod tests {
 
     use url::Url;
     use zeta_plugin::CtcpKind;
-    use zeta_plugin::UrlFilter;
+    use zeta_plugin::EventFilter;
     use zeta_test_support::assert_empty;
 
     use super::*;
@@ -598,7 +603,7 @@ mod tests {
     fn measure(
         label: &str,
         index: &mut EventIndex,
-        filters: &Filters,
+        filters: &FilterHandle,
         message: Message,
     ) -> allocation_counter::AllocationInfo {
         let info = allocation_counter::measure(|| {
@@ -629,7 +634,7 @@ mod tests {
             size_of::<Message>() + 2 * size_of::<usize>(),
         );
 
-        let no_filters = Filters::default();
+        let no_filters = FilterHandle::default();
         let mut index = EventIndex::default();
 
         let unhandled = measure(
@@ -675,7 +680,7 @@ mod tests {
 
         // A published filter handle is consulted before routing; an ignored sender still takes
         // the allocation-free path out of dispatch.
-        let filters = Filters::new(Arc::new(TestFilter));
+        let filters = FilterHandle::new(Arc::new(TestFilter));
         let ignored = measure(
             "ignored sender",
             &mut url_index,
@@ -747,7 +752,7 @@ mod tests {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
 
-        let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
+        let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig example.com"));
 
         assert_empty!(stopped);
         assert!(matches!(
@@ -765,7 +770,7 @@ mod tests {
 
         // Longer words are not matched, and leading whitespace breaks the first word.
         for text in [".digg example.com", "  .dig example.com", "look at .dig"] {
-            let _ = index.dispatch(&Filters::default(), privmsg(text));
+            let _ = index.dispatch(&FilterHandle::default(), privmsg(text));
 
             assert_empty!(drain(&mut mailbox), "`{text}` must not dispatch");
         }
@@ -780,7 +785,7 @@ mod tests {
             subscriptions.command(CommandSpec::new("écho", "echo"));
         });
 
-        let _ = index.dispatch(&Filters::default(), privmsg("écho bonjour"));
+        let _ = index.dispatch(&FilterHandle::default(), privmsg("écho bonjour"));
 
         assert!(matches!(
             drain(&mut mailbox)[..],
@@ -812,7 +817,7 @@ mod tests {
                 .command(CommandSpec::new(".gis", "images"));
         });
 
-        let _ = index.dispatch(&Filters::default(), privmsg(".gis black cats"));
+        let _ = index.dispatch(&FilterHandle::default(), privmsg(".gis black cats"));
 
         assert!(matches!(
             drain(&mut kagi)[..],
@@ -832,7 +837,7 @@ mod tests {
 
         // A claimed host is delivered to its plugin and to generic handlers.
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterHandle::default(),
             privmsg("https://youtube.com/watch?v=1"),
         );
 
@@ -840,13 +845,16 @@ mod tests {
         assert!(matches!(drain(&mut titles)[..], [Event::Url(..)]));
 
         // Host matching is case-insensitive.
-        let _ = index.dispatch(&Filters::default(), privmsg("https://WWW.YOUTUBE.COM/x"));
+        let _ = index.dispatch(
+            &FilterHandle::default(),
+            privmsg("https://WWW.YOUTUBE.COM/x"),
+        );
 
         assert_eq!(drain(&mut youtube).len(), 1);
         assert_eq!(drain(&mut titles).len(), 1);
 
         // An unclaimed host only reaches generic handlers.
-        let _ = index.dispatch(&Filters::default(), privmsg("https://example.com/x"));
+        let _ = index.dispatch(&FilterHandle::default(), privmsg("https://example.com/x"));
 
         assert_empty!(drain(&mut youtube));
         assert_eq!(drain(&mut titles).len(), 1);
@@ -860,7 +868,7 @@ mod tests {
         });
 
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterHandle::default(),
             privmsg("https://a.example/x https://a.example/x https://b.example/y"),
         );
 
@@ -880,7 +888,7 @@ mod tests {
 
         // The registered host is lowercased, and `Url::host_str` already returns the parsed,
         // normalized host — hexadecimal IPv6 digits included — so the lookup needs no copy.
-        let _ = index.dispatch(&Filters::default(), privmsg("https://[2001:DB8::1]/x"));
+        let _ = index.dispatch(&FilterHandle::default(), privmsg("https://[2001:DB8::1]/x"));
 
         assert_eq!(drain(&mut ipv6).len(), 1);
     }
@@ -889,7 +897,7 @@ mod tests {
     /// `filtered.example` host.
     struct TestFilter;
 
-    impl UrlFilter for TestFilter {
+    impl EventFilter for TestFilter {
         fn is_filtered(&self, _channel: &str, _sender: Option<Sender<'_>>, url: &Url) -> bool {
             url.host_str() == Some("filtered.example")
         }
@@ -904,7 +912,7 @@ mod tests {
         // shared state — the same route the filter plugin takes at construction.
         let ctx = zeta_test_support::test_context();
         ctx.shared
-            .publish(Arc::new(Filters::new(Arc::new(TestFilter))));
+            .publish(Arc::new(FilterHandle::new(Arc::new(TestFilter))));
 
         let mut index = EventIndex::default();
         let mut filtered = subscribe(&mut index, "filtered", |subscriptions| {
@@ -914,7 +922,7 @@ mod tests {
             s.urls(UrlScope::Any);
         });
 
-        let filters = Filters::from_context(&ctx);
+        let filters = FilterHandle::from_context(&ctx);
         let _ = index.dispatch(
             &filters,
             privmsg("https://filtered.example/x https://open.example/y"),
@@ -928,7 +936,7 @@ mod tests {
     async fn ignored_senders_trigger_nothing() {
         let ctx = zeta_test_support::test_context();
         ctx.shared
-            .publish(Arc::new(Filters::new(Arc::new(TestFilter))));
+            .publish(Arc::new(FilterHandle::new(Arc::new(TestFilter))));
 
         let mut index = EventIndex::default();
         let mut dig = subscribe(&mut index, "dig", |subscriptions| {
@@ -941,7 +949,7 @@ mod tests {
             s.urls(UrlScope::Any);
         });
 
-        let filters = Filters::from_context(&ctx);
+        let filters = FilterHandle::from_context(&ctx);
 
         // The ignored sender's commands do not trigger, their messages are not delivered and
         // their URLs are not dispatched.
@@ -978,7 +986,10 @@ mod tests {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
 
-        let _ = index.dispatch(&Filters::default(), privmsg("\x01ACTION slaps .dig\x01"));
+        let _ = index.dispatch(
+            &FilterHandle::default(),
+            privmsg("\x01ACTION slaps .dig\x01"),
+        );
 
         assert!(matches!(
             drain(&mut ctcp)[..],
@@ -999,7 +1010,7 @@ mod tests {
         });
 
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterHandle::default(),
             message(
                 "service.example",
                 "NOTICE",
@@ -1022,7 +1033,7 @@ mod tests {
         });
 
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterHandle::default(),
             message("server.example", "NOTICE", &["zeta", "server maintenance"]),
         );
 
@@ -1039,12 +1050,12 @@ mod tests {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
 
-        let _ = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
+        let _ = index.dispatch(&FilterHandle::default(), privmsg(".dig example.com"));
 
         assert!(matches!(drain(&mut dig)[..], [Event::Command(..)]));
         assert!(matches!(drain(&mut watcher)[..], [Event::Message(..)]));
 
-        let _ = index.dispatch(&Filters::default(), privmsg("no events at all?"));
+        let _ = index.dispatch(&FilterHandle::default(), privmsg("no events at all?"));
 
         assert_empty!(drain(&mut dig));
         assert_eq!(drain(&mut watcher).len(), 1);
@@ -1063,8 +1074,14 @@ mod tests {
             s.receive_part();
         });
 
-        let _ = index.dispatch(&Filters::default(), message("nick!u@h", "JOIN", &["#test"]));
-        let _ = index.dispatch(&Filters::default(), message("nick!u@h", "QUIT", &["gone"]));
+        let _ = index.dispatch(
+            &FilterHandle::default(),
+            message("nick!u@h", "JOIN", &["#test"]),
+        );
+        let _ = index.dispatch(
+            &FilterHandle::default(),
+            message("nick!u@h", "QUIT", &["gone"]),
+        );
 
         assert!(matches!(
             drain(&mut joins)[..],
@@ -1085,7 +1102,7 @@ mod tests {
         });
 
         let _ = index.dispatch(
-            &Filters::default(),
+            &FilterHandle::default(),
             message("server.example", "SOMECMD", &["#test", "data"]),
         );
 
@@ -1145,9 +1162,12 @@ mod tests {
                 EventKind::Raw => {
                     subscriptions.receive_raw();
                 }
+                // `cases` mirrors `EventKind::ALL`, so a new kind fails the length assertion
+                // above before it can reach this arm.
+                _ => unreachable!("every event kind has a subscription method"),
             });
 
-            let _ = index.dispatch(&Filters::default(), message.clone());
+            let _ = index.dispatch(&FilterHandle::default(), message.clone());
 
             let events = drain(&mut mailbox);
 
@@ -1167,11 +1187,14 @@ mod tests {
 
         drop(dig);
 
-        let stopped = index.dispatch(&Filters::default(), privmsg(".dig example.com"));
+        let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig example.com"));
         assert_eq!(stopped, ["dig"]);
 
         // The evicted plugin receives nothing further.
-        let stopped = index.dispatch(&Filters::default(), message("n!u@h", "JOIN", &["#test"]));
+        let stopped = index.dispatch(
+            &FilterHandle::default(),
+            message("n!u@h", "JOIN", &["#test"]),
+        );
 
         assert_empty!(stopped);
     }
@@ -1190,7 +1213,10 @@ mod tests {
 
         // The message matches the command, the message subscription, and the URL
         // subscription; the stopped plugin is still reported only once.
-        let stopped = index.dispatch(&Filters::default(), privmsg(".dig https://example.com/x"));
+        let stopped = index.dispatch(
+            &FilterHandle::default(),
+            privmsg(".dig https://example.com/x"),
+        );
 
         assert_eq!(stopped, ["dig"]);
     }
@@ -1253,7 +1279,7 @@ mod tests {
             subscriptions.receive_ctcp();
         });
 
-        let filters = Filters::default();
+        let filters = FilterHandle::default();
 
         benchmark(
             "unhandled privmsg",
@@ -1316,7 +1342,7 @@ mod tests {
         label: &str,
         dispatches: usize,
         index: &mut EventIndex,
-        filters: &Filters,
+        filters: &FilterHandle,
         make: impl Fn() -> Message,
     ) {
         let messages: Vec<Message> = (0..dispatches).map(|_| make()).collect();

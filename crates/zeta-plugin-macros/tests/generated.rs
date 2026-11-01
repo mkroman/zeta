@@ -3,7 +3,7 @@
 //! The expansion tests in the crate verify classification; this test makes the generated
 //! `Plugin` implementation itself compile for the edge cases that need special handling.
 
-use zeta_plugin::clap::Parser;
+use clap::Parser;
 use zeta_plugin::prelude::*;
 use zeta_plugin::{Client, Error};
 

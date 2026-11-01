@@ -11,10 +11,10 @@
 //!
 //! const YT: CommandSpec = CommandSpec::new(".yt", "Search YouTube");
 //!
-//! assert_eq!(YT.parse(".yt"), Some(""));
-//! assert_eq!(YT.parse(".yt rust"), Some("rust"));
-//! assert_eq!(YT.parse(".youtube rust"), None);
-//! assert_eq!(YT.parse(".goodbye"), None);
+//! assert_eq!(YT.trailing_args(".yt"), Some(""));
+//! assert_eq!(YT.trailing_args(".yt rust"), Some("rust"));
+//! assert_eq!(YT.trailing_args(".youtube rust"), None);
+//! assert_eq!(YT.trailing_args(".goodbye"), None);
 //! ```
 
 use std::any::TypeId;
@@ -156,8 +156,8 @@ impl CommandSpec {
     /// Returns `None` if the input does not start with the trigger, or if the character
     /// immediately following the trigger is not whitespace (i.e. it is part of a longer word).
     #[must_use]
-    pub fn parse<'a>(&self, input: &'a str) -> Option<&'a str> {
-        self.parse_range(input).map(|range| &input[range])
+    pub fn trailing_args<'a>(&self, input: &'a str) -> Option<&'a str> {
+        self.args_range(input).map(|range| &input[range])
     }
 
     /// Returns the byte range of the trailing arguments within `input`, if it matches.
@@ -166,7 +166,7 @@ impl CommandSpec {
     /// arguments with their leading whitespace stripped otherwise. Callers that hold the input
     /// (rather than a borrowed slice of it) use this instead of re-deriving the range from the
     /// returned slice's length.
-    pub(crate) fn parse_range(&self, input: &str) -> Option<Range<usize>> {
+    pub(crate) fn args_range(&self, input: &str) -> Option<Range<usize>> {
         let suffix = input.strip_prefix(self.trigger)?;
 
         match suffix.chars().next() {
@@ -209,10 +209,10 @@ impl CommandSpec {
     /// }
     ///
     /// const HELLO: CommandSpec = CommandSpec::new(".hello", "Greet someone");
-    /// let opts: Opts = HELLO.parse_args("world").unwrap();
+    /// let opts: Opts = HELLO.parse_shell("world").unwrap();
     /// assert_eq!(opts.name, "world");
     /// ```
-    pub fn parse_args<T: Parser + 'static>(&self, args: &str) -> Result<T, ArgsError> {
+    pub fn parse_shell<T: Parser + 'static>(&self, args: &str) -> Result<T, ArgsError> {
         let tokens = shlex::split(args).ok_or(ArgsError::Quoting)?;
 
         self.parse_tokens(tokens.iter().map(String::as_str))
@@ -221,7 +221,7 @@ impl CommandSpec {
     /// Parses the trailing arguments of the command into a [`Parser`]-derived struct, splitting
     /// them on whitespace.
     ///
-    /// Unlike [`parse_args`](CommandSpec::parse_args), the arguments are not tokenized like a
+    /// Unlike [`parse_shell`](CommandSpec::parse_shell), the arguments are not tokenized like a
     /// POSIX shell: quotes and escapes are preserved verbatim, so free-form text (e.g. messages
     /// containing apostrophes) reaches a trailing positional argument unharmed.
     ///
@@ -265,7 +265,7 @@ impl CommandSpec {
         mode: ArgsMode,
     ) -> Result<T, ArgsError> {
         match mode {
-            ArgsMode::Shell => self.parse_args(args),
+            ArgsMode::Shell => self.parse_shell(args),
             ArgsMode::Words => self.parse_words(args),
         }
     }
@@ -380,6 +380,7 @@ where
 
 /// An error returned when command arguments could not be parsed.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ArgsError {
     /// The arguments could not be tokenized (e.g. unbalanced quotes).
     #[error("could not parse arguments")]
@@ -414,18 +415,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_matches_the_trigger_prefix() {
+    fn trailing_args_matches_the_trigger_prefix() {
         const CMD: CommandSpec = CommandSpec::new("!test", "test");
 
-        assert_eq!(CMD.parse("!test --help"), Some("--help"));
-        assert_eq!(CMD.parse("!test"), Some(""));
+        assert_eq!(CMD.trailing_args("!test --help"), Some("--help"));
+        assert_eq!(CMD.trailing_args("!test"), Some(""));
         // Repeated whitespace between the trigger and the arguments collapses.
-        assert_eq!(CMD.parse("!test   --help"), Some("--help"));
-        assert_eq!(CMD.parse("!test  \t  args"), Some("args"));
+        assert_eq!(CMD.trailing_args("!test   --help"), Some("--help"));
+        assert_eq!(CMD.trailing_args("!test  \t  args"), Some("args"));
         // Only the exact trigger prefix matches.
-        assert_eq!(CMD.parse("!testing --help"), None);
+        assert_eq!(CMD.trailing_args("!testing --help"), None);
         // Ideographic space (U+3000) is 3 bytes — must not panic on byte slice.
-        assert_eq!(CMD.parse("!test\u{3000}args"), Some("args"));
+        assert_eq!(CMD.trailing_args("!test\u{3000}args"), Some("args"));
     }
 
     #[test]
@@ -451,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_tokenizes_like_a_shell() {
+    fn parse_shell_tokenizes_like_a_shell() {
         #[derive(Parser, Debug, PartialEq)]
         /// Test options.
         struct Opts {
@@ -465,7 +466,7 @@ mod tests {
 
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
-        let opts: Opts = CMD.parse_args(r#"one "two words" th\ ree"#).unwrap();
+        let opts: Opts = CMD.parse_shell(r#"one "two words" th\ ree"#).unwrap();
 
         assert_eq!(
             opts,
@@ -478,10 +479,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_reports_usage_on_error() {
+    fn parse_shell_reports_usage_on_error() {
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
-        let err = CMD.parse_args::<NameOpts>("").unwrap_err();
+        let err = CMD.parse_shell::<NameOpts>("").unwrap_err();
 
         // The string is replied to verbatim, so it must read as a usage message for the
         // command and name the missing argument; the exact layout belongs to clap.
@@ -494,11 +495,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_reports_quoting_error() {
+    fn parse_shell_reports_quoting_error() {
         const CMD: CommandSpec = CommandSpec::new(".test", "test");
 
         assert_eq!(
-            CMD.parse_args::<NameOpts>("\"unbalanced"),
+            CMD.parse_shell::<NameOpts>("\"unbalanced"),
             Err(ArgsError::Quoting)
         );
     }
@@ -596,7 +597,7 @@ mod tests {
 
         let first: Opts = CMD.parse_words("hello").unwrap();
         let second: Opts = CMD.parse_words("--language fr hello").unwrap();
-        let third: Opts = CMD.parse_args("\"hello\" --language de").unwrap();
+        let third: Opts = CMD.parse_shell("\"hello\" --language de").unwrap();
 
         assert_eq!(
             first,
@@ -675,7 +676,7 @@ mod tests {
 
         let first: CountedOpts = CMD.parse_words("one").unwrap();
         let second: CountedOpts = CMD.parse_words("two").unwrap();
-        let third: CountedOpts = CMD.parse_args("three").unwrap();
+        let third: CountedOpts = CMD.parse_shell("three").unwrap();
 
         assert_eq!(
             BUILDS.load(Ordering::SeqCst),

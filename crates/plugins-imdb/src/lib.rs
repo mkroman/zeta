@@ -229,7 +229,7 @@ mod tests {
         ];
 
         for (case, input, expected) in cases {
-            let opts: Opts = COMMAND.parse_args(input).unwrap();
+            let opts: Opts = COMMAND.parse_shell(input).unwrap();
 
             assert_eq!(opts.query(), expected, "{case}");
         }

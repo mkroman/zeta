@@ -166,7 +166,7 @@ impl CommandEvent {
             return None;
         };
 
-        let args_start = spec.parse_range(text)?.start;
+        let args_start = spec.args_range(text)?.start;
 
         Some(Self {
             message,
@@ -455,6 +455,7 @@ impl FromMessage for CtcpEvent {
 
 /// The kind of a [`CtcpEvent`], classified from its CTCP command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CtcpKind {
     /// An action (`/me`) message.
     Action,
@@ -544,6 +545,7 @@ fn parse_ctcp(text: &str) -> Option<(&str, &str)> {
 
 /// The scope of URLs a plugin registered interest in: which posted URLs it wants to receive.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UrlScope {
     /// The plugin does not handle URLs.
     #[default]
@@ -646,6 +648,7 @@ macro_rules! event_kind_flags {
         /// Commands and URLs are excluded: their subscriptions carry payloads ([`CommandSpec`],
         /// [`UrlScope`]) instead of a plain flag.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[non_exhaustive]
         pub enum EventKind {
             $(
                 #[doc = $kind_doc]
