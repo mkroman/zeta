@@ -161,11 +161,9 @@ impl From<Vec<Coin>> for CoinCache {
 }
 
 impl CoinCache {
-    /// Finds the highest-scoring coin whose name matches `query`.
-    fn find_by_name(&self, query: &str, max_name_typos: u16) -> Option<&Coin> {
-        let symbol = matching::find_by_name(&self.names, query, max_name_typos)?;
-
-        self.by_symbol.get(symbol)
+    /// Returns the id of the highest-scoring coin whose name matches `query`.
+    fn find_by_name(&self, query: &str, max_name_typos: u16) -> Option<u64> {
+        matching::find_by_name(&self.names, query, max_name_typos)
     }
 }
 
@@ -297,7 +295,7 @@ impl CoinMarketCap {
         // resolve the query as a symbol (e.g. when the cache has not been populated yet, or the
         // coin is outside the cached top 1000).
         let query = match self.resolve_coin(&opts.coin) {
-            Some(coin) => CoinQuery::Id(coin.id),
+            Some(id) => CoinQuery::Id(id),
             None => CoinQuery::Symbol(opts.coin.to_ascii_uppercase()),
         };
 
@@ -375,17 +373,17 @@ impl CoinMarketCap {
         Ok(())
     }
 
-    /// Resolves a user query to a coin, by exact symbol match first and by fuzzy name match
+    /// Resolves a user query to a coin id, by exact symbol match first and by fuzzy name match
     /// second.
-    fn resolve_coin(&self, query: &str) -> Option<Coin> {
+    fn resolve_coin(&self, query: &str) -> Option<u64> {
         self.coins.read(|cache| {
             let cache = cache?;
 
             cache
                 .by_symbol
                 .get(&query.to_ascii_uppercase())
-                .cloned()
-                .or_else(|| cache.find_by_name(query, self.max_name_typos).cloned())
+                .map(|coin| coin.id)
+                .or_else(|| cache.find_by_name(query, self.max_name_typos))
         })
     }
 
@@ -595,27 +593,20 @@ mod tests {
     fn resolves_coins_by_symbol_and_name() {
         let plugin = test_plugin();
 
-        let coin = plugin.resolve_coin("btc").expect("symbol lookup");
-        assert_eq!(coin.name, "Bitcoin");
-        assert_eq!(coin.id, 1);
+        assert_eq!(plugin.resolve_coin("btc"), Some(1));
+        assert_eq!(plugin.resolve_coin("BTC"), Some(1));
 
         // `bitcoin` matches `Bitcoin` rather than the longer `Bitcoin Cash`.
-        let coin = plugin.resolve_coin("bitcoin").expect("name lookup");
-        assert_eq!(coin.name, "Bitcoin");
+        assert_eq!(plugin.resolve_coin("bitcoin"), Some(1));
 
         // Misspelled names still resolve, including with substituted characters.
-        let coin = plugin.resolve_coin("bitcon").expect("fuzzy lookup");
-        assert_eq!(coin.name, "Bitcoin");
+        assert_eq!(plugin.resolve_coin("bitcon"), Some(1));
+        assert_eq!(plugin.resolve_coin("bitkoin"), Some(1));
+        assert_eq!(plugin.resolve_coin("doge"), Some(74));
 
-        let coin = plugin.resolve_coin("bitkoin").expect("typo lookup");
-        assert_eq!(coin.name, "Bitcoin");
-
-        let coin = plugin.resolve_coin("doge").expect("fuzzy lookup");
-        assert_eq!(coin.name, "Dogecoin");
-
-        assert!(plugin.resolve_coin("").is_none());
-        assert!(plugin.resolve_coin("   ").is_none());
-        assert!(plugin.resolve_coin("zzzz").is_none());
+        assert_eq!(plugin.resolve_coin(""), None);
+        assert_eq!(plugin.resolve_coin("   "), None);
+        assert_eq!(plugin.resolve_coin("zzzz"), None);
     }
 
     #[test]
