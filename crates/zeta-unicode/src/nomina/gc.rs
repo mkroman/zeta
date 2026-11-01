@@ -156,7 +156,7 @@ mod tests {
         let mut starts = Vec::new();
         let mut previous = 0u32;
         for &(start, _) in runs {
-            zeta_unicode_format::write_varint(u64::from(start - previous), &mut starts);
+            zeta_unicode_format::write_varint(start - previous, &mut starts);
             previous = start;
         }
         let cats: Vec<u8> = runs.iter().map(|&(_, id)| id).collect();

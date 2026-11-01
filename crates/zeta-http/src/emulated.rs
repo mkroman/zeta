@@ -225,7 +225,13 @@ mod tests {
         let error = crate::WreqError::from(error);
         let full = error.full();
 
-        assert_redactions(&error.to_string(), full, &format!("{error:?}"), &address);
+        assert_redactions(
+            &error.to_string(),
+            full,
+            &format!("{error:?}"),
+            &address,
+            "key=secret",
+        );
 
         // `wreq` renders its first source itself; walking the chain again would print that
         // link twice.

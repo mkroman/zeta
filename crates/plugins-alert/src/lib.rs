@@ -126,12 +126,19 @@ pub struct AlertPlugin {
     service: Arc<AlertService>,
     /// The receiver of due alerts, moved into the delivery task on load.
     receiver: Option<mpsc::UnboundedReceiver<Alert>>,
+    /// The scheduler task, stopped before the delivery channel is closed on shutdown.
+    scheduler: Option<tokio::task::JoinHandle<()>>,
+    /// The delivery task, drained on shutdown so it drops its IRC sender.
+    delivery: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AlertPlugin {
     /// Spawns the delivery task that sends due alerts over IRC as they are delivered by the
     /// scheduler.
-    fn start_delivery(client: &Client, mut receiver: mpsc::UnboundedReceiver<Alert>) {
+    fn start_delivery(
+        client: &Client,
+        mut receiver: mpsc::UnboundedReceiver<Alert>,
+    ) -> tokio::task::JoinHandle<()> {
         let sender = client.sender();
 
         tokio::spawn(async move {
@@ -163,7 +170,7 @@ impl AlertPlugin {
             tracing::info_span!("alert.delivery.stop").in_scope(|| {
                 debug!("alert delivery channel is closed");
             });
-        });
+        })
     }
 }
 
@@ -183,16 +190,39 @@ impl AlertPlugin {
         // Intentional: other plugins register alerts through the shared service.
         ctx.shared.publish(Arc::clone(&service));
 
-        Ok(Self { service, receiver })
+        Ok(Self {
+            service,
+            receiver,
+            scheduler: None,
+            delivery: None,
+        })
     }
 
     #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {
         self.service.load().await.map_err(plugin_err)?;
-        self.service.start_scheduler();
+        self.scheduler = Some(self.service.start_scheduler());
 
         if let Some(receiver) = self.receiver.take() {
-            Self::start_delivery(client, receiver);
+            self.delivery = Some(Self::start_delivery(client, receiver));
+        }
+
+        Ok(())
+    }
+
+    #[handler(shutdown)]
+    async fn shutdown(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
+        // Stop the producer first, then close the channel: the delivery task drains queued
+        // alerts and exits, dropping its IRC sender before the host drops the client.
+        if let Some(scheduler) = self.scheduler.take() {
+            scheduler.abort();
+            let _ = scheduler.await;
+        }
+
+        self.service.close();
+
+        if let Some(delivery) = self.delivery.take() {
+            let _ = delivery.await;
         }
 
         Ok(())

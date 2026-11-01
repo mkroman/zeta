@@ -43,8 +43,9 @@ impl PartialOrd for Scheduled {
 struct Scheduler {
     /// The alert repository.
     repo: AlertRepository,
-    /// The sender half of the channel used to deliver due alerts.
-    tx: mpsc::UnboundedSender<Alert>,
+    /// The sender half of the channel used to deliver due alerts, taken to close the channel
+    /// on shutdown.
+    tx: Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<Alert>>>>,
     /// The alerts due within the window, ordered by the time they are due.
     cache: Arc<Mutex<BinaryHeap<Reverse<Scheduled>>>>,
     /// Wakes the scheduler to sync the window when an alert is created.
@@ -82,7 +83,7 @@ impl AlertService {
         Self {
             scheduler: Scheduler {
                 repo: AlertRepository::new(db),
-                tx,
+                tx: Arc::new(std::sync::Mutex::new(Some(tx))),
                 cache: Arc::new(Mutex::new(BinaryHeap::new())),
                 notify: Arc::new(Notify::new()),
                 retry_delay: settings.retry_delay,
@@ -133,16 +134,28 @@ impl AlertService {
     }
 
     /// Spawns the scheduler task, delivering due alerts until the runtime shuts down.
-    pub fn start_scheduler(&self) {
+    #[must_use]
+    pub fn start_scheduler(&self) -> tokio::task::JoinHandle<()> {
         let scheduler = self.scheduler.clone();
 
         tokio::spawn(async move {
             scheduler.run().await;
-        });
+        })
+    }
+
+    /// Closes the delivery channel: the delivery task drains what is queued, then exits and
+    /// drops its IRC sender.
+    pub(crate) fn close(&self) {
+        zeta_utils::sync::lock(&self.scheduler.tx).take();
     }
 }
 
 impl Scheduler {
+    /// Returns a clone of the delivery sender, or `None` once the channel has been closed.
+    fn sender(&self) -> Option<mpsc::UnboundedSender<Alert>> {
+        zeta_utils::sync::lock(&self.tx).clone()
+    }
+
     /// Syncs the cache with the database, replacing it with the alerts due within the window.
     ///
     /// Only the scheduler task mutates the cache, so an alert persisted by `create` just before
@@ -214,7 +227,7 @@ impl Scheduler {
 
         loop {
             match self.tick().await {
-                // The delivery channel is closed: the plugin's delivery task has stopped, so
+                // The delivery channel is closed: the scheduler was stopped for shutdown, so
                 // nothing can be delivered until the bot restarts.
                 Err(Error::Closed) => break,
                 Err(_) => {
@@ -296,6 +309,12 @@ impl Scheduler {
     async fn tick(&self) -> Result<(), Error> {
         let due = self.pop_due(Utc::now()).await;
 
+        let Some(tx) = self.sender() else {
+            self.requeue(&due).await;
+
+            return Err(Error::Closed);
+        };
+
         if due.is_empty() {
             return Ok(());
         }
@@ -303,7 +322,7 @@ impl Scheduler {
         for Scheduled(alert) in &due {
             trace!(?alert, "delivering alert");
 
-            if self.tx.send(alert.clone()).is_err() {
+            if tx.send(alert.clone()).is_err() {
                 error!(alert.id = alert.id, "alert delivery channel is closed");
 
                 self.requeue(&due).await;
@@ -381,7 +400,7 @@ mod tests {
         let mut receiver = service.take_receiver().unwrap();
 
         service.load().await.unwrap();
-        service.start_scheduler();
+        let _scheduler = service.start_scheduler();
 
         // The scheduler wakes through the stored notification for an alert created while its
         // cache is empty, so no settling delay is needed here.
@@ -440,6 +459,27 @@ mod tests {
 
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
+    }
+
+    #[sqlx::test(migrations = "../plugins/migrations")]
+    async fn closing_the_channel_drains_queued_alerts(db: sqlx::PgPool) {
+        let mut service = AlertService::new(db, &Settings::default());
+        let mut receiver = service.take_receiver().unwrap();
+
+        let alert = service
+            .create(new_alert("drain", "#smoke", "queued", Utc::now()))
+            .await
+            .unwrap();
+
+        service.load().await.unwrap();
+        service.scheduler.tick().await.unwrap();
+
+        service.close();
+
+        // The queued alert is still delivered, and the closed channel then ends the delivery
+        // loop so its IRC sender is dropped.
+        assert_eq!(receiver.recv().await.unwrap(), alert);
+        assert_eq!(receiver.recv().await, None);
     }
 
     #[sqlx::test(migrations = "../plugins/migrations")]

@@ -228,8 +228,8 @@ mod tests {
         }
         let mut previous = 0u32;
         for &(lo, hi, prefix, suffix) in patterns {
-            write_varint(u64::from(lo - previous), &mut section);
-            write_varint(u64::from(hi - lo + 1), &mut section);
+            write_varint(lo - previous, &mut section);
+            write_varint(hi - lo + 1, &mut section);
             section
                 .push(u8::try_from(prefixes.iter().position(|p| *p == prefix).unwrap()).unwrap());
             section

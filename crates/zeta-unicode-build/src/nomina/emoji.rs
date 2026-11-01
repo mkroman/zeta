@@ -397,14 +397,14 @@ fn encode_payload(
         );
         let first = *cps.first().expect("a non-empty key");
         assert!(first >= previous, "keys are not sorted by first code point");
-        write_varint(u64::from(first - previous), &mut key_raw);
+        write_varint(first - previous, &mut key_raw);
         previous = first;
         write_varint(
-            u64::try_from(cps.len()).expect("a key length"),
+            u32::try_from(cps.len()).expect("a key length"),
             &mut key_raw,
         );
         for &cp in cps.iter().skip(1) {
-            write_varint(u64::from(cp), &mut key_raw);
+            write_varint(cp, &mut key_raw);
         }
         key_bytes += entry.key.len();
     }

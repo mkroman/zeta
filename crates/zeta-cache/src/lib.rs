@@ -256,7 +256,7 @@ pub struct TtlMap<K, V> {
     entries: RwLock<HashMap<K, Entry<Option<Arc<V>>>>>,
     /// Per-key single-flight locks: concurrent misses for the same key refresh once. Entries
     /// are removed once they are uncontended, so the map does not grow with refreshed keys.
-    flights: tokio::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
+    flights: std::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
     /// How long a cached value stays fresh.
     ttl: Duration,
     /// How long a cached negative result stays fresh.
@@ -275,7 +275,7 @@ where
     pub fn with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
         Self {
             entries: RwLock::new(HashMap::with_capacity(capacity)),
-            flights: tokio::sync::Mutex::new(HashMap::with_capacity(
+            flights: std::sync::Mutex::new(HashMap::with_capacity(
                 capacity.min(DEFAULT_FLIGHT_CAPACITY),
             )),
             ttl,
@@ -349,15 +349,21 @@ where
         }
 
         let flight = {
-            let mut flights = self.flights.lock().await;
+            let mut flights = self.flights.lock().unwrap_or_else(PoisonError::into_inner);
 
             Arc::clone(flights.entry(key.clone()).or_default())
         };
-        let flight_guard = flight.lock().await;
+        // Declared before the guard so it outlives it: released on every exit, including
+        // cancellation and a panic in `refresh`.
+        let _release = FlightRelease {
+            flights: &self.flights,
+            key: &key,
+        };
+        let _flight_guard = flight.lock().await;
 
-        // No `?` before the release below: every exit — including a failing refresh and the
+        // No `?` before the guard is dropped: every exit — including a failing refresh and the
         // double-check — has to give the flight entry a chance to be cleaned up.
-        let outcome = match self.peek_arc(&key) {
+        match self.peek_arc(&key) {
             // Another task refreshed the key while this one waited for the flight lock.
             Some(cached) => Ok(cached.map(|value| (*value).clone())),
             None => match refresh().await {
@@ -368,33 +374,6 @@ where
                 }
                 Err(error) => Err(error),
             },
-        };
-
-        // Whoever releases the flight last removes the entry, so the flight map does not grow
-        // with every refreshed — or every failing — key; a waiter that already holds the clone
-        // keeps working, and the double-check above hands it the freshly inserted entry.
-        drop(flight_guard);
-        self.release_flight(&key).await;
-
-        outcome
-    }
-
-    /// Removes `key`'s flight entry once no task holds or waits for it.
-    ///
-    /// A task that is still queued on the flight keeps its clone and cleans up when it in turn
-    /// releases, so the entry survives at most until its last holder runs this.
-    async fn release_flight(&self, key: &K)
-    where
-        K: Send + Sync,
-        V: Send + Sync,
-    {
-        let mut flights = self.flights.lock().await;
-
-        if flights
-            .get(key)
-            .is_some_and(|flight| flight.try_lock().is_ok())
-        {
-            flights.remove(key);
         }
     }
 
@@ -452,6 +431,29 @@ where
     }
 }
 
+/// Removes a [`TtlMap`] flight entry when its guard is dropped, including on cancellation.
+struct FlightRelease<'a, K: Eq + Hash> {
+    /// The flight map the entry lives in.
+    flights: &'a std::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
+    /// The key whose entry is released.
+    key: &'a K,
+}
+
+impl<K: Eq + Hash> Drop for FlightRelease<'_, K> {
+    fn drop(&mut self) {
+        let mut flights = self.flights.lock().unwrap_or_else(PoisonError::into_inner);
+
+        // A task that is still queued on the flight keeps its clone and cleans up when it in
+        // turn releases, so the entry survives at most until its last holder drops this.
+        if flights
+            .get(self.key)
+            .is_some_and(|flight| flight.try_lock().is_ok())
+        {
+            flights.remove(self.key);
+        }
+    }
+}
+
 #[cfg(test)]
 mod ttl_map_tests {
     use super::*;
@@ -488,7 +490,7 @@ mod ttl_map_tests {
         assert_eq!(cache.get(&"a".to_string()), Some(7));
 
         // The uncontended flight entry is cleaned up afterwards.
-        assert_empty!(cache.flights.lock().await);
+        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
     }
 
     #[tokio::test]
@@ -526,7 +528,7 @@ mod ttl_map_tests {
 
         // The last flight holder cleaned up, even though every waiter went through the
         // double-check instead of refreshing.
-        assert_empty!(cache.flights.lock().await);
+        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
     }
 
     #[tokio::test]
@@ -561,7 +563,23 @@ mod ttl_map_tests {
         // released its flight — and every one of them released its own afterwards.
         assert_eq!(attempts.load(Ordering::SeqCst), 8);
         assert_eq!(cache.get(&"a".to_string()), None);
-        assert_empty!(cache.flights.lock().await);
+        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
+    }
+
+    #[tokio::test]
+    async fn cancelled_refreshes_leave_no_flight_entry() {
+        let cache = ttl_map(Duration::from_mins(1));
+
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(10),
+            cache.get_or_refresh("a".to_string(), || {
+                std::future::pending::<Result<Option<u8>, ()>>()
+            }),
+        )
+        .await;
+
+        assert!(cancelled.is_err(), "the refresh should time out");
+        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
     }
 
     #[tokio::test]
@@ -713,7 +731,7 @@ mod ttl_map_tests {
 
         // A failing refresh must not leave its flight entry behind: unlike `entries`, the
         // flight map is neither bounded nor expired.
-        assert_empty!(cache.flights.lock().await);
+        assert_empty!(cache.flights.lock().unwrap_or_else(PoisonError::into_inner));
     }
 
     /// Measures inserts into a full cache, where every insert evicts an entry.

@@ -217,15 +217,20 @@ pub async fn timeout_error() -> (reqwest::Error, SocketAddr) {
 
 /// Asserts the redaction guarantees a connection-refused wrapper error makes.
 ///
-/// No rendering leaks the query string; the short form (what a channel reply gets) is
-/// classified, host-only and bounded; the full rendering (what a log line gets) carries the
-/// redacted URL.
+/// No rendering leaks `query`; the short form (what a channel reply gets) is classified,
+/// host-only and bounded; the full rendering (what a log line gets) carries the redacted URL.
 ///
 /// # Panics
 ///
 /// Panics on the first broken guarantee.
-pub fn assert_redactions(message: &str, full: &str, debug: &str, address: &SocketAddr) {
-    assert_common(message, full, debug, address, "could not connect");
+pub fn assert_redactions(
+    message: &str,
+    full: &str,
+    debug: &str,
+    address: &SocketAddr,
+    query: &str,
+) {
+    assert_common(message, full, debug, address, query, "could not connect");
 
     // The source chain carries hyper's `client error (Connect)` link on every platform. The
     // OS wording below it differs (Linux says "Connection refused", macOS says "Address not
@@ -243,21 +248,34 @@ pub fn assert_redactions(message: &str, full: &str, debug: &str, address: &Socke
 /// # Panics
 ///
 /// Panics on the first broken guarantee.
-pub fn assert_timeout_redactions(message: &str, full: &str, debug: &str, address: &SocketAddr) {
-    assert_common(message, full, debug, address, "request timed out");
+pub fn assert_timeout_redactions(
+    message: &str,
+    full: &str,
+    debug: &str,
+    address: &SocketAddr,
+    query: &str,
+) {
+    assert_common(message, full, debug, address, query, "request timed out");
 }
 
 /// Asserts the guarantees shared by [`assert_redactions`] and [`assert_timeout_redactions`].
-fn assert_common(message: &str, full: &str, debug: &str, address: &SocketAddr, short_prefix: &str) {
-    assert!(!message.contains("secret"), "{message}");
+fn assert_common(
+    message: &str,
+    full: &str,
+    debug: &str,
+    address: &SocketAddr,
+    query: &str,
+    short_prefix: &str,
+) {
+    assert!(!message.contains(query), "{message}");
     assert!(message.starts_with(short_prefix), "{message}");
     assert!(message.contains(&address.ip().to_string()), "{message}");
     assert!(message.len() < 64, "{message}");
 
-    assert!(!full.contains("secret"), "{full}");
+    assert!(!full.contains(query), "{full}");
     assert!(full.contains(&format!("http://{address}/")), "{full}");
 
-    assert!(!debug.contains("secret"), "{debug}");
+    assert!(!debug.contains(query), "{debug}");
 }
 
 /// Starts a wiremock server answering `404 Not Found` to every request.

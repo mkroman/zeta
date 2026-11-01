@@ -577,11 +577,14 @@ mod tests {
         let mut masks = Vec::new();
         for (cps, rule, argument) in entries {
             let first = cps[0];
-            zeta_unicode_format::write_varint(u64::from(first - previous), &mut key_raw);
+            zeta_unicode_format::write_varint(first - previous, &mut key_raw);
             previous = first;
-            zeta_unicode_format::write_varint(cps.len() as u64, &mut key_raw);
+            zeta_unicode_format::write_varint(
+                u32::try_from(cps.len()).expect("a key length"),
+                &mut key_raw,
+            );
             for &cp in cps.iter().skip(1) {
-                zeta_unicode_format::write_varint(u64::from(cp), &mut key_raw);
+                zeta_unicode_format::write_varint(cp, &mut key_raw);
             }
             rule_raw.push(rule.id());
             if matches!(*rule, Rule::UcdMask | Rule::UcdMaskHyphen) {

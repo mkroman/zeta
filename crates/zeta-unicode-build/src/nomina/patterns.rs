@@ -192,8 +192,8 @@ pub fn pattern_section(patterns: &[Pattern]) -> (Vec<u8>, PatternStats) {
             .iter()
             .position(|text| **text == pattern.suffix)
             .expect("the suffix was collected");
-        write_varint(u64::from(pattern.lo - previous), &mut records);
-        write_varint(u64::from(pattern.hi - pattern.lo) + 1, &mut records);
+        write_varint(pattern.lo - previous, &mut records);
+        write_varint(pattern.hi - pattern.lo + 1, &mut records);
         records.push(u8::try_from(prefix).expect("prefix id"));
         records.push(u8::try_from(suffix).expect("suffix id"));
         previous = pattern.lo;

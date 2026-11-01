@@ -67,6 +67,7 @@ mod tests {
             error.full(),
             &format!("{error:?}"),
             &address,
+            "key=secret",
         );
 
         // The chain ends at the wrapper, so nothing that walks `source()` can reach a raw error.
@@ -89,6 +90,7 @@ mod tests {
             error.full(),
             &format!("{error:?}"),
             &address,
+            "key=secret",
         );
 
         assert_eq!(error.error_type(), "timeout");
