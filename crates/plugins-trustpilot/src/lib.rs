@@ -178,10 +178,8 @@ impl Trustpilot {
 fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
     let score = normalized_score(b.score.trust_score);
     let reviews = b.number_of_reviews.total.to_formatted_string(&Locale::en);
-    let url = format!(
-        "https://{review_domain}.trustpilot.com/review/{}",
-        b.name.identifying
-    );
+    let identifying = unstyle_text(&b.name.identifying);
+    let url = format!("https://{review_domain}.trustpilot.com/review/{identifying}");
     let name = unstyle_text(&b.display_name);
 
     labeled_reply(

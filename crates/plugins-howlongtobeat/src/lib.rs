@@ -321,6 +321,7 @@ impl HowLongToBeat {
 
 /// Formats a parsed `Game` struct into an IRC-friendly text string.
 fn format_game(game: &Game) -> String {
+    let name = unstyle_text(&game.game_name);
     let main = format_seconds(game.comp_main);
     let main_extra = format_seconds(game.comp_plus);
     let completionist = format_seconds(game.comp_100);
@@ -328,8 +329,7 @@ fn format_game(game: &Game) -> String {
     labeled_reply(
         "HLTB",
         format!(
-            "(\x0f{}\x0310): Main Story: \x0f{}\x0310 | Main + Extra: \x0f{}\x0310 | Completionist: \x0f{}",
-            game.game_name, main, main_extra, completionist
+            "(\x0f{name}\x0310): Main Story: \x0f{main}\x0310 | Main + Extra: \x0f{main_extra}\x0310 | Completionist: \x0f{completionist}"
         ),
     )
 }

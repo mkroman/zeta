@@ -39,7 +39,7 @@ pub struct Settings {
 /// The geoip plugin: geolocates addresses on behalf of `.geoip` commands.
 pub struct GeoIp {
     /// The HTTP client used for API requests.
-    pub client: reqwest::Client,
+    client: reqwest::Client,
     api_key: String,
     /// The resolver used to turn domains into addresses.
     resolver: TokioResolver,
@@ -178,7 +178,7 @@ impl Display for IpInfo {
 
             // Every part ends in the reply color, so a plain space between parts keeps the
             // separator cyan.
-            write!(fmt, "{label}:{RESET} {value}")?;
+            write!(fmt, "{label}:{RESET} {}", unstyle_text(value))?;
             wrote = true;
         }
 
@@ -195,7 +195,7 @@ fn reply(info: &IpInfo) -> String {
     format!(
         "{}({RESET}{}{COLOR}): {info}",
         labeled_reply_prefix("GeoIP"),
-        info.ip
+        unstyle_text(&info.ip)
     )
 }
 
@@ -341,6 +341,26 @@ mod tests {
                  Region:{RESET} Capital Region City:{RESET} Copenhagen"
             )
         );
+    }
+
+    #[test]
+    fn display_strips_formatting_from_api_text() {
+        let info = ip_info(
+            "\x0310Fake\nASN",
+            "13335",
+            "De\x02nmark",
+            "Capital Region",
+            "Copenhagen",
+        );
+
+        let rendered = info.to_string();
+        let rendered = unstyle_text(&rendered);
+
+        assert!(
+            rendered.contains("AS: Fake ASN ASN: 13335 Country: Denmark"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains('\n'), "{rendered}");
     }
 
     #[test]

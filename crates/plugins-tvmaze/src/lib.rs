@@ -32,7 +32,7 @@ pub enum Error {
 }
 
 /// The TVmaze plugin: looks up shows and their next episodes.
-pub struct Tvmaze {
+pub struct TvMaze {
     /// HTTP client for API requests.
     client: reqwest::Client,
 }
@@ -116,7 +116,7 @@ pub struct Episode {
 }
 
 #[plugin(name = "tvmaze")]
-impl Tvmaze {
+impl TvMaze {
     // The `Plugin` trait requires the constructor to return `Result`, even when initialization
     // cannot fail.
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
@@ -151,7 +151,7 @@ impl Tvmaze {
     }
 }
 
-impl Tvmaze {
+impl TvMaze {
     /// Searches for a single show using the TVmaze API.
     ///
     /// # Arguments
@@ -202,8 +202,9 @@ impl Tvmaze {
         let content = format!(
             "Next episode “\x0f{title}\x0310” (\x0f{season}x{number:02}\x0310) airs in\x0f {time_until_air}"
         );
+        let name = unstyle_text(&show.name);
 
-        Self::build_formatted_message(Some(&show.name), &content)
+        Self::build_formatted_message(Some(&name), &content)
     }
 
     /// Formats a message about the show's current status.
@@ -285,7 +286,7 @@ mod tests {
 
     #[test]
     fn builds_the_search_url() {
-        let url = Tvmaze::build_search_url("a show");
+        let url = TvMaze::build_search_url("a show");
 
         // `query_pairs_mut` percent-encodes the space as `+`.
         assert_eq!(
@@ -322,7 +323,7 @@ mod tests {
         let show = show_with_next_episode();
 
         // The fixture's airstamp is in the past, so the time-until-air clamps to zero minutes.
-        let message = strip_formatting(&Tvmaze::format_show_message(&show));
+        let message = strip_formatting(&TvMaze::format_show_message(&show));
 
         assert!(
             message.contains("Next episode “The Next One” (2x07) airs in 0 minutes"),
@@ -337,7 +338,7 @@ mod tests {
         let mut show = show_with_next_episode();
         show.embedded = None;
 
-        let message = strip_formatting(&Tvmaze::format_show_message(&show));
+        let message = strip_formatting(&TvMaze::format_show_message(&show));
 
         assert!(
             message.contains("A Show is currently marked as Running and there is no next episode"),
