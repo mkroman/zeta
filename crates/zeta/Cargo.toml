@@ -87,6 +87,7 @@ zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["
 zeta-plugin-runtime = { path = "../zeta-plugin-runtime" }
 
 [dev-dependencies]
+tempfile.workspace = true
 url.workspace = true
 zeta-test-support = { path = "../zeta-test-support" }
 
