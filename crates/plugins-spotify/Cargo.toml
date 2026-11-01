@@ -18,7 +18,6 @@ native-tls-vendored = [
 
 [dependencies]
 base64 = "0.23.0"
-indefinite = "0.1.11"
 num-format = "0.4.4"
 reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"] }
 serde.workspace = true
