@@ -43,6 +43,10 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: short
+  # Debug info is 80-95% of each test binary, and `cargo test` links one per
+  # workspace crate. The runner's remaining disk is not enough for the
+  # all-features build with it; dropping it keeps the test job off the ceiling.
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 permissions:
   contents: read
