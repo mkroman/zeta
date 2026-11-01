@@ -20,7 +20,7 @@
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::{Arc, Mutex, OnceLock, TryLockError};
+use std::sync::{Arc, LazyLock, Mutex, TryLockError};
 
 use clap::{ArgAction, ColorChoice, Command, Parser};
 use thiserror::Error;
@@ -333,25 +333,22 @@ fn tolerate_repeated_switches(command: Command) -> Command {
     command.mut_subcommands(tolerate_repeated_switches)
 }
 
-/// The configured commands reused across parses.
+/// The cache key of a configured command: its trigger and the argument type it parses.
+type CommandKey = (&'static str, TypeId);
+
+/// The configured commands reused across parses, initialized on first use.
 ///
 /// [`Command`] is `Send`, and [`Command::try_get_matches_from_mut`] is clap's API for parsing
 /// with a command that stays alive, so one configured tree per command is reused instead of
 /// rebuilding the whole argument tree on every call. The trigger is part of the key because it
 /// is rendered as the binary name in usage and help output; the argument type is keyed by
 /// [`TypeId`], so parsers must be `'static`.
-type CommandKey = (&'static str, TypeId);
-
-static COMMANDS: OnceLock<Mutex<HashMap<CommandKey, Arc<Mutex<Command>>>>> = OnceLock::new();
-
-/// Returns the process-wide command cache, initializing it on first use.
-fn commands() -> &'static Mutex<HashMap<CommandKey, Arc<Mutex<Command>>>> {
-    COMMANDS.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static COMMANDS: LazyLock<Mutex<HashMap<CommandKey, Arc<Mutex<Command>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Returns the cached command for `T` under `trigger`, configuring it on first use.
 fn cached_command<T: Parser + 'static>(trigger: &'static str) -> Arc<Mutex<Command>> {
-    let mut commands = sync::lock(commands());
+    let mut commands = sync::lock(&COMMANDS);
 
     Arc::clone(
         commands
@@ -373,7 +370,7 @@ where
     match cached_command::<T>(trigger).try_lock() {
         Ok(mut command) => parse(&mut command),
         Err(TryLockError::Poisoned(_)) => {
-            sync::lock(commands()).remove(&(trigger, TypeId::of::<T>()));
+            sync::lock(&COMMANDS).remove(&(trigger, TypeId::of::<T>()));
 
             parse(&mut configure(T::command(), trigger))
         }
