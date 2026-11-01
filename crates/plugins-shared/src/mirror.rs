@@ -16,7 +16,10 @@ use zeta_plugin::prelude::*;
 /// mirror configured.
 ///
 /// Without a configured mirror this is a no-op, leaving the plugin to its non-mirroring
-/// behavior.
+/// behavior. If the media has already been mirrored, the existing link is sent immediately;
+/// otherwise the download and upload happen in a background task that replies with the link once
+/// it is ready. A failed mirror check is logged and leaves the channel without a reply. The
+/// channel is shared as an `Arc<str>` because the reply callback outlives this call.
 pub async fn ensure_mirrored_if_configured(
     mirror: Option<&MirrorHandle>,
     url: &str,
@@ -24,24 +27,10 @@ pub async fn ensure_mirrored_if_configured(
     channel: &str,
     client: &Client,
 ) {
-    if let Some(mirror) = mirror {
-        ensure_mirrored_and_reply(mirror, url, id, channel, client).await;
-    }
-}
+    let Some(mirror) = mirror else {
+        return;
+    };
 
-/// Mirrors the media at `url` with the given `id`, replying with the mirrored file's link to
-/// `channel` through `client`.
-///
-/// If the media has already been mirrored, the existing link is sent immediately; otherwise the
-/// download and upload happen in a background task that replies with the link once it is ready.
-/// A failed mirror check is logged and leaves the channel without a reply.
-pub async fn ensure_mirrored_and_reply(
-    mirror: &MirrorHandle,
-    url: &str,
-    id: &str,
-    channel: &str,
-    client: &Client,
-) {
     let sender = client.sender();
     let channel: Arc<str> = Arc::from(channel);
 
