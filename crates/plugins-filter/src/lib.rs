@@ -207,23 +207,10 @@ impl Add {
     fn new_filters(&self, channel: Option<&str>, created_by: &str) -> Vec<NewFilter> {
         let hosts = expand(&self.host);
         let paths = expand(&self.path);
-        let (nickname, username, hostname) = (
-            self.sender
-                .nick
-                .as_deref()
-                .map(str::trim)
-                .map(str::to_owned),
-            self.sender
-                .user
-                .as_deref()
-                .map(str::trim)
-                .map(str::to_owned),
-            self.sender
-                .hostname
-                .as_deref()
-                .map(str::trim)
-                .map(str::to_owned),
-        );
+        let trimmed = |value: &Option<String>| value.as_deref().map(str::trim).map(str::to_owned);
+        let nickname = trimmed(&self.sender.nick);
+        let username = trimmed(&self.sender.user);
+        let hostname = trimmed(&self.sender.hostname);
 
         let mut filters = Vec::with_capacity(hosts.len() * paths.len());
 
