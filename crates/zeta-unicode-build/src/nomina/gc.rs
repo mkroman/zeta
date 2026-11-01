@@ -96,7 +96,7 @@ pub fn general_category_section(ranges: &[GcRange]) -> (Vec<u8>, GcStats) {
             (1..=GC_SHORT_NAMES.len()).contains(&usize::from(id)),
             "general category id {id} is out of range"
         );
-        write_varint(u64::from(range_start - previous), &mut start_stream);
+        write_varint(range_start - previous, &mut start_stream);
         previous = range_start;
         cats.push(id);
     }

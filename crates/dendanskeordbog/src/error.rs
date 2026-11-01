@@ -206,7 +206,7 @@ mod tests {
         let full = error.full();
         let debug = format!("{error:?}");
 
-        assert_redactions(&message, full, &debug, &address);
+        assert_redactions(&message, full, &debug, &address, "key=secret");
 
         assert_eq!(error.error_type(), "connection_error");
 
@@ -225,7 +225,7 @@ mod tests {
         let full = error.full();
         let debug = format!("{error:?}");
 
-        assert_timeout_redactions(&message, full, &debug, &address);
+        assert_timeout_redactions(&message, full, &debug, &address, "key=secret");
 
         assert_eq!(error.error_type(), "timeout");
     }

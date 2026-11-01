@@ -26,7 +26,10 @@ pub fn read_varint(bytes: &[u8]) -> Option<(u32, usize)> {
 }
 
 /// Appends `value` as a LEB128 varint.
-pub fn write_varint(mut value: u64, out: &mut Vec<u8>) {
+///
+/// Takes the same width [`read_varint`] returns, so a value the reader would reject cannot be
+/// written.
+pub fn write_varint(mut value: u32, out: &mut Vec<u8>) {
     while value >= 0x80 {
         #[allow(
             clippy::cast_possible_truncation,
@@ -155,16 +158,10 @@ mod tests {
 
     #[test]
     fn varints_round_trip_and_reject_overlong_input() {
-        for value in [0u64, 1, 127, 128, 300, u64::from(u32::MAX)] {
+        for value in [0u32, 1, 127, 128, 300, u32::MAX] {
             let mut encoded = Vec::new();
             write_varint(value, &mut encoded);
-            assert_eq!(
-                read_varint(&encoded),
-                Some((
-                    u32::try_from(value).expect("test values fit in u32"),
-                    encoded.len()
-                ))
-            );
+            assert_eq!(read_varint(&encoded), Some((value, encoded.len())));
         }
         assert_eq!(read_varint(&[]), None);
         assert_eq!(read_varint(&[0x80]), None);
