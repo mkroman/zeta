@@ -169,19 +169,28 @@ impl Display for IpInfo {
             ("Country", self.country_name.as_str()),
             ("Region", self.region_name.as_str()),
             ("City", self.city_name.as_str()),
-        ]
-        .into_iter()
-        .filter(|(_, value)| !value.is_empty())
-        .map(|(label, value)| format!("{label}:{RESET} {value}"))
-        .collect::<Vec<_>>();
+        ];
 
-        if parts.is_empty() {
-            write!(fmt, "No location data available")
-        } else {
+        // Written part by part: collecting formatted strings to join them afterwards would
+        // allocate once per part for a display that is built for every reply.
+        let mut wrote = false;
+
+        for (label, value) in parts.into_iter().filter(|(_, value)| !value.is_empty()) {
+            if wrote {
+                fmt.write_str(" ")?;
+            }
+
             // Every part ends in the reply color, so a plain space between parts keeps the
             // separator cyan.
-            write!(fmt, "{}", parts.join(" "))
+            write!(fmt, "{label}:{RESET} {value}")?;
+            wrote = true;
         }
+
+        if !wrote {
+            write!(fmt, "No location data available")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -222,11 +231,16 @@ impl GeoIp {
                 // `dns.answers` is the OpenTelemetry convention for the addresses a lookup
                 // resolved to:
                 // https://opentelemetry.io/docs/specs/semconv/registry/attributes/dns/
-                let addresses: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
-                if !addresses.is_empty() {
-                    // The answers are a string array per convention; tracing macros have no
-                    // array value type, so they go through Debug as a single string.
-                    debug!(dns.answers = ?addresses, "resolved domain");
+                // The string array is built only when debug logging is on: the collection
+                // itself would run for every lookup even when the event is filtered out.
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    let addresses: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
+
+                    if !addresses.is_empty() {
+                        // The answers are a string array per convention; tracing macros have no
+                        // array value type, so they go through Debug as a single string.
+                        debug!(dns.answers = ?addresses, "resolved domain");
+                    }
                 }
 
                 lookup
@@ -290,5 +304,81 @@ mod tests {
         } assert: {
             assert_eq!(settings.api_key.as_deref(), Some("secret"));
         }
+    }
+
+    /// The details the API reported for a test address, with each formatted part overridable.
+    fn ip_info(
+        asn_name: &str,
+        asn: &str,
+        country_name: &str,
+        region_name: &str,
+        city_name: &str,
+    ) -> IpInfo {
+        IpInfo {
+            ip: "203.0.113.1".to_owned(),
+            country_code: "DK".to_owned(),
+            country_name: country_name.to_owned(),
+            region_name: region_name.to_owned(),
+            city_name: city_name.to_owned(),
+            latitude: 55.6761,
+            longitude: 12.5683,
+            zip_code: "1000".to_owned(),
+            time_zone: "+01:00".to_owned(),
+            asn: asn.to_owned(),
+            asn_name: asn_name.to_owned(),
+            is_proxy: false,
+        }
+    }
+
+    #[test]
+    fn display_writes_each_location_part_once() {
+        let info = ip_info(
+            "Cloudflare",
+            "13335",
+            "Denmark",
+            "Capital Region",
+            "Copenhagen",
+        );
+
+        // The parts are separated by a single space and end in `RESET`, so the separator keeps
+        // the reply color.
+        assert_eq!(
+            info.to_string(),
+            format!(
+                "AS:{RESET} Cloudflare ASN:{RESET} 13335 Country:{RESET} Denmark \
+                 Region:{RESET} Capital Region City:{RESET} Copenhagen"
+            )
+        );
+    }
+
+    #[test]
+    fn display_skips_empty_location_parts() {
+        let info = ip_info("", "", "Denmark", "", "Copenhagen");
+
+        assert_eq!(
+            info.to_string(),
+            format!("Country:{RESET} Denmark City:{RESET} Copenhagen")
+        );
+    }
+
+    #[test]
+    fn display_falls_back_when_no_part_is_known() {
+        let info = ip_info("", "", "", "", "");
+
+        assert_eq!(info.to_string(), "No location data available");
+    }
+
+    #[test]
+    fn lookup_result_wraps_the_location_in_a_labeled_reply() {
+        let info = ip_info("Cloudflare", "13335", "Denmark", "", "");
+
+        assert_eq!(
+            LookupResult(info).to_string(),
+            format!(
+                "{}({RESET}203.0.113.1{COLOR}): AS:{RESET} Cloudflare ASN:{RESET} 13335 \
+                 Country:{RESET} Denmark",
+                labeled_reply_prefix("GeoIP")
+            )
+        );
     }
 }
