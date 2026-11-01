@@ -31,6 +31,19 @@ fn request_error(error: reqwest::Error) -> RequestError {
     error
 }
 
+/// Parses a dictionary page on a blocking thread.
+///
+/// Parsing a full page is synchronous CPU work (`Html::parse_document`); on the blocking pool
+/// it cannot stall the async executor while it runs. A failed task — e.g. a panic in the HTML
+/// parser — is reported as [`Error::Parse`].
+async fn parse_on_blocking_thread(
+    parse: impl FnOnce() -> Result<DictionaryDocument, Error> + Send + 'static,
+) -> Result<DictionaryDocument, Error> {
+    tokio::task::spawn_blocking(parse)
+        .await
+        .map_err(|error| Error::Parse(error.to_string()))?
+}
+
 /// The URL of the dictionary's query endpoint.
 const QUERY_URL: &str = "https://ws.dsl.dk/ddo/query";
 /// The name of the query parameter used to specify the word to look up.
@@ -111,6 +124,8 @@ impl Client {
     ///   a timeout, or if the server returns a non-successful status code (e.g., 404, 500).
     /// - [`Error::MissingElement`]: If the response body is received but the HTML
     ///   is malformed or does not match the expected structure, preventing parsing.
+    /// - [`Error::Parse`]: If the blocking parse task fails, e.g. because the HTML parser
+    ///   panicked.
     pub async fn query(&self, word: &str) -> Result<DictionaryDocument, Error> {
         let request = self
             .client
@@ -130,7 +145,7 @@ impl Client {
             .await
             .map_err(|error| Error::Request(request_error(error)))?;
 
-        DictionaryDocument::from_html(&body)
+        parse_on_blocking_thread(move || DictionaryDocument::from_html(body)).await
     }
 }
 
@@ -140,5 +155,49 @@ impl Default for Client {
     /// This is equivalent to calling [`Client::new`].
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn parses_the_response_body_on_a_blocking_thread() {
+        let html = zeta_test_support::fixture!("queries/hest.html");
+
+        let document = parse_on_blocking_thread(move || DictionaryDocument::from_html(html))
+            .await
+            .expect("parsed document");
+
+        assert_eq!(document.entries.len(), 1);
+        assert_eq!(document.entries[0].head.keyword, "hest");
+    }
+
+    #[tokio::test]
+    async fn failed_parse_tasks_are_reported_as_parse_errors() {
+        let error = parse_on_blocking_thread(|| panic!("parser panicked"))
+            .await
+            .expect_err("a panicking parse task should fail");
+
+        assert!(matches!(&error, Error::Parse(_)), "{error:?}");
+        assert!(
+            error
+                .to_string()
+                .starts_with("could not parse the dictionary page:")
+        );
+    }
+
+    #[tokio::test]
+    async fn parser_errors_keep_their_own_variant() {
+        // A page that parses but lacks the expected structure is the parser's error, not a
+        // failed task.
+        let html = r#"<html><body><span class="ar"></span></body></html>"#;
+
+        let error = parse_on_blocking_thread(move || DictionaryDocument::from_html(html))
+            .await
+            .expect_err("a malformed entry should fail");
+
+        assert!(matches!(&error, Error::MissingElement(_)), "{error:?}");
     }
 }
