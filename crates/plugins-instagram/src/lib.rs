@@ -31,6 +31,7 @@ mod urls;
 
 use std::fmt::Write;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -130,7 +131,10 @@ pub struct Instagram {
     /// The instant of the previous request to Instagram, throttling bursts.
     last_request: Mutex<Option<Instant>>,
     /// The front-page session tokens for the GraphQL API, refreshed after they expire.
-    session: TtlCache<graphql::SessionTokens>,
+    ///
+    /// Shared rather than copied: a gated fetch only needs to borrow the tokens, and an `Arc`
+    /// clone is a refcount bump instead of two `String` allocations.
+    session: TtlCache<Arc<graphql::SessionTokens>>,
     /// The details fetched for each media id, cached so repeated links do not repeat the fetches.
     details: TtlMap<String, MediaDetails>,
 }
@@ -479,7 +483,9 @@ impl Instagram {
         let session = self
             .session
             .get_or_refresh(|| async {
-                graphql::fetch_session(&self.client, self.session_cookie.as_deref()).await
+                graphql::fetch_session(&self.client, self.session_cookie.as_deref())
+                    .await
+                    .map(Arc::new)
             })
             .await?;
 

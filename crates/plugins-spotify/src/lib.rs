@@ -320,7 +320,10 @@ impl Spotify {
     }
 
     async fn fetch<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, Error> {
-        let token = self.credentials.access_token(Self::token_grant).await?;
+        let token = self
+            .credentials
+            .access_token_shared(Self::token_grant)
+            .await?;
         let url = format!("{API_BASE_URL}/{path}");
 
         let request = self

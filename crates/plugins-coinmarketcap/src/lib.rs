@@ -19,7 +19,6 @@
 //! `max_name_typos` (2) settings tune quoting and fuzzy name lookups.
 
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -139,8 +138,11 @@ struct CoinOpts {
 /// cache TTL expires.
 #[derive(Debug)]
 struct CoinCache {
-    /// The cached coins, keyed by ticker symbol.
-    by_symbol: HashMap<String, Coin>,
+    /// The cached coin ids, keyed by ticker symbol.
+    ///
+    /// Only the id is read back, so the symbol is the single copy the cache keeps: it is moved
+    /// into the map key instead of being cloned next to a stored `Coin`.
+    by_symbol: HashMap<String, u64>,
     /// The coins' names, lower-cased once for fuzzy matching.
     names: Vec<NamedCoin>,
 }
@@ -149,24 +151,17 @@ impl From<Vec<Coin>> for CoinCache {
     fn from(coins: Vec<Coin>) -> Self {
         // The map endpoint returns coins in ascending rank order; keep the first (highest
         // ranked) occurrence when multiple coins share a symbol.
-        let mut by_symbol = HashMap::with_capacity(coins.len());
+        let mut by_symbol: HashMap<String, u64> = HashMap::with_capacity(coins.len());
         let mut names = Vec::with_capacity(coins.len());
 
         for coin in coins {
-            if let Entry::Vacant(entry) = by_symbol.entry(coin.symbol.clone()) {
+            if !by_symbol.contains_key(coin.symbol.as_str()) {
                 names.push(NamedCoin::new(&coin));
-                entry.insert(coin);
+                by_symbol.insert(coin.symbol, coin.id);
             }
         }
 
         Self { by_symbol, names }
-    }
-}
-
-impl CoinCache {
-    /// Returns the id of the highest-scoring coin whose name matches `query`.
-    fn find_by_name(&self, query: &str, max_name_typos: u16) -> Option<u64> {
-        matching::find_by_name(&self.names, query, max_name_typos)
     }
 }
 
@@ -388,8 +383,8 @@ impl CoinMarketCap {
             cache
                 .by_symbol
                 .get(&query.to_ascii_uppercase())
-                .map(|coin| coin.id)
-                .or_else(|| cache.find_by_name(query, self.max_name_typos))
+                .copied()
+                .or_else(|| matching::find_by_name(&cache.names, query, self.max_name_typos))
         })
     }
 
@@ -595,7 +590,7 @@ mod tests {
             },
         ]);
 
-        assert_eq!(cache.by_symbol["ONE"].id, 336);
+        assert_eq!(cache.by_symbol["ONE"], 336);
     }
 
     #[test]

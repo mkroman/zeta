@@ -325,14 +325,28 @@ pub struct FilterIndex {
 impl FilterIndex {
     /// Inserts `filter` into the index.
     pub(super) fn insert(&mut self, filter: Filter) {
-        let channel = filter.channel.as_deref().map(str::to_lowercase);
+        // Resolve the bucket through the stack-lowercased key first, so only the first filter
+        // of a channel allocates its key. The borrow ends before `filter` is moved into the
+        // entry.
+        let existing = filter
+            .channel
+            .as_deref()
+            .and_then(|channel| with_channel_key(channel, |key| self.channels.get_mut(key)));
+
         let entry = Arc::new(Entry::new(filter));
 
         self.has_sender_only |= entry.sender_only();
 
-        match channel {
-            Some(channel) => self.channels.entry(channel).or_default().insert(entry),
-            None => self.all_channels.insert(entry),
+        if let Some(bucket) = existing {
+            bucket.insert(entry);
+        } else if let Some(channel) = entry.filter.channel.as_deref() {
+            // The stack helper's lowercasing is exactly `str::to_lowercase` for a new key.
+            let key = channel.to_lowercase();
+            let mut bucket = HostIndex::default();
+            bucket.insert(entry);
+            self.channels.insert(key, bucket);
+        } else {
+            self.all_channels.insert(entry);
         }
 
         self.count += 1;
