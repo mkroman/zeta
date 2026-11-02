@@ -12,7 +12,7 @@
 //! anywhere else.
 //!
 //! ```
-//! use zeta_plugin::{Client, Context, Error, plugin};
+//! use zeta_plugin::{Client, Context, Error, plugin, send_reply};
 //!
 //! /// Greets people in the channel the command came from.
 //! #[derive(Default)]
@@ -22,7 +22,7 @@
 //! impl Greet {
 //!     #[command(".hello", "Greet someone")]
 //!     async fn hello(&self, _: &Context, client: &Client, channel: &str) -> Result<(), Error> {
-//!         client.send_privmsg(channel, "hello!")?;
+//!         send_reply(client, channel, "hello!".to_owned())?;
 //!
 //!         Ok(())
 //!     }

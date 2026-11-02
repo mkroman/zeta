@@ -137,7 +137,7 @@ impl Dig {
         match self.resolve(&opts.name, opts.record_type).await {
             Ok(result) => {
                 for line in result.to_string().lines() {
-                    send_reply(client, channel, line)?;
+                    send_reply(client, channel, line.to_owned())?;
                 }
             }
             Err(err) => {
