@@ -68,18 +68,10 @@ pub fn parse_or_usage<T: Parser + 'static>(
     }
 }
 
-/// Sends `message` to `channel` as a single `PRIVMSG`, moving it into the outgoing command.
+/// Sends `message` to `channel` as a single `PRIVMSG` through the client's [`Sender`].
 ///
-/// [`Client::send_privmsg`] formats its message into a `String`, splits that and then copies
-/// every line again, so a reply built here would be copied twice before it reaches the outgoing
-/// queue. Sending the [`Command`] directly moves the reply instead. A message that carries an
-/// IRC line break — which the reply builders pass through verbatim, so only a hand-built message
-/// normally has one — still goes through [`Client::send_privmsg`], keeping its multi-line
-/// splitting unchanged.
-///
-/// `message` is an owned `String` rather than an `impl Into<String>` so this body is compiled
-/// once instead of once per call-site argument type; callers that hold a `&str` allocate at the
-/// call site with `to_owned`.
+/// A thin wrapper over [`send_reply_via`] on [`Client::sender`], so both entry points share one
+/// body and cannot drift apart.
 ///
 /// # Errors
 ///
@@ -89,18 +81,23 @@ pub fn send_reply(
     channel: &str,
     message: String,
 ) -> Result<(), irc::error::Error> {
-    if message.contains("\r\n") {
-        return client.send_privmsg(channel, message);
-    }
-
-    client.send(Command::PRIVMSG(channel.to_owned(), message))
+    send_reply_via(&client.sender(), channel, message)
 }
 
 /// Sends `message` to `channel` as a single `PRIVMSG` through `sender`, moving it into the
 /// outgoing command.
 ///
-/// Unlike [`send_reply`], this does not need a [`Client`], so a task that keeps a
-/// [`Sender`] alive after the handler returns can reply without reaching for the client.
+/// A task that keeps a [`Sender`] alive after the handler returns can reply through this without
+/// reaching for the [`Client`]. [`Client::send_privmsg`] formats its message into a `String`,
+/// splits that and then copies every line again, so a reply built here would be copied twice
+/// before it reaches the outgoing queue; sending the [`Command`] directly moves the reply
+/// instead. A message that carries an IRC line break — which the reply builders pass through
+/// verbatim, so only a hand-built message normally has one — still goes through
+/// [`Sender::send_privmsg`], keeping its multi-line splitting unchanged.
+///
+/// `message` is an owned `String` rather than an `impl Into<String>` so this body is compiled
+/// once instead of once per call-site argument type; callers that hold a `&str` allocate at the
+/// call site with `to_owned`.
 ///
 /// # Errors
 ///
@@ -197,6 +194,18 @@ mod tests {
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
             .collect()
+    }
+
+    #[tokio::test]
+    async fn send_reply_and_send_reply_via_deliver_replies() {
+        let client = mock_client().await;
+
+        send_reply(&client, "#test", "plain".to_owned())
+            .expect("the mock client accepts the message");
+        send_reply(&client, "#test", "a\r\nb".to_owned())
+            .expect("the mock client accepts the multi-line message");
+        send_reply_via(&client.sender(), "#test", "via sender".to_owned())
+            .expect("the mock client accepts the message");
     }
 
     #[tokio::test]
