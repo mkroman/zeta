@@ -4,8 +4,10 @@
 //! the price, and the change percentages — reset to the default color, with changes in green
 //! when positive and red when negative.
 
+use std::fmt::Write as _;
+
 use coinmarketcap::model::QuoteData;
-use zeta_plugin::irc::{COLOR, RESET, plain_reply, unstyle_text};
+use zeta_plugin::irc::{COLOR, PLAIN_REPLY_PREFIX, RESET, unstyle_text};
 
 /// Formats a coin quote as an IRC message, e.g.:
 ///
@@ -14,39 +16,57 @@ pub fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> St
     let name = unstyle_text(&quote.name);
     let symbol = unstyle_text(&quote.symbol);
 
+    // The reply is assembled in one buffer: the values are written as they are formatted
+    // instead of into per-value strings that are then interpolated and copied again.
+    let mut reply =
+        String::with_capacity(PLAIN_REPLY_PREFIX.len() + name.len() + symbol.len() + 192);
+    reply.push_str(PLAIN_REPLY_PREFIX);
+
     let Some(fiat) = quote.quote.get(currency) else {
-        return plain_reply(format!(
+        let _ = write!(
+            reply,
             "{name} ({RESET}{symbol}{COLOR}) has no quote in {currency}"
-        ));
+        );
+
+        return reply;
     };
 
-    let price = fiat.price.map_or_else(
-        || "n/a".to_string(),
-        |price| format_money(price, currency, sign),
+    let _ = write!(
+        reply,
+        "{name} ({RESET}{symbol}{COLOR}) is currently trading at{RESET} "
     );
 
-    let change_hour = format_change(fiat.percent_change_1h);
-    let change_day = format_change(fiat.percent_change_24h);
-    let change_week = format_change(fiat.percent_change_7d);
+    match fiat.price {
+        Some(price) => reply.push_str(&format_money(price, currency, sign)),
+        None => reply.push_str("n/a"),
+    }
 
-    plain_reply(format!(
-        "{name} ({RESET}{symbol}{COLOR}) is currently trading at{RESET} {price}{COLOR} \
-         (1 Hour Change:{RESET} {change_hour}{COLOR} 24 Hour Change:{RESET} {change_day}{COLOR} \
-         7 Day Change:{RESET} {change_week}{COLOR})"
-    ))
+    let _ = write!(reply, "{COLOR} (1 Hour Change:{RESET} ");
+    push_change(&mut reply, fiat.percent_change_1h);
+    let _ = write!(reply, "{COLOR} 24 Hour Change:{RESET} ");
+    push_change(&mut reply, fiat.percent_change_24h);
+    let _ = write!(reply, "{COLOR} 7 Day Change:{RESET} ");
+    push_change(&mut reply, fiat.percent_change_7d);
+    reply.push_str(COLOR);
+    reply.push(')');
+
+    reply
 }
 
-/// Formats a price change percentage in green (positive) or red (negative), followed by a reset.
-fn format_change(change: Option<f64>) -> String {
+/// Appends a price change percentage in green (positive) or red (negative), followed by a reset.
+fn push_change(reply: &mut String, change: Option<f64>) {
     let Some(change) = change else {
-        return "\x0fn/a".to_string();
+        let _ = write!(reply, "{RESET}n/a");
+
+        return;
     };
 
-    if change.is_sign_negative() {
-        format!("\x034{change:+.2}%\x0f")
+    let code = if change.is_sign_negative() {
+        "\x034"
     } else {
-        format!("\x033{change:+.2}%\x0f")
-    }
+        "\x033"
+    };
+    let _ = write!(reply, "{code}{change:+.2}%{RESET}");
 }
 
 /// Formats a price with the currency sign when one is known, appending the currency code
@@ -164,9 +184,18 @@ mod tests {
 
     #[test]
     fn formats_changes() {
-        assert_eq!(format_change(Some(0.5)), "\x033+0.50%\x0f");
-        assert_eq!(format_change(Some(-1.2)), "\x034-1.20%\x0f");
-        assert_eq!(format_change(Some(0.0)), "\x033+0.00%\x0f");
-        assert_eq!(format_change(None), "\x0fn/a");
+        let cases = [
+            (Some(0.5), "\x033+0.50%\x0f"),
+            (Some(-1.2), "\x034-1.20%\x0f"),
+            (Some(0.0), "\x033+0.00%\x0f"),
+            (None, "\x0fn/a"),
+        ];
+
+        for (change, expected) in cases {
+            let mut formatted = String::new();
+            push_change(&mut formatted, change);
+
+            assert_eq!(formatted, expected);
+        }
     }
 }

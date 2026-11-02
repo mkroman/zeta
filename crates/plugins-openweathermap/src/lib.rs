@@ -11,12 +11,14 @@
 //! the plugin is skipped at startup. Invoking `.w` without arguments uses the
 //! `default_location` setting, or replies with usage when unset.
 
+use std::fmt::Write as _;
+
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use zeta_http as http;
 use zeta_http::RequestError;
-use zeta_plugin::irc::{plain_reply, send_reply};
+use zeta_plugin::irc::{COLOR, PLAIN_REPLY_PREFIX, RESET, plain_reply, send_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 
@@ -300,47 +302,57 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
     let temp_unit = units.temperature();
     let speed_unit = units.wind_speed();
 
-    let name = irc::unstyle_text(&w.name);
-    let location = w.sys.country.as_ref().map_or_else(
-        || name.to_string(),
-        |c| format!("{name}, {}", irc::unstyle_text(c)),
-    );
+    // The reply is assembled in one buffer: the location, conditions, wind, and the extra
+    // details are written as they are formatted instead of into intermediate strings that are
+    // then joined and copied.
+    let mut reply = String::with_capacity(PLAIN_REPLY_PREFIX.len() + 192);
+    reply.push_str(PLAIN_REPLY_PREFIX);
 
-    let conditions = if w.weather.is_empty() {
-        "unknown conditions".to_string()
-    } else {
-        w.weather
-            .iter()
-            .map(|d| irc::unstyle_text(&d.description))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    let _ = write!(reply, "Right now in {RESET}{}", irc::unstyle_text(&w.name));
 
-    let wind_info = match w.wind.gust {
-        Some(g) if g > 0.0 => format!(
-            "{:.1} {speed_unit} (gusts: {:.1} {speed_unit})",
-            w.wind.speed, g
-        ),
-        _ => format!("{:.1} {speed_unit}", w.wind.speed),
-    };
-
-    let mut extra_info = Vec::new();
-    extra_info.push(format!("Wind: \x0f{wind_info}\x0310"));
-    extra_info.push(format!("Humidity: \x0f{}%\x0310", w.main.humidity));
-    extra_info.push(format!("Pressure: \x0f{} hPa\x0310", w.main.pressure));
-
-    if let Some(clouds) = &w.clouds {
-        extra_info.push(format!("Cloud coverage: \x0f{}%\x0310", clouds.all));
+    if let Some(country) = &w.sys.country {
+        let _ = write!(reply, ", {}", irc::unstyle_text(country));
     }
 
-    plain_reply(format!(
-        "Right now in \x0f{}\x0310 it's \x0f{:.1} {temp_unit}\x0310 (feels like \x0f{:.1} {temp_unit}\x0310) with \x0f{}\x0310. {}",
-        location,
-        w.main.temp,
-        w.main.feels_like,
-        conditions,
-        extra_info.join(". ")
-    ))
+    let _ = write!(
+        reply,
+        "{COLOR} it's {RESET}{:.1} {temp_unit}{COLOR} (feels like {RESET}{:.1} {temp_unit}{COLOR}) with {RESET}",
+        w.main.temp, w.main.feels_like
+    );
+
+    if w.weather.is_empty() {
+        reply.push_str("unknown conditions");
+    } else {
+        for (index, description) in w.weather.iter().enumerate() {
+            if index > 0 {
+                reply.push_str(", ");
+            }
+
+            reply.push_str(&irc::unstyle_text(&description.description));
+        }
+    }
+
+    let _ = write!(
+        reply,
+        "{COLOR}. Wind: {RESET}{:.1} {speed_unit}",
+        w.wind.speed
+    );
+
+    if let Some(gust) = w.wind.gust.filter(|gust| *gust > 0.0) {
+        let _ = write!(reply, " (gusts: {gust:.1} {speed_unit})");
+    }
+
+    let _ = write!(
+        reply,
+        "{COLOR}. Humidity: {RESET}{}%{COLOR}. Pressure: {RESET}{} hPa{COLOR}",
+        w.main.humidity, w.main.pressure
+    );
+
+    if let Some(clouds) = &w.clouds {
+        let _ = write!(reply, ". Cloud coverage: {RESET}{}%{COLOR}", clouds.all);
+    }
+
+    reply
 }
 
 #[cfg(test)]
@@ -417,6 +429,17 @@ mod tests {
         assert_eq!(response.weather[0].description, "light rain");
         assert_eq!(response.wind.gust, Some(6.5));
         assert_eq!(response.clouds.map(|clouds| clouds.all), Some(75));
+    }
+
+    #[test]
+    fn formats_weather_matches_the_expected_layout() {
+        assert_eq!(
+            format_weather(&test_response(), Units::Metric),
+            "\x0310> Right now in \x0fCopenhagen, DK\x0310 it's \x0f12.5 °C\x0310 \
+             (feels like \x0f11.0 °C\x0310) with \x0flight rain\x0310. Wind: \x0f3.0 m/s \
+             (gusts: 6.5 m/s)\x0310. Humidity: \x0f72%\x0310. Pressure: \x0f1013 hPa\x0310. \
+             Cloud coverage: \x0f75%\x0310"
+        );
     }
 
     #[test]
