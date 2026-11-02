@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 use futures::FutureExt;
 use irc::client::Client;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{Instrument, Span, debug, error, warn};
 
@@ -38,6 +39,11 @@ impl PluginTask {
     /// closes, the plugin's shutdown hook runs before the task exits. If a handler panics, the
     /// shutdown hook still runs and the panic is resumed afterwards, so the task's join error
     /// remains a panic rather than a clean exit.
+    ///
+    /// `startup` reports to the host's startup barrier: the sender is consumed after the
+    /// `loaded` hook returns, whether it succeeded or failed. A hook that panics drops the sender
+    /// without reporting, which resolves the host's receiver immediately; the host's grace bounds
+    /// a hook that stalls instead.
     pub fn spawn(
         name: &'static str,
         mut plugin: Box<dyn Plugin>,
@@ -45,6 +51,7 @@ impl PluginTask {
         client: Arc<Client>,
         mut receiver: mpsc::Receiver<Envelope>,
         shutdown_span: Arc<OnceLock<Span>>,
+        startup: oneshot::Sender<()>,
     ) -> Self {
         let handle = tokio::spawn(async move {
             debug!(zeta.plugin.name = %name, "plugin task started");
@@ -59,11 +66,18 @@ impl PluginTask {
                 zeta.plugin.name = %name
             );
 
-            if let Err(error) = plugin
+            let loaded = plugin
                 .loaded(&ctx, &client)
                 .instrument(load_span.clone())
-                .await
-            {
+                .await;
+
+            // Report in on the startup barrier before branching: a plugin that failed to load
+            // will never enter the event loop, so the host must not keep waiting for it. The
+            // receiver is dropped when the host's grace expires first; the send then fails and
+            // there is nobody left to tell.
+            let _ = startup.send(());
+
+            if let Err(error) = loaded {
                 load_span.in_scope(|| warn!(exception.message = %error, "plugin failed to load"));
 
                 return;
@@ -155,6 +169,8 @@ impl PluginTask {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use zeta_plugin::event::MessageEvent;
     use zeta_test_support::{Recording, RecordingPlugin, publish_recording, test_context};
@@ -186,6 +202,16 @@ mod tests {
         }
     }
 
+    /// A plugin whose `loaded` hook fails, modelling a plugin that gives up at startup.
+    struct FailingLoader;
+
+    #[zeta_plugin::async_trait::async_trait]
+    impl Plugin for FailingLoader {
+        async fn loaded(&mut self, _: &Context, _: &Client) -> Result<(), zeta_plugin::Error> {
+            Err(zeta_plugin::Error::Message("load failed".to_owned()))
+        }
+    }
+
     #[tokio::test]
     async fn plugin_task_drains_messages_before_shutdown() {
         let ctx = Arc::new(test_context());
@@ -203,6 +229,7 @@ mod tests {
             Arc::clone(&client),
             receiver,
             Arc::new(OnceLock::new()),
+            oneshot::channel().0,
         );
 
         for _ in 0..2 {
@@ -248,6 +275,7 @@ mod tests {
             Arc::clone(&client),
             receiver,
             Arc::new(OnceLock::new()),
+            oneshot::channel().0,
         );
 
         let message = irc::proto::Message::new(None, "PRIVMSG", vec!["#test", "hello"])
@@ -275,5 +303,37 @@ mod tests {
                 .expect("the recording lock is not poisoned"),
             ["shutdown"]
         );
+    }
+
+    /// A hook that fails to load still reports on the startup barrier before its task exits: the
+    /// host must not wait out the grace for a task that will never handle events.
+    #[tokio::test]
+    async fn a_failed_load_reports_on_the_startup_barrier() {
+        let ctx = Arc::new(test_context());
+        let client = Arc::new(zeta_test_support::mock_client().await);
+
+        let (_, receiver) = mpsc::channel(8);
+        let (started, startup) = oneshot::channel();
+        let task = PluginTask::spawn(
+            "failing",
+            Box::new(FailingLoader),
+            Arc::clone(&ctx),
+            Arc::clone(&client),
+            receiver,
+            Arc::new(OnceLock::new()),
+            started,
+        );
+
+        // The hook fails, but the task sends before returning: the receiver resolves well before
+        // any realistic startup grace. A dropped sender would resolve with an error instead.
+        tokio::time::timeout(Duration::from_secs(1), startup)
+            .await
+            .expect("the failed load should report instead of waiting out the grace")
+            .expect("the task should report before it exits");
+
+        let (_, handle) = task.into_handle();
+        handle
+            .await
+            .expect("the failed loaded hook exits the task cleanly");
     }
 }

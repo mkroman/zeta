@@ -29,10 +29,12 @@ pub use error::Error;
 pub use model::{Criteria, Filter, NewFilter};
 pub use service::FilterService;
 
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::Parser;
-use tracing::debug;
+use tracing::{debug, error, warn};
 
 use zeta_plugin::irc::{labeled_reply, parse_or_usage, send_reply};
 use zeta_plugin::{
@@ -310,6 +312,57 @@ pub struct FilterPlugin {
     admins: Hostmasks,
 }
 
+/// The number of times a failed filter load is attempted before filtering is given up for this
+/// run.
+const LOAD_ATTEMPTS: u32 = 4;
+
+/// The first delay between load attempts; each further delay doubles it.
+const LOAD_BACKOFF: Duration = Duration::from_millis(250);
+
+/// Loads the filters with `load`, retrying a failed attempt with exponential backoff.
+///
+/// A transient database failure at startup must not disable filtering for the process lifetime:
+/// the handle published from the constructor keeps pointing at the service, so a later successful
+/// load takes effect without a restart. Every retry is logged at `warn`, and the final failure at
+/// `error` because filtering stays disabled until the next successful load.
+async fn load_with_retry<E, F, Fut>(mut load: F) -> Result<(), E>
+where
+    E: std::fmt::Display,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), E>>,
+{
+    let mut delay = LOAD_BACKOFF;
+
+    for attempt in 1..=LOAD_ATTEMPTS {
+        match load().await {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < LOAD_ATTEMPTS => {
+                warn!(
+                    attempt,
+                    max_attempts = LOAD_ATTEMPTS,
+                    exception.message = %error,
+                    "failed to load filters; retrying"
+                );
+
+                tokio::time::sleep(delay).await;
+                delay = delay.saturating_mul(2);
+            }
+            Err(error) => {
+                error!(
+                    attempt,
+                    max_attempts = LOAD_ATTEMPTS,
+                    exception.message = %error,
+                    "failed to load filters; filtering is disabled"
+                );
+
+                return Err(error);
+            }
+        }
+    }
+
+    unreachable!("the last attempt returns")
+}
+
 /// The reply sent to senders that are not authorized to manage filters.
 const UNAUTHORIZED: &str = "You are not authorized to manage filters.";
 
@@ -521,7 +574,11 @@ impl FilterPlugin {
 
     #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        self.service.load().await.map_err(plugin_err)?;
+        // The host waits for this hook before dispatching (bounded by its startup grace), so a
+        // retry keeps that window short instead of leaving filtering disabled for the run.
+        load_with_retry(|| self.service.load())
+            .await
+            .map_err(plugin_err)?;
 
         Ok(())
     }
@@ -600,8 +657,64 @@ fn describe(filter: &Filter) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
     use clap::CommandFactory;
     use zeta_plugin::{NoSettings, Registered};
+
+    /// A transient load failure is retried with a doubled delay: 250 ms, then 500 ms, before the
+    /// third attempt succeeds.
+    #[tokio::test(start_paused = true)]
+    async fn retries_a_transient_load_failure() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&attempts);
+        let started = tokio::time::Instant::now();
+
+        let result = load_with_retry(|| {
+            let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
+
+            async move {
+                if attempt < 3 {
+                    Err(format!("attempt {attempt}"))
+                } else {
+                    Ok(())
+                }
+            }
+        })
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        assert!(
+            started.elapsed() >= Duration::from_millis(750),
+            "250 ms + 500 ms of backoff, elapsed {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A persistent failure is returned only after every attempt, so the error logged by the
+    /// handler is the one from the last attempt.
+    #[tokio::test(start_paused = true)]
+    async fn a_persistent_load_failure_is_returned_after_every_attempt() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&attempts);
+        let started = tokio::time::Instant::now();
+
+        let result = load_with_retry(|| {
+            let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
+
+            async move { Err::<(), _>(format!("attempt {attempt}")) }
+        })
+        .await;
+
+        assert_eq!(attempts.load(Ordering::SeqCst), LOAD_ATTEMPTS);
+        assert_eq!(result.unwrap_err(), format!("attempt {LOAD_ATTEMPTS}"));
+        assert!(
+            started.elapsed() >= Duration::from_millis(1_750),
+            "250 ms + 500 ms + 1 s of backoff, elapsed {:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn cli_definition_is_valid() {

@@ -9,7 +9,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::Duration;
 
 use irc::proto::{Command, Message};
 use smallvec::SmallVec;
@@ -19,6 +21,8 @@ use url::Url;
 use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent, is_ctcp};
 use zeta_plugin::{CommandSpec, Event, EventKind, FilterHandle, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrlRef};
+
+use crate::runtime::MAILBOX_CAPACITY;
 
 /// An event queued for a plugin together with the handler span it must run inside.
 ///
@@ -82,16 +86,72 @@ struct Subscriber {
     overflow: Arc<Overflow>,
 }
 
+/// The minimum interval between mailbox-overflow warnings.
+const WARN_INTERVAL: Duration = Duration::from_secs(30);
+
 /// The overflow state of one plugin mailbox.
 ///
 /// The dispatcher is the only writer, but the state is shared by every subscription that targets
-/// the mailbox, so it lives in atomics rather than in one dispatch call's locals.
-#[derive(Debug, Default)]
+/// the mailbox, so it lives in atomics rather than in one dispatch call's locals. The drop count
+/// is cumulative for the lifetime of the mailbox: an accepted event does not reset it, so the
+/// warning reports how many events the plugin has shed in total.
+#[derive(Debug)]
 struct Overflow {
-    /// Events the full mailbox shed in the current overflow episode.
+    /// Events this mailbox has shed since the process started.
     dropped: AtomicUsize,
-    /// Whether the current overflow episode has been reported at `warn`.
-    reported: AtomicBool,
+    /// Seconds since the process start when the last warning was emitted; [`NEVER`] if none was.
+    last_warn: AtomicU64,
+}
+
+/// The `last_warn` of a mailbox that has not warned yet.
+///
+/// Zero is a valid timestamp — every drop during the first second of the process would otherwise
+/// look unwarned — so the sentinel is the largest value instead.
+const NEVER: u64 = u64::MAX;
+
+impl Default for Overflow {
+    fn default() -> Self {
+        Self {
+            dropped: AtomicUsize::new(0),
+            last_warn: AtomicU64::new(NEVER),
+        }
+    }
+}
+
+impl Overflow {
+    /// Returns the number of events the mailbox has shed so far.
+    fn dropped(&self) -> usize {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Records a drop and returns the cumulative count when a warning is due.
+    ///
+    /// A warning is due on the first drop and then at most once per [`WARN_INTERVAL`]; an
+    /// accepted event does not move the window, so a saturated-but-draining mailbox cannot warn
+    /// at its drain rate.
+    fn record_drop(&self, now_secs: u64) -> Option<usize> {
+        let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+        let last = self.last_warn.load(Ordering::Relaxed);
+        let due = last == NEVER || now_secs.saturating_sub(last) >= WARN_INTERVAL.as_secs();
+
+        if due && self.last_warn.swap(now_secs, Ordering::Relaxed) == last {
+            Some(dropped)
+        } else {
+            None
+        }
+    }
+}
+
+/// Returns the whole seconds elapsed since the process-wide base instant.
+///
+/// The base is set on the first call: nothing needs a clock before the first overflow, and the
+/// function only runs on the cold drop path.
+fn now_secs() -> u64 {
+    static BASE: OnceLock<tokio::time::Instant> = OnceLock::new();
+
+    BASE.get_or_init(tokio::time::Instant::now)
+        .elapsed()
+        .as_secs()
 }
 
 impl Subscriber {
@@ -128,42 +188,32 @@ impl Subscriber {
         let envelope = Envelope { event, span };
 
         match self.mailbox.try_send(envelope) {
-            Ok(()) => self.recovered(),
+            Ok(()) => {}
             Err(mpsc::error::TrySendError::Closed(_)) => stopped.push(self.name),
             Err(mpsc::error::TrySendError::Full(_)) => self.shed(),
         }
     }
 
-    /// Records that the mailbox accepted an event.
-    ///
-    /// The next overflow starts a new episode, so it is reported again; the count of the episode
-    /// that just ended is no longer needed.
-    fn recovered(&self) {
-        if self.overflow.reported.load(Ordering::Relaxed) {
-            self.overflow.dropped.store(0, Ordering::Relaxed);
-            self.overflow.reported.store(false, Ordering::Relaxed);
-        }
-    }
-
     /// Records that the mailbox was full and the event was shed.
     ///
-    /// The first drop of an episode is a warning; the rest are debug lines carrying the running
-    /// count. Warning on every drop would let a stalled plugin flood the log at the same rate as
-    /// the traffic it is failing to handle.
+    /// A warning is emitted at most once per [`WARN_INTERVAL`]; the drops in between only log at
+    /// `debug` with the cumulative count. Warning on every drop would let a stalled plugin flood
+    /// the log at the same rate as the traffic it is failing to handle, and resetting the episode
+    /// on the next accepted event let a saturated-but-draining mailbox warn at its drain rate.
     fn shed(&self) {
-        let dropped = self.overflow.dropped.fetch_add(1, Ordering::Relaxed) + 1;
-
-        if self.overflow.reported.swap(true, Ordering::Relaxed) {
-            debug!(
-                zeta.plugin.name = %self.name,
-                dropped,
-                "plugin mailbox is still full; dropping event"
-            );
-        } else {
+        if let Some(dropped) = self.overflow.record_drop(now_secs()) {
             warn!(
                 zeta.plugin.name = %self.name,
-                dropped,
+                zeta.plugin.mailbox.dropped = dropped,
+                zeta.plugin.mailbox.capacity = MAILBOX_CAPACITY,
                 "plugin mailbox is full; dropping events"
+            );
+        } else {
+            debug!(
+                zeta.plugin.name = %self.name,
+                zeta.plugin.mailbox.dropped = self.overflow.dropped(),
+                zeta.plugin.mailbox.capacity = MAILBOX_CAPACITY,
+                "plugin mailbox is still full; dropping event"
             );
         }
     }
@@ -1313,6 +1363,87 @@ mod tests {
             drain(&mut receiver)[..],
             [Event::Command(ref command)] if command.args() == "after"
         ));
+    }
+
+    /// The first drop of a mailbox overflow warns with the cumulative count.
+    #[test]
+    fn the_first_drop_warns() {
+        let overflow = Overflow::default();
+
+        assert_eq!(overflow.record_drop(1), Some(1));
+        assert_eq!(overflow.dropped(), 1);
+    }
+
+    /// Further drops inside the warning interval only count; they do not warn.
+    #[test]
+    fn drops_within_the_warning_interval_stay_at_debug() {
+        let overflow = Overflow::default();
+
+        assert_eq!(overflow.record_drop(1), Some(1));
+        assert_eq!(overflow.record_drop(2), None);
+        assert_eq!(overflow.record_drop(30), None);
+        assert_eq!(overflow.dropped(), 3);
+    }
+
+    /// A drop at or after the interval warns again, carrying the cumulative count, so the warning
+    /// alone says how many events were shed in total.
+    #[test]
+    fn a_drop_after_the_warning_interval_warns_again() {
+        let overflow = Overflow::default();
+
+        assert_eq!(overflow.record_drop(10), Some(1));
+        assert_eq!(overflow.record_drop(39), None);
+        assert_eq!(overflow.record_drop(40), Some(3));
+        assert_eq!(overflow.record_drop(70), Some(4));
+    }
+
+    /// An accepted event does not touch the overflow state: it neither resets the cumulative
+    /// count nor re-arms the warning. `Subscriber::send` only calls into [`Overflow`] on `Full`,
+    /// so the old episode reset — a warning per accepted event — cannot reappear here.
+    #[test]
+    fn accepted_events_do_not_reset_the_overflow_state() {
+        let overflow = Overflow::default();
+
+        assert_eq!(overflow.record_drop(1), Some(1));
+
+        // The mailbox accepted an event: `send`'s `Ok` arm does nothing.
+        assert_eq!(overflow.record_drop(2), None);
+        assert_eq!(overflow.record_drop(15), None);
+        assert_eq!(overflow.dropped(), 3);
+
+        // The window still starts at the first warning, so the count keeps growing across it.
+        assert_eq!(overflow.record_drop(31), Some(4));
+    }
+
+    /// A mailbox that keeps accepting an event between drops is the case the old episode logic
+    /// mishandled: every accepted event re-armed the warning, so it warned once per accepted
+    /// event. The time window caps that at one warning per [`WARN_INTERVAL`], while the count
+    /// still reflects every drop.
+    #[test]
+    fn drops_interleaved_with_accepts_warn_once_per_window() {
+        const EVENTS: u64 = 100_000;
+
+        let overflow = Overflow::default();
+        let mut drops = 0;
+        let mut warnings = 0;
+
+        // One event per millisecond for 100 s; every second event is accepted, the rest shed.
+        // The timestamps are the event's second, so the drops of one second share a window slot.
+        for event in 0..EVENTS {
+            if event % 2 == 0 {
+                continue;
+            }
+
+            drops += 1;
+
+            if overflow.record_drop(event / 1_000).is_some() {
+                warnings += 1;
+            }
+        }
+
+        assert_eq!(drops, EVENTS / 2);
+        assert_eq!(warnings, 4, "one warning per 30 s window over 100 s");
+        assert_eq!(overflow.dropped(), 50_000);
     }
 
     /// The precomputed handler span names must follow the event kinds: the array is derived
