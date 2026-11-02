@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 use futures::FutureExt;
 use irc::client::Client;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{Instrument, Span, debug, error, warn};
 
@@ -38,6 +39,11 @@ impl PluginTask {
     /// closes, the plugin's shutdown hook runs before the task exits. If a handler panics, the
     /// shutdown hook still runs and the panic is resumed afterwards, so the task's join error
     /// remains a panic rather than a clean exit.
+    ///
+    /// `startup` reports to the host's startup barrier: the sender is consumed after the
+    /// `loaded` hook returns, whether it succeeded or failed. A hook that panics drops the sender
+    /// without reporting, which resolves the host's receiver immediately; the host's grace bounds
+    /// a hook that stalls instead.
     pub fn spawn(
         name: &'static str,
         mut plugin: Box<dyn Plugin>,
@@ -45,6 +51,7 @@ impl PluginTask {
         client: Arc<Client>,
         mut receiver: mpsc::Receiver<Envelope>,
         shutdown_span: Arc<OnceLock<Span>>,
+        startup: oneshot::Sender<()>,
     ) -> Self {
         let handle = tokio::spawn(async move {
             debug!(zeta.plugin.name = %name, "plugin task started");
@@ -59,11 +66,18 @@ impl PluginTask {
                 zeta.plugin.name = %name
             );
 
-            if let Err(error) = plugin
+            let loaded = plugin
                 .loaded(&ctx, &client)
                 .instrument(load_span.clone())
-                .await
-            {
+                .await;
+
+            // Report in on the startup barrier before branching: a plugin that failed to load
+            // will never enter the event loop, so the host must not keep waiting for it. The
+            // receiver is dropped when the host's grace expires first; the send then fails and
+            // there is nobody left to tell.
+            let _ = startup.send(());
+
+            if let Err(error) = loaded {
                 load_span.in_scope(|| warn!(exception.message = %error, "plugin failed to load"));
 
                 return;
@@ -203,6 +217,7 @@ mod tests {
             Arc::clone(&client),
             receiver,
             Arc::new(OnceLock::new()),
+            oneshot::channel().0,
         );
 
         for _ in 0..2 {
@@ -248,6 +263,7 @@ mod tests {
             Arc::clone(&client),
             receiver,
             Arc::new(OnceLock::new()),
+            oneshot::channel().0,
         );
 
         let message = irc::proto::Message::new(None, "PRIVMSG", vec!["#test", "hello"])

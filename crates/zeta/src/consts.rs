@@ -24,6 +24,13 @@ pub const DEFAULT_IRC_TLS_PORT: u16 = 6697;
 /// their queued messages and shutdown hooks, before they are aborted.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
+/// The duration to wait for every plugin's `loaded` hook before dispatching incoming messages.
+///
+/// Dispatching before the hooks finish would let handlers run against state they are still
+/// building — the filter index, caches, catalog entries. The grace bounds a hook that stalls: the
+/// bot then dispatches with whatever loaded instead of never connecting.
+pub const STARTUP_GRACE: Duration = Duration::from_secs(15);
+
 /// How long to wait for the outgoing task to flush the `QUIT` message before giving up.
 pub const QUIT_FLUSH_DELAY: Duration = Duration::from_millis(500);
 

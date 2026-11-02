@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use irc::client::Client;
 use irc::proto::Message;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{Span, error, warn};
 
@@ -24,9 +25,9 @@ use crate::task::PluginTask;
 ///
 /// A plugin that stops draining its mailbox — a stalled database pool, a blocked fetch, a
 /// handler that never returns — would otherwise grow with every event it subscribes to. The
-/// dispatcher never blocks on the mailbox: a full one drops the event and warns once per
-/// overflow episode, and the plugin is not evicted.
-const MAILBOX_CAPACITY: usize = 4_096;
+/// dispatcher never blocks on the mailbox: a full one drops the event and warns at most once per
+/// warning interval, and the plugin is not evicted.
+pub const MAILBOX_CAPACITY: usize = 4_096;
 
 /// The running plugins: their dispatch index and their tasks.
 pub struct PluginRuntime {
@@ -41,6 +42,13 @@ pub struct PluginRuntime {
     /// would not reach the dispatcher. Keeping it out of the per-message path avoids a
     /// shared-state lookup on every IRC line.
     filters: FilterHandle,
+    /// The startup barrier: one receiver per plugin, resolved when its `loaded` hook returns.
+    ///
+    /// Each task holds the matching sender and sends after the hook ran, whether it succeeded or
+    /// failed. A task that panics before sending drops its sender, which resolves the receiver
+    /// immediately instead of holding up dispatch for the full grace. [`Self::wait_loaded`] waits
+    /// for all of them.
+    startup: Vec<oneshot::Receiver<()>>,
     /// The runtime's `zeta.shutdown` span, used as the parent of each task's
     /// `zeta.plugin.shutdown` span. The hooks run in the plugin tasks, so the parent is set
     /// explicitly; it keeps the shutdown in one trace.
@@ -56,6 +64,9 @@ impl PluginRuntime {
     ///
     /// The shared filters are resolved before the tasks are spawned: every plugin is already
     /// constructed, and the filter plugin publishes its handle from its constructor.
+    ///
+    /// Every task also reports on the startup barrier once its `loaded` hook has finished;
+    /// [`Self::wait_loaded`] waits for all of them.
     #[must_use]
     pub fn start(plugins: Vec<LoadedPlugin>, ctx: &Arc<Context>, client: &Arc<Client>) -> Self {
         // The plugins are already constructed: the filter plugin published its handle from its
@@ -63,6 +74,7 @@ impl PluginRuntime {
         // dispatch a message.
         let filters = FilterHandle::from_context(ctx);
 
+        let mut startup = Vec::with_capacity(plugins.len());
         let mut index = EventIndex::default();
         let mut tasks = Vec::with_capacity(plugins.len());
         let shutdown_span = Arc::new(OnceLock::new());
@@ -74,6 +86,8 @@ impl PluginRuntime {
         } in plugins
         {
             let (sender, receiver) = tokio::sync::mpsc::channel(MAILBOX_CAPACITY);
+            let (started, startup_signal) = oneshot::channel();
+            startup.push(startup_signal);
 
             tasks.push(PluginTask::spawn(
                 name,
@@ -82,6 +96,7 @@ impl PluginRuntime {
                 Arc::clone(client),
                 receiver,
                 Arc::clone(&shutdown_span),
+                started,
             ));
             index.add(name, &subscriptions, sender);
         }
@@ -90,7 +105,40 @@ impl PluginRuntime {
             index,
             tasks,
             filters,
+            startup,
             shutdown_span,
+        }
+    }
+
+    /// Waits until every plugin's `loaded` hook has finished, or `grace` elapses.
+    ///
+    /// A hook that failed still reports in: its task exits without handling events, so waiting
+    /// for it any longer would only burn the grace every other plugin may need. A task that
+    /// panicked drops its sender without reporting, which resolves its receiver immediately; a
+    /// hook that stalls is bounded by `grace`.
+    pub async fn wait_loaded(&mut self, grace: Duration) {
+        let startup = std::mem::take(&mut self.startup);
+        let plugin_count = startup.len();
+
+        if plugin_count == 0 {
+            return;
+        }
+
+        if let Ok(results) = tokio::time::timeout(grace, futures::future::join_all(startup)).await {
+            let failed = results.iter().filter(|result| result.is_err()).count();
+
+            if failed > 0 {
+                warn!(
+                    plugins = plugin_count,
+                    plugins.failed = failed,
+                    "plugin task stopped before its loaded hook finished"
+                );
+            }
+        } else {
+            warn!(
+                plugins = plugin_count,
+                "timed out waiting for plugins to load; dispatching with whatever loaded"
+            );
         }
     }
 
@@ -121,6 +169,7 @@ impl PluginRuntime {
             index,
             tasks,
             filters: _,
+            startup: _,
             shutdown_span: _,
         } = self;
 
@@ -175,8 +224,11 @@ async fn drain_tasks(mut handles: Vec<(&'static str, JoinHandle<()>)>, grace: Du
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use futures::future;
     use url::Url;
-    use zeta_plugin::{EventFilter, Sender};
+    use zeta_plugin::{EventFilter, LoadedPlugin, Plugin, Sender, Subscriptions};
 
     use super::*;
 
@@ -190,6 +242,66 @@ mod tests {
 
         fn ignores(&self, _channel: &str, sender: Option<Sender<'_>>) -> bool {
             sender.is_some_and(|sender| sender.nick == self.0)
+        }
+    }
+
+    /// A plugin whose `loaded` hook waits `delay` and then records that it ran.
+    struct Loader {
+        loaded: Arc<AtomicBool>,
+        delay: Duration,
+    }
+
+    #[zeta_plugin::async_trait::async_trait]
+    impl Plugin for Loader {
+        async fn loaded(
+            &mut self,
+            _ctx: &Context,
+            _client: &Client,
+        ) -> Result<(), zeta_plugin::Error> {
+            tokio::time::sleep(self.delay).await;
+            self.loaded.store(true, Ordering::SeqCst);
+
+            Ok(())
+        }
+    }
+
+    /// A plugin whose `loaded` hook never finishes, modelling a stalled hook.
+    struct PendingLoader(Arc<AtomicBool>);
+
+    #[zeta_plugin::async_trait::async_trait]
+    impl Plugin for PendingLoader {
+        async fn loaded(
+            &mut self,
+            _ctx: &Context,
+            _client: &Client,
+        ) -> Result<(), zeta_plugin::Error> {
+            future::pending::<()>().await;
+            self.0.store(true, Ordering::SeqCst);
+
+            Ok(())
+        }
+    }
+
+    /// A plugin whose `loaded` hook panics before it can report on the startup barrier.
+    struct PanicLoader;
+
+    #[zeta_plugin::async_trait::async_trait]
+    impl Plugin for PanicLoader {
+        async fn loaded(
+            &mut self,
+            _ctx: &Context,
+            _client: &Client,
+        ) -> Result<(), zeta_plugin::Error> {
+            panic!("loaded hook panic");
+        }
+    }
+
+    /// Wraps `loader` into a plugin with no subscriptions.
+    fn loaded_plugin(name: &'static str, loader: Loader) -> LoadedPlugin {
+        LoadedPlugin {
+            name,
+            plugin: Box::new(loader),
+            subscriptions: Subscriptions::new(),
         }
     }
 
@@ -217,6 +329,117 @@ mod tests {
         assert!(!runtime.filters.ignores("#test", sender("later")));
     }
 
+    /// Dispatching must not start while a `loaded` hook is still building the state the handlers
+    /// read; `wait_loaded` returns only after every hook has reported in.
+    #[tokio::test]
+    async fn wait_loaded_waits_for_the_loaded_hooks() {
+        let ctx = Arc::new(zeta_test_support::test_context());
+        let client = Arc::new(zeta_test_support::mock_client().await);
+        let loaded = Arc::new(AtomicBool::new(false));
+        let delay = Duration::from_millis(50);
+
+        let mut runtime = PluginRuntime::start(
+            vec![loaded_plugin(
+                "loader",
+                Loader {
+                    loaded: Arc::clone(&loaded),
+                    delay,
+                },
+            )],
+            &ctx,
+            &client,
+        );
+
+        assert!(!loaded.load(Ordering::SeqCst), "the hook has not finished");
+
+        let started = tokio::time::Instant::now();
+        runtime.wait_loaded(Duration::from_secs(5)).await;
+        let elapsed = started.elapsed();
+
+        println!("startup_barrier: loaded hook {delay:?}, wait_loaded returned after {elapsed:?}");
+
+        assert!(loaded.load(Ordering::SeqCst), "the hook should have run");
+        assert!(
+            elapsed >= delay,
+            "wait_loaded returned before the hook finished: {elapsed:?}"
+        );
+
+        runtime.shutdown(Duration::from_secs(1)).await;
+    }
+
+    /// A hook that never finishes must not stall startup forever: the grace bounds the wait and
+    /// dispatch proceeds with whatever loaded.
+    #[tokio::test]
+    async fn wait_loaded_gives_up_after_the_grace() {
+        let ctx = Arc::new(zeta_test_support::test_context());
+        let client = Arc::new(zeta_test_support::mock_client().await);
+        let loaded = Arc::new(AtomicBool::new(false));
+
+        // A hook that stalls models the case the grace exists for; a panicking hook drops its
+        // sender instead and is covered by its own test below.
+        let mut runtime = PluginRuntime::start(
+            vec![LoadedPlugin {
+                name: "stalled",
+                plugin: Box::new(PendingLoader(Arc::clone(&loaded))),
+                subscriptions: Subscriptions::new(),
+            }],
+            &ctx,
+            &client,
+        );
+
+        let started = tokio::time::Instant::now();
+        runtime.wait_loaded(Duration::from_millis(50)).await;
+
+        println!(
+            "startup_barrier: 50 ms grace, stalled hook, wait_loaded returned after {:?}",
+            started.elapsed()
+        );
+
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the grace should bound the wait"
+        );
+        assert!(
+            !loaded.load(Ordering::SeqCst),
+            "the stalled hook never finished"
+        );
+
+        runtime.shutdown(Duration::ZERO).await;
+    }
+
+    /// A task that panics before reporting drops its sender, so its receiver resolves
+    /// immediately: the startup wait is not held up for the full grace by a dead plugin.
+    #[tokio::test]
+    async fn wait_loaded_returns_when_a_loaded_hook_panics() {
+        let ctx = Arc::new(zeta_test_support::test_context());
+        let client = Arc::new(zeta_test_support::mock_client().await);
+
+        let mut runtime = PluginRuntime::start(
+            vec![LoadedPlugin {
+                name: "panicking",
+                plugin: Box::new(PanicLoader),
+                subscriptions: Subscriptions::new(),
+            }],
+            &ctx,
+            &client,
+        );
+
+        let started = tokio::time::Instant::now();
+        runtime.wait_loaded(Duration::from_secs(30)).await;
+
+        println!(
+            "startup_barrier: 30 s grace, panicking hook, wait_loaded returned after {:?}",
+            started.elapsed()
+        );
+
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "a panicking task should resolve its receiver, not wait out the grace"
+        );
+
+        runtime.shutdown(Duration::from_secs(1)).await;
+    }
+
     #[tokio::test]
     async fn drain_tasks_aborts_stragglers() {
         let finished = Arc::new(tokio::sync::Mutex::new(false));
@@ -227,7 +450,7 @@ mod tests {
 
             *flag.lock().await = true;
         });
-        let hung = tokio::spawn(futures::future::pending::<()>());
+        let hung = tokio::spawn(future::pending::<()>());
 
         drain_tasks(
             vec![("fast", fast), ("hung", hung)],

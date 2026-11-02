@@ -6,7 +6,7 @@ use tracing::{Instrument, debug, error, info, trace, warn};
 
 use crate::Error;
 use crate::config::Config;
-use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE};
+use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE, STARTUP_GRACE};
 use zeta_plugin::Context;
 use zeta_plugin_runtime::{PluginRuntime, Registry};
 
@@ -290,11 +290,12 @@ impl Zeta {
     ///
     /// Consumes the bot: the plugin registry is drained into the running tasks, so the instance
     /// cannot be run twice.
-    /// Each plugin is spawned into its own long-lived task. Incoming messages are dispatched to
-    /// every plugin through a bounded mailbox, so a slow or failing plugin cannot block the IRC
-    /// connection or the other plugins: once its mailbox is full, further events for that plugin
-    /// are shed. Plugin errors, including failures during loading, are logged but never
-    /// propagated.
+    /// Each plugin is spawned into its own long-lived task. Incoming messages are not dispatched
+    /// until every plugin's `loaded` hook has finished or the startup grace (`STARTUP_GRACE`)
+    /// expires. Messages are dispatched to every plugin through a bounded mailbox, so a slow or
+    /// failing plugin cannot block the IRC connection or the other plugins: once its mailbox is
+    /// full, further events for that plugin are shed. Plugin errors, including failures during
+    /// loading, are logged but never propagated.
     ///
     /// # Shutdown behavior
     ///
@@ -350,6 +351,16 @@ impl Zeta {
         // events instead of growing.
         let mut runtime =
             PluginRuntime::start(self.registry.take_plugins(), &self.context, &client);
+
+        // The plugin tasks start their `loaded` hooks as soon as they are spawned. Wait for them
+        // — filters loaded, caches warmed — before dispatching, so the first messages do not run
+        // against empty state. The grace bounds a stalled hook; the runtime then dispatches with
+        // whatever loaded. The short span makes the timeout warning exportable: `run` has no
+        // process-lifetime span, and events outside a span are dropped.
+        runtime
+            .wait_loaded(STARTUP_GRACE)
+            .instrument(tracing::info_span!("zeta.startup"))
+            .await;
 
         // Dispatching incoming IRC messages as events to the plugins that registered interest,
         // until the stream ends, the write path stops, or a shutdown signal arrives.
