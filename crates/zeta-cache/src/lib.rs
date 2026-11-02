@@ -253,10 +253,10 @@ const DEFAULT_FLIGHT_CAPACITY: usize = 16;
 pub struct TtlMap<K, V> {
     /// The cached entries, keyed by their lookup key.
     ///
-    /// A short write guard covers an insert; reads share a read guard. No user code runs under
-    /// the lock — the critical sections only update the map and perform TTL arithmetic on
-    /// trusted keys — so a panic cannot leave it half-updated, which is what makes this
-    /// non-poisoning lock sound.
+    /// A short write guard covers an insert; reads share a read guard. The critical sections
+    /// only update the map and perform TTL arithmetic on trusted keys; an evicted or replaced
+    /// value is dropped only after its entry is removed, so a panic cannot leave the map
+    /// half-updated — which is what makes this non-poisoning lock sound.
     entries: RwLock<HashMap<K, Entry<Option<Arc<V>>>>>,
     /// Per-key single-flight locks: concurrent misses for the same key refresh once. Entries
     /// are removed once they are uncontended, so the map does not grow with refreshed keys.
