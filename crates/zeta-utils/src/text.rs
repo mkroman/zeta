@@ -7,7 +7,7 @@ mod article;
 pub use article::indefinite_article;
 
 /// Helpers for truncating text.
-pub trait Truncatable: AsRef<str> {
+pub trait TruncatableExt: AsRef<str> {
     /// Truncates the text to at most `len` characters, appending `suffix` when truncation
     /// happens (the result may then exceed `len` by the suffix's length).
     fn truncate_with_suffix(&self, len: usize, suffix: &str) -> Cow<'_, str> {
@@ -47,7 +47,7 @@ pub trait Truncatable: AsRef<str> {
     }
 }
 
-impl<T: ?Sized + AsRef<str>> Truncatable for T {}
+impl<T: ?Sized + AsRef<str>> TruncatableExt for T {}
 
 /// Strips `prefix` from `s`, comparing characters by their Unicode lowercase forms.
 ///
@@ -318,10 +318,14 @@ mod tests {
     fn truncate_within_borrows_only_when_the_text_fits() {
         let s: &str = "this is a very long string";
 
-        // should not copy when length exceeds str
-        assert!(matches!(s.truncate_within(250, "…"), Cow::Borrowed(_)));
-        // should copy when truncating
-        assert!(matches!(s.truncate_within(10, "…"), Cow::Owned(_)));
+        assert!(
+            matches!(s.truncate_within(250, "…"), Cow::Borrowed(_)),
+            "should not copy when length exceeds str"
+        );
+        assert!(
+            matches!(s.truncate_within(10, "…"), Cow::Owned(_)),
+            "should copy when truncating"
+        );
     }
 
     #[test]

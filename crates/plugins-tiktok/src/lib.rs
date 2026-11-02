@@ -21,7 +21,7 @@ use zeta_mirror::{MediaId, Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
 use zeta_utils::irc::unstyle_text;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 use self::oembed::OEmbed;
 use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};

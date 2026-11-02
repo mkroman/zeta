@@ -173,6 +173,10 @@ pub async fn refresh_data(
 
 /// Rebuilds a rink context from `data` and swaps it into `ctx`, carrying the previous result
 /// across so `ans` keeps resolving.
+///
+/// # Errors
+///
+/// Returns a [`ZetaError`] when the context cannot be rebuilt from `data`.
 pub fn swap_in(ctx: &mut RinkContext, data: &CurrencyData) -> Result<(), ZetaError> {
     let previous = ctx.previous_result.clone();
     let next = build_context(Some(data), previous)?;
@@ -203,7 +207,7 @@ async fn fetch_crypto(
                 "could not refresh cryptocurrency listings; keeping the previous table"
             );
 
-            currency.read(|data| data.and_then(|data| data.crypto.clone()))
+            currency.with_value(|data| data.and_then(|data| data.crypto.clone()))
         }
     }
 }

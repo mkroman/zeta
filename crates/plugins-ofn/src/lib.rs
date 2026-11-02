@@ -27,7 +27,7 @@ use url::Url;
 
 use self::service::OfnService;
 use zeta_plugin::prelude::*;
-use zeta_utils::duration::TimeInWords;
+use zeta_utils::duration::TimeInWordsExt;
 
 /// The ofn plugin: records posted URLs and reports reposts.
 pub struct Ofn {

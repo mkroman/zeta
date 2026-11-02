@@ -48,7 +48,7 @@ use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
 use zeta_utils::irc::unstyle_text;
 use zeta_utils::settings::resolve_optional_setting;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 use self::meta::MediaDetails;
 use self::urls::{InstagramLink, MediaKind, media_url, parse_instagram_url, story_url};

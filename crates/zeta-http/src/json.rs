@@ -5,7 +5,7 @@
 
 use serde::de::DeserializeOwned;
 use tracing::error;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 use crate::response::LOGGED_BODY_LENGTH;
 

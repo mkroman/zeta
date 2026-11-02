@@ -15,7 +15,7 @@ use tracing::debug;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::strip_control_chars;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
 

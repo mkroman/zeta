@@ -35,7 +35,7 @@ use tracing::{Instrument, debug, error, trace};
 
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_within_budget};
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 /// The `.alert` command.
 const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(

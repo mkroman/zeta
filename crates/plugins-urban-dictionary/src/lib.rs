@@ -14,7 +14,7 @@ use tracing::debug;
 use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 /// The endpoint definitions are looked up against.
 const DEFINE_URL: &str = "https://api.urbandictionary.com/v0/define";

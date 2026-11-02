@@ -506,8 +506,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let shared = zeta_plugin::SharedState::new();
 
-        // Nothing is published, so there is nothing to start.
-        assert!(!start_mirror(&shared));
+        assert!(
+            !start_mirror(&shared),
+            "Nothing is published, so there is nothing to start."
+        );
 
         shared.publish(test_mirror(dir.path()));
         assert!(
@@ -515,8 +517,7 @@ mod tests {
             "startup should start the published mirror's manager"
         );
 
-        // A second startup call is a no-op.
-        assert!(start_mirror(&shared));
+        assert!(start_mirror(&shared), "A second startup call is a no-op.");
     }
 
     #[cfg(unix)]

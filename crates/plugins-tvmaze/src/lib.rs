@@ -14,7 +14,7 @@ use tracing::{debug, instrument};
 use zeta_http as http;
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrl;
-use zeta_utils::duration::TimeInWords;
+use zeta_utils::duration::TimeInWordsExt;
 use zeta_utils::irc::unstyle_text;
 
 /// The single-search endpoint shows are looked up against.

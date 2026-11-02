@@ -24,7 +24,7 @@ use zeta_http::WreqError;
 use zeta_plugin::prelude::*;
 use zeta_url::{RedactedUrlRef, last_path_segment, strip_www};
 use zeta_utils::irc::unstyle_text;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 use metadata::{PageMetadata, fetch_metadata};
 

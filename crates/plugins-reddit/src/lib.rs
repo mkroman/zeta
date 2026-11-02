@@ -15,7 +15,7 @@ use tracing::warn;
 use zeta_mirror::{MediaId, Mirror, MirrorHandle};
 use zeta_plugin::prelude::*;
 use zeta_utils::irc::unstyle_text;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
 pub const USER_AGENT: &str = concat!("linux:zeta:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");

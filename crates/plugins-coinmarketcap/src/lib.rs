@@ -376,7 +376,7 @@ impl CoinMarketCap {
     /// Resolves a user query to a coin id, by exact symbol match first and by fuzzy name match
     /// second.
     fn resolve_coin(&self, query: &str) -> Option<u64> {
-        self.coins.read(|cache| {
+        self.coins.with_value(|cache| {
             let cache = cache?;
 
             cache
@@ -439,7 +439,7 @@ impl CoinMarketCap {
     /// Returns `true` while the fiat cache has not been populated, deferring validation to
     /// the API.
     fn is_valid_currency(&self, currency: &str) -> bool {
-        self.fiat.read(|cache| {
+        self.fiat.with_value(|cache| {
             cache.is_none_or(|cache| cache.signs.is_empty() || cache.signs.contains_key(currency))
         })
     }
@@ -447,7 +447,7 @@ impl CoinMarketCap {
     /// Returns the currency sign for `currency`, if known.
     fn fiat_sign(&self, currency: &str) -> Option<String> {
         self.fiat
-            .read(|cache| cache.and_then(|cache| cache.signs.get(currency).cloned()))
+            .with_value(|cache| cache.and_then(|cache| cache.signs.get(currency).cloned()))
     }
 }
 
@@ -509,7 +509,7 @@ mod tests {
             client: Arc::new(
                 CmcClient::with_options("test-api-key", &ClientOptions::default()).unwrap(),
             ),
-            coins: TtlCache::with_value(CoinCache::from(test_coins()), CACHE_TTL),
+            coins: TtlCache::new_with_value(CoinCache::from(test_coins()), CACHE_TTL),
             fiat: TtlCache::new(CACHE_TTL),
             default_currency: DEFAULT_CURRENCY.to_string(),
             max_name_typos: 2,
@@ -634,7 +634,7 @@ mod tests {
         // An empty fiat cache defers validation to the API.
         assert!(plugin.is_valid_currency("XYZ"));
 
-        plugin.fiat = TtlCache::with_value(
+        plugin.fiat = TtlCache::new_with_value(
             FiatCache::from(vec![Fiat {
                 sign: "$".to_string(),
                 symbol: "USD".to_string(),

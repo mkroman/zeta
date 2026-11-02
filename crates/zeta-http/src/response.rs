@@ -8,7 +8,7 @@
 use serde::de::DeserializeOwned;
 use tracing::{Instrument, Span, debug, error, warn};
 use zeta_url::RedactedUrl;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 use crate::client::{ClientSpan, send};
 use crate::json;

@@ -48,7 +48,7 @@ use tracing::{Instrument, debug, warn};
 use zeta_plugin::prelude::*;
 use zeta_url::RedactedUrlRef;
 use zeta_utils::{
-    duration::TimeInWords,
+    duration::TimeInWordsExt,
     irc::{MAX_LISTING_LENGTH, append_entries_with_more},
 };
 

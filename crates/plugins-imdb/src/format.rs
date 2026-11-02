@@ -10,7 +10,7 @@ use zeta_plugin::prelude::{BOLD, COLOR, REPLY_MARKER, RESET};
 use zeta_utils::irc::unstyle_text;
 
 use super::model::{Person, Title};
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 /// Returns the prefix all IMDb replies start with: the reply marker, a bold `IMDb` label and a
 /// cyan colon.
