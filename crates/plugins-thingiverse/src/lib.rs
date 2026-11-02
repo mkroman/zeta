@@ -18,9 +18,9 @@ use tracing::{debug, warn};
 use url::Url;
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
-use zeta_url::{is_numeric_segment, path_segments};
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
+use zeta_utils::irc;
 
 /// The Thingiverse hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
@@ -135,19 +135,19 @@ impl Thingiverse {
 
 /// Returns the numeric thing ID from a `/thing:<id>` URL, if present.
 fn thing_id(url: &Url) -> Option<&str> {
-    let segments = path_segments(url)?;
+    let segments = zeta_url::path_segments(url)?;
     let [segment] = segments.as_slice() else {
         return None;
     };
 
     let id = segment.strip_prefix("thing:")?;
-    is_numeric_segment(id).then_some(id)
+    zeta_url::is_numeric_segment(id).then_some(id)
 }
 
 impl Display for Thing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = unstyle_text(&self.name);
-        let creator = unstyle_text(&self.creator.name);
+        let name = irc::unstyle_text(&self.name);
+        let creator = irc::unstyle_text(&self.creator.name);
 
         let type_desc = if self.is_wip == 1 {
             "\x0f work in progress\x0310"
@@ -195,7 +195,6 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -280,7 +279,7 @@ mod tests {
         ];
 
         for (case, thing, expected) in cases {
-            let formatted = strip_formatting(&thing.to_string());
+            let formatted = irc::strip_formatting(&thing.to_string());
 
             assert!(formatted.contains(expected), "{case}: {formatted}");
         }
@@ -291,7 +290,7 @@ mod tests {
         let thing = thing(0, Some(false), 2, 3, 1);
 
         assert!(
-            strip_formatting(&thing.to_string()).ends_with("and is part of 1 collection"),
+            irc::strip_formatting(&thing.to_string()).ends_with("and is part of 1 collection"),
             "{thing}"
         );
     }
