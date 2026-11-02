@@ -19,7 +19,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
 use tracing::{error, warn};
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{COLOR, RESET, labeled_reply, plain_reply, unstyle_text};
+use zeta_plugin::{
+    Client, CommandEvent, CommandSpec, Context, MessageEvent, Subscriptions, ZetaError, plugin,
+    plugin_err,
+};
 
 /// The `.notify` command.
 const NOTIFY: CommandSpec =

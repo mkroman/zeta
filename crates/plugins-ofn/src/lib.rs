@@ -26,7 +26,8 @@ use num_format::{Locale, ToFormattedString};
 use url::Url;
 
 use self::service::OfnService;
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_utils::duration::TimeInWords;
 
 /// The ofn plugin: records posted URLs and reports reposts.

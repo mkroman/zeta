@@ -12,7 +12,11 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::parse_or_usage;
+use zeta_plugin::{
+    ArgsMode, Client, CommandEvent, CommandSpec, Context, Subscriptions, UrlEvent, ZetaError,
+    plugin, plugin_err,
+};
 
 mod client;
 mod error;

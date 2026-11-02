@@ -12,7 +12,6 @@ mod metadata;
 
 use std::sync::{Arc, OnceLock};
 
-use irc::client::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tracing::{Instrument, debug, warn};
@@ -21,9 +20,10 @@ use wreq::redirect::Policy;
 
 use zeta_http as http;
 use zeta_http::WreqError;
-use zeta_plugin::prelude::*;
-use zeta_url::{RedactedUrlRef, last_path_segment, strip_www};
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::{REPLY_MARKER, labeled_reply, plain_reply};
+use zeta_plugin::{Client, Context, PluginCatalog, UrlEvent, ZetaError, plugin, plugin_err};
+use zeta_url::RedactedUrlRef;
+use zeta_utils::irc;
 use zeta_utils::text::Truncatable;
 
 use metadata::{PageMetadata, fetch_metadata};
@@ -310,7 +310,7 @@ fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
 /// Whether the path of `url` looks like binary content.
 #[must_use]
 fn is_binary_url(url: &Url) -> bool {
-    last_path_segment(url).is_some_and(|segment| {
+    zeta_url::last_path_segment(url).is_some_and(|segment| {
         BINARY_EXTENSIONS
             .iter()
             .any(|extension| ends_with_ignore_ascii_case(segment, extension))
@@ -336,13 +336,13 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         .title
         .as_deref()
         .or(metadata.og_title.as_deref())
-        .map(unstyle_text)
+        .map(irc::unstyle_text)
         .filter(|title| !title.is_empty());
 
     let description = metadata
         .description
         .as_deref()
-        .map(unstyle_text)
+        .map(irc::unstyle_text)
         .filter(|description| !description.is_empty());
 
     if title.is_none() && description.is_none() {
@@ -375,7 +375,7 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         let site = metadata
             .site_name
             .as_deref()
-            .map(unstyle_text)
+            .map(irc::unstyle_text)
             .filter(|site| !site.is_empty());
         let label = site.as_deref().unwrap_or_else(|| host_name(url));
 
@@ -406,7 +406,7 @@ const fn has_open_graph(metadata: &PageMetadata) -> bool {
 /// Returns the host of `url` without its `www.` prefix.
 #[must_use]
 fn host_name(url: &Url) -> &str {
-    url.host_str().map_or("", strip_www)
+    url.host_str().map_or("", zeta_url::strip_www)
 }
 
 #[cfg(test)]
@@ -419,9 +419,8 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
-    use zeta_plugin::CatalogEntry;
+    use zeta_plugin::{CatalogEntry, UrlScope};
     use zeta_test_support::{assert_empty, settings_tests};
-    use zeta_utils::irc::strip_formatting;
 
     /// Starts a minimal HTTP server that answers each request after `delay`, returning its
     /// address, the most connections it ever had open at once, and the number it answered.
@@ -727,7 +726,7 @@ mod tests {
         let url = Url::parse("https://maero.dk").unwrap();
 
         let message =
-            strip_formatting(&format_page(&metadata, &url, &Settings::default()).unwrap());
+            irc::strip_formatting(&format_page(&metadata, &url, &Settings::default()).unwrap());
 
         assert_eq!(message, "> Site: Fake Title — first second");
     }
@@ -792,7 +791,7 @@ mod tests {
             let url = Url::parse(url).unwrap();
             let message = format_page(&metadata, &url, &Settings::default()).unwrap();
 
-            assert_eq!(strip_formatting(&message), expected, "for {url}");
+            assert_eq!(irc::strip_formatting(&message), expected, "for {url}");
         }
     }
 

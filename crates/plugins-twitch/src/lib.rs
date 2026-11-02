@@ -19,8 +19,9 @@ use tracing::warn;
 
 use zeta_http as http;
 use zeta_http::oauth::Credentials;
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::{labeled_reply, plain_reply};
+use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
+use zeta_utils::irc;
 
 mod urls;
 
@@ -62,7 +63,7 @@ pub enum Error {
     Api(#[from] http::ApiError),
     /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
-    Irc(#[from] irc::error::Error),
+    Irc(#[from] ::irc::error::Error),
 }
 
 /// Generic response wrapper for Twitch Helix API endpoints.
@@ -131,9 +132,9 @@ impl Twitch {
                 UrlKind::Stream(login) => self.handle_stream(channel, &login, client).await,
                 UrlKind::Clip(id) => {
                     self.handle_first("clips", &[("id", &id)], channel, client, |clip: &Clip| {
-                        let title = unstyle_text(&clip.title);
-                        let broadcaster = unstyle_text(&clip.broadcaster_name);
-                        let creator = unstyle_text(&clip.creator_name);
+                        let title = irc::unstyle_text(&clip.title);
+                        let broadcaster = irc::unstyle_text(&clip.broadcaster_name);
+                        let creator = irc::unstyle_text(&clip.creator_name);
                         let views = clip.view_count.to_formatted_string(&Locale::en);
 
                         format!(
@@ -144,8 +145,8 @@ impl Twitch {
                 }
                 UrlKind::Video(id) => {
                     self.handle_first("videos", &[("id", &id)], channel, client, |video: &Video| {
-                        let title = unstyle_text(&video.title);
-                        let user = unstyle_text(&video.user_name);
+                        let title = irc::unstyle_text(&video.title);
+                        let user = irc::unstyle_text(&video.user_name);
                         let views = video.view_count.to_formatted_string(&Locale::en);
 
                         format!(
@@ -211,9 +212,9 @@ impl Twitch {
         let response: Response<Stream> = self.get("streams", &[("user_login", user_login)]).await?;
 
         if let Some(stream) = response.data.first() {
-            let user_login = unstyle_text(&stream.user_login);
-            let title = unstyle_text(&stream.title);
-            let game_name = unstyle_text(&stream.game_name);
+            let user_login = irc::unstyle_text(&stream.user_login);
+            let title = irc::unstyle_text(&stream.title);
+            let game_name = irc::unstyle_text(&stream.game_name);
             let viewers = stream.viewer_count.to_formatted_string(&Locale::en);
 
             client.send_privmsg(channel, labeled_reply("Twitch", format!(

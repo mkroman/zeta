@@ -5,7 +5,7 @@
 //! when positive and red when negative.
 
 use coinmarketcap::model::QuoteData;
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{COLOR, RESET, plain_reply, unstyle_text};
 
 /// Formats a coin quote as an IRC message, e.g.:
 ///
@@ -80,7 +80,7 @@ mod tests {
     use std::collections::HashMap;
 
     use coinmarketcap::model::FiatQuote;
-    use zeta_utils::irc::strip_formatting;
+    use zeta_utils::irc;
 
     use super::*;
 
@@ -119,7 +119,7 @@ mod tests {
         quote.name = "\x0310Fake\nName".to_string();
         quote.symbol = "B\x02TC".to_string();
 
-        let formatted = strip_formatting(&format_quote(&quote, "USD", Some("$")));
+        let formatted = irc::strip_formatting(&format_quote(&quote, "USD", Some("$")));
 
         assert!(formatted.contains("Fake Name (BTC)"), "{formatted}");
         assert!(!formatted.contains('\n'), "{formatted}");
@@ -138,11 +138,11 @@ mod tests {
             },
         )]);
 
-        let unknown = strip_formatting(&format_quote(&quote, "AUD", None));
+        let unknown = irc::strip_formatting(&format_quote(&quote, "AUD", None));
         assert!(unknown.contains("1234.50 AUD"), "{unknown}");
         assert!(unknown.contains("n/a"), "{unknown}");
 
-        let missing = strip_formatting(&format_quote(&test_quote(), "DKK", None));
+        let missing = irc::strip_formatting(&format_quote(&test_quote(), "DKK", None));
         assert!(missing.contains("has no quote in DKK"), "{missing}");
     }
 

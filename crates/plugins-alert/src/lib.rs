@@ -33,8 +33,12 @@ use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, trace};
 
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_within_budget};
+use zeta_plugin::irc::{COLOR, RESET, labeled_reply, parse_or_usage, unstyle_text};
+use zeta_plugin::{
+    ArgsMode, Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin,
+    plugin_err,
+};
+use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
 use zeta_utils::text::Truncatable;
 
 /// The `.alert` command.
@@ -503,7 +507,7 @@ fn format_pending(pending: &[Alert]) -> String {
             _ => format_entry(alert),
         });
 
-    append_entries_within_budget(
+    irc::append_entries_within_budget(
         &mut listing,
         entries,
         &format!("{COLOR}, then: "),
@@ -557,7 +561,6 @@ mod tests {
     use super::*;
     use zeta_plugin::ArgsError;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
 
     #[test]
     fn cli_definition_is_valid() {
@@ -792,7 +795,7 @@ mod tests {
     #[test]
     fn formats_no_pending_alerts() {
         assert_eq!(
-            strip_formatting(&format_pending(&[])),
+            irc::strip_formatting(&format_pending(&[])),
             "> Alert: You have no pending alerts"
         );
     }
@@ -819,7 +822,7 @@ mod tests {
             alert("third", at(2026, 9, 16, 11, 23)),
             alert("fourth", at(2026, 9, 17, 9, 15)),
         ];
-        let listing = strip_formatting(&format_pending(&pending));
+        let listing = irc::strip_formatting(&format_pending(&pending));
 
         assert!(
             listing.starts_with("> Alert: Pending alerts: 4"),
@@ -843,7 +846,7 @@ mod tests {
     #[test]
     fn truncates_long_messages() {
         let pending = [alert(&"a".repeat(80), at(2026, 9, 16, 11, 21))];
-        let listing = strip_formatting(&format_pending(&pending));
+        let listing = irc::strip_formatting(&format_pending(&pending));
 
         assert!(
             listing.contains(&format!("Next up: “{}…” Sep 16th 11:21", "a".repeat(50))),
@@ -855,7 +858,7 @@ mod tests {
     #[test]
     fn strips_formatting_from_stored_messages() {
         let pending = [alert("\x0310fake\nmessage\x02", at(2026, 9, 16, 11, 21))];
-        let listing = strip_formatting(&format_pending(&pending));
+        let listing = irc::strip_formatting(&format_pending(&pending));
 
         assert!(
             listing.contains("Next up: “fake message” Sep 16th 11:21"),

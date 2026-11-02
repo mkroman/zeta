@@ -34,10 +34,11 @@ use url::Url;
 use plugins_shared::urls::youtube::URL_HOSTS;
 use zeta_cache::TtlCache;
 use zeta_http as http;
-use zeta_plugin::prelude::*;
-use zeta_utils::duration::{format_duration, parse_iso8601_duration};
-use zeta_utils::irc::unstyle_text;
-use zeta_utils::text::indefinite_article;
+use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup};
+use zeta_plugin::{Client, CommandEvent, Context, UrlEvent, ZetaError, plugin, resolve_secret};
+use zeta_utils::duration;
+use zeta_utils::irc;
+use zeta_utils::text;
 
 pub use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
 
@@ -516,7 +517,7 @@ async fn fetch_video_categories(
 /// YouTube HTML-escapes titles, channel names, and category names in both the search and
 /// videos responses.
 fn sanitize_html(text: &str) -> String {
-    unstyle_text(&htmlize::unescape(text)).into_owned()
+    irc::unstyle_text(&htmlize::unescape(text)).into_owned()
 }
 
 /// Formats the reply for the top video in a `.yt` search.
@@ -560,7 +561,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         snippet.is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
 
     if is_live_stream {
-        let article = indefinite_article(&category);
+        let article = text::indefinite_article(&category);
 
         if let Some(viewers) = video
             .live_streaming_details
@@ -584,9 +585,9 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
     let duration = video
         .content_details
         .as_ref()
-        .and_then(|details| parse_iso8601_duration(&details.duration))
-        .map_or_else(|| "unknown duration".to_string(), format_duration);
-    let article = indefinite_article(&duration);
+        .and_then(|details| duration::parse_iso8601_duration(&details.duration))
+        .map_or_else(|| "unknown duration".to_string(), duration::format_duration);
+    let article = text::indefinite_article(&duration);
 
     plain_reply(format!(
         "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
@@ -598,7 +599,6 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -679,7 +679,7 @@ mod tests {
         snippet.channel_title = "Ben &amp; Jerry".to_string();
 
         assert_eq!(
-            strip_formatting(&format_video_message(&video, "Film &amp; Animation", 1)),
+            irc::strip_formatting(&format_video_message(&video, "Film &amp; Animation", 1)),
             "> “Fish & Chips” is a 1h 2m 20s video by Ben & Jerry with 1 views",
         );
     }
@@ -718,7 +718,8 @@ mod tests {
         ];
 
         for (case, video, category, view_count, expected) in cases {
-            let formatted = strip_formatting(&format_video_message(&video, category, view_count));
+            let formatted =
+                irc::strip_formatting(&format_video_message(&video, category, view_count));
 
             assert!(
                 formatted.starts_with("> “Test Video”"),

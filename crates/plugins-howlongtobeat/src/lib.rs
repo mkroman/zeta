@@ -21,8 +21,9 @@ use tracing::debug;
 
 use zeta_cache::TtlCache;
 use zeta_http as http;
-use zeta_plugin::prelude::*;
-use zeta_utils::duration::{HOURS_AND_MINUTES, format_seconds_in_words};
+use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, unstyle_text};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
+use zeta_utils::duration::{self, HOURS_AND_MINUTES};
 
 const REFERER_URL: &str = "https://howlongtobeat.com/";
 
@@ -340,7 +341,7 @@ fn format_seconds(seconds: u32) -> String {
         return "--".to_string();
     }
 
-    format_seconds_in_words(i64::from(seconds), HOURS_AND_MINUTES)
+    duration::format_seconds_in_words(i64::from(seconds), HOURS_AND_MINUTES)
 }
 
 #[cfg(test)]

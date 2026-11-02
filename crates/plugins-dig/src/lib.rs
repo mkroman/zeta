@@ -24,8 +24,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use tracing::{Instrument, debug};
 
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::{labeled_reply, labeled_reply_prefix};
+use zeta_plugin::{BoxError, Client, Context, ZetaError, plugin};
+use zeta_utils::irc;
 
 /// Settings for the dig plugin, from its `[plugins.dig]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,12 +98,12 @@ impl Display for LookupResult {
         for lookup in self.0.answers() {
             // We need to convert the fields to strings for string padding to work.
             let name = lookup.name.to_string();
-            let name = unstyle_text(&name);
+            let name = irc::unstyle_text(&name);
             let ttl = lookup.ttl.to_string();
             let dns_class = lookup.dns_class.to_string();
             let record_type = lookup.record_type().to_string();
             let data = lookup.data.to_string();
-            let data = unstyle_text(&data);
+            let data = irc::unstyle_text(&data);
 
             write!(fmt, "{}", labeled_reply_prefix("Dig"))?;
             writeln!(
