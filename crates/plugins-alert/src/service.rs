@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use parking_lot::Mutex as ParkingMutex;
 use sqlx::types::chrono::{DateTime, Utc};
 use tokio::sync::{Mutex, Notify, mpsc};
 use tracing::{Instrument, debug, error, instrument, trace, warn};
@@ -45,7 +46,11 @@ struct Scheduler {
     repo: AlertRepository,
     /// The sender half of the channel used to deliver due alerts, taken to close the channel
     /// on shutdown.
-    tx: Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<Alert>>>>,
+    ///
+    /// No user code runs under the lock — locking only clones or takes the sender — so the
+    /// `Option` cannot be left half-updated by a panic, which is what makes this non-poisoning
+    /// lock sound.
+    tx: Arc<ParkingMutex<Option<mpsc::UnboundedSender<Alert>>>>,
     /// The alerts due within the window, ordered by the time they are due.
     cache: Arc<Mutex<BinaryHeap<Reverse<Scheduled>>>>,
     /// Wakes the scheduler to sync the window when an alert is created.
@@ -83,7 +88,7 @@ impl AlertService {
         Self {
             scheduler: Scheduler {
                 repo: AlertRepository::new(db),
-                tx: Arc::new(std::sync::Mutex::new(Some(tx))),
+                tx: Arc::new(ParkingMutex::new(Some(tx))),
                 cache: Arc::new(Mutex::new(BinaryHeap::new())),
                 notify: Arc::new(Notify::new()),
                 retry_delay: settings.retry_delay,
@@ -146,14 +151,14 @@ impl AlertService {
     /// Closes the delivery channel: the delivery task drains what is queued, then exits and
     /// drops its IRC sender.
     pub(crate) fn close(&self) {
-        zeta_utils::sync::lock(&self.scheduler.tx).take();
+        self.scheduler.tx.lock().take();
     }
 }
 
 impl Scheduler {
     /// Returns a clone of the delivery sender, or `None` once the channel has been closed.
     fn sender(&self) -> Option<mpsc::UnboundedSender<Alert>> {
-        zeta_utils::sync::lock(&self.tx).clone()
+        self.tx.lock().clone()
     }
 
     /// Syncs the cache with the database, replacing it with the alerts due within the window.

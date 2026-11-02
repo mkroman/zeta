@@ -176,7 +176,10 @@ mod tests {
         }
 
         async fn shutdown(&mut self, _: &Context, _: &Client) -> Result<(), zeta_plugin::Error> {
-            zeta_utils::sync::lock(&self.recording).push("shutdown");
+            self.recording
+                .lock()
+                .expect("the recording lock is not poisoned")
+                .push("shutdown");
 
             Ok(())
         }
@@ -219,7 +222,9 @@ mod tests {
         let (_, handle) = task.into_handle();
         handle.await.expect("task should finish");
 
-        let log = zeta_utils::sync::lock(&recording);
+        let log = recording
+            .lock()
+            .expect("the recording lock is not poisoned");
 
         assert_eq!(*log, ["message", "message", "shutdown"]);
     }
@@ -261,6 +266,11 @@ mod tests {
             .expect_err("the panicking handler should still panic the task");
 
         assert!(error.is_panic(), "expected a panic join error: {error:?}");
-        assert_eq!(*zeta_utils::sync::lock(&recording), ["shutdown"]);
+        assert_eq!(
+            *recording
+                .lock()
+                .expect("the recording lock is not poisoned"),
+            ["shutdown"]
+        );
     }
 }

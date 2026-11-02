@@ -16,6 +16,7 @@ hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
 humantime-serde = "1.1.1"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
 miette = { version = "7.2.0", default-features = false, features = ["derive", "fancy-no-backtrace"] }
+parking_lot = "0.12"
 proc-macro2 = "1"
 quote = "1"
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }

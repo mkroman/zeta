@@ -8,8 +8,8 @@ repository = "https://github.com/mkroman/zeta"
 
 [dependencies]
 arc-swap.workspace = true
+parking_lot.workspace = true
 tokio.workspace = true
-zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
 zeta-test-support = { path = "../zeta-test-support", default-features = false }

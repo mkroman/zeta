@@ -27,9 +27,10 @@ mod ytdlp;
 use std::{
     collections::HashSet,
     path::PathBuf,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
 };
 
+use parking_lot::Mutex;
 use tracing::{debug, error, warn};
 use url::Url;
 
@@ -44,6 +45,10 @@ pub use media_id::{InvalidMediaId, MediaId};
 pub use s3::Error as MirrorError;
 
 /// The media currently being mirrored, keyed by `(prefix, id)`.
+///
+/// No user code runs under the lock — the critical sections only insert into or remove from the
+/// set using trusted keys — so a panic cannot leave it half-updated, which is what makes this
+/// non-poisoning lock sound.
 type InFlight = Mutex<HashSet<(String, String)>>;
 
 /// Mirrors media: downloads it with `yt-dlp` and uploads it to S3.
@@ -198,12 +203,16 @@ impl Mirror {
 
     /// Returns `false` if the media is already being mirrored, otherwise marks it as in-flight.
     fn mark_in_flight(&self, prefix: &str, id: &str) -> bool {
-        zeta_utils::sync::lock(&self.in_flight).insert((prefix.to_string(), id.to_string()))
+        self.in_flight
+            .lock()
+            .insert((prefix.to_string(), id.to_string()))
     }
 
     /// Removes media from an in-flight set.
     fn clear_in_flight(in_flight: &InFlight, prefix: &str, id: &str) {
-        zeta_utils::sync::lock(in_flight).remove(&(prefix.to_string(), id.to_string()));
+        in_flight
+            .lock()
+            .remove(&(prefix.to_string(), id.to_string()));
     }
 
     /// Returns the download manager, starting it on first use.
