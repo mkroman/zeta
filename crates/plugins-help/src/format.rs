@@ -487,35 +487,17 @@ mod tests {
     struct Stats {}
 
     fn catalog() -> PluginCatalog {
-        PluginCatalog {
-            entries: vec![
-                CatalogEntry {
-                    name: "alert".to_owned(),
-                    commands: ALERT_COMMANDS.to_vec(),
-                    url_scope: UrlScope::None,
-                },
-                CatalogEntry {
-                    name: "dig".to_owned(),
-                    commands: DIG_COMMANDS.to_vec(),
-                    url_scope: UrlScope::None,
-                },
-                CatalogEntry {
-                    name: "imdb".to_owned(),
-                    commands: IMDB_COMMANDS.to_vec(),
-                    url_scope: UrlScope::None,
-                },
-                CatalogEntry {
-                    name: "openweathermap".to_owned(),
-                    commands: WEATHER_COMMANDS.to_vec(),
-                    url_scope: UrlScope::None,
-                },
-                CatalogEntry {
-                    name: "hooks".to_owned(),
-                    commands: Vec::new(),
-                    url_scope: UrlScope::None,
-                },
-            ],
-        }
+        PluginCatalog::new(vec![
+            CatalogEntry::new("alert".to_owned(), ALERT_COMMANDS.to_vec(), UrlScope::None),
+            CatalogEntry::new("dig".to_owned(), DIG_COMMANDS.to_vec(), UrlScope::None),
+            CatalogEntry::new("imdb".to_owned(), IMDB_COMMANDS.to_vec(), UrlScope::None),
+            CatalogEntry::new(
+                "openweathermap".to_owned(),
+                WEATHER_COMMANDS.to_vec(),
+                UrlScope::None,
+            ),
+            CatalogEntry::new("hooks".to_owned(), Vec::new(), UrlScope::None),
+        ])
     }
 
     #[test]
@@ -694,15 +676,17 @@ mod tests {
 
     #[test]
     fn splits_long_lists_into_unheaded_continuations() {
-        let catalog = PluginCatalog {
-            entries: (0..100)
-                .map(|index| CatalogEntry {
-                    name: format!("plugin-{index:03}{}", "x".repeat(90)),
-                    commands: vec![HELP],
-                    url_scope: UrlScope::None,
+        let catalog = PluginCatalog::new(
+            (0..100)
+                .map(|index| {
+                    CatalogEntry::new(
+                        format!("plugin-{index:03}{}", "x".repeat(90)),
+                        vec![HELP],
+                        UrlScope::None,
+                    )
                 })
                 .collect(),
-        };
+        );
 
         let rendered = messages(&catalog, "");
 

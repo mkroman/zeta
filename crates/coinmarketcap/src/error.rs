@@ -160,6 +160,7 @@ pub type ParseError = serde_path_to_error::Error<serde_json::Error>;
 /// The [`Display`](std::fmt::Display) representation of each variant is the message that is
 /// replied to the channel.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The client could not be built.
     #[error("Could not reach the CoinMarketCap API")]

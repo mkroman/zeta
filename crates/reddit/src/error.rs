@@ -144,6 +144,7 @@ const fn classify(timeout: bool, connect: bool) -> &'static str {
 
 /// Errors that can occur while using the Reddit API.
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// The HTTP client could not be built.
     #[error("could not build http client")]

@@ -49,14 +49,16 @@ impl Registry {
         let entries = self
             .plugins
             .iter()
-            .map(|plugin| CatalogEntry {
-                name: plugin.name.to_string(),
-                commands: plugin.subscriptions.commands().to_vec(),
-                url_scope: plugin.subscriptions.url_scope(),
+            .map(|plugin| {
+                CatalogEntry::new(
+                    plugin.name.to_string(),
+                    plugin.subscriptions.commands().to_vec(),
+                    plugin.subscriptions.url_scope(),
+                )
             })
             .collect();
 
-        ctx.shared.publish(Arc::new(PluginCatalog { entries }));
+        ctx.shared.publish(Arc::new(PluginCatalog::new(entries)));
     }
 
     /// Registers a plugin from its [`PluginRegistration`].
@@ -67,16 +69,15 @@ impl Registry {
     /// into the plugin's own settings type and constructs the plugin; unrecognized settings keys
     /// are reported once when the configuration is loaded.
     ///
-    /// Returns `true` if the plugin was successfully initialized and registered, `false` if it
-    /// failed or if another plugin with the same name is already registered (or has failed to
-    /// initialize). Failed plugins are tracked in `self.failed_plugins` and logged with their
-    /// name and error.
+    /// Failed plugins are recorded and logged with their name and error, and their names are
+    /// reported by [`Registry::failed_plugin_names`]. A plugin whose name is already registered
+    /// or has already failed is not registered again.
     pub fn register_with(
         &mut self,
         registration: &PluginRegistration,
         ctx: &Context,
         section: Option<&Value>,
-    ) -> bool {
+    ) {
         let name = registration.name;
         let already_failed = self
             .failed_plugins
@@ -95,30 +96,26 @@ impl Registry {
                 self.failed_plugins.push((name, error));
             }
 
-            return false;
+            return;
         }
 
         match (registration.construct)(ctx, section) {
             Ok(loaded) => {
                 debug!(zeta.plugin.name = %loaded.name, "registered plugin");
                 self.plugins.push(loaded);
-
-                true
             }
             Err(error) => self.fail(name, error),
         }
     }
 
-    /// Records a plugin initialization failure and reports it.
-    fn fail(&mut self, name: &'static str, error: Error) -> bool {
+    /// Records a plugin initialization failure.
+    fn fail(&mut self, name: &'static str, error: Error) {
         warn!(
             zeta.plugin.name = %name,
             exception.message = %error,
             "failed to initialize plugin"
         );
         self.failed_plugins.push((name, error));
-
-        false
     }
 
     /// Returns the number of plugins that were successfully initialized.
@@ -163,11 +160,9 @@ mod tests {
         let mut registry = Registry::new();
         let registration = PluginRegistration::new::<RecordingPlugin>();
 
-        assert!(registry.register_with(&registration, &ctx, None));
-        assert!(
-            !registry.register_with(&registration, &ctx, None),
-            "a name can only be registered once"
-        );
+        registry.register_with(&registration, &ctx, None);
+        // A name can only be registered once; the duplicate lands in the failure list.
+        registry.register_with(&registration, &ctx, None);
 
         assert_eq!(registry.len(), 1);
         assert_eq!(
@@ -182,7 +177,7 @@ mod tests {
         publish_recording(&ctx);
         let mut registry = Registry::new();
 
-        assert!(registry.register_with(&PluginRegistration::new::<RecordingPlugin>(), &ctx, None));
+        registry.register_with(&PluginRegistration::new::<RecordingPlugin>(), &ctx, None);
 
         registry.publish_catalog(&ctx);
 

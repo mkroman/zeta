@@ -141,6 +141,7 @@ const fn classify(timeout: bool, connect: bool) -> &'static str {
 
 /// Errors that can occur while searching with Kagi.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The stream request could not be sent.
     #[error("could not send stream request")]
