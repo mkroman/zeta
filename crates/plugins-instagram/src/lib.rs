@@ -589,6 +589,12 @@ impl Instagram {
 
     /// Ensures at least `REQUEST_INTERVAL` has passed since the previous request to Instagram,
     /// then records this one.
+    ///
+    /// The guard is intentionally held across the sleep: the mutex lock is the rate-limit queue.
+    /// Concurrent callers block on `lock()` and take turns waiting out the remaining interval;
+    /// dropping the guard before sleeping would release every caller at once into the same
+    /// expired interval. Handler serialization makes the lock uncontended today, but this
+    /// contract is what keeps a future concurrent caller from becoming a thundering herd.
     async fn throttle(&self) {
         let mut last_request = self.last_request.lock().await;
 

@@ -1,6 +1,7 @@
 [package]
 name = "dendanskeordbog"
 version = "0.1.0"
+rust-version.workspace = true
 edition = "2024"
 description = "A client and parser for the Danish Dictionary (Den Danske Ordbog)."
 license = "MIT OR Apache-2.0"

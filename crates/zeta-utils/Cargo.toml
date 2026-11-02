@@ -1,6 +1,7 @@
 [package]
 name = "zeta-utils"
 version = "0.0.0"
+rust-version.workspace = true
 edition = "2024"
 description = "Shared utility helpers for the zeta IRC bot."
 license = "MIT OR Apache-2.0"

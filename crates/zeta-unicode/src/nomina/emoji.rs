@@ -160,6 +160,8 @@ impl Emoji {
             first_cps.push(u32::from(text.chars().next()?));
         }
 
+        first_cps.shrink_to_fit();
+
         Some(Self {
             keys,
             key_offsets,
@@ -403,6 +405,8 @@ fn decode_keys(raw: &[u8], count: usize) -> Option<(Vec<u8>, Vec<u16>)> {
         return None;
     }
     offsets.push(u16::try_from(keys.len()).ok()?);
+    keys.shrink_to_fit();
+    offsets.shrink_to_fit();
     Some((keys, offsets))
 }
 
@@ -423,6 +427,7 @@ fn decode_names(raw: &[u8], count: usize) -> Option<(String, Vec<u16>)> {
         return None;
     }
     offsets.push(u16::try_from(names.len()).ok()?);
+    offsets.shrink_to_fit();
     Some((names, offsets))
 }
 

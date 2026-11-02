@@ -4,6 +4,9 @@ members = ["crates/*"]
 # `cargo run`, `build`, `test` and `check` without a selection flag operate on the bot.
 default-members = ["crates/zeta"]
 
+[workspace.package]
+rust-version = "1.99"
+
 [workspace.dependencies]
 arc-swap = "1.9"
 async-trait = "0.1.89"
