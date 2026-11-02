@@ -125,7 +125,9 @@ enum Matcher {
     /// A `*suffix` or `prefix*` pattern with no other wildcard.
     ///
     /// A single `*` at one end only needs a prefix or suffix comparison, which is cheaper than
-    /// the backtracking [`WildMatch`]; the general matcher is kept for non-ASCII values.
+    /// the backtracking [`WildMatch`]; the general matcher is kept for non-ASCII values. It is
+    /// boxed to keep the variant small: the fallback only runs for non-ASCII values, which no
+    /// ASCII comparison can fold the way [`WildMatch`] does.
     Affix {
         /// The literal part; lowercased for case-insensitive patterns.
         text: String,
@@ -134,7 +136,7 @@ enum Matcher {
         /// Which end of the value the literal is anchored to.
         anchor: Anchor,
         /// The general matcher, used for non-ASCII values.
-        fallback: WildMatch,
+        fallback: Box<WildMatch>,
     },
     /// A wildcard pattern.
     Wild(WildMatch),
@@ -173,10 +175,10 @@ impl Pattern {
                         },
                         case,
                         anchor,
-                        fallback: match case {
+                        fallback: Box::new(match case {
                             Case::Sensitive => WildMatch::new(pattern),
                             Case::Insensitive => WildMatch::new_case_insensitive(pattern),
-                        },
+                        }),
                     }
                 } else {
                     Matcher::Wild(match case {
