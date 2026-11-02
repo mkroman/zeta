@@ -24,6 +24,7 @@ clap.workspace = true
 figment.workspace = true
 inventory = "0.3.24"
 irc.workspace = true
+parking_lot.workspace = true
 reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_ignored.workspace = true
