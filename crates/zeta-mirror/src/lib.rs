@@ -49,19 +49,7 @@ pub use s3::Error as MirrorError;
 /// No user code runs under the lock — the critical sections only insert into or remove from the
 /// set using trusted keys — so a panic cannot leave it half-updated, which is what makes this
 /// non-poisoning lock sound.
-type InFlight = Mutex<HashSet<InFlightKey>>;
-
-/// The `(prefix, id)` key of the in-flight set.
-///
-/// `Box<str>` keeps every entry smaller than the `(String, String)` pair it replaces, and
-/// removals compare the borrowed parts directly, so they allocate nothing.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct InFlightKey {
-    /// The key prefix of the plugin that mirrors the media.
-    prefix: Box<str>,
-    /// The id of the media being mirrored.
-    id: Box<str>,
-}
+type InFlight = Mutex<HashSet<(String, String)>>;
 
 /// Mirrors media: downloads it with `yt-dlp` and uploads it to S3.
 ///
@@ -215,22 +203,19 @@ impl Mirror {
 
     /// Returns `false` if the media is already being mirrored, otherwise marks it as in-flight.
     fn mark_in_flight(&self, prefix: &str, id: &str) -> bool {
-        self.in_flight.lock().insert(InFlightKey {
-            prefix: prefix.into(),
-            id: id.into(),
-        })
+        self.in_flight
+            .lock()
+            .insert((prefix.to_string(), id.to_string()))
     }
 
-    /// Removes media from an in-flight set.
+    /// Removes media from the in-flight set.
     ///
-    /// Comparing the borrowed parts keeps this allocation-free. Removal is a linear scan, but
-    /// the set holds at most one entry per media being mirrored right now — one for every
-    /// queued or running download, which the download manager bounds — so the scan is
-    /// trivially cheap.
-    fn clear_in_flight(in_flight: &InFlight, prefix: &str, id: &str) {
-        in_flight
-            .lock()
-            .retain(|key| &*key.prefix != prefix || &*key.id != id);
+    /// Consumes the owned key parts, so the removal hashes once and touches no allocator. The
+    /// set holds at most one entry per media being mirrored right now — one for every queued or
+    /// running download, which the download manager bounds — so hashing into it is trivially
+    /// cheap.
+    fn clear_in_flight(in_flight: &InFlight, prefix: String, id: String) {
+        in_flight.lock().remove(&(prefix, id));
     }
 
     /// Returns the download manager, starting it on first use.
@@ -281,7 +266,9 @@ impl Mirror {
 
         let Some(manager) = self.download_manager() else {
             warn!(media.id = %id, "download manager is not running");
-            Self::clear_in_flight(&self.in_flight, prefix, id.as_str());
+            // This path holds only borrows, so clearing the mark materializes the key with two
+            // small allocations on an error path that drops the URL either way.
+            Self::clear_in_flight(&self.in_flight, prefix.to_string(), id.as_str().to_string());
 
             return Ok(None);
         };
@@ -310,8 +297,9 @@ impl Mirror {
             public_url_base,
             on_finish: Box::new(move |result| {
                 // The in-flight mark is always cleared, also on failure, so that a later link
-                // triggers a new attempt. Errors are logged by the download manager.
-                Self::clear_in_flight(&in_flight, &prefix, &id);
+                // triggers a new attempt. The owned key parts are consumed for an
+                // allocation-free removal. Errors are logged by the download manager.
+                Self::clear_in_flight(&in_flight, prefix, id);
 
                 if let Ok(link) = result {
                     on_mirrored(link);
@@ -326,7 +314,8 @@ impl Mirror {
                 "could not submit the download, the manager is not running"
             );
 
-            Self::clear_in_flight(&self.in_flight, &request.prefix, &request.id);
+            // The rejected request owns its key parts; consume them.
+            Self::clear_in_flight(&self.in_flight, request.prefix, request.id);
         }
 
         Ok(None)
@@ -394,7 +383,7 @@ mod tests {
         // The same id under a different prefix is a different piece of media.
         assert!(mirror.mark_in_flight("tiktok", "456"));
 
-        Mirror::clear_in_flight(&mirror.in_flight, "reddit", "123");
+        Mirror::clear_in_flight(&mirror.in_flight, "reddit".to_string(), "123".to_string());
         assert!(mirror.mark_in_flight("reddit", "123"));
     }
 
