@@ -13,13 +13,31 @@ use std::future::Future;
 use clap::Parser;
 use irc::client::Client;
 
-use crate::command::ArgsMode;
+use crate::command::{ArgsError, ArgsMode};
 use crate::event::CommandEvent;
 
 pub use zeta_utils::irc::{
     BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
     plain_reply, unstyle_text,
 };
+
+/// Sends each non-empty usage line as its own `PRIVMSG`.
+///
+/// Outlined from [`parse_or_usage`]: the loop is type-independent and only runs when the
+/// argument parse fails, while the parse itself is monomorphised per argument type.
+#[inline(never)]
+fn reply_usage(
+    client: &Client,
+    channel: &str,
+    error: &ArgsError,
+    format: &dyn Fn(&str) -> String,
+) -> Result<(), irc::error::Error> {
+    for line in error.to_string().lines().filter(|line| !line.is_empty()) {
+        client.send_privmsg(channel, format(line))?;
+    }
+
+    Ok(())
+}
 
 /// Parses the trailing arguments of `command` with the tokenization selected by `mode`,
 /// replying with the usage lines to the command's channel when the parse fails.
@@ -42,9 +60,7 @@ pub fn parse_or_usage<T: Parser + 'static>(
     match command.spec.parse_with(command.args(), mode) {
         Ok(args) => Ok(Some(args)),
         Err(error) => {
-            for line in error.to_string().lines().filter(|line| !line.is_empty()) {
-                client.send_privmsg(command.channel(), format(line))?;
-            }
+            reply_usage(client, command.channel(), &error, &format)?;
 
             Ok(None)
         }
