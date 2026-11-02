@@ -18,11 +18,12 @@ use zeta_test_support::wiremock::{
 };
 
 use crate::Rink;
+use crate::actor::Rewrite;
 use crate::currency::{self, build_context};
 
 /// Evaluates `line` through the actor, panicking if it has stopped.
-pub async fn evaluate(rink: &Rink, line: &str, classify: bool) -> String {
-    rink.eval_and_format(line, classify)
+pub async fn evaluate(rink: &Rink, line: &str, rewrite: Rewrite) -> String {
+    rink.eval_and_format(line, rewrite)
         .await
         .expect("the rink actor must be running")
 }
@@ -215,7 +216,7 @@ pub async fn plugin_with_listings(status: u16) -> (Rink, MockServer, MockServer)
 
     let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat_server.uri())));
     rink.cmc = Some(Arc::new(
-        CmcClient::with_base(
+        CmcClient::try_new_with_base(
             "test-api-key",
             &test_client_options(),
             &listings_server.uri(),

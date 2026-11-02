@@ -11,11 +11,11 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
-use zeta_utils::sync;
+use parking_lot::{Mutex, RwLock};
 
 /// A single-slot cache holding a value until its time-to-live expires.
 ///
@@ -253,11 +253,21 @@ const DEFAULT_FLIGHT_CAPACITY: usize = 16;
 pub struct TtlMap<K, V> {
     /// The cached entries, keyed by their lookup key.
     ///
-    /// A short write guard covers an insert; reads share a read guard.
+    /// A short write guard covers an insert; reads share a read guard. These critical sections do
+    /// run user code: map operations call `K`'s `Hash`/`Eq`, eviction clones a key, and replacing
+    /// or evicting an entry drops a `V`. The lock is still safe without poisoning because
+    /// `HashMap` is panic-safe and the guard is released while unwinding — a panic can leave an
+    /// eviction partly done or skip the insert that triggered it, but never leaves the map
+    /// structurally invalid.
     entries: RwLock<HashMap<K, Entry<Option<Arc<V>>>>>,
     /// Per-key single-flight locks: concurrent misses for the same key refresh once. Entries
     /// are removed once they are uncontended, so the map does not grow with refreshed keys.
-    flights: std::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
+    ///
+    /// The critical sections clone and hash the key, so they do run `K`'s `Clone`/`Hash`/`Eq`
+    /// implementations. The lock is still safe without poisoning: `HashMap` is panic-safe and the
+    /// guard is released while unwinding, leaving the map structurally valid (at worst, an entry
+    /// is not inserted or removed).
+    flights: Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
     /// How long a cached value stays fresh.
     ttl: Duration,
     /// How long a cached negative result stays fresh.
@@ -276,7 +286,7 @@ where
     pub fn new_with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
         Self {
             entries: RwLock::new(HashMap::with_capacity(capacity)),
-            flights: std::sync::Mutex::new(HashMap::with_capacity(
+            flights: Mutex::new(HashMap::with_capacity(
                 capacity.min(DEFAULT_FLIGHT_CAPACITY),
             )),
             ttl,
@@ -318,7 +328,7 @@ where
     /// the guard is released.
     #[allow(clippy::option_option)] // the outer option separates a miss from a negative entry
     fn peek_arc(&self, key: &K) -> Option<Option<Arc<V>>> {
-        let entries = sync::read(&self.entries);
+        let entries = self.entries.read();
 
         entries
             .get(key)
@@ -350,7 +360,7 @@ where
         }
 
         let flight = {
-            let mut flights = sync::lock(&self.flights);
+            let mut flights = self.flights.lock();
 
             Arc::clone(flights.entry(key.clone()).or_default())
         };
@@ -380,6 +390,10 @@ where
 
     /// Inserts an entry for `key`, evicting expired entries and, when still at capacity, the
     /// closest-to-expiring entry first.
+    ///
+    /// Replaced and evicted values are dropped while the write guard is held. If a `V`
+    /// destructor panics, the guard is released while unwinding with the map still structurally
+    /// valid; eviction may stop early and the insert that triggered it may not run.
     fn insert(&self, key: K, value: Option<V>) {
         let ttl = if value.is_some() {
             self.ttl
@@ -391,7 +405,7 @@ where
             expires_at: Instant::now() + ttl,
         };
 
-        let mut entries = sync::write(&self.entries);
+        let mut entries = self.entries.write();
 
         if entries.len() >= self.capacity && !entries.contains_key(&key) {
             Self::evict(&mut entries, self.capacity);
@@ -402,6 +416,10 @@ where
 
     /// Makes room for a new entry by removing expired entries and, when the cache is still at
     /// capacity, the single closest-to-expiring entry.
+    ///
+    /// Removed entries are dropped while the caller's write guard is held. `retain` and `remove`
+    /// are panic-safe, so a panicking `V` destructor leaves the map structurally valid, possibly
+    /// with the purge incomplete and the following insert skipped.
     fn evict(entries: &mut HashMap<K, Entry<Option<Arc<V>>>>, capacity: usize) {
         let now = Instant::now();
         let mut expired = 0usize;
@@ -435,14 +453,14 @@ where
 /// Removes a [`TtlMap`] flight entry when its guard is dropped, including on cancellation.
 struct FlightRelease<'a, K: Eq + Hash> {
     /// The flight map the entry lives in.
-    flights: &'a std::sync::Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
+    flights: &'a Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
     /// The key whose entry is released.
     key: &'a K,
 }
 
 impl<K: Eq + Hash> Drop for FlightRelease<'_, K> {
     fn drop(&mut self) {
-        let mut flights = sync::lock(self.flights);
+        let mut flights = self.flights.lock();
 
         // A task that is still queued on the flight keeps its clone and cleans up when it in
         // turn releases, so the entry survives at most until its last holder drops this.
@@ -491,8 +509,8 @@ mod ttl_map_tests {
         assert_eq!(cache.get(&"a".to_string()), Some(7));
 
         assert_empty!(
-            sync::lock(&cache.flights),
-            "The uncontended flight entry is cleaned up afterwards."
+            cache.flights.lock(),
+            "the uncontended flight entry is cleaned up afterwards"
         );
     }
 
@@ -531,7 +549,7 @@ mod ttl_map_tests {
 
         // The last flight holder cleaned up, even though every waiter went through the
         // double-check instead of refreshing.
-        assert_empty!(sync::lock(&cache.flights));
+        assert_empty!(cache.flights.lock());
     }
 
     #[tokio::test]
@@ -566,7 +584,7 @@ mod ttl_map_tests {
         // released its flight — and every one of them released its own afterwards.
         assert_eq!(attempts.load(Ordering::SeqCst), 8);
         assert_eq!(cache.get(&"a".to_string()), None);
-        assert_empty!(sync::lock(&cache.flights));
+        assert_empty!(cache.flights.lock());
     }
 
     #[tokio::test]
@@ -582,7 +600,7 @@ mod ttl_map_tests {
         .await;
 
         assert!(cancelled.is_err(), "the refresh should time out");
-        assert_empty!(sync::lock(&cache.flights));
+        assert_empty!(cache.flights.lock());
     }
 
     #[tokio::test]
@@ -599,7 +617,9 @@ mod ttl_map_tests {
             .unwrap();
 
         // Expire only `a`'s entry.
-        sync::write(&cache.entries)
+        cache
+            .entries
+            .write()
             .get_mut(&"a".to_string())
             .unwrap()
             .expires_at = Instant::now();
@@ -645,11 +665,8 @@ mod ttl_map_tests {
         assert_eq!(refreshes, 1);
 
         // Negative results expire before values do.
-        let entry_expires_at = |key: &str| {
-            sync::read(&cache.entries)
-                .get(key)
-                .map(|entry| entry.expires_at)
-        };
+        let entry_expires_at =
+            |key: &str| cache.entries.read().get(key).map(|entry| entry.expires_at);
 
         cache
             .get_or_refresh("present".to_string(), || async { Ok::<_, ()>(Some(7)) })
@@ -686,7 +703,9 @@ mod ttl_map_tests {
         assert!(cache.peek_arc(&"absent".to_string()).is_none());
 
         // The returned value shares the cached allocation instead of copying it.
-        let stored = sync::read(&cache.entries)
+        let stored = cache
+            .entries
+            .read()
             .get(&"present".to_string())
             .unwrap()
             .value
@@ -695,7 +714,9 @@ mod ttl_map_tests {
 
         assert!(Arc::ptr_eq(&present, &stored));
 
-        sync::write(&cache.entries)
+        cache
+            .entries
+            .write()
             .get_mut(&"present".to_string())
             .unwrap()
             .expires_at = Instant::now();
@@ -722,7 +743,7 @@ mod ttl_map_tests {
 
         // A failing refresh must not leave its flight entry behind: unlike `entries`, the
         // flight map is neither bounded nor expired.
-        assert_empty!(sync::lock(&cache.flights));
+        assert_empty!(cache.flights.lock());
     }
 
     /// Measures inserts into a full cache, where every insert evicts an entry.
@@ -758,7 +779,7 @@ mod ttl_map_tests {
         #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
         let per_insert = nanos / INSERTS as f64;
 
-        assert_eq!(sync::read(&cache.entries).len(), CAPACITY);
+        assert_eq!(cache.entries.read().len(), CAPACITY);
         println!("{CAPACITY}-entry cache: {per_insert:.0} ns/insert");
     }
 
@@ -789,7 +810,7 @@ mod ttl_map_tests {
         }
 
         // Keep the readers' key in place while the writer churns through new keys.
-        sync::write(&cache.entries).get_mut(&0).unwrap().expires_at =
+        cache.entries.write().get_mut(&0).unwrap().expires_at =
             Instant::now() + Duration::from_hours(100);
 
         let barrier = Barrier::new(READERS + 1);
@@ -844,7 +865,7 @@ mod ttl_map_tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(sync::read(&cache.entries).len(), 4);
+        assert_eq!(cache.entries.read().len(), 4);
 
         // A fifth entry evicts the closest-to-expiring one, keeping the cache bounded.
         cache
@@ -853,7 +874,7 @@ mod ttl_map_tests {
             .unwrap();
 
         let (len, contains_e) = {
-            let entries = sync::read(&cache.entries);
+            let entries = cache.entries.read();
             (entries.len(), entries.contains_key(&"e".to_string()))
         };
 
@@ -870,14 +891,16 @@ mod ttl_map_tests {
         // Give every entry a distinct expiry so the oldest is unambiguous.
         for (key, hours) in [("a", 1), ("b", 2), ("c", 3), ("d", 4)] {
             cache.insert(key.to_string(), Some(7));
-            sync::write(&cache.entries)
+            cache
+                .entries
+                .write()
                 .get_mut(&key.to_string())
                 .unwrap()
                 .expires_at = Instant::now() + Duration::from_hours(hours);
         }
 
         let keys = || {
-            let mut keys: Vec<_> = sync::read(&cache.entries).keys().cloned().collect();
+            let mut keys: Vec<_> = cache.entries.read().keys().cloned().collect();
             keys.sort_unstable();
 
             keys
@@ -894,7 +917,9 @@ mod ttl_map_tests {
         assert_eq!(keys(), ["c", "d", "e", "f"]);
 
         // An expired entry is retained away without evicting a fresh one.
-        sync::write(&cache.entries)
+        cache
+            .entries
+            .write()
             .get_mut(&"c".to_string())
             .unwrap()
             .expires_at = Instant::now();

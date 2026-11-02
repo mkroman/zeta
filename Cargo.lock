@@ -3024,6 +3024,7 @@ dependencies = [
  "clap",
  "humantime-serde",
  "interim",
+ "parking_lot",
  "rand 0.10.3",
  "serde",
  "sqlx",
@@ -6002,9 +6003,9 @@ name = "zeta-cache"
 version = "0.0.0"
 dependencies = [
  "arc-swap",
+ "parking_lot",
  "tokio",
  "zeta-test-support",
- "zeta-utils",
 ]
 
 [[package]]
@@ -6041,6 +6042,7 @@ dependencies = [
  "const-hex",
  "futures",
  "humantime-serde",
+ "parking_lot",
  "reqwest",
  "secrecy",
  "serde",
@@ -6067,6 +6069,7 @@ dependencies = [
  "figment",
  "inventory",
  "irc",
+ "parking_lot",
  "reqwest",
  "serde",
  "serde_ignored",
@@ -6111,7 +6114,6 @@ dependencies = [
  "zeta-plugin",
  "zeta-test-support",
  "zeta-url",
- "zeta-utils",
 ]
 
 [[package]]

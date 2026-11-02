@@ -60,6 +60,7 @@ impl SharedState {
 }
 
 /// Shared context for plugin invocations.
+#[non_exhaustive]
 pub struct Context {
     /// The database connection pool.
     #[cfg(feature = "database")]

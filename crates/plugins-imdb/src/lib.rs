@@ -95,7 +95,7 @@ impl Imdb {
     ) -> Result<Self, ZetaError> {
         subscriptions.command(COMMAND);
 
-        let client = GraphQlClient::new(settings, &ctx.config.http).map_err(plugin_err)?;
+        let client = GraphQlClient::try_new(settings, &ctx.config.http).map_err(plugin_err)?;
 
         Ok(Self { client })
     }
@@ -243,7 +243,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs network access"]
     async fn live_api_contract_smoke() {
-        let client = GraphQlClient::new(&Settings::default(), &HttpConfig::default()).unwrap();
+        let client = GraphQlClient::try_new(&Settings::default(), &HttpConfig::default()).unwrap();
 
         let results = client.search("peggle nights", SEARCH_LIMIT).await.unwrap();
         assert_ne!(results, Vec::new());

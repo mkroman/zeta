@@ -483,13 +483,11 @@ mod tests {
 
     /// Returns a catalog whose only entry declares `hosts`.
     fn catalog_with(name: &str, hosts: &'static [&'static str]) -> PluginCatalog {
-        PluginCatalog {
-            entries: vec![CatalogEntry {
-                name: name.to_owned(),
-                commands: Vec::new(),
-                url_scope: UrlScope::Hosts(hosts),
-            }],
-        }
+        PluginCatalog::new(vec![CatalogEntry::new(
+            name.to_owned(),
+            Vec::new(),
+            UrlScope::Hosts(hosts),
+        )])
     }
 
     #[test]

@@ -27,16 +27,12 @@ impl MediaId {
     /// # Errors
     ///
     /// Returns [`InvalidMediaId`] when the id is empty or contains any other character.
-    pub fn parse(id: impl Into<String>) -> Result<Self, InvalidMediaId> {
-        let id = id.into();
-
-        // `is_identifier` already rejects the empty string; the explicit check keeps the
-        // requirement visible here and preserves the accepted set if the helper changes.
-        if id.is_empty() || !zeta_url::is_identifier(&id, ALLOWED) {
-            return Err(InvalidMediaId(id));
+    pub fn parse(id: &str) -> Result<Self, InvalidMediaId> {
+        if !is_valid(id) {
+            return Err(InvalidMediaId(id.to_owned()));
         }
 
-        Ok(Self(id))
+        Ok(Self(id.to_owned()))
     }
 
     /// Returns the id as a string slice.
@@ -78,8 +74,20 @@ impl TryFrom<String> for MediaId {
     type Error = InvalidMediaId;
 
     fn try_from(id: String) -> Result<Self, Self::Error> {
-        Self::parse(id)
+        // Validate in place so a valid id is moved into the `MediaId` instead of copied.
+        if !is_valid(&id) {
+            return Err(InvalidMediaId(id));
+        }
+
+        Ok(Self(id))
     }
+}
+
+/// Whether `id` is a non-empty string of ASCII alphanumerics plus `_` and `-`.
+fn is_valid(id: &str) -> bool {
+    // `is_identifier` already rejects the empty string; the explicit check keeps the
+    // requirement visible here and preserves the accepted set if the helper changes.
+    !id.is_empty() && zeta_url::is_identifier(id, ALLOWED)
 }
 
 /// The error returned when a media id is empty or contains unsafe characters.

@@ -28,10 +28,8 @@ pub struct RequestError {
     url: Option<RedactedUrl>,
     /// The host the request went to, for the short rendering.
     host: Option<String>,
-    /// Whether the request timed out.
-    timeout: bool,
-    /// Whether the request failed before it could be sent.
-    connect: bool,
+    /// The classified transport failure.
+    failure: Failure,
 }
 
 impl RequestError {
@@ -54,7 +52,7 @@ impl RequestError {
     /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
     #[must_use]
     pub const fn error_type(&self) -> &'static str {
-        classify(self.timeout, self.connect)
+        self.failure.error_type()
     }
 }
 
@@ -64,8 +62,7 @@ impl From<reqwest::Error> for RequestError {
         let host = error
             .url()
             .and_then(|url| url.host_str().map(str::to_string));
-        let timeout = error.is_timeout();
-        let connect = error.is_connect();
+        let failure = Failure::from_flags(error.is_timeout(), error.is_connect());
 
         let error = error.without_url();
         let kind = error.to_string();
@@ -76,20 +73,17 @@ impl From<reqwest::Error> for RequestError {
             detail,
             url,
             host,
-            timeout,
-            connect,
+            failure,
         }
     }
 }
 
 impl fmt::Display for RequestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.timeout {
-            f.write_str("request timed out")?;
-        } else if self.connect {
-            f.write_str("could not connect")?;
-        } else {
-            f.write_str(&self.kind)?;
+        match self.failure {
+            Failure::TimedOut => f.write_str("request timed out")?,
+            Failure::Connect => f.write_str("could not connect")?,
+            Failure::Other => f.write_str(&self.kind)?,
         }
 
         self.host
@@ -125,22 +119,44 @@ fn detail(kind: &str, error: &(dyn StdError + 'static), url: Option<&str>) -> St
     message
 }
 
-/// The low-cardinality [`error.type`] value for a classified transport failure: the attribute
-/// OpenTelemetry wants on a failed log line instead of a longer message.
-///
-/// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
-const fn classify(timeout: bool, connect: bool) -> &'static str {
-    if timeout {
-        "timeout"
-    } else if connect {
-        "connection_error"
-    } else {
-        "other"
+/// The classified transport failure behind a [`RequestError`].
+#[derive(Debug, Clone, Copy)]
+enum Failure {
+    /// The request timed out.
+    TimedOut,
+    /// The request failed before it could be sent.
+    Connect,
+    /// Any other transport failure.
+    Other,
+}
+
+impl Failure {
+    /// Classifies the `timeout` and `connect` flags a client reports for an error.
+    const fn from_flags(timeout: bool, connect: bool) -> Self {
+        if timeout {
+            Self::TimedOut
+        } else if connect {
+            Self::Connect
+        } else {
+            Self::Other
+        }
+    }
+
+    /// The [`error.type`] value for this failure, for a span or log field.
+    ///
+    /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
+    const fn error_type(self) -> &'static str {
+        match self {
+            Self::TimedOut => "timeout",
+            Self::Connect => "connection_error",
+            Self::Other => "other",
+        }
     }
 }
 
 /// Errors that can occur while searching with Kagi.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The stream request could not be sent.
     #[error("could not send stream request")]

@@ -215,7 +215,7 @@ impl CoinMarketCap {
     ) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
         let client = Arc::new(
-            CmcClient::with_options(
+            CmcClient::try_new_with_options(
                 api_key,
                 &ClientOptions {
                     timeout: ctx.config.http.timeout,
@@ -514,7 +514,7 @@ mod tests {
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
             client: Arc::new(
-                CmcClient::with_options("test-api-key", &ClientOptions::default()).unwrap(),
+                CmcClient::try_new_with_options("test-api-key", &ClientOptions::default()).unwrap(),
             ),
             coins: TtlCache::new_with_value(CoinCache::from(test_coins()), CACHE_TTL),
             fiat: TtlCache::new(CACHE_TTL),

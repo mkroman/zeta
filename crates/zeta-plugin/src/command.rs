@@ -24,7 +24,6 @@ use std::sync::{Arc, LazyLock, Mutex, TryLockError};
 
 use clap::{ArgAction, ColorChoice, Command, Parser};
 use thiserror::Error;
-use zeta_utils::sync;
 
 /// How a command's trailing arguments are split into tokens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,12 +342,18 @@ type CommandKey = (&'static str, TypeId);
 /// rebuilding the whole argument tree on every call. The trigger is part of the key because it
 /// is rendered as the binary name in usage and help output; the argument type is keyed by
 /// [`TypeId`], so parsers must be `'static`.
-static COMMANDS: LazyLock<Mutex<HashMap<CommandKey, Arc<Mutex<Command>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+///
+/// This outer map uses a non-poisoning lock. A fresh command is configured inside
+/// `or_insert_with` while the lock is held, but the entry API only inserts after the closure
+/// returns: a panic in `configure` unwinds with the map unchanged rather than leaving a
+/// half-configured command behind. The per-command `std::sync::Mutex` inside stays poisoning on
+/// purpose — a parse that panicked must be detected so its command is evicted, not reused.
+static COMMANDS: LazyLock<parking_lot::Mutex<HashMap<CommandKey, Arc<Mutex<Command>>>>> =
+    LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
 
 /// Returns the cached command for `T` under `trigger`, configuring it on first use.
 fn cached_command<T: Parser + 'static>(trigger: &'static str) -> Arc<Mutex<Command>> {
-    let mut commands = sync::lock(&COMMANDS);
+    let mut commands = COMMANDS.lock();
 
     Arc::clone(
         commands
@@ -361,8 +366,9 @@ fn cached_command<T: Parser + 'static>(trigger: &'static str) -> Arc<Mutex<Comma
 ///
 /// A busy entry means another thread is parsing the same command (or a value parser recursed
 /// into it); rather than block, that call configures a fresh command. A poisoned entry comes
-/// from a parse that panicked: it is evicted so a later call caches a fresh command, and this
-/// call uses a fresh command directly.
+/// from a parse that panicked: the per-command lock is a `std::sync::Mutex` on purpose, so the
+/// poison is observed and the entry evicted instead of reusing a command whose parse may have
+/// left it in an unknown state. This call then uses a fresh command directly.
 fn with_cached_command<T, R>(trigger: &'static str, parse: impl FnOnce(&mut Command) -> R) -> R
 where
     T: Parser + 'static,
@@ -370,7 +376,7 @@ where
     match cached_command::<T>(trigger).try_lock() {
         Ok(mut command) => parse(&mut command),
         Err(TryLockError::Poisoned(_)) => {
-            sync::lock(&COMMANDS).remove(&(trigger, TypeId::of::<T>()));
+            COMMANDS.lock().remove(&(trigger, TypeId::of::<T>()));
 
             parse(&mut configure(T::command(), trigger))
         }
@@ -708,7 +714,9 @@ mod tests {
         const CMD: CommandSpec = CommandSpec::with_args::<Opts>(".busy", "test");
 
         let cached = cached_command::<Opts>(".busy");
-        let guard = sync::lock(&cached);
+        let guard = cached
+            .lock()
+            .expect("the cached command lock is not poisoned");
 
         let (sender, receiver) = mpsc::channel();
         let parse = std::thread::spawn(move || {

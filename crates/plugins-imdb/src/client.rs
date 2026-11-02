@@ -108,7 +108,7 @@ impl GraphQlClient {
     ///
     /// Returns an error if the HTTP client could not be built, or a configured country or
     /// language is not a valid header value.
-    pub fn new(settings: &Settings, config: &HttpConfig) -> Result<Self, Error> {
+    pub fn try_new(settings: &Settings, config: &HttpConfig) -> Result<Self, Error> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(ORIGIN, HeaderValue::from_static("https://www.imdb.com"));

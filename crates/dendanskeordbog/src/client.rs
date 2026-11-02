@@ -62,23 +62,8 @@ pub struct Client {
 impl Client {
     /// Constructs a new `Client` with default settings.
     ///
-    /// This method provides a convenient way to create a client. It configures default gzip
-    /// support, a 30-second timeout, and disables redirects.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the underlying HTTP client cannot be built. This can happen in environments with
-    /// misconfigured network or TLS dependencies. For a non-panicking version, see
-    /// [`Client::try_new`].
-    #[must_use]
-    pub fn new() -> Self {
-        Self::try_new().expect("could not construct http client")
-    }
-
-    /// Attempts to construct a new `Client` with default settings.
-    ///
-    /// This is the fallible version of [`Client::new`]. It configures the client with gzip
-    /// support, a 30-second timeout, and disables redirects.
+    /// This method configures the client with gzip support, a 30-second timeout, and disables
+    /// redirects.
     ///
     /// # Errors
     ///
@@ -146,15 +131,6 @@ impl Client {
             .map_err(|error| Error::Request(request_error(error)))?;
 
         parse_on_blocking_thread(move || DictionaryDocument::from_html(body)).await
-    }
-}
-
-impl Default for Client {
-    /// Creates a default `Client` instance.
-    ///
-    /// This is equivalent to calling [`Client::new`].
-    fn default() -> Self {
-        Self::new()
     }
 }
 
