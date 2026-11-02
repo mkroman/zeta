@@ -20,6 +20,14 @@ use zeta_plugin::{Context, FilterHandle, LoadedPlugin};
 use crate::dispatch::EventIndex;
 use crate::task::PluginTask;
 
+/// The number of events a plugin may have queued before new ones are shed.
+///
+/// A plugin that stops draining its mailbox — a stalled database pool, a blocked fetch, a
+/// handler that never returns — would otherwise grow with every event it subscribes to. The
+/// dispatcher never blocks on the mailbox: a full one drops the event and warns once per
+/// overflow episode, and the plugin is not evicted.
+const MAILBOX_CAPACITY: usize = 4_096;
+
 /// The running plugins: their dispatch index and their tasks.
 pub struct PluginRuntime {
     /// Routes incoming messages to the plugins that registered interest.
@@ -42,8 +50,9 @@ pub struct PluginRuntime {
 impl PluginRuntime {
     /// Spawns every plugin into its own long-lived task and indexes its subscriptions.
     ///
-    /// Each task gets an unbounded mailbox, so a slow or failing plugin cannot block the IRC
-    /// connection or the other plugins.
+    /// Each task gets a bounded mailbox, so a slow or failing plugin cannot block the IRC
+    /// connection or the other plugins. A plugin that stops draining its mailbox has further
+    /// events shed instead of retained.
     ///
     /// The shared filters are resolved before the tasks are spawned: every plugin is already
     /// constructed, and the filter plugin publishes its handle from its constructor.
@@ -64,7 +73,7 @@ impl PluginRuntime {
             subscriptions,
         } in plugins
         {
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+            let (sender, receiver) = tokio::sync::mpsc::channel(MAILBOX_CAPACITY);
 
             tasks.push(PluginTask::spawn(
                 name,
