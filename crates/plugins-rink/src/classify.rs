@@ -176,6 +176,7 @@ fn contains_parse_error(query: &Query) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::Rewrite;
     use crate::currency::build_context;
     use crate::test_support::{currency_server, evaluate, offline_plugin, test_plugin};
     use zeta_utils::irc::strip_formatting;
@@ -195,7 +196,7 @@ mod tests {
         ];
 
         for (line, value) in cases {
-            let reply = strip_formatting(&evaluate(&rink, line, true).await);
+            let reply = strip_formatting(&evaluate(&rink, line, Rewrite::Classify).await);
             assert!(reply.contains(value), "{line}: missing {value:?}: {reply}");
             assert!(reply.contains("money"), "{line}: {reply}");
         }
@@ -207,7 +208,7 @@ mod tests {
 
         // The corrections land before any evaluation: the reply names the *tracked*
         // dependencies (USD), which only the rewritten `10 USD to DKK` can trigger.
-        let reply = strip_formatting(&evaluate(&rink, "10 usd to dkk", true).await);
+        let reply = strip_formatting(&evaluate(&rink, "10 usd to dkk", Rewrite::Classify).await);
         assert!(reply.contains("Missing dependencies: USD"), "{reply}");
     }
 
@@ -225,7 +226,7 @@ mod tests {
         ];
 
         for (line, expected) in cases {
-            let reply = strip_formatting(&evaluate(&rink, line, true).await);
+            let reply = strip_formatting(&evaluate(&rink, line, Rewrite::Classify).await);
 
             for needle in expected {
                 assert!(
@@ -240,7 +241,7 @@ mod tests {
     async fn classify_returns_unparseable_queries_unchanged() {
         let rink = offline_plugin();
 
-        let reply = strip_formatting(&evaluate(&rink, "20:00 in tokyo", true).await);
+        let reply = strip_formatting(&evaluate(&rink, "20:00 in tokyo", Rewrite::Classify).await);
         assert!(reply.contains("Error: Expected term, got `:`"), "{reply}");
     }
 
@@ -252,8 +253,8 @@ mod tests {
         // `<error: …>` unit, so the line stays verbatim and rink reports the real problem.
         for line in ["egg $%^", "10 usd +", "5 usd -> dkk + "] {
             assert_eq!(
-                evaluate(&rink, line, true).await,
-                evaluate(&rink, line, false).await,
+                evaluate(&rink, line, Rewrite::Classify).await,
+                evaluate(&rink, line, Rewrite::Verbatim).await,
                 "classification changed the outcome of {line:?}"
             );
         }
@@ -299,8 +300,8 @@ mod tests {
 
         // Both list items are corrected, not just the left-hand side.
         assert_eq!(
-            evaluate(&rink, "5 usd -> dkk, eur", true).await,
-            evaluate(&rink, "5 USD -> DKK, EUR", false).await,
+            evaluate(&rink, "5 usd -> dkk, eur", Rewrite::Classify).await,
+            evaluate(&rink, "5 USD -> DKK, EUR", Rewrite::Verbatim).await,
         );
     }
 
@@ -360,8 +361,8 @@ mod tests {
             "20:00 in tokyo",
             "1 << meter",
         ] {
-            let strict = evaluate(&rink, line, false).await;
-            let smart = evaluate(&rink, line, true).await;
+            let strict = evaluate(&rink, line, Rewrite::Verbatim).await;
+            let smart = evaluate(&rink, line, Rewrite::Classify).await;
             assert_eq!(strict, smart, "classification changed {line:?}");
         }
     }

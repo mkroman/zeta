@@ -111,6 +111,7 @@ fn render_spans(out: &mut String, style: &mut Style, error: bool, spans: &[Span<
 
 #[cfg(test)]
 mod tests {
+    use crate::actor::Rewrite;
     use crate::test_support::{evaluate, offline_plugin};
     use zeta_utils::irc::strip_formatting;
 
@@ -119,7 +120,7 @@ mod tests {
         let rink = offline_plugin();
 
         assert_eq!(
-            evaluate(&rink, "4 m", false).await,
+            evaluate(&rink, "4 m", Rewrite::Verbatim).await,
             "\x0310> \x0f4 meter \x0310(\x0flength\x0310)"
         );
     }
@@ -129,7 +130,7 @@ mod tests {
         let rink = offline_plugin();
 
         // A query without a close match carries no suggestion.
-        let reply = evaluate(&rink, "wronginput", false).await;
+        let reply = evaluate(&rink, "wronginput", Rewrite::Verbatim).await;
         assert!(
             strip_formatting(&reply).contains("Error: No such unit wronginput"),
             "{reply}"
@@ -142,7 +143,7 @@ mod tests {
     async fn substances_render_every_property_and_label_as_a_value() {
         let rink = offline_plugin();
 
-        let reply = strip_formatting(&evaluate(&rink, "egg", false).await);
+        let reply = strip_formatting(&evaluate(&rink, "egg", Rewrite::Verbatim).await);
 
         for expected in [
             "egg: USA large egg.",
@@ -161,7 +162,7 @@ mod tests {
     async fn a_unit_span_following_a_number_stays_inside_the_value_run() {
         let rink = offline_plugin();
 
-        let reply = strip_formatting(&evaluate(&rink, "helium", false).await);
+        let reply = strip_formatting(&evaluate(&rink, "helium", Rewrite::Verbatim).await);
         assert!(
             reply.contains("atomic_number = 2 (dimensionless)"),
             "{reply}"
@@ -177,7 +178,7 @@ mod tests {
         let rink = offline_plugin();
 
         // A fixed date keeps the assertions free of the clock and the host timezone.
-        let reply = evaluate(&rink, "#2016-08-24#", true).await;
+        let reply = evaluate(&rink, "#2016-08-24#", Rewrite::Classify).await;
         // The datetime renders as a value, inside the run opened right after the marker.
         assert!(strip_formatting(&reply).contains("2016-08-24"), "{reply}");
         // The value run closes right after the datetime's trailing timezone label.

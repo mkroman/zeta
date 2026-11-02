@@ -73,9 +73,9 @@ enum Anchor {
     Suffix,
 }
 
-/// Compares `value` against `text` as `anchor` describes. `value` must be ASCII, so every byte
-/// index is a character boundary.
-fn match_affix(value: &str, text: &str, sensitive: bool, anchor: Anchor) -> bool {
+/// Compares `value` against `text` as `anchor` and `case` describe. `value` must be ASCII, so
+/// every byte index is a character boundary.
+fn match_affix(value: &str, text: &str, case: Case, anchor: Anchor) -> bool {
     let compared = match anchor {
         Anchor::Prefix => value.get(..text.len()),
         Anchor::Suffix => value
@@ -84,12 +84,9 @@ fn match_affix(value: &str, text: &str, sensitive: bool, anchor: Anchor) -> bool
             .map(|start| &value[start..]),
     };
 
-    compared.is_some_and(|compared| {
-        if sensitive {
-            compared == text
-        } else {
-            compared.eq_ignore_ascii_case(text)
-        }
+    compared.is_some_and(|compared| match case {
+        Case::Sensitive => compared == text,
+        Case::Insensitive => compared.eq_ignore_ascii_case(text),
     })
 }
 
@@ -122,8 +119,8 @@ enum Matcher {
     Literal {
         /// The pattern text; lowercased for case-insensitive patterns.
         text: String,
-        /// Whether the comparison is case-sensitive.
-        sensitive: bool,
+        /// How the comparison folds case.
+        case: Case,
     },
     /// A `*suffix` or `prefix*` pattern with no other wildcard.
     ///
@@ -132,8 +129,8 @@ enum Matcher {
     Affix {
         /// The literal part; lowercased for case-insensitive patterns.
         text: String,
-        /// Whether the comparison is case-sensitive.
-        sensitive: bool,
+        /// How the comparison folds case.
+        case: Case,
         /// Which end of the value the literal is anchored to.
         anchor: Anchor,
         /// The general matcher, used for non-ASCII values.
@@ -166,7 +163,7 @@ impl Pattern {
                             Case::Sensitive => pattern.to_owned(),
                             Case::Insensitive => pattern.to_ascii_lowercase(),
                         },
-                        sensitive: matches!(case, Case::Sensitive),
+                        case,
                     }
                 } else if let Some((text, anchor)) = affix_pattern(pattern) {
                     Matcher::Affix {
@@ -174,7 +171,7 @@ impl Pattern {
                             Case::Sensitive => text.to_owned(),
                             Case::Insensitive => text.to_ascii_lowercase(),
                         },
-                        sensitive: matches!(case, Case::Sensitive),
+                        case,
                         anchor,
                         fallback: match case {
                             Case::Sensitive => WildMatch::new(pattern),
@@ -207,28 +204,26 @@ impl Pattern {
 
         match &self.matcher {
             Matcher::Unset => true,
-            Matcher::Literal { text, sensitive } => {
-                if *sensitive {
-                    value == text.as_str()
-                } else if value.is_ascii() {
-                    value.eq_ignore_ascii_case(text)
-                } else {
+            Matcher::Literal { text, case } => match case {
+                Case::Sensitive => value == text.as_str(),
+                Case::Insensitive if value.is_ascii() => value.eq_ignore_ascii_case(text),
+                Case::Insensitive => {
                     // `WildMatch` lowercases Unicode character-wise, so an ASCII pattern can
                     // match non-ASCII input (the Kelvin sign lowercases to `k`); mirror that
                     // instead of comparing ASCII only, without allocating a lowered copy.
                     value.chars().flat_map(char::to_lowercase).eq(text.chars())
                 }
-            }
+            },
             Matcher::Affix {
                 text,
-                sensitive,
+                case,
                 anchor,
                 fallback,
             } => {
                 // `WildMatch` folds case per character; an ASCII comparison does not reproduce
                 // that for non-ASCII input, so only ASCII values take the fast path.
                 if value.is_ascii() {
-                    match_affix(value, text, *sensitive, *anchor)
+                    match_affix(value, text, *case, *anchor)
                 } else {
                     fallback.matches(value)
                 }
@@ -421,6 +416,13 @@ mod tests {
     fn literal_patterns_match_without_wildcards() {
         let insensitive = Pattern::compile(Some("IMDB.com"), Case::Insensitive);
 
+        assert!(matches!(
+            &insensitive.matcher,
+            Matcher::Literal {
+                case: Case::Insensitive,
+                ..
+            }
+        ));
         assert!(insensitive.matches(Some("imdb.com")));
         assert!(insensitive.matches(Some("IMDB.COM")));
         assert!(!insensitive.matches(Some("www.imdb.com")));
@@ -428,6 +430,13 @@ mod tests {
 
         let sensitive = Pattern::compile(Some("/Title"), Case::Sensitive);
 
+        assert!(matches!(
+            &sensitive.matcher,
+            Matcher::Literal {
+                case: Case::Sensitive,
+                ..
+            }
+        ));
         assert!(sensitive.matches(Some("/Title")));
         assert!(!sensitive.matches(Some("/title")));
     }
@@ -460,7 +469,13 @@ mod tests {
     fn affix_patterns_match_single_sided_wildcards() {
         let suffix = Pattern::compile(Some("*bot"), Case::Insensitive);
 
-        assert!(matches!(&suffix.matcher, Matcher::Affix { .. }));
+        assert!(matches!(
+            &suffix.matcher,
+            Matcher::Affix {
+                case: Case::Insensitive,
+                ..
+            }
+        ));
         assert!(suffix.matches(Some("mybot")));
         assert!(suffix.matches(Some("bot")));
         assert!(suffix.matches(Some("MYBOT")));
@@ -470,7 +485,13 @@ mod tests {
 
         let prefix = Pattern::compile(Some("bot*"), Case::Sensitive);
 
-        assert!(matches!(&prefix.matcher, Matcher::Affix { .. }));
+        assert!(matches!(
+            &prefix.matcher,
+            Matcher::Affix {
+                case: Case::Sensitive,
+                ..
+            }
+        ));
         assert!(prefix.matches(Some("botx")));
         assert!(prefix.matches(Some("bot")));
         assert!(!prefix.matches(Some("xbot")));
