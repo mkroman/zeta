@@ -154,7 +154,7 @@ impl S3 {
     /// # Errors
     ///
     /// Returns an error if a required value is missing or a configured value is invalid.
-    pub fn new(config: &MirrorConfig) -> Result<Self, Error> {
+    pub fn try_new(config: &MirrorConfig) -> Result<Self, Error> {
         let access_key_id = resolve_secret(config.s3_access_key_id.as_deref(), "S3_ACCESS_KEY_ID")?;
         let secret_access_key = resolve_secret(
             config
@@ -546,7 +546,7 @@ mod tests {
             .unwrap_or_else(|| "auto".to_string());
 
         assert_eq!(
-            S3::new(&config)
+            S3::try_new(&config)
                 .expect("the configuration is complete")
                 .region,
             expected
@@ -559,7 +559,7 @@ mod tests {
 
         // A configured region wins over the environment and the default.
         assert_eq!(
-            S3::new(&config)
+            S3::try_new(&config)
                 .expect("the configuration is complete")
                 .region,
             "eu-west-1"

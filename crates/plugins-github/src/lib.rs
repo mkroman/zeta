@@ -78,7 +78,7 @@ impl GitHub {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         // The token is optional; it only raises the API rate limit.
         let token = settings::resolve_optional_setting(settings.token.as_deref(), "GITHUB_TOKEN");
-        let plugin = Self::with_token(&ctx.config.http, token).map_err(plugin_err)?;
+        let plugin = Self::try_new_with_token(&ctx.config.http, token).map_err(plugin_err)?;
 
         Ok(plugin)
     }
@@ -126,7 +126,7 @@ impl GitHub {
     ///
     /// Returns an error if the HTTP client could not be built, or the token is not a valid
     /// header value.
-    pub fn with_token(config: &HttpConfig, token: Option<String>) -> Result<Self, Error> {
+    pub fn try_new_with_token(config: &HttpConfig, token: Option<String>) -> Result<Self, Error> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -220,7 +220,8 @@ mod tests {
     #[test]
     fn invalid_tokens_are_rejected() {
         assert!(
-            GitHub::with_token(&HttpConfig::default(), Some("bad\ntoken".to_string())).is_err(),
+            GitHub::try_new_with_token(&HttpConfig::default(), Some("bad\ntoken".to_string()))
+                .is_err(),
             "invalid token should be rejected"
         );
     }

@@ -73,17 +73,22 @@ impl Client {
     /// # Examples
     ///
     /// ```
+    /// # fn example() -> Result<(), reddit::Error> {
     /// let client_id = "reddit client id";
     /// let client_secret = "reddit client secret";
-    /// let client = reddit::Client::new(client_id, client_secret);
+    /// let client = reddit::Client::try_new(client_id, client_secret)?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the HTTP client fails to build.
-    pub fn new(client_id: impl Into<String>, client_secret: impl Into<SecretString>) -> Self {
-        Self::with_options(client_id, client_secret, ClientOptions::default())
-            .expect("could not build http client")
+    /// Returns [`Error::BuildClient`] if the HTTP client fails to build.
+    pub fn try_new(
+        client_id: impl Into<String>,
+        client_secret: impl Into<SecretString>,
+    ) -> Result<Self, Error> {
+        Self::try_new_with_options(client_id, client_secret, ClientOptions::default())
     }
 
     /// Constructs a new [`Client`] for interacting with the Reddit API using the given options.
@@ -91,7 +96,7 @@ impl Client {
     /// # Errors
     ///
     /// Returns [`Error::BuildClient`] if the HTTP client fails to build.
-    pub fn with_options(
+    pub fn try_new_with_options(
         client_id: impl Into<String>,
         client_secret: impl Into<SecretString>,
         options: ClientOptions,

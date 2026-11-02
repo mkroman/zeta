@@ -85,12 +85,11 @@ impl Client {
     ///
     /// The token is the value of the `kagi_session` cookie from an authenticated browser session.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the HTTP client fails to build.
-    pub fn with_token(token: impl Into<SecretString>) -> Self {
-        Self::with_token_and_options(token, ClientOptions::default())
-            .expect("could not build http client")
+    /// Returns [`Error::BuildClient`] if the HTTP client fails to build.
+    pub fn try_new(token: impl Into<SecretString>) -> Result<Self, Error> {
+        Self::try_new_with_options(token, ClientOptions::default())
     }
 
     /// Constructs a new [`Client`] for searching with Kagi using the given session token and
@@ -98,14 +97,11 @@ impl Client {
     ///
     /// The token is the value of the `kagi_session` cookie from an authenticated browser session.
     ///
-    /// # Panics
-    ///
-    /// Panics if the HTTP client fails to build.
-    ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidHeader`] if a configured header value is invalid.
-    pub fn with_token_and_options(
+    /// Returns [`Error::BuildClient`] if the HTTP client fails to build, and
+    /// [`Error::InvalidHeader`] if a configured header value is invalid.
+    pub fn try_new_with_options(
         token: impl Into<SecretString>,
         options: ClientOptions,
     ) -> Result<Self, Error> {
@@ -317,7 +313,7 @@ mod tests {
         };
 
         assert!(matches!(
-            Client::with_token_and_options("token", options),
+            Client::try_new_with_options("token", options),
             Err(Error::InvalidHeader(_))
         ));
     }

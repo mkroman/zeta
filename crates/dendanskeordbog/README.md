@@ -26,7 +26,7 @@ use dendanskeordbog::{Client, Error};
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Create a new client with default settings.
-    let client = Client::new();
+    let client = Client::try_new()?;
 
     // Query the dictionary for the word "hest".
     let document = client.query("hest").await?;

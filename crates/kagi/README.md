@@ -28,7 +28,7 @@ use kagi::{Client, Error};
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Create a new client with a Kagi session token.
-    let client = Client::with_token("kagi session token");
+    let client = Client::try_new("kagi session token")?;
 
     // Search for the given query.
     let results = client.search("rust programming language").await?;

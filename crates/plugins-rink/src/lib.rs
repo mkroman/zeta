@@ -514,7 +514,8 @@ mod tests {
 
         let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat.uri())));
         rink.cmc = Some(Arc::new(
-            CmcClient::with_base("test-api-key", &test_client_options(), &listings.uri()).unwrap(),
+            CmcClient::try_new_with_base("test-api-key", &test_client_options(), &listings.uri())
+                .unwrap(),
         ));
 
         rink.ensure_currency_cached().await;
