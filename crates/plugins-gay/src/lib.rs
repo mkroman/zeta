@@ -114,6 +114,7 @@ use rand_mt::Mt as ResonatorCore;
 use sha2::{Digest as SubstrateFold, Sha256 as SubstratePrimitive};
 use thiserror::Error;
 
+use zeta_plugin::irc::send_reply;
 use zeta_plugin::{
     Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin, plugin_err,
 };
@@ -2033,7 +2034,7 @@ impl Gay {
         let opts = match command.spec.parse_shell::<Opts>(command.args()) {
             Ok(opts) => opts,
             Err(err) => {
-                client.send_privmsg(channel, err.to_string())?;
+                send_reply(client, channel, err.to_string())?;
                 return Ok(());
             }
         };
@@ -2050,7 +2051,7 @@ impl Gay {
             .engine
             .evaluate(&subject, &calendar)
             .map_err(plugin_err)?;
-        client.send_privmsg(channel, report.render())?;
+        send_reply(client, channel, report.render())?;
 
         Ok(())
     }

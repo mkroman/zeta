@@ -45,7 +45,9 @@ use std::time::Duration;
 use clap::Parser;
 use tracing::{Instrument, debug, warn};
 
-use zeta_plugin::irc::{COLOR, RESET, labeled_reply, parse_or_usage, plain_reply};
+use zeta_plugin::irc::{
+    COLOR, RESET, labeled_reply, parse_or_usage, plain_reply, send_reply, send_reply_via,
+};
 use zeta_plugin::{
     ArgsMode, Client, CommandEvent, CommandSpec, Context, Hostmasks, Sender, Subscriptions,
     UrlEvent, ZetaError, plugin, plugin_err,
@@ -190,7 +192,7 @@ impl Unwall {
             return Ok(true);
         }
 
-        client.send_privmsg(channel, labeled_reply(NAME, UNAUTHORIZED))?;
+        send_reply(client, channel, labeled_reply(NAME, UNAUTHORIZED))?;
 
         Ok(false)
     }
@@ -210,11 +212,12 @@ impl Unwall {
                 Some(host) if !hosts.contains(&host) => hosts.push(host),
                 Some(_) => {}
                 None => {
-                    client.send_privmsg(
+                    send_reply(
+                        client,
                         channel,
                         labeled_reply(
                             NAME,
-                            format!("{RESET}{input}{COLOR} does not look like a hostname."),
+                            format_args!("{RESET}{input}{COLOR} does not look like a hostname."),
                         ),
                     )?;
 
@@ -224,7 +227,8 @@ impl Unwall {
         }
 
         if hosts.is_empty() {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
                 labeled_reply(NAME, "specify at least one hostname to unwall."),
             )?;
@@ -233,9 +237,13 @@ impl Unwall {
         }
 
         if let Err(error) = self.service.add_sites(&hosts, nickname).await {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
-                labeled_reply(NAME, format!("could not add the sites:{RESET} {error}")),
+                labeled_reply(
+                    NAME,
+                    format_args!("could not add the sites:{RESET} {error}"),
+                ),
             )?;
 
             return Ok(());
@@ -243,9 +251,13 @@ impl Unwall {
 
         debug!(unwall.site.count = hosts.len(), "added unwall sites");
 
-        client.send_privmsg(
+        send_reply(
+            client,
             channel,
-            labeled_reply(NAME, format!("Now unwalling {}{COLOR}.", join_and(&hosts))),
+            labeled_reply(
+                NAME,
+                format_args!("Now unwalling {}{COLOR}.", join_and(&hosts)),
+            ),
         )?;
 
         Ok(())
@@ -254,11 +266,14 @@ impl Unwall {
     /// Removes the covered sites matching the `rm`/`del`/`delete` subcommand pattern.
     async fn remove(&self, client: &Client, channel: &str, pattern: &str) -> Result<(), ZetaError> {
         let Some(pattern) = sites::normalize_site(pattern) else {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
                 labeled_reply(
                     NAME,
-                    format!("{RESET}{pattern}{COLOR} does not look like a hostname or wildcard."),
+                    format_args!(
+                        "{RESET}{pattern}{COLOR} does not look like a hostname or wildcard."
+                    ),
                 ),
             )?;
 
@@ -268,9 +283,13 @@ impl Unwall {
         let removed = match self.service.remove_matching(&pattern).await {
             Ok(removed) => removed,
             Err(error) => {
-                client.send_privmsg(
+                send_reply(
+                    client,
                     channel,
-                    labeled_reply(NAME, format!("could not remove the sites:{RESET} {error}")),
+                    labeled_reply(
+                        NAME,
+                        format_args!("could not remove the sites:{RESET} {error}"),
+                    ),
                 )?;
 
                 return Ok(());
@@ -283,7 +302,7 @@ impl Unwall {
             format!("Removed {}{COLOR} from unwalled sites.", join_and(&removed))
         };
 
-        client.send_privmsg(channel, labeled_reply(NAME, response))?;
+        send_reply(client, channel, labeled_reply(NAME, response))?;
 
         Ok(())
     }
@@ -295,7 +314,7 @@ impl Unwall {
         let response = if sites.is_empty() {
             labeled_reply(
                 NAME,
-                format!(
+                format_args!(
                     "{RESET}No unwalled sites yet{COLOR}: add one with\
                      {RESET} .unwall add <host>{COLOR}, e.g.{RESET} .unwall add bloomberg.com{COLOR}."
                 ),
@@ -303,7 +322,7 @@ impl Unwall {
         } else {
             let mut message = labeled_reply(
                 NAME,
-                format!("{RESET}{}{COLOR} unwalled sites:{RESET} ", sites.len()),
+                format_args!("{RESET}{}{COLOR} unwalled sites:{RESET} ", sites.len()),
             );
 
             irc::append_entries_with_more(
@@ -319,7 +338,7 @@ impl Unwall {
             message
         };
 
-        client.send_privmsg(channel, response)?;
+        send_reply(client, channel, response)?;
 
         Ok(())
     }
@@ -329,7 +348,7 @@ impl Unwall {
         let response = match self.service.statistics().await {
             Ok(stats) => labeled_reply(
                 NAME,
-                format!(
+                format_args!(
                     "{RESET}{}{COLOR} links unwalled across{RESET} {}{COLOR} sites \
                      by{RESET} {}{COLOR} users ({RESET}{}{COLOR} today).",
                     stats.urls, stats.hosts, stats.users, stats.urls_today
@@ -337,11 +356,11 @@ impl Unwall {
             ),
             Err(error) => labeled_reply(
                 NAME,
-                format!("could not load the statistics:{RESET} {error}"),
+                format_args!("could not load the statistics:{RESET} {error}"),
             ),
         };
 
-        client.send_privmsg(channel, response)?;
+        send_reply(client, channel, response)?;
 
         Ok(())
     }
@@ -351,7 +370,7 @@ impl Unwall {
         let response = match self.service.host_statistics(host).await {
             Ok(Some(stats)) => labeled_reply(
                 NAME,
-                format!(
+                format_args!(
                     "{RESET}{}{COLOR} links unwalled for{RESET} {host}{COLOR} \
                      by{RESET} {}{COLOR} users ({RESET}{}{COLOR} today, most recent\
                      {RESET} {}{COLOR}).",
@@ -361,14 +380,17 @@ impl Unwall {
                     stats.latest.map_or_default(|latest| latest.time_ago()),
                 ),
             ),
-            Ok(None) => labeled_reply(NAME, format!("No unwalled links for{RESET} {host}{COLOR}.")),
+            Ok(None) => labeled_reply(
+                NAME,
+                format_args!("No unwalled links for{RESET} {host}{COLOR}."),
+            ),
             Err(error) => labeled_reply(
                 NAME,
-                format!("could not load the statistics:{RESET} {error}"),
+                format_args!("could not load the statistics:{RESET} {error}"),
             ),
         };
 
-        client.send_privmsg(channel, response)?;
+        send_reply(client, channel, response)?;
 
         Ok(())
     }
@@ -448,7 +470,7 @@ impl Unwall {
                         // The link rides on the plain reply prefix, which colors the
                         // whole line cyan.
                         if let Err(error) =
-                            irc.send_privmsg(&channel, plain_reply(&cached.unwall_url))
+                            send_reply_via(&irc, &channel, plain_reply(&cached.unwall_url))
                         {
                             warn!(exception.message = %error, "could not send the unwall link");
                         }
@@ -459,9 +481,12 @@ impl Unwall {
                             "could not unwall the article"
                         );
 
-                        if let Err(error) = irc.send_privmsg(
+                        if let Err(error) = send_reply_via(
+                            &irc,
                             &channel,
-                            plain_reply(format!("could not unwall the article:{RESET} {error}")),
+                            plain_reply(format_args!(
+                                "could not unwall the article:{RESET} {error}"
+                            )),
                         ) {
                             warn!(exception.message = %error, "could not send the unwall failure");
                         }

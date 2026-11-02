@@ -55,6 +55,7 @@ use render::{error_message, render_reply};
 use coinmarketcap::Client as CmcClient;
 use zeta_cache::TtlCache;
 use zeta_http::RequestError;
+use zeta_plugin::irc::send_reply;
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
 
 /// Calculator plugin using rink-rs.
@@ -162,7 +163,7 @@ impl Rink {
             .eval_and_format(command.args(), Rewrite::Verbatim)
             .await?;
 
-        client.send_privmsg(command.channel(), message)?;
+        send_reply(client, command.channel(), message)?;
 
         Ok(())
     }
@@ -184,7 +185,7 @@ impl Rink {
             .eval_and_format(command.args(), Rewrite::Classify)
             .await?;
 
-        client.send_privmsg(command.channel(), message)?;
+        send_reply(client, command.channel(), message)?;
 
         Ok(())
     }

@@ -13,7 +13,7 @@ use tracing::debug;
 use url::Url;
 
 use zeta_http as http;
-use zeta_plugin::irc::plain_reply;
+use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_utils::irc;
 
@@ -167,7 +167,7 @@ impl PornHub {
             let video = self.video_by_id(&video_id).await?;
             debug!(?video, "fetched video");
 
-            let _ = client.send_privmsg(channel, Self::format_video_message(&video));
+            let _ = send_reply(client, channel, Self::format_video_message(&video));
         }
 
         Ok(())
@@ -201,7 +201,7 @@ impl PornHub {
         let title = irc::unstyle_text(&video.title);
         let views = video.views.to_formatted_string(&Locale::en);
 
-        plain_reply(format!(
+        plain_reply(format_args!(
             "“\x0f{title}\x0310” is a PornHub video with\x0f {views}\x0310 views"
         ))
     }

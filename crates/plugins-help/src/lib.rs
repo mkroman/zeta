@@ -12,6 +12,7 @@
 
 mod format;
 
+use zeta_plugin::irc::send_reply;
 use zeta_plugin::{Client, CommandEvent, Context, PluginCatalog, ZetaError, plugin};
 
 use format::{gray, heading, messages};
@@ -38,7 +39,8 @@ impl Help {
         let args = command.args();
 
         let Some(catalog) = ctx.shared.get::<PluginCatalog>() else {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
                 format!(
                     "{}{}",
@@ -51,7 +53,7 @@ impl Help {
         };
 
         for message in messages(&catalog, args.trim()) {
-            client.send_privmsg(channel, message)?;
+            send_reply(client, channel, message)?;
         }
 
         Ok(())

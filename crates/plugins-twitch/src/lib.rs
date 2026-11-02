@@ -19,7 +19,7 @@ use tracing::warn;
 
 use zeta_http as http;
 use zeta_http::oauth::Credentials;
-use zeta_plugin::irc::{labeled_reply, plain_reply};
+use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 
@@ -217,12 +217,23 @@ impl Twitch {
             let game_name = irc::unstyle_text(&stream.game_name);
             let viewers = stream.viewer_count.to_formatted_string(&Locale::en);
 
-            client.send_privmsg(channel, labeled_reply("Twitch", format!(
-                "{user_login}:\x0f {title}\x0310 - Game:\x0f {game_name}\x0310 Viewers:\x0f {viewers}\x0310"
-            )))?;
+            send_reply(
+                client,
+                channel,
+                labeled_reply(
+                    "Twitch",
+                    format_args!(
+                        "{user_login}:\x0f {title}\x0310 - Game:\x0f {game_name}\x0310 Viewers:\x0f {viewers}\x0310"
+                    ),
+                ),
+            )?;
         } else {
             // Fallback behavior: just print the channel name if not live.
-            client.send_privmsg(channel, plain_reply(format!("{user_login} - Twitch")))?;
+            send_reply(
+                client,
+                channel,
+                plain_reply(format_args!("{user_login} - Twitch")),
+            )?;
         }
 
         Ok(())
@@ -244,7 +255,7 @@ impl Twitch {
             |item| labeled_reply("Twitch", render(item)),
         );
 
-        client.send_privmsg(channel, message)?;
+        send_reply(client, channel, message)?;
 
         Ok(())
     }

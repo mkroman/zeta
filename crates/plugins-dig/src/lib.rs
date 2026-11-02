@@ -24,7 +24,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use tracing::{Instrument, debug};
 
-use zeta_plugin::irc::{labeled_reply, labeled_reply_prefix};
+use zeta_plugin::irc::{labeled_reply, labeled_reply_prefix, send_reply};
 use zeta_plugin::{BoxError, Client, Context, ZetaError, plugin};
 use zeta_utils::irc;
 
@@ -137,11 +137,11 @@ impl Dig {
         match self.resolve(&opts.name, opts.record_type).await {
             Ok(result) => {
                 for line in result.to_string().lines() {
-                    client.send_privmsg(channel, line)?;
+                    send_reply(client, channel, line)?;
                 }
             }
             Err(err) => {
-                client.send_privmsg(channel, labeled_reply("Dig", err.to_string()))?;
+                send_reply(client, channel, labeled_reply("Dig", err.to_string()))?;
             }
         }
 

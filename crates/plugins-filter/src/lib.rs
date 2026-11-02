@@ -34,7 +34,7 @@ use std::sync::Arc;
 use clap::Parser;
 use tracing::debug;
 
-use zeta_plugin::irc::{labeled_reply, parse_or_usage};
+use zeta_plugin::irc::{labeled_reply, parse_or_usage, send_reply};
 use zeta_plugin::{
     ArgsMode, Client, CommandEvent, CommandSpec, Context, FilterHandle, Hostmasks, Sender,
     Subscriptions, ZetaError, plugin, plugin_err,
@@ -288,10 +288,10 @@ impl Delete {
 /// as-is.
 fn changed_response(name: &str, verb: &str, filters: &[Filter]) -> String {
     match filters {
-        [filter] => labeled_reply(name, format!("{verb} {}.", describe(filter))),
+        [filter] => labeled_reply(name, format_args!("{verb} {}.", describe(filter))),
         // More than one filter, so the plural is always right.
         filters => listing(
-            labeled_reply(name, format!("{verb} {} filters: ", filters.len())),
+            labeled_reply(name, format_args!("{verb} {} filters: ", filters.len())),
             filters,
             0,
         ),
@@ -330,7 +330,7 @@ impl FilterPlugin {
         let scope = match opts.validate(channel) {
             Ok(scope) => scope,
             Err(error) => {
-                client.send_privmsg(channel, labeled_reply("Filter", &error))?;
+                send_reply(client, channel, labeled_reply("Filter", &error))?;
 
                 return Ok(());
             }
@@ -353,7 +353,7 @@ impl FilterPlugin {
                         )
                     };
 
-                    client.send_privmsg(channel, labeled_reply("Filter", response))?;
+                    send_reply(client, channel, labeled_reply("Filter", response))?;
 
                     return Ok(());
                 }
@@ -362,7 +362,7 @@ impl FilterPlugin {
 
         debug!(filter.count = total, "added filters");
 
-        client.send_privmsg(channel, changed_response("Filter", "Added", &added))?;
+        send_reply(client, channel, changed_response("Filter", "Added", &added))?;
 
         Ok(())
     }
@@ -381,7 +381,7 @@ impl FilterPlugin {
             listing(
                 labeled_reply(
                     "Filter",
-                    format!(
+                    format_args!(
                         "{} matching your criteria: ",
                         text::pluralize(filters.len(), "filter")
                     ),
@@ -391,7 +391,7 @@ impl FilterPlugin {
             )
         };
 
-        client.send_privmsg(channel, response)?;
+        send_reply(client, channel, response)?;
 
         Ok(())
     }
@@ -400,7 +400,8 @@ impl FilterPlugin {
     async fn delete(&self, client: &Client, channel: &str, opts: Delete) -> Result<(), ZetaError> {
         if let Some(id) = opts.id {
             if opts.criteria().is_some() {
-                client.send_privmsg(
+                send_reply(
+                    client,
                     channel,
                     labeled_reply("Filter", "specify either a filter id or criteria, not both"),
                 )?;
@@ -411,9 +412,10 @@ impl FilterPlugin {
             // The removed filter is named in the reply, and an unknown id is answered without
             // touching the database.
             let Some(filter) = self.service.find(id) else {
-                client.send_privmsg(
+                send_reply(
+                    client,
                     channel,
-                    labeled_reply("Filter", format!("No filter with id {id}.")),
+                    labeled_reply("Filter", format_args!("No filter with id {id}.")),
                 )?;
 
                 return Ok(());
@@ -425,13 +427,14 @@ impl FilterPlugin {
                 Err(error) => format!("could not delete the filter: {error}"),
             };
 
-            client.send_privmsg(channel, labeled_reply("Filter", &response))?;
+            send_reply(client, channel, labeled_reply("Filter", &response))?;
 
             return Ok(());
         }
 
         let Some(criteria) = opts.criteria() else {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
                 labeled_reply(
                     "Filter",
@@ -446,7 +449,8 @@ impl FilterPlugin {
         let filters = self.service.select(&criteria);
 
         if filters.is_empty() {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
                 labeled_reply("Filter", "No filters match your criteria."),
             )?;
@@ -462,7 +466,7 @@ impl FilterPlugin {
             let mut confirmation = listing(
                 labeled_reply(
                     "Filter",
-                    format!(
+                    format_args!(
                         "{} matching the criteria will be deleted: ",
                         text::pluralize(filters.len(), "filter")
                     ),
@@ -473,7 +477,7 @@ impl FilterPlugin {
 
             confirmation.push_str(FORCE_SUFFIX);
 
-            client.send_privmsg(channel, confirmation)?;
+            send_reply(client, channel, confirmation)?;
 
             return Ok(());
         }
@@ -484,12 +488,15 @@ impl FilterPlugin {
             }
             Ok(removed) => labeled_reply(
                 "Filter",
-                format!("Removed {removed} of {} matching filters.", filters.len()),
+                format_args!("Removed {removed} of {} matching filters.", filters.len()),
             ),
-            Err(error) => labeled_reply("Filter", format!("could not delete the filters: {error}")),
+            Err(error) => labeled_reply(
+                "Filter",
+                format_args!("could not delete the filters: {error}"),
+            ),
         };
 
-        client.send_privmsg(channel, response)?;
+        send_reply(client, channel, response)?;
 
         Ok(())
     }
@@ -532,7 +539,7 @@ impl FilterPlugin {
         };
 
         if !self.is_admin(sender) {
-            client.send_privmsg(channel, labeled_reply("Filter", UNAUTHORIZED))?;
+            send_reply(client, channel, labeled_reply("Filter", UNAUTHORIZED))?;
 
             return Ok(());
         }

@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::fmt::Write as _;
 use std::iter::Peekable;
 use std::str::Chars;
 
@@ -28,13 +29,56 @@ pub const REPLY_MARKER: &str = "\x0310>";
 /// Callers that budget a reply in bytes can subtract this instead of re-deriving the format.
 pub const PLAIN_REPLY_PREFIX: &str = "\x0310> ";
 
+/// The reply body capacity reserved up front, in bytes.
+///
+/// IRC replies are capped at roughly 400 bytes and the common reply is well under 200, so
+/// reserving a body makes the common reply allocate once instead of once per doubling of its
+/// length.
+const REPLY_BODY_RESERVE: usize = 256;
+
+/// The bytes [`write_labeled_reply_prefix`] writes besides the label: the marker, the reset, the
+/// two bold codes, the colour code, a space and the colon.
+const LABELED_PREFIX_BYTES: usize =
+    REPLY_MARKER.len() + RESET.len() + BOLD.len() + 1 + 1 + BOLD.len() + COLOR.len() + 1;
+
+/// Writes `message` into `reply`.
+///
+/// Outlined and non-generic: the reply builders are generic over the message's `Display` type,
+/// and this body is identical for all of them.
+#[inline(never)]
+fn write_display(reply: &mut String, message: &dyn fmt::Display) {
+    // Writing into a `String` cannot fail.
+    let _ = write!(reply, "{message}");
+}
+
 /// Formats `message` as a reply labeled `label`.
 ///
 /// The reply starts with [`REPLY_MARKER`], followed by the bold label, e.g.
 /// `> Twitch: <message>`.
+#[inline]
 #[must_use]
 pub fn labeled_reply(label: &str, message: impl fmt::Display) -> String {
-    format!("{REPLY_MARKER}{RESET}{BOLD} {label}:{BOLD}{COLOR} {message}")
+    let mut reply = String::with_capacity(LABELED_PREFIX_BYTES + label.len() + REPLY_BODY_RESERVE);
+    write_labeled_reply_prefix(&mut reply, label);
+    write_display(&mut reply, &message);
+
+    reply
+}
+
+/// Writes the bold-label prefix [`labeled_reply`] starts its replies with into `reply`.
+///
+/// Unlike [`labeled_reply`], the prefix can be written to an incrementally built message, e.g.
+/// from a `Display` implementation or a caller that assembles the whole reply in one buffer.
+pub fn write_labeled_reply_prefix(reply: &mut String, label: &str) {
+    reply.push_str(REPLY_MARKER);
+    reply.push_str(RESET);
+    reply.push_str(BOLD);
+    reply.push(' ');
+    reply.push_str(label);
+    reply.push(':');
+    reply.push_str(BOLD);
+    reply.push_str(COLOR);
+    reply.push(' ');
 }
 
 /// Returns the bold-label prefix that [`labeled_reply`] starts its replies with.
@@ -43,13 +87,21 @@ pub fn labeled_reply(label: &str, message: impl fmt::Display) -> String {
 /// from a `Display` implementation.
 #[must_use]
 pub fn labeled_reply_prefix(label: &str) -> String {
-    format!("{REPLY_MARKER}{RESET}{BOLD} {label}:{BOLD}{COLOR} ")
+    let mut prefix = String::with_capacity(LABELED_PREFIX_BYTES + label.len());
+    write_labeled_reply_prefix(&mut prefix, label);
+
+    prefix
 }
 
 /// Formats `message` as a reply without a label.
+#[inline]
 #[must_use]
 pub fn plain_reply(message: impl fmt::Display) -> String {
-    format!("{PLAIN_REPLY_PREFIX}{message}")
+    let mut reply = String::with_capacity(PLAIN_REPLY_PREFIX.len() + REPLY_BODY_RESERVE);
+    reply.push_str(PLAIN_REPLY_PREFIX);
+    write_display(&mut reply, &message);
+
+    reply
 }
 
 /// Strips a nickname mention (`<nick>, ...` or `<nick>: ...`) from the start of `s`.
@@ -58,13 +110,8 @@ pub fn plain_reply(message: impl fmt::Display) -> String {
 /// text following it.
 #[must_use]
 pub fn strip_nick_prefix<'a>(s: &'a str, current_nickname: &str) -> Option<&'a str> {
-    s.strip_prefix(current_nickname).and_then(|s| {
-        if s.starts_with(", ") || s.starts_with(": ") {
-            Some(&s[2..])
-        } else {
-            None
-        }
-    })
+    s.strip_prefix(current_nickname)
+        .and_then(|s| s.strip_prefix(", ").or_else(|| s.strip_prefix(": ")))
 }
 
 /// Removes every control character from `text`, including IRC formatting codes and their color

@@ -22,7 +22,9 @@ use tracing::{Instrument, debug, warn};
 use url::Host;
 
 use zeta_http as http;
-use zeta_plugin::irc::{COLOR, RESET, labeled_reply, labeled_reply_prefix, unstyle_text};
+use zeta_plugin::irc::{
+    COLOR, RESET, labeled_reply, labeled_reply_prefix, send_reply, unstyle_text,
+};
 use zeta_plugin::{Client, Context, ZetaError, plugin, plugin_err, resolve_secret};
 
 const BASE_URL: &str = "https://api.ip2location.io";
@@ -140,7 +142,7 @@ impl GeoIp {
         match self.resolve(&opts.name).await {
             Ok(info) => {
                 for line in reply(&info).lines() {
-                    client.send_privmsg(channel, line)?;
+                    send_reply(client, channel, line)?;
                 }
             }
             Err(err) => {
@@ -150,7 +152,7 @@ impl GeoIp {
                     "geoip lookup failed"
                 );
 
-                client.send_privmsg(channel, labeled_reply("GeoIP", err))?;
+                send_reply(client, channel, labeled_reply("GeoIP", err))?;
             }
         }
 

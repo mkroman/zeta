@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_mirror::{MediaId, Mirror, MirrorHandle};
-use zeta_plugin::irc::{labeled_reply, plain_reply};
+use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
@@ -130,9 +130,10 @@ impl Reddit {
                         .await?;
                 }
                 Err(err) => {
-                    client.send_privmsg(
+                    send_reply(
+                        client,
                         channel,
-                        plain_reply(format!("could not resolve video link: {err}")),
+                        plain_reply(format_args!("could not resolve video link: {err}")),
                     )?;
                 }
             },
@@ -144,9 +145,10 @@ impl Reddit {
                         }
                     }
                     Err(err) => {
-                        client.send_privmsg(
+                        send_reply(
+                            client,
                             channel,
-                            plain_reply(format!("could not resolve shortened link: {err}")),
+                            plain_reply(format_args!("could not resolve shortened link: {err}")),
                         )?;
                     }
                 }
@@ -154,12 +156,13 @@ impl Reddit {
             Link::Subreddit(subreddit) => {
                 match self.client.subreddit_about_info(&subreddit).await {
                     Ok(subreddit) => {
-                        client.send_privmsg(channel, format_subreddit(&subreddit))?;
+                        send_reply(client, channel, format_subreddit(&subreddit))?;
                     }
                     Err(err) => {
-                        client.send_privmsg(
+                        send_reply(
+                            client,
                             channel,
-                            plain_reply(format!("could not fetch subreddit details: {err}")),
+                            plain_reply(format_args!("could not fetch subreddit details: {err}")),
                         )?;
                     }
                 }
@@ -183,9 +186,10 @@ impl Reddit {
                     .await?;
             }
             Err(err) => {
-                client.send_privmsg(
+                send_reply(
+                    client,
                     channel,
-                    plain_reply(format!("could not fetch submission details: {err}")),
+                    plain_reply(format_args!("could not fetch submission details: {err}")),
                 )?;
             }
         }
@@ -205,7 +209,7 @@ impl Reddit {
         // reads it, so a copy would be a wasted allocation per mirrored submission.
         let id = submission.id.as_deref().unwrap_or(fallback_id);
 
-        client.send_privmsg(channel, format_submission(&submission))?;
+        send_reply(client, channel, format_submission(&submission))?;
 
         // The media URL from the API is used for the download: reddit's anti-bot filters may
         // prevent `yt-dlp` from accessing the video through the link itself.
@@ -235,7 +239,7 @@ impl Reddit {
 /// Formats a submission's title and subreddit as a complete plain reply, unstyled for a single
 /// IRC line. Callers send the result as-is.
 fn format_submission(submission: &Submission) -> String {
-    plain_reply(format!(
+    plain_reply(format_args!(
         "{} : {}",
         irc::unstyle_text(&submission.title),
         irc::unstyle_text(&submission.subreddit)

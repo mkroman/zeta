@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use zeta_cache::TtlCache;
-use zeta_plugin::irc::plain_reply;
+use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{
     Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin, plugin_err,
     resolve_secret,
@@ -287,7 +287,7 @@ impl CoinMarketCap {
         let opts = match CC.parse_shell::<CoinOpts>(args) {
             Ok(opts) if !opts.coin.trim().is_empty() => opts,
             _ => {
-                client.send_privmsg(channel, plain_reply(CC_USAGE))?;
+                send_reply(client, channel, plain_reply(CC_USAGE))?;
                 return Ok(());
             }
         };
@@ -316,9 +316,10 @@ impl CoinMarketCap {
         args: &str,
     ) -> Result<(), ZetaError> {
         let Ok(opts) = command.parse_shell::<QuoteOpts>(args) else {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
-                plain_reply(format!("Usage: {} \x0f[currency]", command.trigger())),
+                plain_reply(format_args!("Usage: {} \x0f[currency]", command.trigger())),
             )?;
             return Ok(());
         };
@@ -355,7 +356,8 @@ impl CoinMarketCap {
 
         match quote {
             Ok(quote) => {
-                client.send_privmsg(
+                send_reply(
+                    client,
                     channel,
                     format::format_quote(&quote, &currency, sign.as_deref()),
                 )?;
@@ -374,7 +376,7 @@ impl CoinMarketCap {
             warn!(exception.message = %err, "coin lookup failed");
         }
 
-        client.send_privmsg(channel, plain_reply(err.to_string()))?;
+        send_reply(client, channel, plain_reply(err.to_string()))?;
 
         Ok(())
     }

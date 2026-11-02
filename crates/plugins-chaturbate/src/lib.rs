@@ -10,7 +10,7 @@ use tracing::debug;
 use url::Url;
 
 use zeta_http as http;
-use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
@@ -74,7 +74,7 @@ impl Chaturbate {
         if let Some(username) = extract_username(url.url()) {
             debug!(%username, "processing chaturbate url");
             if let Err(e) = self.process_broadcaster(&username, channel, client).await {
-                client.send_privmsg(channel, labeled_reply("Chaturbate", e.to_string()))?;
+                send_reply(client, channel, labeled_reply("Chaturbate", e.to_string()))?;
             }
         }
 
@@ -107,7 +107,7 @@ impl Chaturbate {
             format!("{username} (\x0f{gender}\x0310) - {title}")
         };
 
-        client.send_privmsg(channel, labeled_reply("Chaturbate", &msg))?;
+        send_reply(client, channel, labeled_reply("Chaturbate", &msg))?;
 
         Ok(())
     }

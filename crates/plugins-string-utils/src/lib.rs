@@ -10,7 +10,7 @@
 use std::fmt::Write;
 use std::sync::Once;
 
-use zeta_plugin::irc::{RESET, plain_reply};
+use zeta_plugin::irc::{RESET, plain_reply, send_reply};
 use zeta_plugin::{Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin};
 
 mod unicode;
@@ -102,7 +102,8 @@ impl StringUtils {
             return Self::usage(client, command.channel(), command.spec);
         }
 
-        client.send_privmsg(
+        send_reply(
+            client,
             command.channel(),
             plain_reply((definition.render)(command.args())),
         )?;
@@ -123,7 +124,7 @@ impl StringUtils {
             return Ok(());
         };
 
-        client.send_privmsg(channel, plain_reply(usage))?;
+        send_reply(client, channel, plain_reply(usage))?;
 
         Ok(())
     }

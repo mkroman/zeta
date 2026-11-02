@@ -12,7 +12,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use zeta_plugin::irc::parse_or_usage;
+use zeta_plugin::irc::{parse_or_usage, send_reply};
 use zeta_plugin::{
     ArgsMode, Client, CommandEvent, CommandSpec, Context, Subscriptions, UrlEvent, ZetaError,
     plugin, plugin_err,
@@ -118,7 +118,8 @@ impl Imdb {
 
         let query = opts.query();
         if query.is_empty() {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
                 format!("{} usage: !imdb <title>", format::prefix()),
             )?;
@@ -128,13 +129,13 @@ impl Imdb {
         let results = match self.client.search(&query, SEARCH_LIMIT).await {
             Ok(results) => results,
             Err(err) => {
-                client.send_privmsg(channel, format!("{} {err}", format::prefix()))?;
+                send_reply(client, channel, format!("{} {err}", format::prefix()))?;
                 return Ok(());
             }
         };
 
         let Some(result) = results.first() else {
-            client.send_privmsg(channel, format!("{} no results", format::prefix()))?;
+            send_reply(client, channel, format!("{} no results", format::prefix()))?;
             return Ok(());
         };
 
@@ -182,8 +183,8 @@ impl Imdb {
         result: Result<String, Error>,
     ) -> Result<(), ZetaError> {
         match result {
-            Ok(message) => client.send_privmsg(channel, message)?,
-            Err(err) => client.send_privmsg(channel, format!("{} {err}", format::prefix()))?,
+            Ok(message) => send_reply(client, channel, message)?,
+            Err(err) => send_reply(client, channel, format!("{} {err}", format::prefix()))?,
         }
 
         Ok(())

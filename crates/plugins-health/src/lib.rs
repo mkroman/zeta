@@ -15,7 +15,7 @@ use tokio::runtime::Handle;
 #[cfg(feature = "database")]
 use zeta_plugin::database::Database;
 
-use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, ZetaError, plugin};
 
 /// The `.health` command description.
@@ -45,7 +45,7 @@ impl Health {
                 ..snapshot
             };
 
-            client.send_privmsg(channel, labeled_reply("Health", snapshot))?;
+            send_reply(client, channel, labeled_reply("Health", snapshot))?;
         }
 
         Ok(())

@@ -18,7 +18,7 @@ use url::Url;
 use zeta_http as http;
 use zeta_http::RequestError;
 use zeta_mirror::{MediaId, Mirror, MirrorHandle};
-use zeta_plugin::irc::{COLOR, RESET, plain_reply};
+use zeta_plugin::irc::{COLOR, RESET, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
@@ -171,7 +171,7 @@ impl Tiktok {
         if self.settings.post_summary
             && let Some(summary) = format_summary(&embed, self.settings.title_length)
         {
-            let _ = client.send_privmsg(channel, plain_reply(&summary));
+            let _ = send_reply(client, channel, plain_reply(&summary));
         }
 
         let Some(mirror) = self.mirror.as_ref() else {

@@ -23,7 +23,7 @@ use url::Url;
 
 use zeta_http as http;
 use zeta_http::oauth::Credentials;
-use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, MessageEvent, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text;
@@ -349,7 +349,8 @@ impl Spotify {
     {
         match self.fetch::<T>(path).await {
             Ok(details) => {
-                client.send_privmsg(
+                send_reply(
+                    client,
                     channel,
                     labeled_reply("Spotify", render(&details, include_url)),
                 )?;
@@ -366,7 +367,11 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
     if let http::ApiError::Status { status, .. } = error
         && *status == reqwest::StatusCode::NOT_FOUND
     {
-        client.send_privmsg(channel, labeled_reply("Spotify", "Resource not found"))?;
+        send_reply(
+            client,
+            channel,
+            labeled_reply("Spotify", "Resource not found"),
+        )?;
     }
 
     Ok(())

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
 use tracing::{error, warn};
 
-use zeta_plugin::irc::{COLOR, RESET, labeled_reply, plain_reply, unstyle_text};
+use zeta_plugin::irc::{COLOR, RESET, labeled_reply, plain_reply, send_reply, unstyle_text};
 use zeta_plugin::{
     Client, CommandEvent, CommandSpec, Context, MessageEvent, Subscriptions, ZetaError, plugin,
     plugin_err,
@@ -89,7 +89,8 @@ impl NotificationPlugin {
         let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
 
         let Some((target, message)) = parse_args(command.args()) else {
-            client.send_privmsg(
+            send_reply(
+                client,
                 channel,
                 labeled_reply("Notification", "Usage: .notify\x0f <nick> <message>"),
             )?;
@@ -110,12 +111,12 @@ impl NotificationPlugin {
             Ok(_) => plain_reply("The notification has been stored."),
             Err(Error::TooManyPending(max)) => labeled_reply(
                 "Notification",
-                format!("{target} already has {max} pending notifications in this channel"),
+                format_args!("{target} already has {max} pending notifications in this channel"),
             ),
             Err(_) => labeled_reply("Notification", "could not store the notification"),
         };
 
-        client.send_privmsg(channel, message)?;
+        send_reply(client, channel, message)?;
 
         Ok(())
     }
@@ -152,7 +153,8 @@ impl NotificationPlugin {
                     .with_timezone(&Local)
                     .format("%d/%m/%Y %H:%M:%S");
 
-                match client.send_privmsg(
+                match send_reply(
+                    client,
                     channel,
                     format!(
                         "{nickname}:{COLOR} Notification{RESET} {message}{COLOR} from{RESET} {creator}{COLOR} at{RESET} {created_at}"

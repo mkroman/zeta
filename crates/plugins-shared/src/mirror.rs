@@ -10,7 +10,7 @@ use irc::client::Client;
 use tracing::warn;
 
 use zeta_mirror::{MediaId, MirrorHandle};
-use zeta_plugin::irc::plain_reply;
+use zeta_plugin::irc::{plain_reply, send_reply, send_reply_via};
 
 /// Mirrors the media at `url` and replies with the mirrored file's link, when the plugin has a
 /// mirror configured.
@@ -37,13 +37,13 @@ pub async fn ensure_mirrored_if_configured(
     let on_mirrored = {
         let channel = Arc::clone(&channel);
         move |link: String| {
-            let _ = sender.send_privmsg(&channel, plain_reply(link));
+            let _ = send_reply_via(&sender, &channel, plain_reply(link));
         }
     };
 
     match mirror.ensure_mirrored(url, id, on_mirrored).await {
         Ok(Some(link)) => {
-            let _ = client.send_privmsg(&channel, plain_reply(&link));
+            let _ = send_reply(client, &channel, plain_reply(&link));
         }
         Ok(None) => {}
         Err(error) => {

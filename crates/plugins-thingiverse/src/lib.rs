@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 use url::Url;
 
 use zeta_http as http;
-use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 
@@ -113,7 +113,7 @@ impl Thingiverse {
                 }
             };
 
-            client.send_privmsg(channel, message)?;
+            send_reply(client, channel, message)?;
         }
 
         Ok(())
