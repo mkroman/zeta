@@ -133,7 +133,7 @@ pub struct YouTube {
     /// HTTP client for making API requests with connection pooling
     client: reqwest::Client,
     /// Thread-safe cache of video categories mapped by category ID, refreshed by the task
-    /// started in [`Plugin::loaded`] once per [`CATEGORIES_TTL`].
+    /// started in [`Plugin::loaded`](zeta_plugin::Plugin::loaded) once per [`CATEGORIES_TTL`].
     video_categories: Arc<TtlCache<HashMap<String, Category>>>,
 }
 

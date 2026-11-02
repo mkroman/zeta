@@ -50,8 +50,9 @@ pub struct Settings {
     /// Hosts whose URLs are left to dedicated plugins.
     ///
     /// Empty by default: the hosts that loaded plugins advertise through the plugin catalog
-    /// (see [`Subscriptions::urls`]) are left alone without any configuration, including hosts
-    /// of plugins added after this configuration was written.
+    /// (see [`Subscriptions::urls`](zeta_plugin::Subscriptions::urls)) are left alone without
+    /// any configuration, including hosts of plugins added after this configuration was
+    /// written.
     pub ignored_hosts: Vec<String>,
     /// The maximum number of redirects to follow.
     pub max_redirects: usize,

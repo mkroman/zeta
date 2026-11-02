@@ -121,7 +121,7 @@ const SUCCESS_MESSAGES: &[&str] = &[
 /// The alert service is published to [`Context::shared`], so other plugins can schedule alerts
 /// through [`AlertService::create`].
 ///
-/// [`loaded`]: Plugin::loaded
+/// [`loaded`]: zeta_plugin::Plugin::loaded
 pub struct AlertPlugin {
     /// The alert service, also published for other plugins to use.
     service: Arc<AlertService>,
