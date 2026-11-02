@@ -12,7 +12,7 @@ pub enum Link {
     /// title (e.g. `/title/tt1375666/mediaviewer/rm2694581760`).
     Title(String),
     /// Link to a person (e.g. `/name/nm0186505`).
-    Name(String),
+    Person(String),
 }
 
 /// Attempts to parse the given `url` as an IMDb URL.
@@ -31,7 +31,7 @@ pub fn classify_imdb_url(url: &Url) -> Option<Link> {
         }
         // `/name/<id>[/…]`
         Some(["name", id, ..]) if is_prefixed_numeric_id(id, "nm") => {
-            Some(Link::Name((*id).to_string()))
+            Some(Link::Person((*id).to_string()))
         }
         _ => None,
     }
@@ -77,21 +77,21 @@ mod tests {
     }
 
     #[test]
-    fn classify_name_urls() {
+    fn classify_person_urls() {
         assert_parses(
             classify_imdb_url,
             &[
                 (
                     "https://www.imdb.com/name/nm0000138/",
-                    Some(Link::Name("nm0000138".to_string())),
+                    Some(Link::Person("nm0000138".to_string())),
                 ),
                 (
                     "https://www.imdb.com/name/nm0000138",
-                    Some(Link::Name("nm0000138".to_string())),
+                    Some(Link::Person("nm0000138".to_string())),
                 ),
                 (
                     "https://www.imdb.com/name/nm0186505/awards",
-                    Some(Link::Name("nm0186505".to_string())),
+                    Some(Link::Person("nm0186505".to_string())),
                 ),
             ],
         );

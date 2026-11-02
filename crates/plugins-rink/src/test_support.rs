@@ -79,8 +79,8 @@ pub const TEST_CURRENCY_DATA: &str = r#"[
 ]"#;
 
 /// Builds a CoinMarketCap client configuration for the tests.
-pub fn test_client_config() -> coinmarketcap::Config {
-    coinmarketcap::Config::default()
+pub fn test_client_options() -> coinmarketcap::ClientOptions {
+    coinmarketcap::ClientOptions::default()
 }
 
 /// A ranked cryptocurrency listing fixture: Ethereum and a faked euro coin, plus a symbol
@@ -217,7 +217,7 @@ pub async fn plugin_with_listings(status: u16) -> (Rink, MockServer, MockServer)
     rink.cmc = Some(Arc::new(
         CmcClient::with_base(
             "test-api-key",
-            &test_client_config(),
+            &test_client_options(),
             &listings_server.uri(),
         )
         .unwrap(),

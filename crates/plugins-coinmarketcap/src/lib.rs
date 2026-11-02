@@ -32,7 +32,7 @@ use zeta_plugin::prelude::*;
 use zeta_utils::irc::strip_control_chars;
 
 use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat};
-use coinmarketcap::{Client as CmcClient, Config, Error};
+use coinmarketcap::{Client as CmcClient, ClientOptions, Error};
 
 mod format;
 mod matching;
@@ -212,9 +212,9 @@ impl CoinMarketCap {
     ) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
         let client = Arc::new(
-            CmcClient::with_config(
+            CmcClient::with_options(
                 api_key,
-                &Config {
+                &ClientOptions {
                     timeout: ctx.config.http.timeout,
                     user_agent: ctx.config.http.user_agent.clone(),
                 },
@@ -506,7 +506,9 @@ mod tests {
     /// Builds a plugin instance for lookup tests, without touching the API.
     fn test_plugin() -> CoinMarketCap {
         CoinMarketCap {
-            client: Arc::new(CmcClient::with_config("test-api-key", &Config::default()).unwrap()),
+            client: Arc::new(
+                CmcClient::with_options("test-api-key", &ClientOptions::default()).unwrap(),
+            ),
             coins: TtlCache::with_value(CoinCache::from(test_coins()), CACHE_TTL),
             fiat: TtlCache::new(CACHE_TTL),
             default_currency: DEFAULT_CURRENCY.to_string(),

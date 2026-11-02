@@ -375,7 +375,7 @@ mod tests {
 
     use crate::test_support::{
         TEST_CURRENCY_DATA, currency_server, evaluate, listings_server, offline_plugin,
-        plugin_with_listings, test_client_config, test_plugin,
+        plugin_with_listings, test_client_options, test_plugin,
     };
 
     #[tokio::test]
@@ -514,7 +514,7 @@ mod tests {
 
         let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat.uri())));
         rink.cmc = Some(Arc::new(
-            CmcClient::with_base("test-api-key", &test_client_config(), &listings.uri()).unwrap(),
+            CmcClient::with_base("test-api-key", &test_client_options(), &listings.uri()).unwrap(),
         ));
 
         rink.ensure_currency_cached().await;

@@ -35,7 +35,7 @@ mod client;
 mod error;
 pub mod model;
 
-pub use client::{Client, Config};
+pub use client::{Client, ClientOptions};
 pub use error::Error;
 pub use model::{
     Coin, CoinQuery, DEFAULT_CURRENCY, Envelope, Fiat, FiatQuote, Listing, ListingQuote, QuoteData,

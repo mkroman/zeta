@@ -51,8 +51,8 @@ pub enum Error {
 
 /// Structure representing the GitHub Plugin.
 /// Holds the HTTP client to reuse connection pools.
-pub struct GitHubPlugin {
-    http: reqwest::Client,
+pub struct GitHub {
+    client: reqwest::Client,
 }
 
 /// Represents the top-level search response from GitHub API.
@@ -73,7 +73,7 @@ struct RepoItem {
 }
 
 #[plugin(name = "github", settings = Settings)]
-impl GitHubPlugin {
+impl GitHub {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         // The token is optional; it only raises the API rate limit.
         let token = resolve_optional_setting(settings.token.as_deref(), "GITHUB_TOKEN");
@@ -118,7 +118,7 @@ impl GitHubPlugin {
     }
 }
 
-impl GitHubPlugin {
+impl GitHub {
     /// Creates a new instance of the GitHub plugin.
     ///
     /// # Errors
@@ -148,7 +148,7 @@ impl GitHubPlugin {
             .build()
             .map_err(|error| Error::Request(RequestError::from(error)))?;
 
-        Ok(Self { http: client })
+        Ok(Self { client })
     }
 
     /// Searches for repositories matching `query`.
@@ -161,7 +161,7 @@ impl GitHubPlugin {
         let params = [("q", query), ("sort", "stars"), ("order", "desc")];
 
         let request = self
-            .http
+            .client
             .get("https://api.github.com/search/repositories")
             .query(&params);
         http::get_json(request).await.map_err(Error::from)
@@ -219,8 +219,7 @@ mod tests {
     #[test]
     fn invalid_tokens_are_rejected() {
         assert!(
-            GitHubPlugin::with_token(&HttpConfig::default(), Some("bad\ntoken".to_string()))
-                .is_err(),
+            GitHub::with_token(&HttpConfig::default(), Some("bad\ntoken".to_string())).is_err(),
             "invalid token should be rejected"
         );
     }

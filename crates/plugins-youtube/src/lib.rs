@@ -297,7 +297,6 @@ impl YouTube {
         &self,
         _ctx: &Context,
         client: &Client,
-        channel: &str,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
         let args = command.args().trim();
@@ -310,7 +309,7 @@ impl YouTube {
 
         reply_lookup(
             client,
-            channel,
+            command.channel(),
             self.search(args),
             search_reply,
             plain_reply,
@@ -608,15 +607,18 @@ mod tests {
             assert!(settings.api_key.is_none());
             assert_eq!(settings.region_code, "US");
             assert_eq!(settings.safe_search, SafeSearch::None);
+            assert!(settings.enable_command);
         }
         deserialize: {
             "api_key": "secret",
             "region_code": "DK",
             "safe_search": "strict",
+            "enable_command": false,
         } assert: {
             assert_eq!(settings.api_key.as_deref(), Some("secret"));
             assert_eq!(settings.region_code, "DK");
             assert_eq!(settings.safe_search, SafeSearch::Strict);
+            assert!(!settings.enable_command);
         }
     }
 
