@@ -169,6 +169,8 @@ impl PluginTask {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use zeta_plugin::event::MessageEvent;
     use zeta_test_support::{Recording, RecordingPlugin, publish_recording, test_context};
@@ -197,6 +199,16 @@ mod tests {
                 .push("shutdown");
 
             Ok(())
+        }
+    }
+
+    /// A plugin whose `loaded` hook fails, modelling a plugin that gives up at startup.
+    struct FailingLoader;
+
+    #[zeta_plugin::async_trait::async_trait]
+    impl Plugin for FailingLoader {
+        async fn loaded(&mut self, _: &Context, _: &Client) -> Result<(), zeta_plugin::Error> {
+            Err(zeta_plugin::Error::Message("load failed".to_owned()))
         }
     }
 
@@ -291,5 +303,37 @@ mod tests {
                 .expect("the recording lock is not poisoned"),
             ["shutdown"]
         );
+    }
+
+    /// A hook that fails to load still reports on the startup barrier before its task exits: the
+    /// host must not wait out the grace for a task that will never handle events.
+    #[tokio::test]
+    async fn a_failed_load_reports_on_the_startup_barrier() {
+        let ctx = Arc::new(test_context());
+        let client = Arc::new(zeta_test_support::mock_client().await);
+
+        let (_, receiver) = mpsc::channel(8);
+        let (started, startup) = oneshot::channel();
+        let task = PluginTask::spawn(
+            "failing",
+            Box::new(FailingLoader),
+            Arc::clone(&ctx),
+            Arc::clone(&client),
+            receiver,
+            Arc::new(OnceLock::new()),
+            started,
+        );
+
+        // The hook fails, but the task sends before returning: the receiver resolves well before
+        // any realistic startup grace. A dropped sender would resolve with an error instead.
+        tokio::time::timeout(Duration::from_secs(1), startup)
+            .await
+            .expect("the failed load should report instead of waiting out the grace")
+            .expect("the task should report before it exits");
+
+        let (_, handle) = task.into_handle();
+        handle
+            .await
+            .expect("the failed loaded hook exits the task cleanly");
     }
 }
