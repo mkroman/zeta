@@ -17,6 +17,9 @@ pub enum Error {
     /// A plugin-specific error, boxed from the plugin's own error type.
     #[error("Plugin error: {0}")]
     Plugin(#[from] BoxError),
+    /// A plugin failed with a plain message, e.g. an invalid configuration value.
+    #[error("{0}")]
+    Message(String),
 }
 
 /// Wraps any error into [`Error::Plugin`].
@@ -41,9 +44,9 @@ pub fn plugin_err<E: StdError + Send + Sync + 'static>(e: E) -> Error {
 /// The error message includes the variable name.
 pub fn resolve_secret(value: Option<&str>, name: &str) -> Result<String, Error> {
     zeta_utils::settings::resolve_optional_setting(value, name).ok_or_else(|| {
-        Error::Plugin(Box::new(std::io::Error::other(format!(
+        Error::Message(format!(
             "neither the plugin setting nor environment variable `{name}` is set"
-        ))))
+        ))
     })
 }
 

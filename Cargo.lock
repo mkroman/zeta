@@ -6005,6 +6005,7 @@ dependencies = [
  "arc-swap",
  "tokio",
  "zeta-test-support",
+ "zeta-utils",
 ]
 
 [[package]]
@@ -6118,6 +6119,7 @@ dependencies = [
 name = "zeta-test-support"
 version = "0.0.0"
 dependencies = [
+ "irc",
  "reqwest",
  "serde_json",
  "sqlx",

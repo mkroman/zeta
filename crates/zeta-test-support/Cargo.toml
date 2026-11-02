@@ -8,12 +8,14 @@ repository = "https://github.com/mkroman/zeta"
 
 [features]
 default = ["context", "http"]
-# The plugin context helper, with an unreachable (lazily connected) database pool.
-context = ["dep:sqlx", "dep:zeta-plugin", "zeta-plugin/database"]
+# The plugin context helper, with an unreachable (lazily connected) database pool, and the
+# mock IRC client.
+context = ["dep:irc", "dep:sqlx", "dep:zeta-plugin", "zeta-plugin/database"]
 # The HTTP transport helpers: connection-refused, timeout, and 404 servers.
 http = ["dep:reqwest", "dep:wiremock"]
 
 [dependencies]
+irc = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 serde_json.workspace = true
 # The test context carries an unreachable (lazily connected) database pool; the plugin

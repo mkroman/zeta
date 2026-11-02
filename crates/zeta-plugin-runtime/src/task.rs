@@ -187,17 +187,7 @@ mod tests {
         let ctx = Arc::new(test_context());
         let recording = publish_recording(&ctx);
 
-        let client = Arc::new(
-            Client::from_config(irc::client::data::Config {
-                nickname: Some("zeta-test".to_owned()),
-                server: Some("mock".to_owned()),
-                use_mock_connection: true,
-                mock_initial_value: Some(String::new()),
-                ..Default::default()
-            })
-            .await
-            .expect("mock irc client"),
-        );
+        let client = Arc::new(zeta_test_support::mock_client().await);
 
         let (sender, receiver) = mpsc::unbounded_channel();
         let task = PluginTask::spawn(
@@ -239,17 +229,7 @@ mod tests {
         let ctx = Arc::new(test_context());
         let recording = publish_recording(&ctx);
 
-        let client = Arc::new(
-            Client::from_config(irc::client::data::Config {
-                nickname: Some("zeta-test".to_owned()),
-                server: Some("mock".to_owned()),
-                use_mock_connection: true,
-                mock_initial_value: Some(String::new()),
-                ..Default::default()
-            })
-            .await
-            .expect("mock irc client"),
-        );
+        let client = Arc::new(zeta_test_support::mock_client().await);
 
         let (sender, receiver) = mpsc::unbounded_channel();
         let task = PluginTask::spawn(

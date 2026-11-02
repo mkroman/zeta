@@ -184,20 +184,6 @@ mod tests {
         }
     }
 
-    /// Builds a client on the `irc` crate's mock connection, so the test needs no server.
-    async fn mock_client() -> Arc<Client> {
-        let config = irc::client::prelude::Config {
-            use_mock_connection: true,
-            ..irc::client::prelude::Config::default()
-        };
-
-        Arc::new(
-            Client::from_config(config)
-                .await
-                .expect("a mock connection should be created"),
-        )
-    }
-
     /// The runtime resolves the handle the filter plugin published from its constructor, and
     /// keeps it: filtering changes go through the service, not through another `publish`.
     #[tokio::test]
@@ -208,7 +194,7 @@ mod tests {
                 "ignored",
             )))));
 
-        let client = mock_client().await;
+        let client = Arc::new(zeta_test_support::mock_client().await);
         let runtime = PluginRuntime::start(Vec::new(), &ctx, &client);
         let sender = |nick| Some(Sender::new(nick, "user", "host.example"));
 

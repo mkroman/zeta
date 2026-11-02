@@ -32,11 +32,9 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
     let request = request?;
     let method = request.method().clone();
     let uri = request.uri();
-    let port = uri.port_u16().or_else(|| match uri.scheme_str() {
-        Some("https") => Some(443),
-        Some("http") => Some(80),
-        _ => None,
-    });
+    let port = uri
+        .port_u16()
+        .or_else(|| crate::uri::default_port(uri.scheme_str()));
 
     let span = info_span!(
         "http.client",

@@ -52,6 +52,24 @@ pub fn test_context() -> zeta_plugin::Context {
     )
 }
 
+/// Builds an IRC client on the `irc` crate's mock connection, so a test needs no server.
+///
+/// # Panics
+///
+/// Panics if the mock client cannot be constructed.
+#[cfg(feature = "context")]
+pub async fn mock_client() -> zeta_plugin::Client {
+    zeta_plugin::Client::from_config(irc::client::data::Config {
+        nickname: Some("zeta-test".to_owned()),
+        server: Some("mock".to_owned()),
+        use_mock_connection: true,
+        mock_initial_value: Some(String::new()),
+        ..Default::default()
+    })
+    .await
+    .expect("mock irc client")
+}
+
 /// The lifecycle log shared between a test and its [`RecordingPlugin`].
 #[cfg(feature = "context")]
 pub type Recording = std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>;
