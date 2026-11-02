@@ -343,11 +343,11 @@ type CommandKey = (&'static str, TypeId);
 /// is rendered as the binary name in usage and help output; the argument type is keyed by
 /// [`TypeId`], so parsers must be `'static`.
 ///
-/// This outer map uses a non-poisoning lock: its critical sections only read, insert and remove
-/// entries on trusted keys, and an insertion happens only after the entry is fully configured —
-/// so a panic while configuring a fresh command leaves the map unchanged, never half-updated.
-/// The per-command `std::sync::Mutex` inside stays poisoning on purpose — a parse that panicked
-/// must be detected so its command is evicted, not reused.
+/// This outer map uses a non-poisoning lock. A fresh command is configured inside
+/// `or_insert_with` while the lock is held, but the entry API only inserts after the closure
+/// returns: a panic in `configure` unwinds with the map unchanged rather than leaving a
+/// half-configured command behind. The per-command `std::sync::Mutex` inside stays poisoning on
+/// purpose — a parse that panicked must be detected so its command is evicted, not reused.
 static COMMANDS: LazyLock<parking_lot::Mutex<HashMap<CommandKey, Arc<Mutex<Command>>>>> =
     LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
 

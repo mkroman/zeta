@@ -253,17 +253,20 @@ const DEFAULT_FLIGHT_CAPACITY: usize = 16;
 pub struct TtlMap<K, V> {
     /// The cached entries, keyed by their lookup key.
     ///
-    /// A short write guard covers an insert; reads share a read guard. The critical sections
-    /// only update the map and perform TTL arithmetic on trusted keys; an evicted or replaced
-    /// value is dropped only after its entry is removed, so a panic cannot leave the map
-    /// half-updated — which is what makes this non-poisoning lock sound.
+    /// A short write guard covers an insert; reads share a read guard. These critical sections do
+    /// run user code: map operations call `K`'s `Hash`/`Eq`, eviction clones a key, and replacing
+    /// or evicting an entry drops a `V`. The lock is still safe without poisoning because
+    /// `HashMap` is panic-safe and the guard is released while unwinding — a panic can leave an
+    /// eviction partly done or skip the insert that triggered it, but never leaves the map
+    /// structurally invalid.
     entries: RwLock<HashMap<K, Entry<Option<Arc<V>>>>>,
     /// Per-key single-flight locks: concurrent misses for the same key refresh once. Entries
     /// are removed once they are uncontended, so the map does not grow with refreshed keys.
     ///
-    /// No user code runs under the lock — the critical sections only insert, look up and
-    /// remove entries on trusted keys — so a panic cannot leave it half-updated, which is what
-    /// makes this non-poisoning lock sound.
+    /// The critical sections clone and hash the key, so they do run `K`'s `Clone`/`Hash`/`Eq`
+    /// implementations. The lock is still safe without poisoning: `HashMap` is panic-safe and the
+    /// guard is released while unwinding, leaving the map structurally valid (at worst, an entry
+    /// is not inserted or removed).
     flights: Mutex<HashMap<K, Arc<tokio::sync::Mutex<()>>>>,
     /// How long a cached value stays fresh.
     ttl: Duration,
@@ -387,6 +390,10 @@ where
 
     /// Inserts an entry for `key`, evicting expired entries and, when still at capacity, the
     /// closest-to-expiring entry first.
+    ///
+    /// Replaced and evicted values are dropped while the write guard is held. If a `V`
+    /// destructor panics, the guard is released while unwinding with the map still structurally
+    /// valid; eviction may stop early and the insert that triggered it may not run.
     fn insert(&self, key: K, value: Option<V>) {
         let ttl = if value.is_some() {
             self.ttl
@@ -409,6 +416,10 @@ where
 
     /// Makes room for a new entry by removing expired entries and, when the cache is still at
     /// capacity, the single closest-to-expiring entry.
+    ///
+    /// Removed entries are dropped while the caller's write guard is held. `retain` and `remove`
+    /// are panic-safe, so a panicking `V` destructor leaves the map structurally valid, possibly
+    /// with the purge incomplete and the following insert skipped.
     fn evict(entries: &mut HashMap<K, Entry<Option<Arc<V>>>>, capacity: usize) {
         let now = Instant::now();
         let mut expired = 0usize;
