@@ -7,6 +7,7 @@
 //! [`Credentials`] pairs it with the application's credentials and the shared HTTP client.
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -34,7 +35,9 @@ pub struct TokenResponse {
 /// owner.
 pub struct TokenCache {
     /// The cached access token, stale once its lifetime minus the expiry buffer has passed.
-    token: TtlCache<String>,
+    ///
+    /// Shared behind an `Arc` so a request borrows the token instead of cloning its bytes.
+    token: TtlCache<Arc<str>>,
 }
 
 impl TokenCache {
@@ -64,13 +67,32 @@ impl TokenCache {
         R: FnOnce() -> F + Send,
         F: Future<Output = Result<TokenResponse, E>> + Send,
     {
+        self.get_shared(refresh)
+            .await
+            .map(|token| token.to_string())
+    }
+
+    /// Returns a valid access token as a shared string, requesting a new one through `refresh`
+    /// when the cached token is missing or within `EXPIRY_BUFFER` of expiring.
+    ///
+    /// Serves the same cached token as [`TokenCache::get`], but hands out the cached
+    /// allocation instead of copying the token for every request.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `refresh` if it fails to obtain a new token.
+    pub async fn get_shared<E, F, R>(&self, refresh: R) -> Result<Arc<str>, E>
+    where
+        R: FnOnce() -> F + Send,
+        F: Future<Output = Result<TokenResponse, E>> + Send,
+    {
         self.token
             .get_or_refresh_with(|| async move {
                 let response = refresh().await?;
                 let lifetime = Duration::from_secs(response.expires_in);
 
                 Ok((
-                    response.access_token,
+                    Arc::from(response.access_token),
                     lifetime.saturating_sub(EXPIRY_BUFFER),
                 ))
             })
@@ -154,8 +176,29 @@ impl Credentials {
         &self,
         grant: impl FnOnce(&reqwest::Client, &Self) -> reqwest::RequestBuilder + Send,
     ) -> Result<String, crate::ApiError> {
+        self.access_token_shared(grant)
+            .await
+            .map(|token| token.to_string())
+    }
+
+    /// Returns a valid access token as a shared string, requesting a new one through the
+    /// client-credentials grant when the cached token is missing or within the expiry buffer of
+    /// expiring.
+    ///
+    /// Serves the same cached token as [`Credentials::access_token`], but hands out the cached
+    /// allocation instead of copying the token for every API request. `grant` builds the token
+    /// request exactly as for [`Credentials::access_token`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an `http::ApiError` when the token request fails or its response cannot be
+    /// parsed.
+    pub async fn access_token_shared(
+        &self,
+        grant: impl FnOnce(&reqwest::Client, &Self) -> reqwest::RequestBuilder + Send,
+    ) -> Result<Arc<str>, crate::ApiError> {
         self.token
-            .get(|| async {
+            .get_shared(|| async {
                 debug!(auth_url = %self.auth_url, "refreshing oauth2 access token");
                 let token = crate::get_json(grant(&self.client, self)).await?;
 
@@ -172,7 +215,7 @@ mod tests {
 
     use super::*;
 
-    fn cached_token(cache: &TokenCache) -> Option<String> {
+    fn cached_token(cache: &TokenCache) -> Option<Arc<str>> {
         cache.token.get()
     }
 
@@ -280,6 +323,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shared_tokens_reuse_the_cached_allocation() {
+        let cache = TokenCache::new();
+        let requests = Arc::new(AtomicUsize::new(0));
+
+        let refresh = || {
+            let requests = Arc::clone(&requests);
+
+            async move {
+                requests.fetch_add(1, Ordering::SeqCst);
+
+                Ok::<_, ()>(TokenResponse {
+                    access_token: "token".to_owned(),
+                    expires_in: 3600,
+                })
+            }
+        };
+
+        let first = cache.get_shared(refresh).await.unwrap();
+        // The `String` accessor serves the same cache entry and must not refresh it.
+        let string = cache.get(refresh).await.unwrap();
+        let second = cache.get_shared(refresh).await.unwrap();
+        let cached = cached_token(&cache).expect("the token is cached");
+
+        assert_eq!(string, "token");
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&second, &cached));
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn access_token_requests_one_token_through_the_grant() {
         use serde_json::json;
         use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
@@ -314,5 +387,44 @@ mod tests {
 
         assert_eq!(first, "token");
         assert_eq!(second, "token");
+    }
+
+    #[tokio::test]
+    async fn access_token_shared_reuses_the_cached_allocation() {
+        use serde_json::json;
+        use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
+
+        let server = MockServer::start().await;
+
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "token",
+                "expires_in": 3600,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let credentials = Credentials::new(
+            reqwest::Client::new(),
+            "https://auth.example/token",
+            "client-id",
+            "client-secret",
+        );
+        let grant = |client: &reqwest::Client, _: &Credentials| {
+            client
+                .post(&uri)
+                .form(&[("grant_type", "client_credentials")])
+        };
+
+        // The `String` accessor populates the cache; both shared reads must serve that same
+        // allocation, and the mock's `expect(1)` pins the single token request.
+        let string = credentials.access_token(grant).await.unwrap();
+        let first = credentials.access_token_shared(grant).await.unwrap();
+        let second = credentials.access_token_shared(grant).await.unwrap();
+
+        assert_eq!(string, "token");
+        assert!(Arc::ptr_eq(&first, &second));
     }
 }

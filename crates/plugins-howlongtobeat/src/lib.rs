@@ -10,6 +10,7 @@
 //! `403 Forbidden` refreshes the token and retries the search once. The token binds the caller's
 //! IP address and User-Agent, so the init and search requests must go through one client.
 
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::{
@@ -47,8 +48,8 @@ const AUTH_TTL: Duration = Duration::from_hours(1);
 pub struct HowLongToBeat {
     /// The HTTP client used for requests.
     client: reqwest::Client,
-    /// Cached search token.
-    auth: TtlCache<String>,
+    /// Cached search token, shared so a search only borrows it.
+    auth: TtlCache<Arc<str>>,
 }
 
 /// Errors that can occur during API interactions.
@@ -255,7 +256,7 @@ impl HowLongToBeat {
     ///
     /// The token binds the caller's IP address and User-Agent, so it is only valid for
     /// requests made through the same client.
-    async fn fetch_auth(&self) -> Result<String, Error> {
+    async fn fetch_auth(&self) -> Result<Arc<str>, Error> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -270,7 +271,7 @@ impl HowLongToBeat {
             .header(REFERER, REFERER_URL);
         let init: InitResponse = http::get_json(request).await?;
 
-        Ok(init.token)
+        Ok(init.token.into())
     }
 
     /// Performs a search for a specific game query.

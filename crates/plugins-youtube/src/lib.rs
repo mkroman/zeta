@@ -134,7 +134,10 @@ pub struct YouTube {
     client: reqwest::Client,
     /// Thread-safe cache of video categories mapped by category ID, refreshed by the task
     /// started in [`Plugin::loaded`](zeta_plugin::Plugin::loaded) once per [`CATEGORIES_TTL`].
-    video_categories: Arc<TtlCache<HashMap<String, Category>>>,
+    ///
+    /// The map is shared behind an `Arc` so a reply borrows the titles instead of cloning one
+    /// per video.
+    video_categories: Arc<TtlCache<Arc<HashMap<String, Category>>>>,
 }
 
 /// YouTube API and plugin-specific error types.
@@ -362,19 +365,21 @@ impl YouTube {
     /// Formats the reply for `video`, resolving its category and view count.
     fn video_reply(&self, video: &Video) -> String {
         let snippet = video.snippet.as_ref();
-        let category_id = snippet.map_or(String::new(), |s| s.category_id.clone());
+        let category_id = snippet.map(|s| s.category_id.as_str());
 
         // The map is refreshed by the task started on load; the read is
         // stale-tolerant, so an unavailable API keeps serving the last known
-        // categories.
-        let category = self.video_categories.with_value(|cache| {
-            cache
-                .and_then(|categories| categories.get(&category_id))
-                .map_or_else(
-                    || "unknown category".to_string(),
-                    |category| category.snippet.title.clone(),
-                )
-        });
+        // categories. Cloning the `Arc` lets the category title be borrowed
+        // after the closure instead of copied.
+        #[allow(clippy::redundant_closure_for_method_calls)] // a bare `Option::cloned` is ambiguous
+        let categories = self.video_categories.with_value(|cache| cache.cloned());
+        let category = categories
+            .as_deref()
+            .zip(category_id)
+            .and_then(|(categories, id)| categories.get(id))
+            .map_or("unknown category", |category| {
+                category.snippet.title.as_str()
+            });
 
         let view_count = video
             .statistics
@@ -382,7 +387,7 @@ impl YouTube {
             .and_then(|s| str::parse::<u64>(&s.view_count).ok())
             .unwrap_or(0);
 
-        format_video_message(video, &category, view_count)
+        format_video_message(video, category, view_count)
     }
 
     /// Spawns the task that periodically refreshes the cached video categories.
@@ -414,7 +419,9 @@ impl YouTube {
                 async {
                     let refreshed = cache
                         .refresh(|| async {
-                            fetch_video_categories(&client, &api_key, &region_code).await
+                            fetch_video_categories(&client, &api_key, &region_code)
+                                .await
+                                .map(Arc::new)
                         })
                         .await;
 

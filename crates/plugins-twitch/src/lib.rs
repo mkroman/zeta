@@ -187,7 +187,7 @@ impl Twitch {
     ) -> Result<Response<T>, Error> {
         let token = self
             .credentials
-            .access_token(Self::token_grant)
+            .access_token_shared(Self::token_grant)
             .await
             .map_err(Error::from)?;
         let url = format!("{BASE_URL}/{endpoint}");
