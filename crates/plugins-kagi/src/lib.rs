@@ -10,7 +10,6 @@
 //! the `language` setting). A missing token fails plugin initialization and the plugin is
 //! skipped at startup; the HTTP timeout and user agent come from the shared `[http]` settings.
 
-use std::future::Future;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -44,13 +43,13 @@ impl Default for Settings {
 }
 
 /// Kagi search integration.
-pub struct KagiPlugin {
+pub struct Kagi {
     /// Kagi search client.
     client: kagi::Client,
 }
 
 #[plugin(name = "kagi", settings = Settings)]
-impl KagiPlugin {
+impl Kagi {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let token = resolve_secret(settings.session_token.as_deref(), "KAGI_SESSION_TOKEN")?;
         let options = kagi::ClientOptions {
@@ -77,17 +76,29 @@ impl KagiPlugin {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let search = |query: String| async move {
-            self.client.search(&query).await.map(|results| {
-                results
-                    .into_iter()
-                    .map(|result| (result.title, result.url))
-                    .collect()
-            })
-        };
+        reply_lookup(
+            client,
+            command.channel(),
+            self.client.search(command.args()),
+            |results| {
+                results.first().map_or_else(
+                    || plain_reply("No results"),
+                    |result| {
+                        labeled_reply(
+                            "Kagi",
+                            format!("{} - {}", unstyle_text(&result.title), result.url),
+                        )
+                    },
+                )
+            },
+            |err| {
+                warn!(exception.message = %err, "kagi search failed");
+                plain_reply(err)
+            },
+        )
+        .await?;
 
-        self.handle_lookup(client, command.channel(), command.args(), search)
-            .await
+        Ok(())
     }
 
     /// Replies to `.gis` with the first image result for the query.
@@ -103,48 +114,23 @@ impl KagiPlugin {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let search = |query: String| async move {
-            self.client.images(&query).await.map(|results| {
-                results
-                    .into_iter()
-                    .map(|result| (result.title, result.image_url))
-                    .collect()
-            })
-        };
-
-        self.handle_lookup(client, command.channel(), command.args(), search)
-            .await
-    }
-}
-
-impl KagiPlugin {
-    /// Handles the `.g` and `.gis` commands by linking the top result for the query.
-    ///
-    /// `search` runs the query and yields the results as `(title, url)` pairs; only the top
-    /// result is linked.
-    async fn handle_lookup<F, Fut>(
-        &self,
-        client: &Client,
-        channel: &str,
-        query: &str,
-        search: F,
-    ) -> Result<(), ZetaError>
-    where
-        F: FnOnce(String) -> Fut,
-        Fut: Future<Output = Result<Vec<(String, String)>, kagi::Error>>,
-    {
         reply_lookup(
             client,
-            channel,
-            search(query.to_string()),
+            command.channel(),
+            self.client.images(command.args()),
             |results| {
                 results.first().map_or_else(
                     || plain_reply("No results"),
-                    |(title, url)| labeled_reply("Kagi", format!("{title} - {url}")),
+                    |result| {
+                        labeled_reply(
+                            "Kagi",
+                            format!("{} - {}", unstyle_text(&result.title), result.image_url),
+                        )
+                    },
                 )
             },
             |err| {
-                warn!(exception.message = %err, "kagi search failed");
+                warn!(exception.message = %err, "kagi image search failed");
                 plain_reply(err)
             },
         )

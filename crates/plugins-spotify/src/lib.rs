@@ -130,7 +130,7 @@ impl Spotify {
         let client_id = resolve_secret(settings.client_id.as_deref(), "SPOTIFY_CLIENT_ID")?;
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
         let credentials = Credentials::new(client, AUTH_URL, client_id, client_secret);
 
         Ok(Self { credentials })
@@ -254,15 +254,16 @@ impl Spotify {
                     client,
                     |artist: &Artist, include_url| {
                         let name = unstyle_text(&artist.name);
-                        let genres = join_with_and(&artist.genres);
+                        let genres: Vec<_> = artist.genres.iter().map(|genre| unstyle_text(genre)).collect();
+                        let joined = join_with_and(&genres);
                         let followers = artist.followers.total.to_formatted_string(&Locale::en);
 
                         let mut msg = format!("\x0f{name}\x0310 is");
-                        if artist.genres.is_empty() {
+                        if genres.is_empty() {
                             let _ = write!(msg, " an");
                         } else {
-                            let article = indefinite_article(&genres);
-                            let _ = write!(msg, " {article} {genres}");
+                            let article = indefinite_article(&joined);
+                            let _ = write!(msg, " {article} {joined}");
                         }
                         let _ = write!(msg, " artist with \x0f{followers}\x0310 followers");
 

@@ -11,8 +11,8 @@ use zeta_plugin::prelude::*;
 ///
 /// `\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x0f $97231.50\x0310 (...)`
 pub fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String {
-    let name = &quote.name;
-    let symbol = &quote.symbol;
+    let name = unstyle_text(&quote.name);
+    let symbol = unstyle_text(&quote.symbol);
 
     let Some(fiat) = quote.quote.get(currency) else {
         return plain_reply(format!(
@@ -111,6 +111,18 @@ mod tests {
          (1 Hour Change:\x0f \x033+0.50%\x0f\x0310 24 Hour Change:\x0f \
          \x034-1.20%\x0f\x0310 7 Day Change:\x0f \x033+10.25%\x0f\x0310)"
         );
+    }
+
+    #[test]
+    fn strips_formatting_from_api_text() {
+        let mut quote = test_quote();
+        quote.name = "\x0310Fake\nName".to_string();
+        quote.symbol = "B\x02TC".to_string();
+
+        let formatted = strip_formatting(&format_quote(&quote, "USD", Some("$")));
+
+        assert!(formatted.contains("Fake Name (BTC)"), "{formatted}");
+        assert!(!formatted.contains('\n'), "{formatted}");
     }
 
     #[test]

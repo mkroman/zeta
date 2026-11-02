@@ -202,8 +202,9 @@ impl Tvmaze {
         let content = format!(
             "Next episode “\x0f{title}\x0310” (\x0f{season}x{number:02}\x0310) airs in\x0f {time_until_air}"
         );
+        let name = unstyle_text(&show.name);
 
-        Self::build_formatted_message(Some(&show.name), &content)
+        Self::build_formatted_message(Some(&name), &content)
     }
 
     /// Formats a message about the show's current status.

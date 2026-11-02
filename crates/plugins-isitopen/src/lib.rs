@@ -316,7 +316,12 @@ impl IsItOpen {
             return Err(Error::Places(details_res.status));
         }
 
-        Ok(details_res.result)
+        // Google's place name is third-party text: strip formatting and line breaks once here
+        // so every formatter can interpolate it directly.
+        let mut place = details_res.result;
+        place.name = unstyle_text(&place.name).into_owned();
+
+        Ok(place)
     }
 
     fn format_opening_time(place: &PlaceDetails, nick: &str) -> String {

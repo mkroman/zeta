@@ -111,7 +111,7 @@ impl Twitch {
         let client_id = resolve_secret(settings.client_id.as_deref(), "TWITCH_CLIENT_ID")?;
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "TWITCH_CLIENT_SECRET")?;
-        let client = http::build_client(&ctx.config.http);
+        let client = ctx.http().clone();
         let credentials = Credentials::new(client, AUTH_URL, client_id, client_secret);
 
         Ok(Self { credentials })
@@ -144,8 +144,8 @@ impl Twitch {
                 }
                 UrlKind::Video(id) => {
                     self.handle_first("videos", &[("id", &id)], channel, client, |video: &Video| {
-                        let title = &video.title;
-                        let user = &video.user_name;
+                        let title = unstyle_text(&video.title);
+                        let user = unstyle_text(&video.user_name);
                         let views = video.view_count.to_formatted_string(&Locale::en);
 
                         format!(
