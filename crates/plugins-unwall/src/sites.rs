@@ -4,7 +4,7 @@
 //! itself has tested: an entry is either a hostname — matching the host and its `www.` variant —
 //! or a `*.domain` wildcard, matching the bare domain and every subdomain.
 
-use zeta_utils::text::strip_suffix_ignore_case;
+use zeta_utils::text;
 
 /// Whether `input` looks like a hostname: dot-separated labels of alphanumerics and hyphens,
 /// none empty and none starting or ending with a hyphen.
@@ -53,7 +53,7 @@ pub fn matches_site(candidate: &str, site: &str) -> bool {
             || zeta_url::strip_www(candidate).eq_ignore_ascii_case(site);
     };
 
-    strip_suffix_ignore_case(candidate, domain)
+    text::strip_suffix_ignore_case(candidate, domain)
         .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
 }
 

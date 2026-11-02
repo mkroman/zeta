@@ -12,7 +12,7 @@
 
 mod format;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::{Client, CommandEvent, Context, PluginCatalog, ZetaError, plugin};
 
 use format::{gray, heading, messages};
 

@@ -1,6 +1,8 @@
 //! Configuration loading and validation.
 
-use std::{collections::HashMap, fmt, time::Duration};
+use std::collections::HashMap;
+use std::fmt;
+use std::time::Duration;
 
 use figment::{
     Figment,

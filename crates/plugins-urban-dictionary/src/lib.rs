@@ -12,8 +12,9 @@ use time::OffsetDateTime;
 use tracing::debug;
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::{labeled_reply, reply_lookup};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
+use zeta_utils::irc;
 use zeta_utils::text::Truncatable;
 
 /// The endpoint definitions are looked up against.
@@ -138,9 +139,9 @@ struct DefinitionFormatter<'a> {
 
 impl Display for DefinitionFormatter<'_> {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let word = unstyle_text(&self.definition.word);
-        let definition = unstyle_text(&self.definition.definition);
-        let example = unstyle_text(&self.definition.example);
+        let word = irc::unstyle_text(&self.definition.word);
+        let definition = irc::unstyle_text(&self.definition.definition);
+        let example = irc::unstyle_text(&self.definition.example);
         let definition = definition.truncate_with_suffix(self.max_length, "…");
         let example = example.truncate_with_suffix(self.max_length, "…");
 

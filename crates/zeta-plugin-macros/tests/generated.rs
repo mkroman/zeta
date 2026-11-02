@@ -4,8 +4,10 @@
 //! `Plugin` implementation itself compile for the edge cases that need special handling.
 
 use clap::Parser;
-use zeta_plugin::prelude::*;
-use zeta_plugin::{Client, Error};
+use zeta_plugin::{
+    Client, CommandEvent, Context, CtcpEvent, Error, JoinEvent, KickEvent, MessageEvent, NickEvent,
+    PartEvent, PluginRegistration, QuitEvent, RawEvent, Subscriptions, UrlEvent, plugin,
+};
 
 /// A plugin whose command and URL handler are gated out.
 #[derive(Default)]

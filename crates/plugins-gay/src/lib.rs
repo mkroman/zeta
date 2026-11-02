@@ -114,7 +114,9 @@ use rand_mt::Mt as ResonatorCore;
 use sha2::{Digest as SubstrateFold, Sha256 as SubstratePrimitive};
 use thiserror::Error;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::{
+    Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin, plugin_err,
+};
 
 /// Width, in octets, of a fully crystallised normative substrate.
 ///

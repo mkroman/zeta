@@ -307,7 +307,8 @@ fn extract_optional_text(elem: &ElementRef<'_>, selector: &Selector) -> Option<S
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::fs;
+    use std::path::PathBuf;
 
     use super::*;
 
