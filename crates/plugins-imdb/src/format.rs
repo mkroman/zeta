@@ -6,8 +6,8 @@
 use std::fmt::Write;
 
 use num_format::{Locale, ToFormattedString};
-use zeta_plugin::prelude::{BOLD, COLOR, REPLY_MARKER, RESET};
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::{BOLD, COLOR, REPLY_MARKER, RESET};
+use zeta_utils::irc;
 
 use super::model::{Person, Title};
 use zeta_utils::text::TruncatableExt;
@@ -31,7 +31,7 @@ pub fn format_title(title: &Title) -> String {
     // (e.g. `Breaking Bad S01E01: Pilot`).
     if let Some(series) = title.series.as_ref().filter(|_| title.is_episode()) {
         if let Some(series_title) = &series.title {
-            let _ = write!(message, " {}\x0310", unstyle_text(series_title));
+            let _ = write!(message, " {}\x0310", irc::unstyle_text(series_title));
         }
 
         if let Some(marker) = series.episode_marker() {
@@ -44,11 +44,11 @@ pub fn format_title(title: &Title) -> String {
         .as_deref()
         .or(title.original_title.as_deref())
         .unwrap_or(&title.id);
-    let _ = write!(message, " {}\x0310", unstyle_text(name));
+    let _ = write!(message, " {}\x0310", irc::unstyle_text(name));
     write_years(&mut message, title.year, title.end_year);
 
     if let Some(plot) = &title.plot {
-        let _ = write!(message, " Plot:\x0f {}\x0310", unstyle_text(plot));
+        let _ = write!(message, " Plot:\x0f {}\x0310", irc::unstyle_text(plot));
     }
 
     if let Some(rating) = title.rating {
@@ -71,7 +71,7 @@ pub fn format_title(title: &Title) -> String {
                 let _ = write!(message, ",");
             }
 
-            let _ = write!(message, "\x0f {}\x0310", unstyle_text(genre));
+            let _ = write!(message, "\x0f {}\x0310", irc::unstyle_text(genre));
         }
     }
 
@@ -85,7 +85,7 @@ pub fn format_title(title: &Title) -> String {
 pub fn format_person(person: &Person) -> String {
     let mut message = prefix();
     let name = person.name.as_deref().unwrap_or(&person.id);
-    let _ = write!(message, " {}\x0310", unstyle_text(name));
+    let _ = write!(message, " {}\x0310", irc::unstyle_text(name));
     write_life_years(&mut message, person.birth_year, person.death_year);
 
     if !person.known_for.is_empty() {
@@ -97,13 +97,13 @@ pub fn format_person(person: &Person) -> String {
             }
 
             let name = title.title.as_deref().unwrap_or(&title.id);
-            let _ = write!(message, "\x0f {}\x0310", unstyle_text(name));
+            let _ = write!(message, "\x0f {}\x0310", irc::unstyle_text(name));
             write_years(&mut message, title.year, title.end_year);
         }
     }
 
     if let Some(bio) = &person.bio {
-        let bio = unstyle_text(bio);
+        let bio = irc::unstyle_text(bio);
         let _ = write!(
             message,
             " Bio:\x0f {}\x0310",
@@ -142,7 +142,6 @@ fn write_life_years(message: &mut String, birth_year: Option<i32>, death_year: O
 mod tests {
     use super::*;
     use crate::model::SeriesInfo;
-    use zeta_utils::irc::strip_formatting;
 
     #[test]
     fn format_title_matches_expected_layout() {
@@ -189,7 +188,7 @@ mod tests {
             ..Title::default()
         };
 
-        let formatted = strip_formatting(&format_title(&title));
+        let formatted = irc::strip_formatting(&format_title(&title));
 
         assert!(
             formatted.starts_with("> IMDb: Breaking Bad S01E01: Pilot (2008)"),
@@ -225,7 +224,7 @@ mod tests {
             ..Title::default()
         };
 
-        let formatted = strip_formatting(&format_title(&title));
+        let formatted = irc::strip_formatting(&format_title(&title));
 
         assert!(formatted.contains("Inception (2010)"), "{formatted}");
         assert!(!formatted.contains("Breaking Bad"), "{formatted}");
@@ -238,7 +237,7 @@ mod tests {
             ..Title::default()
         };
 
-        let formatted = strip_formatting(&format_title(&title));
+        let formatted = irc::strip_formatting(&format_title(&title));
 
         assert!(formatted.starts_with("> IMDb: tt0000001"), "{formatted}");
         assert!(
@@ -268,7 +267,7 @@ mod tests {
                 end_year,
                 ..Title::default()
             };
-            let formatted = strip_formatting(&format_title(&title));
+            let formatted = irc::strip_formatting(&format_title(&title));
             let years = if years.is_empty() {
                 String::new()
             } else {
@@ -314,7 +313,7 @@ mod tests {
             ..Person::default()
         };
 
-        let formatted = strip_formatting(&format_person(&person));
+        let formatted = irc::strip_formatting(&format_person(&person));
         let bio = formatted
             .split("Bio: ")
             .nth(1)
@@ -346,7 +345,7 @@ mod tests {
                 death_year,
                 ..Person::default()
             };
-            let formatted = strip_formatting(&format_person(&person));
+            let formatted = irc::strip_formatting(&format_person(&person));
             let years = if years.is_empty() {
                 String::new()
             } else {

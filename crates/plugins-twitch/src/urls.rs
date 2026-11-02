@@ -2,8 +2,6 @@
 
 use url::Url;
 
-use zeta_url::{is_identifier, is_numeric_segment, path_segments};
-
 /// The Twitch.tv hostname.
 pub const TWITCH_HOST: &str = "twitch.tv";
 
@@ -44,9 +42,11 @@ const RESERVED_SEGMENTS: &[&str] = &["clip", "videos"];
 
 /// Parses twitch.tv URLs.
 fn parse_twitch_tv_url(url: &Url) -> Option<UrlKind> {
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         // twitch.tv/videos/<id>
-        ["videos", id] if is_numeric_segment(id) => Some(UrlKind::Video((*id).to_string())),
+        ["videos", id] if zeta_url::is_numeric_segment(id) => {
+            Some(UrlKind::Video((*id).to_string()))
+        }
         // twitch.tv/<channel>/clip/<id>
         [_, "clip", id] if is_valid_clip_id(id) => Some(UrlKind::Clip((*id).to_string())),
         // twitch.tv/<channel>
@@ -59,7 +59,7 @@ fn parse_twitch_tv_url(url: &Url) -> Option<UrlKind> {
 
 /// Parses clips.twitch.tv URLs.
 fn parse_clips_url(url: &Url) -> Option<UrlKind> {
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         // clips.twitch.tv/<id>
         [id] if is_valid_clip_id(id) => Some(UrlKind::Clip((*id).to_string())),
         _ => None,
@@ -69,7 +69,7 @@ fn parse_clips_url(url: &Url) -> Option<UrlKind> {
 /// Returns whether the segment is a valid Twitch clip id (a base62 slug).
 #[must_use]
 fn is_valid_clip_id(id: &str) -> bool {
-    is_identifier(id, "")
+    zeta_url::is_identifier(id, "")
 }
 
 /// Checks if a string looks like a valid Twitch username.
@@ -77,7 +77,7 @@ fn is_valid_clip_id(id: &str) -> bool {
 /// Twitch usernames are 4-25 characters long and contain alphanumeric characters and
 /// underscores.
 fn is_valid_username(s: &str) -> bool {
-    (4..=25).contains(&s.len()) && is_identifier(s, "_")
+    (4..=25).contains(&s.len()) && zeta_url::is_identifier(s, "_")
 }
 
 #[cfg(test)]

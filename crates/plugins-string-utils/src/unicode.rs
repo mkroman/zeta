@@ -12,9 +12,9 @@ use zeta_unicode::{
     MAX_EMOJI_KEY_BYTES, emoji_name, general_category, may_start_emoji_sequence, name_or_label,
     write_name,
 };
-use zeta_utils::irc::{BOLD, COLOR, MAX_LISTING_LENGTH, RESET};
+use zeta_utils::irc::MAX_LISTING_LENGTH;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{BOLD, COLOR, PLAIN_REPLY_PREFIX, RESET};
 
 /// The body budget of a `.uni` reply, after the plain reply prefix.
 const REPLY_BUDGET: usize = MAX_LISTING_LENGTH - PLAIN_REPLY_PREFIX.len();
@@ -317,6 +317,7 @@ fn write_uppercase(out: &mut String, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_plugin::irc::plain_reply;
 
     #[test]
     fn uni_names_a_single_character() {

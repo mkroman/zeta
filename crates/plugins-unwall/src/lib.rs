@@ -45,12 +45,14 @@ use std::time::Duration;
 use clap::Parser;
 use tracing::{Instrument, debug, warn};
 
-use zeta_plugin::prelude::*;
-use zeta_url::RedactedUrlRef;
-use zeta_utils::{
-    duration::TimeInWordsExt,
-    irc::{MAX_LISTING_LENGTH, append_entries_with_more},
+use zeta_plugin::irc::{COLOR, RESET, labeled_reply, parse_or_usage, plain_reply};
+use zeta_plugin::{
+    ArgsMode, Client, CommandEvent, CommandSpec, Context, Hostmasks, Sender, Subscriptions,
+    UrlEvent, ZetaError, plugin, plugin_err,
 };
+use zeta_url::RedactedUrlRef;
+use zeta_utils::duration::TimeInWordsExt;
+use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
 
 use client::UnwallClient;
 use model::NewFetch;
@@ -304,7 +306,7 @@ impl Unwall {
                 format!("{RESET}{}{COLOR} unwalled sites:{RESET} ", sites.len()),
             );
 
-            append_entries_with_more(
+            irc::append_entries_with_more(
                 &mut message,
                 sites.iter().map(|site| site.host.as_str()),
                 sites.len(),

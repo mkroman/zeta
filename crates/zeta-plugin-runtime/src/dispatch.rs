@@ -554,7 +554,6 @@ impl EventIndex {
 
 #[cfg(test)]
 mod tests {
-    use std::mem::size_of;
     use std::sync::Arc;
 
     use url::Url;

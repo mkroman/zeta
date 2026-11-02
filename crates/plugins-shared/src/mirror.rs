@@ -10,7 +10,7 @@ use irc::client::Client;
 use tracing::warn;
 
 use zeta_mirror::{MediaId, MirrorHandle};
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::plain_reply;
 
 /// Mirrors the media at `url` and replies with the mirrored file's link, when the plugin has a
 /// mirror configured.

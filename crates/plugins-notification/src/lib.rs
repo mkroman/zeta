@@ -9,17 +9,19 @@ mod model;
 mod repository;
 mod service;
 
-pub use {
-    error::Error,
-    model::{NewNotification, Notification},
-    service::NotificationService,
-};
+pub use error::Error;
+pub use model::{NewNotification, Notification};
+pub use service::NotificationService;
 
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
 use tracing::{error, warn};
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{COLOR, RESET, labeled_reply, plain_reply, unstyle_text};
+use zeta_plugin::{
+    Client, CommandEvent, CommandSpec, Context, MessageEvent, Subscriptions, ZetaError, plugin,
+    plugin_err,
+};
 
 /// The `.notify` command.
 const NOTIFY: CommandSpec =

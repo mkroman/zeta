@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::strip_control_chars;
+use zeta_plugin::irc::{labeled_reply, reply_lookup};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
+use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
@@ -179,7 +180,7 @@ fn extract_errors(stderr: &str) -> Vec<String> {
 /// Sanitizes the playground output for IRC: control characters (which include newlines) are
 /// stripped, and the result is trimmed.
 fn sanitize_output(s: &str) -> String {
-    strip_control_chars(s).trim().to_owned()
+    irc::strip_control_chars(s).trim().to_owned()
 }
 
 #[cfg(test)]

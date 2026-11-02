@@ -7,7 +7,7 @@ use scraper::{ElementRef, Html, Node, Selector};
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::debug;
-use zeta_utils::text::quoted_string_literal;
+use zeta_utils::text;
 
 use crate::{BASE_URL, ImageResult, SearchResult};
 
@@ -58,7 +58,7 @@ pub fn extract_nonce(html: &str) -> Option<String> {
     html.match_indices(MARKER).find_map(|(index, _)| {
         let tail = &html[index + MARKER.len()..];
         let tail = tail.trim_start().strip_prefix('=')?.trim_start();
-        let (literal, _) = quoted_string_literal(tail, '"')?;
+        let (literal, _) = text::quoted_string_literal(tail, '"')?;
         let nonce = literal.strip_circumfix('"', '"')?;
 
         if nonce.is_empty() {

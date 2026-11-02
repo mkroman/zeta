@@ -11,8 +11,8 @@
 use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::strip_nick_prefix;
+use zeta_plugin::{Client, Context, MessageEvent, ZetaError, plugin};
+use zeta_utils::irc;
 
 /// Settings for the choices plugin, from its `[plugins.choices]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -55,7 +55,7 @@ impl Choices {
     ) -> Result<(), ZetaError> {
         let current_nickname = client.current_nickname();
 
-        if let Some(msg) = strip_nick_prefix(event.text(), current_nickname)
+        if let Some(msg) = irc::strip_nick_prefix(event.text(), current_nickname)
             && let Some(options) = extract_options(msg, &self.settings)
         {
             let source_nickname = event.sender().map_or("", |sender| sender.nick);
@@ -105,11 +105,11 @@ mod tests {
     #[test]
     fn it_should_strip_nick_prefix() {
         assert_eq!(
-            strip_nick_prefix("zeta: hello world", "zeta"),
+            irc::strip_nick_prefix("zeta: hello world", "zeta"),
             Some("hello world")
         );
         assert_eq!(
-            strip_nick_prefix("zeta, hello world", "zeta"),
+            irc::strip_nick_prefix("zeta, hello world", "zeta"),
             Some("hello world")
         );
     }

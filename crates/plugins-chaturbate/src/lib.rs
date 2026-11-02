@@ -10,10 +10,11 @@ use tracing::debug;
 use url::Url;
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
-use zeta_url::{RedactedUrl, is_identifier, path_segments};
-use zeta_utils::irc::unstyle_text;
-use zeta_utils::text::quoted_string_literal;
+use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
+use zeta_url::RedactedUrl;
+use zeta_utils::irc;
+use zeta_utils::text;
 
 /// The Chaturbate hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["chaturbate.com", "www.chaturbate.com"];
@@ -37,7 +38,7 @@ pub enum Error {
     Deserialize(#[from] serde_json::Error),
     /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
-    Irc(#[from] irc::error::Error),
+    Irc(#[from] ::irc::error::Error),
 }
 
 /// The parsed contents of `window.initialRoomDossier`.
@@ -96,9 +97,9 @@ impl Chaturbate {
         let dossier = parse_room_dossier(&html)?;
         debug!(?dossier, "parsed room dossier");
 
-        let username = unstyle_text(&dossier.broadcaster_username);
-        let gender = unstyle_text(&dossier.broadcaster_gender);
-        let title = unstyle_text(&dossier.room_title);
+        let username = irc::unstyle_text(&dossier.broadcaster_username);
+        let gender = irc::unstyle_text(&dossier.broadcaster_gender);
+        let title = irc::unstyle_text(&dossier.room_title);
 
         let msg = if dossier.room_status == "offline" {
             format!("{username} (\x0foffline\x0310)")
@@ -123,7 +124,7 @@ fn parse_room_dossier(html: &str) -> Result<RoomDossier, Error> {
         .strip_prefix('=')
         .ok_or(Error::DossierNotFound)?
         .trim_start();
-    let (literal, rest) = quoted_string_literal(tail, '"').ok_or(Error::DossierNotFound)?;
+    let (literal, rest) = text::quoted_string_literal(tail, '"').ok_or(Error::DossierNotFound)?;
 
     if !rest.starts_with(';') {
         return Err(Error::DossierNotFound);
@@ -156,9 +157,11 @@ fn extract_username(url: &Url) -> Option<String> {
         return None;
     }
 
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         // Exclude well-known non-broadcaster paths.
-        [username, ..] if is_identifier(username, "_") && !RESERVED_SEGMENTS.contains(username) => {
+        [username, ..]
+            if zeta_url::is_identifier(username, "_") && !RESERVED_SEGMENTS.contains(username) =>
+        {
             Some((*username).to_string())
         }
         _ => None,

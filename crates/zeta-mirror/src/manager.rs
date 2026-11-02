@@ -30,7 +30,8 @@ use std::{
     sync::Arc,
 };
 
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tracing::{Instrument, debug, error, trace, warn};
 use url::Url;
 
@@ -40,7 +41,6 @@ use super::{
     tempdir::tempdir_builder,
     ytdlp::{self, DownloadedFile, Downloader, Progress},
 };
-use zeta_url::is_identifier;
 
 /// The maximum number of uploads that run at the same time.
 const UPLOAD_CONCURRENCY: usize = 2;
@@ -506,7 +506,7 @@ impl Manager {
     /// The directory exists before the download task is spawned, and a failure to create it is
     /// reported to the requester instead of starting the download.
     async fn start_download(&mut self, request: DownloadRequest) {
-        if !is_identifier(&request.id, "_-") {
+        if !zeta_url::is_identifier(&request.id, "_-") {
             warn!(media.id = %request.id, "rejecting download with an unsafe id");
 
             (request.on_finish)(Err(Error::InvalidId(request.id)));

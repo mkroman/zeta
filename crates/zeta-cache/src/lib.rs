@@ -732,7 +732,6 @@ mod ttl_map_tests {
     #[test]
     #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
     fn benchmark_inserts_into_a_full_map() {
-        use std::hint::black_box;
         use std::time::Instant;
 
         const CAPACITY: usize = 256;
@@ -751,7 +750,7 @@ mod ttl_map_tests {
         let start = Instant::now();
 
         for key in CAPACITY as u64..CAPACITY as u64 + INSERTS {
-            cache.insert(black_box(key), None);
+            cache.insert(std::hint::black_box(key), None);
         }
 
         let nanos = start.elapsed().as_secs_f64() * 1e9;
@@ -770,7 +769,6 @@ mod ttl_map_tests {
     #[test]
     #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
     fn benchmark_reader_contention() {
-        use std::hint::black_box;
         use std::sync::Barrier;
         use std::time::Instant;
 
@@ -804,7 +802,7 @@ mod ttl_map_tests {
                     barrier.wait();
 
                     for _ in 0..READS_PER_READER {
-                        black_box(cache.peek(&0));
+                        std::hint::black_box(cache.peek(&0));
                     }
                 });
             }

@@ -12,10 +12,11 @@ use serde::Deserialize;
 use tracing::{debug, instrument};
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{labeled_reply, reply_lookup};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::duration::TimeInWordsExt;
-use zeta_utils::irc::unstyle_text;
+use zeta_utils::irc;
 
 /// The single-search endpoint shows are looked up against.
 const SINGLESEARCH_URL: &str = "https://api.tvmaze.com/singlesearch/shows";
@@ -190,7 +191,7 @@ impl Tvmaze {
 
     /// Formats a message about the next episode.
     fn format_next_episode_message(show: &Show, episode: &Episode) -> String {
-        let title = unstyle_text(&episode.name);
+        let title = irc::unstyle_text(&episode.name);
         let season = episode.season;
         let number = episode.number;
         let time_until_air = {
@@ -202,15 +203,15 @@ impl Tvmaze {
         let content = format!(
             "Next episode “\x0f{title}\x0310” (\x0f{season}x{number:02}\x0310) airs in\x0f {time_until_air}"
         );
-        let name = unstyle_text(&show.name);
+        let name = irc::unstyle_text(&show.name);
 
         Self::build_formatted_message(Some(&name), &content)
     }
 
     /// Formats a message about the show's current status.
     fn format_show_status_message(show: &Show) -> String {
-        let name = unstyle_text(&show.name);
-        let status = unstyle_text(&show.status);
+        let name = irc::unstyle_text(&show.name);
+        let status = irc::unstyle_text(&show.status);
         let content = format!(
             "\x0f{name}\x0310 is currently marked as\x0f {status}\x0310 and there is no next episode"
         );
@@ -251,7 +252,6 @@ impl Tvmaze {
 mod tests {
     use super::*;
     use similar_asserts::assert_eq;
-    use zeta_utils::irc::strip_formatting;
 
     /// Decodes a recorded search response for a running show with a scheduled next episode.
     fn show_with_next_episode() -> Show {
@@ -323,7 +323,7 @@ mod tests {
         let show = show_with_next_episode();
 
         // The fixture's airstamp is in the past, so the time-until-air clamps to zero minutes.
-        let message = strip_formatting(&Tvmaze::format_show_message(&show));
+        let message = irc::strip_formatting(&Tvmaze::format_show_message(&show));
 
         assert!(
             message.contains("Next episode “The Next One” (2x07) airs in 0 minutes"),
@@ -338,7 +338,7 @@ mod tests {
         let mut show = show_with_next_episode();
         show.embedded = None;
 
-        let message = strip_formatting(&Tvmaze::format_show_message(&show));
+        let message = irc::strip_formatting(&Tvmaze::format_show_message(&show));
 
         assert!(
             message.contains("A Show is currently marked as Running and there is no next episode"),

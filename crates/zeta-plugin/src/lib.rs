@@ -34,6 +34,8 @@ pub use command::{ArgsError, ArgsMode, CommandSpec};
 pub use config::HostConfig;
 pub use context::{Context, SharedState};
 pub use error::Error;
+pub use error::Error as ZetaError;
+pub use error::{BoxError, plugin_err, resolve_secret};
 pub use event::{
     CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
     NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
@@ -54,30 +56,3 @@ pub use zeta_plugin_macros::{instrument_database, plugin};
 // dependencies of their own.
 pub use self::irc::{labeled_reply, parse_or_usage, plain_reply, reply_lookup};
 pub use ::irc::client::Client;
-
-/// Common includes used in plugins.
-pub mod prelude {
-    pub use async_trait::async_trait;
-
-    // The crate's own `irc` module cannot be glob-imported here: its name collides with the
-    // external `irc` crate that plugins also import. Everything else the public API exports is
-    // listed, including the items used less often, so the prelude does not silently omit them.
-    pub use crate::catalog::{CatalogEntry, PluginCatalog};
-    pub use crate::command::{ArgsError, ArgsMode, CommandSpec};
-    pub use crate::error::{BoxError, Error as ZetaError, plugin_err, resolve_secret};
-    pub use crate::event::{
-        CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
-        NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
-    };
-    pub use crate::filtering::{EventFilter, FilterHandle};
-    pub use crate::hostmask::Hostmasks;
-    pub use crate::irc::{
-        BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
-        parse_or_usage, plain_reply, reply_lookup, unstyle_text,
-    };
-    pub use crate::registration::PluginRegistration;
-    pub use crate::types::NoSettings;
-    pub use crate::{Context, Error, Plugin, Registered, SharedState};
-    pub use ::irc::client::Client;
-    pub use zeta_plugin_macros::{instrument_database, plugin};
-}
