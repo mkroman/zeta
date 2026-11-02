@@ -49,7 +49,19 @@ pub use s3::Error as MirrorError;
 /// No user code runs under the lock — the critical sections only insert into or remove from the
 /// set using trusted keys — so a panic cannot leave it half-updated, which is what makes this
 /// non-poisoning lock sound.
-type InFlight = Mutex<HashSet<(String, String)>>;
+type InFlight = Mutex<HashSet<InFlightKey>>;
+
+/// The `(prefix, id)` key of the in-flight set.
+///
+/// `Box<str>` keeps every entry smaller than the `(String, String)` pair it replaces, and
+/// removals compare the borrowed parts directly, so they allocate nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct InFlightKey {
+    /// The key prefix of the plugin that mirrors the media.
+    prefix: Box<str>,
+    /// The id of the media being mirrored.
+    id: Box<str>,
+}
 
 /// Mirrors media: downloads it with `yt-dlp` and uploads it to S3.
 ///
@@ -203,16 +215,20 @@ impl Mirror {
 
     /// Returns `false` if the media is already being mirrored, otherwise marks it as in-flight.
     fn mark_in_flight(&self, prefix: &str, id: &str) -> bool {
-        self.in_flight
-            .lock()
-            .insert((prefix.to_string(), id.to_string()))
+        self.in_flight.lock().insert(InFlightKey {
+            prefix: prefix.into(),
+            id: id.into(),
+        })
     }
 
     /// Removes media from an in-flight set.
+    ///
+    /// Comparing the borrowed parts keeps this allocation-free; the set only holds media that
+    /// is downloading right now, so the linear scan is trivially cheap.
     fn clear_in_flight(in_flight: &InFlight, prefix: &str, id: &str) {
         in_flight
             .lock()
-            .remove(&(prefix.to_string(), id.to_string()));
+            .retain(|key| &*key.prefix != prefix || &*key.id != id);
     }
 
     /// Returns the download manager, starting it on first use.
