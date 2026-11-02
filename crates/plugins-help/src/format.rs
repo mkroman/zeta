@@ -3,6 +3,8 @@
 //! Renders the plugin index, a plugin's commands, and a command's description, usage synopsis,
 //! and argument details, splitting long lists across continuation messages.
 
+use std::fmt::Write as _;
+
 use clap::{Arg, ArgAction, Command};
 
 use zeta_plugin::irc::{BOLD, COLOR, REPLY_MARKER, RESET};
@@ -157,28 +159,38 @@ fn help_text(argument: &Arg) -> String {
 /// (with the comma inside the color when the detail has a description), and details after the
 /// first carry a leading space inside their label.
 fn details_list(details: &[Detail]) -> String {
-    details
-        .iter()
-        .enumerate()
-        .map(|(index, detail)| {
-            let comma = if index + 1 == details.len() { "" } else { "," };
+    // The list is one string: every piece is a fixed escape sequence plus the detail's own
+    // text, so the size is known before the first write.
+    let mut list = String::with_capacity(
+        details
+            .iter()
+            .map(|detail| detail.label.len() + detail.description.len() + 24)
+            .sum(),
+    );
 
-            let label = if index == 0 {
-                bold(&detail.label)
-            } else {
-                bold(&format!(" {}", detail.label))
-            };
+    for (index, detail) in details.iter().enumerate() {
+        let comma = if index + 1 == details.len() { "" } else { "," };
 
-            if detail.description.is_empty() {
-                format!("{label}{comma}")
-            } else {
-                format!(
-                    "{label}{}",
-                    gray(&format!(": {}{comma}", detail.description))
-                )
-            }
-        })
-        .collect()
+        list.push_str(BOLD);
+
+        if index > 0 {
+            list.push(' ');
+        }
+
+        list.push_str(&detail.label);
+        list.push_str(BOLD);
+
+        if detail.description.is_empty() {
+            list.push_str(comma);
+        } else {
+            list.push_str(COLOR);
+            // Writing to a `String` cannot fail.
+            let _ = write!(list, ": {}{comma}", detail.description);
+            list.push_str(RESET);
+        }
+    }
+
+    list
 }
 
 /// Prepends the packed list of `entries` to `header`.
@@ -206,7 +218,10 @@ fn pack<S: AsRef<str>>(entries: &[S], max_length: usize) -> Vec<String> {
     let mut remaining = entries;
 
     while !remaining.is_empty() {
-        let mut message = String::new();
+        // The message cannot exceed the budget, and reserving all of it would over-allocate
+        // every short message; a capped initial capacity keeps the common listings from
+        // reallocating without reserving thousands of bytes for a handful of entries.
+        let mut message = String::with_capacity(max_length.min(512));
         let appended = irc::append_entries_within_budget(
             &mut message,
             remaining.iter(),
@@ -370,11 +385,6 @@ fn positional_label(positional: &Arg) -> String {
     } else {
         format!("[{label}]")
     }
-}
-
-/// Formats `s` in bold.
-fn bold(s: &str) -> String {
-    format!("{BOLD}{s}{BOLD}")
 }
 
 /// Formats `s` in the muted scaffolding color.

@@ -4,6 +4,7 @@
 //! their color reset, with each value re-entering the cyan mode for the scaffolding that follows.
 
 use std::fmt::Write;
+use std::sync::OnceLock;
 
 use num_format::{Locale, ToFormattedString};
 use zeta_plugin::irc::{BOLD, COLOR, REPLY_MARKER, RESET};
@@ -12,20 +13,31 @@ use zeta_utils::irc;
 use super::model::{Person, Title};
 use zeta_utils::text::TruncatableExt;
 
+/// The prefix all IMDb replies start with.
+///
+/// Every fragment is a formatting constant, so it is formatted once per process instead of
+/// once per reply.
+static PREFIX: OnceLock<String> = OnceLock::new();
+
 /// Returns the prefix all IMDb replies start with: the reply marker, a bold `IMDb` label and a
 /// cyan colon.
 ///
 /// Unlike [`labeled_reply_prefix`](zeta_plugin::irc::labeled_reply_prefix), the colon renders
 /// cyan and the prefix carries no trailing space: the builders below append space-led segments,
 /// so a trailing space here would double up.
-pub fn prefix() -> String {
-    format!("{REPLY_MARKER}{RESET}{BOLD} IMDb{BOLD}{COLOR}:{RESET}")
+#[must_use]
+pub fn prefix() -> &'static str {
+    PREFIX
+        .get_or_init(|| format!("{REPLY_MARKER}{RESET}{BOLD} IMDb{BOLD}{COLOR}:{RESET}"))
+        .as_str()
 }
 
 /// Formats the details of `title` as a single IRC message.
 #[must_use]
 pub fn format_title(title: &Title) -> String {
-    let mut message = prefix();
+    let prefix = prefix();
+    let mut message = String::with_capacity(prefix.len() + 256);
+    message.push_str(prefix);
 
     // Episodes are prefixed with their series and season/episode marker
     // (e.g. `Breaking Bad S01E01: Pilot`).
@@ -83,7 +95,9 @@ pub fn format_title(title: &Title) -> String {
 /// Formats the details of `person` as a single IRC message.
 #[must_use]
 pub fn format_person(person: &Person) -> String {
-    let mut message = prefix();
+    let prefix = prefix();
+    let mut message = String::with_capacity(prefix.len() + 256);
+    message.push_str(prefix);
     let name = person.name.as_deref().unwrap_or(&person.id);
     let _ = write!(message, " {}\x0310", irc::unstyle_text(name));
     write_life_years(&mut message, person.birth_year, person.death_year);

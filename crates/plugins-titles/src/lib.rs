@@ -10,6 +10,7 @@
 
 mod metadata;
 
+use std::fmt::Write as _;
 use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,9 @@ use wreq::redirect::Policy;
 
 use zeta_http as http;
 use zeta_http::WreqError;
-use zeta_plugin::irc::{REPLY_MARKER, labeled_reply, plain_reply, send_reply, send_reply_via};
+use zeta_plugin::irc::{
+    BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, plain_reply, send_reply, send_reply_via,
+};
 use zeta_plugin::{Client, Context, PluginCatalog, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrlRef;
 use zeta_utils::irc;
@@ -30,6 +33,10 @@ use metadata::{PageMetadata, fetch_metadata};
 
 /// The separator between a page's title and its description.
 const CONTENT_SEPARATOR: &str = " — ";
+
+/// The bytes a labeled reply prefix writes besides its label.
+const LABELED_PREFIX_BYTES: usize =
+    REPLY_MARKER.len() + RESET.len() + 2 * BOLD.len() + COLOR.len() + 3;
 
 /// File extensions that we avoid requesting to save time and bandwidth.
 const BINARY_EXTENSIONS: &[&str] = &[
@@ -363,16 +370,9 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
 
     let capacity = title.len() + description.len() + separator.map_or(0, str::len);
 
-    let mut content = String::with_capacity(capacity);
-    content.push_str(title);
-
-    if let Some(separator) = separator {
-        content.push_str(separator);
-    }
-
-    content.push_str(description);
-
-    let message = if has_open_graph(metadata) {
+    // The reply is one buffer: the prefix is written first and the content follows, so the
+    // finished line never has to be copied into a second string.
+    let mut message = if has_open_graph(metadata) {
         let site = metadata
             .site_name
             .as_deref()
@@ -380,10 +380,29 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
             .filter(|site| !site.is_empty());
         let label = site.as_deref().unwrap_or_else(|| host_name(url));
 
-        labeled_reply(label, &content)
+        let mut message = String::with_capacity(LABELED_PREFIX_BYTES + label.len() + capacity);
+        // The same bytes as `zeta_utils::irc::labeled_reply_prefix`, written into the reply
+        // buffer instead of into a temporary string.
+        let _ = write!(
+            message,
+            "{REPLY_MARKER}{RESET}{BOLD} {label}:{BOLD}{COLOR} "
+        );
+
+        message
     } else {
-        plain_reply(&content)
+        let mut message = String::with_capacity(PLAIN_REPLY_PREFIX.len() + capacity);
+        message.push_str(PLAIN_REPLY_PREFIX);
+
+        message
     };
+
+    message.push_str(title);
+
+    if let Some(separator) = separator {
+        message.push_str(separator);
+    }
+
+    message.push_str(description);
 
     // `truncate_within` borrows the message when it already fits, so the byte-length check
     // lets the common short reply skip the `Cow` clone its result would otherwise take.
