@@ -29,6 +29,7 @@ pub use error::Error;
 pub use model::{Criteria, Filter, NewFilter};
 pub use service::FilterService;
 
+use std::fmt::Write as _;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -643,15 +644,31 @@ fn describe(filter: &Filter) -> String {
         ("nick", filter.nickname.as_deref()),
         ("user", filter.username.as_deref()),
         ("hostname", filter.hostname.as_deref()),
-    ]
-    .into_iter()
-    .filter_map(|(name, value)| value.map(|value| format!("{name}={value}")))
-    .collect::<Vec<_>>()
-    .join(" ");
+    ];
+    // Every set criterion contributes its `name=value` and a separating space; the sum is an
+    // upper bound on the composed length, so the buffer is allocated once and never regrows.
+    let mut text = String::with_capacity(
+        criteria
+            .iter()
+            .filter_map(|&(name, value)| value.map(|value| name.len() + value.len() + 1))
+            .sum(),
+    );
+
+    for &(name, value) in &criteria {
+        let Some(value) = value else {
+            continue;
+        };
+
+        if !text.is_empty() {
+            text.push(' ');
+        }
+
+        let _ = write!(text, "{name}={value}");
+    }
 
     let scope = filter.channel.as_deref().unwrap_or("all channels");
 
-    format!("#{}: {criteria} ({scope})", filter.id)
+    format!("#{}: {text} ({scope})", filter.id)
 }
 
 #[cfg(test)]
