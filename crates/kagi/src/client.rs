@@ -87,8 +87,7 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::BuildClient`] if the HTTP client fails to build, and
-    /// [`Error::InvalidHeader`] if a default header value is invalid.
+    /// Returns [`Error::BuildClient`] if the HTTP client fails to build.
     pub fn try_new(token: impl Into<SecretString>) -> Result<Self, Error> {
         Self::try_new_with_options(token, ClientOptions::default())
     }
