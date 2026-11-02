@@ -12,7 +12,7 @@ chrono = { version = "0.4.45" }
 clap = { version = "4.6.7", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 foldhash = "0.2"
-hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
+hickory-resolver = { version = "0.26.2", default-features = false, features = ["tokio", "tls-aws-lc-rs"] }
 humantime-serde = "1.1.1"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
 miette = { version = "7.2.0", default-features = false, features = ["derive", "fancy-no-backtrace"] }
@@ -88,4 +88,38 @@ codegen-units = 1
 opt-level = "s"
 
 [profile.release.package.toml_edit]
+opt-level = "s"
+
+# The jiff date math is only reachable through rink's date expressions.
+[profile.release.package.jiff]
+opt-level = "s"
+
+# CLI argument parsing: a handful of strings, once, at startup.
+[profile.release.package.clap_builder]
+opt-level = "s"
+
+# Configuration and startup error rendering only.
+[profile.release.package.figment]
+opt-level = "s"
+[profile.release.package.miette]
+opt-level = "s"
+
+# DNS lookups are network-bound; packet encode/decode is not worth optimizing for speed.
+[profile.release.package.hickory-net]
+opt-level = "s"
+[profile.release.package.hickory-proto]
+opt-level = "s"
+[profile.release.package.hickory-resolver]
+opt-level = "s"
+
+# TLS handshakes are per-connection setup; the record crypto runs in the provider.
+[profile.release.package.rustls]
+opt-level = "s"
+
+# Postgres wire protocol rows: IRC-scale query rates are nowhere near CPU-bound.
+[profile.release.package.sqlx-postgres]
+opt-level = "s"
+
+# HTML parsing sits behind network fetches in the titles path.
+[profile.release.package.html5ever]
 opt-level = "s"
