@@ -201,20 +201,24 @@ impl Mirror {
         self.s3.object_exists(&key).await
     }
 
-    /// Returns `false` if the media is already being mirrored, otherwise marks it as in-flight.
-    fn mark_in_flight(&self, prefix: &str, id: &str) -> bool {
-        self.in_flight
-            .lock()
-            .insert((prefix.to_string(), id.to_string()))
+    /// Marks the media as in-flight, returning the key that clears the mark.
+    ///
+    /// The returned key is the copy this call keeps; [`Mirror::clear_in_flight`] consumes it,
+    /// so clearing never allocates. Returns `None` if the media is already being mirrored —
+    /// the existing mark belongs to the earlier caller, which clears it with its own key.
+    fn mark_in_flight(&self, prefix: &str, id: &str) -> Option<(String, String)> {
+        let key = (prefix.to_string(), id.to_string());
+        self.in_flight.lock().insert(key.clone()).then_some(key)
     }
 
     /// Removes media from the in-flight set.
     ///
-    /// Consumes the owned key parts, so the removal hashes once and touches no allocator. The
-    /// set holds at most one entry per media being mirrored right now — one for every queued or
-    /// running download, which the download manager bounds — so hashing into it is trivially
-    /// cheap.
-    fn clear_in_flight(in_flight: &InFlight, prefix: String, id: String) {
+    /// Consumes the owned key that [`Mirror::mark_in_flight`] returned (or a clone of it), so
+    /// the removal hashes once and touches no allocator. The set holds at most one entry per
+    /// media being mirrored right now — one for every queued or running download, which the
+    /// download manager bounds — so hashing into it is trivially cheap.
+    fn clear_in_flight(in_flight: &InFlight, key: (String, String)) {
+        let (prefix, id) = key;
         in_flight.lock().remove(&(prefix, id));
     }
 
@@ -258,25 +262,23 @@ impl Mirror {
             return Ok(Some(link));
         }
 
-        if !self.mark_in_flight(prefix, id.as_str()) {
+        let Some(in_flight_key) = self.mark_in_flight(prefix, id.as_str()) else {
             debug!(media.id = %id, "media is already being mirrored");
 
             return Ok(None);
-        }
+        };
 
         let Some(manager) = self.download_manager() else {
             warn!(media.id = %id, "download manager is not running");
-            // This path holds only borrows, so clearing the mark materializes the key with two
-            // small allocations on an error path that drops the URL either way.
-            Self::clear_in_flight(&self.in_flight, prefix.to_string(), id.as_str().to_string());
+            // This path holds only borrows, so it consumes the mark's key directly; no copy
+            // is made on the way to the removal.
+            Self::clear_in_flight(&self.in_flight, in_flight_key);
 
             return Ok(None);
         };
 
         let in_flight = Arc::clone(&self.in_flight);
         let url = url.to_string();
-        let id = id.as_str().to_string();
-        let prefix = prefix.to_string();
         let public_url_base = public_url_base.clone();
 
         // The download is asynchronous and outlives this handler, so the download's span is
@@ -292,14 +294,14 @@ impl Mirror {
 
         let request = DownloadRequest {
             url,
-            id: id.clone(),
-            prefix: prefix.clone(),
+            id: in_flight_key.1.clone(),
+            prefix: in_flight_key.0.clone(),
             public_url_base,
             on_finish: Box::new(move |result| {
                 // The in-flight mark is always cleared, also on failure, so that a later link
-                // triggers a new attempt. The owned key parts are consumed for an
-                // allocation-free removal. Errors are logged by the download manager.
-                Self::clear_in_flight(&in_flight, prefix, id);
+                // triggers a new attempt. Consuming the mark's key keeps the removal
+                // allocation-free. Errors are logged by the download manager.
+                Self::clear_in_flight(&in_flight, in_flight_key);
 
                 if let Ok(link) = result {
                     on_mirrored(link);
@@ -315,7 +317,7 @@ impl Mirror {
             );
 
             // The rejected request owns its key parts; consume them.
-            Self::clear_in_flight(&self.in_flight, request.prefix, request.id);
+            Self::clear_in_flight(&self.in_flight, (request.prefix, request.id));
         }
 
         Ok(None)
@@ -376,15 +378,16 @@ mod tests {
     fn test_in_flight_tracking() {
         let mirror = mirror_for_test();
 
-        assert!(mirror.mark_in_flight("reddit", "123"));
+        // Newly marked media returns the key that clears the mark.
+        assert!(mirror.mark_in_flight("reddit", "123").is_some());
         // Media that is already being mirrored is not marked again.
-        assert!(!mirror.mark_in_flight("reddit", "123"));
-        assert!(mirror.mark_in_flight("reddit", "456"));
+        assert!(mirror.mark_in_flight("reddit", "123").is_none());
+        assert!(mirror.mark_in_flight("reddit", "456").is_some());
         // The same id under a different prefix is a different piece of media.
-        assert!(mirror.mark_in_flight("tiktok", "456"));
+        assert!(mirror.mark_in_flight("tiktok", "456").is_some());
 
-        Mirror::clear_in_flight(&mirror.in_flight, "reddit".to_string(), "123".to_string());
-        assert!(mirror.mark_in_flight("reddit", "123"));
+        Mirror::clear_in_flight(&mirror.in_flight, ("reddit".to_string(), "123".to_string()));
+        assert!(mirror.mark_in_flight("reddit", "123").is_some());
     }
 
     #[tokio::test]
