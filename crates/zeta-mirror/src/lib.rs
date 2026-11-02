@@ -223,8 +223,10 @@ impl Mirror {
 
     /// Removes media from an in-flight set.
     ///
-    /// Comparing the borrowed parts keeps this allocation-free; the set only holds media that
-    /// is downloading right now, so the linear scan is trivially cheap.
+    /// Comparing the borrowed parts keeps this allocation-free. Removal is a linear scan, but
+    /// the set holds at most one entry per media being mirrored right now — one for every
+    /// queued or running download, which the download manager bounds — so the scan is
+    /// trivially cheap.
     fn clear_in_flight(in_flight: &InFlight, prefix: &str, id: &str) {
         in_flight
             .lock()
