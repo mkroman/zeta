@@ -142,7 +142,7 @@ impl GeoIp {
         match self.resolve(&opts.name).await {
             Ok(info) => {
                 for line in reply(&info).lines() {
-                    send_reply(client, channel, line)?;
+                    send_reply(client, channel, line.to_owned())?;
                 }
             }
             Err(err) => {

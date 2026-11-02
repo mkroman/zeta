@@ -34,7 +34,7 @@ fn reply_usage(
     format: &dyn Fn(&str) -> String,
 ) -> Result<(), irc::error::Error> {
     for line in error.to_string().lines().filter(|line| !line.is_empty()) {
-        client.send_privmsg(channel, format(line))?;
+        send_reply(client, channel, format(line))?;
     }
 
     Ok(())
@@ -77,16 +77,18 @@ pub fn parse_or_usage<T: Parser + 'static>(
 /// normally has one — still goes through [`Client::send_privmsg`], keeping its multi-line
 /// splitting unchanged.
 ///
+/// `message` is an owned `String` rather than an `impl Into<String>` so this body is compiled
+/// once instead of once per call-site argument type; callers that hold a `&str` allocate at the
+/// call site with `to_owned`.
+///
 /// # Errors
 ///
 /// Returns any error produced while sending the message.
 pub fn send_reply(
     client: &Client,
     channel: &str,
-    message: impl Into<String>,
+    message: String,
 ) -> Result<(), irc::error::Error> {
-    let message = message.into();
-
     if message.contains("\r\n") {
         return client.send_privmsg(channel, message);
     }
@@ -106,10 +108,8 @@ pub fn send_reply(
 pub fn send_reply_via(
     sender: &Sender,
     channel: &str,
-    message: impl Into<String>,
+    message: String,
 ) -> Result<(), irc::error::Error> {
-    let message = message.into();
-
     if message.contains("\r\n") {
         return sender.send_privmsg(channel, message);
     }

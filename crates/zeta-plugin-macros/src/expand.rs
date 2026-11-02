@@ -1362,7 +1362,8 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
     let usage = args.usage.as_ref().map(|usage| {
         quote! {
             if command.args().trim().is_empty() {
-                client.send_privmsg(
+                ::zeta_plugin::send_reply(
+                    client,
                     command.channel(),
                     ::zeta_plugin::plain_reply(#usage),
                 )?;
@@ -2072,6 +2073,7 @@ mod tests {
         let rendered = render(&plugin, &inherent).to_string();
 
         assert!(rendered.contains("plain_reply"), "{rendered}");
+        assert!(rendered.contains("send_reply"), "{rendered}");
         assert!(rendered.contains("Usage: .test <arg>"), "{rendered}");
     }
 
