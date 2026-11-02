@@ -34,9 +34,13 @@ use std::sync::Arc;
 use clap::Parser;
 use tracing::debug;
 
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::{MAX_LISTING_LENGTH, append_entries_with_more};
-use zeta_utils::text::pluralize;
+use zeta_plugin::irc::{labeled_reply, parse_or_usage};
+use zeta_plugin::{
+    ArgsMode, Client, CommandEvent, CommandSpec, Context, FilterHandle, Hostmasks, Sender,
+    Subscriptions, ZetaError, plugin, plugin_err,
+};
+use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
+use zeta_utils::text;
 
 /// The `.filter` command.
 const FILTER: CommandSpec =
@@ -379,7 +383,7 @@ impl FilterPlugin {
                     "Filter",
                     format!(
                         "{} matching your criteria: ",
-                        pluralize(filters.len(), "filter")
+                        text::pluralize(filters.len(), "filter")
                     ),
                 ),
                 &filters,
@@ -460,7 +464,7 @@ impl FilterPlugin {
                     "Filter",
                     format!(
                         "{} matching the criteria will be deleted: ",
-                        pluralize(filters.len(), "filter")
+                        text::pluralize(filters.len(), "filter")
                     ),
                 ),
                 &filters,
@@ -554,7 +558,7 @@ impl FilterPlugin {
 fn listing(header: String, filters: &[Filter], reserved: usize) -> String {
     let mut listing = header;
 
-    append_entries_with_more(
+    irc::append_entries_with_more(
         &mut listing,
         filters.iter().map(describe),
         filters.len(),
@@ -590,7 +594,7 @@ fn describe(filter: &Filter) -> String {
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use zeta_utils::irc::strip_formatting;
+    use zeta_plugin::{NoSettings, Registered};
 
     #[test]
     fn cli_definition_is_valid() {
@@ -718,7 +722,7 @@ mod tests {
 
         for (case, filters, expected) in cases {
             assert_eq!(
-                strip_formatting(&changed_response("Filter", "Added", &filters)),
+                irc::strip_formatting(&changed_response("Filter", "Added", &filters)),
                 expected,
                 "for {case}"
             );
@@ -727,9 +731,9 @@ mod tests {
 
     #[test]
     fn counts_are_pluralized() {
-        assert_eq!(pluralize(1, "filter"), "1 filter");
-        assert_eq!(pluralize(2, "filter"), "2 filters");
-        assert_eq!(pluralize(0, "filter"), "0 filters");
+        assert_eq!(text::pluralize(1, "filter"), "1 filter");
+        assert_eq!(text::pluralize(2, "filter"), "2 filters");
+        assert_eq!(text::pluralize(0, "filter"), "0 filters");
     }
 
     #[test]

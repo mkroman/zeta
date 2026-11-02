@@ -3,7 +3,6 @@
 use std::fmt::Write;
 
 use url::Url;
-use zeta_url::{is_identifier, path_segments};
 
 use crate::Link;
 
@@ -38,7 +37,7 @@ pub fn classify_reddit_url(url: &Url) -> Option<Link> {
 
 /// Parses reddit.com URLs
 pub fn classify_reddit_com_url(url: &Url) -> Option<Link> {
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         // Direct link to a subreddit
         //
         // Parameters: `/r/<subreddit>`
@@ -102,8 +101,8 @@ fn classify_redd_it_url(url: &Url) -> Option<Link> {
         }
         // `redd.it/<id>` is the short link for a submission; resolving it is the API's job, so
         // it is classified as the comments page it redirects to.
-        Some("redd.it") => match path_segments(url)?.as_slice() {
-            [id] if is_identifier(id, "") => Some(Link::CommentsPage {
+        Some("redd.it") => match zeta_url::path_segments(url)?.as_slice() {
+            [id] if zeta_url::is_identifier(id, "") => Some(Link::CommentsPage {
                 id: (*id).to_string(),
             }),
             _ => None,

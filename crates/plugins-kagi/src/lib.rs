@@ -15,7 +15,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, unstyle_text};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err, resolve_secret};
 
 /// Settings for the kagi plugin, from its `[plugins.kagi]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]

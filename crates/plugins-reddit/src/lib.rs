@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_mirror::{MediaId, Mirror, MirrorHandle};
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::{labeled_reply, plain_reply};
+use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err, resolve_secret};
+use zeta_utils::irc;
 use zeta_utils::text::Truncatable;
 
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
@@ -53,7 +54,7 @@ pub enum Error {
     Reddit(#[from] reddit::Error),
     /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
-    Irc(#[from] irc::error::Error),
+    Irc(#[from] ::irc::error::Error),
 }
 
 /// Reddit integration plugin.
@@ -236,8 +237,8 @@ impl Reddit {
 fn format_submission(submission: &Submission) -> String {
     plain_reply(format!(
         "{} : {}",
-        unstyle_text(&submission.title),
-        unstyle_text(&submission.subreddit)
+        irc::unstyle_text(&submission.title),
+        irc::unstyle_text(&submission.subreddit)
     ))
 }
 
@@ -247,8 +248,8 @@ fn format_submission(submission: &Submission) -> String {
 /// The description is unstyled before it is truncated, so the character budget counts what is
 /// actually sent.
 fn format_subreddit(subreddit: &Subreddit) -> String {
-    let title = unstyle_text(&subreddit.title);
-    let description = unstyle_text(&subreddit.public_description);
+    let title = irc::unstyle_text(&subreddit.title);
+    let description = irc::unstyle_text(&subreddit.public_description);
     let description = description.truncate_with_suffix(250, "…");
 
     labeled_reply(&title, description)
@@ -258,7 +259,6 @@ fn format_subreddit(subreddit: &Subreddit) -> String {
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
 
     /// Builds a submission from the API shape used in the tests below.
     fn submission(title: &str, subreddit: &str) -> Submission {
@@ -290,7 +290,7 @@ mod tests {
         let submission = submission("Sparindex S&amp;P500 børsnoteres i morgen", "dkfinance");
 
         assert_eq!(
-            strip_formatting(&format_submission(&submission)),
+            irc::strip_formatting(&format_submission(&submission)),
             "> Sparindex S&P500 børsnoteres i morgen : dkfinance"
         );
     }
@@ -300,7 +300,7 @@ mod tests {
         let subreddit = subreddit("r/Denmark &amp; friends", "News &amp; discussion");
 
         assert_eq!(
-            strip_formatting(&format_subreddit(&subreddit)),
+            irc::strip_formatting(&format_subreddit(&subreddit)),
             "> r/Denmark & friends: News & discussion"
         );
     }
@@ -311,11 +311,11 @@ mod tests {
         let subreddit = subreddit("r/Denmark", "News&#10;and\x02 discussion");
 
         assert_eq!(
-            strip_formatting(&format_submission(&submission)),
+            irc::strip_formatting(&format_submission(&submission)),
             "> Fake Title : dkfinance"
         );
         assert_eq!(
-            strip_formatting(&format_subreddit(&subreddit)),
+            irc::strip_formatting(&format_subreddit(&subreddit)),
             "> r/Denmark: News and discussion"
         );
     }

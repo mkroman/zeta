@@ -12,7 +12,7 @@
 //! anywhere else.
 //!
 //! ```
-//! use zeta_plugin::{Client, Context, Error, prelude::*};
+//! use zeta_plugin::{Client, Context, Error, plugin};
 //!
 //! /// Greets people in the channel the command came from.
 //! #[derive(Default)]
@@ -52,7 +52,7 @@
 //! parameters in the declared order:
 //!
 //! ```
-//! use zeta_plugin::prelude::*;
+//! use zeta_plugin::{Context, Error, Subscriptions, plugin};
 //!
 //! struct Greet;
 //!

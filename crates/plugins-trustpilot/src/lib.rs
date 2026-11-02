@@ -14,9 +14,10 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_url::RedactedUrl;
-use zeta_utils::irc::unstyle_text;
+use zeta_utils::irc;
 
 /// The business-unit search endpoint reviews are looked up against.
 const FIND_URL: &str = "https://api.trustpilot.com/v1/business-units/find";
@@ -178,9 +179,9 @@ impl Trustpilot {
 fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
     let score = normalized_score(b.score.trust_score);
     let reviews = b.number_of_reviews.total.to_formatted_string(&Locale::en);
-    let identifying = unstyle_text(&b.name.identifying);
+    let identifying = irc::unstyle_text(&b.name.identifying);
     let url = format!("https://{review_domain}.trustpilot.com/review/{identifying}");
-    let name = unstyle_text(&b.display_name);
+    let name = irc::unstyle_text(&b.display_name);
 
     labeled_reply(
         "Trustpilot",
@@ -206,7 +207,6 @@ fn normalized_score(trust_score: f64) -> f64 {
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -272,7 +272,7 @@ mod tests {
             number_of_reviews: NumberOfReviews { total: 1 },
         };
 
-        let formatted = strip_formatting(&format_business(&business, "www"));
+        let formatted = irc::strip_formatting(&format_business(&business, "www"));
 
         assert!(formatted.contains("Score: 4.8/5.0"), "{formatted}");
         assert!(

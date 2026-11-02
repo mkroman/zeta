@@ -21,9 +21,10 @@ use tracing::debug;
 use zeta_http as http;
 use zeta_http::HttpConfig;
 use zeta_http::RequestError;
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::unstyle_text;
-use zeta_utils::settings::resolve_optional_setting;
+use zeta_plugin::irc::{labeled_reply, reply_lookup};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
+use zeta_utils::irc;
+use zeta_utils::settings;
 
 /// Settings for the github plugin, from its `[plugins.github]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -76,7 +77,7 @@ struct RepoItem {
 impl GitHub {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         // The token is optional; it only raises the API rate limit.
-        let token = resolve_optional_setting(settings.token.as_deref(), "GITHUB_TOKEN");
+        let token = settings::resolve_optional_setting(settings.token.as_deref(), "GITHUB_TOKEN");
         let plugin = Self::try_new_with_token(&ctx.config.http, token).map_err(plugin_err)?;
 
         Ok(plugin)
@@ -176,17 +177,17 @@ impl GitHub {
             let _ = write!(line, "\x0F\u{2442}\x0310 ");
         }
 
-        line.push_str(&unstyle_text(&item.full_name));
+        line.push_str(&irc::unstyle_text(&item.full_name));
 
         if let Some(desc) = &item.description {
-            let _ = write!(line, " - {}", unstyle_text(desc));
+            let _ = write!(line, " - {}", irc::unstyle_text(desc));
         }
 
         // " -\x0f <url>"
-        let _ = write!(line, " -\x0F {}", unstyle_text(&item.html_url));
+        let _ = write!(line, " -\x0F {}", irc::unstyle_text(&item.html_url));
 
         // "\x0310 - Language:\x0f <lang>\x0310 Stars:\x0f <stars>"
-        let language = item.language.as_deref().map(unstyle_text);
+        let language = item.language.as_deref().map(irc::unstyle_text);
         let lang = language.as_deref().unwrap_or("?");
         let _ = write!(
             line,

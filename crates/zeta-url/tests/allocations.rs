@@ -4,12 +4,7 @@
 //! the suite without interference. Linking the crate installs its counting allocator; the test
 //! needs no `#[global_allocator]` of its own.
 
-use std::hint::black_box;
-use std::mem::size_of;
-
 use url::Url;
-
-use zeta_url::path_segments;
 
 /// Returns the allocation statistics `f` performs on this thread.
 fn measure(f: impl FnOnce()) -> allocation_counter::AllocationInfo {
@@ -21,10 +16,10 @@ fn path_segments_keeps_typical_urls_off_the_heap() {
     let typical = Url::parse("https://www.example.com/a/b").expect("valid URL");
 
     let info = measure(|| {
-        let segments = path_segments(&typical).expect("the URL has segments");
+        let segments = zeta_url::path_segments(&typical).expect("the URL has segments");
 
         assert_eq!(segments.as_slice(), ["a", "b"]);
-        black_box(&segments);
+        std::hint::black_box(&segments);
     });
 
     // On main this collected into a `Vec<&str>`: one allocation of 64 bytes (a two-element
@@ -37,10 +32,10 @@ fn path_segments_keeps_typical_urls_off_the_heap() {
     let six = Url::parse("https://www.example.com/a/b/c/d/e/f").expect("valid URL");
 
     let info = measure(|| {
-        let segments = path_segments(&six).expect("the URL has segments");
+        let segments = zeta_url::path_segments(&six).expect("the URL has segments");
 
         assert_eq!(segments.len(), 6);
-        black_box(&segments);
+        std::hint::black_box(&segments);
     });
 
     assert_eq!(info.count_total, 0, "six segments live inline");
@@ -53,10 +48,10 @@ fn path_segments_keeps_typical_urls_off_the_heap() {
     let deep = Url::parse("https://www.example.com/a/b/c/d/e/f/g/h/i/j/k/l").expect("valid URL");
 
     let info = measure(|| {
-        let segments = path_segments(&deep).expect("the URL has segments");
+        let segments = zeta_url::path_segments(&deep).expect("the URL has segments");
 
         assert_eq!(segments.len(), 12);
-        black_box(&segments);
+        std::hint::black_box(&segments);
     });
 
     let required = u64::try_from(12 * size_of::<&str>())
