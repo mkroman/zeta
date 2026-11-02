@@ -650,7 +650,7 @@ fn describe(filter: &Filter) -> String {
     let mut text = String::with_capacity(
         criteria
             .iter()
-            .filter_map(|&(name, value)| value.map(|value| name.len() + value.len() + 1))
+            .filter_map(|&(name, value)| value.map(|value| name.len() + value.len() + 2))
             .sum(),
     );
 
