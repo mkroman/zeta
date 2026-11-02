@@ -68,18 +68,10 @@ pub fn parse_or_usage<T: Parser + 'static>(
     }
 }
 
-/// Sends `message` to `channel` as a single `PRIVMSG`, moving it into the outgoing command.
+/// Sends `message` to `channel` as a single `PRIVMSG` through the client's [`Sender`].
 ///
-/// [`Client::send_privmsg`] formats its message into a `String`, splits that and then copies
-/// every line again, so a reply built here would be copied twice before it reaches the outgoing
-/// queue. Sending the [`Command`] directly moves the reply instead. A message that carries an
-/// IRC line break — which the reply builders pass through verbatim, so only a hand-built message
-/// normally has one — still goes through [`Client::send_privmsg`], keeping its multi-line
-/// splitting unchanged.
-///
-/// `message` is an owned `String` rather than an `impl Into<String>` so this body is compiled
-/// once instead of once per call-site argument type; callers that hold a `&str` allocate at the
-/// call site with `to_owned`.
+/// A thin wrapper over [`send_reply_via`] on [`Client::sender`], so both entry points share one
+/// body and cannot drift apart.
 ///
 /// # Errors
 ///
@@ -89,18 +81,23 @@ pub fn send_reply(
     channel: &str,
     message: String,
 ) -> Result<(), irc::error::Error> {
-    if message.contains("\r\n") {
-        return client.send_privmsg(channel, message);
-    }
-
-    client.send(Command::PRIVMSG(channel.to_owned(), message))
+    send_reply_via(&client.sender(), channel, message)
 }
 
 /// Sends `message` to `channel` as a single `PRIVMSG` through `sender`, moving it into the
 /// outgoing command.
 ///
-/// Unlike [`send_reply`], this does not need a [`Client`], so a task that keeps a
-/// [`Sender`] alive after the handler returns can reply without reaching for the client.
+/// A task that keeps a [`Sender`] alive after the handler returns can reply through this without
+/// reaching for the [`Client`]. [`Client::send_privmsg`] formats its message into a `String`,
+/// splits that and then copies every line again, so a reply built here would be copied twice
+/// before it reaches the outgoing queue; sending the [`Command`] directly moves the reply
+/// instead. A message that carries an IRC line break — which the reply builders pass through
+/// verbatim, so only a hand-built message normally has one — still goes through
+/// [`Sender::send_privmsg`], keeping its multi-line splitting unchanged.
+///
+/// `message` is an owned `String` rather than an `impl Into<String>` so this body is compiled
+/// once instead of once per call-site argument type; callers that hold a `&str` allocate at the
+/// call site with `to_owned`.
 ///
 /// # Errors
 ///
@@ -144,12 +141,19 @@ pub async fn reply_lookup<T, E>(
 mod tests {
     use std::cell::RefCell;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use clap::Parser;
     use irc::proto::Message;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::net::TcpListener;
+    use tokio::time::timeout;
 
     use super::*;
     use crate::command::CommandSpec;
+
+    /// How long the replies have to reach the test listener before the test gives up.
+    const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// Options whose required positional argument makes an empty invocation fail.
     #[derive(Debug, Parser)]
@@ -197,6 +201,63 @@ mod tests {
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
             .collect()
+    }
+
+    #[tokio::test]
+    async fn send_reply_and_send_reply_via_deliver_replies() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind the test listener");
+        let address = listener.local_addr().expect("the listener has an address");
+
+        // The mock connection's sent log is `#[cfg(test)]` inside the irc crate, so the replies
+        // are asserted on a real socket instead: a plain reply, a reply carrying an IRC line
+        // break, and a direct `Sender` reply.
+        let mut client = Client::from_config(irc::client::data::Config {
+            nickname: Some("zeta-test".to_owned()),
+            server: Some(address.ip().to_string()),
+            port: Some(address.port()),
+            // `use_tls` defaults to true when a TLS feature is enabled, which would hang the
+            // handshake against this plain listener.
+            use_tls: Some(false),
+            ..Default::default()
+        })
+        .await
+        .expect("the client connects to the test listener");
+
+        // Without the outgoing future being driven, the enqueued commands never reach the socket.
+        let outgoing = client.outgoing().expect("the outgoing future is available");
+        tokio::spawn(async move {
+            let _ = outgoing.await;
+        });
+
+        send_reply(&client, "#test", "plain".to_owned()).expect("the plain reply sends");
+        send_reply(&client, "#test", "a\r\nb".to_owned()).expect("the multi-line reply sends");
+        send_reply_via(&client.sender(), "#test", "via sender".to_owned())
+            .expect("the direct-sender reply sends");
+
+        let (socket, _) = listener.accept().await.expect("the client connects");
+        let mut reader = BufReader::new(socket);
+        let mut delivered = Vec::new();
+        for _ in 0..4 {
+            let mut line = String::new();
+            timeout(DELIVERY_TIMEOUT, reader.read_line(&mut line))
+                .await
+                .expect("every reply reaches the socket in time")
+                .expect("every reply reads as a line");
+            delivered.push(line);
+        }
+
+        assert_eq!(
+            delivered,
+            [
+                "PRIVMSG #test plain\r\n",
+                "PRIVMSG #test a\r\n",
+                "PRIVMSG #test b\r\n",
+                "PRIVMSG #test :via sender\r\n",
+            ],
+            "the line-break reply splits into two PRIVMSGs, all in send order"
+        );
     }
 
     #[tokio::test]
