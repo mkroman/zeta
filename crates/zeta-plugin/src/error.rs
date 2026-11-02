@@ -27,6 +27,7 @@ pub enum Error {
 ///
 /// Accepts errors that implement [`StdError + Send + Sync`] and boxes them
 /// into a [`BoxError`], then wraps into [`Error::Plugin`].
+#[must_use]
 pub fn plugin_err<E: StdError + Send + Sync + 'static>(e: E) -> Error {
     Error::Plugin(Box::new(e))
 }

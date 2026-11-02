@@ -8,7 +8,7 @@
 //! The inflection, etymology, and example are optional; each is shown by default and can be
 //! turned off in `[plugins.dendanskeordbog]`.
 
-use std::fmt::{self, Display};
+use std::fmt::Write;
 
 use dendanskeordbog::DictionaryDocument;
 use serde::{Deserialize, Serialize};
@@ -46,51 +46,48 @@ pub struct DenDanskeOrdbog {
     settings: Settings,
 }
 
-struct MessageFormatter<'a> {
-    document: &'a DictionaryDocument,
-    settings: &'a Settings,
-}
+fn format_message(document: &DictionaryDocument, settings: &Settings) -> String {
+    let Some(entry) = document.entries.first() else {
+        return plain_reply("No results");
+    };
 
-impl Display for MessageFormatter<'_> {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(entry) = self.document.entries.first() {
-            write!(fmt, "{}", labeled_reply_prefix("DDO"))?;
+    let mut message = labeled_reply_prefix("DDO");
 
-            if let Some(phonetic) = &entry.phonetic {
-                write!(fmt, " {}", unstyle_text(phonetic))?;
-            }
-
-            let pos = unstyle_text(&entry.pos);
-            write!(fmt, " (\x0f{pos}\x0310)")?;
-
-            if self.settings.show_morphology
-                && let Some(inflection) = &entry.morphology
-            {
-                write!(fmt, " Bøjning:\x0f {}\x0310", unstyle_text(inflection))?;
-            }
-
-            if self.settings.show_etymology
-                && let Some(etymology) = &entry.etymology
-            {
-                write!(fmt, " Oprindelse:\x0f {}\x0310", unstyle_text(etymology))?;
-            }
-
-            if let Some(definition) = &entry.definitions.first() {
-                let description = unstyle_text(&definition.description);
-                write!(fmt, " Definition:\x0f {description}\x0310")?;
-
-                if self.settings.show_examples
-                    && let Some(example) = &definition.examples.first()
-                {
-                    write!(fmt, " Eksempel:\x0f {}\x0310", unstyle_text(example))?;
-                }
-            }
-        } else {
-            write!(fmt, "{}", plain_reply("No results"))?;
-        }
-
-        Ok(())
+    if let Some(phonetic) = &entry.phonetic {
+        let _ = write!(message, " {}", unstyle_text(phonetic));
     }
+
+    let pos = unstyle_text(&entry.pos);
+    let _ = write!(message, " (\x0f{pos}\x0310)");
+
+    if settings.show_morphology
+        && let Some(inflection) = &entry.morphology
+    {
+        let _ = write!(message, " Bøjning:\x0f {}\x0310", unstyle_text(inflection));
+    }
+
+    if settings.show_etymology
+        && let Some(etymology) = &entry.etymology
+    {
+        let _ = write!(
+            message,
+            " Oprindelse:\x0f {}\x0310",
+            unstyle_text(etymology)
+        );
+    }
+
+    if let Some(definition) = &entry.definitions.first() {
+        let description = unstyle_text(&definition.description);
+        let _ = write!(message, " Definition:\x0f {description}\x0310");
+
+        if settings.show_examples
+            && let Some(example) = &definition.examples.first()
+        {
+            let _ = write!(message, " Eksempel:\x0f {}\x0310", unstyle_text(example));
+        }
+    }
+
+    message
 }
 
 #[plugin(name = "dendanskeordbog", settings = Settings)]
@@ -124,13 +121,7 @@ impl DenDanskeOrdbog {
             client,
             command.channel(),
             self.client.query(command.args()),
-            |document| {
-                MessageFormatter {
-                    document: &document,
-                    settings: &self.settings,
-                }
-                .to_string()
-            },
+            |document| format_message(&document, &self.settings),
             |error| {
                 warn!(exception.message = %error, "ddo lookup failed");
                 plain_reply(error)

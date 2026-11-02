@@ -21,6 +21,16 @@ use zeta_plugin::database::Database;
 /// allocate the keys it looks up.
 type PendingByTarget = HashMap<String, HashMap<String, Vec<Notification>>>;
 
+/// Inserts `notification` into `cache`, keyed by its channel and target nickname.
+fn insert_pending(cache: &mut PendingByTarget, notification: Notification) {
+    cache
+        .entry(notification.channel.clone())
+        .or_default()
+        .entry(notification.target.clone())
+        .or_default()
+        .push(notification);
+}
+
 /// Stores notifications in the database and caches the pending ones in memory.
 ///
 /// The cache is keyed by channel, and within each channel by the target nickname, so lookups can
@@ -69,12 +79,7 @@ impl NotificationService {
             trace!(?notification, "storing notification in cache");
 
             pending += 1;
-            loaded
-                .entry(notification.channel.clone())
-                .or_default()
-                .entry(notification.target.clone())
-                .or_default()
-                .push(notification);
+            insert_pending(&mut loaded, notification);
         }
 
         let mut cache = self.cache.lock().await;
@@ -116,12 +121,7 @@ impl NotificationService {
 
         let mut cache = self.cache.lock().await;
         self.pending.fetch_add(1, Ordering::Relaxed);
-        cache
-            .entry(notification.channel.clone())
-            .or_default()
-            .entry(notification.target.clone())
-            .or_default()
-            .push(notification.clone());
+        insert_pending(&mut cache, notification.clone());
         drop(cache);
 
         Ok(notification)
@@ -170,12 +170,7 @@ impl NotificationService {
         for notification in notifications {
             trace!(?notification, "restoring undelivered notification");
 
-            cache
-                .entry(notification.channel.clone())
-                .or_default()
-                .entry(notification.target.clone())
-                .or_default()
-                .push(notification);
+            insert_pending(&mut cache, notification);
         }
     }
 

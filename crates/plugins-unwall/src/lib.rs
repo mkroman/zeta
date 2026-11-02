@@ -123,9 +123,9 @@ enum Subcommand {
     #[command(name = "rm", visible_alias = "del", visible_alias = "delete")]
     Remove(Remove),
     /// summarize the covered sites
-    List(List),
+    List,
     /// show overall statistics about the unwalled links
-    Stats(Stats),
+    Stats,
     /// show statistics for one host
     Info(Info),
 }
@@ -144,14 +144,6 @@ struct Remove {
     /// the hostname or wildcard to remove, e.g. `www.bloomberg.com` or `*.bloomberg.com`
     pattern: String,
 }
-
-/// Summarize the covered sites.
-#[derive(clap::Args, Debug)]
-struct List {}
-
-/// Show overall statistics about the unwalled links.
-#[derive(clap::Args, Debug)]
-struct Stats {}
 
 /// Show statistics for one host.
 #[derive(clap::Args, Debug)]
@@ -554,8 +546,8 @@ impl Unwall {
 
                 self.remove(client, channel, &pattern).await
             }
-            Subcommand::List(List {}) => self.list(client, channel),
-            Subcommand::Stats(Stats {}) => self.stats(client, channel).await,
+            Subcommand::List => self.list(client, channel),
+            Subcommand::Stats => self.stats(client, channel).await,
             Subcommand::Info(Info { host }) => self.info(client, channel, &host).await,
         }
     }

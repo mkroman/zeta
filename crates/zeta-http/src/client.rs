@@ -141,6 +141,7 @@ pub fn build_client(config: &HttpConfig) -> reqwest::Client {
 }
 
 /// Returns a default HTTP client builder configured by [`HttpConfig`].
+#[must_use = "the builder does nothing until `.build()` is called"]
 #[cfg(feature = "http")]
 pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
     reqwest::ClientBuilder::new()

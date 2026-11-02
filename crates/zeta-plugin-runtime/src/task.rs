@@ -23,6 +23,7 @@ use crate::dispatch::Envelope;
 /// Closing the mailbox — by dropping its senders, which the dispatcher holds — makes the plugin
 /// drain its queued events, run the shutdown hook and exit. A panicking handler still runs the
 /// shutdown hook; the panic is re-raised afterwards so the task keeps its panic status.
+#[must_use = "dropping the task handle detaches the plugin task instead of stopping it"]
 pub struct PluginTask {
     /// The name of the plugin, used for logging.
     pub name: &'static str,

@@ -22,16 +22,6 @@ pub struct MirrorHandle {
 }
 
 impl MirrorHandle {
-    /// Creates a handle for the given mirror.
-    #[must_use]
-    pub const fn new(mirror: Arc<Mirror>, prefix: String, public_url_base: Url) -> Self {
-        Self {
-            mirror,
-            prefix,
-            public_url_base,
-        }
-    }
-
     /// Resolves a handle from a plugin's configuration.
     ///
     /// Every plugin follows the same convention: the download prefix resolves through the
@@ -61,7 +51,11 @@ impl MirrorHandle {
             plugin,
         );
 
-        Some(Self::new(mirror, prefix, public_url_base))
+        Some(Self {
+            mirror,
+            prefix,
+            public_url_base,
+        })
     }
 
     /// Mirrors the media at `url` unless it has already been mirrored or a mirror of it is
