@@ -765,6 +765,26 @@ mod tests {
         receiver
     }
 
+    /// Registers a subscriber for [`dispatch_benchmark`] with a `capacity`-slot mailbox.
+    ///
+    /// The benchmark never drains its mailboxes. The regular [`subscribe`] helper uses the
+    /// 8-slot mailbox of the unit tests, which would make the benchmark measure the overflow path
+    /// after the eighth dispatch instead of accepted delivery.
+    fn benchmark_subscriber(
+        index: &mut EventIndex,
+        name: &'static str,
+        capacity: usize,
+        register: impl FnOnce(&mut Subscriptions),
+    ) -> mpsc::Receiver<Envelope> {
+        let mut subscriptions = Subscriptions::new();
+        register(&mut subscriptions);
+
+        let (mailbox, receiver) = mpsc::channel(capacity);
+        index.add(name, &subscriptions, mailbox);
+
+        receiver
+    }
+
     #[test]
     fn registered_command_is_dispatched() {
         let mut index = EventIndex::default();
@@ -1354,14 +1374,18 @@ mod tests {
     fn dispatch_benchmark() {
         const DISPATCHES: usize = 100_000;
 
+        // The benchmark never drains a mailbox, so each subscriber gets one that accepts every
+        // event its case dispatches; the 8-slot unit-test mailbox would shed after eight sends.
+        // Each subscriber receives at most `DISPATCHES` events, one per dispatched message.
+
         let mut index = EventIndex::default();
-        let _dig = subscribe(&mut index, "dig", |subscriptions| {
+        let _dig = benchmark_subscriber(&mut index, "dig", DISPATCHES, |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
-        let _joiner = subscribe(&mut index, "joiner", |subscriptions| {
+        let _joiner = benchmark_subscriber(&mut index, "joiner", DISPATCHES, |subscriptions| {
             subscriptions.receive_join();
         });
-        let _ctcp = subscribe(&mut index, "ctcp", |subscriptions| {
+        let _ctcp = benchmark_subscriber(&mut index, "ctcp", DISPATCHES, |subscriptions| {
             subscriptions.receive_ctcp();
         });
 
@@ -1385,15 +1409,16 @@ mod tests {
         // This second index reaches the scheme-colon gate and, past it, the URL scan: a generic
         // subscriber like `titles` and a host-scoped one like `youtube`.
         let mut url_index = EventIndex::default();
-        let _url_dig = subscribe(&mut url_index, "dig", |subscriptions| {
+        let _url_dig = benchmark_subscriber(&mut url_index, "dig", DISPATCHES, |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
-        let _titles = subscribe(&mut url_index, "titles", |subscriptions| {
+        let _titles = benchmark_subscriber(&mut url_index, "titles", DISPATCHES, |subscriptions| {
             subscriptions.urls(UrlScope::Any);
         });
-        let _example = subscribe(&mut url_index, "example", |subscriptions| {
-            subscriptions.urls(UrlScope::Hosts(&["example.com"]));
-        });
+        let _example =
+            benchmark_subscriber(&mut url_index, "example", DISPATCHES, |subscriptions| {
+                subscriptions.urls(UrlScope::Hosts(&["example.com"]));
+            });
 
         benchmark(
             "unhandled privmsg, url subscriber",
