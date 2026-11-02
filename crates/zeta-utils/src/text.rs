@@ -6,22 +6,47 @@ mod article;
 
 pub use article::indefinite_article;
 
+/// Truncates `text` to at most `len` characters, appending `suffix` when truncation happens.
+///
+/// Non-generic so every receiver type shares one copy of the logic.
+#[inline(never)]
+fn truncate_with_suffix_str<'a>(text: &'a str, len: usize, suffix: &str) -> Cow<'a, str> {
+    match text.char_indices().nth(len) {
+        Some((byte_idx, _)) => {
+            let mut truncated = String::with_capacity(byte_idx + suffix.len());
+            truncated.push_str(&text[..byte_idx]);
+            truncated.push_str(suffix);
+            Cow::Owned(truncated)
+        }
+        None => Cow::Borrowed(text),
+    }
+}
+
+/// Truncates `text` so that it is at most `len` characters *including* `suffix`.
+///
+/// Non-generic so every receiver type shares one copy of the logic.
+#[inline(never)]
+fn truncate_within_str<'a>(text: &'a str, len: usize, suffix: &str) -> Cow<'a, str> {
+    // One character is at least one byte, so text within `len` bytes holds at most `len`
+    // characters: the common short reply needs no scan at all.
+    if text.len() <= len {
+        return Cow::Borrowed(text);
+    }
+
+    // The text exceeds the budget in bytes, but the budget counts characters.
+    if text.char_indices().nth(len).is_none() {
+        return Cow::Borrowed(text);
+    }
+
+    truncate_with_suffix_str(text, len.saturating_sub(suffix.chars().count()), suffix)
+}
+
 /// Helpers for truncating text.
 pub trait TruncatableExt: AsRef<str> {
     /// Truncates the text to at most `len` characters, appending `suffix` when truncation
     /// happens (the result may then exceed `len` by the suffix's length).
     fn truncate_with_suffix(&self, len: usize, suffix: &str) -> Cow<'_, str> {
-        let text = self.as_ref();
-
-        match text.char_indices().nth(len) {
-            Some((byte_idx, _)) => {
-                let mut truncated = String::with_capacity(byte_idx + suffix.len());
-                truncated.push_str(&text[..byte_idx]);
-                truncated.push_str(suffix);
-                Cow::Owned(truncated)
-            }
-            None => Cow::Borrowed(text),
-        }
+        truncate_with_suffix_str(self.as_ref(), len, suffix)
     }
 
     /// Truncates the text so that it is at most `len` characters *including* `suffix`, which is
@@ -30,20 +55,7 @@ pub trait TruncatableExt: AsRef<str> {
     /// A suffix longer than `len` is kept whole, so the result can exceed `len` in that case.
     /// Text that fits is borrowed from `self`.
     fn truncate_within(&self, len: usize, suffix: &str) -> Cow<'_, str> {
-        let text = self.as_ref();
-
-        // One character is at least one byte, so text within `len` bytes holds at most `len`
-        // characters: the common short reply needs no scan at all.
-        if text.len() <= len {
-            return Cow::Borrowed(text);
-        }
-
-        // The text exceeds the budget in bytes, but the budget counts characters.
-        if text.char_indices().nth(len).is_none() {
-            return Cow::Borrowed(text);
-        }
-
-        self.truncate_with_suffix(len.saturating_sub(suffix.chars().count()), suffix)
+        truncate_within_str(self.as_ref(), len, suffix)
     }
 }
 
