@@ -51,7 +51,7 @@ use zeta_plugin::{
     UrlEvent, ZetaError, plugin, plugin_err,
 };
 use zeta_url::RedactedUrlRef;
-use zeta_utils::duration::TimeInWords;
+use zeta_utils::duration::TimeInWordsExt;
 use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
 
 use client::UnwallClient;

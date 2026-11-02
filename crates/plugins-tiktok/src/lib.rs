@@ -22,7 +22,7 @@ use zeta_plugin::irc::{COLOR, RESET, plain_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 use self::oembed::OEmbed;
 use self::urls::{TiktokLink, parse_tiktok_url, short_url, video_url};

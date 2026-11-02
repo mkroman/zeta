@@ -366,7 +366,7 @@ impl Rink {
             && self.cmc.is_some()
             && self
                 .currency
-                .read(|data| data.is_none_or(|entry| entry.crypto.is_none()))
+                .with_value(|data| data.is_none_or(|entry| entry.crypto.is_none()))
     }
 }
 

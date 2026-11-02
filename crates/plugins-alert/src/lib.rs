@@ -37,7 +37,7 @@ use zeta_plugin::{
     plugin_err,
 };
 use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 /// The `.alert` command.
 const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(

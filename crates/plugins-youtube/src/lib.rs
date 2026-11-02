@@ -367,7 +367,7 @@ impl YouTube {
         // The map is refreshed by the task started on load; the read is
         // stale-tolerant, so an unavailable API keeps serving the last known
         // categories.
-        let category = self.video_categories.read(|cache| {
+        let category = self.video_categories.with_value(|cache| {
             cache
                 .and_then(|categories| categories.get(&category_id))
                 .map_or_else(

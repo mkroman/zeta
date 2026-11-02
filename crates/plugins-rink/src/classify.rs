@@ -272,7 +272,7 @@ mod tests {
         #[allow(clippy::redundant_closure_for_method_calls)]
         let data = rink
             .currency
-            .read(|data| data.cloned())
+            .with_value(|data| data.cloned())
             .expect("the fetched currency data must be cached");
         let ctx = build_context(Some(&data), None).expect("the fetched data must build a context");
 

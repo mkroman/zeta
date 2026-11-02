@@ -144,7 +144,7 @@ impl SharedMessage {
     }
 
     /// Returns the message, whether or not it has been shared.
-    fn get(&self) -> &Message {
+    fn message(&self) -> &Message {
         self.shared
             .as_deref()
             .or(self.message.as_ref())
@@ -320,7 +320,7 @@ impl EventIndex {
         let mut message = SharedMessage::new(message);
         let mut stopped = Vec::new();
 
-        match Route::of(message.get()) {
+        match Route::of(message.message()) {
             Route::Privmsg => self.dispatch_privmsg(filters, &mut message, &mut stopped),
             Route::Kind(kind) => self.deliver_kind(kind, &mut message, &mut stopped),
             Route::Ignore => {}
@@ -390,7 +390,7 @@ impl EventIndex {
     ) {
         let subscribers = self.subscribers(kind);
 
-        if subscribers.is_empty() || (kind == EventKind::Ctcp && !is_ctcp(message.get())) {
+        if subscribers.is_empty() || (kind == EventKind::Ctcp && !is_ctcp(message.message())) {
             return;
         }
 
@@ -415,18 +415,18 @@ impl EventIndex {
         message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
-        let Command::PRIVMSG(target, text) = &message.get().command else {
+        let Command::PRIVMSG(target, text) = &message.message().command else {
             return;
         };
 
         // CTCP messages are their own event kind and are routed to nothing else.
-        if is_ctcp(message.get()) {
+        if is_ctcp(message.message()) {
             self.deliver_kind(EventKind::Ctcp, message, stopped);
 
             return;
         }
 
-        let sender = Sender::from_message(message.get());
+        let sender = Sender::from_message(message.message());
 
         // Senders matching a filter without URL criteria are ignored entirely: their commands
         // do not trigger, their messages are not delivered to message subscribers, and their
@@ -488,7 +488,7 @@ impl EventIndex {
         message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
-        let Command::PRIVMSG(target, text) = &message.get().command else {
+        let Command::PRIVMSG(target, text) = &message.message().command else {
             return;
         };
 
@@ -499,7 +499,7 @@ impl EventIndex {
             return;
         }
 
-        let sender = Sender::from_message(message.get());
+        let sender = Sender::from_message(message.message());
 
         // The retained URLs are collected before the message is shared, so a `PRIVMSG` that
         // carries no URL (or only filtered ones) still does not allocate the shared message.

@@ -68,7 +68,7 @@ impl<T> TtlCache<T> {
 
     /// Creates a cache pre-populated with `value`, expiring after `ttl`.
     #[must_use]
-    pub fn with_value(value: T, ttl: Duration) -> Self {
+    pub fn new_with_value(value: T, ttl: Duration) -> Self {
         let cache = Self::new(ttl);
 
         cache.replace(Entry::new(value, ttl));
@@ -76,14 +76,14 @@ impl<T> TtlCache<T> {
         cache
     }
 
-    /// Runs `read` with the cached value if one exists, fresh or stale.
+    /// Runs `access` with the cached value if one exists, fresh or stale.
     ///
     /// Stale values are served so callers that pair this with a preceding refresh attempt keep
     /// working with the last known data while the source is unavailable.
-    pub fn read<R>(&self, read: impl FnOnce(Option<&T>) -> R) -> R {
+    pub fn with_value<R>(&self, access: impl FnOnce(Option<&T>) -> R) -> R {
         let entry = self.entry.load();
 
-        read(entry.as_ref().map(|entry| &entry.value))
+        access(entry.as_ref().map(|entry| &entry.value))
     }
 
     /// Returns whether the cache holds a value that has not expired.
@@ -95,7 +95,7 @@ impl<T> TtlCache<T> {
 
     /// Returns a clone of the cached value when it is fresh.
     ///
-    /// Unlike [`TtlCache::read`], a stale value is not returned.
+    /// Unlike [`TtlCache::with_value`], a stale value is not returned.
     #[must_use]
     #[allow(clippy::redundant_closure_for_method_calls)] // a bare `Option::cloned` is ambiguous
     pub fn get(&self) -> Option<T>
@@ -112,7 +112,7 @@ impl<T> TtlCache<T> {
 
     /// Returns the cached value when it is fresh, refreshing through `refresh` otherwise.
     ///
-    /// Unlike [`TtlCache::read`], a stale value is not returned; a missing or expired value
+    /// Unlike [`TtlCache::with_value`], a stale value is not returned; a missing or expired value
     /// triggers a refresh, whose result is cached and returned. Failures are returned without
     /// caching anything, leaving any stale value in place.
     ///
@@ -178,7 +178,7 @@ impl<T> TtlCache<T> {
     /// Populates the cache through `refresh` when its value is missing or expired.
     ///
     /// Unlike [`TtlCache::get_or_refresh`], the refreshed value is not returned and `T` needs
-    /// no `Clone`; readers access it through [`TtlCache::read`] or [`TtlCache::get`].
+    /// no `Clone`; readers access it through [`TtlCache::with_value`] or [`TtlCache::get`].
     ///
     /// Concurrent refresh attempts are single-flight: the first refreshes while the others
     /// wait and return once it has populated the cache.
@@ -283,7 +283,7 @@ where
     /// Creates an empty cache where cached values expire after `ttl` and negative results after
     /// `negative_ttl`, holding at most `capacity` entries.
     #[must_use]
-    pub fn with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
+    pub fn new_with_negative_ttl(ttl: Duration, negative_ttl: Duration, capacity: usize) -> Self {
         Self {
             entries: RwLock::new(HashMap::with_capacity(capacity)),
             flights: Mutex::new(HashMap::with_capacity(
@@ -299,7 +299,7 @@ where
     /// after a tenth of it, holding up to the default number of entries.
     #[must_use]
     pub fn new(ttl: Duration) -> Self {
-        Self::with_negative_ttl(ttl, ttl / 10, DEFAULT_TTL_MAP_CAPACITY)
+        Self::new_with_negative_ttl(ttl, ttl / 10, DEFAULT_TTL_MAP_CAPACITY)
     }
 
     /// Returns the cached value for `key` when it has not expired.
@@ -480,7 +480,7 @@ mod ttl_map_tests {
     use zeta_test_support::assert_empty;
 
     fn ttl_map(ttl: Duration) -> TtlMap<String, u8> {
-        TtlMap::with_negative_ttl(ttl, ttl / 2, 4)
+        TtlMap::new_with_negative_ttl(ttl, ttl / 2, 4)
     }
 
     #[tokio::test]
@@ -508,8 +508,10 @@ mod ttl_map_tests {
         assert_eq!(refreshes, 1);
         assert_eq!(cache.get(&"a".to_string()), Some(7));
 
-        // The uncontended flight entry is cleaned up afterwards.
-        assert_empty!(cache.flights.lock());
+        assert_empty!(
+            cache.flights.lock(),
+            "the uncontended flight entry is cleaned up afterwards"
+        );
     }
 
     #[tokio::test]
@@ -756,8 +758,11 @@ mod ttl_map_tests {
         const CAPACITY: usize = 256;
         const INSERTS: u64 = 10_000;
 
-        let cache: TtlMap<u64, u8> =
-            TtlMap::with_negative_ttl(Duration::from_hours(1), Duration::from_mins(1), CAPACITY);
+        let cache: TtlMap<u64, u8> = TtlMap::new_with_negative_ttl(
+            Duration::from_hours(1),
+            Duration::from_mins(1),
+            CAPACITY,
+        );
 
         for key in 0..CAPACITY as u64 {
             cache.insert(key, None);
@@ -794,8 +799,11 @@ mod ttl_map_tests {
         const CAPACITY: usize = 256;
         const VALUE_LEN: usize = 64 * 1024;
 
-        let cache: TtlMap<u64, Vec<u8>> =
-            TtlMap::with_negative_ttl(Duration::from_hours(1), Duration::from_hours(1), CAPACITY);
+        let cache: TtlMap<u64, Vec<u8>> = TtlMap::new_with_negative_ttl(
+            Duration::from_hours(1),
+            Duration::from_hours(1),
+            CAPACITY,
+        );
 
         for key in 0..CAPACITY as u64 {
             cache.insert(key, Some(vec![0; VALUE_LEN]));
@@ -877,7 +885,8 @@ mod ttl_map_tests {
     #[tokio::test]
     async fn evicts_one_closest_to_expiring_entry_per_insert_at_capacity() {
         // New entries outlive the seeded ones, so each insert evicts the seed it follows.
-        let cache = TtlMap::with_negative_ttl(Duration::from_hours(10), Duration::from_hours(1), 4);
+        let cache =
+            TtlMap::new_with_negative_ttl(Duration::from_hours(10), Duration::from_hours(1), 4);
 
         // Give every entry a distinct expiry so the oldest is unambiguous.
         for (key, hours) in [("a", 1), ("b", 2), ("c", 3), ("d", 4)] {
@@ -926,7 +935,7 @@ mod tests {
 
     #[allow(clippy::redundant_closure_for_method_calls)] // a bare `Option::copied` is ambiguous
     fn cached_value(cache: &TtlCache<u8>) -> Option<u8> {
-        cache.read(|value| value.copied())
+        cache.with_value(|value| value.copied())
     }
 
     fn cache_with(ttl: Duration) -> TtlCache<u8> {
@@ -1106,7 +1115,7 @@ mod tests {
 
         // A zero TTL is never fresh, so `get` no longer sees the value...
         assert_eq!(cache.get(), None);
-        // ...but `read` still serves it, and a refresh replaces it (though a zero TTL makes
+        // ...but `with_value` still serves it, and a refresh replaces it (though a zero TTL makes
         // the replacement immediately stale again).
         assert_eq!(cached_value(&cache), Some(7));
         cache

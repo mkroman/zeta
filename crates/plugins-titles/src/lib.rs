@@ -24,7 +24,7 @@ use zeta_plugin::irc::{REPLY_MARKER, labeled_reply, plain_reply};
 use zeta_plugin::{Client, Context, PluginCatalog, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrlRef;
 use zeta_utils::irc;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 use metadata::{PageMetadata, fetch_metadata};
 

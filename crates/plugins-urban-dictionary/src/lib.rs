@@ -15,7 +15,7 @@ use zeta_http as http;
 use zeta_plugin::irc::{labeled_reply, reply_lookup};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_utils::irc;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 /// The endpoint definitions are looked up against.
 const DEFINE_URL: &str = "https://api.urbandictionary.com/v0/define";

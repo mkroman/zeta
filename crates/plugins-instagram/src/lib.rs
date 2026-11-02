@@ -49,7 +49,7 @@ use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
 use zeta_utils::settings;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 use self::meta::MediaDetails;
 use self::urls::{InstagramLink, MediaKind, media_url, parse_instagram_url, story_url};
@@ -202,7 +202,7 @@ impl Instagram {
             metadata_proxy,
             last_request: Mutex::new(None),
             session: TtlCache::new(SESSION_TTL),
-            details: TtlMap::with_negative_ttl(
+            details: TtlMap::new_with_negative_ttl(
                 DETAILS_TTL,
                 MISSING_DETAILS_TTL,
                 DETAILS_CACHE_CAPACITY,
@@ -802,7 +802,7 @@ mod tests {
             metadata_proxy: None,
             last_request: Mutex::new(None),
             session: TtlCache::new(SESSION_TTL),
-            details: TtlMap::with_negative_ttl(
+            details: TtlMap::new_with_negative_ttl(
                 DETAILS_TTL,
                 MISSING_DETAILS_TTL,
                 DETAILS_CACHE_CAPACITY,

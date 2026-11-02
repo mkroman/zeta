@@ -108,7 +108,7 @@ pub fn format_seconds_in_words(total_seconds: i64, units: &[(i64, &'static str)]
 }
 
 /// Formats points in time and durations in words, e.g. `"1 year, 2 weeks, and 3 days"`.
-pub trait TimeInWords {
+pub trait TimeInWordsExt {
     /// Formats `self` in words, e.g. `"1 year, 2 weeks, and 3 days"`.
     ///
     /// Non-positive durations are formatted as `"0 minutes"`.
@@ -126,14 +126,14 @@ pub trait TimeInWords {
 }
 
 #[cfg(feature = "chrono")]
-impl TimeInWords for DateTime<Utc> {
+impl TimeInWordsExt for DateTime<Utc> {
     fn in_words(&self) -> String {
         format_seconds_in_words((Utc::now() - *self).num_seconds(), UNITS_WITH_SECONDS)
     }
 }
 
 #[cfg(feature = "time")]
-impl TimeInWords for TimeDuration {
+impl TimeInWordsExt for TimeDuration {
     fn in_words(&self) -> String {
         format_seconds_in_words(self.whole_seconds(), UNITS_TO_MINUTES)
     }

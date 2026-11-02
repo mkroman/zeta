@@ -15,7 +15,7 @@ use zeta_http as http;
 use zeta_plugin::irc::{labeled_reply, reply_lookup};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_url::RedactedUrl;
-use zeta_utils::duration::TimeInWords;
+use zeta_utils::duration::TimeInWordsExt;
 use zeta_utils::irc;
 
 /// The single-search endpoint shows are looked up against.

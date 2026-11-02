@@ -16,7 +16,7 @@ use zeta_mirror::{MediaId, Mirror, MirrorHandle};
 use zeta_plugin::irc::{labeled_reply, plain_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err, resolve_secret};
 use zeta_utils::irc;
-use zeta_utils::text::Truncatable;
+use zeta_utils::text::TruncatableExt;
 
 /// Identifying HTTP user agent for API requests (i.e. `linux:zeta:<VERSION> (by /u/drizz)`)
 pub const USER_AGENT: &str = concat!("linux:zeta:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");
