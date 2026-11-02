@@ -1,6 +1,7 @@
 [package]
 name = "plugins-rust-playground"
 version = "0.0.0"
+rust-version.workspace = true
 edition = "2024"
 description = "The rust_playground plugin for the zeta IRC bot."
 license = "MIT OR Apache-2.0"

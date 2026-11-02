@@ -1,6 +1,7 @@
 [package]
 name = "plugins-spotify"
 version = "0.0.0"
+rust-version.workspace = true
 edition = "2024"
 description = "The spotify plugin for the zeta IRC bot."
 license = "MIT OR Apache-2.0"

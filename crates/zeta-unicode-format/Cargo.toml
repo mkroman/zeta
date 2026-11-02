@@ -1,6 +1,7 @@
 [package]
 name = "zeta-unicode-format"
 version = "0.0.0"
+rust-version.workspace = true
 edition = "2024"
 description = "Shared Nomina wire layout, byte primitives, Huffman codec and emoji grammar for zeta-unicode and its generator."
 license = "MIT OR Apache-2.0"
