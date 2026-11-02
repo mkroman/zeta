@@ -201,7 +201,7 @@ impl Instagram {
             metadata_proxy,
             last_request: Mutex::new(None),
             session: TtlCache::new(SESSION_TTL),
-            details: TtlMap::with_negative_ttl(
+            details: TtlMap::new_with_negative_ttl(
                 DETAILS_TTL,
                 MISSING_DETAILS_TTL,
                 DETAILS_CACHE_CAPACITY,
@@ -802,7 +802,7 @@ mod tests {
             metadata_proxy: None,
             last_request: Mutex::new(None),
             session: TtlCache::new(SESSION_TTL),
-            details: TtlMap::with_negative_ttl(
+            details: TtlMap::new_with_negative_ttl(
                 DETAILS_TTL,
                 MISSING_DETAILS_TTL,
                 DETAILS_CACHE_CAPACITY,

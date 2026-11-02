@@ -320,11 +320,11 @@ mod tests {
 
         assert!(
             matches!(s.truncate_within(250, "…"), Cow::Borrowed(_)),
-            "should not copy when length exceeds str"
+            "a budget larger than the text must stay borrowed so no allocation happens"
         );
         assert!(
             matches!(s.truncate_within(10, "…"), Cow::Owned(_)),
-            "should copy when truncating"
+            "the suffix forces a new string, so the result must be owned"
         );
     }
 
@@ -353,10 +353,14 @@ mod tests {
             s.truncate_with_suffix(250, "…"),
             "this is a very long string"
         );
-        // should not copy when length exceeds str
-        assert!(matches!(s.truncate_with_suffix(250, "…"), Cow::Borrowed(_)));
-        // should copy when truncating
-        assert!(matches!(s.truncate_with_suffix(10, "…"), Cow::Owned(_)));
+        assert!(
+            matches!(s.truncate_with_suffix(250, "…"), Cow::Borrowed(_)),
+            "a budget larger than the text must stay borrowed so no allocation happens"
+        );
+        assert!(
+            matches!(s.truncate_with_suffix(10, "…"), Cow::Owned(_)),
+            "the suffix forces a new string, so the result must be owned"
+        );
     }
 
     #[test]
