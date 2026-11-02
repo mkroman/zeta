@@ -48,7 +48,6 @@ mod currency;
 mod render;
 #[cfg(test)]
 mod test_support;
-use crate::classify as classification;
 use actor::{EvalOutcome, Handle};
 use currency::{CurrencyData, build_context, refresh_data};
 use render::{error_message, render_reply};

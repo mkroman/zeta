@@ -117,7 +117,7 @@ async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<Request>) {
                 reply,
             } => {
                 let evaluated_line = if classify {
-                    super::classification::classify(&ctx, &line)
+                    super::classify::classify(&ctx, &line)
                 } else {
                     line
                 };
