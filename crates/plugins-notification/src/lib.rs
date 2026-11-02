@@ -9,11 +9,9 @@ mod model;
 mod repository;
 mod service;
 
-pub use {
-    error::Error,
-    model::{NewNotification, Notification},
-    service::NotificationService,
-};
+pub use error::Error;
+pub use model::{NewNotification, Notification};
+pub use service::NotificationService;
 
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;

@@ -30,12 +30,8 @@ pub use urls::{Link, classify_imdb_url};
 
 /// The IMDb hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["imdb.com", "m.imdb.com", "www.imdb.com"];
-pub use {
-    error::Error,
-    model::{Person, SearchResult, SeriesInfo, Title},
-};
-
-use format::prefix;
+pub use error::Error;
+pub use model::{Person, SearchResult, SeriesInfo, Title};
 
 /// Number of search results to request.
 const SEARCH_LIMIT: usize = 5;
@@ -114,7 +110,7 @@ impl Imdb {
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
         let Some(opts) = parse_or_usage::<Opts>(client, command, ArgsMode::Shell, |line: &str| {
-            format!("{} {line}", prefix())
+            format!("{} {line}", format::prefix())
         })?
         else {
             return Ok(());
@@ -122,20 +118,23 @@ impl Imdb {
 
         let query = opts.query();
         if query.is_empty() {
-            client.send_privmsg(channel, format!("{} usage: !imdb <title>", prefix()))?;
+            client.send_privmsg(
+                channel,
+                format!("{} usage: !imdb <title>", format::prefix()),
+            )?;
             return Ok(());
         }
 
         let results = match self.client.search(&query, SEARCH_LIMIT).await {
             Ok(results) => results,
             Err(err) => {
-                client.send_privmsg(channel, format!("{} {err}", prefix()))?;
+                client.send_privmsg(channel, format!("{} {err}", format::prefix()))?;
                 return Ok(());
             }
         };
 
         let Some(result) = results.first() else {
-            client.send_privmsg(channel, format!("{} no results", prefix()))?;
+            client.send_privmsg(channel, format!("{} no results", format::prefix()))?;
             return Ok(());
         };
 
@@ -184,7 +183,7 @@ impl Imdb {
     ) -> Result<(), ZetaError> {
         match result {
             Ok(message) => client.send_privmsg(channel, message)?,
-            Err(err) => client.send_privmsg(channel, format!("{} {err}", prefix()))?,
+            Err(err) => client.send_privmsg(channel, format!("{} {err}", format::prefix()))?,
         }
 
         Ok(())

@@ -19,7 +19,9 @@ mod model;
 mod repository;
 mod service;
 
-pub use {error::Error, model::Statistics, service::Resource};
+pub use error::Error;
+pub use model::Statistics;
+pub use service::Resource;
 
 use clap::Parser;
 use num_format::{Locale, ToFormattedString};

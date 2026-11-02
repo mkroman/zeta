@@ -15,11 +15,9 @@ mod model;
 mod repository;
 mod service;
 
-pub use {
-    error::Error,
-    model::{Alert, NewAlert},
-    service::AlertService,
-};
+pub use error::Error;
+pub use model::{Alert, NewAlert};
+pub use service::AlertService;
 
 use std::sync::Arc;
 use std::time::Duration;
