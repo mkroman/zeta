@@ -141,12 +141,19 @@ pub async fn reply_lookup<T, E>(
 mod tests {
     use std::cell::RefCell;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use clap::Parser;
     use irc::proto::Message;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::net::TcpListener;
+    use tokio::time::timeout;
 
     use super::*;
     use crate::command::CommandSpec;
+
+    /// How long the replies have to reach the test listener before the test gives up.
+    const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// Options whose required positional argument makes an empty invocation fail.
     #[derive(Debug, Parser)]
@@ -198,14 +205,59 @@ mod tests {
 
     #[tokio::test]
     async fn send_reply_and_send_reply_via_deliver_replies() {
-        let client = mock_client().await;
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind the test listener");
+        let address = listener.local_addr().expect("the listener has an address");
 
-        send_reply(&client, "#test", "plain".to_owned())
-            .expect("the mock client accepts the message");
-        send_reply(&client, "#test", "a\r\nb".to_owned())
-            .expect("the mock client accepts the multi-line message");
+        // The mock connection's sent log is `#[cfg(test)]` inside the irc crate, so the replies
+        // are asserted on a real socket instead: a plain reply, a reply carrying an IRC line
+        // break, and a direct `Sender` reply.
+        let mut client = Client::from_config(irc::client::data::Config {
+            nickname: Some("zeta-test".to_owned()),
+            server: Some(address.ip().to_string()),
+            port: Some(address.port()),
+            // `use_tls` defaults to true when a TLS feature is enabled, which would hang the
+            // handshake against this plain listener.
+            use_tls: Some(false),
+            ..Default::default()
+        })
+        .await
+        .expect("the client connects to the test listener");
+
+        // Without the outgoing future being driven, the enqueued commands never reach the socket.
+        let outgoing = client.outgoing().expect("the outgoing future is available");
+        tokio::spawn(async move {
+            let _ = outgoing.await;
+        });
+
+        send_reply(&client, "#test", "plain".to_owned()).expect("the plain reply sends");
+        send_reply(&client, "#test", "a\r\nb".to_owned()).expect("the multi-line reply sends");
         send_reply_via(&client.sender(), "#test", "via sender".to_owned())
-            .expect("the mock client accepts the message");
+            .expect("the direct-sender reply sends");
+
+        let (socket, _) = listener.accept().await.expect("the client connects");
+        let mut reader = BufReader::new(socket);
+        let mut delivered = Vec::new();
+        for _ in 0..4 {
+            let mut line = String::new();
+            timeout(DELIVERY_TIMEOUT, reader.read_line(&mut line))
+                .await
+                .expect("every reply reaches the socket in time")
+                .expect("every reply reads as a line");
+            delivered.push(line);
+        }
+
+        assert_eq!(
+            delivered,
+            [
+                "PRIVMSG #test plain\r\n",
+                "PRIVMSG #test a\r\n",
+                "PRIVMSG #test b\r\n",
+                "PRIVMSG #test :via sender\r\n",
+            ],
+            "the line-break reply splits into two PRIVMSGs, all in send order"
+        );
     }
 
     #[tokio::test]
