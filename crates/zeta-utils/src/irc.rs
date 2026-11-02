@@ -47,8 +47,11 @@ const LABELED_PREFIX_BYTES: usize =
 /// and this body is identical for all of them.
 #[inline(never)]
 fn write_display(reply: &mut String, message: &dyn fmt::Display) {
-    // Writing into a `String` cannot fail.
-    let _ = write!(reply, "{message}");
+    // Writing into a `String` cannot fail, but the `Display` implementation can; `format!`
+    // panics in that case, so keep the same message instead of silently truncating the reply.
+    write!(reply, "{message}").expect(
+        "a formatting trait implementation returned an error when the underlying stream did not",
+    );
 }
 
 /// Formats `message` as a reply labeled `label`.
@@ -390,6 +393,15 @@ pub fn append_entries_with_more<S: AsRef<str>>(
 mod tests {
     use super::*;
 
+    /// A `Display` implementation that always fails, like a broken external formatter.
+    struct FailingDisplay;
+
+    impl fmt::Display for FailingDisplay {
+        fn fmt(&self, _formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            Err(fmt::Error)
+        }
+    }
+
     #[test]
     fn labeled_reply_wraps_the_message_in_the_label() {
         assert_eq!(
@@ -425,6 +437,22 @@ mod tests {
     fn plain_reply_prefix_extends_the_reply_marker_by_one_space() {
         assert!(PLAIN_REPLY_PREFIX.starts_with(REPLY_MARKER));
         assert_eq!(PLAIN_REPLY_PREFIX.len(), REPLY_MARKER.len() + 1);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "a formatting trait implementation returned an error when the underlying stream did not"
+    )]
+    fn labeled_reply_panics_when_the_display_implementation_fails() {
+        let _ = labeled_reply("Twitch", FailingDisplay);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "a formatting trait implementation returned an error when the underlying stream did not"
+    )]
+    fn plain_reply_panics_when_the_display_implementation_fails() {
+        let _ = plain_reply(FailingDisplay);
     }
 
     #[test]
