@@ -16,8 +16,9 @@ use tracing::{debug, warn};
 
 use zeta_http as http;
 use zeta_http::RequestError;
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::plain_reply;
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
+use zeta_utils::irc;
 
 /// The direct-geocoding endpoint location names are resolved against.
 const GEOCODING_URL: &str = "https://api.openweathermap.org/geo/1.0/direct";
@@ -299,10 +300,10 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
     let temp_unit = units.temperature();
     let speed_unit = units.wind_speed();
 
-    let name = unstyle_text(&w.name);
+    let name = irc::unstyle_text(&w.name);
     let location = w.sys.country.as_ref().map_or_else(
         || name.to_string(),
-        |c| format!("{name}, {}", unstyle_text(c)),
+        |c| format!("{name}, {}", irc::unstyle_text(c)),
     );
 
     let conditions = if w.weather.is_empty() {
@@ -310,7 +311,7 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
     } else {
         w.weather
             .iter()
-            .map(|d| unstyle_text(&d.description))
+            .map(|d| irc::unstyle_text(&d.description))
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -346,7 +347,6 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
 
     /// Builds a weather response for formatting tests.
     fn test_response() -> WeatherResponse {
@@ -434,7 +434,7 @@ mod tests {
         ];
 
         for (case, units, temperature, wind) in cases {
-            let formatted = strip_formatting(&format_weather(&test_response(), units));
+            let formatted = irc::strip_formatting(&format_weather(&test_response(), units));
 
             assert!(
                 formatted.contains("Right now in Copenhagen, DK"),

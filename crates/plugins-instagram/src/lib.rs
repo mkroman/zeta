@@ -44,10 +44,11 @@ use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_http::emulated::ResponseError;
 use zeta_mirror::{MediaId, Mirror, MirrorHandle};
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::plain_reply;
+use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrl;
-use zeta_utils::irc::unstyle_text;
-use zeta_utils::settings::resolve_optional_setting;
+use zeta_utils::irc;
+use zeta_utils::settings;
 use zeta_utils::text::Truncatable;
 
 use self::meta::MediaDetails;
@@ -184,11 +185,11 @@ impl Instagram {
             settings.public_url_base.as_deref(),
         );
 
-        let session_cookie = resolve_optional_setting(
+        let session_cookie = settings::resolve_optional_setting(
             settings.session_cookie.as_deref(),
             "INSTAGRAM_SESSION_COOKIE",
         );
-        let metadata_proxy = resolve_optional_setting(
+        let metadata_proxy = settings::resolve_optional_setting(
             settings.metadata_proxy.as_deref(),
             "INSTAGRAM_METADATA_PROXY",
         );
@@ -611,7 +612,7 @@ fn format_summary(details: &MediaDetails, kind: &str, caption_length: usize) -> 
     if let Some(caption) = details
         .caption
         .as_deref()
-        .map(unstyle_text)
+        .map(irc::unstyle_text)
         .filter(|caption| !caption.is_empty())
     {
         let truncated = caption.truncate_with_suffix(caption_length, "…");
@@ -621,7 +622,7 @@ fn format_summary(details: &MediaDetails, kind: &str, caption_length: usize) -> 
     if let Some(author) = details
         .author
         .as_deref()
-        .map(unstyle_text)
+        .map(irc::unstyle_text)
         .filter(|author| !author.is_empty())
     {
         if buf.is_empty() {
@@ -641,7 +642,6 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -759,7 +759,7 @@ mod tests {
             assert_eq!(
                 format_summary(&details, kind, 150)
                     .as_deref()
-                    .map(strip_formatting),
+                    .map(irc::strip_formatting),
                 expected,
                 "for {case}"
             );

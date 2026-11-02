@@ -15,7 +15,8 @@ use tokio::runtime::Handle;
 #[cfg(feature = "database")]
 use zeta_plugin::database::Database;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::{Client, Context, ZetaError, plugin};
 
 /// The `.health` command description.
 #[cfg(feature = "database")]
@@ -158,12 +159,12 @@ mod tests {
     use super::*;
 
     use wildmatch::WildMatch;
-    use zeta_utils::irc::strip_formatting;
+    use zeta_utils::irc;
 
     #[tokio::test]
     async fn it_should_format_message() {
         let snapshot = Snapshot::capture().expect("could not capture");
-        let snapshot_message = strip_formatting(&snapshot.to_string());
+        let snapshot_message = irc::strip_formatting(&snapshot.to_string());
         let wildmatcher =
             WildMatch::new("Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled)");
         assert!(wildmatcher.matches(&snapshot_message));
@@ -180,7 +181,7 @@ mod tests {
             closed: false,
         });
 
-        let snapshot_message = strip_formatting(&snapshot.to_string());
+        let snapshot_message = irc::strip_formatting(&snapshot.to_string());
         let wildmatcher = WildMatch::new(
             "Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled) DB: 3/10 (2 idle)",
         );
@@ -198,7 +199,7 @@ mod tests {
             closed: true,
         });
 
-        let snapshot_message = strip_formatting(&snapshot.to_string());
+        let snapshot_message = irc::strip_formatting(&snapshot.to_string());
         let wildmatcher = WildMatch::new(
             "Memory usage: * MiB (* MiB virtual) Workers: * Tasks: * (* scheduled) DB: closed",
         );

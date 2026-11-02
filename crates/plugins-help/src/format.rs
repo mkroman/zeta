@@ -5,8 +5,9 @@
 
 use clap::{Arg, ArgAction, Command};
 
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::append_entries_within_budget;
+use zeta_plugin::irc::{BOLD, COLOR, REPLY_MARKER, RESET};
+use zeta_plugin::{CatalogEntry, CommandSpec, PluginCatalog};
+use zeta_utils::irc;
 
 /// The maximum length of a help message, assuming the IRCv3 extended line length of 8191 bytes
 /// and leaving room for the sender prefix, `PRIVMSG` framing and line ending overhead.
@@ -206,8 +207,13 @@ fn pack<S: AsRef<str>>(entries: &[S], max_length: usize) -> Vec<String> {
 
     while !remaining.is_empty() {
         let mut message = String::new();
-        let appended =
-            append_entries_within_budget(&mut message, remaining.iter(), SEPARATOR, max_length, 0);
+        let appended = irc::append_entries_within_budget(
+            &mut message,
+            remaining.iter(),
+            SEPARATOR,
+            max_length,
+            0,
+        );
 
         messages.push(message);
         remaining = &remaining[appended..];
@@ -409,7 +415,7 @@ mod tests {
     use super::*;
     use crate::HELP;
     use clap::Parser;
-    use zeta_utils::irc::strip_formatting;
+    use zeta_plugin::UrlScope;
 
     const ALERT: CommandSpec = CommandSpec::new(".alert", "Schedule an alert to be posted later");
     const ALERT_COMMANDS: &[CommandSpec] = &[ALERT];
@@ -574,11 +580,11 @@ mod tests {
 
     #[test]
     fn describes_commands_without_usage_or_with_details() {
-        let bare = strip_formatting(&command_messages(&BARE)[0]);
+        let bare = irc::strip_formatting(&command_messages(&BARE)[0]);
         assert!(bare.contains("Help (.bare)"), "{bare}");
         assert!(!bare.contains("Usage"), "{bare}");
 
-        let repeat = strip_formatting(&command_messages(&REPEAT)[0]);
+        let repeat = irc::strip_formatting(&command_messages(&REPEAT)[0]);
         for expected in [
             "Help (.repeat)",
             "Repeat the given values",
@@ -591,7 +597,7 @@ mod tests {
         assert!(!repeat.contains("hidden"), "hidden flag leaked: {repeat}");
 
         let command = CommandSpec::with_args::<SubcommandOpts>(".stats", "Show statistics");
-        let subcommands = strip_formatting(&command_messages(&command)[0]);
+        let subcommands = irc::strip_formatting(&command_messages(&command)[0]);
         for expected in [
             "Help (.stats)",
             "Show statistics",
@@ -607,7 +613,7 @@ mod tests {
 
     #[test]
     fn describes_short_only_flags_without_a_long_form() {
-        let message = strip_formatting(&command_messages(&SHORT_ONLY)[0]);
+        let message = irc::strip_formatting(&command_messages(&SHORT_ONLY)[0]);
 
         assert!(
             message.contains("-q: a switch with no long form"),
@@ -630,7 +636,7 @@ mod tests {
         ];
 
         assert_eq!(
-            strip_formatting(&details_list(&details)),
+            irc::strip_formatting(&details_list(&details)),
             "<a>, <b>: b description"
         );
     }

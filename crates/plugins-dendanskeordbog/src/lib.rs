@@ -14,7 +14,8 @@ use dendanskeordbog::DictionaryDocument;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{labeled_reply_prefix, plain_reply, reply_lookup, unstyle_text};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
 /// section.
