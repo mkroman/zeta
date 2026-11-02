@@ -341,9 +341,14 @@ mod tests {
         };
 
         let first = cache.get_shared(refresh).await.unwrap();
+        // The `String` accessor serves the same cache entry and must not refresh it.
+        let string = cache.get(refresh).await.unwrap();
         let second = cache.get_shared(refresh).await.unwrap();
+        let cached = cached_token(&cache).expect("the token is cached");
 
+        assert_eq!(string, "token");
         assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&second, &cached));
         assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 
@@ -382,5 +387,44 @@ mod tests {
 
         assert_eq!(first, "token");
         assert_eq!(second, "token");
+    }
+
+    #[tokio::test]
+    async fn access_token_shared_reuses_the_cached_allocation() {
+        use serde_json::json;
+        use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
+
+        let server = MockServer::start().await;
+
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "token",
+                "expires_in": 3600,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let credentials = Credentials::new(
+            reqwest::Client::new(),
+            "https://auth.example/token",
+            "client-id",
+            "client-secret",
+        );
+        let grant = |client: &reqwest::Client, _: &Credentials| {
+            client
+                .post(&uri)
+                .form(&[("grant_type", "client_credentials")])
+        };
+
+        // The `String` accessor populates the cache; both shared reads must serve that same
+        // allocation, and the mock's `expect(1)` pins the single token request.
+        let string = credentials.access_token(grant).await.unwrap();
+        let first = credentials.access_token_shared(grant).await.unwrap();
+        let second = credentials.access_token_shared(grant).await.unwrap();
+
+        assert_eq!(string, "token");
+        assert!(Arc::ptr_eq(&first, &second));
     }
 }
