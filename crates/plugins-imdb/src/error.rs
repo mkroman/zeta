@@ -5,6 +5,7 @@ use zeta_http::RequestError;
 
 /// Errors that can occur during IMDb interaction.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The API request failed or its response could not be handled.
     #[error(transparent)]

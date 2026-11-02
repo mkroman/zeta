@@ -4,6 +4,7 @@ use crate::{CommandSpec, UrlScope};
 
 /// Metadata about a registered plugin.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct CatalogEntry {
     /// The name of the plugin.
     pub name: String,
@@ -14,6 +15,16 @@ pub struct CatalogEntry {
 }
 
 impl CatalogEntry {
+    /// Creates a new catalog entry.
+    #[must_use]
+    pub const fn new(name: String, commands: Vec<CommandSpec>, url_scope: UrlScope) -> Self {
+        Self {
+            name,
+            commands,
+            url_scope,
+        }
+    }
+
     /// Whether the plugin declares that it handles links posted on `host`.
     ///
     /// Only exact host registrations count: a plugin registered for every URL
@@ -36,7 +47,16 @@ impl CatalogEntry {
 /// plugins can look it up through [`Context::shared`](crate::Context::shared) to discover
 /// other plugins. It is not replaced afterwards, so consumers may cache the handle.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct PluginCatalog {
     /// The registered plugins, in registration order.
     pub entries: Vec<CatalogEntry>,
+}
+
+impl PluginCatalog {
+    /// Creates a new catalog from `entries`, in registration order.
+    #[must_use]
+    pub const fn new(entries: Vec<CatalogEntry>) -> Self {
+        Self { entries }
+    }
 }
