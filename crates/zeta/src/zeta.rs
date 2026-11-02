@@ -204,6 +204,17 @@ fn exit_on_second_signal() {
     });
 }
 
+/// Logs the signal that triggered the shutdown and arms the forced exit for a second one.
+///
+/// `run` has no process-lifetime span of its own, and the OpenTelemetry layer drops events that
+/// are not in a span, so the one-off diagnostic gets a short span here.
+fn note_signal(signal: ShutdownSignal) {
+    tracing::info_span!("zeta.signal", signal = signal.name()).in_scope(|| info!("shutting down"));
+
+    // Another signal during the grace period forces an immediate exit.
+    exit_on_second_signal();
+}
+
 /// Starts the download manager of the shared mirror, when one is published.
 ///
 /// The mirror is published to the context's shared state during construction; plugins pick up
@@ -302,12 +313,13 @@ impl Zeta {
     /// The bot shuts down gracefully on `SIGINT` (`Ctrl-C`) and, on unix, `SIGTERM` — e.g. when a
     /// container orchestrator deletes the pod running the bot. On a signal, the plugin tasks
     /// drain their queued messages and run [`Plugin::shutdown`] first, then a `QUIT` with the
-    /// configured message ([`IrcConfig::quit_message`]) is sent to the server. The plugin tasks
-    /// share a grace period of `SHUTDOWN_GRACE`; stragglers are aborted. A second signal during
-    /// the grace period exits the process immediately, whether the shutdown was triggered by a
-    /// signal or by the connection ending. The same drain runs when the IRC stream ends, or an
-    /// error propagates; a connection that ends without a shutdown signal is reported as an
-    /// error so the process exits non-zero.
+    /// configured message ([`IrcConfig::quit_message`]) is sent to the server. A signal received
+    /// during the startup wait for the `loaded` hooks takes the same path and skips dispatch. The
+    /// plugin tasks share a grace period of `SHUTDOWN_GRACE`; stragglers are aborted. A second
+    /// signal during the grace period exits the process immediately, whether the shutdown was
+    /// triggered by a signal or by the connection ending. The same drain runs when the IRC stream
+    /// ends, or an error propagates; a connection that ends without a shutdown signal is reported
+    /// as an error so the process exits non-zero.
     ///
     /// [`IrcConfig::quit_message`]: crate::config::IrcConfig::quit_message
     /// [`Plugin::shutdown`]: zeta_plugin::Plugin::shutdown
@@ -357,53 +369,61 @@ impl Zeta {
         // against empty state. The grace bounds a stalled hook; the runtime then dispatches with
         // whatever loaded. The short span makes the timeout warning exportable: `run` has no
         // process-lifetime span, and events outside a span are dropped.
-        runtime
-            .wait_loaded(STARTUP_GRACE)
-            .instrument(tracing::info_span!("zeta.startup"))
-            .await;
-
-        // Dispatching incoming IRC messages as events to the plugins that registered interest,
-        // until the stream ends, the write path stops, or a shutdown signal arrives.
-        let dispatch = dispatch_messages(&mut stream, &mut runtime);
+        //
+        // The shutdown future is created and pinned before the wait: `shutdown_signal` installs
+        // the signal listeners on its first poll, so it must be selected alongside the wait. A
+        // signal received during that window would otherwise use the default disposition and
+        // terminate the process without draining the plugins or sending `QUIT`.
+        let mut shutdown = Box::pin(shutdown_signal());
 
         let mut shutting_down = false;
         let mut dispatch_error = None;
         let mut outgoing_done = false;
 
         tokio::select! {
-            result = dispatch => {
-                if let Err(error) = result {
-                    dispatch_error = Some(error);
-                }
-            }
-            signal = shutdown_signal() => {
-                // `run` has no process-lifetime span of its own, and the OpenTelemetry layer
-                // drops events that are not in a span, so each one-off diagnostic gets a short
-                // span here.
-                tracing::info_span!("zeta.signal", signal = signal.name())
-                    .in_scope(|| info!("shutting down"));
+            () = runtime
+                .wait_loaded(STARTUP_GRACE)
+                .instrument(tracing::info_span!("zeta.startup")) => {}
+            signal = &mut shutdown => {
+                note_signal(signal);
                 shutting_down = true;
-
-                // Another signal during the grace period forces an immediate exit.
-                exit_on_second_signal();
             }
-            result = &mut outgoing => {
-                outgoing_done = true;
+        }
 
-                tracing::warn_span!("irc.outgoing.stopped").in_scope(|| match result {
-                    Ok(()) => warn!("the IRC connection write path stopped"),
-                    Err(error) => warn!(exception.message = %error, "the IRC connection write path stopped"),
-                });
+        // Dispatching incoming IRC messages as events to the plugins that registered interest,
+        // until the stream ends, the write path stops, or a shutdown signal arrives. A signal
+        // during the startup wait skips dispatch and goes straight to the shutdown below.
+        if !shutting_down {
+            let dispatch = dispatch_messages(&mut stream, &mut runtime);
 
-                if dispatch_error.is_none() {
-                    dispatch_error = Some(Error::IrcDisconnected {
-                        reason: "the IRC connection write path stopped".to_owned(),
+            tokio::select! {
+                result = dispatch => {
+                    if let Err(error) = result {
+                        dispatch_error = Some(error);
+                    }
+                }
+                signal = &mut shutdown => {
+                    note_signal(signal);
+                    shutting_down = true;
+                }
+                result = &mut outgoing => {
+                    outgoing_done = true;
+
+                    tracing::warn_span!("irc.outgoing.stopped").in_scope(|| match result {
+                        Ok(()) => warn!("the IRC connection write path stopped"),
+                        Err(error) => warn!(exception.message = %error, "the IRC connection write path stopped"),
                     });
+
+                    if dispatch_error.is_none() {
+                        dispatch_error = Some(Error::IrcDisconnected {
+                            reason: "the IRC connection write path stopped".to_owned(),
+                        });
+                    }
                 }
             }
         }
 
-        // The signal branch already armed the forced-exit path; arm it for the branches that
+        // The signal branches already armed the forced-exit path; arm it for the branches that
         // ended the connection without a signal. The signal handlers stay installed after the
         // first signal, so a second one must not be delivered to nobody.
         if !shutting_down {
