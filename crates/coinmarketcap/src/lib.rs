@@ -18,7 +18,7 @@
 //! use coinmarketcap::Client;
 //!
 //! # async fn example() -> Result<(), coinmarketcap::Error> {
-//! let client = Client::new("coinmarketcap api key")?;
+//! let client = Client::try_new("coinmarketcap api key")?;
 //!
 //! let listings = client.listings(100).await?;
 //!

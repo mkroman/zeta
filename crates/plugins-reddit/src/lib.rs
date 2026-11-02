@@ -70,7 +70,7 @@ impl Reddit {
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =
             resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();
-        let client = reddit::Client::with_options(
+        let client = reddit::Client::try_new_with_options(
             client_id,
             client_secret,
             reddit::ClientOptions {

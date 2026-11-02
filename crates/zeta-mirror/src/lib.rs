@@ -78,7 +78,7 @@ impl Mirror {
             max_filesize: config.max_filesize.clone(),
             download_timeout: config.download_timeout,
         });
-        let s3 = S3::new(config)?;
+        let s3 = S3::try_new(config)?;
 
         Ok(Self::new(
             s3,

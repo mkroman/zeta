@@ -215,7 +215,7 @@ pub async fn plugin_with_listings(status: u16) -> (Rink, MockServer, MockServer)
 
     let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat_server.uri())));
     rink.cmc = Some(Arc::new(
-        CmcClient::with_base(
+        CmcClient::try_new_with_base(
             "test-api-key",
             &test_client_options(),
             &listings_server.uri(),

@@ -58,7 +58,7 @@ impl Kagi {
             session_duration: settings.session_duration,
             language: settings.language.clone(),
         };
-        let client = kagi::Client::with_token_and_options(token, options).map_err(plugin_err)?;
+        let client = kagi::Client::try_new_with_options(token, options).map_err(plugin_err)?;
 
         Ok(Self { client })
     }

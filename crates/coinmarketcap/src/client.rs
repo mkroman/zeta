@@ -61,14 +61,14 @@ pub struct Client {
 
 impl Client {
     /// Builds a client for the CoinMarketCap API with the default configuration. Use
-    /// [`Client::with_options`] to customize the timeout and user agent.
+    /// [`Client::try_new_with_options`] to customize the timeout and user agent.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidApiKey`] if the API key is not a valid HTTP header value, and
     /// [`Error::Build`] if the client could not be built.
-    pub fn new(api_key: impl Into<String>) -> Result<Self, Error> {
-        Self::with_options(api_key, &ClientOptions::default())
+    pub fn try_new(api_key: impl Into<String>) -> Result<Self, Error> {
+        Self::try_new_with_options(api_key, &ClientOptions::default())
     }
 
     /// Builds a client for the CoinMarketCap API, with the API key and the expected response
@@ -78,11 +78,11 @@ impl Client {
     ///
     /// Returns [`Error::InvalidApiKey`] if the API key is not a valid HTTP header value, and
     /// [`Error::Build`] if the client could not be built.
-    pub fn with_options(
+    pub fn try_new_with_options(
         api_key: impl Into<String>,
         options: &ClientOptions,
     ) -> Result<Self, Error> {
-        Self::with_base(api_key, options, API_BASE_URL)
+        Self::try_new_with_base(api_key, options, API_BASE_URL)
     }
 
     /// Builds a client against `base` instead of the public API endpoint — for tests, and for
@@ -92,7 +92,7 @@ impl Client {
     ///
     /// Returns [`Error::InvalidApiKey`] if the API key is not a valid HTTP header value, and
     /// [`Error::Build`] if the client could not be built.
-    pub fn with_base(
+    pub fn try_new_with_base(
         api_key: impl Into<String>,
         options: &ClientOptions,
         base: &str,
