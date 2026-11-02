@@ -1,6 +1,7 @@
 //! Configuration for the shared media mirror.
 
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
+use std::time::Duration;
 
 use secrecy::SecretString;
 use serde::Deserialize;
