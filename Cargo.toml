@@ -83,3 +83,9 @@ strip = "debuginfo"
 panic = "unwind"
 opt-level = 3
 codegen-units = 1
+
+[profile.release.package.rink_core]
+opt-level = "s"
+
+[profile.release.package.toml_edit]
+opt-level = "s"
