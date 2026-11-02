@@ -71,7 +71,11 @@ impl OfnService {
         url: &Url,
     ) -> Result<Option<Resource>, Error> {
         if let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url) {
-            if let Some(video) = self.find_youtube_video(origin, &video_id).await? {
+            if let Some(video) = self
+                .repo
+                .find_youtube_video(&video_id, origin.channel, origin.network)
+                .await?
+            {
                 return Ok(Some(Resource::YouTubeRecord(video)));
             }
 
@@ -125,17 +129,6 @@ impl OfnService {
     /// Returns [`Error::Database`] if the counts could not be queried from the database.
     pub async fn stats(&self) -> Result<Statistics, Error> {
         self.repo.statistics(Utc::now().date_naive()).await
-    }
-
-    /// Finds the YouTube video record for `video_id` in the origin's channel and network.
-    async fn find_youtube_video(
-        &self,
-        origin: &ChannelMessageOrigin<'_>,
-        video_id: &str,
-    ) -> Result<Option<YouTubeRecord>, Error> {
-        self.repo
-            .find_youtube_video(video_id, origin.channel, origin.network)
-            .await
     }
 }
 

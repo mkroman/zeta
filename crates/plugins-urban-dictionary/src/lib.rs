@@ -5,14 +5,14 @@
 //! definition and example text is truncated to `max_definition_length` characters (default
 //! 400) with an ellipsis suffix; an empty query replies with usage.
 
-use std::fmt::Display;
+use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::debug;
 
 use zeta_http as http;
-use zeta_plugin::irc::{labeled_reply, reply_lookup};
+use zeta_plugin::irc::{labeled_reply, labeled_reply_prefix, reply_lookup};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
@@ -113,14 +113,7 @@ impl UrbanDictionary {
             |definitions| {
                 definitions.list.first().map_or_else(
                     || labeled_reply("Urban Dictionary", "No results"),
-                    |definition| {
-                        let formatter = DefinitionFormatter {
-                            definition,
-                            max_length: self.settings.max_definition_length,
-                        };
-
-                        labeled_reply("Urban Dictionary", formatter.to_string())
-                    },
+                    |definition| format_definition(definition, self.settings.max_definition_length),
                 )
             },
             |error| labeled_reply("Urban Dictionary", error),
@@ -132,23 +125,19 @@ impl UrbanDictionary {
 }
 
 /// Formats a definition for IRC, truncating its text to the configured maximum length.
-struct DefinitionFormatter<'a> {
-    definition: &'a Definition,
-    max_length: usize,
-}
+fn format_definition(definition: &Definition, max_length: usize) -> String {
+    let word = irc::unstyle_text(&definition.word);
+    let definition_text = irc::unstyle_text(&definition.definition);
+    let example = irc::unstyle_text(&definition.example);
+    let definition_text = definition_text.truncate_with_suffix(max_length, "…");
+    let example = example.truncate_with_suffix(max_length, "…");
 
-impl Display for DefinitionFormatter<'_> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let word = irc::unstyle_text(&self.definition.word);
-        let definition = irc::unstyle_text(&self.definition.definition);
-        let example = irc::unstyle_text(&self.definition.example);
-        let definition = definition.truncate_with_suffix(self.max_length, "…");
-        let example = example.truncate_with_suffix(self.max_length, "…");
+    let mut message = labeled_reply_prefix("Urban Dictionary");
+    let _ = write!(message, "Term:\x0f {word}\x0310");
+    let _ = write!(message, " Definition:\x0f {definition_text}\x0310");
+    let _ = write!(message, " Example:\x0f {example}");
 
-        write!(fmt, "Term:\x0f {word}\x0310")?;
-        write!(fmt, " Definition:\x0f {definition}\x0310")?;
-        write!(fmt, " Example:\x0f {example}")
-    }
+    message
 }
 
 impl UrbanDictionary {
@@ -208,15 +197,12 @@ mod tests {
     #[test]
     fn formats_definitions() {
         let definition = test_definition();
-        let formatter = DefinitionFormatter {
-            definition: &definition,
-            max_length: 400,
-        };
-
-        assert_eq!(
-            formatter.to_string(),
-            "Term:\x0f word\x0310 Definition:\x0f definition\x0310 Example:\x0f example"
+        let expected = format!(
+            "{}Term:\x0f word\x0310 Definition:\x0f definition\x0310 Example:\x0f example",
+            labeled_reply_prefix("Urban Dictionary")
         );
+
+        assert_eq!(format_definition(&definition, 400), expected);
     }
 
     #[test]
@@ -224,11 +210,7 @@ mod tests {
         let mut definition = test_definition();
         definition.definition = "\x0310Fake\nDefinition\x0f".to_string();
 
-        let formatter = DefinitionFormatter {
-            definition: &definition,
-            max_length: 400,
-        };
-        let message = formatter.to_string();
+        let message = format_definition(&definition, 400);
 
         assert!(message.contains("Fake Definition"), "{message}");
         assert!(!message.contains("\x0310Fake"), "{message}");
@@ -239,11 +221,7 @@ mod tests {
         let mut definition = test_definition();
         definition.definition = "x".repeat(20);
         definition.example = "y".repeat(20);
-        let formatter = DefinitionFormatter {
-            definition: &definition,
-            max_length: 10,
-        };
-        let message = formatter.to_string();
+        let message = format_definition(&definition, 10);
 
         assert!(
             message.contains(&format!("{}\u{2026}", "x".repeat(10))),

@@ -406,6 +406,7 @@ pub trait Plugin: Send + Sync {
 /// # Errors
 ///
 /// Returns the error of the handler the event was routed to.
+#[must_use = "the returned future must be awaited; dropping it discards the event"]
 pub fn handle_event<'a>(
     plugin: &'a dyn Plugin,
     ctx: &'a Context,

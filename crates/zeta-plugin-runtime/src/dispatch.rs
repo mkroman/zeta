@@ -266,6 +266,7 @@ type RetainedUrl<'a> = (Arc<Url>, Option<&'static str>, &'a [Subscriber]);
 type IndexMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
 
 /// The dispatch index of every registered plugin's subscriptions.
+#[derive(Default)]
 pub struct EventIndex {
     /// Registered commands, indexed by their trigger — the first word of a message.
     commands: IndexMap<&'static str, Vec<CommandTarget>>,
@@ -286,19 +287,6 @@ pub struct EventIndex {
     url_any: Vec<Subscriber>,
     /// Plugins subscribed to plain-interest event kinds, indexed by [`EventKind::index`].
     kinds: [Vec<Subscriber>; EventKind::ALL.len()],
-}
-
-impl Default for EventIndex {
-    fn default() -> Self {
-        Self {
-            commands: IndexMap::default(),
-            command_initials: 0,
-            command_initials_non_ascii: false,
-            url_hosts: IndexMap::default(),
-            url_any: Vec::new(),
-            kinds: std::array::from_fn(|_| Vec::new()),
-        }
-    }
 }
 
 impl EventIndex {
