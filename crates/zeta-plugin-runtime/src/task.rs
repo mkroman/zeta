@@ -16,8 +16,8 @@ use crate::dispatch::Envelope;
 
 /// A plugin running in its own long-lived task.
 ///
-/// The task loads the plugin and then waits for events on an unbounded channel, handling them
-/// one at a time. State that other plugins should be able to access must be published to
+/// The task loads the plugin and then waits for events on a bounded channel, handling them one
+/// at a time. State that other plugins should be able to access must be published to
 /// [`Context::shared`] when the plugin is constructed or loaded.
 ///
 /// Closing the mailbox — by dropping its senders, which the dispatcher holds — makes the plugin
@@ -42,7 +42,7 @@ impl PluginTask {
         mut plugin: Box<dyn Plugin>,
         ctx: Arc<Context>,
         client: Arc<Client>,
-        mut receiver: mpsc::UnboundedReceiver<Envelope>,
+        mut receiver: mpsc::Receiver<Envelope>,
         shutdown_span: Arc<OnceLock<Span>>,
     ) -> Self {
         let handle = tokio::spawn(async move {
@@ -192,7 +192,7 @@ mod tests {
 
         let client = Arc::new(zeta_test_support::mock_client().await);
 
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = mpsc::channel(8);
         let task = PluginTask::spawn(
             "recording",
             Box::new(RecordingPlugin {
@@ -213,6 +213,7 @@ mod tests {
                     event: zeta_plugin::Event::Message(MessageEvent::new(Arc::new(message))),
                     span: Span::none(),
                 })
+                .await
                 .expect("task should be running");
         }
 
@@ -236,7 +237,7 @@ mod tests {
 
         let client = Arc::new(zeta_test_support::mock_client().await);
 
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = mpsc::channel(8);
         let task = PluginTask::spawn(
             "panicking",
             Box::new(PanickingPlugin {
@@ -256,6 +257,7 @@ mod tests {
                 event: zeta_plugin::Event::Message(MessageEvent::new(Arc::new(message))),
                 span: Span::none(),
             })
+            .await
             .expect("task should be running");
 
         drop(sender);

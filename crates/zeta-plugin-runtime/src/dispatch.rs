@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use irc::proto::{Command, Message};
 use smallvec::SmallVec;
@@ -76,12 +77,30 @@ struct Subscriber {
     /// The precomputed handler span names of the plugin.
     names: Arc<SpanNames>,
     /// The mailbox events are queued on.
-    mailbox: mpsc::UnboundedSender<Envelope>,
+    mailbox: mpsc::Sender<Envelope>,
+    /// The mailbox's overflow state, shared by every subscription of the plugin.
+    overflow: Arc<Overflow>,
+}
+
+/// The overflow state of one plugin mailbox.
+///
+/// The dispatcher is the only writer, but the state is shared by every subscription that targets
+/// the mailbox, so it lives in atomics rather than in one dispatch call's locals.
+#[derive(Debug, Default)]
+struct Overflow {
+    /// Events the full mailbox shed in the current overflow episode.
+    dropped: AtomicUsize,
+    /// Whether the current overflow episode has been reported at `warn`.
+    reported: AtomicBool,
 }
 
 impl Subscriber {
     /// Queues `event` for the plugin, recording the plugin in `stopped` when its mailbox is
     /// closed (i.e. the plugin's task has stopped).
+    ///
+    /// A full mailbox is not a stopped plugin: the event is shed, the overflow is counted, and
+    /// the plugin stays registered. Evicting it here would let a burst permanently unregister a
+    /// healthy plugin.
     fn send(&self, event: Event, stopped: &mut Vec<&'static str>) {
         // Created here, while the dispatch span is current, so the handler joins the message's
         // trace. The span also covers the time the event waits in the mailbox. `or_current`
@@ -108,8 +127,44 @@ impl Subscriber {
         let span = span.or_current();
         let envelope = Envelope { event, span };
 
-        if self.mailbox.send(envelope).is_err() {
-            stopped.push(self.name);
+        match self.mailbox.try_send(envelope) {
+            Ok(()) => self.recovered(),
+            Err(mpsc::error::TrySendError::Closed(_)) => stopped.push(self.name),
+            Err(mpsc::error::TrySendError::Full(_)) => self.shed(),
+        }
+    }
+
+    /// Records that the mailbox accepted an event.
+    ///
+    /// The next overflow starts a new episode, so it is reported again; the count of the episode
+    /// that just ended is no longer needed.
+    fn recovered(&self) {
+        if self.overflow.reported.load(Ordering::Relaxed) {
+            self.overflow.dropped.store(0, Ordering::Relaxed);
+            self.overflow.reported.store(false, Ordering::Relaxed);
+        }
+    }
+
+    /// Records that the mailbox was full and the event was shed.
+    ///
+    /// The first drop of an episode is a warning; the rest are debug lines carrying the running
+    /// count. Warning on every drop would let a stalled plugin flood the log at the same rate as
+    /// the traffic it is failing to handle.
+    fn shed(&self) {
+        let dropped = self.overflow.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+
+        if self.overflow.reported.swap(true, Ordering::Relaxed) {
+            debug!(
+                zeta.plugin.name = %self.name,
+                dropped,
+                "plugin mailbox is still full; dropping event"
+            );
+        } else {
+            warn!(
+                zeta.plugin.name = %self.name,
+                dropped,
+                "plugin mailbox is full; dropping events"
+            );
         }
     }
 }
@@ -255,12 +310,13 @@ impl EventIndex {
         &mut self,
         name: &'static str,
         subscriptions: &Subscriptions,
-        mailbox: mpsc::UnboundedSender<Envelope>,
+        mailbox: mpsc::Sender<Envelope>,
     ) {
         let subscriber = Subscriber {
             name,
             names: Arc::new(SpanNames::new(name)),
             mailbox,
+            overflow: Arc::new(Overflow::default()),
         };
 
         for command in subscriptions.commands() {
@@ -666,7 +722,7 @@ mod tests {
     }
 
     /// Collects every event a test subscriber received from its mailbox.
-    fn drain(mailbox: &mut mpsc::UnboundedReceiver<Envelope>) -> Vec<Event> {
+    fn drain(mailbox: &mut mpsc::Receiver<Envelope>) -> Vec<Event> {
         let mut events = Vec::new();
 
         while let Ok(envelope) = mailbox.try_recv() {
@@ -699,11 +755,31 @@ mod tests {
         index: &mut EventIndex,
         name: &'static str,
         register: impl FnOnce(&mut Subscriptions),
-    ) -> mpsc::UnboundedReceiver<Envelope> {
+    ) -> mpsc::Receiver<Envelope> {
         let mut subscriptions = Subscriptions::new();
         register(&mut subscriptions);
 
-        let (mailbox, receiver) = mpsc::unbounded_channel();
+        let (mailbox, receiver) = mpsc::channel(8);
+        index.add(name, &subscriptions, mailbox);
+
+        receiver
+    }
+
+    /// Registers a subscriber for [`dispatch_benchmark`] with a `capacity`-slot mailbox.
+    ///
+    /// The benchmark never drains its mailboxes. The regular [`subscribe`] helper uses the
+    /// 8-slot mailbox of the unit tests, which would make the benchmark measure the overflow path
+    /// after the eighth dispatch instead of accepted delivery.
+    fn benchmark_subscriber(
+        index: &mut EventIndex,
+        name: &'static str,
+        capacity: usize,
+        register: impl FnOnce(&mut Subscriptions),
+    ) -> mpsc::Receiver<Envelope> {
+        let mut subscriptions = Subscriptions::new();
+        register(&mut subscriptions);
+
+        let (mailbox, receiver) = mpsc::channel(capacity);
         index.add(name, &subscriptions, mailbox);
 
         receiver
@@ -1197,6 +1273,60 @@ mod tests {
         assert_eq!(stopped, ["dig"]);
     }
 
+    /// A full mailbox sheds events instead of growing without bound, and `Full` must not be
+    /// treated as `Closed`: a burst would otherwise permanently unregister a healthy plugin.
+    #[test]
+    fn a_full_mailbox_drops_events_without_evicting_the_plugin() {
+        const CAPACITY: usize = 8;
+
+        let mut index = EventIndex::default();
+        let mut subscriptions = Subscriptions::new();
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+
+        // The mailbox is registered directly instead of through `subscribe`, so the test can
+        // fill its 8 slots and reach the full state in a few dispatches.
+        let (mailbox, mut receiver) = mpsc::channel(CAPACITY);
+        index.add("dig", &subscriptions, mailbox);
+
+        for argument in 0..CAPACITY {
+            let stopped = index.dispatch(
+                &FilterHandle::default(),
+                privmsg(&format!(".dig {argument}")),
+            );
+
+            assert_empty!(stopped, "accepted event {argument}");
+        }
+
+        let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig overflow"));
+        assert_empty!(stopped, "a full mailbox must not evict the plugin");
+
+        let arguments = drain(&mut receiver)
+            .into_iter()
+            .map(|event| match event {
+                Event::Command(command) => command.args().to_string(),
+                other => panic!("expected a command event, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(arguments.len(), CAPACITY);
+        assert_eq!(
+            arguments,
+            (0..CAPACITY)
+                .map(|argument| argument.to_string())
+                .collect::<Vec<_>>(),
+            "accepted events must preserve FIFO order"
+        );
+
+        // Draining the mailbox frees a slot: the plugin is still registered and receives the
+        // next event.
+        let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig after"));
+        assert_empty!(stopped);
+        assert!(matches!(
+            drain(&mut receiver)[..],
+            [Event::Command(ref command)] if command.args() == "after"
+        ));
+    }
+
     /// The precomputed handler span names must follow the event kinds: the array is derived
     /// from [`EventKind::ALL`], so it cannot drift from the enum.
     #[test]
@@ -1244,14 +1374,18 @@ mod tests {
     fn dispatch_benchmark() {
         const DISPATCHES: usize = 100_000;
 
+        // The benchmark never drains a mailbox, so each subscriber gets one that accepts every
+        // event its case dispatches; the 8-slot unit-test mailbox would shed after eight sends.
+        // Each subscriber receives at most `DISPATCHES` events, one per dispatched message.
+
         let mut index = EventIndex::default();
-        let _dig = subscribe(&mut index, "dig", |subscriptions| {
+        let _dig = benchmark_subscriber(&mut index, "dig", DISPATCHES, |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
-        let _joiner = subscribe(&mut index, "joiner", |subscriptions| {
+        let _joiner = benchmark_subscriber(&mut index, "joiner", DISPATCHES, |subscriptions| {
             subscriptions.receive_join();
         });
-        let _ctcp = subscribe(&mut index, "ctcp", |subscriptions| {
+        let _ctcp = benchmark_subscriber(&mut index, "ctcp", DISPATCHES, |subscriptions| {
             subscriptions.receive_ctcp();
         });
 
@@ -1275,15 +1409,16 @@ mod tests {
         // This second index reaches the scheme-colon gate and, past it, the URL scan: a generic
         // subscriber like `titles` and a host-scoped one like `youtube`.
         let mut url_index = EventIndex::default();
-        let _url_dig = subscribe(&mut url_index, "dig", |subscriptions| {
+        let _url_dig = benchmark_subscriber(&mut url_index, "dig", DISPATCHES, |subscriptions| {
             subscriptions.command(CommandSpec::new(".dig", "dig"));
         });
-        let _titles = subscribe(&mut url_index, "titles", |subscriptions| {
+        let _titles = benchmark_subscriber(&mut url_index, "titles", DISPATCHES, |subscriptions| {
             subscriptions.urls(UrlScope::Any);
         });
-        let _example = subscribe(&mut url_index, "example", |subscriptions| {
-            subscriptions.urls(UrlScope::Hosts(&["example.com"]));
-        });
+        let _example =
+            benchmark_subscriber(&mut url_index, "example", DISPATCHES, |subscriptions| {
+                subscriptions.urls(UrlScope::Hosts(&["example.com"]));
+            });
 
         benchmark(
             "unhandled privmsg, url subscriber",

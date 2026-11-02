@@ -291,9 +291,10 @@ impl Zeta {
     /// Consumes the bot: the plugin registry is drained into the running tasks, so the instance
     /// cannot be run twice.
     /// Each plugin is spawned into its own long-lived task. Incoming messages are dispatched to
-    /// every plugin through an unbounded channel, so a slow or failing plugin cannot block the IRC
-    /// connection or the other plugins. Plugin errors, including failures during loading, are
-    /// logged but never propagated.
+    /// every plugin through a bounded mailbox, so a slow or failing plugin cannot block the IRC
+    /// connection or the other plugins: once its mailbox is full, further events for that plugin
+    /// are shed. Plugin errors, including failures during loading, are logged but never
+    /// propagated.
     ///
     /// # Shutdown behavior
     ///
@@ -344,8 +345,9 @@ impl Zeta {
         let mut stream = client.stream()?;
         let client = Arc::new(client);
 
-        // Each plugin gets its own long-lived task with an unbounded mailbox, so a slow or
-        // failing plugin cannot block the IRC connection or the other plugins.
+        // Each plugin gets its own long-lived task with a bounded mailbox, so a slow or failing
+        // plugin cannot block the IRC connection or the other plugins; a full mailbox sheds
+        // events instead of growing.
         let mut runtime =
             PluginRuntime::start(self.registry.take_plugins(), &self.context, &client);
 

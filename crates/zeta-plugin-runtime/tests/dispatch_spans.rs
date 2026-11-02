@@ -43,7 +43,7 @@ fn handler_span_is_a_child_of_the_dispatch_span() {
         let mut subscriptions = Subscriptions::new();
         subscriptions.command(CommandSpec::new(".dig", "dig"));
 
-        let (mailbox, mut receiver) = mpsc::unbounded_channel();
+        let (mailbox, mut receiver) = mpsc::channel(8);
         let mut index = EventIndex::default();
         index.add("dig", &subscriptions, mailbox);
 
