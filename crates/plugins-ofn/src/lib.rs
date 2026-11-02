@@ -23,12 +23,10 @@ pub use {error::Error, model::Statistics, service::Resource};
 
 use clap::Parser;
 use num_format::{Locale, ToFormattedString};
-use tracing::debug;
 use url::Url;
 
-use self::service::{OfnService, Recorded};
+use self::service::OfnService;
 use zeta_plugin::prelude::*;
-use zeta_url::RedactedUrl;
 use zeta_utils::duration::TimeInWords;
 
 /// The ofn plugin: records posted URLs and reports reposts.
@@ -62,7 +60,7 @@ impl Ofn {
         url: &Url,
     ) -> Result<(), ZetaError> {
         match self.service.record_url(origin, url).await {
-            Ok(Recorded::Found(resource)) => {
+            Ok(Some(resource)) => {
                 let time_ago = resource.created_at().time_ago();
 
                 client.send_privmsg(
@@ -74,10 +72,7 @@ impl Ofn {
                     ),
                 )?;
             }
-            Ok(Recorded::Inserted) => {
-                debug!(url.full = %RedactedUrl::from_url(url), "inserted url record");
-            }
-            Ok(Recorded::Failed) => {}
+            Ok(None) => {}
             Err(error) => {
                 client.send_privmsg(origin.channel, formatted_err(&error.to_string()))?;
             }

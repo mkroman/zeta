@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tracing::trace;
 use url::Url;
 
-use super::model::{Case, Filter, Pattern};
+use super::model::{Case, Filter, Pattern, is_wildcard};
 use zeta_plugin::Sender;
 use zeta_url::RedactedUrlRef;
 
@@ -23,11 +23,6 @@ use zeta_url::RedactedUrlRef;
 /// ever used to look an existing key up. If untrusted keys are ever inserted, this must switch
 /// to `foldhash::quality` or the std `RandomState`.
 type IndexMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
-
-/// Whether `pattern` contains wildcards.
-pub fn is_wildcard(pattern: &str) -> bool {
-    pattern.contains('*') || pattern.contains('?')
-}
 
 /// Returns `pattern` trimmed, or `None` when it is missing or blank.
 fn non_blank(pattern: Option<&str>) -> Option<&str> {
@@ -369,6 +364,15 @@ impl FilterIndex {
     /// All filters in the index, ordered by id.
     pub(super) fn filters(&self) -> Vec<Filter> {
         self.sorted_filters().into_iter().cloned().collect()
+    }
+
+    /// Returns the filter with `id`, without ordering or cloning the whole index.
+    pub(super) fn find(&self, id: i32) -> Option<&Filter> {
+        self.channels
+            .values()
+            .chain(std::iter::once(&self.all_channels))
+            .flat_map(HostIndex::filters)
+            .find(|filter| filter.id == id)
     }
 
     /// All filters in the index as references, ordered by id.

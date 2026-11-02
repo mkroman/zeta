@@ -188,12 +188,12 @@ impl NotificationService {
     ///
     /// Returns [`Error::Database`] if the notifications could not be deleted from the database.
     #[instrument(name = "notification.delete", skip_all, err)]
-    pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
+    pub async fn delete_ids(&self, ids: &[i32]) -> Result<(), Error> {
         if ids.is_empty() {
             return Ok(());
         }
 
-        self.repo.delete_all(ids).await
+        self.repo.delete_ids(ids).await
     }
 }
 

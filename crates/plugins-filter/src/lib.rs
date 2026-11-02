@@ -144,7 +144,7 @@ impl Add {
         let channel = if self.all_channels {
             None
         } else if let Some(channel) = self.channel.as_deref() {
-            if index::is_wildcard(channel) {
+            if model::is_wildcard(channel) {
                 return Err(
                     "--channel does not support wildcards; use --all-channels to match every channel"
                         .to_string(),

@@ -1,6 +1,5 @@
 //! Errors that can occur while unwalling.
 
-use zeta_http::ApiError;
 use zeta_http::RequestError;
 use zeta_plugin::database::DbError;
 use zeta_plugin::impl_repository_error;
@@ -14,9 +13,6 @@ pub enum Error {
     /// The request to the unwall API could not be sent.
     #[error(transparent)]
     Request(#[from] RequestError),
-    /// The unwall API response could not be parsed.
-    #[error(transparent)]
-    Api(#[from] ApiError),
     /// The unwall API rejected the article with an error status.
     #[error("unwall could not fetch the article (HTTP {0})")]
     Status(u16),

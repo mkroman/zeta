@@ -95,7 +95,7 @@ impl AlertRepository {
     ///
     /// Returns [`Error::Delete`] if the alerts could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "alerts")]
-    pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
+    pub async fn delete_ids(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting alerts from database");
 
         zeta_plugin::database::delete_ids(&self.db, "alerts", ids)

@@ -3,6 +3,12 @@
 use sqlx::prelude::FromRow;
 use wildmatch::WildMatch;
 
+/// Whether `pattern` contains wildcards.
+#[must_use]
+pub fn is_wildcard(pattern: &str) -> bool {
+    pattern.contains('*') || pattern.contains('?')
+}
+
 /// A filter, as stored in the database.
 ///
 /// Every criterion is optional; a filter matches a message when all of its set criteria match —
@@ -96,16 +102,13 @@ fn affix_pattern(pattern: &str) -> Option<(&str, Anchor)> {
         return None;
     }
 
-    if let Some(suffix) = pattern
-        .strip_prefix('*')
-        .filter(|text| !text.contains(['*', '?']))
-    {
+    if let Some(suffix) = pattern.strip_prefix('*').filter(|text| !is_wildcard(text)) {
         return Some((suffix, Anchor::Suffix));
     }
 
     pattern
         .strip_suffix('*')
-        .filter(|text| !text.contains(['*', '?']))
+        .filter(|text| !is_wildcard(text))
         .map(|prefix| (prefix, Anchor::Prefix))
 }
 
@@ -157,7 +160,7 @@ impl Pattern {
             .map(str::trim)
             .filter(|pattern| !pattern.is_empty())
             .map_or(Matcher::Unset, |pattern| {
-                if pattern.is_ascii() && !pattern.contains('*') && !pattern.contains('?') {
+                if pattern.is_ascii() && !is_wildcard(pattern) {
                     Matcher::Literal {
                         text: match case {
                             Case::Sensitive => pattern.to_owned(),
@@ -212,8 +215,8 @@ impl Pattern {
                 } else {
                     // `WildMatch` lowercases Unicode character-wise, so an ASCII pattern can
                     // match non-ASCII input (the Kelvin sign lowercases to `k`); mirror that
-                    // instead of comparing ASCII only.
-                    value.to_lowercase() == text.as_str()
+                    // instead of comparing ASCII only, without allocating a lowered copy.
+                    value.chars().flat_map(char::to_lowercase).eq(text.chars())
                 }
             }
             Matcher::Affix {

@@ -46,7 +46,7 @@ impl NotificationRepository {
                 target, nickname, username, hostname, channel, message
             ) VALUES (
                 $1, $2, $3, $4, $5, $6
-            ) RETURNING *",
+            ) RETURNING id, target, nickname, channel, message, created_at",
         )
         .bind(notification.target)
         .bind(notification.nickname)
@@ -65,7 +65,7 @@ impl NotificationRepository {
     ///
     /// Returns [`Error::Delete`] if the notification could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "notifications")]
-    pub async fn delete_all(&self, ids: &[i32]) -> Result<(), Error> {
+    pub async fn delete_ids(&self, ids: &[i32]) -> Result<(), Error> {
         trace!(?ids, "deleting notifications from database");
 
         zeta_plugin::database::delete_ids(&self.db, "notifications", ids)

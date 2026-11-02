@@ -186,10 +186,11 @@ impl AlertPlugin {
                 async {
                     trace!(?alert, "delivering alert");
 
-                    if let Err(err) = sender.send_privmsg(
-                        &alert.channel,
-                        format!("{}: {}", alert.nickname, alert.message),
-                    ) {
+                    let message = unstyle_text(&alert.message);
+
+                    if let Err(err) = sender
+                        .send_privmsg(&alert.channel, format!("{}: {message}", alert.nickname))
+                    {
                         error!(exception.message = ?err, "could not deliver alert");
                     }
                 }
@@ -515,10 +516,8 @@ fn format_pending(pending: &[Alert]) -> String {
 
 /// Formats a pending alert as a `“message” Mon DDth HH:MM` entry.
 fn format_entry(alert: &Alert) -> String {
-    let message = alert
-        .message
-        .as_str()
-        .truncate_with_suffix(MAX_LISTED_MESSAGE_CHARS, "…");
+    let message = unstyle_text(&alert.message);
+    let message = message.truncate_with_suffix(MAX_LISTED_MESSAGE_CHARS, "…");
     let due = format_due(alert.time.with_timezone(&Local));
 
     format!("“{RESET}{message}{COLOR}”{RESET} {due}{COLOR}")
@@ -851,6 +850,17 @@ mod tests {
             "{listing}"
         );
         assert!(!listing.contains(&"a".repeat(51)), "{listing}");
+    }
+
+    #[test]
+    fn strips_formatting_from_stored_messages() {
+        let pending = [alert("\x0310fake\nmessage\x02", at(2026, 9, 16, 11, 21))];
+        let listing = strip_formatting(&format_pending(&pending));
+
+        assert!(
+            listing.contains("Next up: “fake message” Sep 16th 11:21"),
+            "{listing}"
+        );
     }
 
     #[test]

@@ -321,7 +321,7 @@ impl Scheduler {
 
         let sent: Vec<i32> = due.iter().map(|Scheduled(alert)| alert.id).collect();
 
-        if let Err(err) = self.repo.delete_all(&sent).await {
+        if let Err(err) = self.repo.delete_ids(&sent).await {
             warn!(
                 exception.message = ?err,
                 alert.count = due.len(),
