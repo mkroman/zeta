@@ -66,31 +66,59 @@ mod request {
         f: &mut fmt::Formatter<'_>,
         kind: &str,
         host: Option<&str>,
-        timeout: bool,
-        connect: bool,
+        failure: Failure,
     ) -> fmt::Result {
-        if timeout {
-            f.write_str("request timed out")?;
-        } else if connect {
-            f.write_str("could not connect")?;
-        } else {
-            f.write_str(kind)?;
+        match failure {
+            Failure::TimedOut => f.write_str("request timed out")?,
+            Failure::Connect => f.write_str("could not connect")?,
+            Failure::Other => f.write_str(kind)?,
         }
 
         host.map_or(Ok(()), |host| write!(f, " ({host})"))
     }
 
-    /// The low-cardinality [`error.type`] value for a classified transport failure: the
-    /// attribute OpenTelemetry wants on a failed client span instead of a longer message.
-    ///
-    /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
-    const fn classify(timeout: bool, connect: bool) -> &'static str {
-        if timeout {
-            "timeout"
-        } else if connect {
-            "connection_error"
-        } else {
-            "other"
+    /// The classified transport failure behind a [`TransportError`].
+    #[derive(Debug, Clone, Copy)]
+    enum Failure {
+        /// The request timed out.
+        TimedOut,
+        /// The request failed before it could be sent.
+        Connect,
+        /// Any other transport failure.
+        Other,
+    }
+
+    impl Failure {
+        /// Classifies the `timeout` and `connect` flags a client reports for an error.
+        const fn from_flags(timeout: bool, connect: bool) -> Self {
+            if timeout {
+                Self::TimedOut
+            } else if connect {
+                Self::Connect
+            } else {
+                Self::Other
+            }
+        }
+
+        /// The [`error.type`] value for this failure, for a span or log field.
+        ///
+        /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
+        const fn error_type(self) -> &'static str {
+            match self {
+                Self::TimedOut => "timeout",
+                Self::Connect => "connection_error",
+                Self::Other => "other",
+            }
+        }
+
+        /// Whether the failure was a timeout.
+        const fn is_timeout(self) -> bool {
+            matches!(self, Self::TimedOut)
+        }
+
+        /// Whether the failure happened before the request could be sent.
+        const fn is_connect(self) -> bool {
+            matches!(self, Self::Connect)
         }
     }
 
@@ -113,10 +141,8 @@ mod request {
         url: Option<RedactedUrl>,
         /// The host the request went to, for the short rendering.
         host: Option<String>,
-        /// Whether the request timed out.
-        timeout: bool,
-        /// Whether the request failed before it could be sent.
-        connect: bool,
+        /// The classified transport failure.
+        failure: Failure,
         /// Whether the failure happened while sending the request rather than while reading
         /// its response. Always false for `wreq` errors, which do not distinguish the two.
         request: bool,
@@ -130,8 +156,7 @@ mod request {
             error: &(dyn StdError + 'static),
             url: Option<RedactedUrl>,
             host: Option<String>,
-            timeout: bool,
-            connect: bool,
+            failure: Failure,
             request: bool,
             skip: usize,
         ) -> Self {
@@ -143,8 +168,7 @@ mod request {
                 detail,
                 url,
                 host,
-                timeout,
-                connect,
+                failure,
                 request,
             }
         }
@@ -156,13 +180,12 @@ mod request {
             let host = error
                 .url()
                 .and_then(|url| url.host_str().map(str::to_string));
-            let timeout = error.is_timeout();
-            let connect = error.is_connect();
+            let failure = Failure::from_flags(error.is_timeout(), error.is_connect());
             let request = error.is_request();
 
             let error = error.without_url();
 
-            Self::from_parts(&error, url, host, timeout, connect, request, 0)
+            Self::from_parts(&error, url, host, failure, request, 0)
         }
 
         /// Renders a `wreq::Error`, stripping its URI before anything can format it.
@@ -172,12 +195,11 @@ mod request {
                 .uri()
                 .map(|uri| RedactedUrl::from_unparsed(&uri.to_string()));
             let host = error.uri().and_then(|uri| uri.host().map(str::to_string));
-            let timeout = error.is_timeout();
-            let connect = error.is_connect();
+            let failure = Failure::from_flags(error.is_timeout(), error.is_connect());
 
             let error = error.without_uri();
             // `wreq::Error` renders its own first source, so the chain starts one link deeper.
-            Self::from_parts(&error, url, host, timeout, connect, false, 1)
+            Self::from_parts(&error, url, host, failure, false, 1)
         }
 
         /// Returns the request URL without its query string, fragment, or userinfo, if the
@@ -199,20 +221,20 @@ mod request {
         /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
         #[must_use]
         pub const fn error_type(&self) -> &'static str {
-            classify(self.timeout, self.connect)
+            self.failure.error_type()
         }
 
         /// Returns whether the request timed out.
         #[must_use]
         pub const fn is_timeout(&self) -> bool {
-            self.timeout
+            self.failure.is_timeout()
         }
 
         /// Returns whether the request failed before it could be sent, e.g. because the
         /// connection was refused or the host could not be resolved.
         #[must_use]
         pub const fn is_connect(&self) -> bool {
-            self.connect
+            self.failure.is_connect()
         }
 
         /// Returns whether the failure happened while sending the request rather than while
@@ -239,13 +261,7 @@ mod request {
 
     impl fmt::Display for TransportError {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write_short(
-                f,
-                &self.kind,
-                self.host.as_deref(),
-                self.timeout,
-                self.connect,
-            )
+            write_short(f, &self.kind, self.host.as_deref(), self.failure)
         }
     }
 

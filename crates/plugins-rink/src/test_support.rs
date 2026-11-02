@@ -18,11 +18,12 @@ use zeta_test_support::wiremock::{
 };
 
 use crate::Rink;
+use crate::actor::Rewrite;
 use crate::currency::{self, build_context};
 
 /// Evaluates `line` through the actor, panicking if it has stopped.
-pub async fn evaluate(rink: &Rink, line: &str, classify: bool) -> String {
-    rink.eval_and_format(line, classify)
+pub async fn evaluate(rink: &Rink, line: &str, rewrite: Rewrite) -> String {
+    rink.eval_and_format(line, rewrite)
         .await
         .expect("the rink actor must be running")
 }

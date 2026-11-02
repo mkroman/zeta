@@ -48,7 +48,7 @@ mod currency;
 mod render;
 #[cfg(test)]
 mod test_support;
-use actor::{EvalOutcome, Handle};
+use actor::{EvalOutcome, Handle, Rewrite};
 use currency::{CurrencyData, build_context, refresh_data};
 use render::{error_message, render_reply};
 
@@ -158,7 +158,9 @@ impl Rink {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let message = self.eval_and_format(command.args(), false).await?;
+        let message = self
+            .eval_and_format(command.args(), Rewrite::Verbatim)
+            .await?;
 
         client.send_privmsg(command.channel(), message)?;
 
@@ -178,7 +180,9 @@ impl Rink {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let message = self.eval_and_format(command.args(), true).await?;
+        let message = self
+            .eval_and_format(command.args(), Rewrite::Classify)
+            .await?;
 
         client.send_privmsg(command.channel(), message)?;
 
@@ -266,8 +270,8 @@ impl Rink {
 
     /// Evaluates `line` and renders the result or error as a one-line IRC reply.
     ///
-    /// When `classify` is set, unit tokens rink cannot resolve are case-corrected against the
-    /// registry first, so `.c 10 usd to dkk` evaluates like `10 USD to DKK`.
+    /// With [`Rewrite::Classify`], unit tokens rink cannot resolve are case-corrected against
+    /// the registry first, so `.c 10 usd to dkk` evaluates like `10 USD to DKK`.
     ///
     /// A query that runs into missing currency data triggers an inline refresh and a
     /// re-evaluation, mirroring upstream rink's REPL, which fetches on demand in the same
@@ -279,13 +283,13 @@ impl Rink {
     /// # Errors
     ///
     /// Returns a [`ZetaError`] when the rink actor has stopped.
-    async fn eval_and_format(&self, line: &str, classify: bool) -> Result<String, ZetaError> {
+    async fn eval_and_format(&self, line: &str, rewrite: Rewrite) -> Result<String, ZetaError> {
         let actor = self
             .actor
             .as_ref()
             .ok_or_else(|| plugin_err(std::io::Error::other("the rink actor is not running")))?;
 
-        let retry_line = match actor.eval(line.to_owned(), classify).await? {
+        let retry_line = match actor.eval(line.to_owned(), rewrite).await? {
             EvalOutcome::Answer(text) => return Ok(text),
             EvalOutcome::NeedsCurrency { error_reply, .. } if self.client.is_none() => {
                 return Ok(error_reply);
@@ -298,7 +302,7 @@ impl Rink {
         // on demand in the same situation.
         self.ensure_currency_cached().await;
 
-        match actor.eval(retry_line, false).await? {
+        match actor.eval(retry_line, Rewrite::Verbatim).await? {
             EvalOutcome::Answer(text) => Ok(text),
             EvalOutcome::NeedsCurrency { error_reply, .. } => Ok(error_reply),
         }
@@ -369,6 +373,7 @@ impl Rink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::Rewrite;
     use zeta_plugin::{Registered, Subscriptions};
     use zeta_test_support::settings_tests;
     use zeta_utils::irc;
@@ -382,9 +387,9 @@ mod tests {
     async fn ans_references_the_previous_result() {
         let rink = offline_plugin();
 
-        evaluate(&rink, "4 m", false).await;
+        evaluate(&rink, "4 m", Rewrite::Verbatim).await;
 
-        let reply = irc::strip_formatting(&evaluate(&rink, "ans * 2", false).await);
+        let reply = irc::strip_formatting(&evaluate(&rink, "ans * 2", Rewrite::Verbatim).await);
         assert!(reply.contains("8 meter"), "{reply}");
         assert!(reply.contains("length"), "{reply}");
     }
@@ -404,7 +409,7 @@ mod tests {
         ];
 
         for (line, expected) in cases {
-            let reply = irc::strip_formatting(&evaluate(&rink, line, false).await);
+            let reply = irc::strip_formatting(&evaluate(&rink, line, Rewrite::Verbatim).await);
 
             for needle in expected {
                 assert!(
@@ -421,18 +426,23 @@ mod tests {
 
         rink.ensure_currency_cached().await;
 
-        for (line, classify) in [("1 ETH to USD", false), ("1 eth to usd", true)] {
-            let reply = irc::strip_formatting(&evaluate(&rink, line, classify).await);
+        for (line, rewrite) in [
+            ("1 ETH to USD", Rewrite::Verbatim),
+            ("1 eth to usd", Rewrite::Classify),
+        ] {
+            let reply = irc::strip_formatting(&evaluate(&rink, line, rewrite).await);
             assert!(reply.contains("2650.32 USD"), "{line}: {reply}");
             assert!(reply.contains("money"), "{line}: {reply}");
         }
 
         // 50_000 satoshis are 0.0005 bitcoin at the fixture's 65 000 USD price.
-        let sats = irc::strip_formatting(&evaluate(&rink, "50000 sats to usd", true).await);
+        let sats =
+            irc::strip_formatting(&evaluate(&rink, "50000 sats to usd", Rewrite::Classify).await);
         assert!(sats.contains("32.5 USD"), "{sats}");
 
         // A gwei stays convertible without being resolvable as fiat.
-        let gwei = irc::strip_formatting(&evaluate(&rink, "1 gwei to usd", true).await);
+        let gwei =
+            irc::strip_formatting(&evaluate(&rink, "1 gwei to usd", Rewrite::Classify).await);
         assert!(gwei.contains("USD"), "{gwei}");
     }
 
@@ -444,7 +454,8 @@ mod tests {
 
         // The fake EUR coin (priced 1.2) must not shadow the bundled euro: 1 EUR is 0.5 USD
         // under the fiat fixture, and the rejected `1INCH` symbol must not break the load.
-        let reply = irc::strip_formatting(&evaluate(&rink, "1 EUR to USD", false).await);
+        let reply =
+            irc::strip_formatting(&evaluate(&rink, "1 EUR to USD", Rewrite::Verbatim).await);
         assert!(reply.contains("0.5 USD"), "{reply}");
         assert!(!reply.contains("1.2"), "{reply}");
     }
@@ -494,7 +505,8 @@ mod tests {
         rink.cmc = None;
         rink.ensure_currency_cached().await;
 
-        let disabled = irc::strip_formatting(&evaluate(&rink, "1 eth to usd", true).await);
+        let disabled =
+            irc::strip_formatting(&evaluate(&rink, "1 eth to usd", Rewrite::Classify).await);
         assert!(disabled.contains("Missing dependencies: ETH"), "{disabled}");
 
         // The fiat dataset is fine; the listings endpoint is not. The refresh fails as a
@@ -503,7 +515,8 @@ mod tests {
         let (rink, _fiat, _listings) = plugin_with_listings(500).await;
         rink.ensure_currency_cached().await;
 
-        let failed = irc::strip_formatting(&evaluate(&rink, "1 eth to usd", true).await);
+        let failed =
+            irc::strip_formatting(&evaluate(&rink, "1 eth to usd", Rewrite::Classify).await);
         assert!(failed.contains("Missing dependencies: ETH"), "{failed}");
     }
 
@@ -524,7 +537,7 @@ mod tests {
         // The listings fetch failed, so the requested table is absent even though the fiat
         // entry is fresh: unlike an unresolvable dependency, this state a refetch can fix,
         // so the query retries the listings inline instead of waiting out the whole TTL.
-        let reply = evaluate(&rink, "1 gwei to usd", true).await;
+        let reply = evaluate(&rink, "1 gwei to usd", Rewrite::Classify).await;
         assert!(reply.contains("Missing dependencies"), "{reply}");
 
         assert_eq!(listings.received_requests().await.unwrap().len(), 2);
@@ -535,12 +548,12 @@ mod tests {
         let server = currency_server(500).await;
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
 
-        let failed = irc::strip_formatting(&evaluate(&rink, "1 USD", false).await);
+        let failed = irc::strip_formatting(&evaluate(&rink, "1 USD", Rewrite::Verbatim).await);
         assert!(failed.contains("Missing dependencies: USD"), "{failed}");
 
         let rink = offline_plugin();
 
-        let disabled = irc::strip_formatting(&evaluate(&rink, "1 USD", false).await);
+        let disabled = irc::strip_formatting(&evaluate(&rink, "1 USD", Rewrite::Verbatim).await);
         assert!(disabled.contains("Missing dependencies: USD"), "{disabled}");
     }
 
@@ -558,7 +571,7 @@ mod tests {
         // cannot add the missing table. The queries must not reach the network again.
         for _ in 0..3 {
             // `.c` case-corrects `usd`, so the pending `gwei` dependency is what surfaces.
-            let reply = evaluate(&rink, "1 gwei to usd", true).await;
+            let reply = evaluate(&rink, "1 gwei to usd", Rewrite::Classify).await;
 
             assert!(reply.contains("Missing dependencies"), "{reply}");
         }
@@ -573,10 +586,10 @@ mod tests {
 
         rink.ensure_currency_cached().await;
 
-        let fiat = evaluate(&rink, "100 usd to eur", true).await;
+        let fiat = evaluate(&rink, "100 usd to eur", Rewrite::Classify).await;
         assert!(fiat.contains("euro") && fiat.contains("money"), "{fiat}");
 
-        let bitcoin = evaluate(&rink, "1 btc to usd", true).await;
+        let bitcoin = evaluate(&rink, "1 btc to usd", Rewrite::Classify).await;
         assert!(
             bitcoin.contains("USD") && bitcoin.contains("money"),
             "{bitcoin}"

@@ -20,6 +20,15 @@ use super::{error_message, render_reply};
 #[derive(Clone)]
 pub struct Handle(mpsc::UnboundedSender<Request>);
 
+/// Whether an evaluation rewrites the line before running it.
+#[derive(Debug, Clone, Copy)]
+pub enum Rewrite {
+    /// Case-correct unit tokens rink cannot resolve before evaluating.
+    Classify,
+    /// Evaluate the line as written.
+    Verbatim,
+}
+
 /// The rendered outcome of an evaluation request.
 pub enum EvalOutcome {
     /// The final IRC reply, including the reply marker.
@@ -40,7 +49,7 @@ enum Request {
         /// The line to evaluate.
         line: String,
         /// Whether to case-correct unresolvable unit tokens first.
-        classify: bool,
+        rewrite: Rewrite,
         /// The channel the rendered answer is sent back on.
         reply: oneshot::Sender<EvalOutcome>,
     },
@@ -63,7 +72,8 @@ impl Handle {
         Self(tx)
     }
 
-    /// Evaluates `line`, rendering the result inside the actor.
+    /// Evaluates `line`, case-correcting it first when `rewrite` asks, and rendering the result
+    /// inside the actor.
     ///
     /// # Errors
     ///
@@ -71,14 +81,14 @@ impl Handle {
     pub(super) async fn eval(
         &self,
         line: String,
-        classify: bool,
+        rewrite: Rewrite,
     ) -> Result<EvalOutcome, ZetaError> {
         let (reply, response) = oneshot::channel();
 
         self.0
             .send(Request::Evaluate {
                 line,
-                classify,
+                rewrite,
                 reply,
             })
             .map_err(|_| actor_stopped())?;
@@ -113,13 +123,12 @@ async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<Request>) {
         tracing::info_span!("rink.eval").in_scope(|| match request {
             Request::Evaluate {
                 line,
-                classify,
+                rewrite,
                 reply,
             } => {
-                let evaluated_line = if classify {
-                    super::classify::classify(&ctx, &line)
-                } else {
-                    line
+                let evaluated_line = match rewrite {
+                    Rewrite::Classify => super::classify::classify(&ctx, &line),
+                    Rewrite::Verbatim => line,
                 };
 
                 // Rink's replies are not `Send`, so the answer is rendered here, before it is
