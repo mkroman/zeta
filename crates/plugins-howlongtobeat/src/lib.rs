@@ -329,7 +329,7 @@ fn format_game(game: &Game) -> String {
 
     labeled_reply(
         "HLTB",
-        format!(
+        format_args!(
             "(\x0f{name}\x0310): Main Story: \x0f{main}\x0310 | Main + Extra: \x0f{main_extra}\x0310 | Completionist: \x0f{completionist}"
         ),
     )

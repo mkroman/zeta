@@ -54,5 +54,8 @@ pub use zeta_plugin_macros::{instrument_database, plugin};
 // Re-exported through the crate root so the code the `#[plugin]` macro generates — and plugin
 // crates generally — can reference it as absolute `::zeta_plugin::…` paths without adding
 // dependencies of their own.
-pub use self::irc::{labeled_reply, parse_or_usage, plain_reply, reply_lookup};
+pub use self::irc::{
+    labeled_reply, parse_or_usage, plain_reply, reply_lookup, send_reply, send_reply_via,
+    write_labeled_reply_prefix,
+};
 pub use ::irc::client::Client;

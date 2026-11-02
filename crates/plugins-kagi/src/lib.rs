@@ -87,7 +87,7 @@ impl Kagi {
                     |result| {
                         labeled_reply(
                             "Kagi",
-                            format!("{} - {}", unstyle_text(&result.title), result.url),
+                            format_args!("{} - {}", unstyle_text(&result.title), result.url),
                         )
                     },
                 )
@@ -125,7 +125,7 @@ impl Kagi {
                     |result| {
                         labeled_reply(
                             "Kagi",
-                            format!("{} - {}", unstyle_text(&result.title), result.image_url),
+                            format_args!("{} - {}", unstyle_text(&result.title), result.image_url),
                         )
                     },
                 )

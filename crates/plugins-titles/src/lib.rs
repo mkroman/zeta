@@ -20,7 +20,7 @@ use wreq::redirect::Policy;
 
 use zeta_http as http;
 use zeta_http::WreqError;
-use zeta_plugin::irc::{REPLY_MARKER, labeled_reply, plain_reply};
+use zeta_plugin::irc::{REPLY_MARKER, labeled_reply, plain_reply, send_reply, send_reply_via};
 use zeta_plugin::{Client, Context, PluginCatalog, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrlRef;
 use zeta_utils::irc;
@@ -144,7 +144,7 @@ impl Titles {
         if let Some(scheme) = event.repaired_from {
             debug!(%scheme, url.full = %RedactedUrlRef::from_url(url), "posting repaired url");
 
-            if let Err(error) = client.send_privmsg(event.channel(), plain_reply(url)) {
+            if let Err(error) = send_reply(client, event.channel(), plain_reply(url)) {
                 warn!(exception.message = %error, "could not send repaired url");
             }
         }
@@ -239,7 +239,7 @@ impl Titles {
                         );
 
                         if let Err(send_error) =
-                            sender.send_privmsg(&channel, format!("{REPLY_MARKER} {error}"))
+                            send_reply_via(&sender, &channel, format!("{REPLY_MARKER} {error}"))
                         {
                             warn!(exception.message = %send_error, "could not send fetch error");
                         }
@@ -249,7 +249,7 @@ impl Titles {
                 };
 
                 if let Some(message) = format_page(&metadata, &url, &settings)
-                    && let Err(error) = sender.send_privmsg(&channel, message)
+                    && let Err(error) = send_reply_via(&sender, &channel, message)
                 {
                     warn!(exception.message = %error, "could not send page metadata");
                 }

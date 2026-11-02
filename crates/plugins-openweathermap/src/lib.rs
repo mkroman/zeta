@@ -16,7 +16,7 @@ use tracing::{debug, warn};
 
 use zeta_http as http;
 use zeta_http::RequestError;
-use zeta_plugin::irc::plain_reply;
+use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 
@@ -211,7 +211,7 @@ impl OpenWeatherMap {
 
         let location = if args.trim().is_empty() {
             let Some(location) = self.default_location.as_deref() else {
-                client.send_privmsg(channel, plain_reply("Usage: .w\x0f <location>"))?;
+                send_reply(client, channel, plain_reply("Usage: .w\x0f <location>"))?;
 
                 return Ok(());
             };
@@ -230,7 +230,7 @@ impl OpenWeatherMap {
             }
         };
 
-        client.send_privmsg(channel, message)?;
+        send_reply(client, channel, message)?;
 
         Ok(())
     }

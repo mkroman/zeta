@@ -5,20 +5,21 @@
 //! the reply color and the default color. The formatting helpers that produce those byte
 //! sequences live in [`zeta_utils::irc`], next to the other IRC formatting helpers, and are
 //! re-exported here so plugin code can keep importing them from this module. What remains here
-//! are the helpers that need the plugin vocabulary: replying with a failed argument parse's
-//! usage lines.
+//! are the helpers that need the plugin vocabulary: sending a finished reply without the copies
+//! [`Client::send_privmsg`] makes, and replying with a failed argument parse's usage lines.
 
 use std::future::Future;
 
 use clap::Parser;
-use irc::client::Client;
+use irc::client::{Client, Sender};
+use irc::proto::Command;
 
 use crate::command::{ArgsError, ArgsMode};
 use crate::event::CommandEvent;
 
 pub use zeta_utils::irc::{
     BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
-    plain_reply, unstyle_text,
+    plain_reply, unstyle_text, write_labeled_reply_prefix,
 };
 
 /// Sends each non-empty usage line as its own `PRIVMSG`.
@@ -67,10 +68,59 @@ pub fn parse_or_usage<T: Parser + 'static>(
     }
 }
 
+/// Sends `message` to `channel` as a single `PRIVMSG`, moving it into the outgoing command.
+///
+/// [`Client::send_privmsg`] formats its message into a `String`, splits that and then copies
+/// every line again, so a reply built here would be copied twice before it reaches the outgoing
+/// queue. Sending the [`Command`] directly moves the reply instead. A message that carries an
+/// IRC line break — which the reply builders pass through verbatim, so only a hand-built message
+/// normally has one — still goes through [`Client::send_privmsg`], keeping its multi-line
+/// splitting unchanged.
+///
+/// # Errors
+///
+/// Returns any error produced while sending the message.
+pub fn send_reply(
+    client: &Client,
+    channel: &str,
+    message: impl Into<String>,
+) -> Result<(), irc::error::Error> {
+    let message = message.into();
+
+    if message.contains("\r\n") {
+        return client.send_privmsg(channel, message);
+    }
+
+    client.send(Command::PRIVMSG(channel.to_owned(), message))
+}
+
+/// Sends `message` to `channel` as a single `PRIVMSG` through `sender`, moving it into the
+/// outgoing command.
+///
+/// Unlike [`send_reply`], this does not need a [`Client`], so a task that keeps a
+/// [`Sender`] alive after the handler returns can reply without reaching for the client.
+///
+/// # Errors
+///
+/// Returns any error produced while sending the message.
+pub fn send_reply_via(
+    sender: &Sender,
+    channel: &str,
+    message: impl Into<String>,
+) -> Result<(), irc::error::Error> {
+    let message = message.into();
+
+    if message.contains("\r\n") {
+        return sender.send_privmsg(channel, message);
+    }
+
+    sender.send(Command::PRIVMSG(channel.to_owned(), message))
+}
+
 /// Awaits a lookup and replies with its outcome to `channel`.
 ///
 /// `render` formats a successful value and `on_error` a failed lookup, so a handler that only
-/// differs in how it presents the two does not repeat the `match` and `send_privmsg` scaffold.
+/// differs in how it presents the two does not repeat the `match` and [`send_reply`] scaffold.
 ///
 /// # Errors
 ///
@@ -87,7 +137,7 @@ pub async fn reply_lookup<T, E>(
         Err(error) => on_error(error),
     };
 
-    client.send_privmsg(channel, message)
+    send_reply(client, channel, message)
 }
 
 #[cfg(test)]

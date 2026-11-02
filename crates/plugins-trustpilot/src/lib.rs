@@ -185,7 +185,7 @@ fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
 
     labeled_reply(
         "Trustpilot",
-        format!(
+        format_args!(
             "(\x0f{name}\x0310): Score:\x0f {score:.1}\x0310/\x0f5.0\x0310 Reviews:\x0f {reviews}\x0310 - {url}"
         ),
     )

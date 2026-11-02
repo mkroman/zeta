@@ -243,7 +243,7 @@ impl Tvmaze {
     fn build_formatted_message(prefix: Option<&str>, message: &str) -> String {
         prefix.map_or_else(
             || labeled_reply("TVmaze", message),
-            |name| labeled_reply("TVmaze", format!("(\x0f{name}\x0310): {message}")),
+            |name| labeled_reply("TVmaze", format_args!("(\x0f{name}\x0310): {message}")),
         )
     }
 }

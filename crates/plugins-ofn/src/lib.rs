@@ -28,7 +28,7 @@ use num_format::{Locale, ToFormattedString};
 use url::Url;
 
 use self::service::OfnService;
-use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_utils::duration::TimeInWordsExt;
 
@@ -66,7 +66,8 @@ impl Ofn {
             Ok(Some(resource)) => {
                 let time_ago = resource.created_at().time_ago();
 
-                client.send_privmsg(
+                send_reply(
+                    client,
                     origin.channel,
                     format!(
                         "{}: OFN - posted by {} {time_ago}",
@@ -77,7 +78,7 @@ impl Ofn {
             }
             Ok(None) => {}
             Err(error) => {
-                client.send_privmsg(origin.channel, formatted_err(&error.to_string()))?;
+                send_reply(client, origin.channel, formatted_err(&error.to_string()))?;
             }
         }
 
@@ -146,7 +147,7 @@ impl Ofn {
                     "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"
                 );
 
-                client.send_privmsg(channel, labeled_reply("OFN", &output))?;
+                send_reply(client, channel, labeled_reply("OFN", &output))?;
             }
         }
 
@@ -186,7 +187,7 @@ enum Subcommand {
 pub struct Stats {}
 
 fn formatted_err(s: &str) -> String {
-    labeled_reply("OFN", format!("Error:\x0f {s}"))
+    labeled_reply("OFN", format_args!("Error:\x0f {s}"))
 }
 
 #[cfg(test)]

@@ -34,7 +34,7 @@ use url::Url;
 use plugins_shared::urls::youtube::URL_HOSTS;
 use zeta_cache::TtlCache;
 use zeta_http as http;
-use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup};
+use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, send_reply};
 use zeta_plugin::{Client, CommandEvent, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::duration;
 use zeta_utils::irc;
@@ -337,13 +337,13 @@ impl YouTube {
         let video = match self.get_video(&video_id).await {
             Ok(video) => video,
             Err(error) => {
-                client.send_privmsg(channel, plain_reply(error))?;
+                send_reply(client, channel, plain_reply(error))?;
 
                 return Ok(());
             }
         };
 
-        client.send_privmsg(channel, self.video_reply(&video))?;
+        send_reply(client, channel, self.video_reply(&video))?;
 
         Ok(())
     }
@@ -536,7 +536,7 @@ fn search_reply(results: Vec<Search>) -> String {
 
                 labeled_reply(
                     "YouTube",
-                    format!("{title} - https://www.youtube.com/watch?v={id}"),
+                    format_args!("{title} - https://www.youtube.com/watch?v={id}"),
                 )
             },
         )
@@ -569,14 +569,14 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
             .and_then(|details| details.concurrent_viewers.as_deref())
             .and_then(|viewers| viewers.parse::<u64>().ok())
         {
-            return plain_reply(format!(
+            return plain_reply(format_args!(
                 "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
                  {channel_name}\x0310 with\x0f {}\x0310 viewers",
                 viewers.to_formatted_string(&Locale::en),
             ));
         }
 
-        return plain_reply(format!(
+        return plain_reply(format_args!(
             "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
              {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
         ));
@@ -589,7 +589,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         .map_or_else(|| "unknown duration".to_string(), duration::format_duration);
     let article = text::indefinite_article(&duration);
 
-    plain_reply(format!(
+    plain_reply(format_args!(
         "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
          {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
     ))

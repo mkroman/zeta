@@ -11,6 +11,7 @@
 use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 
+use zeta_plugin::irc::send_reply;
 use zeta_plugin::{Client, Context, MessageEvent, ZetaError, plugin};
 use zeta_utils::irc;
 
@@ -64,7 +65,11 @@ impl Choices {
                 return Ok(());
             };
 
-            client.send_privmsg(event.channel(), format!("{source_nickname}: {selection}"))?;
+            send_reply(
+                client,
+                event.channel(),
+                format!("{source_nickname}: {selection}"),
+            )?;
         }
 
         Ok(())

@@ -18,7 +18,7 @@ use time::{
 use tracing::{debug, warn};
 
 use zeta_http as http;
-use zeta_plugin::irc::{plain_reply, unstyle_text};
+use zeta_plugin::irc::{plain_reply, send_reply, unstyle_text};
 use zeta_plugin::{Client, Context, MessageEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text;
@@ -281,7 +281,7 @@ impl IsItOpen {
             }
         };
 
-        client.send_privmsg(channel, message)?;
+        send_reply(client, channel, message)?;
 
         Ok(())
     }

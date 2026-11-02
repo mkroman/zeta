@@ -31,7 +31,9 @@ use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, trace};
 
-use zeta_plugin::irc::{COLOR, RESET, labeled_reply, parse_or_usage, unstyle_text};
+use zeta_plugin::irc::{
+    COLOR, RESET, labeled_reply, parse_or_usage, send_reply, send_reply_via, unstyle_text,
+};
 use zeta_plugin::{
     ArgsMode, Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin,
     plugin_err,
@@ -141,7 +143,7 @@ impl AlertPlugin {
         opts: &Opts,
     ) -> Result<(), ZetaError> {
         if !opts.args.is_empty() {
-            client.send_privmsg(channel, labeled_reply("Alert", USAGE))?;
+            send_reply(client, channel, labeled_reply("Alert", USAGE))?;
 
             return Ok(());
         }
@@ -151,7 +153,8 @@ impl AlertPlugin {
             Err(err) => {
                 error!(exception.message = ?err, "could not list pending alerts");
 
-                client.send_privmsg(
+                send_reply(
+                    client,
                     channel,
                     labeled_reply("Alert", "could not list your pending alerts"),
                 )?;
@@ -160,7 +163,7 @@ impl AlertPlugin {
             }
         };
 
-        client.send_privmsg(channel, format_pending(&pending))?;
+        send_reply(client, channel, format_pending(&pending))?;
 
         Ok(())
     }
@@ -190,9 +193,11 @@ impl AlertPlugin {
 
                     let message = unstyle_text(&alert.message);
 
-                    if let Err(err) = sender
-                        .send_privmsg(&alert.channel, format!("{}: {message}", alert.nickname))
-                    {
+                    if let Err(err) = send_reply_via(
+                        &sender,
+                        &alert.channel,
+                        format!("{}: {message}", alert.nickname),
+                    ) {
                         error!(exception.message = ?err, "could not deliver alert");
                     }
                 }
@@ -290,7 +295,7 @@ impl AlertPlugin {
         let input = opts.input();
 
         let Some((message, time_spec)) = split_args(&input) else {
-            client.send_privmsg(channel, labeled_reply("Alert", USAGE))?;
+            send_reply(client, channel, labeled_reply("Alert", USAGE))?;
 
             return Ok(());
         };
@@ -298,7 +303,7 @@ impl AlertPlugin {
         let time = match parse_time(time_spec, Local::now()) {
             Ok(time) => time,
             Err(err) => {
-                client.send_privmsg(channel, labeled_reply("Alert", err.to_string()))?;
+                send_reply(client, channel, labeled_reply("Alert", err.to_string()))?;
 
                 return Ok(());
             }
@@ -317,18 +322,22 @@ impl AlertPlugin {
             Ok(_) => {
                 let local = time.with_timezone(&Local).format("%d/%m/%Y %H:%M:%S");
 
-                client.send_privmsg(
+                send_reply(
+                    client,
                     channel,
                     labeled_reply(
                         "Alert",
-                        format!("{} Alert stored for\x0f {local}.", success_message()),
+                        format_args!("{} Alert stored for\x0f {local}.", success_message()),
                     ),
                 )?;
             }
             Err(err) => {
                 error!(exception.message = ?err, "could not store alert");
-                client
-                    .send_privmsg(channel, labeled_reply("Alert", "could not store the alert"))?;
+                send_reply(
+                    client,
+                    channel,
+                    labeled_reply("Alert", "could not store the alert"),
+                )?;
             }
         }
 
@@ -494,7 +503,10 @@ fn format_pending(pending: &[Alert]) -> String {
         return labeled_reply("Alert", "You have no pending alerts");
     }
 
-    let mut listing = labeled_reply("Alert", format!("Pending alerts:\x0f {}", pending.len()));
+    let mut listing = labeled_reply(
+        "Alert",
+        format_args!("Pending alerts:\x0f {}", pending.len()),
+    );
 
     let entries = pending
         .iter()
