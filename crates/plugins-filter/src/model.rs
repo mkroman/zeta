@@ -578,7 +578,6 @@ mod tests {
     #[test]
     #[ignore = "benchmark; run with --ignored --nocapture"]
     fn benchmark_affix_patterns() {
-        use std::hint::black_box;
         use std::time::Instant;
 
         #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
@@ -592,7 +591,7 @@ mod tests {
                 let start = Instant::now();
 
                 for _ in 0..ITERATIONS {
-                    black_box(operation());
+                    std::hint::black_box(operation());
                 }
 
                 let nanos = start.elapsed().as_secs_f64() * 1e9;
@@ -639,8 +638,8 @@ mod tests {
         for (label, pattern, value) in cases {
             // Keep the inputs opaque: with literals the compiler can constant-fold the matching
             // a real lookup does, hiding the work the benchmark is meant to measure.
-            let pattern = black_box(&pattern);
-            let value = black_box(value);
+            let pattern = std::hint::black_box(&pattern);
+            let value = std::hint::black_box(value);
             let nanos = measure(|| pattern.matches(Some(value)));
 
             println!("affix benchmark: {label}: {value:?}: {nanos:.1} ns/op");

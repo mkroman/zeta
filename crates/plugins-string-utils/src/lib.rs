@@ -10,11 +10,10 @@
 use std::fmt::Write;
 use std::sync::Once;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{RESET, plain_reply};
+use zeta_plugin::{Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin};
 
 mod unicode;
-
-use unicode::unicode_details;
 
 /// The `.b` string to bytes command.
 const BYTES: CommandSpec = CommandSpec::new(".b", "Show a string's UTF-8 bytes as hex escapes");
@@ -62,7 +61,7 @@ const COMMANDS: [Command; 5] = [
     Command {
         spec: UNICODE,
         usage: " <chars>",
-        render: unicode_details,
+        render: unicode::unicode_details,
     },
 ];
 
@@ -195,6 +194,7 @@ fn warm_unicode() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_plugin::{NoSettings, Registered};
 
     #[test]
     fn str_to_hex_test() {

@@ -49,14 +49,13 @@ mod render;
 #[cfg(test)]
 mod test_support;
 use actor::{EvalOutcome, Handle, Rewrite};
-use classify::classify;
 use currency::{CurrencyData, build_context, refresh_data};
 use render::{error_message, render_reply};
 
 use coinmarketcap::Client as CmcClient;
 use zeta_cache::TtlCache;
 use zeta_http::RequestError;
-use zeta_plugin::prelude::*;
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
 
 /// Calculator plugin using rink-rs.
 pub struct Rink {
@@ -375,8 +374,9 @@ impl Rink {
 mod tests {
     use super::*;
     use crate::actor::Rewrite;
+    use zeta_plugin::{Registered, Subscriptions};
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
+    use zeta_utils::irc;
 
     use crate::test_support::{
         TEST_CURRENCY_DATA, currency_server, evaluate, listings_server, offline_plugin,
@@ -389,7 +389,7 @@ mod tests {
 
         evaluate(&rink, "4 m", Rewrite::Verbatim).await;
 
-        let reply = strip_formatting(&evaluate(&rink, "ans * 2", Rewrite::Verbatim).await);
+        let reply = irc::strip_formatting(&evaluate(&rink, "ans * 2", Rewrite::Verbatim).await);
         assert!(reply.contains("8 meter"), "{reply}");
         assert!(reply.contains("length"), "{reply}");
     }
@@ -409,7 +409,7 @@ mod tests {
         ];
 
         for (line, expected) in cases {
-            let reply = strip_formatting(&evaluate(&rink, line, Rewrite::Verbatim).await);
+            let reply = irc::strip_formatting(&evaluate(&rink, line, Rewrite::Verbatim).await);
 
             for needle in expected {
                 assert!(
@@ -430,17 +430,19 @@ mod tests {
             ("1 ETH to USD", Rewrite::Verbatim),
             ("1 eth to usd", Rewrite::Classify),
         ] {
-            let reply = strip_formatting(&evaluate(&rink, line, rewrite).await);
+            let reply = irc::strip_formatting(&evaluate(&rink, line, rewrite).await);
             assert!(reply.contains("2650.32 USD"), "{line}: {reply}");
             assert!(reply.contains("money"), "{line}: {reply}");
         }
 
         // 50_000 satoshis are 0.0005 bitcoin at the fixture's 65 000 USD price.
-        let sats = strip_formatting(&evaluate(&rink, "50000 sats to usd", Rewrite::Classify).await);
+        let sats =
+            irc::strip_formatting(&evaluate(&rink, "50000 sats to usd", Rewrite::Classify).await);
         assert!(sats.contains("32.5 USD"), "{sats}");
 
         // A gwei stays convertible without being resolvable as fiat.
-        let gwei = strip_formatting(&evaluate(&rink, "1 gwei to usd", Rewrite::Classify).await);
+        let gwei =
+            irc::strip_formatting(&evaluate(&rink, "1 gwei to usd", Rewrite::Classify).await);
         assert!(gwei.contains("USD"), "{gwei}");
     }
 
@@ -452,7 +454,8 @@ mod tests {
 
         // The fake EUR coin (priced 1.2) must not shadow the bundled euro: 1 EUR is 0.5 USD
         // under the fiat fixture, and the rejected `1INCH` symbol must not break the load.
-        let reply = strip_formatting(&evaluate(&rink, "1 EUR to USD", Rewrite::Verbatim).await);
+        let reply =
+            irc::strip_formatting(&evaluate(&rink, "1 EUR to USD", Rewrite::Verbatim).await);
         assert!(reply.contains("0.5 USD"), "{reply}");
         assert!(!reply.contains("1.2"), "{reply}");
     }
@@ -502,7 +505,8 @@ mod tests {
         rink.cmc = None;
         rink.ensure_currency_cached().await;
 
-        let disabled = strip_formatting(&evaluate(&rink, "1 eth to usd", Rewrite::Classify).await);
+        let disabled =
+            irc::strip_formatting(&evaluate(&rink, "1 eth to usd", Rewrite::Classify).await);
         assert!(disabled.contains("Missing dependencies: ETH"), "{disabled}");
 
         // The fiat dataset is fine; the listings endpoint is not. The refresh fails as a
@@ -511,7 +515,8 @@ mod tests {
         let (rink, _fiat, _listings) = plugin_with_listings(500).await;
         rink.ensure_currency_cached().await;
 
-        let failed = strip_formatting(&evaluate(&rink, "1 eth to usd", Rewrite::Classify).await);
+        let failed =
+            irc::strip_formatting(&evaluate(&rink, "1 eth to usd", Rewrite::Classify).await);
         assert!(failed.contains("Missing dependencies: ETH"), "{failed}");
     }
 
@@ -542,12 +547,12 @@ mod tests {
         let server = currency_server(500).await;
         let rink = test_plugin(Some(format!("{}/data/currency.json", server.uri())));
 
-        let failed = strip_formatting(&evaluate(&rink, "1 USD", Rewrite::Verbatim).await);
+        let failed = irc::strip_formatting(&evaluate(&rink, "1 USD", Rewrite::Verbatim).await);
         assert!(failed.contains("Missing dependencies: USD"), "{failed}");
 
         let rink = offline_plugin();
 
-        let disabled = strip_formatting(&evaluate(&rink, "1 USD", Rewrite::Verbatim).await);
+        let disabled = irc::strip_formatting(&evaluate(&rink, "1 USD", Rewrite::Verbatim).await);
         assert!(disabled.contains("Missing dependencies: USD"), "{disabled}");
     }
 

@@ -733,7 +733,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "performance measurement"]
     async fn bench_read_output_progress_lines() {
-        use std::{fmt::Write as _, time::Instant};
+        use std::fmt::Write as _;
+        use std::time::Instant;
 
         const UPDATES: usize = 100_000;
         const RUNS: usize = 20;

@@ -911,7 +911,6 @@ mod tests {
     #[test]
     #[ignore = "benchmark: run explicitly with --ignored --nocapture"]
     fn benchmark_matches_and_ignores() {
-        use std::hint::black_box;
         use std::time::Instant;
 
         #[allow(clippy::cast_precision_loss)] // iteration counts are far below 2^52
@@ -925,7 +924,7 @@ mod tests {
                 let start = Instant::now();
 
                 for _ in 0..ITERATIONS {
-                    black_box(operation());
+                    std::hint::black_box(operation());
                 }
 
                 let nanos = start.elapsed().as_secs_f64() * 1e9;
@@ -941,8 +940,8 @@ mod tests {
         let sender = Sender::new("someone", "user", "host.example");
         // Keep the inputs opaque: with literals the compiler can constant-fold the lowercasing
         // a real lookup does, hiding the allocation the benchmark is meant to measure.
-        let channel = black_box("#chan-0");
-        let url = black_box(&url);
+        let channel = std::hint::black_box("#chan-0");
+        let url = std::hint::black_box(&url);
         let matches = measure(|| index.matches(channel, Some(sender), url));
         let ignores = measure(|| index.ignores(channel, Some(sender)));
 
@@ -959,13 +958,11 @@ mod tests {
     #[test]
     #[ignore = "measurement: run explicitly with --ignored --nocapture"]
     fn benchmark_index_build_bytes() {
-        use std::hint::black_box;
-
         let mut filters = 0;
         let info = allocation_counter::measure(|| {
             let index = benchmark_index();
             filters = index.len();
-            black_box(index);
+            std::hint::black_box(index);
         });
         #[allow(clippy::cast_precision_loss)] // the index is far below 2^52 bytes
         let per_filter = info.bytes_total as f64 / filters as f64;

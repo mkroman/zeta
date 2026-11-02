@@ -13,9 +13,9 @@ use tracing::debug;
 use url::Url;
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
-use zeta_url::query_param;
-use zeta_utils::irc::unstyle_text;
+use zeta_plugin::irc::plain_reply;
+use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
+use zeta_utils::irc;
 
 /// The hostname for PornHub URLs.
 const PORNHUB_HOST: &str = "www.pornhub.com";
@@ -161,7 +161,7 @@ impl PornHub {
     // Processes a single URL if it's a valid PornHub video URL.
     async fn process_url(&self, url: &Url, channel: &str, client: &Client) -> Result<(), Error> {
         if is_pornhub_video_url(url)
-            && let Some(video_id) = query_param(url, "viewkey")
+            && let Some(video_id) = zeta_url::query_param(url, "viewkey")
         {
             debug!(media.id = %video_id, "processing video");
             let video = self.video_by_id(&video_id).await?;
@@ -198,7 +198,7 @@ impl PornHub {
 
     /// Formats a message about the video.
     fn format_video_message(video: &Video) -> String {
-        let title = unstyle_text(&video.title);
+        let title = irc::unstyle_text(&video.title);
         let views = video.views.to_formatted_string(&Locale::en);
 
         plain_reply(format!(

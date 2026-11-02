@@ -179,7 +179,7 @@ mod tests {
     use crate::actor::Rewrite;
     use crate::currency::build_context;
     use crate::test_support::{currency_server, evaluate, offline_plugin, test_plugin};
-    use zeta_utils::irc::strip_formatting;
+    use zeta_utils::irc;
 
     #[tokio::test]
     async fn classify_case_corrects_unresolvable_units() {
@@ -196,7 +196,7 @@ mod tests {
         ];
 
         for (line, value) in cases {
-            let reply = strip_formatting(&evaluate(&rink, line, Rewrite::Classify).await);
+            let reply = irc::strip_formatting(&evaluate(&rink, line, Rewrite::Classify).await);
             assert!(reply.contains(value), "{line}: missing {value:?}: {reply}");
             assert!(reply.contains("money"), "{line}: {reply}");
         }
@@ -208,7 +208,8 @@ mod tests {
 
         // The corrections land before any evaluation: the reply names the *tracked*
         // dependencies (USD), which only the rewritten `10 USD to DKK` can trigger.
-        let reply = strip_formatting(&evaluate(&rink, "10 usd to dkk", Rewrite::Classify).await);
+        let reply =
+            irc::strip_formatting(&evaluate(&rink, "10 usd to dkk", Rewrite::Classify).await);
         assert!(reply.contains("Missing dependencies: USD"), "{reply}");
     }
 
@@ -226,7 +227,7 @@ mod tests {
         ];
 
         for (line, expected) in cases {
-            let reply = strip_formatting(&evaluate(&rink, line, Rewrite::Classify).await);
+            let reply = irc::strip_formatting(&evaluate(&rink, line, Rewrite::Classify).await);
 
             for needle in expected {
                 assert!(
@@ -241,7 +242,8 @@ mod tests {
     async fn classify_returns_unparseable_queries_unchanged() {
         let rink = offline_plugin();
 
-        let reply = strip_formatting(&evaluate(&rink, "20:00 in tokyo", Rewrite::Classify).await);
+        let reply =
+            irc::strip_formatting(&evaluate(&rink, "20:00 in tokyo", Rewrite::Classify).await);
         assert!(reply.contains("Error: Expected term, got `:`"), "{reply}");
     }
 

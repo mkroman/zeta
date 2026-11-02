@@ -81,12 +81,11 @@ pub trait Registered: Plugin + Sized + 'static {
 /// the call. Plugins that need to share state with other plugins can publish it through their
 /// context.
 ///
-///# Examples
+/// # Examples
 ///
 /// ```
 /// use clap::Parser;
-/// use irc::client::Client;
-/// use zeta_plugin::{Error, prelude::*};
+/// use zeta_plugin::{Client, Context, Error, plugin};
 ///
 /// /// Greets the named person.
 /// #[derive(Default)]
@@ -119,8 +118,7 @@ pub trait Registered: Plugin + Sized + 'static {
 /// A plugin reacts to more than commands by declaring a handler for the event kind:
 ///
 /// ```
-/// use irc::client::Client;
-/// use zeta_plugin::{Error, prelude::*};
+/// use zeta_plugin::{Client, Context, Error, JoinEvent, MessageEvent, UrlEvent, plugin};
 ///
 /// /// Watches the channel traffic.
 /// #[derive(Default)]
@@ -168,8 +166,7 @@ pub trait Plugin: Send + Sync {
     /// [`CommandSpec`](super::CommandSpec)'s documentation on matching by identity):
     ///
     /// ```
-    /// use irc::client::Client;
-    /// use zeta_plugin::{Error, prelude::*};
+    /// use zeta_plugin::{Client, Context, Error, plugin};
     ///
     /// # #[derive(Default)]
     /// # struct MyPlugin;
@@ -370,11 +367,10 @@ pub trait Plugin: Send + Sync {
     ///
     /// The default implementation does nothing.
     ///
-    ///# Examples
+    /// # Examples
     ///
     /// ```
-    /// use irc::client::Client;
-    /// use zeta_plugin::{Error, prelude::*};
+    /// use zeta_plugin::{Client, Context, Error, plugin};
     ///
     /// /// Flushes pending state on shutdown.
     /// #[derive(Default)]

@@ -2,8 +2,6 @@
 
 use url::Url;
 
-use zeta_url::{is_identifier, is_numeric_segment, path_segments};
-
 /// The hostname used for shortened URLs.
 const TIKTOK_SHORT_HOST: &str = "vm.tiktok.com";
 
@@ -58,7 +56,7 @@ pub fn parse_tiktok_url(url: &Url) -> Option<TiktokLink> {
 
 /// Parses vm.tiktok.com URLs.
 fn parse_shortened_tiktok_url(url: &Url) -> Option<TiktokLink> {
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         [id] if is_valid_short_id(id) => Some(TiktokLink::Shortened((*id).to_string())),
         _ => None,
     }
@@ -66,7 +64,7 @@ fn parse_shortened_tiktok_url(url: &Url) -> Option<TiktokLink> {
 
 /// Parses tiktok.com URLs
 fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         // `/@somechannel`
         [channel] if is_valid_channel_slug(channel) => {
             Some(TiktokLink::Channel((*channel).to_string()))
@@ -74,7 +72,7 @@ fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
         // `/@somechannel/video/7551110927479754006`, or `/@/video/7551110927479754006` — the
         // anonymous form short links redirect to when they do not carry the author.
         [channel, "video", video_id]
-            if is_valid_video_channel_slug(channel) && is_numeric_segment(video_id) =>
+            if is_valid_video_channel_slug(channel) && zeta_url::is_numeric_segment(video_id) =>
         {
             Some(TiktokLink::Video {
                 channel: (*channel).to_string(),
@@ -88,7 +86,7 @@ fn parse_tiktok_com_url(url: &Url) -> Option<TiktokLink> {
 /// Returns whether the segment is a valid channel slug (`@` followed by username characters).
 #[must_use]
 fn is_valid_channel_slug(segment: &str) -> bool {
-    segment.starts_with('@') && is_identifier(&segment[1..], "._-")
+    segment.starts_with('@') && zeta_url::is_identifier(&segment[1..], "._-")
 }
 
 /// Returns whether the segment is a valid channel slug in a video URL: a channel slug, or the
@@ -101,7 +99,7 @@ fn is_valid_video_channel_slug(segment: &str) -> bool {
 /// Returns whether the segment is a valid shortened-link id.
 #[must_use]
 fn is_valid_short_id(id: &str) -> bool {
-    is_identifier(id, "")
+    zeta_url::is_identifier(id, "")
 }
 
 #[cfg(test)]

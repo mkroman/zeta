@@ -11,7 +11,7 @@ use std::time::Duration;
 use rink_core::{Context as RinkContext, Value};
 use tracing::debug;
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::{ZetaError, plugin_err};
 
 use super::actor::Handle;
 use coinmarketcap::Client as CmcClient;
@@ -20,7 +20,7 @@ use rink_core::types::DateTime;
 use std::collections::HashSet;
 use std::fmt::Write;
 use tracing::warn;
-use zeta_utils::irc::strip_control_chars;
+use zeta_utils::irc;
 
 /// The URL of rink's live currency dataset.
 ///
@@ -301,7 +301,7 @@ fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
             continue;
         }
 
-        let name = strip_control_chars(&listing.name);
+        let name = irc::strip_control_chars(&listing.name);
         let _ = writeln!(
             text,
             "?? {name} ({}). Sourced from CoinMarketCap. Current as of {date}.",

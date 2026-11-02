@@ -4,8 +4,6 @@ use std::borrow::Cow;
 
 use url::Url;
 
-use zeta_url::{path_segments, query_param};
-
 /// The hostname of shortened YouTube URLs.
 const YOUTU_BE_HOST: &str = "youtu.be";
 
@@ -49,11 +47,11 @@ pub fn parse_youtube_url(url: &Url) -> Option<UrlKind<'_>> {
 
 /// Parses youtube.com URLs
 fn parse_youtube_com_url(url: &Url) -> Option<UrlKind<'_>> {
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         // `/watch?v=<video_id>`
-        ["watch"] => query_param(url, "v").map(UrlKind::Video),
+        ["watch"] => zeta_url::query_param(url, "v").map(UrlKind::Video),
         // `/playlist?list=<playlist_id>`
-        ["playlist"] => query_param(url, "list").map(UrlKind::Playlist),
+        ["playlist"] => zeta_url::query_param(url, "list").map(UrlKind::Playlist),
         // `/channel/<channel_id>`
         ["channel", channel_id] if !channel_id.is_empty() => {
             Some(UrlKind::Channel(Cow::Borrowed(channel_id)))
@@ -72,7 +70,7 @@ fn parse_youtube_com_url(url: &Url) -> Option<UrlKind<'_>> {
 
 /// Parses youtu.be URLs
 fn parse_youtu_be_url(url: &Url) -> Option<UrlKind<'_>> {
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         // `/video_id`
         [video_id] => Some(UrlKind::Video(Cow::Borrowed(video_id))),
         _ => None,

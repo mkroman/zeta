@@ -23,10 +23,10 @@ use url::Url;
 
 use zeta_http as http;
 use zeta_http::oauth::Credentials;
-use zeta_plugin::prelude::*;
-use zeta_url::path_segments;
-use zeta_utils::irc::unstyle_text;
-use zeta_utils::text::{indefinite_article, join_with_and};
+use zeta_plugin::irc::labeled_reply;
+use zeta_plugin::{Client, Context, MessageEvent, UrlEvent, ZetaError, plugin, resolve_secret};
+use zeta_utils::irc;
+use zeta_utils::text;
 
 /// The Spotify hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["open.spotify.com", "play.spotify.com"];
@@ -209,9 +209,9 @@ impl Spotify {
                     include_url,
                     client,
                     |track: &Track, include_url| {
-                        let name = unstyle_text(&track.name);
+                        let name = irc::unstyle_text(&track.name);
                         let artists = join_artists(&track.artists);
-                        let album = unstyle_text(&track.album.name);
+                        let album = irc::unstyle_text(&track.album.name);
 
                         let mut msg = format!("\x0f{name}\x0310 is a track by {artists}\x0310");
                         let _ = write!(msg, " from the album \x0f{album}\x0310");
@@ -232,7 +232,7 @@ impl Spotify {
                     include_url,
                     client,
                     |album: &Album, include_url| {
-                        let name = unstyle_text(&album.name);
+                        let name = irc::unstyle_text(&album.name);
                         let artists = join_artists(&album.artists);
 
                         let mut msg = format!("\x0f{name}\x0310 is an album by {artists}");
@@ -253,16 +253,16 @@ impl Spotify {
                     include_url,
                     client,
                     |artist: &Artist, include_url| {
-                        let name = unstyle_text(&artist.name);
-                        let genres: Vec<_> = artist.genres.iter().map(|genre| unstyle_text(genre)).collect();
-                        let joined = join_with_and(&genres);
+                        let name = irc::unstyle_text(&artist.name);
+                        let genres: Vec<_> = artist.genres.iter().map(|genre| irc::unstyle_text(genre)).collect();
+                        let joined = text::join_with_and(&genres);
                         let followers = artist.followers.total.to_formatted_string(&Locale::en);
 
                         let mut msg = format!("\x0f{name}\x0310 is");
                         if genres.is_empty() {
                             let _ = write!(msg, " an");
                         } else {
-                            let article = indefinite_article(&joined);
+                            let article = text::indefinite_article(&joined);
                             let _ = write!(msg, " {article} {joined}");
                         }
                         let _ = write!(msg, " artist with \x0f{followers}\x0310 followers");
@@ -283,9 +283,9 @@ impl Spotify {
                     include_url,
                     client,
                     |playlist: &Playlist, include_url| {
-                        let name = unstyle_text(&playlist.name);
+                        let name = irc::unstyle_text(&playlist.name);
                         let total_tracks = playlist.tracks.total;
-                        let owner = unstyle_text(
+                        let owner = irc::unstyle_text(
                             playlist
                                 .owner
                                 .display_name
@@ -375,9 +375,9 @@ fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), Zet
 fn join_artists(artists: &[ArtistSimple]) -> String {
     let names: Vec<String> = artists
         .iter()
-        .map(|a| format!("\x0f{}\x0310", unstyle_text(&a.name)))
+        .map(|a| format!("\x0f{}\x0310", irc::unstyle_text(&a.name)))
         .collect();
-    join_with_and(&names)
+    text::join_with_and(&names)
 }
 
 /// Returns the bare `spotify:type:id` URIs found in `text`, in order.
@@ -409,7 +409,7 @@ fn parse_spotify_uris(text: &str) -> Vec<(&str, &str)> {
 
 fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
     // path segments: ["track", "4uLU6hMCjMI75M1A2tKUQC"]
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         [kind, id] => Some((kind, id)),
         _ => None,
     }
@@ -420,7 +420,6 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc::strip_formatting;
 
     settings_tests! {
         Settings,
@@ -522,7 +521,7 @@ mod tests {
 
         for (case, names, expected) in cases {
             assert_eq!(
-                strip_formatting(&join_artists(&artists(names))),
+                irc::strip_formatting(&join_artists(&artists(names))),
                 expected,
                 "{case}"
             );

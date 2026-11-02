@@ -22,7 +22,8 @@ use tracing::{Instrument, debug, warn};
 use url::Host;
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::{COLOR, RESET, labeled_reply, labeled_reply_prefix, unstyle_text};
+use zeta_plugin::{Client, Context, ZetaError, plugin, plugin_err, resolve_secret};
 
 const BASE_URL: &str = "https://api.ip2location.io";
 

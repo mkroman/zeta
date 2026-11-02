@@ -9,8 +9,8 @@
 
 use rink_core::output::fmt::{FmtToken, Span, TokenFmt};
 use rink_core::output::{QueryError, QueryReply};
-use zeta_plugin::prelude::*;
-use zeta_utils::text::collapse_whitespace;
+use zeta_plugin::irc::{COLOR, RESET};
+use zeta_utils::text;
 
 /// The styles rink's output renders in.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -63,7 +63,7 @@ fn render<'a, T: TokenFmt<'a>>(obj: &'a T, error: bool) -> String {
 
     render_spans(&mut out, &mut style, error, &obj.to_spans());
 
-    collapse_whitespace(&out)
+    text::collapse_whitespace(&out)
 }
 
 /// Writes `spans` into `out`, styled per their markup hints.
@@ -113,7 +113,7 @@ fn render_spans(out: &mut String, style: &mut Style, error: bool, spans: &[Span<
 mod tests {
     use crate::actor::Rewrite;
     use crate::test_support::{evaluate, offline_plugin};
-    use zeta_utils::irc::strip_formatting;
+    use zeta_utils::irc;
 
     #[tokio::test]
     async fn numeric_results_render_the_value_in_the_default_color() {
@@ -132,7 +132,7 @@ mod tests {
         // A query without a close match carries no suggestion.
         let reply = evaluate(&rink, "wronginput", Rewrite::Verbatim).await;
         assert!(
-            strip_formatting(&reply).contains("Error: No such unit wronginput"),
+            irc::strip_formatting(&reply).contains("Error: No such unit wronginput"),
             "{reply}"
         );
         // The input is reset so an error cannot leak formatting into the rest of the line.
@@ -143,7 +143,7 @@ mod tests {
     async fn substances_render_every_property_and_label_as_a_value() {
         let rink = offline_plugin();
 
-        let reply = strip_formatting(&evaluate(&rink, "egg", Rewrite::Verbatim).await);
+        let reply = irc::strip_formatting(&evaluate(&rink, "egg", Rewrite::Verbatim).await);
 
         for expected in [
             "egg: USA large egg.",
@@ -162,7 +162,7 @@ mod tests {
     async fn a_unit_span_following_a_number_stays_inside_the_value_run() {
         let rink = offline_plugin();
 
-        let reply = strip_formatting(&evaluate(&rink, "helium", Rewrite::Verbatim).await);
+        let reply = irc::strip_formatting(&evaluate(&rink, "helium", Rewrite::Verbatim).await);
         assert!(
             reply.contains("atomic_number = 2 (dimensionless)"),
             "{reply}"
@@ -180,7 +180,10 @@ mod tests {
         // A fixed date keeps the assertions free of the clock and the host timezone.
         let reply = evaluate(&rink, "#2016-08-24#", Rewrite::Classify).await;
         // The datetime renders as a value, inside the run opened right after the marker.
-        assert!(strip_formatting(&reply).contains("2016-08-24"), "{reply}");
+        assert!(
+            irc::strip_formatting(&reply).contains("2016-08-24"),
+            "{reply}"
+        );
         // The value run closes right after the datetime's trailing timezone label.
         assert!(reply.contains("]\x0310"), "{reply}");
     }

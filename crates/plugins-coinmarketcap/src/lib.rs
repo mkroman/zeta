@@ -28,8 +28,12 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use zeta_cache::TtlCache;
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::strip_control_chars;
+use zeta_plugin::irc::plain_reply;
+use zeta_plugin::{
+    Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin, plugin_err,
+    resolve_secret,
+};
+use zeta_utils::irc;
 
 use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat};
 use coinmarketcap::{Client as CmcClient, ClientOptions, Error};
@@ -37,7 +41,6 @@ use coinmarketcap::{Client as CmcClient, ClientOptions, Error};
 mod format;
 mod matching;
 
-use format::format_quote;
 use matching::NamedCoin;
 
 /// Settings for the coinmarketcap plugin, from its `[plugins.coinmarketcap]` configuration
@@ -352,7 +355,10 @@ impl CoinMarketCap {
 
         match quote {
             Ok(quote) => {
-                client.send_privmsg(channel, format_quote(&quote, &currency, sign.as_deref()))?;
+                client.send_privmsg(
+                    channel,
+                    format::format_quote(&quote, &currency, sign.as_deref()),
+                )?;
             }
             Err(err) => Self::reply_error(client, channel, &err)?,
         }
@@ -462,7 +468,8 @@ fn parse_currency(
     default_currency: &str,
     is_valid: impl Fn(&str) -> bool,
 ) -> Result<String, Error> {
-    let currency = strip_control_chars(currency.unwrap_or(default_currency)).to_ascii_uppercase();
+    let currency =
+        irc::strip_control_chars(currency.unwrap_or(default_currency)).to_ascii_uppercase();
 
     if is_valid(&currency) {
         Ok(currency)
@@ -474,7 +481,7 @@ fn parse_currency(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_plugin::ArgsError;
+    use zeta_plugin::{ArgsError, Registered};
     use zeta_test_support::settings_tests;
 
     /// Builds a coin list for cache tests.

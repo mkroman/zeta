@@ -18,9 +18,10 @@ use time::{
 use tracing::{debug, warn};
 
 use zeta_http as http;
-use zeta_plugin::prelude::*;
-use zeta_utils::irc::strip_nick_prefix;
-use zeta_utils::text::{strip_prefix_ignore_case, strip_suffix_ignore_case};
+use zeta_plugin::irc::{plain_reply, unstyle_text};
+use zeta_plugin::{Client, Context, MessageEvent, ZetaError, plugin, resolve_secret};
+use zeta_utils::irc;
+use zeta_utils::text;
 
 /// The place-text-search endpoint place ids are resolved against.
 const TEXTSEARCH_URL: &str = "https://maps.googleapis.com/maps/api/place/textsearch/json";
@@ -242,7 +243,7 @@ impl IsItOpen {
         let current_nickname = client.current_nickname();
 
         // Check if the message is addressed to the bot
-        if let Some(msg) = strip_nick_prefix(event.text(), current_nickname)
+        if let Some(msg) = irc::strip_nick_prefix(event.text(), current_nickname)
             && let Some(nick) = event.sender().map(|sender| sender.nick)
         {
             self.process_query(event.channel(), nick, msg, client)
@@ -439,26 +440,26 @@ fn parse_query(query: &str) -> Option<(QueryAction, &str)> {
     let query = query.strip_suffix('?')?;
 
     for prefix in ["hvornår åbner ", "hvad tid åbner "] {
-        if let Some(place) = strip_prefix_ignore_case(query, prefix) {
+        if let Some(place) = text::strip_prefix_ignore_case(query, prefix) {
             return Some((QueryAction::OpeningTime, place));
         }
     }
 
     for prefix in ["hvornår lukker ", "hvad tid lukker "] {
-        if let Some(place) = strip_prefix_ignore_case(query, prefix) {
+        if let Some(place) = text::strip_prefix_ignore_case(query, prefix) {
             return Some((QueryAction::ClosingTime, place));
         }
     }
 
     for prefix in ["har ", "er "] {
-        if let Some(rest) = strip_prefix_ignore_case(query, prefix) {
+        if let Some(rest) = text::strip_prefix_ignore_case(query, prefix) {
             for suffix in [" åbent", " åben"] {
-                if let Some(place) = strip_suffix_ignore_case(rest, suffix) {
+                if let Some(place) = text::strip_suffix_ignore_case(rest, suffix) {
                     return Some((QueryAction::IsOpen, place));
                 }
             }
 
-            if let Some(place) = strip_suffix_ignore_case(rest, " lukket") {
+            if let Some(place) = text::strip_suffix_ignore_case(rest, " lukket") {
                 return Some((QueryAction::IsClosed, place));
             }
         }

@@ -10,7 +10,8 @@ use rink_core::Context as RinkContext;
 use rink_core::output::QueryError;
 use tokio::sync::{mpsc, oneshot};
 
-use zeta_plugin::prelude::*;
+use zeta_plugin::irc::plain_reply;
+use zeta_plugin::{ZetaError, plugin_err};
 
 use super::currency::CurrencyData;
 use super::{error_message, render_reply};
@@ -126,7 +127,7 @@ async fn run(mut ctx: RinkContext, mut rx: mpsc::UnboundedReceiver<Request>) {
                 reply,
             } => {
                 let evaluated_line = match rewrite {
-                    Rewrite::Classify => super::classify(&ctx, &line),
+                    Rewrite::Classify => super::classify::classify(&ctx, &line),
                     Rewrite::Verbatim => line,
                 };
 

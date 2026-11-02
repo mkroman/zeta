@@ -8,8 +8,6 @@
 use std::fmt;
 use std::str::FromStr;
 
-use zeta_url::is_identifier;
-
 /// The characters a media id may contain in addition to ASCII alphanumerics.
 const ALLOWED: &str = "_-";
 
@@ -34,7 +32,7 @@ impl MediaId {
 
         // `is_identifier` already rejects the empty string; the explicit check keeps the
         // requirement visible here and preserves the accepted set if the helper changes.
-        if id.is_empty() || !is_identifier(&id, ALLOWED) {
+        if id.is_empty() || !zeta_url::is_identifier(&id, ALLOWED) {
             return Err(InvalidMediaId(id));
         }
 
