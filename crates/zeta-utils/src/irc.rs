@@ -371,7 +371,8 @@ pub fn append_entries_with_more<S: AsRef<str>>(
 ) -> usize {
     // Reserve for the longest suffix, when every entry is dropped: over-reserving by a few
     // bytes for smaller counts is preferable to a suffix that pushes the line over budget.
-    let suffix_reserve = more(total).len();
+    // An empty listing reserves nothing.
+    let suffix_reserve = if total == 0 { 0 } else { more(total).len() };
 
     let appended = append_entries_within_budget(
         message,
