@@ -120,22 +120,17 @@ impl PluginTask {
             // the load one above. The span is a child of the runtime's `zeta.shutdown` span when
             // the shutdown came from there: the hook runs in the plugin's own task, but the
             // explicit parent keeps the shutdown in one trace.
-            let span = shutdown_span.get().map_or_else(
-                || {
-                    tracing::info_span!(
-                        "zeta.plugin.shutdown",
-                        otel.name = %format!("zeta.plugin.shutdown {name}"),
-                        zeta.plugin.name = %name
-                    )
-                },
-                |shutdown| {
-                    tracing::info_span!(
-                        parent: shutdown,
-                        "zeta.plugin.shutdown",
-                        otel.name = %format!("zeta.plugin.shutdown {name}"),
-                        zeta.plugin.name = %name
-                    )
-                },
+            //
+            // Without a recorded shutdown span the parent is `None`, which roots the span: this
+            // task body runs in a bare `tokio::spawn` with no ambient span, so the contextual
+            // parent the unset case used to rely on produced a root too. Revisit that assumption
+            // if the task ever gains an ambient parent (e.g. through `.instrument`).
+            // `and_then(Span::id)` keeps the disabled-parent case rooted, matching the enabled arm.
+            let span = tracing::info_span!(
+                parent: shutdown_span.get().and_then(Span::id),
+                "zeta.plugin.shutdown",
+                otel.name = %format!("zeta.plugin.shutdown {name}"),
+                zeta.plugin.name = %name
             );
 
             if let Err(error) = plugin
