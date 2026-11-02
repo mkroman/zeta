@@ -2,8 +2,6 @@
 
 use url::Url;
 
-use zeta_url::{is_identifier, is_numeric_segment, path_segments, query_param, strip_www};
-
 /// The standard hostname.
 const INSTAGRAM_COM: &str = "instagram.com";
 
@@ -124,7 +122,7 @@ pub fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
 
     // `instagr.am` serves the same path structure as the standard hosts, but links that don't
     // parse as known resources are share links that have to be resolved through a redirect.
-    let host = strip_www(host);
+    let host = zeta_url::strip_www(host);
 
     match host {
         INSTAGRAM_COM | M_INSTAGRAM_COM => parse_instagram_com_url(url),
@@ -133,7 +131,7 @@ pub fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
         }
         // Link wrappers point at the target through their `u` query parameter.
         L_INSTAGRAM_COM => {
-            let target = query_param(url, "u")?;
+            let target = zeta_url::query_param(url, "u")?;
 
             let target = Url::parse(&target).ok()?;
             if target.host_str() == Some(L_INSTAGRAM_COM) {
@@ -148,13 +146,15 @@ pub fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
 
 /// Parses the path structure shared by the standard Instagram hosts.
 fn parse_instagram_com_url(url: &Url) -> Option<InstagramLink> {
-    match path_segments(url)?.as_slice() {
+    match zeta_url::path_segments(url)?.as_slice() {
         // `/share/<token>` — app share links, resolved through a redirect.
         ["share", token] if is_valid_shortcode(token) => {
             Some(InstagramLink::Shortened(url.clone()))
         }
         // `/stories/<user>/<id>` — a story or highlight.
-        ["stories", username, id] if is_valid_username(username) && is_numeric_segment(id) => {
+        ["stories", username, id]
+            if is_valid_username(username) && zeta_url::is_numeric_segment(id) =>
+        {
             Some(InstagramLink::Story {
                 username: (*username).to_string(),
                 id: (*id).to_string(),
@@ -201,14 +201,14 @@ fn is_embed_suffix(segments: &[&str]) -> bool {
 /// underscores, as accepted by Instagram.
 #[must_use]
 fn is_valid_username(segment: &str) -> bool {
-    segment.len() <= 30 && is_identifier(segment, "._")
+    segment.len() <= 30 && zeta_url::is_identifier(segment, "._")
 }
 
 /// Returns whether the segment is a valid media shortcode: base64url characters, as assigned by
 /// Instagram.
 #[must_use]
 fn is_valid_shortcode(segment: &str) -> bool {
-    is_identifier(segment, "_-")
+    zeta_url::is_identifier(segment, "_-")
 }
 
 #[cfg(test)]

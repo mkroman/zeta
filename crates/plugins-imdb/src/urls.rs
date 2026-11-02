@@ -2,8 +2,6 @@
 
 use url::Url;
 
-use zeta_url::{is_prefixed_numeric_id, path_segments};
-
 /// A link to an IMDb resource.
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[non_exhaustive]
@@ -22,15 +20,15 @@ pub fn classify_imdb_url(url: &Url) -> Option<Link> {
         return None;
     }
 
-    let segments = path_segments(url);
+    let segments = zeta_url::path_segments(url);
 
     match segments.as_deref() {
         // `/title/<id>[/…]` — any sub-page of a title (e.g. photo galleries) refers to the title.
-        Some(["title", id, ..]) if is_prefixed_numeric_id(id, "tt") => {
+        Some(["title", id, ..]) if zeta_url::is_prefixed_numeric_id(id, "tt") => {
             Some(Link::Title((*id).to_string()))
         }
         // `/name/<id>[/…]`
-        Some(["name", id, ..]) if is_prefixed_numeric_id(id, "nm") => {
+        Some(["name", id, ..]) if zeta_url::is_prefixed_numeric_id(id, "nm") => {
             Some(Link::Person((*id).to_string()))
         }
         _ => None,
