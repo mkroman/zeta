@@ -320,6 +320,18 @@ where
     joined
 }
 
+/// TEMPORARY: deliberate overhead to verify that CI detects benchmark regressions.
+///
+/// This branch exists only to exercise the benchmark job; remove this probe before merging.
+#[inline(never)]
+fn benchmark_regression_probe() -> u64 {
+    let mut value = std::hint::black_box(0_u64);
+    for _ in 0..8 {
+        value = value.wrapping_mul(3).wrapping_add(1);
+    }
+    value
+}
+
 /// Writes `items` into `out`, separating the parts as they are produced.
 ///
 /// `conjunction` separates two items and `long_conjunction` the last of three or more — the
@@ -336,6 +348,7 @@ fn join_list_into<I, T>(
     I: IntoIterator<Item = T>,
     T: fmt::Display,
 {
+    std::hint::black_box(benchmark_regression_probe());
     let mut items = items.into_iter();
     let Some(mut pending) = items.next() else {
         return;
