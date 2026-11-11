@@ -109,17 +109,35 @@ image changes before they show up as warnings) and manually via `workflow_dispat
   report in the job summary. Fork PRs get the job summary and the gate; their token is
   read-only, so API publishing is skipped. Regressions also upload the raw `summary.json`
   files and Callgrind flamegraph SVGs for old and new code.
-- **Waivers** — `benchmarks/ci/waivers.toml` documents accepted regressions (reason, PR,
-  optional expiry). Waived entries stay visible as ⚠ in the report but do not fail the check.
+- **Waivers** — the `WAIVERS` constant in `xtask/src/config.rs` documents accepted
+  regressions (reason and optional `YYYY-MM-DD` expiry). Waived entries stay visible as ⚠ in
+  the report but do not fail the check.
 - **Adding benchmarks or suites** — no report code needs to change. Case labels come from the
   benchmark ids in the Rust sources (`#[bench::leap_day_anniversary]` renders as "leap day
   anniversary"); new suites are discovered from the summary files, and benchmarks sharing a
-  set of case ids are compared automatically. `benchmarks/ci/report.toml` only holds the
-  policy, report limits, optional display overrides and the reference benchmark per suite.
-- **Configuration hygiene** — `report.toml` and `waivers.toml` are validated strictly:
-  unknown or mistyped keys fail the run, and after every benchmark run
-  `report.py --check-config` cross-references them with the measured benchmark inventory
-  (stale display/case/suite entries, invalid comparison references, unmatched or expired
-  waivers). Renaming or removing a benchmark therefore requires updating the configuration
-  in the same change. The scripts have a unit-test safety net:
-  `python3 benchmarks/ci/test_scripts.py` (also run by both benchmark jobs).
+  set of case ids are compared automatically. Display overrides, suite source/context paths
+  and the reference benchmark per suite live in `xtask/src/config.rs`.
+- **Configuration hygiene** — the configuration is Rust code, so it is compile-time checked
+  (there are no keys to mistype). After every benchmark run `cargo xtask bench check-config`
+  additionally cross-references display overrides, suite entries, comparison references and
+  waivers with the measured inventory, failing on renamed or removed benchmarks and warning
+  about expired or duplicate waivers. Unit tests cover the tooling and run in both jobs:
+  `cargo test -p xtask`.
+
+## Tooling
+
+Benchmark automation is a Rust xtask (`xtask/`), invoked through the cargo alias in
+`.cargo/config.toml`:
+
+```shell
+cargo xtask bench metadata --output bench-metadata.txt --toolchain stable
+cargo xtask bench check-config
+cargo xtask bench report --baseline-found --bench-exit-code 3
+cargo xtask bench gate
+cargo xtask bench has-regressions
+cargo xtask bench post-report --dry-run
+```
+
+Summaries are parsed with the typed `gungraun-summary` v7 model; the only other dependency is
+`serde_json`. Configuration (policy, display overrides, comparison references, waivers) is
+plain Rust data in `xtask/src/config.rs`.

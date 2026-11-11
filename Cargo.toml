@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["benchmarks", "crates/*"]
+members = ["benchmarks", "crates/*", "xtask"]
 # `cargo run`, `build`, `test` and `check` without a selection flag operate on the bot.
 default-members = ["crates/zeta"]
 
@@ -93,3 +93,9 @@ codegen-units = 1
 [profile.bench]
 debug = true
 strip = false
+
+# The xtask is a developer tool built on demand by `cargo xtask`. Dependency debug info is
+# unnecessary and dominates its cold build time; the profile still inherits dev otherwise.
+[profile.xtask]
+inherits = "dev"
+debug = false

@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+publish = false
+edition = "2024"
+description = "Workspace automation for the zeta repository."
+
+[dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

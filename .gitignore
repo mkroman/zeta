@@ -7,6 +7,3 @@ AGENTS.md
 bench-metadata.txt
 bench-report.md
 verdict.json
-
-# Python bytecode from the benchmark report scripts.
-__pycache__/
