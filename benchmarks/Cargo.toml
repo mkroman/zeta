@@ -1,0 +1,26 @@
+[package]
+name = "zeta-benchmarks"
+version = "0.0.0"
+publish = false
+edition = "2024"
+description = "Gungraun benchmarks for the zeta workspace."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+chrono = { workspace = true }
+time = { workspace = true }
+zeta-utils = { path = "../crates/zeta-utils", features = ["chrono", "time"] }
+
+[dev-dependencies]
+gungraun = { workspace = true }
+
+[[bench]]
+name = "join"
+harness = false
+
+[[bench]]
+name = "duration"
+harness = false
+
+[lints]
+workspace = true

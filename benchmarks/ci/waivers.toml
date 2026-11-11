@@ -1,0 +1,27 @@
+# Accepted benchmark regressions.
+#
+# A PR that intentionally regresses a benchmark adds a waiver here, so the regression is
+# documented and reviewed instead of being absorbed by raising a limit or silently
+# re-recording the baseline. The workflow still reports waived regressions — as ⚠ with the
+# recorded reason — but does not fail the check.
+#
+# Fields:
+#   benchmark  Benchmark function name as reported by gungraun (required).
+#   case       Optional case id (e.g. "case_4"); omit to waive every case.
+#   metric     "Ir" (default), "TotalBlocks", or "TotalBytes".
+#   reason     Why the regression is accepted (required; shown in the report).
+#   pr         The pull request that introduced or accepted the regression.
+#   expires    Optional YYYY-MM-DD; the waiver stops applying after this date so the
+#              trade-off is revisited.
+#
+# Example:
+#
+# [[waiver]]
+# benchmark = "bench_oxford_join_filtered_iterator"
+# case = "sixty_four_items"
+# metric = "Ir"
+# reason = "Keeps the zero-allocation contract; +4.5% Ir accepted for the API shape."
+# pr = 512
+# expires = "2027-05-01"
+
+waiver = []

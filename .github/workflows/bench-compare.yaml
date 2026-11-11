@@ -1,0 +1,164 @@
+name: Compare
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "The GitHub runner to use."
+        default: "ubuntu-latest"
+        type: string
+      toolchain:
+        description: "Rust toolchain to use. Defaults to `stable`."
+        default: "stable"
+        type: string
+
+      # Kept separate from the test workflow's debug-profile cache: the benchmark profile
+      # builds release+LTO artifacts, which would otherwise be evicted on every cache save.
+      cache-key:
+        description: "Shared cache key"
+        default: "bench-${{ inputs.toolchain }}"
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+  statuses: write
+
+jobs:
+  compare:
+    name: vs main
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test benchmark scripts
+        run: python3 benchmarks/ci/test_scripts.py
+      - name: Install Rust ${{ inputs.toolchain }}
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ inputs.toolchain }}
+      - name: Install Gungraun runner and Valgrind
+        uses: gungraun/setup-gungraun@62591572561bb2f4ed2ae300b8a8bea99ea8ddaf # v1
+      - name: Cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ${{ inputs.cache-key }}
+          cache-on-failure: true
+      # The baseline lives in the artifact of the last successful run on main. Only
+      # successful runs upload it, so it always points at a known-good state.
+      - name: Find last known good baseline
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/benchmarks.yaml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id')
+
+          if [ -n "$run_id" ]; then
+            echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Restore baseline
+        if: steps.baseline.outputs.run-id != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: bench-baseline
+          path: target/gungraun
+          run-id: ${{ steps.baseline.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Record benchmark metadata
+        env:
+          TOOLCHAIN: ${{ inputs.toolchain }}
+        run: |
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "toolchain=$TOOLCHAIN"
+            echo "rustc-release=$(rustc -vV | sed -n 's/^release: //p')"
+            echo "rustc-commit=$(rustc -vV | sed -n 's/^commit-hash: //p')"
+            echo "valgrind=$(valgrind --version)"
+            echo "gungraun-runner=$(gungraun-runner --version)"
+            echo "cargo-lock-sha256=$(sha256sum Cargo.lock | cut -d' ' -f1)"
+            echo "run-id=${GITHUB_RUN_ID}"
+            echo "run-url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > bench-metadata.txt
+      # gungraun exits with code 3 when a compiled-in limit is exceeded; capture it so the
+      # workflow policy (not the exit code alone) decides the conclusion. Any other exit
+      # code is reported as a benchmark-run error.
+      - name: Run benchmarks
+        id: bench
+        run: |
+          set +e
+          cargo bench -p zeta-benchmarks -- --baseline=main --save-summary=json --parallel=auto
+          code=$?
+          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      # The summaries are the authoritative inventory: fail when report.toml or the waivers
+      # reference benchmarks that were renamed or removed, so configuration cannot drift.
+      - name: Check report configuration
+        run: |
+          set -o pipefail
+          python3 benchmarks/ci/report.py --check-config | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Generate bench report
+        id: report
+        env:
+          BENCH_EXIT_CODE: ${{ steps.bench.outputs.exit-code }}
+        run: |
+          args=(--bench-exit-code "$BENCH_EXIT_CODE")
+          if [ -f target/gungraun/bench-metadata.txt ]; then
+            args+=(--baseline-found)
+          fi
+          python3 benchmarks/ci/report.py "${args[@]}"
+          cat bench-report.md >> "$GITHUB_STEP_SUMMARY"
+      # Publishing never fails the job: the regression gate below is a separate step, so a
+      # permission problem (for example on a fork PR) cannot mask a red gate.
+      - name: Publish bench report
+        if: ${{ !github.event.pull_request.head.repo.fork }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 benchmarks/ci/publish.py
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-results
+          path: |
+            target/gungraun
+            bench-report.md
+            verdict.json
+          if-no-files-found: ignore
+          retention-days: 90
+      # Flamegraphs are generated for every benchmark, but only regressions need the extra
+      # artifact: the old and new SVGs answer "why did Ir grow?".
+      - name: Check for flamegraphs
+        id: flamegraphs
+        if: always()
+        run: |
+          if python3 -c 'import json, sys; sys.exit(0 if json.load(open("verdict.json"))["counts"]["regressed"] else 1)'; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload flamegraphs
+        if: steps.flamegraphs.outputs.present == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-flamegraphs
+          path: target/gungraun/**/*.svg
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Check regressions
+        if: always()
+        run: |
+          verdict=$(python3 -c 'import json; print(json.load(open("verdict.json"))["verdict"])')
+          case "$verdict" in
+            regressed|error)
+              echo "::error::Benchmark regressions were detected; see the Bench report check."
+              exit 1
+              ;;
+          esac

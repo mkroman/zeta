@@ -1,0 +1,51 @@
+name: Benchmarks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  # Re-records the baseline weekly so runner-image (rustc/Valgrind) updates are picked up
+  # before they show up as toolchain-mismatch warnings on unrelated pull requests.
+  schedule:
+    - cron: "17 3 * * 1"
+  # The manual re-baseline action suggested by the toolchain-mismatch banner.
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Record a fresh baseline without comparing against the previous one (use after an accepted toolchain change)."
+        type: boolean
+        default: false
+
+# Cancel superseded PR runs to free up cache writers; never cancel a baseline recording.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: Benchmarks
+    if: github.event_name != 'pull_request'
+    uses: $/.github/workflows/bench-baseline.yaml
+    with:
+      force: ${{ inputs.force || false }}
+    permissions:
+      contents: read
+      actions: read
+
+  compare:
+    name: Benchmarks
+    if: github.event_name == 'pull_request'
+    uses: $/.github/workflows/bench-compare.yaml
+    # Job-level permissions replace the workflow-level ones entirely; the called workflow
+    # needs checks/statuses writes to publish the report.
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      statuses: write

@@ -1,0 +1,43 @@
+# Configuration for benchmarks/ci/report.py.
+#
+# Case labels come from the benchmark ids in the Rust sources (`#[bench::leap_day_anniversary]`
+# renders as "leap day anniversary"), so this file only holds the gating policy, report
+# limits, optional display overrides and comparison references.
+
+[policy]
+# Positive Ir deltas below this many instructions are churn on trivial benches.
+floor_ir = 16
+# Exact counts with a matched toolchain gate on any reproducible increase.
+limit_ir = 0.0
+# Gungraun's compiled-in soft limit, drawn as the reference band in the chart.
+backstop_ir = 1.0
+
+[report]
+# Baselines older than this are flagged.
+stale_days = 7
+# Presentation limits keep the report readable as the suite grows.
+max_chart_bars = 12
+max_table_rows = 120
+
+# Optional display overrides; functions not listed are humanized from their Rust names.
+[display]
+bench_std_join = "std join (baseline)"
+bench_parse_iso8601 = "parse_iso8601_duration"
+bench_format_seconds_full_table = "format_seconds_in_words (full table)"
+bench_format_seconds_hours_and_minutes = "format_seconds_in_words (h/m)"
+bench_distance_in_words_chrono = "distance_in_words (chrono)"
+bench_distance_in_words_time = "distance_in_words (time)"
+bench_time_duration_in_words = "duration::in_words"
+
+# Within-run comparison groups: suite -> reference benchmark. Other benchmarks in the same
+# suite that use the same set of case ids are compared against the reference automatically.
+# Informational only, never gated.
+[comparisons]
+join = "bench_std_join"
+duration = "bench_distance_in_words_chrono"
+
+# Per-benchmark case labels are rarely needed; the ids are the labels. If one is not good
+# enough, override it here:
+#
+# [case_labels."bench_some_function"]
+# some_id = "Readable case label"
