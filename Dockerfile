@@ -25,15 +25,21 @@ RUN sh /usr/local/bin/install-cargo-tool cargo-chef /usr/local/bin && \
 # Analyze project dependencies
 FROM chef AS planner
 
-# Every workspace member lives under `crates/`; the globs keep new crates from having to be
-# listed here by hand. `cargo chef prepare` only reads manifests, so the stub `lib.rs` files are
-# enough; `zeta-unicode`'s build script is the one non-manifest input the recipe needs.
+# Workspace members live under `crates/` plus the top-level `benchmarks/` and `xtask/`
+# packages. The globs keep new crates and benchmarks from having to be listed by hand.
+# `cargo chef prepare` only reads manifests, so the stub `lib.rs` files and the declared
+# benchmark sources are enough; `zeta-unicode`'s build script is the one non-manifest input
+# the recipe needs.
 COPY --parents \
     Cargo.toml \
     Cargo.lock \
     crates/*/Cargo.toml \
     crates/*/src/lib.rs \
     crates/zeta-unicode/build.rs \
+    benchmarks/Cargo.toml \
+    benchmarks/benches/*.rs \
+    xtask/Cargo.toml \
+    xtask/src/lib.rs \
     ./
 
 RUN cargo chef prepare --recipe-path recipe.json
@@ -60,6 +66,10 @@ COPY --parents \
     crates/*/build.rs \
     crates/plugins/migrations \
     crates/zeta-unicode/data \
+    benchmarks/Cargo.toml \
+    benchmarks/benches \
+    xtask/Cargo.toml \
+    xtask/src \
     ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
