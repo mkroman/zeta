@@ -5,10 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
-
 use crate::config;
 use crate::error::{Error, Result};
+use crate::json::{self, Value};
 
 /// One metric's new value, baseline value and recorded percentage difference.
 #[derive(Clone, Copy, Debug, Default)]
@@ -108,7 +107,7 @@ pub fn load(directory: &Path) -> Result<Vec<Benchmark>> {
                 continue;
             }
         };
-        let summary = match serde_json::from_str::<Value>(&text) {
+        let summary = match json::parse(&text) {
             Ok(summary) => summary,
             Err(error) => {
                 eprintln!("warning: skipping {}: {error}", path.display());
@@ -321,29 +320,32 @@ mod tests {
 
     #[test]
     fn extracts_benchmark_from_summary_json() {
-        let summary = serde_json::json!({
-            "function_name": "bench_x",
-            "id": "case_0",
-            "benchmark_file": "benches/join.rs",
-            "profiles": [
-                {
-                    "tool": "Callgrind",
-                    "data": { "total": { "metrics": {
-                        "Ir": {
-                            "values": { "new": 120, "old": 100 },
-                            "change": { "diff_pct": "20.0", "factor": "1.2" }
-                        }
-                    } } }
-                },
-                {
-                    "tool": "DHAT",
-                    "data": { "total": { "metrics": {
-                        "TotalBlocks": { "values": { "new": 2, "old": 1 } },
-                        "TotalBytes": { "values": { "new": 64, "old": 32 } }
-                    } } }
-                }
-            ]
-        });
+        let summary = json::parse(
+            r#"{
+                "function_name": "bench_x",
+                "id": "case_0",
+                "benchmark_file": "benches/join.rs",
+                "profiles": [
+                    {
+                        "tool": "Callgrind",
+                        "data": { "total": { "metrics": {
+                            "Ir": {
+                                "values": { "new": 120, "old": 100 },
+                                "change": { "diff_pct": "20.0", "factor": "1.2" }
+                            }
+                        } } }
+                    },
+                    {
+                        "tool": "DHAT",
+                        "data": { "total": { "metrics": {
+                            "TotalBlocks": { "values": { "new": 2, "old": 1 } },
+                            "TotalBytes": { "values": { "new": 64, "old": 32 } }
+                        } } }
+                    }
+                ]
+            }"#,
+        )
+        .expect("valid summary JSON");
         let benchmark = benchmark_from_summary(&summary).expect("callgrind summary");
         assert_eq!(benchmark.suite, "join");
         assert_eq!(benchmark.function, "bench_x");
@@ -365,8 +367,21 @@ mod tests {
 
     #[test]
     fn skips_summaries_without_callgrind() {
-        let summary = serde_json::json!({ "function_name": "x", "profiles": [] });
+        let summary = json::parse(r#"{"function_name":"x","profiles":[]}"#).expect("valid JSON");
         assert!(benchmark_from_summary(&summary).is_none());
+    }
+
+    #[test]
+    fn accepts_missing_or_null_case_ids() {
+        for document in [
+            r#"{"function_name":"x","id":null,"profiles":[{"tool":"Callgrind","data":{"total":{"metrics":{}}}}]}"#,
+            r#"{"function_name":"x","profiles":[{"tool":"Callgrind","data":{"total":{"metrics":{}}}}]}"#,
+        ] {
+            let summary = json::parse(document).expect("valid JSON");
+            let benchmark = benchmark_from_summary(&summary).expect("callgrind summary");
+            assert_eq!(benchmark.case, None);
+            assert_eq!(benchmark.suite, "unknown");
+        }
     }
 
     #[test]

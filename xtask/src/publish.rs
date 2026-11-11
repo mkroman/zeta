@@ -10,9 +10,8 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use serde_json::{Value, json};
-
 use crate::error::{Error, Result};
+use crate::json::{self, Value};
 use crate::workspace_root;
 
 pub struct PublishOptions {
@@ -22,7 +21,7 @@ pub struct PublishOptions {
 }
 
 pub fn publish(options: &PublishOptions) -> Result<()> {
-    let verdict: Value = serde_json::from_str(&fs::read_to_string(&options.verdict)?)?;
+    let verdict: Value = json::parse(&fs::read_to_string(&options.verdict)?)?;
     let report = fs::read_to_string(&options.report)?;
     let repository = std::env::var("GITHUB_REPOSITORY").unwrap_or_default();
     let sha = std::env::var("GITHUB_SHA").unwrap_or_default();
@@ -34,33 +33,68 @@ pub fn publish(options: &PublishOptions) -> Result<()> {
 
     let run_url = run_url();
     let summary: String = report.chars().take(65_000).collect();
-    let check_run = json!({
-        "name": "Bench report",
-        "head_sha": sha,
-        "status": "completed",
-        "conclusion": verdict["conclusion"].as_str().unwrap_or("neutral"),
-        "details_url": run_url,
-        "output": {
-            "title": verdict["title"].as_str().unwrap_or("Bench report"),
-            "summary": summary,
-            "annotations": annotations(&verdict),
-        }
-    });
+    let check_run = Value::object([
+        ("name", Value::from("Bench report")),
+        ("head_sha", Value::from(sha.as_str())),
+        ("status", Value::from("completed")),
+        (
+            "conclusion",
+            Value::from(
+                verdict
+                    .get("conclusion")
+                    .and_then(Value::as_str)
+                    .unwrap_or("neutral"),
+            ),
+        ),
+        ("details_url", Value::from(run_url.as_str())),
+        (
+            "output",
+            Value::object([
+                (
+                    "title",
+                    Value::from(
+                        verdict
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Bench report"),
+                    ),
+                ),
+                ("summary", Value::from(summary.as_str())),
+                ("annotations", Value::Array(annotations(&verdict))),
+            ]),
+        ),
+    ]);
     post(
         &format!("/repos/{repository}/check-runs"),
         &check_run,
         options.dry_run,
     );
 
-    if let Some(statuses) = verdict["statuses"].as_object() {
+    if let Some(statuses) = verdict.get("statuses").and_then(Value::as_object) {
         for (context, status) in statuses {
-            let mut payload = json!({
-                "state": status["state"].as_str().unwrap_or("success"),
-                "context": context,
-                "description": status["description"].as_str().unwrap_or(""),
-            });
+            let mut payload = Value::object([
+                (
+                    "state",
+                    Value::from(
+                        status
+                            .get("state")
+                            .and_then(Value::as_str)
+                            .unwrap_or("success"),
+                    ),
+                ),
+                ("context", Value::from(context.as_str())),
+                (
+                    "description",
+                    Value::from(
+                        status
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                    ),
+                ),
+            ]);
             if !run_url.is_empty() {
-                payload["target_url"] = Value::String(run_url.clone());
+                payload.insert("target_url", run_url.as_str());
             }
             post(
                 &format!("/repos/{repository}/statuses/{sha}"),
@@ -83,32 +117,39 @@ fn run_url() -> String {
 
 fn annotations(verdict: &Value) -> Vec<Value> {
     let mut annotations = Vec::new();
-    let Some(regressions) = verdict["regressions"].as_array() else {
+    let Some(regressions) = verdict.get("regressions").and_then(Value::as_array) else {
         return annotations;
     };
     for regression in regressions.iter().take(50) {
-        let Some(source) = regression["source"].as_str() else {
+        let Some(source) = regression.get("source").and_then(Value::as_str) else {
             continue;
         };
         if !workspace_root().join(source).is_file() {
             continue;
         }
-        let reasons: Vec<&str> = regression["reasons"]
-            .as_array()
+        let reasons: Vec<&str> = regression
+            .get("reasons")
+            .and_then(Value::as_array)
             .map(|reasons| reasons.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
-        annotations.push(json!({
-            "path": source,
-            "start_line": 1,
-            "end_line": 1,
-            "annotation_level": "failure",
-            "title": "Benchmark regression",
-            "message": format!(
-                "{}: {}",
-                regression["display"].as_str().unwrap_or("benchmark"),
-                reasons.join("; ")
+        annotations.push(Value::object([
+            ("path", Value::from(source)),
+            ("start_line", Value::from(1_u64)),
+            ("end_line", Value::from(1_u64)),
+            ("annotation_level", Value::from("failure")),
+            ("title", Value::from("Benchmark regression")),
+            (
+                "message",
+                Value::from(format!(
+                    "{}: {}",
+                    regression
+                        .get("display")
+                        .and_then(Value::as_str)
+                        .unwrap_or("benchmark"),
+                    reasons.join("; ")
+                )),
             ),
-        }));
+        ]));
     }
     annotations
 }
@@ -116,10 +157,7 @@ fn annotations(verdict: &Value) -> Vec<Value> {
 fn post(path: &str, payload: &Value, dry_run: bool) {
     if dry_run {
         println!("POST {path}");
-        println!(
-            "{}",
-            serde_json::to_string_pretty(payload).unwrap_or_default()
-        );
+        println!("{}", json::to_string_pretty(payload));
         return;
     }
 
@@ -137,11 +175,12 @@ fn post(path: &str, payload: &Value, dry_run: bool) {
         }
     };
 
-    if let Some(stdin) = child.stdin.as_mut() {
-        let body = serde_json::to_vec(payload).unwrap_or_default();
-        if stdin.write_all(&body).is_err() {
-            eprintln!("warning: could not send payload to `gh` for {path}");
-        }
+    if let Some(stdin) = child.stdin.as_mut()
+        && stdin
+            .write_all(json::to_string(payload).as_bytes())
+            .is_err()
+    {
+        eprintln!("warning: could not send payload to `gh` for {path}");
     }
 
     match child.wait_with_output() {

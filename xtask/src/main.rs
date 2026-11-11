@@ -15,6 +15,7 @@ mod check;
 mod config;
 mod error;
 mod format;
+mod json;
 mod metadata;
 mod model;
 mod policy;

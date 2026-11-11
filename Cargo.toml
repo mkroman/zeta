@@ -99,3 +99,6 @@ strip = false
 [profile.xtask]
 inherits = "dev"
 debug = false
+# CI only reuses the finished binary between steps, so incremental state adds a large
+# target-dir footprint without helping a cold build.
+incremental = false
