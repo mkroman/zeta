@@ -109,14 +109,14 @@ image changes before they show up as warnings) and manually via `workflow_dispat
   report in the job summary. Fork PRs get the job summary and the gate; their token is
   read-only, so API publishing is skipped. Regressions also upload the raw `summary.json`
   files and Callgrind flamegraph SVGs for old and new code.
-- **Waivers** — the `WAIVERS` constant in `xtask/src/config.rs` documents accepted
+- **Waivers** — the `WAIVERS` constant in `xtask/src/bench/config.rs` documents accepted
   regressions (reason and optional `YYYY-MM-DD` expiry). Waived entries stay visible as ⚠ in
   the report but do not fail the check.
 - **Adding benchmarks or suites** — no report code needs to change. Case labels come from the
   benchmark ids in the Rust sources (`#[bench::leap_day_anniversary]` renders as "leap day
   anniversary"); new suites are discovered from the summary files, and benchmarks sharing a
   set of case ids are compared automatically. Display overrides, suite source/context paths
-  and the reference benchmark per suite live in `xtask/src/config.rs`.
+  and the reference benchmark per suite live in `xtask/src/bench/config.rs`.
 - **Configuration hygiene** — the configuration is Rust code, so it is compile-time checked
   (there are no keys to mistype). After every benchmark run `cargo xtask bench check-config`
   additionally cross-references display overrides, suite entries, comparison references and
@@ -138,6 +138,6 @@ cargo xtask bench has-regressions
 cargo xtask bench post-report --dry-run
 ```
 
-Summaries are parsed with the typed `gungraun-summary` v7 model; the only other dependency is
-`serde_json`. Configuration (policy, display overrides, comparison references, waivers) is
-plain Rust data in `xtask/src/config.rs`.
+Summaries are read with a small in-tree JSON module, so the xtask builds without compiling a
+dependency tree. Configuration (policy, display overrides, comparison references, waivers) is
+plain Rust data in `xtask/src/bench/config.rs`.

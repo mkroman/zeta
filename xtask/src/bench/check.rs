@@ -1,14 +1,14 @@
 //! Configuration hygiene checks against the measured benchmark inventory.
 //!
 //! `cargo xtask bench check-config` runs this after a benchmark run (the summaries are the
-//! authoritative inventory) and fails when the Rust constants in `config.rs` or the accepted
-//! waivers reference something that no longer exists. That keeps renames and removals from
-//! silently disabling display names, comparison groups or waivers.
+//! authoritative inventory) and fails when the Rust constants in `bench/config.rs` or the
+//! accepted waivers reference something that no longer exists. That keeps renames and
+//! removals from silently disabling display names, comparison groups or waivers.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::{self, Metric, Waiver};
-use crate::model::{Benchmark, Inventory};
+use crate::bench::config::{self, Metric, Waiver};
+use crate::bench::model::{Benchmark, Inventory};
 
 pub struct CheckResult {
     pub benchmarks: usize,
@@ -158,7 +158,7 @@ pub fn format_result(result: &CheckResult, source: &str) -> String {
     if !result.ok() {
         lines.push(
             "The configuration references benchmarks that no longer exist; update \
-             `xtask/src/config.rs`."
+             `xtask/src/bench/config.rs`."
                 .to_owned(),
         );
     }
@@ -168,7 +168,7 @@ pub fn format_result(result: &CheckResult, source: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Metrics, Tier};
+    use crate::bench::model::{Metrics, Tier};
 
     fn benchmark(function: &str, case: &str, suite: &str) -> Benchmark {
         Benchmark {

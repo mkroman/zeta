@@ -1,11 +1,12 @@
-//! The measured benchmark model, loaded from Gungraun's typed v7 summaries, plus the
-//! inventory indexes shared by the report, policy and configuration checks.
+//! The measured benchmark model, loaded from Gungraun's v7 summaries, plus the inventory
+//! indexes shared by the report, policy and configuration checks.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config;
+use crate::bench::config;
+use crate::bench::metadata::{Metadata, Mismatch};
 use crate::error::{Error, Result};
 use crate::json::{self, Value};
 
@@ -90,6 +91,17 @@ impl Benchmark {
             || self.dhat_bytes.old.is_some()
             || self.dhat_bytes.new.is_some()
     }
+}
+
+/// One run's inputs for policy decisions and rendering.
+pub struct RunSummary {
+    pub benchmarks: Vec<Benchmark>,
+    pub baseline: Metadata,
+    pub current: Metadata,
+    pub baseline_found: bool,
+    pub toolchain_matched: bool,
+    pub mismatches: Vec<Mismatch>,
+    pub exit_code: i32,
 }
 
 /// Load every summary below `directory`.

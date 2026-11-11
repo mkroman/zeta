@@ -4,7 +4,7 @@
 //! mistype and no schema to validate. The command `bench check-config` still validates the
 //! names against the measured benchmark inventory.
 
-use std::time::SystemTime;
+use crate::time;
 
 /// Gating policy for exact, deterministic counts.
 pub struct Policy {
@@ -125,48 +125,11 @@ pub const WAIVERS: &[Waiver] = &[
     // },
 ];
 
-/// Today, expressed as days since the Unix epoch (UTC).
-pub fn today() -> i64 {
-    unix_now() / 86_400
-}
-
-/// Seconds since the Unix epoch, saturating rather than failing before 1970.
-pub fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |duration| {
-            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
-        })
-}
-
-/// Parse a strict `YYYY-MM-DD` date into days since the Unix epoch.
-pub fn parse_date(value: &str) -> Option<i64> {
-    let mut parts = value.split('-');
-    let year = parts.next()?.parse::<i32>().ok()?;
-    let month = parts.next()?.parse::<u32>().ok()?;
-    let day = parts.next()?.parse::<u32>().ok()?;
-    if parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    Some(days_from_civil(year, month, day))
-}
-
-/// Howard Hinnant's `days_from_civil`, valid for the proleptic Gregorian calendar.
-fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
-    let year = i64::from(year) - i64::from(month <= 2);
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let month = i64::from(month);
-    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + i64::from(day) - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
 impl Waiver {
     pub fn expired(&self) -> bool {
         self.expires
-            .and_then(parse_date)
-            .is_some_and(|expiry| expiry < today())
+            .and_then(time::parse_date)
+            .is_some_and(|expiry| expiry < time::today())
     }
 
     pub fn matches(&self, benchmark: &str, case: Option<&str>, metric: Metric) -> bool {

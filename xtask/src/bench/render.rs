@@ -3,10 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::config;
-use crate::format::{natural_cmp, number, percent, signed};
-use crate::model::{Benchmark, Inventory, Tier};
-use crate::policy::{self, RunSummary, Verdict, counts, suite_totals};
+use crate::bench::config;
+use crate::bench::format::{natural_cmp, number, percent, signed};
+use crate::bench::model::{Benchmark, Inventory, RunSummary, Tier};
+use crate::bench::policy::{self, Verdict, counts, suite_totals};
 
 /// First line of the headline, used as the check-run title.
 #[must_use]
@@ -565,9 +565,9 @@ fn capitalize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::Metadata;
-    use crate::model::Metrics;
-    use crate::policy::classify;
+    use crate::bench::metadata::Metadata;
+    use crate::bench::model::Metrics;
+    use crate::bench::policy::classify;
 
     #[allow(clippy::cast_precision_loss)]
     fn benchmark(function: &str, case: &str, old: u64, new: u64, suite: &str) -> Benchmark {

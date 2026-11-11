@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+/// The result of a task, using [`Error`] for every failure.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// A task failed with a message suitable for `eprintln!`.
@@ -9,7 +10,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Error(String);
 
 impl Error {
-    pub fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }
 }

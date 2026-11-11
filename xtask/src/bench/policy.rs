@@ -2,21 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::{self, Metric, Waiver};
-use crate::format::{percent, signed};
-use crate::metadata::{Metadata, Mismatch};
-use crate::model::{Benchmark, Tier};
-
-/// One run's inputs for policy decisions and rendering.
-pub struct RunSummary {
-    pub benchmarks: Vec<Benchmark>,
-    pub baseline: Metadata,
-    pub current: Metadata,
-    pub baseline_found: bool,
-    pub toolchain_matched: bool,
-    pub mismatches: Vec<Mismatch>,
-    pub exit_code: i32,
-}
+use crate::bench::config::{self, Metric, Waiver};
+use crate::bench::format::{percent, signed};
+use crate::bench::model::{Benchmark, RunSummary, Tier};
 
 /// The overall verdict for a run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,8 +247,9 @@ pub fn statuses(run: &RunSummary) -> BTreeMap<String, Status> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Waiver;
-    use crate::model::Metrics;
+    use crate::bench::config::Waiver;
+    use crate::bench::metadata::Metadata;
+    use crate::bench::model::Metrics;
 
     #[allow(clippy::cast_precision_loss)]
     fn benchmark(function: &str, old: Option<u64>, new: Option<u64>, suite: &str) -> Benchmark {

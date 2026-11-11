@@ -9,8 +9,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use crate::config;
 use crate::error::{Error, Result};
+use crate::time;
 use crate::workspace_root;
 
 /// Toolchain metadata that must match the baseline for exact-count gating.
@@ -82,7 +82,7 @@ impl Metadata {
         self.get("unix-time")
             .parse::<i64>()
             .ok()
-            .map(|timestamp| (config::unix_now() - timestamp).max(0) / 86_400)
+            .map(|timestamp| (time::unix_now() - timestamp).max(0) / 86_400)
     }
 
     /// Differences in the keys that make instruction counts comparable. Without metadata on
@@ -115,7 +115,7 @@ pub fn record(output: &Path, toolchain: &str) -> Result<()> {
         "commit".to_owned(),
         run_command("git", &["-C", path_str(root), "rev-parse", "HEAD"])?,
     );
-    values.insert("unix-time".to_owned(), config::unix_now().to_string());
+    values.insert("unix-time".to_owned(), time::unix_now().to_string());
     values.insert("toolchain".to_owned(), toolchain.to_owned());
 
     let rustc = run_command("rustc", &["-vV"])?;
