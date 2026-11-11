@@ -21,6 +21,7 @@ use zeta_http::RequestError;
 use zeta_plugin::irc::{COLOR, PLAIN_REPLY_PREFIX, RESET, plain_reply, send_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
+use zeta_utils::text::IteratorJoinExt;
 
 /// The direct-geocoding endpoint location names are resolved against.
 const GEOCODING_URL: &str = "https://api.openweathermap.org/geo/1.0/direct";
@@ -323,13 +324,13 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
     if w.weather.is_empty() {
         reply.push_str("unknown conditions");
     } else {
-        for (index, description) in w.weather.iter().enumerate() {
-            if index > 0 {
-                reply.push_str(", ");
-            }
+        let conditions = w
+            .weather
+            .iter()
+            .map(|description| irc::unstyle_text(&description.description))
+            .oxford_join();
 
-            reply.push_str(&irc::unstyle_text(&description.description));
-        }
+        reply.push_str(&conditions);
     }
 
     let _ = write!(

@@ -16,7 +16,7 @@ use zeta_http as http;
 use zeta_plugin::irc::{labeled_reply, reply_lookup};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_utils::irc;
-use zeta_utils::text::TruncatableExt;
+use zeta_utils::text::{ListJoinExt, TruncatableExt};
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";
 
@@ -144,7 +144,7 @@ impl RustPlayground {
                 // Fallback to raw stderr if no specific errors were found
                 sanitize_output(&result.stderr)
             } else {
-                format!("Compilation error(s): {}", errors.join(", "))
+                format!("Compilation error(s): {}", errors.oxford_join())
             }
         };
 
