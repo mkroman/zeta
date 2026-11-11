@@ -1,18 +1,22 @@
 //! Helpers for formatting and parsing points in time and durations.
+//!
+//! Anchor-free durations are formatted through fixed-length unit tables ([`format_seconds_in_words`]),
+//! while distances between two points in time are counted against the calendar
+//! ([`DistanceInWordsExt`]), so leap years and variable month lengths are exact.
 
 use std::fmt::Write;
 use std::time::Duration;
 
+#[cfg(feature = "chrono")]
+use chrono::{DateTime, Datelike, Months, Utc};
+#[cfg(feature = "time")]
+use time::{Date, Duration as TimeDuration, Month, OffsetDateTime};
+
 // The unit tables below — and the constants only they need — are gated on the feature that
 // uses them (or `test`): the `test` alternative keeps them available to the tests at the bottom
-// of this file even when neither feature is enabled, so the table-driven core is exercised on
-// every build. `UNITS_WITH_SECONDS` serves the `chrono` implementation, `UNITS_TO_MINUTES` the
-// `time` one.
-
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, Utc};
-#[cfg(feature = "time")]
-use time::Duration as TimeDuration;
+// of this file even when no feature is enabled, so the table-driven core is exercised on
+// every build. `UNITS_TO_MINUTES` serves the `time` implementation, and `UNITS_WITH_SECONDS`
+// is retained for the tests — calendar distances do not use fixed-length tables.
 
 /// Seconds in a minute.
 const SECONDS_PER_MINUTE: i64 = 60;
@@ -21,28 +25,28 @@ const SECONDS_PER_HOUR: i64 = 60 * SECONDS_PER_MINUTE;
 /// Seconds in a day.
 const SECONDS_PER_DAY: i64 = 24 * SECONDS_PER_HOUR;
 /// Seconds in a week.
-#[cfg(any(feature = "chrono", feature = "time", test))]
+#[cfg(any(feature = "time", test))]
 const SECONDS_PER_WEEK: i64 = 7 * SECONDS_PER_DAY;
 /// Seconds in a (non-leap) year.
-#[cfg(any(feature = "chrono", feature = "time", test))]
+#[cfg(any(feature = "time", test))]
 const SECONDS_PER_YEAR: i64 = 365 * SECONDS_PER_DAY;
 /// Seconds in a second.
 const SECONDS_PER_SECOND: i64 = 1;
 
 /// Duration units in descending order, as `(seconds per unit, singular name)`.
-#[cfg(any(feature = "chrono", feature = "time", test))]
+#[cfg(any(feature = "time", test))]
 const YEARS: (i64, &str) = (SECONDS_PER_YEAR, "year");
-#[cfg(any(feature = "chrono", feature = "time", test))]
+#[cfg(any(feature = "time", test))]
 const WEEKS: (i64, &str) = (SECONDS_PER_WEEK, "week");
-#[cfg(any(feature = "chrono", feature = "time", test))]
+#[cfg(any(feature = "time", test))]
 const DAYS: (i64, &str) = (SECONDS_PER_DAY, "day");
 const HOURS: (i64, &str) = (SECONDS_PER_HOUR, "hour");
 const MINUTES: (i64, &str) = (SECONDS_PER_MINUTE, "minute");
-#[cfg(any(feature = "chrono", test))]
+#[cfg(test)]
 const SECONDS: (i64, &str) = (SECONDS_PER_SECOND, "second");
 
 /// Duration units in descending order, down to and including seconds.
-#[cfg(any(feature = "chrono", test))]
+#[cfg(test)]
 const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
 
 /// Duration units in descending order, down to and including minutes.
@@ -52,43 +56,45 @@ const UNITS_TO_MINUTES: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES];
 /// Duration units from hours down to minutes.
 pub const HOURS_AND_MINUTES: &[(i64, &str)] = &[HOURS, MINUTES];
 
-/// Formats a duration of `total_seconds` in words using the given unit table, e.g.
-/// `"1 year, 2 weeks, and 3 days"`.
+/// Formats a duration of `total_seconds` in words using the given fixed-length unit table,
+/// e.g. `"1 year, 2 weeks, and 3 days"`.
+///
+/// The table treats every year as 365 days; for distances between two calendar dates, where
+/// leap years and variable month lengths matter, use [`DistanceInWordsExt`] instead.
 ///
 /// Non-positive durations are formatted as `"0 minutes"`.
 #[must_use]
 pub fn format_seconds_in_words(total_seconds: i64, units: &[(i64, &'static str)]) -> String {
-    let total = total_seconds.max(0);
+    join_counts_in_words(units.iter().scan(
+        total_seconds.max(0),
+        |remainder, &(unit_seconds, unit)| {
+            let count = *remainder / unit_seconds;
+            *remainder %= unit_seconds;
+            Some((count, unit))
+        },
+    ))
+}
 
-    // Count the non-zero parts first: the separators depend on how many there are, and counting
-    // keeps the parts off the heap entirely.
-    let mut remainder = total;
-    let mut num_parts = 0;
-
-    for &(unit_seconds, _) in units {
-        if remainder / unit_seconds > 0 {
-            num_parts += 1;
-        }
-
-        remainder %= unit_seconds;
-    }
+/// Joins `(count, unit)` parts as words, e.g. `"1 hour and 30 minutes"`, skipping zero counts.
+///
+/// The iterator is cloned to count the non-zero parts before writing them, so it must be
+/// `Clone`. Returns `"0 minutes"` when every count is zero.
+fn join_counts_in_words(parts: impl Iterator<Item = (i64, &'static str)> + Clone) -> String {
+    let num_parts = parts.clone().filter(|&(count, _)| count > 0).count();
 
     if num_parts == 0 {
         return "0 minutes".to_string();
     }
 
-    // Sub-year remainders cap each non-leading count (weeks < 52, days < 7, ...) and large counts
-    // only occur for years, so 24 bytes per part never needs a reallocation.
+    // The separators depend on how many parts there are; sub-year remainders cap each
+    // non-leading count (weeks < 52, days < 7, ...) and large counts only occur for years, so
+    // 24 bytes per part never needs a reallocation.
     let last_separator = if num_parts > 2 { ", and " } else { " and " };
     let mut buf = String::with_capacity(24 * num_parts);
-    let mut remainder = total;
     let mut written = 0;
 
-    for &(unit_seconds, unit) in units {
-        let count = remainder / unit_seconds;
-        remainder %= unit_seconds;
-
-        if count == 0 {
+    for (count, unit) in parts {
+        if count <= 0 {
             continue;
         }
 
@@ -108,6 +114,10 @@ pub fn format_seconds_in_words(total_seconds: i64, units: &[(i64, &'static str)]
 }
 
 /// Formats points in time and durations in words, e.g. `"1 year, 2 weeks, and 3 days"`.
+///
+/// The implementations for points in time count whole calendar months, so leap years and
+/// variable month lengths are exact. For a distance between two arbitrary points in time, use
+/// [`DistanceInWordsExt`].
 pub trait TimeInWordsExt {
     /// Formats `self` in words, e.g. `"1 year, 2 weeks, and 3 days"`.
     ///
@@ -128,7 +138,13 @@ pub trait TimeInWordsExt {
 #[cfg(feature = "chrono")]
 impl TimeInWordsExt for DateTime<Utc> {
     fn in_words(&self) -> String {
-        format_seconds_in_words((Utc::now() - *self).num_seconds(), UNITS_WITH_SECONDS)
+        let now = Utc::now();
+
+        if *self >= now {
+            "0 minutes".to_string()
+        } else {
+            calendar_distance_in_words(*self, now)
+        }
     }
 }
 
@@ -136,6 +152,198 @@ impl TimeInWordsExt for DateTime<Utc> {
 impl TimeInWordsExt for TimeDuration {
     fn in_words(&self) -> String {
         format_seconds_in_words(self.whole_seconds(), UNITS_TO_MINUTES)
+    }
+}
+
+#[cfg(feature = "time")]
+impl TimeInWordsExt for OffsetDateTime {
+    fn in_words(&self) -> String {
+        let now = Self::now_utc();
+
+        if *self >= now {
+            "0 minutes".to_string()
+        } else {
+            calendar_distance_in_words(*self, now)
+        }
+    }
+}
+
+/// Formats calendar distances between points in time in words, e.g.
+/// `"1 year, 2 months, and 3 days"`.
+///
+/// Unlike [`TimeInWordsExt`], which formats anchor-free durations with fixed-length units,
+/// distances are counted against real calendar dates: leap years, month lengths, and
+/// end-of-month clamping (January 31 plus one month is February 28 or 29) are all accounted
+/// for. The units descend from years through months — then weeks below one month — days, hours,
+/// minutes, and seconds.
+///
+/// Leap seconds are not counted separately: UTC civil time treats every day as 86,400 seconds,
+/// and a parsed leap second is represented as its preceding second, so distances are unaffected
+/// by leap-second insertions. Daylight saving time does not apply to UTC.
+///
+/// Implemented for `chrono::DateTime<Utc>` (feature `chrono`) and `time::OffsetDateTime`
+/// (feature `time`).
+pub trait DistanceInWordsExt {
+    /// Formats the distance between `self` and `to` in words, e.g.
+    /// `"1 year, 2 months, and 3 days"`.
+    ///
+    /// The distance is symmetric: either order of the two points in time produces the same
+    /// text. Zero distances are formatted as `"0 minutes"`.
+    #[must_use]
+    fn distance_in_words(self, to: Self) -> String;
+
+    /// Formats the distance from now until `self` in words, e.g. `"2 months and 3 days"`.
+    ///
+    /// Points in time in the past are formatted as `"0 minutes"`.
+    #[must_use]
+    fn time_until(self) -> String;
+}
+
+/// A point in time with just enough calendar arithmetic to measure distances in words.
+#[cfg(any(feature = "chrono", feature = "time"))]
+trait CalendarPoint: Copy + PartialOrd {
+    /// Returns the year and the 1-based month of the point in time.
+    fn year_and_month(self) -> (i64, u32);
+
+    /// Adds `months` whole calendar months, clamping the day of month to the target month's
+    /// length — e.g. January 31 plus one month is February 28 or 29.
+    fn plus_months(self, months: u32) -> Option<Self>;
+
+    /// Returns the whole seconds from `earlier` to `self`, which must not be earlier than
+    /// `earlier`.
+    ///
+    /// The result is rounded to the nearest second, so points in time on exact boundaries are
+    /// reported as such instead of a second short because of sub-second drift.
+    fn seconds_since(self, earlier: Self) -> i64;
+}
+
+#[cfg(feature = "chrono")]
+impl CalendarPoint for DateTime<Utc> {
+    fn year_and_month(self) -> (i64, u32) {
+        (i64::from(self.year()), self.month())
+    }
+
+    fn plus_months(self, months: u32) -> Option<Self> {
+        self.checked_add_months(Months::new(months))
+    }
+
+    fn seconds_since(self, earlier: Self) -> i64 {
+        let delta = self - earlier;
+        let seconds = delta.num_seconds();
+
+        if delta.subsec_nanos() >= 500_000_000 {
+            seconds + 1
+        } else {
+            seconds
+        }
+    }
+}
+
+#[cfg(feature = "time")]
+impl CalendarPoint for OffsetDateTime {
+    fn year_and_month(self) -> (i64, u32) {
+        (i64::from(self.year()), u8::from(self.month()).into())
+    }
+
+    fn plus_months(self, months: u32) -> Option<Self> {
+        let index =
+            i64::from(self.year()) * 12 + i64::from(u8::from(self.month()) - 1) + i64::from(months);
+        let year = i32::try_from(index.div_euclid(12)).ok()?;
+        let month = Month::try_from(u8::try_from(index.rem_euclid(12)).ok()? + 1).ok()?;
+        let day = self.day().min(month.length(year));
+        let date = Date::from_calendar_date(year, month, day).ok()?;
+
+        Some(self.replace_date(date))
+    }
+
+    fn seconds_since(self, earlier: Self) -> i64 {
+        let delta = self - earlier;
+        let seconds = delta.whole_seconds();
+
+        if delta.subsec_nanoseconds() >= 500_000_000 {
+            seconds + 1
+        } else {
+            seconds
+        }
+    }
+}
+
+/// Decomposes the calendar distance from `from` to `to` into words, e.g.
+/// `"1 year, 2 months, and 3 days"`.
+#[cfg(any(feature = "chrono", feature = "time"))]
+fn calendar_distance_in_words<C: CalendarPoint>(from: C, to: C) -> String {
+    let (from, to) = if from <= to { (from, to) } else { (to, from) };
+
+    let (from_year, from_month) = from.year_and_month();
+    let (to_year, to_month) = to.year_and_month();
+    let months_upper_bound =
+        (to_year - from_year) * 12 + i64::from(to_month) - i64::from(from_month);
+
+    // The month count is the upper bound or one less, because the day of month may not have
+    // been reached yet — or, with end-of-month clamping, may have been reached early. Starting
+    // one below and walking up therefore finds the true count in at most two steps.
+    let mut months = u32::try_from(months_upper_bound.saturating_sub(1)).unwrap_or(0);
+
+    while let Some(next) = from.plus_months(months + 1) {
+        if next > to {
+            break;
+        }
+
+        months += 1;
+    }
+
+    let anchor = from.plus_months(months).unwrap_or(from);
+    let remainder = to.seconds_since(anchor);
+    let days = remainder / SECONDS_PER_DAY;
+    let hours = remainder % SECONDS_PER_DAY / SECONDS_PER_HOUR;
+    let minutes = remainder % SECONDS_PER_HOUR / SECONDS_PER_MINUTE;
+    let seconds = remainder % SECONDS_PER_MINUTE;
+
+    join_counts_in_words(
+        [
+            (i64::from(months / 12), "year"),
+            (i64::from(months % 12), "month"),
+            (days / 7, "week"),
+            (days % 7, "day"),
+            (hours, "hour"),
+            (minutes, "minute"),
+            (seconds, "second"),
+        ]
+        .into_iter(),
+    )
+}
+
+#[cfg(feature = "chrono")]
+impl DistanceInWordsExt for DateTime<Utc> {
+    fn distance_in_words(self, to: Self) -> String {
+        calendar_distance_in_words(self, to)
+    }
+
+    fn time_until(self) -> String {
+        let now = Utc::now();
+
+        if self <= now {
+            "0 minutes".to_string()
+        } else {
+            calendar_distance_in_words(now, self)
+        }
+    }
+}
+
+#[cfg(feature = "time")]
+impl DistanceInWordsExt for OffsetDateTime {
+    fn distance_in_words(self, to: Self) -> String {
+        calendar_distance_in_words(self, to)
+    }
+
+    fn time_until(self) -> String {
+        let now = Self::now_utc();
+
+        if self <= now {
+            "0 minutes".to_string()
+        } else {
+            calendar_distance_in_words(now, self)
+        }
     }
 }
 
@@ -352,24 +560,251 @@ mod time_ago_tests {
         );
     }
 
-    // The deltas below sit inside a unit boundary with at least an hour of slack, so the drift
+    // The delta below sits inside a unit boundary with at least an hour of slack, so the drift
     // between the test's `Utc::now()` and the one inside `time_ago` cannot change the output.
-    // The exact boundary values are pinned clock-free by the `words` tests above, which the
-    // `DateTime<Utc>` impl delegates to with `UNITS_WITH_SECONDS`.
+    // The exact calendar boundary values are pinned clock-free by the `distance_in_words` tests.
     #[test]
     fn should_format_elapsed_time_in_words() {
         assert_eq!(
             (Utc::now() - (TimeDelta::weeks(2) - TimeDelta::hours(1))).time_ago(),
             "1 week, 6 days, and 23 hours ago"
         );
+    }
+}
+
+#[cfg(all(test, feature = "chrono"))]
+mod distance_in_words_tests {
+    use chrono::{NaiveDate, TimeDelta, TimeZone};
+
+    use super::*;
+
+    fn utc(year: i32, month: u32, day: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn should_count_leap_day_anniversaries() {
         assert_eq!(
-            (Utc::now() - TimeDelta::days(401)).time_ago(),
-            "1 year, 5 weeks, and 1 day ago"
+            utc(2024, 2, 28).distance_in_words(utc(2024, 2, 29)),
+            "1 day"
         );
         assert_eq!(
-            (Utc::now() - TimeDelta::days(731)).time_ago(),
-            "2 years and 1 day ago"
+            utc(2024, 2, 29).distance_in_words(utc(2025, 2, 28)),
+            "1 year"
         );
+        assert_eq!(
+            utc(2024, 2, 29).distance_in_words(utc(2025, 3, 1)),
+            "1 year and 1 day"
+        );
+    }
+
+    #[test]
+    fn should_apply_century_leap_year_rules() {
+        // 2000 was a leap year, 2100 will not be.
+        assert_eq!(
+            utc(2000, 2, 28).distance_in_words(utc(2000, 3, 1)),
+            "2 days"
+        );
+        assert_eq!(utc(2100, 2, 28).distance_in_words(utc(2100, 3, 1)), "1 day");
+    }
+
+    #[test]
+    fn should_clamp_end_of_month_anniversaries() {
+        assert_eq!(
+            utc(2023, 1, 31).distance_in_words(utc(2023, 2, 28)),
+            "1 month"
+        );
+        assert_eq!(
+            utc(2024, 1, 31).distance_in_words(utc(2024, 2, 29)),
+            "1 month"
+        );
+        assert_eq!(
+            utc(2024, 1, 31).distance_in_words(utc(2024, 2, 28)),
+            "4 weeks"
+        );
+    }
+
+    #[test]
+    fn should_format_weeks_only_below_one_month() {
+        assert_eq!(
+            utc(2024, 1, 1).distance_in_words(utc(2024, 1, 15)),
+            "2 weeks"
+        );
+        assert_eq!(
+            utc(2024, 1, 1).distance_in_words(utc(2024, 1, 20)),
+            "2 weeks and 5 days"
+        );
+        assert_eq!(
+            utc(2024, 1, 1).distance_in_words(utc(2024, 2, 16)),
+            "1 month, 2 weeks, and 1 day"
+        );
+    }
+
+    #[test]
+    fn should_format_mixed_calendar_parts() {
+        let from = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2025, 3, 2, 13, 30, 45).unwrap();
+
+        assert_eq!(
+            from.distance_in_words(to),
+            "1 year, 2 months, 1 day, 1 hour, 30 minutes, and 45 seconds"
+        );
+    }
+
+    #[test]
+    fn should_format_distances_symmetrically() {
+        let earlier = utc(1969, 7, 20);
+        let later = utc(2024, 7, 20);
+
+        assert_eq!(earlier.distance_in_words(later), "55 years");
+        assert_eq!(later.distance_in_words(earlier), "55 years");
+    }
+
+    #[test]
+    fn should_format_zero_distances_as_zero_minutes() {
+        let at = utc(2024, 1, 1);
+
+        assert_eq!(at.distance_in_words(at), "0 minutes");
+    }
+
+    #[test]
+    fn should_count_distant_years() {
+        assert_eq!(
+            utc(2024, 1, 1).distance_in_words(utc(2400, 1, 1)),
+            "376 years"
+        );
+    }
+
+    #[test]
+    fn should_fold_leap_seconds_into_the_previous_second() {
+        let leap = NaiveDate::from_ymd_opt(2016, 12, 31)
+            .unwrap()
+            .and_hms_nano_opt(23, 59, 59, 1_000_000_000)
+            .unwrap()
+            .and_utc();
+        let before = NaiveDate::from_ymd_opt(2016, 12, 31)
+            .unwrap()
+            .and_hms_opt(23, 59, 59)
+            .unwrap()
+            .and_utc();
+        let midnight = utc(2017, 1, 1);
+
+        assert_eq!(leap.distance_in_words(midnight), "0 minutes");
+        assert_eq!(before.distance_in_words(midnight), "1 second");
+    }
+
+    #[test]
+    fn should_format_time_until_from_now() {
+        // A few days ahead leaves enough slack that the drift between the test's clock read
+        // and the one inside `time_until` cannot change the leading unit.
+        assert!(
+            (Utc::now() + TimeDelta::days(2))
+                .time_until()
+                .starts_with("2 days")
+        );
+    }
+
+    #[test]
+    fn should_format_now_and_past_timestamps_as_zero_minutes_until() {
+        assert_eq!(Utc::now().time_until(), "0 minutes");
+        assert_eq!((Utc::now() - TimeDelta::days(1)).time_until(), "0 minutes");
+    }
+}
+
+#[cfg(all(test, feature = "time"))]
+mod offset_date_time_distance_tests {
+    use time::Duration;
+
+    use super::*;
+
+    fn utc(year: i32, month: Month, day: u8) -> OffsetDateTime {
+        Date::from_calendar_date(year, month, day)
+            .unwrap()
+            .with_hms(0, 0, 0)
+            .unwrap()
+            .assume_utc()
+    }
+
+    #[test]
+    fn should_count_leap_day_anniversaries() {
+        assert_eq!(
+            utc(2024, Month::February, 28).distance_in_words(utc(2024, Month::February, 29)),
+            "1 day"
+        );
+        assert_eq!(
+            utc(2024, Month::February, 29).distance_in_words(utc(2025, Month::February, 28)),
+            "1 year"
+        );
+        assert_eq!(
+            utc(2024, Month::February, 29).distance_in_words(utc(2025, Month::March, 1)),
+            "1 year and 1 day"
+        );
+    }
+
+    #[test]
+    fn should_apply_century_leap_year_rules() {
+        // 2000 was a leap year, 2100 will not be.
+        assert_eq!(
+            utc(2000, Month::February, 28).distance_in_words(utc(2000, Month::March, 1)),
+            "2 days"
+        );
+        assert_eq!(
+            utc(2100, Month::February, 28).distance_in_words(utc(2100, Month::March, 1)),
+            "1 day"
+        );
+    }
+
+    #[test]
+    fn should_clamp_end_of_month_anniversaries() {
+        assert_eq!(
+            utc(2023, Month::January, 31).distance_in_words(utc(2023, Month::February, 28)),
+            "1 month"
+        );
+        assert_eq!(
+            utc(2024, Month::January, 31).distance_in_words(utc(2024, Month::February, 29)),
+            "1 month"
+        );
+        assert_eq!(
+            utc(2024, Month::January, 31).distance_in_words(utc(2024, Month::February, 28)),
+            "4 weeks"
+        );
+    }
+
+    #[test]
+    fn should_format_weeks_only_below_one_month() {
+        assert_eq!(
+            utc(2024, Month::January, 1).distance_in_words(utc(2024, Month::February, 16)),
+            "1 month, 2 weeks, and 1 day"
+        );
+    }
+
+    #[test]
+    fn should_format_distances_symmetrically() {
+        let earlier = utc(1969, Month::July, 20);
+        let later = utc(2024, Month::July, 20);
+
+        assert_eq!(earlier.distance_in_words(later), "55 years");
+        assert_eq!(later.distance_in_words(earlier), "55 years");
+    }
+
+    #[test]
+    fn should_format_elapsed_time_in_words() {
+        let now = OffsetDateTime::now_utc();
+
+        assert_eq!(now.in_words(), "0 minutes");
+        assert_eq!((now + Duration::minutes(5)).in_words(), "0 minutes");
+
+        let elapsed = (now - Duration::minutes(5)).time_ago();
+        assert!(elapsed.starts_with("5 minutes"), "{elapsed}");
+        assert!(elapsed.ends_with(" ago"), "{elapsed}");
+    }
+
+    #[test]
+    fn should_format_time_until_from_now() {
+        let now = OffsetDateTime::now_utc();
+
+        assert!((now + Duration::days(2)).time_until().starts_with("2 days"));
+        assert_eq!((now - Duration::days(1)).time_until(), "0 minutes");
     }
 }
 

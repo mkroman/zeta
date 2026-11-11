@@ -15,7 +15,7 @@ use zeta_http as http;
 use zeta_plugin::irc::{labeled_reply, reply_lookup};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_url::RedactedUrl;
-use zeta_utils::duration::TimeInWordsExt;
+use zeta_utils::duration::DistanceInWordsExt;
 use zeta_utils::irc;
 
 /// The single-search endpoint shows are looked up against.
@@ -194,12 +194,9 @@ impl Tvmaze {
         let title = irc::unstyle_text(&episode.name);
         let season = episode.season;
         let number = episode.number;
-        let time_until_air = {
-            let now = time::OffsetDateTime::now_utc();
-            episode
-                .airstamp
-                .map_or_else(|| "???".to_string(), |airstamp| (airstamp - now).in_words())
-        };
+        let time_until_air = episode
+            .airstamp
+            .map_or_else(|| "???".to_string(), DistanceInWordsExt::time_until);
         let content = format!(
             "Next episode “\x0f{title}\x0310” (\x0f{season}x{number:02}\x0310) airs in\x0f {time_until_air}"
         );
