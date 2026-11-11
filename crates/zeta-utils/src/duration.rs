@@ -4,50 +4,48 @@
 //! while distances between two points in time are counted against the calendar
 //! ([`DistanceInWordsExt`]), so leap years and variable month lengths are exact.
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 use std::time::Duration;
+
+use crate::text::IteratorJoinExt;
 
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Datelike, Months, Utc};
 #[cfg(feature = "time")]
 use time::{Date, Duration as TimeDuration, Month, OffsetDateTime};
 
-// The unit tables below — and the constants only they need — are gated on the feature that
-// uses them (or `test`): the `test` alternative keeps them available to the tests at the bottom
-// of this file even when no feature is enabled, so the table-driven core is exercised on
-// every build. `UNITS_TO_MINUTES` serves the `time` implementation, and `UNITS_WITH_SECONDS`
-// is retained for the tests — calendar distances do not use fixed-length tables.
+// The unit tables are part of the public API so callers (and benchmarks) do not have to
+// redefine unit lengths: `UNITS_WITH_SECONDS` is the canonical fixed-length table for
+// [`format_seconds_in_words`], `UNITS_TO_MINUTES` serves the `time` implementation, and the
+// `SECONDS_PER_*` constants can be used to build custom tables. Calendar distances do not
+// use fixed-length tables.
 
-/// Seconds in a minute.
-const SECONDS_PER_MINUTE: i64 = 60;
-/// Seconds in an hour.
-const SECONDS_PER_HOUR: i64 = 60 * SECONDS_PER_MINUTE;
-/// Seconds in a day.
-const SECONDS_PER_DAY: i64 = 24 * SECONDS_PER_HOUR;
-/// Seconds in a week.
-#[cfg(any(feature = "time", test))]
-const SECONDS_PER_WEEK: i64 = 7 * SECONDS_PER_DAY;
-/// Seconds in a (non-leap) year.
-#[cfg(any(feature = "time", test))]
-const SECONDS_PER_YEAR: i64 = 365 * SECONDS_PER_DAY;
 /// Seconds in a second.
-const SECONDS_PER_SECOND: i64 = 1;
+pub const SECONDS_PER_SECOND: i64 = 1;
+/// Seconds in a minute.
+pub const SECONDS_PER_MINUTE: i64 = 60;
+/// Seconds in an hour.
+pub const SECONDS_PER_HOUR: i64 = 60 * SECONDS_PER_MINUTE;
+/// Seconds in a day.
+pub const SECONDS_PER_DAY: i64 = 24 * SECONDS_PER_HOUR;
+/// Seconds in a week.
+pub const SECONDS_PER_WEEK: i64 = 7 * SECONDS_PER_DAY;
+/// Seconds in a (non-leap) year.
+pub const SECONDS_PER_YEAR: i64 = 365 * SECONDS_PER_DAY;
 
 /// Duration units in descending order, as `(seconds per unit, singular name)`.
-#[cfg(any(feature = "time", test))]
 const YEARS: (i64, &str) = (SECONDS_PER_YEAR, "year");
-#[cfg(any(feature = "time", test))]
 const WEEKS: (i64, &str) = (SECONDS_PER_WEEK, "week");
-#[cfg(any(feature = "time", test))]
 const DAYS: (i64, &str) = (SECONDS_PER_DAY, "day");
 const HOURS: (i64, &str) = (SECONDS_PER_HOUR, "hour");
 const MINUTES: (i64, &str) = (SECONDS_PER_MINUTE, "minute");
-#[cfg(test)]
 const SECONDS: (i64, &str) = (SECONDS_PER_SECOND, "second");
 
 /// Duration units in descending order, down to and including seconds.
-#[cfg(test)]
-const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
+///
+/// A convenience table for [`format_seconds_in_words`]; every year counts as 365 days. For
+/// distances between two calendar dates use [`DistanceInWordsExt`].
+pub const UNITS_WITH_SECONDS: &[(i64, &str)] = &[YEARS, WEEKS, DAYS, HOURS, MINUTES, SECONDS];
 
 /// Duration units in descending order, down to and including minutes.
 #[cfg(any(feature = "time", test))]
@@ -75,42 +73,37 @@ pub fn format_seconds_in_words(total_seconds: i64, units: &[(i64, &'static str)]
     ))
 }
 
+/// One `count unit(s)` part of a duration, pluralized when formatted.
+///
+/// Rendering through [`fmt::Display`] keeps the parts streaming through [`IteratorJoinExt`]:
+/// no per-part string is allocated.
+struct WordCount {
+    count: i64,
+    unit: &'static str,
+}
+
+impl fmt::Display for WordCount {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let plural = if self.count == 1 { "" } else { "s" };
+
+        write!(formatter, "{} {}{plural}", self.count, self.unit)
+    }
+}
+
 /// Joins `(count, unit)` parts as words, e.g. `"1 hour and 30 minutes"`, skipping zero counts.
 ///
-/// The iterator is cloned to count the non-zero parts before writing them, so it must be
-/// `Clone`. Returns `"0 minutes"` when every count is zero.
-fn join_counts_in_words(parts: impl Iterator<Item = (i64, &'static str)> + Clone) -> String {
-    let num_parts = parts.clone().filter(|&(count, _)| count > 0).count();
+/// Returns `"0 minutes"` when every count is zero.
+fn join_counts_in_words(parts: impl Iterator<Item = (i64, &'static str)>) -> String {
+    let joined = parts
+        .filter(|&(count, _)| count > 0)
+        .map(|(count, unit)| WordCount { count, unit })
+        .oxford_join();
 
-    if num_parts == 0 {
-        return "0 minutes".to_string();
+    if joined.is_empty() {
+        "0 minutes".to_string()
+    } else {
+        joined
     }
-
-    // The separators depend on how many parts there are; sub-year remainders cap each
-    // non-leading count (weeks < 52, days < 7, ...) and large counts only occur for years, so
-    // 24 bytes per part never needs a reallocation.
-    let last_separator = if num_parts > 2 { ", and " } else { " and " };
-    let mut buf = String::with_capacity(24 * num_parts);
-    let mut written = 0;
-
-    for (count, unit) in parts {
-        if count <= 0 {
-            continue;
-        }
-
-        if written > 0 {
-            buf.push_str(if written == num_parts - 1 {
-                last_separator
-            } else {
-                ", "
-            });
-        }
-
-        let _ = write!(buf, "{count} {unit}{}", if count == 1 { "" } else { "s" });
-        written += 1;
-    }
-
-    buf
 }
 
 /// Formats points in time and durations in words, e.g. `"1 year, 2 weeks, and 3 days"`.

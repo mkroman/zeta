@@ -1,0 +1,128 @@
+name: Baseline
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "The GitHub runner to use."
+        default: "ubuntu-latest"
+        type: string
+      toolchain:
+        description: "Rust toolchain to use. Defaults to `stable`."
+        default: "stable"
+        type: string
+      force:
+        description: "Record a fresh baseline without comparing against the previous one."
+        default: false
+        type: boolean
+
+      # Ordered after the inputs their defaults depend on. The benchmark profile (release +
+      # LTO) shares no artifacts with the test workflow's debug-profile cache, so it keeps
+      # its own key instead of thrashing CI's cache.
+      cache-key:
+        description: "Shared cache key"
+        default: "bench-${{ inputs.toolchain }}"
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  record:
+    name: Record
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust ${{ inputs.toolchain }}
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ inputs.toolchain }}
+      - name: Install Gungraun runner and Valgrind
+        uses: gungraun/setup-gungraun@62591572561bb2f4ed2ae300b8a8bea99ea8ddaf # v1
+      - name: Cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ${{ inputs.cache-key }}
+          cache-on-failure: true
+      - name: Test benchmark tooling
+        run: cargo test -p xtask --profile xtask
+      # The previous baseline is the comparison target for this run. It is only restored
+      # when the run was not forced, so a forced run always records from scratch.
+      - name: Find previous baseline
+        if: ${{ !inputs.force }}
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        run: |
+          run_id=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/benchmarks.yaml/runs?branch=main&status=success&per_page=10" \
+            --jq ".workflow_runs[] | select(.id != ${CURRENT_RUN_ID}) | .id" | head -n 1)
+
+          if [ -n "$run_id" ]; then
+            echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Restore previous baseline
+        if: ${{ !inputs.force && steps.previous.outputs.run-id != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: bench-baseline
+          path: target/gungraun
+          run-id: ${{ steps.previous.outputs.run-id }}
+          github-token: ${{ github.token }}
+      # The metadata describes the environment the counts were taken in. The report refuses
+      # to gate on counts recorded with a different toolchain, so drift is reported instead
+      # of silently absorbed by the regression limits.
+      - name: Record benchmark metadata
+        env:
+          TOOLCHAIN: ${{ inputs.toolchain }}
+        run: cargo xtask bench metadata --output bench-metadata.txt --toolchain "$TOOLCHAIN"
+      # gungraun exits with code 3 when a compiled-in limit is exceeded; capture it so the
+      # workflow policy (not the exit code alone) decides whether the baseline advances.
+      - name: Run benchmarks
+        id: bench
+        run: |
+          set +e
+          cargo bench -p zeta-benchmarks -- --save-baseline=main --save-summary=json --parallel=auto
+          code=$?
+          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      # The summaries are the authoritative inventory: fail when the xtask configuration
+      # references benchmarks that were renamed or removed, so configuration cannot drift.
+      - name: Check report configuration
+        run: |
+          set -o pipefail
+          cargo xtask bench check-config | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Generate bench report
+        env:
+          BENCH_EXIT_CODE: ${{ steps.bench.outputs.exit-code }}
+        run: |
+          args=(--bench-exit-code "$BENCH_EXIT_CODE")
+          if [ -f target/gungraun/bench-metadata.txt ]; then
+            args+=(--baseline-found)
+          fi
+          cargo xtask bench report "${args[@]}"
+          cat bench-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Check regressions
+        run: cargo xtask bench gate
+      # The artifact's metadata must describe the run that produced it, not the previous
+      # baseline it was compared against.
+      - name: Update baseline metadata
+        run: cp bench-metadata.txt target/gungraun/bench-metadata.txt
+      # Reaching this step means the current results passed against the previous baseline
+      # (waivers included), so the artifact only ever moves forward to a known-good state.
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-baseline
+          path: target/gungraun
+          if-no-files-found: error
+          retention-days: 90

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["benchmarks", "crates/*", "xtask"]
 # `cargo run`, `build`, `test` and `check` without a selection flag operate on the bot.
 default-members = ["crates/zeta"]
 
@@ -15,6 +15,7 @@ chrono = { version = "0.4.45" }
 clap = { version = "4.6.7", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 foldhash = "0.2"
+gungraun = "0.20.0"
 hickory-resolver = { version = "0.26.2", features = ["tls-aws-lc-rs"] }
 humantime-serde = "1.1.1"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
@@ -86,3 +87,18 @@ strip = "debuginfo"
 panic = "unwind"
 opt-level = 3
 codegen-units = 1
+
+# Gungraun needs debug symbols to find the benchmark entry point (and the `bench` profile
+# inherits `release`, including its stripping).
+[profile.bench]
+debug = true
+strip = false
+
+# The xtask is a developer tool built on demand by `cargo xtask`. Dependency debug info is
+# unnecessary and dominates its cold build time; the profile still inherits dev otherwise.
+[profile.xtask]
+inherits = "dev"
+debug = false
+# CI only reuses the finished binary between steps, so incremental state adds a large
+# target-dir footprint without helping a cold build.
+incremental = false

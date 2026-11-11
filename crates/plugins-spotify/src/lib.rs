@@ -26,7 +26,7 @@ use zeta_http::oauth::Credentials;
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, MessageEvent, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
-use zeta_utils::text;
+use zeta_utils::text::{self, ListJoinExt};
 
 /// The Spotify hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["open.spotify.com", "play.spotify.com"];
@@ -255,7 +255,7 @@ impl Spotify {
                     |artist: &Artist, include_url| {
                         let name = irc::unstyle_text(&artist.name);
                         let genres: Vec<_> = artist.genres.iter().map(|genre| irc::unstyle_text(genre)).collect();
-                        let joined = text::join_with_and(&genres);
+                        let joined = genres.oxford_join();
                         let followers = artist.followers.total.to_formatted_string(&Locale::en);
 
                         let mut msg = format!("\x0f{name}\x0310 is");
@@ -385,7 +385,7 @@ fn join_artists(artists: &[ArtistSimple]) -> String {
         .iter()
         .map(|a| format!("\x0f{}\x0310", irc::unstyle_text(&a.name)))
         .collect();
-    text::join_with_and(&names)
+    names.oxford_join()
 }
 
 /// Returns the bare `spotify:type:id` URIs found in `text`, in order.
@@ -536,10 +536,10 @@ mod tests {
         }
 
         // The comma sits between two color codes, so `strip_formatting` would swallow it; pin the exact
-        // layout for the three-name variant to keep the separator covered.
+        // layout for the three-name variant to keep the Oxford separator covered.
         assert_eq!(
             join_artists(&artists(&["Aurora", "Sigrid", "Agnes Obel"])),
-            "\x0fAurora\x0310, \x0fSigrid\x0310 and \x0fAgnes Obel\x0310"
+            "\x0fAurora\x0310, \x0fSigrid\x0310, and \x0fAgnes Obel\x0310"
         );
     }
 }
