@@ -326,8 +326,9 @@ where
 #[inline(never)]
 fn benchmark_regression_probe() -> u64 {
     let mut value = std::hint::black_box(0_u64);
-    for _ in 0..8 {
-        value = value.wrapping_mul(3).wrapping_add(1);
+    let iterations = std::hint::black_box(64_u64);
+    for index in 0..iterations {
+        value = value.wrapping_add(index | 1);
     }
     value
 }
