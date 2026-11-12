@@ -178,12 +178,15 @@ fn curl_fetch(curl: &Path, url: &str, path: &Path) -> Result<()> {
         )));
     }
 
-    // Windows cannot rename over an existing file. The scratch guard makes this unlikely,
-    // but removing the target keeps retries and partially completed runs working.
+    replace_file(&part, path)
+}
+
+/// Move a completed download into place, working around Windows' no-overwrite rename.
+fn replace_file(part: &Path, path: &Path) -> Result<()> {
     if path.exists() {
         fs::remove_file(path)?;
     }
-    fs::rename(&part, path)?;
+    fs::rename(part, path)?;
     Ok(())
 }
 
@@ -358,6 +361,21 @@ mod tests {
         assert!(has_emoji_version("# Version: 16.0  \r\n", "16.0"));
         assert!(has_emoji_version("\u{feff}# Version: 16.0\n", "16.0"));
         assert!(!has_emoji_version("# Version: 16.0.1\r\n", "16.0"));
+    }
+
+    #[test]
+    fn replaces_an_existing_destination() {
+        let dir = scratch_dir("replace");
+        let part = dir.join("file.part");
+        let path = dir.join("file");
+        write(&part, "new");
+        write(&path, "old");
+
+        replace_file(&part, &path).expect("replace the file");
+
+        assert_eq!(fs::read_to_string(&path).expect("read target"), "new");
+        assert!(!part.exists());
+        fs::remove_dir_all(dir).expect("clean up");
     }
 
     #[test]
