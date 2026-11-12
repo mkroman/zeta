@@ -84,7 +84,7 @@ jobs:
         id: bench
         run: |
           set +e
-          cargo bench -p zeta-benchmarks -- --baseline=main --save-summary=json --parallel=auto
+          cargo bench -p zeta-benchmarks --no-fail-fast -- --baseline=main --save-summary=json --parallel=auto
           code=$?
           echo "exit-code=$code" >> "$GITHUB_OUTPUT"
           exit 0
