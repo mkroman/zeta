@@ -111,6 +111,8 @@ jobs:
         with:
           version: "2026.11.6"
           install_args: "github:rust-secure-code/cargo-auditable"
+          # Release artifacts must not consume a cache other jobs can write.
+          cache: false
         env:
           MISE_ENV: docker
       - name: Build
