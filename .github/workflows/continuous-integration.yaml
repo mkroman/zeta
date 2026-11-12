@@ -30,7 +30,7 @@ jobs:
   # `fetch-ucd` shells out to curl and manipulates paths and renames, so exercise the
   # dependency-free xtask tests on Windows as well. No database or services are needed.
   xtask_windows:
-    name: xtask (Windows)
+    name: Test xtask (Windows)
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
