@@ -53,13 +53,13 @@ impl Tier {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Regressed => "🔴 regression",
-            Self::Warning => "⚠ warning",
-            Self::Waived => "⚠ waived",
-            Self::Drift => "🟡 drift",
-            Self::Improved => "🟢 improved",
-            Self::Unchanged => "⚪ unchanged",
-            Self::New => "🆕 new",
+            Self::Regressed => "regression",
+            Self::Warning => "warning",
+            Self::Waived => "waived",
+            Self::Drift => "drift",
+            Self::Improved => "improved",
+            Self::Unchanged => "unchanged",
+            Self::New => "new",
         }
     }
 }

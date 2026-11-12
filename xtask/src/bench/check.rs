@@ -147,7 +147,7 @@ pub fn format_result(result: &CheckResult, source: &str) -> String {
         result.benchmarks, result.suites
     )];
     if result.ok() && result.warnings.is_empty() {
-        lines.push("✔ No configuration drift.".to_owned());
+        lines.push("No configuration drift.".to_owned());
     }
     for error in &result.errors {
         lines.push(format!("error: {error}"));

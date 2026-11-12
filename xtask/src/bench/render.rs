@@ -23,18 +23,18 @@ pub fn headline(run: &RunSummary) -> String {
     let verdict = policy::verdict(run);
     let counts = counts(&run.benchmarks);
     let mut parts = Vec::new();
-    for (tier, icon, label) in [
-        (Tier::Regressed, "🔴", "regression(s)"),
-        (Tier::Warning, "⚠", "warning(s)"),
-        (Tier::Waived, "⚠", "waived"),
-        (Tier::Drift, "🟡", "drift"),
-        (Tier::Improved, "🟢", "improved"),
-        (Tier::Unchanged, "⚪", "unchanged"),
-        (Tier::New, "🆕", "new"),
+    for (tier, label) in [
+        (Tier::Regressed, "regression(s)"),
+        (Tier::Warning, "warning(s)"),
+        (Tier::Waived, "waived"),
+        (Tier::Drift, "drift"),
+        (Tier::Improved, "improved"),
+        (Tier::Unchanged, "unchanged"),
+        (Tier::New, "new"),
     ] {
         let count = counts.get(&tier).copied().unwrap_or(0);
         if count > 0 {
-            parts.push(format!("{icon} {count} {label}"));
+            parts.push(format!("{count} {label}"));
         }
     }
     let detail = if parts.is_empty() {
@@ -44,23 +44,22 @@ pub fn headline(run: &RunSummary) -> String {
     };
 
     match verdict {
-        Verdict::Regressed => format!("🔴 Regressions detected — check fails\n\n{detail}"),
+        Verdict::Regressed => format!("Regressions detected — check fails\n\n{detail}"),
         Verdict::Warning => {
-            format!("⚠ Toolchain mismatch — regressions reported as warnings\n\n{detail}")
+            format!("Toolchain mismatch — regressions reported as warnings\n\n{detail}")
         }
         Verdict::NoBaseline => {
-            "ℹ️ No baseline recorded yet — this run records measurements but does not gate"
-                .to_owned()
+            "No baseline recorded yet — this run records measurements but does not gate".to_owned()
         }
-        Verdict::Error => "❌ Benchmark run failed — see the job log".to_owned(),
-        Verdict::Ok => format!("✅ No regressions\n\n{detail}"),
+        Verdict::Error => "Benchmark run failed — see the job log".to_owned(),
+        Verdict::Ok => format!("No regressions\n\n{detail}"),
     }
 }
 
 #[must_use]
 pub fn metadata_block(run: &RunSummary) -> Vec<String> {
     if !run.baseline_found {
-        return vec!["ℹ️ No last-known-good baseline artifact was available.".to_owned()];
+        return vec!["No last-known-good baseline artifact was available.".to_owned()];
     }
 
     let mut rows = Vec::new();
@@ -69,10 +68,7 @@ pub fn metadata_block(run: &RunSummary) -> Vec<String> {
         ("valgrind", "valgrind"),
         ("gungraun-runner", "gungraun"),
     ] {
-        let baseline = run.baseline.get(key);
-        let current = run.current.get(key);
-        let mark = if baseline == current { "✓" } else { "⚠" };
-        rows.push(format!("{label} {} ({mark})", or_unknown(current)));
+        rows.push(format!("{label} {}", or_unknown(run.current.get(key))));
     }
     let lock = if !run.baseline.get("cargo-lock-hash").is_empty()
         && run.baseline.get("cargo-lock-hash") == run.current.get("cargo-lock-hash")
@@ -104,7 +100,7 @@ pub fn metadata_block(run: &RunSummary) -> Vec<String> {
         format!(
             "Baseline: main@{sha} ({age}){}",
             if stale {
-                format!(" — ⚠ older than {} days", config::REPORT.stale_days)
+                format!(" — older than {} days", config::REPORT.stale_days)
             } else {
                 String::new()
             }
@@ -114,7 +110,7 @@ pub fn metadata_block(run: &RunSummary) -> Vec<String> {
     if !run.toolchain_matched {
         lines.extend([
             String::new(),
-            "> ⚠ **Toolchain mismatch vs baseline** — instruction counts are not comparable; \
+            "> **Toolchain mismatch vs baseline** — instruction counts are not comparable; \
              regressions are reported as warnings. Re-record the baseline from main \
              (`Benchmarks` → Run workflow) after the toolchain settles."
                 .to_owned(),
@@ -137,7 +133,7 @@ const fn or_unknown(value: &str) -> &str {
 #[must_use]
 pub fn build_report(run: &RunSummary) -> String {
     let mut lines = vec![
-        "## 🔬 Bench report".to_owned(),
+        "## Bench report".to_owned(),
         String::new(),
         headline(run),
         String::new(),
@@ -147,8 +143,8 @@ pub fn build_report(run: &RunSummary) -> String {
 
     if run.baseline_found {
         lines.extend(totals_section(run));
+        lines.extend(regression_impact_section(run));
         lines.extend(changed_sections(run));
-        lines.extend(chart_section(run));
         lines.extend(collapsed_sections(run));
         lines.extend(all_benchmarks_section(run));
     }
@@ -156,13 +152,15 @@ pub fn build_report(run: &RunSummary) -> String {
     lines.extend([
         "---".to_owned(),
         String::new(),
-        "*Methodology: one-shot Valgrind Callgrind and DHAT — counts are exact integers, not \
-         statistical samples, so there are no confidence intervals. The chart lines show the \
-         configured acceptance limit and gungraun's compiled-in soft limit as a reference \
-         band; the workflow gates on any reproducible increase above the instruction floor. \
-         Cross-implementation ratios are informational and never gated. Flamegraph SVGs and \
-         the raw `summary.json` files are attached to the run artifacts.*"
-            .to_owned(),
+        format!(
+            "*Methodology: one-shot Valgrind Callgrind and DHAT — counts are exact integers, \
+             not statistical samples, so there are no confidence intervals. The chart shows \
+             absolute `Ir` increases for regressions and marks the {} instruction floor; the \
+             workflow gates on any reproducible increase above that floor. \
+             Cross-implementation ratios are informational and never gated. Flamegraph SVGs and \
+             the raw `summary.json` files are attached to the run artifacts.*",
+            config::POLICY.floor
+        ),
         String::new(),
     ]);
     lines.join("\n")
@@ -196,9 +194,9 @@ fn totals_section(run: &RunSummary) -> Vec<String> {
 fn changed_sections(run: &RunSummary) -> Vec<String> {
     let mut lines = Vec::new();
     for (tier, title) in [
-        (Tier::Regressed, "🔴 Regressions"),
-        (Tier::Waived, "⚠ Waived regressions"),
-        (Tier::Warning, "⚠ Warnings"),
+        (Tier::Regressed, "Regressions"),
+        (Tier::Waived, "Waived regressions"),
+        (Tier::Warning, "Warnings"),
     ] {
         let mut selected: Vec<&Benchmark> = run
             .benchmarks
@@ -225,24 +223,123 @@ fn changed_sections(run: &RunSummary) -> Vec<String> {
     lines
 }
 
-fn chart_section(run: &RunSummary) -> Vec<String> {
-    let chart = chart(&run.benchmarks);
-    if chart.is_empty() {
-        return vec![
-            "✅ No measurable instruction changes.".to_owned(),
-            String::new(),
-        ];
+/// The regression impact chart: absolute `Ir` deltas against the gate floor.
+fn regression_impact_section(run: &RunSummary) -> Vec<String> {
+    let regressions = ir_regressions(&run.benchmarks);
+    if regressions.is_empty() {
+        return Vec::new();
     }
-    let mut lines = chart;
+
+    let mut lines = vec![
+        "### Regression impact".to_owned(),
+        String::new(),
+        format!(
+            "Bars show the absolute `Ir` increase; the line marks the {} instruction floor.",
+            config::POLICY.floor
+        ),
+        String::new(),
+    ];
+    lines.extend(impact_chart(&regressions));
     lines.push(String::new());
+    lines.extend(impact_legend(&regressions));
+    lines.push(String::new());
+    lines
+}
+
+/// Positive `Ir` regressions, largest absolute increase first.
+fn ir_regressions(benchmarks: &[Benchmark]) -> Vec<&Benchmark> {
+    let mut regressions: Vec<&Benchmark> = benchmarks
+        .iter()
+        .filter(|benchmark| benchmark.tier == Tier::Regressed)
+        .filter(|benchmark| benchmark.ir.delta().is_some_and(|delta| delta > 0))
+        .collect();
+    regressions.sort_by_key(|benchmark| std::cmp::Reverse(benchmark.ir.delta().unwrap_or(0)));
+    regressions.truncate(config::REPORT.max_chart_bars);
+    regressions
+}
+
+/// A bar chart of absolute `Ir` regressions with the policy floor as a line.
+#[allow(clippy::cast_precision_loss)]
+fn impact_chart(regressions: &[&Benchmark]) -> Vec<String> {
+    let labels: Vec<String> = (1..=regressions.len())
+        .map(|index| index.to_string())
+        .collect();
+    let values: Vec<u64> = regressions
+        .iter()
+        .map(|benchmark| benchmark.ir.delta().unwrap_or(0).unsigned_abs())
+        .collect();
+    let max = values.iter().copied().max().unwrap_or(0);
+    let floor = config::POLICY.floor as f64;
+    let best = (max as f64 * 1.1).max(floor);
+    let line = |value: f64| {
+        format!(
+            "    line [{}]",
+            labels
+                .iter()
+                .map(|_| format!("{value:.0}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+
+    vec![
+        "```mermaid".to_owned(),
+        "---".to_owned(),
+        "config:".to_owned(),
+        "  themeVariables:".to_owned(),
+        "    xyChart:".to_owned(),
+        "      plotColorPalette: \"#cf222e, #d0d7de\"".to_owned(),
+        "---".to_owned(),
+        "xychart-beta".to_owned(),
+        "    title \"Ir regression impact\"".to_owned(),
+        format!(
+            "    x-axis [{}]",
+            labels
+                .iter()
+                .map(|label| format!("\"{label}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        format!("    y-axis \"Δ Ir\" 0 --> {best:.0}"),
+        format!(
+            "    bar [{}]",
+            values
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        line(floor),
+        "```".to_owned(),
+    ]
+}
+
+/// The numbered rows shared by the impact chart.
+fn impact_legend(regressions: &[&Benchmark]) -> Vec<String> {
+    let mut lines = vec![
+        "**Chart legend**".to_owned(),
+        String::new(),
+        "| # | Benchmark | Δ Ir | Δ Ir% |".to_owned(),
+        "| ---: | --- | ---: | ---: |".to_owned(),
+    ];
+    for (index, benchmark) in regressions.iter().enumerate() {
+        let delta = benchmark.ir.delta().unwrap_or(0);
+        lines.push(format!(
+            "| {} | {} | {} | {} |",
+            index + 1,
+            benchmark.label(),
+            number(Some(u64::try_from(delta).unwrap_or(0))),
+            percent(benchmark.ir.pct)
+        ));
+    }
     lines
 }
 
 fn collapsed_sections(run: &RunSummary) -> Vec<String> {
     let mut lines = Vec::new();
     for (tier, title) in [
-        (Tier::Drift, "🟡 Drift within limits"),
-        (Tier::Improved, "🟢 Improvements"),
+        (Tier::Drift, "Drift within limits"),
+        (Tier::Improved, "Improvements"),
     ] {
         let selected: Vec<&Benchmark> = run
             .benchmarks
@@ -362,109 +459,6 @@ pub fn table(benchmarks: &[&Benchmark]) -> Vec<String> {
         lines.push(row);
     }
     lines
-}
-
-fn chart(benchmarks: &[Benchmark]) -> Vec<String> {
-    let mut changed: Vec<&Benchmark> = benchmarks
-        .iter()
-        .filter(|benchmark| benchmark.ir.delta().is_some_and(|delta| delta != 0))
-        .collect();
-    changed.sort_by_key(|benchmark| std::cmp::Reverse(benchmark.ir.delta().unwrap_or(0).abs()));
-    changed.truncate(config::REPORT.max_chart_bars);
-    if changed.is_empty() {
-        return Vec::new();
-    }
-
-    let labels: Vec<String> = changed
-        .iter()
-        .map(|benchmark| benchmark.label().replace('"', "'"))
-        .collect();
-    let mut regressed = Vec::new();
-    let mut drift = Vec::new();
-    let mut improved = Vec::new();
-    for benchmark in &changed {
-        let pct = match benchmark.ir.pct {
-            Some(value) if value.is_infinite() && value.is_sign_positive() => 100.0,
-            Some(value) if value.is_infinite() => -100.0,
-            Some(value) => value,
-            None => 0.0,
-        };
-        let (regressed_value, drift_value, improved_value) = match benchmark.tier {
-            Tier::Regressed => (pct, 0.0, 0.0),
-            Tier::Improved => (0.0, 0.0, pct),
-            _ => (0.0, pct, 0.0),
-        };
-        regressed.push(regressed_value);
-        drift.push(drift_value);
-        improved.push(improved_value);
-    }
-
-    let mut worst = -config::POLICY.backstop;
-    let mut best = config::POLICY.backstop;
-    for value in regressed.iter().chain(&drift).chain(&improved) {
-        worst = worst.min(*value);
-        best = best.max(*value);
-    }
-    worst = worst.min(-5.0);
-    best = best.max(5.0);
-    let mut note = "";
-    if best > 50.0 || worst < -50.0 {
-        note = " (axis clipped at ±50%)";
-        best = best.min(50.0);
-        worst = worst.max(-50.0);
-    }
-
-    let bars = |points: &[f64]| {
-        format!(
-            "    bar [{}]",
-            points
-                .iter()
-                .map(|value| format!("{value:.2}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    let line = |value: f64| {
-        format!(
-            "    line [{}]",
-            labels
-                .iter()
-                .map(|_| format!("{value:.2}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-
-    vec![
-        "```mermaid".to_owned(),
-        "---".to_owned(),
-        "config:".to_owned(),
-        "  themeVariables:".to_owned(),
-        "    xyChart:".to_owned(),
-        "      plotColorPalette: \"#cf222e, #9a6700, #1a7f37, #8c959f, #d0d7de, #d0d7de\""
-            .to_owned(),
-        "---".to_owned(),
-        "xychart-beta".to_owned(),
-        format!(
-            "    title \"ΔIr% vs baseline — red = regression, amber = drift, green = improved{note}\""
-        ),
-        format!(
-            "    x-axis [{}]",
-            labels
-                .iter()
-                .map(|label| format!("\"{label}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        format!("    y-axis \"Δ %\" {worst:.2} --> {best:.2}"),
-        bars(&regressed),
-        bars(&drift),
-        bars(&improved),
-        line(config::POLICY.limit),
-        line(config::POLICY.backstop),
-        line(-config::POLICY.backstop),
-        "```".to_owned(),
-    ]
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -616,10 +610,38 @@ mod tests {
             exit_code: 3,
         };
         let report = build_report(&run);
-        assert!(report.contains("🔴 Regressions detected"));
-        assert!(report.contains("### 🔴 Regressions"));
+        assert!(report.contains("Regressions detected"));
+        assert!(report.contains("### Regressions"));
+        assert!(report.contains("### Regression impact"));
         assert!(report.contains("Join vs std join (baseline)"));
-        assert!(report.contains("```mermaid"));
+        assert!(report.contains("xychart-beta"));
+        assert!(report.contains("x-axis [\"1\"]"));
+        assert!(report.contains("**Chart legend**"));
+        assert!(report.contains("| 1 |"));
+        assert!(!report.contains("pie showData"));
+        assert!(!report.contains("quadrantChart"));
         assert!(report.contains("All benchmarks (3)"));
+    }
+
+    #[test]
+    fn omits_the_regression_chart_when_nothing_regressed() {
+        let mut unchanged = benchmark("bench_join_slice", "one_item", 100, 100, "join");
+        classify(&mut unchanged, &[]);
+        let run = RunSummary {
+            benchmarks: vec![unchanged],
+            baseline: Metadata::default(),
+            current: Metadata::default(),
+            baseline_found: true,
+            toolchain_matched: true,
+            mismatches: Vec::new(),
+            exit_code: 0,
+        };
+        let report = build_report(&run);
+        assert!(report.contains("No regressions"));
+        assert!(!report.contains("Regression impact"));
+        assert!(!report.contains("xychart-beta"));
+        assert!(!report.contains("**Chart legend**"));
+        assert!(!report.contains("pie showData"));
+        assert!(!report.contains("quadrantChart"));
     }
 }

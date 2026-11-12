@@ -12,14 +12,11 @@ pub struct Policy {
     pub floor: u64,
     /// Exact counts with a matched toolchain gate on any reproducible increase.
     pub limit: f64,
-    /// The compiled-in gungraun soft limit, shown as the reference band.
-    pub backstop: f64,
 }
 
 pub const POLICY: Policy = Policy {
     floor: 16,
     limit: 0.0,
-    backstop: 1.0,
 };
 
 /// Presentation limits, separate from the gating policy.

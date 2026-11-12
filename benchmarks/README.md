@@ -95,8 +95,7 @@ image changes before they show up as warnings) and manually via `workflow_dispat
 - **Policy** — because the counts are deterministic, the workflow gates on any reproducible
   increase: `Ir` above a 16-instruction floor (single-instruction churn on trivial benches is
   reported as drift instead), plus any growth in DHAT `TotalBlocks`/`TotalBytes` for the join
-  suite. The compiled-in ±1% Callgrind limit remains the backstop, and the chart draws it as
-  the reference band.
+  suite. The compiled-in ±1% Callgrind limit remains the backstop.
 - **Toolchain drift** — the baseline records rustc release/commit, Valgrind, gungraun-runner
   versions and the `Cargo.lock` hash. A mismatch downgrades regressions to warnings with a
   banner instead of producing false alarms. The next main run re-records the baseline under
@@ -110,8 +109,8 @@ image changes before they show up as warnings) and manually via `workflow_dispat
   read-only, so API publishing is skipped. Regressions also upload the raw `summary.json`
   files and Callgrind flamegraph SVGs for old and new code.
 - **Waivers** — the `WAIVERS` constant in `xtask/src/bench/config.rs` documents accepted
-  regressions (reason and optional `YYYY-MM-DD` expiry). Waived entries stay visible as ⚠ in
-  the report but do not fail the check.
+  regressions (reason and optional `YYYY-MM-DD` expiry). Waived entries stay visible in the
+  report but do not fail the check.
 - **Adding benchmarks or suites** — no report code needs to change. Case labels come from the
   benchmark ids in the Rust sources (`#[bench::leap_day_anniversary]` renders as "leap day
   anniversary"); new suites are discovered from the summary files, and benchmarks sharing a
