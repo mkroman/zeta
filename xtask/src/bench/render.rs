@@ -23,18 +23,18 @@ pub fn headline(run: &RunSummary) -> String {
     let verdict = policy::verdict(run);
     let counts = counts(&run.benchmarks);
     let mut parts = Vec::new();
-    for (tier, icon, label) in [
-        (Tier::Regressed, "🔴", "regression(s)"),
-        (Tier::Warning, "⚠", "warning(s)"),
-        (Tier::Waived, "⚠", "waived"),
-        (Tier::Drift, "🟡", "drift"),
-        (Tier::Improved, "🟢", "improved"),
-        (Tier::Unchanged, "⚪", "unchanged"),
-        (Tier::New, "🆕", "new"),
+    for (tier, label) in [
+        (Tier::Regressed, "regression(s)"),
+        (Tier::Warning, "warning(s)"),
+        (Tier::Waived, "waived"),
+        (Tier::Drift, "drift"),
+        (Tier::Improved, "improved"),
+        (Tier::Unchanged, "unchanged"),
+        (Tier::New, "new"),
     ] {
         let count = counts.get(&tier).copied().unwrap_or(0);
         if count > 0 {
-            parts.push(format!("{icon} {count} {label}"));
+            parts.push(format!("{count} {label}"));
         }
     }
     let detail = if parts.is_empty() {
@@ -44,23 +44,22 @@ pub fn headline(run: &RunSummary) -> String {
     };
 
     match verdict {
-        Verdict::Regressed => format!("🔴 Regressions detected — check fails\n\n{detail}"),
+        Verdict::Regressed => format!("Regressions detected — check fails\n\n{detail}"),
         Verdict::Warning => {
-            format!("⚠ Toolchain mismatch — regressions reported as warnings\n\n{detail}")
+            format!("Toolchain mismatch — regressions reported as warnings\n\n{detail}")
         }
         Verdict::NoBaseline => {
-            "ℹ️ No baseline recorded yet — this run records measurements but does not gate"
-                .to_owned()
+            "No baseline recorded yet — this run records measurements but does not gate".to_owned()
         }
-        Verdict::Error => "❌ Benchmark run failed — see the job log".to_owned(),
-        Verdict::Ok => format!("✅ No regressions\n\n{detail}"),
+        Verdict::Error => "Benchmark run failed — see the job log".to_owned(),
+        Verdict::Ok => format!("No regressions\n\n{detail}"),
     }
 }
 
 #[must_use]
 pub fn metadata_block(run: &RunSummary) -> Vec<String> {
     if !run.baseline_found {
-        return vec!["ℹ️ No last-known-good baseline artifact was available.".to_owned()];
+        return vec!["No last-known-good baseline artifact was available.".to_owned()];
     }
 
     let mut rows = Vec::new();
@@ -69,10 +68,7 @@ pub fn metadata_block(run: &RunSummary) -> Vec<String> {
         ("valgrind", "valgrind"),
         ("gungraun-runner", "gungraun"),
     ] {
-        let baseline = run.baseline.get(key);
-        let current = run.current.get(key);
-        let mark = if baseline == current { "✓" } else { "⚠" };
-        rows.push(format!("{label} {} ({mark})", or_unknown(current)));
+        rows.push(format!("{label} {}", or_unknown(run.current.get(key))));
     }
     let lock = if !run.baseline.get("cargo-lock-hash").is_empty()
         && run.baseline.get("cargo-lock-hash") == run.current.get("cargo-lock-hash")
@@ -104,7 +100,7 @@ pub fn metadata_block(run: &RunSummary) -> Vec<String> {
         format!(
             "Baseline: main@{sha} ({age}){}",
             if stale {
-                format!(" — ⚠ older than {} days", config::REPORT.stale_days)
+                format!(" — older than {} days", config::REPORT.stale_days)
             } else {
                 String::new()
             }
@@ -114,7 +110,7 @@ pub fn metadata_block(run: &RunSummary) -> Vec<String> {
     if !run.toolchain_matched {
         lines.extend([
             String::new(),
-            "> ⚠ **Toolchain mismatch vs baseline** — instruction counts are not comparable; \
+            "> **Toolchain mismatch vs baseline** — instruction counts are not comparable; \
              regressions are reported as warnings. Re-record the baseline from main \
              (`Benchmarks` → Run workflow) after the toolchain settles."
                 .to_owned(),
@@ -137,7 +133,7 @@ const fn or_unknown(value: &str) -> &str {
 #[must_use]
 pub fn build_report(run: &RunSummary) -> String {
     let mut lines = vec![
-        "## 🔬 Bench report".to_owned(),
+        "## Bench report".to_owned(),
         String::new(),
         headline(run),
         String::new(),
@@ -147,7 +143,7 @@ pub fn build_report(run: &RunSummary) -> String {
 
     if run.baseline_found {
         lines.extend(totals_section(run));
-        lines.extend(visuals_section(run));
+        lines.extend(regression_impact_section(run));
         lines.extend(changed_sections(run));
         lines.extend(collapsed_sections(run));
         lines.extend(all_benchmarks_section(run));
@@ -156,15 +152,15 @@ pub fn build_report(run: &RunSummary) -> String {
     lines.extend([
         "---".to_owned(),
         String::new(),
-        "*Methodology: one-shot Valgrind Callgrind and DHAT — counts are exact integers, not \
-         statistical samples, so there are no confidence intervals. The verdict pie summarizes \
-         the tiers; numbered chart points map to the chart legend; the impact quadrant plots \
-         relative change against absolute Ir. The chart lines show the configured acceptance \
-         limit and gungraun's compiled-in soft limit as a reference band; the workflow gates on \
-         any reproducible increase above the instruction floor. Cross-implementation ratios are \
-         informational and never gated. Flamegraph SVGs and the raw `summary.json` files are \
-         attached to the run artifacts.*"
-            .to_owned(),
+        format!(
+            "*Methodology: one-shot Valgrind Callgrind and DHAT — counts are exact integers, \
+             not statistical samples, so there are no confidence intervals. The chart shows \
+             absolute `Ir` increases for regressions and marks the {} instruction floor; the \
+             workflow gates on any reproducible increase above that floor. \
+             Cross-implementation ratios are informational and never gated. Flamegraph SVGs and \
+             the raw `summary.json` files are attached to the run artifacts.*",
+            config::POLICY.floor
+        ),
         String::new(),
     ]);
     lines.join("\n")
@@ -198,9 +194,9 @@ fn totals_section(run: &RunSummary) -> Vec<String> {
 fn changed_sections(run: &RunSummary) -> Vec<String> {
     let mut lines = Vec::new();
     for (tier, title) in [
-        (Tier::Regressed, "🔴 Regressions"),
-        (Tier::Waived, "⚠ Waived regressions"),
-        (Tier::Warning, "⚠ Warnings"),
+        (Tier::Regressed, "Regressions"),
+        (Tier::Waived, "Waived regressions"),
+        (Tier::Warning, "Warnings"),
     ] {
         let mut selected: Vec<&Benchmark> = run
             .benchmarks
@@ -227,187 +223,123 @@ fn changed_sections(run: &RunSummary) -> Vec<String> {
     lines
 }
 
-/// The visual overview: verdict distribution, per-benchmark `ΔIr%`, and impact.
-fn visuals_section(run: &RunSummary) -> Vec<String> {
-    let mut lines = Vec::new();
-    let pie = verdict_pie(&run.benchmarks);
-    if !pie.is_empty() {
-        lines.push("### 📊 Verdicts".to_owned());
-        lines.push(String::new());
-        lines.extend(pie);
-        lines.push(String::new());
-    }
-
-    lines.push("### 📈 Instruction changes".to_owned());
-    lines.push(String::new());
-
-    let changed = chart_benchmarks(&run.benchmarks);
-    if changed.is_empty() {
-        lines.push("✅ No measurable instruction changes.".to_owned());
-        lines.push(String::new());
-        return lines;
-    }
-
-    lines.extend(chart(&changed));
-    lines.push(String::new());
-    lines.extend(chart_legend(&changed));
-    lines.push(String::new());
-
-    lines.push("### 🎯 Impact".to_owned());
-    lines.push(String::new());
-    lines.extend(quadrant(&changed));
-    lines.push(String::new());
-    lines
-}
-
-/// A pie chart of the verdict counts.
-fn verdict_pie(benchmarks: &[Benchmark]) -> Vec<String> {
-    let counts = counts(benchmarks);
-    let mut slices = Vec::new();
-    let mut colors = Vec::new();
-    for tier in Tier::ALL {
-        let count = counts.get(&tier).copied().unwrap_or(0);
-        if count > 0 {
-            slices.push(format!("    \"{}\" : {count}", tier.name()));
-            colors.push(format!("    pie{}: \"{}\"", colors.len() + 1, tier.color()));
-        }
-    }
-    if slices.is_empty() {
+/// The regression impact chart: absolute `Ir` deltas against the gate floor.
+fn regression_impact_section(run: &RunSummary) -> Vec<String> {
+    let regressions = ir_regressions(&run.benchmarks);
+    if regressions.is_empty() {
         return Vec::new();
     }
 
     let mut lines = vec![
+        "### Regression impact".to_owned(),
+        String::new(),
+        format!(
+            "Bars show the absolute `Ir` increase; the line marks the {} instruction floor.",
+            config::POLICY.floor
+        ),
+        String::new(),
+    ];
+    lines.extend(impact_chart(&regressions));
+    lines.push(String::new());
+    lines.extend(impact_legend(&regressions));
+    lines.push(String::new());
+    lines
+}
+
+/// Positive `Ir` regressions, largest absolute increase first.
+fn ir_regressions(benchmarks: &[Benchmark]) -> Vec<&Benchmark> {
+    let mut regressions: Vec<&Benchmark> = benchmarks
+        .iter()
+        .filter(|benchmark| benchmark.tier == Tier::Regressed)
+        .filter(|benchmark| benchmark.ir.delta().is_some_and(|delta| delta > 0))
+        .collect();
+    regressions.sort_by_key(|benchmark| std::cmp::Reverse(benchmark.ir.delta().unwrap_or(0)));
+    regressions.truncate(config::REPORT.max_chart_bars);
+    regressions
+}
+
+/// A bar chart of absolute `Ir` regressions with the policy floor as a line.
+#[allow(clippy::cast_precision_loss)]
+fn impact_chart(regressions: &[&Benchmark]) -> Vec<String> {
+    let labels: Vec<String> = (1..=regressions.len())
+        .map(|index| index.to_string())
+        .collect();
+    let values: Vec<u64> = regressions
+        .iter()
+        .map(|benchmark| benchmark.ir.delta().unwrap_or(0).unsigned_abs())
+        .collect();
+    let max = values.iter().copied().max().unwrap_or(0);
+    let floor = config::POLICY.floor as f64;
+    let best = (max as f64 * 1.1).max(floor);
+    let line = |value: f64| {
+        format!(
+            "    line [{}]",
+            labels
+                .iter()
+                .map(|_| format!("{value:.0}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+
+    vec![
         "```mermaid".to_owned(),
         "---".to_owned(),
         "config:".to_owned(),
         "  themeVariables:".to_owned(),
-    ];
-    lines.extend(colors);
-    lines.extend([
+        "    xyChart:".to_owned(),
+        "      plotColorPalette: \"#cf222e, #d0d7de\"".to_owned(),
         "---".to_owned(),
-        "pie showData".to_owned(),
-        "    title Verdict distribution".to_owned(),
-    ]);
-    lines.extend(slices);
-    lines.push("```".to_owned());
-    lines
+        "xychart-beta".to_owned(),
+        "    title \"Ir regression impact\"".to_owned(),
+        format!(
+            "    x-axis [{}]",
+            labels
+                .iter()
+                .map(|label| format!("\"{label}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        format!("    y-axis \"Δ Ir\" 0 --> {best:.0}"),
+        format!(
+            "    bar [{}]",
+            values
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        line(floor),
+        "```".to_owned(),
+    ]
 }
 
-/// Benchmarks shown in the charts, largest absolute change first.
-fn chart_benchmarks(benchmarks: &[Benchmark]) -> Vec<&Benchmark> {
-    let mut changed: Vec<&Benchmark> = benchmarks
-        .iter()
-        .filter(|benchmark| benchmark.ir.delta().is_some_and(|delta| delta != 0))
-        .collect();
-    changed.sort_by_key(|benchmark| std::cmp::Reverse(benchmark.ir.delta().unwrap_or(0).abs()));
-    changed.truncate(config::REPORT.max_chart_bars);
-    changed
-}
-
-/// The percentage shown in the charts; infinite changes are clipped for the axes.
-#[must_use]
-const fn chart_percent(benchmark: &Benchmark) -> f64 {
-    match benchmark.ir.pct {
-        Some(value) if value.is_infinite() && value.is_sign_positive() => 100.0,
-        Some(value) if value.is_infinite() => -100.0,
-        Some(value) => value,
-        None => 0.0,
-    }
-}
-
-/// The numbered rows shared by both charts.
-fn chart_legend(changed: &[&Benchmark]) -> Vec<String> {
+/// The numbered rows shared by the impact chart.
+fn impact_legend(regressions: &[&Benchmark]) -> Vec<String> {
     let mut lines = vec![
         "**Chart legend**".to_owned(),
         String::new(),
-        "| # | Benchmark | Δ Ir% | Verdict |".to_owned(),
-        "| ---: | --- | ---: | --- |".to_owned(),
+        "| # | Benchmark | Δ Ir | Δ Ir% |".to_owned(),
+        "| ---: | --- | ---: | ---: |".to_owned(),
     ];
-    for (index, benchmark) in changed.iter().enumerate() {
+    for (index, benchmark) in regressions.iter().enumerate() {
+        let delta = benchmark.ir.delta().unwrap_or(0);
         lines.push(format!(
             "| {} | {} | {} | {} |",
             index + 1,
             benchmark.label(),
-            percent(benchmark.ir.pct),
-            benchmark.tier.label()
+            number(Some(u64::try_from(delta).unwrap_or(0))),
+            percent(benchmark.ir.pct)
         ));
     }
     lines
-}
-
-/// An impact quadrant: relative change against the absolute instruction count.
-#[allow(clippy::cast_precision_loss)]
-fn quadrant(changed: &[&Benchmark]) -> Vec<String> {
-    let max_percent = changed
-        .iter()
-        .map(|benchmark| chart_percent(benchmark).abs())
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
-    let max_ir = changed
-        .iter()
-        .map(|benchmark| benchmark.ir.new.or(benchmark.ir.old).unwrap_or(0))
-        .max()
-        .unwrap_or(0)
-        .max(1);
-
-    let mut lines = vec![
-        "```mermaid".to_owned(),
-        "---".to_owned(),
-        "config:".to_owned(),
-        "  quadrantChart:".to_owned(),
-        "    chartWidth: 700".to_owned(),
-        "    chartHeight: 500".to_owned(),
-        "    pointLabelFontSize: 10".to_owned(),
-        "---".to_owned(),
-        "quadrantChart".to_owned(),
-        "    title Impact: ΔIr% vs absolute Ir".to_owned(),
-        "    x-axis \"improvement\" --> \"regression\"".to_owned(),
-        "    y-axis \"low Ir\" --> \"high Ir\"".to_owned(),
-        "    quadrant-1 \"large regression\"".to_owned(),
-        "    quadrant-2 \"large improvement\"".to_owned(),
-        "    quadrant-3 \"small improvement\"".to_owned(),
-        "    quadrant-4 \"small regression\"".to_owned(),
-    ];
-    for (index, benchmark) in changed.iter().enumerate() {
-        let relative = chart_percent(benchmark);
-        let x = 0.96_f64
-            .mul_add(0.5 + relative / (2.0 * max_percent), 0.02)
-            .clamp(0.02, 0.98);
-        let ir = benchmark.ir.new.or(benchmark.ir.old).unwrap_or(0);
-        let y = 0.96_f64
-            .mul_add(ir as f64 / max_ir as f64, 0.02)
-            .clamp(0.02, 0.98);
-        lines.push(format!(
-            "    \"{}\": [{}, {}] color: {}, radius: 6",
-            index + 1,
-            quadrant_coordinate(x),
-            quadrant_coordinate(y),
-            benchmark.tier.color()
-        ));
-    }
-    lines.push("```".to_owned());
-    lines
-}
-
-/// Format a coordinate in the `0`..`1` subset Mermaid's quadrant parser accepts.
-#[must_use]
-fn quadrant_coordinate(value: f64) -> String {
-    if !value.is_finite() {
-        "0.500".to_owned()
-    } else if value >= 1.0 {
-        "1".to_owned()
-    } else if value <= 0.0 {
-        "0".to_owned()
-    } else {
-        format!("{value:.3}")
-    }
 }
 
 fn collapsed_sections(run: &RunSummary) -> Vec<String> {
     let mut lines = Vec::new();
     for (tier, title) in [
-        (Tier::Drift, "🟡 Drift within limits"),
-        (Tier::Improved, "🟢 Improvements"),
+        (Tier::Drift, "Drift within limits"),
+        (Tier::Improved, "Improvements"),
     ] {
         let selected: Vec<&Benchmark> = run
             .benchmarks
@@ -527,73 +459,6 @@ pub fn table(benchmarks: &[&Benchmark]) -> Vec<String> {
         lines.push(row);
     }
     lines
-}
-
-fn chart(changed: &[&Benchmark]) -> Vec<String> {
-    let labels: Vec<String> = (1..=changed.len()).map(|index| index.to_string()).collect();
-    let values: Vec<f64> = changed
-        .iter()
-        .map(|benchmark| chart_percent(benchmark))
-        .collect();
-
-    let mut worst = -config::POLICY.backstop;
-    let mut best = config::POLICY.backstop;
-    for value in &values {
-        worst = worst.min(*value);
-        best = best.max(*value);
-    }
-    worst = worst.min(-5.0);
-    best = best.max(5.0);
-    let mut y_label = "Δ %";
-    if best > 50.0 || worst < -50.0 {
-        y_label = "Δ % (clipped ±50%)";
-        best = best.min(50.0);
-        worst = worst.max(-50.0);
-    }
-
-    let line = |value: f64| {
-        format!(
-            "    line [{}]",
-            labels
-                .iter()
-                .map(|_| format!("{value:.2}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-
-    vec![
-        "```mermaid".to_owned(),
-        "---".to_owned(),
-        "config:".to_owned(),
-        "  themeVariables:".to_owned(),
-        "    xyChart:".to_owned(),
-        "      plotColorPalette: \"#0969da, #d0d7de, #d0d7de, #d0d7de\"".to_owned(),
-        "---".to_owned(),
-        "xychart-beta".to_owned(),
-        "    title \"ΔIr% vs baseline (+ = regression)\"".to_owned(),
-        format!(
-            "    x-axis [{}]",
-            labels
-                .iter()
-                .map(|label| format!("\"{label}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        format!("    y-axis \"{y_label}\" {worst:.2} --> {best:.2}"),
-        format!(
-            "    bar [{}]",
-            values
-                .iter()
-                .map(|value| format!("{value:.2}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        line(config::POLICY.limit),
-        line(config::POLICY.backstop),
-        line(-config::POLICY.backstop),
-        "```".to_owned(),
-    ]
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -745,20 +610,21 @@ mod tests {
             exit_code: 3,
         };
         let report = build_report(&run);
-        assert!(report.contains("🔴 Regressions detected"));
-        assert!(report.contains("### 🔴 Regressions"));
+        assert!(report.contains("Regressions detected"));
+        assert!(report.contains("### Regressions"));
+        assert!(report.contains("### Regression impact"));
         assert!(report.contains("Join vs std join (baseline)"));
-        assert!(report.contains("pie showData"));
         assert!(report.contains("xychart-beta"));
         assert!(report.contains("x-axis [\"1\"]"));
-        assert!(report.contains("quadrantChart"));
         assert!(report.contains("**Chart legend**"));
         assert!(report.contains("| 1 |"));
+        assert!(!report.contains("pie showData"));
+        assert!(!report.contains("quadrantChart"));
         assert!(report.contains("All benchmarks (3)"));
     }
 
     #[test]
-    fn renders_the_verdict_pie_when_nothing_changed() {
+    fn omits_the_regression_chart_when_nothing_regressed() {
         let mut unchanged = benchmark("bench_join_slice", "one_item", 100, 100, "join");
         classify(&mut unchanged, &[]);
         let run = RunSummary {
@@ -771,17 +637,11 @@ mod tests {
             exit_code: 0,
         };
         let report = build_report(&run);
-        assert!(report.contains("pie showData"));
-        assert!(report.contains("✅ No measurable instruction changes."));
+        assert!(report.contains("No regressions"));
+        assert!(!report.contains("Regression impact"));
         assert!(!report.contains("xychart-beta"));
+        assert!(!report.contains("**Chart legend**"));
+        assert!(!report.contains("pie showData"));
         assert!(!report.contains("quadrantChart"));
-    }
-
-    #[test]
-    fn formats_quadrant_coordinates_for_mermaid() {
-        assert_eq!(quadrant_coordinate(0.0), "0");
-        assert_eq!(quadrant_coordinate(1.0), "1");
-        assert_eq!(quadrant_coordinate(0.5), "0.500");
-        assert_eq!(quadrant_coordinate(f64::NAN), "0.500");
     }
 }

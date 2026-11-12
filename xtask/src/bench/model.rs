@@ -50,43 +50,16 @@ impl Tier {
         Self::New,
     ];
 
-    /// The tier without its icon, for diagrams and machine-readable summaries.
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Regressed => "regression",
             Self::Warning => "warning",
             Self::Waived => "waived",
             Self::Drift => "drift",
-            Self::Improved => "improvement",
+            Self::Improved => "improved",
             Self::Unchanged => "unchanged",
             Self::New => "new",
-        }
-    }
-
-    /// The tier's color in Mermaid diagrams, matching the report's verdict palette.
-    #[must_use]
-    pub const fn color(self) -> &'static str {
-        match self {
-            Self::Regressed => "#cf222e",
-            Self::Warning | Self::Waived => "#9a6700",
-            Self::Drift => "#d4a72c",
-            Self::Improved => "#1a7f37",
-            Self::Unchanged => "#8c959f",
-            Self::New => "#0969da",
-        }
-    }
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Regressed => "🔴 regression",
-            Self::Warning => "⚠ warning",
-            Self::Waived => "⚠ waived",
-            Self::Drift => "🟡 drift",
-            Self::Improved => "🟢 improved",
-            Self::Unchanged => "⚪ unchanged",
-            Self::New => "🆕 new",
         }
     }
 }
