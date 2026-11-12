@@ -2,6 +2,9 @@
 
 ARG RUST_VERSION=1.99-bookworm
 
+# Official mise image, pinned by digest so the tool bootstrap is reproducible.
+FROM ghcr.io/jdx/mise:2026.11.6@sha256:d4de1845114f6d73e90e15f7642885f74f3ca93074491038a2b9c43e4b897f21 AS mise
+
 # Base layer with build tools
 FROM rust:${RUST_VERSION} AS chef
 WORKDIR /usr/src/app
@@ -13,14 +16,24 @@ ENV CARGO_TERM_COLOR=always \
 # BoringSSL (wreq, titles plugin) needs cmake, and bindgen needs libclang.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        ca-certificates \
         cmake \
         libclang-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install cargo-chef and cargo-auditable from their checksummed release binaries.
-COPY ./hack/install-cargo-tool.sh /usr/local/bin/install-cargo-tool
-RUN sh /usr/local/bin/install-cargo-tool cargo-chef /usr/local/bin && \
-    sh /usr/local/bin/install-cargo-tool cargo-auditable /usr/local/bin
+# Install cargo-chef and cargo-auditable from their checksummed GitHub releases
+# (prebuilt binaries — much faster in CI than compiling them). mise verifies
+# both against mise.docker.lock before exposing their shims.
+COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise
+ENV MISE_DATA_DIR=/mise \
+    MISE_CONFIG_DIR=/mise \
+    MISE_CACHE_DIR=/mise/cache \
+    MISE_ENV=docker \
+    PATH="/mise/shims:${PATH}"
+COPY mise.docker.toml mise.docker.lock ./
+RUN --mount=type=cache,target=/mise/cache \
+    mise trust && \
+    mise install --locked
 
 # Analyze project dependencies
 FROM chef AS planner

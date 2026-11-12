@@ -1,0 +1,36 @@
+# Keep this in step with the mise-action `version` inputs and renovate's
+# `constraints.mise`; they select the CLI that reads this lockfile.
+min_version = "2026.10.19"
+
+[settings]
+lockfile = true
+minimum_release_age = "7d"
+# Resolve checksums from the forge/registry itself, not mise's metadata mirror.
+# Versions are pinned exactly, so the version-list cache buys nothing here.
+use_versions_host = false
+
+[tools]
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
+
+[tasks.fmt]
+run = "cargo fmt --all -- --check"
+
+[tasks.clippy]
+run = "cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings"
+
+[tasks.doc]
+run = "cargo doc --workspace --no-deps --all-features"
+env = { RUSTDOCFLAGS = "-D warnings" }
+
+[tasks.actionlint]
+# SC2086 flags the intentional word splitting in the test workflow's argument lists.
+run = "actionlint -ignore 'not following the format' -ignore 'SC2086' .github/workflows/*.yaml"
+
+[tasks.check]
+run = [
+  "mise run fmt",
+  "mise run clippy",
+  "mise run doc",
+  "mise run actionlint",
+]

@@ -54,6 +54,23 @@ Two rules keep the graph honest:
 - **`zeta-plugin` is only the contract** between the host and the plugins — anything that is
   implementation rather than vocabulary belongs in an infrastructure crate.
 
+## Development
+
+Auxiliary CI and release tools are pinned with [mise](https://mise.jdx.dev/). Install them with:
+
+```sh
+mise install --locked
+mise run check
+```
+
+`mise run check` runs formatting, Clippy, rustdoc and actionlint. The full test suite needs the
+Postgres service from `compose.yaml`, and the all-features build uses the same native
+dependencies as the container (`cmake` and `libclang`).
+
+The container image uses `mise.docker.toml`/`mise.docker.lock`, which pin the checksummed
+`cargo-chef` and `cargo-auditable` binaries; release builds use the same lock through
+`MISE_ENV=docker`. The Rust toolchain itself is managed by rustup.
+
 ## License
 
 Licensed under either of

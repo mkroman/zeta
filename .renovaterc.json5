@@ -4,20 +4,9 @@
     "config:recommended",
     "config:best-practices"
   ],
-  "customManagers": [
-    {
-      // Keep the pinned cargo tool versions and checksums in sync with their
-      // GitHub releases. The computed digest is the release's `sha256.sum`.
-      "customType": "regex",
-      "description": "cargo tools in hack/install-cargo-tool.sh",
-      "managerFilePatterns": ["/^hack\\/install-cargo-tool\\.sh$/"],
-      "matchStrings": [
-        "package_name=\"(?<packageName>[^\"]+)\"\\n\\s*version=\"(?<currentValue>[^\"]+)\"\\n\\s*manifest_sha256=\"(?<currentDigest>[a-f0-9]{64})\"",
-      ],
-      "datasourceTemplate": "github-release-attachments",
-      "versioningTemplate": "semver",
-    },
-  ],
+  "constraints": {
+    "mise": "v2026.11.6"
+  },
   "lockFileMaintenance": {
     enabled: false
   },
@@ -52,10 +41,22 @@
       "matchDatasources": ["docker"],
       "pinDigests": false
     },
-    // Group the cargo tool updates in hack/install-cargo-tool.sh
+    // Group pinned CI tool updates managed by mise
     {
-      "matchDatasources": ["github-release-attachments"],
-      "groupName": "cargo tools"
+      "matchManagers": ["mise"],
+      "groupName": "pinned CI tools",
+      "minimumReleaseAge": "7 days"
+    },
+    // Group the mise CLI version across workflows, the Dockerfile, and tool constraints
+    {
+      "matchPackageNames": ["jdx/mise", "ghcr.io/jdx/mise", "mise"],
+      "groupName": "mise CLI"
+    },
+    // Group Docker build tool updates in mise.docker.toml
+    {
+      "matchFileNames": ["mise.docker.toml"],
+      "groupName": "docker build tools",
+      "minimumReleaseAge": "7 days"
     },
     // AWS publishes one aggregate daily release for all SDK crates, so link
     // each crate to the matching release or the SDK changelog.
