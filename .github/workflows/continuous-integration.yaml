@@ -27,6 +27,24 @@ jobs:
     with:
       toolchain: ${{ matrix.rust }}
 
+  # `fetch-ucd` shells out to curl and manipulates paths and renames, so exercise the
+  # dependency-free xtask tests on Windows as well. No database or services are needed.
+  xtask_windows:
+    name: xtask (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - name: Test xtask
+        run: cargo test -p xtask --profile xtask
+
   # Runs in parallel; the container image job only waits for the tests.
   doc:
     name: Rustdoc
