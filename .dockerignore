@@ -1,9 +1,8 @@
 .dockerignore
 .git/
 .github/
-hack/*
-!hack/*.sh
+hack/
 target/
 Dockerfile
-renovate.json5
+.renovaterc.json5
 compose.yaml
