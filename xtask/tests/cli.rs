@@ -21,8 +21,27 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn help_lists_every_benchmark_task() {
+fn top_level_help_lists_tasks() {
     let output = xtask(&["--help"]);
+    assert!(output.status.success());
+    let stdout = stdout(&output);
+    for task in ["bench", "fetch-ucd"] {
+        assert!(
+            stdout.contains(task),
+            "help does not list `{task}`:\n{stdout}"
+        );
+    }
+    for option in ["--version", "--dest", "--emoji-version"] {
+        assert!(
+            stdout.contains(option),
+            "help does not document `{option}`:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn bench_help_lists_the_task_options() {
+    let output = xtask(&["bench", "--help"]);
     assert!(output.status.success());
     let stdout = stdout(&output);
     for task in [
@@ -35,16 +54,9 @@ fn help_lists_every_benchmark_task() {
     ] {
         assert!(
             stdout.contains(task),
-            "help does not list `{task}`:\n{stdout}"
+            "bench help does not list `{task}`:\n{stdout}"
         );
     }
-}
-
-#[test]
-fn bench_help_lists_the_task_options() {
-    let output = xtask(&["bench", "--help"]);
-    assert!(output.status.success());
-    let stdout = stdout(&output);
     for option in [
         "--output",
         "--summaries",
@@ -81,4 +93,25 @@ fn unknown_benchmark_task_fails() {
     let output = xtask(&["bench", "nonsense"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("unknown benchmark task `nonsense`"));
+}
+
+#[test]
+fn fetch_ucd_requires_version_and_dest() {
+    let output = xtask(&["fetch-ucd"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("missing required option `--version`"));
+}
+
+#[test]
+fn fetch_ucd_rejects_unknown_options_before_downloading() {
+    let output = xtask(&[
+        "fetch-ucd",
+        "--version",
+        "18.0.0",
+        "--dest",
+        "target/ucd-test",
+        "--unknown",
+    ]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("unknown option `--unknown`"));
 }
