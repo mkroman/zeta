@@ -371,6 +371,8 @@ mod tests {
 
     #[test]
     fn parses_explicit_report_arguments() {
+        let verdict = std::env::temp_dir().join("verdict.json");
+        let verdict = verdict.to_str().expect("UTF-8 temp path");
         let Ok(BenchCommand::Report(args)) = bench(&[
             "bench",
             "report",
@@ -380,14 +382,14 @@ mod tests {
             "--bench-exit-code",
             "3",
             "--verdict",
-            "/tmp/verdict.json",
+            verdict,
         ]) else {
             panic!("expected report arguments");
         };
         assert_eq!(args.summaries, workspace_root().join("custom/summaries"));
         assert!(args.baseline_found);
         assert_eq!(args.bench_exit_code, 3);
-        assert_eq!(args.verdict, PathBuf::from("/tmp/verdict.json"));
+        assert_eq!(args.verdict, PathBuf::from(verdict));
     }
 
     #[test]
