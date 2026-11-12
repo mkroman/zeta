@@ -28,6 +28,7 @@ pub enum HelpTopic {
 /// A top-level xtask task.
 pub enum Command {
     Bench(BenchCommand),
+    FetchUcd(FetchUcdArgs),
 }
 
 impl Command {
@@ -35,7 +36,28 @@ impl Command {
     pub fn run(self) -> Result<()> {
         match self {
             Self::Bench(command) => crate::bench::run(command),
+            Self::FetchUcd(args) => crate::ucd::run(&args),
         }
+    }
+}
+
+/// Arguments for `fetch-ucd`.
+pub struct FetchUcdArgs {
+    pub version: String,
+    pub dest: PathBuf,
+    pub emoji_version: Option<String>,
+}
+
+impl FetchUcdArgs {
+    fn parse(arguments: &[String]) -> Result<Self> {
+        let options = Options::parse(arguments, &["version", "dest", "emoji-version"], &[])?;
+        Ok(Self {
+            version: options.required_value("version")?.to_owned(),
+            dest: options
+                .path("dest")
+                .ok_or_else(|| Error::new("missing required option `--dest`"))?,
+            emoji_version: options.value("emoji-version").map(str::to_owned),
+        })
     }
 }
 
@@ -178,6 +200,9 @@ pub fn parse(arguments: &[String]) -> Result<Invocation> {
     };
     match task.as_str() {
         "bench" => parse_bench(rest),
+        "fetch-ucd" => Ok(Invocation::Command(Command::FetchUcd(FetchUcdArgs::parse(
+            rest,
+        )?))),
         "-h" | "--help" => Ok(Invocation::Help(HelpTopic::TopLevel)),
         _ => {
             print_usage(HelpTopic::TopLevel);
@@ -210,15 +235,12 @@ fn parse_bench(arguments: &[String]) -> Result<Invocation> {
 pub fn print_usage(topic: HelpTopic) {
     match topic {
         HelpTopic::TopLevel => println!(
-            "Usage: cargo xtask bench <command>
+            "Usage: cargo xtask <command>
 
 Commands:
-  metadata         Record the benchmark environment metadata
-  check-config     Validate the report configuration against the measured benchmarks
-  report           Render the benchmark report and verdict from Gungraun summaries
-  gate             Fail unless the verdict is passing
-  has-regressions  Print true when the verdict contains regressions
-  post-report      Post the verdict as a check run and commit statuses"
+  bench      Benchmark reporting and gate tasks (`cargo xtask bench --help`)
+  fetch-ucd  Fetch a Unicode release for Nomina training
+             --version <X.Y.Z> --dest <DIR> [--emoji-version <A.B>]"
         ),
         HelpTopic::Bench => println!(
             "Usage: cargo xtask bench <command>
@@ -280,8 +302,17 @@ impl Options {
         self.values.get(name).map(String::as_str)
     }
 
+    fn required_value(&self, name: &str) -> Result<&str> {
+        self.value(name)
+            .ok_or_else(|| Error::new(format!("missing required option `--{name}`")))
+    }
+
     fn flag(&self, name: &str) -> bool {
         self.flags.contains(name)
+    }
+
+    fn path(&self, name: &str) -> Option<PathBuf> {
+        self.value(name).map(resolve_from_root)
     }
 
     fn path_or(&self, name: &str, default: &str) -> PathBuf {
@@ -313,6 +344,7 @@ mod tests {
     fn bench(arguments: &[&str]) -> Result<BenchCommand> {
         match parse(&self::arguments(arguments))? {
             Invocation::Command(Command::Bench(command)) => Ok(command),
+            Invocation::Command(Command::FetchUcd(_)) => panic!("expected a benchmark command"),
             Invocation::Help(_) => panic!("expected a command"),
         }
     }
@@ -339,6 +371,8 @@ mod tests {
 
     #[test]
     fn parses_explicit_report_arguments() {
+        let verdict = std::env::temp_dir().join("verdict.json");
+        let verdict = verdict.to_str().expect("UTF-8 temp path");
         let Ok(BenchCommand::Report(args)) = bench(&[
             "bench",
             "report",
@@ -348,14 +382,14 @@ mod tests {
             "--bench-exit-code",
             "3",
             "--verdict",
-            "/tmp/verdict.json",
+            verdict,
         ]) else {
             panic!("expected report arguments");
         };
         assert_eq!(args.summaries, workspace_root().join("custom/summaries"));
         assert!(args.baseline_found);
         assert_eq!(args.bench_exit_code, 3);
-        assert_eq!(args.verdict, PathBuf::from("/tmp/verdict.json"));
+        assert_eq!(args.verdict, PathBuf::from(verdict));
     }
 
     #[test]
@@ -372,6 +406,24 @@ mod tests {
                 "{arguments:?} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn parses_fetch_ucd_arguments() {
+        let Ok(Invocation::Command(Command::FetchUcd(args))) = parse(&arguments(&[
+            "fetch-ucd",
+            "--version",
+            "18.0.0",
+            "--dest",
+            "target/ucd",
+            "--emoji-version",
+            "16.0",
+        ])) else {
+            panic!("expected fetch-ucd arguments");
+        };
+        assert_eq!(args.version, "18.0.0");
+        assert_eq!(args.dest, workspace_root().join("target/ucd"));
+        assert_eq!(args.emoji_version.as_deref(), Some("16.0"));
     }
 
     #[test]

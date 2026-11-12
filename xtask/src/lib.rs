@@ -17,6 +17,7 @@ mod cli;
 mod error;
 mod json;
 mod time;
+mod ucd;
 
 use std::path::Path;
 

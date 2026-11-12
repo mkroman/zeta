@@ -100,13 +100,16 @@ cargo run -p zeta-unicode-build --bin zeta-unicode-train -- \
     --data-dir ../ucd/15.1.0 --out-dir target/nomina --report --verify
 ```
 
-`hack/fetch-ucd.sh <unicode-version> <dest> [emoji-version]` fetches a release into the
-scratch directory `<dest>`. It refuses a `<dest>` that already holds any earlier candidate
-layout the trainer probes first (flat, `extracted/` or `ucd/`), because those shadow the
-fetched file; update the vendored `crates/zeta-unicode/data` by copying the five files into it
-instead. The CLI writes `nomina.bin` and `manifest.json`; `--verify` re-reads the image. The
-manifest records versions, profile, sections, candidates, input hashes and verification checks,
-with no timestamps or absolute paths. Training is deterministic.
+`cargo xtask fetch-ucd --version <unicode-version> --dest <dest> [--emoji-version <emoji-version>]`
+fetches a release into the scratch directory `<dest>`. It requires `curl`; Windows 10 and later
+ship `curl.exe`, and Git for Windows provides one as a fallback. Relative `--dest` paths
+resolve against the workspace root. It refuses a `<dest>` that
+already holds any earlier candidate layout the trainer probes first (flat, `extracted/` or
+`ucd/`), because those shadow the fetched file; update the vendored
+`crates/zeta-unicode/data` by copying the five files into it instead. The CLI writes `nomina.bin`
+and `manifest.json`; `--verify` re-reads the image. The manifest records versions, profile,
+sections, candidates, input hashes and verification checks, with no timestamps or absolute
+paths. Training is deterministic.
 
 ## Verification and testing
 
