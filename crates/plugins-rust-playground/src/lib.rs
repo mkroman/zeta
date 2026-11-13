@@ -94,7 +94,7 @@ impl RustPlayground {
         ".rs",
         "Evaluate a Rust expression on the Rust playground",
         event,
-        usage = "Usage: .rs\x0f <expr>"
+        usage_hint = "<expr>"
     )]
     async fn evaluate_command(
         &self,

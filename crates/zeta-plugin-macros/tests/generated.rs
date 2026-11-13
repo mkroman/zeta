@@ -4,8 +4,12 @@
 //! `Plugin` implementation itself compile for the edge cases that need special handling.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use clap::Parser;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::TcpListener;
+use tokio::time::timeout;
 use zeta_plugin::{
     Client, CommandEvent, Context, CtcpEvent, Error, Event, JoinEvent, KickEvent, MessageEvent,
     NickEvent, PartEvent, Plugin, QuitEvent, RawEvent, Subscriptions, UrlEvent, plugin,
@@ -143,6 +147,23 @@ impl Full {
     }
 }
 
+/// A plugin deriving its usage reply from the argument hint.
+#[derive(Default)]
+struct Hinted {
+    /// The number of times the command handler ran: the derived reply must preempt it.
+    calls: AtomicUsize,
+}
+
+#[plugin(name = "hinted")]
+impl Hinted {
+    #[command(".hint", "A command with a usage hint", event, usage_hint = "<query>")]
+    async fn hint(&self, _: &Context, _: &Client, _: &CommandEvent) -> Result<(), Error> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
 /// A plugin with one handler per event kind.
 ///
 /// The macro derives each `Event` variant and event type from the kind keyword, so this is what
@@ -242,6 +263,7 @@ fn every_plugin_shape_implements_plugin() {
     assert_plugin::<Full>();
     assert_plugin::<Gated>();
     assert_plugin::<Helper>();
+    assert_plugin::<Hinted>();
     assert_plugin::<Kinds>();
     assert_plugin::<Partial>();
     assert_plugin::<Words>();
@@ -293,17 +315,17 @@ fn message(text: &str) -> MessageEvent {
     ))
 }
 
-fn command(trigger: &str) -> CommandEvent {
+fn command(spec: zeta_plugin::CommandSpec) -> CommandEvent {
     CommandEvent::new(
         std::sync::Arc::new(
             irc::proto::Message::new(
                 Some("nick!user@host.example"),
                 "PRIVMSG",
-                vec!["#test", trigger],
+                vec!["#test", spec.trigger()],
             )
             .expect("message should parse"),
         ),
-        zeta_plugin::CommandSpec::new(".route", "route"),
+        spec,
     )
     .expect("command should match")
 }
@@ -321,11 +343,78 @@ async fn the_generated_handle_routes_each_event_kind() {
         .await
         .expect("message");
     plugin
-        .handle(&ctx, &client, &Event::Command(command(".route")))
+        .handle(&ctx, &client, &Event::Command(command(ROUTE)))
         .await
         .expect("command");
 
     assert_eq!(plugin.loaded.load(Ordering::SeqCst), 1);
     assert_eq!(plugin.message.load(Ordering::SeqCst), 1);
     assert_eq!(plugin.command.load(Ordering::SeqCst), 1);
+}
+
+/// How long a reply has to reach the test listener before the test gives up.
+const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Returns a client whose sent lines are readable from the returned listener socket.
+///
+/// The mock connection's sent log is private to the `irc` crate, so replies are captured on a
+/// real socket instead.
+async fn capturing_client() -> (Client, tokio::net::TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind the test listener");
+    let address = listener.local_addr().expect("the listener has an address");
+
+    let mut client = Client::from_config(irc::client::data::Config {
+        nickname: Some("zeta-test".to_owned()),
+        server: Some(address.ip().to_string()),
+        port: Some(address.port()),
+        // `use_tls` defaults to true when a TLS feature is enabled, which would hang the
+        // handshake against this plain listener.
+        use_tls: Some(false),
+        ..Default::default()
+    })
+    .await
+    .expect("the client connects to the test listener");
+
+    // Without the outgoing future being driven, the enqueued commands never reach the socket.
+    let outgoing = client.outgoing().expect("the outgoing future is available");
+    tokio::spawn(async move {
+        let _ = outgoing.await;
+    });
+
+    let (socket, _) = listener.accept().await.expect("the client connects");
+
+    (client, socket)
+}
+
+#[tokio::test]
+async fn an_empty_invocation_replies_with_the_derived_usage_line() {
+    let ctx = zeta_test_support::test_context();
+    let (client, socket) = capturing_client().await;
+    let plugin = Hinted::default();
+
+    plugin
+        .handle(&ctx, &client, &Event::Command(command(HINT)))
+        .await
+        .expect("an empty invocation replies and succeeds");
+
+    let mut reply = String::new();
+    timeout(
+        DELIVERY_TIMEOUT,
+        BufReader::new(socket).read_line(&mut reply),
+    )
+    .await
+    .expect("the reply reaches the socket in time")
+    .expect("the reply reads as a line");
+
+    assert_eq!(
+        reply, "PRIVMSG #test :\x0310> Usage: .hint\x0f <query>\r\n",
+        "the line colors the trigger and resets before the hint"
+    );
+    assert_eq!(
+        plugin.calls.load(Ordering::SeqCst),
+        0,
+        "the usage reply must preempt the handler"
+    );
 }

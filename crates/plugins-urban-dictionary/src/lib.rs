@@ -98,7 +98,7 @@ impl UrbanDictionary {
         ".ud",
         "Look up the top Urban Dictionary definition",
         event,
-        usage = "Usage: .ud\x0f <query>"
+        usage_hint = "<query>"
     )]
     async fn define(
         &self,

@@ -1,0 +1,5 @@
+error: `usage` and `usage_hint` are mutually exclusive: `usage` is the complete reply line, while `usage_hint` is only the arguments after the trigger
+  --> tests/ui/usage_and_usage_hint.rs:15:22
+   |
+15 |         usage_hint = "<query>"
+   |                      ^^^^^^^^^

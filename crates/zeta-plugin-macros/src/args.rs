@@ -18,6 +18,7 @@ const COMMAND_OPTIONS: &[&str] = &[
     "label",
     "event",
     "usage",
+    "usage_hint",
     "register_if",
 ];
 
@@ -172,6 +173,11 @@ pub struct CommandArgs {
     ///
     /// The literal is the complete reply line, e.g. `"Usage: .dig <name>"`.
     pub usage: Option<LitStr>,
+    /// The arguments of the derived usage line, from `usage_hint = "<name>"`.
+    ///
+    /// The generated reply is `Usage: <trigger>\x0f <hint>`, so only the part after the
+    /// trigger is written down. Mutually exclusive with `usage`.
+    pub usage_hint: Option<LitStr>,
     /// The registration condition, from `register_if = expr`.
     pub register_if: Option<Expr>,
 }
@@ -191,6 +197,7 @@ impl Parse for CommandArgs {
             label: None,
             event: false,
             usage: None,
+            usage_hint: None,
             register_if: None,
         };
 
@@ -220,12 +227,26 @@ impl Parse for CommandArgs {
                     let value: LitStr = parse_value(input)?;
                     set_once(&mut this.usage, value, &ident)?;
                 }
+                "usage_hint" => {
+                    let value: LitStr = parse_value(input)?;
+                    set_once(&mut this.usage_hint, value, &ident)?;
+                }
                 "register_if" => {
                     let value: Expr = parse_value(input)?;
                     set_once(&mut this.register_if, value, &ident)?;
                 }
                 _ => return Err(unknown_option(&ident, "command option", COMMAND_OPTIONS)),
             }
+        }
+
+        if let Some(hint) = &this.usage_hint
+            && this.usage.is_some()
+        {
+            return Err(syn::Error::new(
+                hint.span(),
+                "`usage` and `usage_hint` are mutually exclusive: `usage` is the complete reply \
+                 line, while `usage_hint` is only the arguments after the trigger",
+            ));
         }
 
         Ok(this)
@@ -311,7 +332,20 @@ mod tests {
             args.usage.expect("usage should be set").value(),
             "Usage: .test <arg>"
         );
+        assert!(args.usage_hint.is_none());
         assert!(args.register_if.is_some());
+    }
+
+    #[test]
+    fn parses_a_command_usage_hint() {
+        let args: CommandArgs = syn::parse_str("\".test\", \"A test\", usage_hint = \"<arg>\"")
+            .expect("the arguments should parse");
+
+        assert_eq!(
+            args.usage_hint.expect("usage_hint should be set").value(),
+            "<arg>"
+        );
+        assert!(args.usage.is_none());
     }
 
     #[test]
@@ -333,6 +367,7 @@ mod tests {
             "\".test\", \"A test\", label = \"a\", label = \"b\"",
             "\".test\", \"A test\", event, event",
             "\".test\", \"A test\", usage = \"a\", usage = \"b\"",
+            "\".test\", \"A test\", usage_hint = \"a\", usage_hint = \"b\"",
             "\".test\", \"A test\", register_if = a, register_if = b",
         ] {
             let error = syn::parse_str::<CommandArgs>(arguments)
@@ -341,6 +376,17 @@ mod tests {
 
             assert!(error.to_string().contains("duplicate"), "{error}");
         }
+    }
+
+    #[test]
+    fn rejects_usage_with_usage_hint() {
+        let error = syn::parse_str::<CommandArgs>(
+            "\".test\", \"A test\", usage = \"Usage: .test <arg>\", usage_hint = \"<arg>\"",
+        )
+        .err()
+        .expect("the two usage forms are mutually exclusive");
+
+        assert!(error.to_string().contains("mutually exclusive"), "{error}");
     }
 
     #[test]

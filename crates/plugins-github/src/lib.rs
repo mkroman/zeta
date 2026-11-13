@@ -88,7 +88,7 @@ impl GitHub {
         ".gh",
         "Search GitHub and show the most starred match",
         event,
-        usage = "Usage: .gh <query>"
+        usage_hint = "<query>"
     )]
     async fn search(
         &self,

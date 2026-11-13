@@ -118,7 +118,7 @@ impl Trustpilot {
         ".tp",
         "Look up a business's Trustpilot score",
         event,
-        usage = "Usage: .tp\x0f <domain name>"
+        usage_hint = "<domain name>"
     )]
     async fn lookup(
         &self,
