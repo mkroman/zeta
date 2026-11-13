@@ -46,8 +46,8 @@ the code and the matching doc in the same PR. The complete attribute list is in
 - Repeated spans under one parent carry a bounded discriminator in `otel.name`
   (`zeta.event.handle dig command`), keeping the span name itself stable for filters and
   metrics.
-- `otel.kind` sets the OTel span kind where the default is wrong: `client` for HTTP and S3,
-  `consumer` for inbound IRC.
+- `otel.kind` sets the OTel span kind where the default is wrong: `client` for HTTP, S3, and
+  database spans, `consumer` for inbound IRC.
 - Async fan-out opens its child span while the handler span is current, then moves the span
   into the task (`titles.fetch`, `unwall.resolve`, `media.download`). The unit stays in the
   message's trace after the handler returns.

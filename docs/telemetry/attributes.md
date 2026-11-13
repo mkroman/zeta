@@ -73,7 +73,7 @@ DB spans come from `#[instrument_database]`, which also sets the span name to
 | Attribute | Type | Meaning | Source |
 | --- | --- | --- | --- |
 | `otel.name` | string | Overrides the exported span name; used for the bounded `{plugin} {kind}` discriminator | otel.* |
-| `otel.kind` | string | Sets the OTel span kind: `client` for HTTP/S3, `consumer` for inbound IRC | otel.* |
+| `otel.kind` | string | Sets the OTel span kind: `client` for HTTP/S3/DB, `consumer` for inbound IRC | otel.* |
 
 These are consumed by the tracing layer and are not exported as span attributes.
 
