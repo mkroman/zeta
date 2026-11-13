@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use tracing::warn;
 
+use crate::event::Sender;
+
 /// Database connection pool.
 pub type Database = sqlx::PgPool;
 
@@ -71,6 +73,43 @@ pub fn namespace(db: &Database) -> String {
         .get_database()
         .unwrap_or_default()
         .to_owned()
+}
+
+/// The attribution of an inserted row to the user and channel it came from.
+///
+/// The `(nickname, username, hostname, channel)` columns are repeated by every plugin that
+/// records who posted a link or created a row, so the `New*` insert models carry them as one
+/// field. Row models keep the four columns as their own fields: they derive `FromRow` from the
+/// queried column order, which the attribution does not change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Attribution {
+    /// The nickname of the user.
+    pub nickname: String,
+    /// The username (ident) of the user.
+    pub username: String,
+    /// The hostname of the user.
+    pub hostname: String,
+    /// The channel the user acted in.
+    pub channel: String,
+}
+
+impl Attribution {
+    /// Constructs an attribution from its parts.
+    #[must_use]
+    pub fn new(nickname: &str, username: &str, hostname: &str, channel: &str) -> Self {
+        Self {
+            nickname: nickname.to_owned(),
+            username: username.to_owned(),
+            hostname: hostname.to_owned(),
+            channel: channel.to_owned(),
+        }
+    }
+
+    /// Attributes `channel` to `sender`.
+    #[must_use]
+    pub fn from_sender(sender: Sender<'_>, channel: &str) -> Self {
+        Self::new(sender.nick, sender.username, sender.hostname, channel)
+    }
 }
 
 /// Deletes the rows with the given `ids` from `table`, returning the number of deleted rows.

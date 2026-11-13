@@ -12,7 +12,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use zeta_mirror::{MediaId, Mirror, MirrorHandle};
+use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err, resolve_secret};
 use zeta_utils::irc;
@@ -33,17 +33,9 @@ pub struct Settings {
     ///
     /// Falls back to the `REDDIT_CLIENT_SECRET` environment variable when unset.
     pub client_secret: Option<String>,
-    /// The key prefix that mirrored videos are uploaded under.
-    ///
-    /// Falls back to the `REDDIT_S3_PREFIX` environment variable, and to `reddit` when neither is
-    /// set.
-    pub prefix: Option<String>,
-    /// The base URL used when linking to mirrored videos.
-    ///
-    /// Falls back to the `REDDIT_PUBLIC_URL_BASE` environment variable when unset. Links are
-    /// built by appending the submission id as a URL fragment, so the base must point at a viewer
-    /// page that resolves the fragment — not directly at the bucket.
-    pub public_url_base: Option<String>,
+    /// The prefix and public URL base of mirrored videos.
+    #[serde(flatten)]
+    pub mirror: plugins_shared::mirror::MirrorSettings,
 }
 
 /// Errors that can occur during Reddit interaction
@@ -80,12 +72,7 @@ impl Reddit {
             },
         )
         .map_err(plugin_err)?;
-        let mirror = MirrorHandle::resolve(
-            ctx.shared.get::<Mirror>(),
-            "reddit",
-            settings.prefix.as_deref(),
-            settings.public_url_base.as_deref(),
-        );
+        let mirror = settings.mirror.resolve(ctx, "reddit");
 
         Ok(Self { client, mirror })
     }
@@ -330,8 +317,8 @@ mod tests {
         default: {
             assert!(settings.client_id.is_none());
             assert!(settings.client_secret.is_none());
-            assert!(settings.prefix.is_none());
-            assert!(settings.public_url_base.is_none());
+            assert!(settings.mirror.prefix.is_none());
+            assert!(settings.mirror.public_url_base.is_none());
         }
         deserialize: {
             "client_id": "id",
@@ -341,9 +328,9 @@ mod tests {
         } assert: {
             assert_eq!(settings.client_id.as_deref(), Some("id"));
             assert_eq!(settings.client_secret.as_deref(), Some("secret"));
-            assert_eq!(settings.prefix.as_deref(), Some("~meta/reddit"));
+            assert_eq!(settings.mirror.prefix.as_deref(), Some("~meta/reddit"));
             assert_eq!(
-                settings.public_url_base.as_deref(),
+                settings.mirror.public_url_base.as_deref(),
                 Some("https://pub.example.com/reddit")
             );
         }

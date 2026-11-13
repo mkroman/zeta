@@ -43,8 +43,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
-use tracing::{Instrument, debug, warn};
+use tracing::{debug, warn};
 
+use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{
     COLOR, RESET, labeled_reply, parse_or_usage, plain_reply, send_reply, send_reply_via,
 };
@@ -52,7 +53,6 @@ use zeta_plugin::{
     ArgsMode, Client, CommandEvent, CommandSpec, Context, Hostmasks, Sender, Subscriptions,
     UrlEvent, ZetaError, plugin, plugin_err,
 };
-use zeta_url::RedactedUrlRef;
 use zeta_utils::duration::TimeInWordsExt;
 use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
 
@@ -420,43 +420,19 @@ impl Unwall {
         let fetch = NewFetch {
             url: article.as_str().to_owned(),
             host: host.to_owned(),
-            nickname: sender.nick.to_owned(),
-            username: sender.username.to_owned(),
-            hostname: sender.hostname.to_owned(),
-            channel: event.channel().to_owned(),
+            attribution: Attribution::from_sender(sender, event.channel()),
             network_id: NETWORK_ID.to_owned(),
         };
 
         let service = Arc::clone(&self.service);
-        let submits = Arc::clone(&self.submits);
-        let irc = client.sender();
-        let channel = event.channel().to_owned();
 
-        // The permit is acquired before the task exists, so only a bounded number of tasks are
-        // alive at once. It is moved into the task and released by its drop, on success, error,
-        // and cancellation alike.
-        let permit = submits
-            .acquire_owned()
-            .await
-            .expect("the submission semaphore is never closed");
-
-        // The span carries the redacted URL: without it, this task's logs would only ever
-        // reach stdout. It is a child of the handler span, created while the handler is
-        // current, so the resolution stays in the message's trace even though the handler
-        // returns (and its span closes) first. The target stays under `zeta`: the span parents
-        // the HTTP client span, and disabling it with a plugin log filter would leave that span
-        // as a trace root of its own.
-        let span = tracing::info_span!(
-            target: "zeta.plugins",
-            parent: tracing::Span::current(),
+        plugins_shared::spawn_reply_task!(
+            Arc::clone(&self.submits),
+            client,
+            event.channel(),
             "unwall.resolve",
-            url.full = %RedactedUrlRef::from_url(&article)
-        );
-
-        tokio::spawn(
-            async move {
-                let _permit = permit;
-
+            &article,
+            move |irc, channel| async move {
                 match service.resolve(&article, fetch).await {
                     Ok(cached) => {
                         // The link rides on the plain reply prefix, which colors the
@@ -484,9 +460,9 @@ impl Unwall {
                         }
                     }
                 }
-            }
-            .instrument(span),
-        );
+            },
+        )
+        .await;
     }
 }
 

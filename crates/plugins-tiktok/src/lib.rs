@@ -17,7 +17,7 @@ use url::Url;
 
 use zeta_http as http;
 use zeta_http::{RedirectError, RequestError};
-use zeta_mirror::{MediaId, Mirror, MirrorHandle};
+use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::irc::{COLOR, RESET, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_url::RedactedUrl;
@@ -40,17 +40,9 @@ pub struct Settings {
     /// Mirroring additionally requires the shared `[mirror]` configuration (or the `S3_*`
     /// environment variables); without it, videos are not mirrored regardless of this setting.
     pub mirror: bool,
-    /// The key prefix that mirrored videos are uploaded under.
-    ///
-    /// Falls back to the `TIKTOK_S3_PREFIX` environment variable, and to `tiktok` when neither is
-    /// set.
-    pub prefix: Option<String>,
-    /// The base URL used when linking to mirrored videos.
-    ///
-    /// Falls back to the `TIKTOK_PUBLIC_URL_BASE` environment variable when unset. Links are
-    /// built by appending the video id as a URL fragment, so the base must point at a viewer page
-    /// that resolves the fragment — not directly at the bucket.
-    pub public_url_base: Option<String>,
+    /// The prefix and public URL base of mirrored videos.
+    #[serde(flatten)]
+    pub mirror_settings: plugins_shared::mirror::MirrorSettings,
 }
 
 impl Default for Settings {
@@ -59,8 +51,7 @@ impl Default for Settings {
             post_summary: true,
             title_length: 150,
             mirror: true,
-            prefix: None,
-            public_url_base: None,
+            mirror_settings: plugins_shared::mirror::MirrorSettings::default(),
         }
     }
 }
@@ -90,12 +81,7 @@ pub enum Error {
 impl Tiktok {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let mirror = if settings.mirror {
-            MirrorHandle::resolve(
-                ctx.shared.get::<Mirror>(),
-                "tiktok",
-                settings.prefix.as_deref(),
-                settings.public_url_base.as_deref(),
-            )
+            settings.mirror_settings.resolve(ctx, "tiktok")
         } else {
             None
         };
@@ -257,8 +243,8 @@ mod tests {
             assert!(settings.post_summary);
             assert_eq!(settings.title_length, 150);
             assert!(settings.mirror);
-            assert!(settings.prefix.is_none());
-            assert!(settings.public_url_base.is_none());
+            assert!(settings.mirror_settings.prefix.is_none());
+            assert!(settings.mirror_settings.public_url_base.is_none());
         }
         deserialize: {
             "post_summary": false,
@@ -270,9 +256,12 @@ mod tests {
             assert!(!settings.post_summary);
             assert_eq!(settings.title_length, 100);
             assert!(!settings.mirror);
-            assert_eq!(settings.prefix.as_deref(), Some("~meta/tiktok"));
             assert_eq!(
-                settings.public_url_base.as_deref(),
+                settings.mirror_settings.prefix.as_deref(),
+                Some("~meta/tiktok")
+            );
+            assert_eq!(
+                settings.mirror_settings.public_url_base.as_deref(),
                 Some("https://pub.example.com/tiktok")
             );
         }

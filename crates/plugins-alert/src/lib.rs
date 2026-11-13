@@ -31,6 +31,7 @@ use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, trace};
 
+use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{
     COLOR, RESET, labeled_reply, parse_or_usage, send_reply, send_reply_via, unstyle_text,
 };
@@ -284,7 +285,7 @@ impl AlertPlugin {
             return Ok(());
         };
 
-        let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
+        let nickname = sender.nick;
 
         let Some(opts) = parse_or_usage::<Opts>(client, command, ArgsMode::Words, |line| {
             labeled_reply("Alert", line)
@@ -315,10 +316,7 @@ impl AlertPlugin {
         };
 
         let alert = NewAlert {
-            nickname: nickname.to_owned(),
-            username: username.to_owned(),
-            hostname: hostname.to_owned(),
-            channel: channel.to_owned(),
+            attribution: Attribution::from_sender(sender, channel),
             message: message.to_owned(),
             time,
         };

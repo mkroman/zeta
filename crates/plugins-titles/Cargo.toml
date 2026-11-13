@@ -28,6 +28,7 @@ bytes.workspace = true
 futures = "0.3.31"
 html5ever = "0.40.0"
 irc.workspace = true
+plugins-shared = { path = "../plugins-shared" }
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

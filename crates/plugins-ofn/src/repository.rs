@@ -40,7 +40,7 @@ impl OfnRepository {
         .bind(record.port)
         .bind(&record.path)
         .bind(&record.query)
-        .bind(&record.channel)
+        .bind(&record.attribution.channel)
         .bind(&record.network_id)
         .fetch_optional(&self.db)
         .await
@@ -110,10 +110,10 @@ impl OfnRepository {
         .bind(&record.path)
         .bind(&record.query)
         .bind(&record.fragment)
-        .bind(&record.nickname)
-        .bind(&record.username)
-        .bind(&record.hostname)
-        .bind(&record.channel)
+        .bind(&record.attribution.nickname)
+        .bind(&record.attribution.username)
+        .bind(&record.attribution.hostname)
+        .bind(&record.attribution.channel)
         .bind(&record.network_id)
         .fetch_one(&self.db)
         .await
@@ -145,10 +145,10 @@ impl OfnRepository {
             ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         )
         .bind(&record.video_id)
-        .bind(&record.nickname)
-        .bind(&record.username)
-        .bind(&record.hostname)
-        .bind(&record.channel)
+        .bind(&record.attribution.nickname)
+        .bind(&record.attribution.username)
+        .bind(&record.attribution.hostname)
+        .bind(&record.attribution.channel)
         .bind(&record.network_id)
         .fetch_one(&self.db)
         .await

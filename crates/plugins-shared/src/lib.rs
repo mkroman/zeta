@@ -4,6 +4,7 @@
 //! for the pieces more than one plugin needs, so sharing them never pulls in the plugin that
 //! introduced them.
 
+pub mod task;
 pub mod urls;
 
 /// The IRC-facing reply flow shared by the mirroring plugins.

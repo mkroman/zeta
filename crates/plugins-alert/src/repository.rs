@@ -31,10 +31,10 @@ impl AlertRepository {
                 $1, $2, $3, $4, $5, $6
             ) RETURNING id, nickname, channel, message, time",
         )
-        .bind(alert.nickname)
-        .bind(alert.username)
-        .bind(alert.hostname)
-        .bind(alert.channel)
+        .bind(alert.attribution.nickname)
+        .bind(alert.attribution.username)
+        .bind(alert.attribution.hostname)
+        .bind(alert.attribution.channel)
         .bind(alert.message)
         .bind(alert.time)
         .fetch_one(&self.db)
