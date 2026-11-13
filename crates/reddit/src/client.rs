@@ -15,7 +15,7 @@ use zeta_http::json;
 use zeta_http::oauth::{TokenCache, TokenResponse};
 use zeta_url::RedactedUrl;
 
-use crate::urls::classify_reddit_com_url;
+use crate::urls::{classify_reddit_com_url, is_id, is_subreddit};
 use crate::{
     BASE_URL, Error, HTTP_TIMEOUT, Item, Link, OAUTH_BASE_URL, RequestError, Submission, Subreddit,
     TOKEN_URL, USER_AGENT,
@@ -191,13 +191,16 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns an error if the access token cannot be obtained, the request fails, the
-    /// submission does not exist, or the response cannot be parsed as a submission.
+    /// Returns [`Error::InvalidId`] if `article` is not a valid Reddit id, and otherwise an error
+    /// if the access token cannot be obtained, the request fails, the submission does not exist,
+    /// or the response cannot be parsed as a submission.
     #[instrument(name = "reddit.submission", skip_all, fields(reddit.submission.id = %article))]
     pub async fn submission(&self, article: &str) -> Result<Submission, Error> {
+        let path = submission_path(article)?;
+
         debug!("requesting submission");
 
-        let request = self.authorized_get(&format!("/by_id/t3_{article}")).await?;
+        let request = self.authorized_get(&path).await?;
         let item = self
             .send_json(request, Error::DeserializeSubmission)
             .await?
@@ -220,15 +223,18 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::VideoRedirect`] if the video link does not redirect,
+    /// Returns [`Error::InvalidId`] if `id` is not a valid Reddit id,
+    /// [`Error::VideoRedirect`] if the video link does not redirect,
     /// [`Error::VideoRedirectsToNonSubmission`] if it redirects to something other than a
     /// submission, or any error from fetching the submission itself.
     #[instrument(name = "reddit.video", skip_all, fields(media.id = %id))]
     pub async fn video(&self, id: &str) -> Result<Submission, Error> {
+        let url = video_url(id)?;
+
         debug!("requesting video redirect location");
 
         let url = self
-            .get_redirect_location(&format!("{BASE_URL}/video/{id}"))
+            .get_redirect_location(&url)
             .await
             .inspect_err(|error| {
                 debug!(
@@ -248,13 +254,16 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns an error if the access token cannot be obtained, the request fails, the
-    /// subreddit does not exist, or the response cannot be parsed as a subreddit.
+    /// Returns [`Error::InvalidSubreddit`] if `name` is not a valid subreddit name, and otherwise
+    /// an error if the access token cannot be obtained, the request fails, the subreddit does
+    /// not exist, or the response cannot be parsed as a subreddit.
     #[instrument(name = "reddit.subreddit", skip_all, fields(reddit.subreddit.name = %name))]
     pub async fn subreddit_about_info(&self, name: &str) -> Result<Subreddit, Error> {
+        let path = subreddit_about_path(name)?;
+
         debug!("requesting subreddit details");
 
-        let request = self.authorized_get(&format!("/r/{name}/about")).await?;
+        let request = self.authorized_get(&path).await?;
         let item = self
             .send_json(request, Error::DeserializeSubreddit)
             .await?
@@ -271,17 +280,19 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns an error if the request fails, the link does not redirect, or the redirect
-    /// target is not a comment or submission link.
+    /// Returns [`Error::InvalidSubreddit`] if `subreddit` is not a valid subreddit name,
+    /// [`Error::InvalidId`] if `id` is not a valid Reddit id, and otherwise an error if the
+    /// request fails, the link does not redirect, or the redirect target is not a comment or
+    /// submission link.
     pub async fn resolve_shortened_link(&self, subreddit: &str, id: &str) -> Result<Link, Error> {
+        let url = shortened_link_url(subreddit, id)?;
+
         debug!(
             reddit.subreddit.name = %subreddit,
             reddit.shortlink.id = %id,
             "requesting short link to find redirect location"
         );
-        let url = self
-            .get_redirect_location(&format!("{BASE_URL}/r/{subreddit}/s/{id}"))
-            .await?;
+        let url = self.get_redirect_location(&url).await?;
 
         match classify_reddit_com_url(&url) {
             Some(x @ (Link::Comment { .. } | Link::Submission { .. })) => Ok(x),
@@ -308,5 +319,198 @@ impl Client {
         let location = Url::parse(location).map_err(Error::LocationHeaderUrl)?;
 
         Ok(location)
+    }
+}
+
+/// Builds the API path for a submission, rejecting an id that is not a valid Reddit id.
+///
+/// The id is interpolated into an OAuth API path, so validating it before formatting keeps a
+/// crafted value from adding path segments, a query string or a fragment to the request.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidId`] when `article` is not a valid Reddit id.
+fn submission_path(article: &str) -> Result<String, Error> {
+    if !is_id(article) {
+        return Err(Error::InvalidId);
+    }
+
+    Ok(format!("/by_id/t3_{article}"))
+}
+
+/// Builds the URL of a video submission, rejecting an id that is not a valid Reddit id.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidId`] when `id` is not a valid Reddit id.
+fn video_url(id: &str) -> Result<String, Error> {
+    if !is_id(id) {
+        return Err(Error::InvalidId);
+    }
+
+    Ok(format!("{BASE_URL}/video/{id}"))
+}
+
+/// Builds the API path for a subreddit, rejecting a name that is not a valid subreddit name.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidSubreddit`] when `name` is not a valid subreddit name.
+fn subreddit_about_path(name: &str) -> Result<String, Error> {
+    if !is_subreddit(name) {
+        return Err(Error::InvalidSubreddit);
+    }
+
+    Ok(format!("/r/{name}/about"))
+}
+
+/// Builds the URL of a shortened subreddit link, rejecting a subreddit name or id that would add
+/// segments, a query string or a fragment to the request.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidSubreddit`] when `subreddit` is not a valid subreddit name, and
+/// [`Error::InvalidId`] when `id` is not a valid Reddit id.
+fn shortened_link_url(subreddit: &str, id: &str) -> Result<String, Error> {
+    if !is_subreddit(subreddit) {
+        return Err(Error::InvalidSubreddit);
+    }
+
+    if !is_id(id) {
+        return Err(Error::InvalidId);
+    }
+
+    Ok(format!("{BASE_URL}/r/{subreddit}/s/{id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Segments that would add a path, query or fragment to a request URL, or smuggle one
+    /// through percent-encoding, and the empty form that is not an id or name either.
+    const CRAFTED_SEGMENTS: &[&str] = &[
+        "",
+        "..",
+        ".",
+        "a/b",
+        "a?x",
+        "a#frag",
+        "%2F",
+        "%2e%2e",
+        "a b",
+        "a%20b",
+        "a\nb",
+        "/by_id/t3_1nh144u",
+        "a;b",
+    ];
+
+    #[test]
+    fn submission_path_accepts_ids_and_rejects_crafted_segments() {
+        assert_eq!(submission_path("1nh144u").unwrap(), "/by_id/t3_1nh144u");
+
+        // A fullname is not the bare id the API path expects.
+        assert!(matches!(
+            submission_path("t3_1nh144u"),
+            Err(Error::InvalidId)
+        ));
+
+        for segment in CRAFTED_SEGMENTS {
+            assert!(
+                matches!(submission_path(segment), Err(Error::InvalidId)),
+                "{segment:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn video_url_accepts_ids_and_rejects_crafted_segments() {
+        assert_eq!(
+            video_url("b2l87x1pyn7h1").unwrap(),
+            "https://www.reddit.com/video/b2l87x1pyn7h1"
+        );
+
+        assert!(matches!(
+            video_url("t3_b2l87x1pyn7h1"),
+            Err(Error::InvalidId)
+        ));
+
+        for segment in CRAFTED_SEGMENTS {
+            assert!(
+                matches!(video_url(segment), Err(Error::InvalidId)),
+                "{segment:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn subreddit_about_path_accepts_names_and_rejects_crafted_segments() {
+        assert_eq!(
+            subreddit_about_path("interestingasfuck").unwrap(),
+            "/r/interestingasfuck/about"
+        );
+        assert_eq!(
+            subreddit_about_path("some_sub").unwrap(),
+            "/r/some_sub/about"
+        );
+
+        for segment in CRAFTED_SEGMENTS {
+            assert!(
+                matches!(subreddit_about_path(segment), Err(Error::InvalidSubreddit)),
+                "{segment:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn shortened_link_url_accepts_names_and_ids_and_rejects_crafted_segments() {
+        assert_eq!(
+            shortened_link_url("linuxmemes", "dmwUYLKTjd").unwrap(),
+            "https://www.reddit.com/r/linuxmemes/s/dmwUYLKTjd"
+        );
+
+        assert!(matches!(
+            shortened_link_url("a/b", "dmwUYLKTjd"),
+            Err(Error::InvalidSubreddit)
+        ));
+        assert!(matches!(
+            shortened_link_url("linuxmemes", "t3_dmwUYLKTjd"),
+            Err(Error::InvalidId)
+        ));
+
+        for segment in CRAFTED_SEGMENTS {
+            assert!(
+                matches!(
+                    shortened_link_url("linuxmemes", segment),
+                    Err(Error::InvalidId)
+                ),
+                "{segment:?} should be rejected"
+            );
+        }
+    }
+
+    /// The public methods reject a crafted segment before any token or HTTP work, so the mapped
+    /// error reaches the caller instead of a request to an unintended path.
+    #[tokio::test]
+    async fn methods_reject_crafted_segments_before_the_request() {
+        let client = Client::try_new("client id", "client secret").expect("the client builds");
+
+        assert!(matches!(
+            client.submission("a/b").await,
+            Err(Error::InvalidId)
+        ));
+        assert!(matches!(client.video("%2F").await, Err(Error::InvalidId)));
+        assert!(matches!(
+            client.subreddit_about_info("a b").await,
+            Err(Error::InvalidSubreddit)
+        ));
+        assert!(matches!(
+            client.resolve_shortened_link("../x", "dmwUYLKTjd").await,
+            Err(Error::InvalidSubreddit)
+        ));
+        assert!(matches!(
+            client.resolve_shortened_link("linuxmemes", "a?x").await,
+            Err(Error::InvalidId)
+        ));
     }
 }
