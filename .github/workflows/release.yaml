@@ -109,7 +109,7 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          version: "2026.11.6"
+          version: "2026.11.8"
           install_args: "github:rust-secure-code/cargo-auditable"
           # Release artifacts must not consume a cache other jobs can write.
           cache: false
