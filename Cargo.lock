@@ -6205,7 +6205,13 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "gungraun",
+ "irc",
  "time",
+ "tokio",
+ "tracing",
+ "zeta-plugin",
+ "zeta-plugin-runtime",
+ "zeta-test-support",
  "zeta-utils",
 ]
 
