@@ -1,37 +1,29 @@
 //! Fetch the five Unicode Character Database files used by the Nomina trainer.
 //!
-//! The files are downloaded with the system `curl`, so the xtask keeps its zero-dependency
-//! build. Windows 10 and later ship `curl.exe`, and Git for Windows bundles one as a fallback.
+//! The files are downloaded with the system `curl`, so the xtask needs no third-party
+//! dependencies. Windows 10 and later ship `curl.exe`, and Git for Windows bundles one as a
+//! fallback.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use zeta_unicode_format::{DERIVED_NAME, EMOJI_TEST, INPUTS};
+
 use crate::cli::FetchUcdArgs;
 use crate::error::{Error, Result};
 
-/// Paths the trainer probes before the files this task writes. If any of them exists in the
-/// destination, training would silently read stale data, so the destination must be scratch.
-const STALE_PATHS: &[&str] = &[
-    "DerivedName.txt",
-    "extracted/DerivedName.txt",
-    "ucd/DerivedName.txt",
-    "DerivedGeneralCategory.txt",
-    "extracted/DerivedGeneralCategory.txt",
-    "ucd/DerivedGeneralCategory.txt",
-    "NameAliases.txt",
-    "extracted/NameAliases.txt",
-    "NamedSequences.txt",
-    "extracted/NamedSequences.txt",
-    "emoji-test.txt",
-];
-
-const DERIVED_NAME: &str = "ucd/extracted/DerivedName.txt";
-const DERIVED_GENERAL_CATEGORY: &str = "ucd/extracted/DerivedGeneralCategory.txt";
-const NAME_ALIASES: &str = "ucd/NameAliases.txt";
-const NAMED_SEQUENCES: &str = "ucd/NamedSequences.txt";
-const EMOJI_TEST: &str = "emoji/emoji-test.txt";
+/// The candidate paths the trainer probes before the files this task writes.
+///
+/// If any of them exists in the destination, training would silently read stale data, so the
+/// destination must be scratch. The paths come from the shared
+/// [`zeta_unicode_format::InputSpec`] table, in the order the trainer probes them.
+fn stale_paths() -> impl Iterator<Item = &'static str> {
+    INPUTS
+        .iter()
+        .flat_map(|spec| spec.candidates_before_fetch().iter().copied())
+}
 
 #[cfg(windows)]
 const CURL_HINT: &str = "curl is required to fetch the UCD files; install curl or Git for \
@@ -68,32 +60,22 @@ fn execute(args: &FetchUcdArgs, mut fetch: impl FnMut(&str, &Path) -> Result<()>
     }
 
     ensure_scratch(&args.dest)?;
-    fs::create_dir_all(under(&args.dest, "ucd/extracted"))?;
-    fs::create_dir_all(under(&args.dest, "emoji"))?;
 
     let public = format!("https://www.unicode.org/Public/{}", args.version);
     let emoji_public = format!("https://www.unicode.org/Public/emoji/{emoji_version}");
 
-    for (relative, url) in [
-        (
-            DERIVED_NAME,
-            format!("{public}/ucd/extracted/DerivedName.txt"),
-        ),
-        (
-            DERIVED_GENERAL_CATEGORY,
-            format!("{public}/ucd/extracted/DerivedGeneralCategory.txt"),
-        ),
-        (NAME_ALIASES, format!("{public}/ucd/NameAliases.txt")),
-        (NAMED_SEQUENCES, format!("{public}/ucd/NamedSequences.txt")),
-    ] {
-        fetch(&url, &under(&args.dest, relative))?;
-    }
-
-    // Newer releases publish emoji-test under `/Public/<version>/emoji`; older ones only
-    // carry it in the standalone emoji release directory.
-    let emoji_test = under(&args.dest, EMOJI_TEST);
-    if fetch(&format!("{public}/emoji/emoji-test.txt"), &emoji_test).is_err() {
-        fetch(&format!("{emoji_public}/emoji-test.txt"), &emoji_test)?;
+    for spec in INPUTS {
+        let destination = under(&args.dest, spec.fetch_path);
+        let url = format!("{public}/{}", spec.fetch_path);
+        // Newer releases publish emoji-test under `/Public/<version>/emoji`; older ones only
+        // carry it in the standalone emoji release directory.
+        if spec.file == EMOJI_TEST.file {
+            if fetch(&url, &destination).is_err() {
+                fetch(&format!("{emoji_public}/{}", spec.file), &destination)?;
+            }
+        } else {
+            fetch(&url, &destination)?;
+        }
     }
 
     validate_files(&args.dest, &args.version, emoji_version)?;
@@ -191,7 +173,7 @@ fn replace_file(part: &Path, path: &Path) -> Result<()> {
 }
 
 fn ensure_scratch(dest: &Path) -> Result<()> {
-    for relative in STALE_PATHS {
+    for relative in stale_paths() {
         let path = under(dest, relative);
         if path.exists() {
             return Err(Error::new(format!(
@@ -207,14 +189,8 @@ fn ensure_scratch(dest: &Path) -> Result<()> {
 }
 
 fn validate_files(dest: &Path, version: &str, emoji_version: &str) -> Result<()> {
-    for relative in [
-        DERIVED_NAME,
-        DERIVED_GENERAL_CATEGORY,
-        NAME_ALIASES,
-        NAMED_SEQUENCES,
-        EMOJI_TEST,
-    ] {
-        let path = under(dest, relative);
+    for spec in INPUTS {
+        let path = under(dest, spec.fetch_path);
         let metadata = fs::metadata(&path).map_err(|error| {
             Error::new(format!(
                 "{} is missing or unreadable: {error}",
@@ -229,13 +205,13 @@ fn validate_files(dest: &Path, version: &str, emoji_version: &str) -> Result<()>
         }
     }
 
-    let derived_name = fs::read_to_string(under(dest, DERIVED_NAME))?;
+    let derived_name = fs::read_to_string(under(dest, DERIVED_NAME.fetch_path))?;
     if !has_derived_name_version(&derived_name, version) {
         return Err(Error::new(format!(
             "DerivedName.txt does not mention Unicode {version}"
         )));
     }
-    let emoji_test = fs::read_to_string(under(dest, EMOJI_TEST))?;
+    let emoji_test = fs::read_to_string(under(dest, EMOJI_TEST.fetch_path))?;
     if !has_emoji_version(&emoji_test, emoji_version) {
         return Err(Error::new(format!(
             "emoji-test.txt does not mention Emoji {emoji_version}"
@@ -349,6 +325,26 @@ mod tests {
     }
 
     #[test]
+    fn stale_paths_are_every_candidate_before_a_fetch_path() {
+        assert_eq!(
+            stale_paths().collect::<Vec<_>>(),
+            [
+                "DerivedName.txt",
+                "extracted/DerivedName.txt",
+                "ucd/DerivedName.txt",
+                "DerivedGeneralCategory.txt",
+                "extracted/DerivedGeneralCategory.txt",
+                "ucd/DerivedGeneralCategory.txt",
+                "NameAliases.txt",
+                "extracted/NameAliases.txt",
+                "NamedSequences.txt",
+                "extracted/NamedSequences.txt",
+                "emoji-test.txt",
+            ]
+        );
+    }
+
+    #[test]
     fn checks_release_headers() {
         assert!(has_derived_name_version(
             "\u{feff}# a comment\n# DerivedName-18.0.0.txt\n",
@@ -399,14 +395,8 @@ mod tests {
         let mut urls = Vec::new();
         execute(&args(&dest), successful_fetcher(&mut urls)).expect("fetch succeeds");
 
-        for relative in [
-            DERIVED_NAME,
-            DERIVED_GENERAL_CATEGORY,
-            NAME_ALIASES,
-            NAMED_SEQUENCES,
-            EMOJI_TEST,
-        ] {
-            let path = under(&dest, relative);
+        for spec in INPUTS {
+            let path = under(&dest, spec.fetch_path);
             assert!(path.is_file(), "{} should exist", path.display());
             assert!(fs::metadata(&path).expect("metadata").len() > 0);
         }

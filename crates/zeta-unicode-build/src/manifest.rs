@@ -7,6 +7,7 @@
 use std::path::{Component, Path};
 
 use serde::Serialize;
+use zeta_unicode_format::INPUTS;
 
 use crate::train::TrainOutput;
 
@@ -201,14 +202,11 @@ fn input_records(
     data_dir: &Path,
     inputs: &crate::ucd::Inputs,
 ) -> Result<Vec<InputRecord>, crate::Error> {
-    let mut paths = vec![
-        inputs.paths.names.as_path(),
-        inputs.paths.gc.as_path(),
-        inputs.paths.aliases.as_path(),
-        inputs.paths.emoji.as_path(),
-    ];
-    if let Some(path) = &inputs.paths.sequences {
-        paths.push(path.as_path());
+    let mut paths = Vec::with_capacity(INPUTS.len());
+    for spec in INPUTS {
+        if let Some(path) = inputs.paths.path_for(spec) {
+            paths.push(path);
+        }
     }
     let mut records = Vec::with_capacity(paths.len());
     for path in paths {

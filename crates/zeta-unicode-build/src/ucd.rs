@@ -1,13 +1,16 @@
 //! The vendored UCD inputs and their version headers.
 //!
-//! Inputs are discovered through a candidate list instead of a fixed path, so the generator
-//! accepts both the flat vendored layout (`data/DerivedName.txt`) and the layout of an
-//! extracted Unicode release (`data/ucd/extracted/DerivedName.txt`,
+//! Inputs are discovered through the shared [`InputSpec`] candidate lists instead of a fixed
+//! path, so the generator accepts both the flat vendored layout (`data/DerivedName.txt`) and
+//! the layout of an extracted Unicode release (`data/ucd/extracted/DerivedName.txt`,
 //! `data/ucd/emoji/emoji-test.txt`). A missing file reports every path that was tried.
 
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
+use zeta_unicode_format::{
+    DERIVED_NAME, EMOJI_TEST, GENERAL_CATEGORY, InputSpec, NAME_ALIASES, NAMED_SEQUENCES,
+};
 
 /// The first Unicode release whose UCD ships `NamedSequences.txt` (4.1.0 introduced it).
 ///
@@ -49,6 +52,25 @@ pub struct InputPaths {
     pub sequences: Option<PathBuf>,
     /// The resolved `emoji-test.txt`.
     pub emoji: PathBuf,
+}
+
+impl InputPaths {
+    /// The resolved path for `spec`, or `None` when the release omitted it.
+    pub(crate) fn path_for(&self, spec: &InputSpec) -> Option<&Path> {
+        if spec.file == DERIVED_NAME.file {
+            Some(&self.names)
+        } else if spec.file == GENERAL_CATEGORY.file {
+            Some(&self.gc)
+        } else if spec.file == NAME_ALIASES.file {
+            Some(&self.aliases)
+        } else if spec.file == NAMED_SEQUENCES.file {
+            self.sequences.as_deref()
+        } else if spec.file == EMOJI_TEST.file {
+            Some(&self.emoji)
+        } else {
+            None
+        }
+    }
 }
 
 /// A UCD file that an input could not be resolved or validated against.
@@ -121,69 +143,6 @@ pub enum InputError {
         found: (u8, u8, u8),
     },
 }
-
-/// One UCD file: its canonical name and the paths to try, in order.
-struct InputSpec {
-    /// The canonical file name used in errors and the manifest.
-    file: &'static str,
-    /// Paths relative to the data root, tried in order.
-    candidates: &'static [&'static str],
-}
-
-/// `DerivedName.txt`, flat or inside an extracted release.
-const DERIVED_NAME: InputSpec = InputSpec {
-    file: "DerivedName.txt",
-    candidates: &[
-        "DerivedName.txt",
-        "extracted/DerivedName.txt",
-        "ucd/DerivedName.txt",
-        "ucd/extracted/DerivedName.txt",
-    ],
-};
-
-/// `DerivedGeneralCategory.txt`, flat or inside an extracted release.
-const GENERAL_CATEGORY: InputSpec = InputSpec {
-    file: "DerivedGeneralCategory.txt",
-    candidates: &[
-        "DerivedGeneralCategory.txt",
-        "extracted/DerivedGeneralCategory.txt",
-        "ucd/DerivedGeneralCategory.txt",
-        "ucd/extracted/DerivedGeneralCategory.txt",
-    ],
-};
-
-/// `NameAliases.txt`, flat or inside an extracted release.
-const NAME_ALIASES: InputSpec = InputSpec {
-    file: "NameAliases.txt",
-    candidates: &[
-        "NameAliases.txt",
-        "extracted/NameAliases.txt",
-        "ucd/NameAliases.txt",
-        "ucd/extracted/NameAliases.txt",
-    ],
-};
-
-/// `NamedSequences.txt`, flat or inside an extracted release.
-const NAMED_SEQUENCES: InputSpec = InputSpec {
-    file: "NamedSequences.txt",
-    candidates: &[
-        "NamedSequences.txt",
-        "extracted/NamedSequences.txt",
-        "ucd/NamedSequences.txt",
-        "ucd/extracted/NamedSequences.txt",
-    ],
-};
-
-/// `emoji-test.txt`, flat or inside an extracted release's `emoji/` directory.
-const EMOJI_TEST: InputSpec = InputSpec {
-    file: "emoji-test.txt",
-    candidates: &[
-        "emoji-test.txt",
-        "emoji/emoji-test.txt",
-        "ucd/emoji/emoji-test.txt",
-        "ucd/emoji-test.txt",
-    ],
-};
 
 /// Iterates the non-empty, non-comment lines of a UCD text with their 1-based line numbers.
 ///
