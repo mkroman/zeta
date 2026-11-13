@@ -109,7 +109,7 @@ impl DenDanskeOrdbog {
         ".ddo",
         "Look up a word in Den Danske Ordbog",
         event,
-        usage = "Usage: .ddo\x0f <query>"
+        usage_hint = "<query>"
     )]
     async fn lookup(
         &self,

@@ -226,7 +226,7 @@ impl HowLongToBeat {
         ".hltb",
         "Look up a game's completion times",
         event,
-        usage = "Usage: .hltb\x0f <game>"
+        usage_hint = "<game>"
     )]
     async fn lookup(
         &self,

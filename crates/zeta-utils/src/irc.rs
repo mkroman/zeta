@@ -107,6 +107,34 @@ pub fn plain_reply(message: impl fmt::Display) -> String {
     reply
 }
 
+/// The label a derived usage line opens with.
+const USAGE_LABEL: &str = "Usage: ";
+
+/// The fixed part of a derived usage line: the label and the space after the [`RESET`] that
+/// separates the trigger from the argument hint.
+const USAGE_LINE_BYTES: usize = USAGE_LABEL.len() + RESET.len() + 1;
+
+/// Formats a command's usage line from its trigger and its argument hint.
+///
+/// [`plain_reply`] colors the whole reply, so the [`RESET`] after the trigger returns the
+/// argument placeholders to the default color: `.dig <name>` becomes `Usage: .dig\x0f <name>`.
+/// Commands that need a different line declare it whole instead; this covers the common case
+/// where only the arguments differ.
+///
+/// Not `const`: the line is built in an owned [`String`].
+#[inline]
+#[must_use]
+pub fn usage_line(trigger: &str, hint: &str) -> String {
+    let mut line = String::with_capacity(USAGE_LINE_BYTES + trigger.len() + hint.len());
+    line.push_str(USAGE_LABEL);
+    line.push_str(trigger);
+    line.push_str(RESET);
+    line.push(' ');
+    line.push_str(hint);
+
+    line
+}
+
 /// Strips a nickname mention (`<nick>, ...` or `<nick>: ...`) from the start of `s`.
 ///
 /// Plugins that react to being addressed use this to unwrap the mention and handle only the
@@ -438,6 +466,12 @@ mod tests {
     fn plain_reply_prefix_extends_the_reply_marker_by_one_space() {
         assert!(PLAIN_REPLY_PREFIX.starts_with(REPLY_MARKER));
         assert_eq!(PLAIN_REPLY_PREFIX.len(), REPLY_MARKER.len() + 1);
+    }
+
+    #[test]
+    fn usage_line_resets_between_the_trigger_and_the_hint() {
+        assert_eq!(usage_line(".dig", "<name>"), "Usage: .dig\x0f <name>");
+        assert_eq!(usage_line(".help", ""), "Usage: .help\x0f ");
     }
 
     #[test]

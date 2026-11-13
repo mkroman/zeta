@@ -1415,15 +1415,21 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
         arguments.push(quote!(command));
     }
 
-    // A declared `usage` replaces the method call when the command has no arguments, before
-    // either the option parser or the handler runs.
-    let usage = args.usage.as_ref().map(|usage| {
+    // A declared `usage` (the complete line) or `usage_hint` (the arguments only) replaces the
+    // method call when the command has no arguments, before either the option parser or the
+    // handler runs.
+    let usage_reply = match (&args.usage, &args.usage_hint) {
+        (Some(usage), _) => Some(quote!(#usage)),
+        (None, Some(hint)) => Some(quote!(::zeta_plugin::usage_line(#trigger, #hint))),
+        (None, None) => None,
+    };
+    let usage = usage_reply.map(|line| {
         quote! {
             if command.args().trim().is_empty() {
                 ::zeta_plugin::send_reply(
                     client,
                     command.channel(),
-                    ::zeta_plugin::plain_reply(#usage),
+                    ::zeta_plugin::plain_reply(#line),
                 )?;
 
                 return ::core::result::Result::Ok(());
@@ -1519,6 +1525,7 @@ mod tests {
             label: None,
             event: false,
             usage: None,
+            usage_hint: None,
             register_if: None,
         }
     }
@@ -2118,6 +2125,33 @@ mod tests {
         assert!(rendered.contains("plain_reply"), "{rendered}");
         assert!(rendered.contains("send_reply"), "{rendered}");
         assert!(rendered.contains("Usage: .test <arg>"), "{rendered}");
+    }
+
+    #[test]
+    fn command_usage_hint_derives_the_usage_line() {
+        let inherent: syn::ItemImpl = parse_quote! {
+            impl Plugin {
+                #[command(".test", "desc", event, usage_hint = "<arg>")]
+                async fn test(
+                    &self,
+                    _: &Context,
+                    _: &Client,
+                    _: &CommandEvent,
+                ) -> Result<(), Error> {
+                    Ok(())
+                }
+            }
+        };
+        let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
+
+        let rendered = render(&plugin, &inherent).to_string();
+
+        assert!(rendered.contains("plain_reply"), "{rendered}");
+        assert!(rendered.contains("send_reply"), "{rendered}");
+        assert!(
+            rendered.contains(":: zeta_plugin :: usage_line (\".test\" , \"<arg>\")"),
+            "{rendered}"
+        );
     }
 
     #[test]

@@ -68,7 +68,7 @@ impl Kagi {
         ".g",
         "Search with Kagi and link the top result",
         event,
-        usage = "Usage: .g\x0f <query>"
+        usage_hint = "<query>"
     )]
     async fn search(
         &self,
@@ -106,7 +106,7 @@ impl Kagi {
         ".gis",
         "Search Kagi Images and link the first result",
         event,
-        usage = "Usage: .gis\x0f <query>"
+        usage_hint = "<query>"
     )]
     async fn search_images(
         &self,

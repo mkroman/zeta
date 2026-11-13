@@ -184,7 +184,7 @@ impl YouTube {
         ".yt",
         "Search YouTube and link the top video",
         event,
-        usage = "Usage: .yt\x0f <query>",
+        usage_hint = "<query>",
         register_if = settings.enable_command
     )]
     async fn search_video(

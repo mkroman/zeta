@@ -131,7 +131,7 @@ impl Tvmaze {
         ".next",
         "Show when a show's next episode airs",
         event,
-        usage = "Usage: .next\x0f <show>"
+        usage_hint = "<show>"
     )]
     async fn next(
         &self,

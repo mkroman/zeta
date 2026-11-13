@@ -60,6 +60,6 @@ pub use zeta_plugin_macros::{instrument_database, plugin};
 // dependencies of their own.
 pub use self::irc::{
     labeled_reply, parse_or_usage, plain_reply, reply_lookup, send_reply, send_reply_via,
-    write_labeled_reply_prefix,
+    usage_line, write_labeled_reply_prefix,
 };
 pub use ::irc::client::Client;
