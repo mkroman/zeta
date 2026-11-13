@@ -10,7 +10,6 @@
 
 mod metadata;
 
-use std::fmt::Write as _;
 use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -22,7 +21,8 @@ use wreq::redirect::Policy;
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_plugin::irc::{
-    BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, plain_reply, send_reply, send_reply_via,
+    PLAIN_REPLY_PREFIX, REPLY_MARKER, labeled_reply_prefix_len, plain_reply, send_reply,
+    send_reply_via, write_labeled_reply_prefix,
 };
 use zeta_plugin::{Client, Context, PluginCatalog, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrlRef;
@@ -33,10 +33,6 @@ use metadata::{PageMetadata, fetch_metadata};
 
 /// The separator between a page's title and its description.
 const CONTENT_SEPARATOR: &str = " — ";
-
-/// The bytes a labeled reply prefix writes besides its label.
-const LABELED_PREFIX_BYTES: usize =
-    REPLY_MARKER.len() + RESET.len() + 2 * BOLD.len() + COLOR.len() + 3;
 
 /// File extensions that we avoid requesting to save time and bandwidth.
 const BINARY_EXTENSIONS: &[&str] = &[
@@ -246,7 +242,7 @@ impl Titles {
                         );
 
                         if let Err(send_error) =
-                            send_reply_via(&sender, &channel, format!("{REPLY_MARKER} {error}"))
+                            send_reply_via(&sender, &channel, plain_reply(error))
                         {
                             warn!(exception.message = %send_error, "could not send fetch error");
                         }
@@ -380,13 +376,8 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
             .filter(|site| !site.is_empty());
         let label = site.as_deref().unwrap_or_else(|| host_name(url));
 
-        let mut message = String::with_capacity(LABELED_PREFIX_BYTES + label.len() + capacity);
-        // The same bytes as `zeta_utils::irc::labeled_reply_prefix`, written into the reply
-        // buffer instead of into a temporary string.
-        let _ = write!(
-            message,
-            "{REPLY_MARKER}{RESET}{BOLD} {label}:{BOLD}{COLOR} "
-        );
+        let mut message = String::with_capacity(labeled_reply_prefix_len(label) + capacity);
+        write_labeled_reply_prefix(&mut message, label);
 
         message
     } else {

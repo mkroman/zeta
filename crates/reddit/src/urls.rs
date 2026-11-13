@@ -6,31 +6,55 @@ use url::Url;
 
 use crate::Link;
 
+/// The `i.redd.it` hostname, serving direct image links.
+const I_REDD_IT_HOST: &str = "i.redd.it";
+
+/// The `oauth.reddit.com` hostname.
+const OAUTH_REDDIT_COM_HOST: &str = "oauth.reddit.com";
+
+/// The `old.reddit.com` hostname.
+const OLD_REDDIT_COM_HOST: &str = "old.reddit.com";
+
+/// The `preview.redd.it` hostname, serving preview images.
+const PREVIEW_REDD_IT_HOST: &str = "preview.redd.it";
+
+/// The `redd.it` short-link hostname.
+const REDD_IT_HOST: &str = "redd.it";
+
+/// The `reddit.com` hostname.
+const REDDIT_COM_HOST: &str = "reddit.com";
+
+/// The `v.redd.it` hostname, serving videos.
+const V_REDD_IT_HOST: &str = "v.redd.it";
+
+/// The `www.reddit.com` hostname.
+const WWW_REDDIT_COM_HOST: &str = "www.reddit.com";
+
 /// The hosts [`classify_reddit_url`] recognizes.
 ///
 /// Plugins subscribe to these hosts instead of repeating the list, so a host the classifier
 /// accepts is never left unsubscribed — or subscribed without being handled.
 pub const URL_HOSTS: &[&str] = &[
-    "i.redd.it",
-    "oauth.reddit.com",
-    "old.reddit.com",
-    "preview.redd.it",
-    "redd.it",
-    "reddit.com",
-    "v.redd.it",
-    "www.reddit.com",
+    I_REDD_IT_HOST,
+    OAUTH_REDDIT_COM_HOST,
+    OLD_REDDIT_COM_HOST,
+    PREVIEW_REDD_IT_HOST,
+    REDD_IT_HOST,
+    REDDIT_COM_HOST,
+    V_REDD_IT_HOST,
+    WWW_REDDIT_COM_HOST,
 ];
 
 /// Attempts to parse the given `url` as a reddit URL.
 #[must_use]
 pub fn classify_reddit_url(url: &Url) -> Option<Link> {
     match url.host_str() {
-        Some("v.redd.it" | "i.redd.it" | "preview.redd.it" | "redd.it") => {
+        Some(V_REDD_IT_HOST | I_REDD_IT_HOST | PREVIEW_REDD_IT_HOST | REDD_IT_HOST) => {
             classify_redd_it_url(url)
         }
-        Some("reddit.com" | "www.reddit.com" | "old.reddit.com" | "oauth.reddit.com") => {
-            classify_reddit_com_url(url)
-        }
+        Some(
+            REDDIT_COM_HOST | WWW_REDDIT_COM_HOST | OLD_REDDIT_COM_HOST | OAUTH_REDDIT_COM_HOST,
+        ) => classify_reddit_com_url(url),
         _ => None,
     }
 }
@@ -85,12 +109,12 @@ pub fn classify_reddit_com_url(url: &Url) -> Option<Link> {
 /// Parses redd.it URLs
 fn classify_redd_it_url(url: &Url) -> Option<Link> {
     match url.host_str() {
-        Some("i.redd.it") => Some(Link::Image(url.path().to_string())),
-        Some("v.redd.it") => url
+        Some(I_REDD_IT_HOST) => Some(Link::Image(url.path().to_string())),
+        Some(V_REDD_IT_HOST) => url
             .path_segments()
             .and_then(|mut segment| segment.next())
             .map(|id| Link::Video(id.to_string())),
-        Some("preview.redd.it") => {
+        Some(PREVIEW_REDD_IT_HOST) => {
             let mut request_uri = url.path().to_string();
 
             if let Some(query) = url.query() {
@@ -102,7 +126,7 @@ fn classify_redd_it_url(url: &Url) -> Option<Link> {
         }
         // `redd.it/<id>` is the short link for a submission; resolving it is the API's job, so
         // it is classified as the comments page it redirects to.
-        Some("redd.it") => match zeta_url::path_segments(url)?.as_slice() {
+        Some(REDD_IT_HOST) => match zeta_url::path_segments(url)?.as_slice() {
             [id] if zeta_url::is_identifier(id, "") => Some(Link::CommentsPage {
                 id: (*id).to_string(),
             }),
@@ -219,24 +243,19 @@ mod tests {
         );
     }
 
-    /// The hosts the plugin subscribes to and the classifier recognizes must stay in sync.
+    /// Every host the plugin subscribes to must be recognized by the classifier.
     #[test]
     fn url_hosts_cover_the_classified_hosts() {
-        let cases = [
-            ("i.redd.it", "/gvjukykex8pf1.jpeg"),
-            ("v.redd.it", "/b2l87x1pyn7h1"),
-            ("preview.redd.it", "/nry00uecp5pf1.png"),
-            ("redd.it", "/1nh144u"),
-            ("reddit.com", "/r/rust"),
-            ("www.reddit.com", "/r/rust"),
-            ("old.reddit.com", "/r/rust"),
-            ("oauth.reddit.com", "/r/rust"),
-        ];
-
-        assert_eq!(cases.len(), URL_HOSTS.len());
-
-        for (host, path) in cases {
-            assert!(URL_HOSTS.contains(&host), "{host} is not advertised");
+        for host in URL_HOSTS {
+            let path = match *host {
+                REDD_IT_HOST => "/1nh144u",
+                I_REDD_IT_HOST | V_REDD_IT_HOST | PREVIEW_REDD_IT_HOST => "/test.jpg",
+                REDDIT_COM_HOST
+                | WWW_REDDIT_COM_HOST
+                | OLD_REDDIT_COM_HOST
+                | OAUTH_REDDIT_COM_HOST => "/r/rust",
+                other => panic!("no test path for {other}"),
+            };
 
             let url = Url::parse(&format!("https://{host}{path}")).unwrap();
             assert!(

@@ -39,28 +39,84 @@ pub enum Tier {
     New,
 }
 
-impl Tier {
-    pub const ALL: [Self; 7] = [
-        Self::Regressed,
-        Self::Warning,
-        Self::Waived,
-        Self::Drift,
-        Self::Improved,
-        Self::Unchanged,
-        Self::New,
-    ];
+/// One verdict tier's display name and check-payload slug.
+struct TierInfo {
+    /// The tier the row describes.
+    tier: Tier,
+    /// The human-readable verdict name.
+    label: &'static str,
+    /// The key the tier gets in the check payload's `counts` object.
+    slug: &'static str,
+}
 
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Regressed => "regression",
-            Self::Warning => "warning",
-            Self::Waived => "waived",
-            Self::Drift => "drift",
-            Self::Improved => "improved",
-            Self::Unchanged => "unchanged",
-            Self::New => "new",
+/// Every verdict tier, in display order.
+const TIERS: &[TierInfo] = &[
+    TierInfo {
+        tier: Tier::Regressed,
+        label: "regression",
+        slug: "regressed",
+    },
+    TierInfo {
+        tier: Tier::Warning,
+        label: "warning",
+        slug: "warning",
+    },
+    TierInfo {
+        tier: Tier::Waived,
+        label: "waived",
+        slug: "waived",
+    },
+    TierInfo {
+        tier: Tier::Drift,
+        label: "drift",
+        slug: "drift",
+    },
+    TierInfo {
+        tier: Tier::Improved,
+        label: "improved",
+        slug: "improved",
+    },
+    TierInfo {
+        tier: Tier::Unchanged,
+        label: "unchanged",
+        slug: "unchanged",
+    },
+    TierInfo {
+        tier: Tier::New,
+        label: "new",
+        slug: "new",
+    },
+];
+
+impl Tier {
+    /// Every verdict tier, in display order.
+    pub const ALL: [Self; TIERS.len()] = {
+        let mut tiers = [Self::Regressed; TIERS.len()];
+        let mut index = 0;
+        while index < TIERS.len() {
+            tiers[index] = TIERS[index].tier;
+            index += 1;
         }
+        tiers
+    };
+
+    /// The human-readable verdict name.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        self.info().label
+    }
+
+    /// The key the tier gets in the check payload's `counts` object.
+    #[must_use]
+    pub fn slug(self) -> &'static str {
+        self.info().slug
+    }
+
+    fn info(self) -> &'static TierInfo {
+        TIERS
+            .iter()
+            .find(|info| info.tier == self)
+            .expect("every verdict tier has a table row")
     }
 }
 

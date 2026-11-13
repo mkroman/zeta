@@ -27,11 +27,6 @@ pub const URL_HOSTS: &[&str] = &[
     WWW_INSTAGRAM_COM,
 ];
 
-/// Path segments that name site resources rather than user profiles.
-const RESERVED_SEGMENTS: &[&str] = &[
-    "accounts", "direct", "explore", "p", "reel", "reels", "share", "stories", "tv",
-];
-
 /// An Instagram link, identified by what it points at.
 #[derive(Eq, PartialEq, Debug)]
 pub enum InstagramLink {
@@ -67,35 +62,60 @@ pub enum MediaKind {
     Tv,
 }
 
+/// Defines the media path segments, their kinds, and the [`RESERVED_SEGMENTS`] list from one
+/// row per media kind.
+///
+/// Each row names a kind, its canonical URL path segment, the summary label, and its aliases.
+/// The canonical segment is the one [`MediaKind::segment`] builds URLs from; every segment,
+/// canonical or alias, is reserved so it is never mistaken for a user profile.
+macro_rules! media_kinds {
+    ($($kind:ident => $segment:literal, $label:literal, [$($alias:literal),*];)*) => {
+        /// The accepted media path segments, the kinds they name, and their summary labels.
+        const MEDIA_SEGMENTS: &[(&str, MediaKind, &str)] = &[
+            $(($segment, MediaKind::$kind, $label), $(($alias, MediaKind::$kind, $label),)*)*
+        ];
+
+        /// Path segments that name site resources rather than user profiles.
+        const RESERVED_SEGMENTS: &[&str] = &[
+            $($segment, $($alias,)*)*
+            "accounts", "direct", "explore", "share", "stories",
+        ];
+    };
+}
+
+media_kinds! {
+    Post => "p", "post", [];
+    Reel => "reel", "reel", ["reels"];
+    Tv => "tv", "video", [];
+}
+
 impl MediaKind {
     /// The word used for the kind of media in summaries.
     #[must_use]
-    pub(super) const fn label(self) -> &'static str {
-        match self {
-            Self::Post => "post",
-            Self::Reel => "reel",
-            Self::Tv => "video",
-        }
+    pub(super) fn label(self) -> &'static str {
+        MEDIA_SEGMENTS
+            .iter()
+            .find(|row| row.1 == self)
+            .map(|row| row.2)
+            .expect("every media kind has a segment row")
     }
 
     /// The URL path segment identifying the kind of media in canonical URLs.
     #[must_use]
-    pub(super) const fn segment(self) -> &'static str {
-        match self {
-            Self::Post => "p",
-            Self::Reel => "reel",
-            Self::Tv => "tv",
-        }
+    pub(super) fn segment(self) -> &'static str {
+        MEDIA_SEGMENTS
+            .iter()
+            .find(|row| row.1 == self)
+            .map(|row| row.0)
+            .expect("every media kind has a segment row")
     }
 
     /// Returns the media kind named by the given URL path segment, if any.
     fn from_segment(segment: &str) -> Option<Self> {
-        match segment {
-            "p" => Some(Self::Post),
-            "reel" | "reels" => Some(Self::Reel),
-            "tv" => Some(Self::Tv),
-            _ => None,
-        }
+        MEDIA_SEGMENTS
+            .iter()
+            .find(|row| row.0 == segment)
+            .map(|row| row.1)
     }
 }
 
@@ -450,5 +470,19 @@ mod tests {
         assert_eq!(MediaKind::from_segment("reel"), Some(MediaKind::Reel));
         assert_eq!(MediaKind::from_segment("tv"), Some(MediaKind::Tv));
         assert_eq!(MediaKind::from_segment("stories"), None);
+    }
+
+    #[test]
+    fn test_every_media_segment_is_reserved() {
+        for (segment, kind, _label) in MEDIA_SEGMENTS {
+            assert_eq!(MediaKind::from_segment(segment), Some(*kind), "{segment}");
+            assert!(
+                RESERVED_SEGMENTS.contains(segment),
+                "{segment} is not reserved"
+            );
+        }
+
+        // Non-media site resources stay reserved as well.
+        assert!(RESERVED_SEGMENTS.contains(&"stories"));
     }
 }

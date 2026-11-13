@@ -18,7 +18,7 @@ pub fn verdict(run: &RunSummary) -> Value {
         .iter()
         .map(|tier| {
             (
-                tier_name(*tier).to_owned(),
+                tier.slug().to_owned(),
                 Value::from(counts.get(tier).copied().unwrap_or(0)),
             )
         })
@@ -82,18 +82,6 @@ pub fn verdict(run: &RunSummary) -> Value {
     ])
 }
 
-const fn tier_name(tier: Tier) -> &'static str {
-    match tier {
-        Tier::Regressed => "regressed",
-        Tier::Warning => "warning",
-        Tier::Waived => "waived",
-        Tier::Drift => "drift",
-        Tier::Improved => "improved",
-        Tier::Unchanged => "unchanged",
-        Tier::New => "new",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +89,23 @@ mod tests {
     use crate::bench::model::{Benchmark, Metrics};
     use crate::bench::policy::classify;
     use crate::json;
+
+    /// The payload keys are a wire format consumed by the workflow; pin the exact slugs.
+    #[test]
+    fn tier_slugs_pin_the_payload_keys() {
+        assert_eq!(
+            Tier::ALL.map(Tier::slug),
+            [
+                "regressed",
+                "warning",
+                "waived",
+                "drift",
+                "improved",
+                "unchanged",
+                "new",
+            ]
+        );
+    }
 
     #[test]
     fn verdict_payload_keeps_the_schema() {
@@ -143,16 +148,10 @@ mod tests {
             .get("counts")
             .and_then(Value::as_object)
             .expect("counts object");
-        for tier in [
-            "regressed",
-            "warning",
-            "waived",
-            "drift",
-            "improved",
-            "unchanged",
-            "new",
-        ] {
-            assert!(counts.contains_key(tier), "missing count `{tier}`");
+        for tier in Tier::ALL {
+            let slug = tier.slug();
+
+            assert!(counts.contains_key(slug), "missing count `{slug}`");
         }
         assert_eq!(counts["regressed"].as_u64(), Some(1));
 

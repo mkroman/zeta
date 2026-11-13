@@ -15,17 +15,6 @@ use zeta_plugin::{Client, CommandEvent, CommandSpec, Context, Subscriptions, Zet
 
 mod unicode;
 
-/// The `.b` string to bytes command.
-const BYTES: CommandSpec = CommandSpec::new(".b", "Show a string's UTF-8 bytes as hex escapes");
-/// The `.len` string length command.
-const LENGTH: CommandSpec = CommandSpec::new(".len", "Count the characters in a string");
-/// The `.ord` character codepoint command.
-const ORD: CommandSpec = CommandSpec::new(".ord", "Show the Unicode codepoint of each character");
-/// The `.rev` string reverse command.
-const REVERSE: CommandSpec = CommandSpec::new(".rev", "Reverse a string");
-/// The `.uni` Unicode properties command.
-const UNICODE: CommandSpec = CommandSpec::new(".uni", "Show a character's Unicode properties");
-
 /// One command this plugin serves: its specification, usage arguments and renderer.
 struct Command {
     /// The registered command.
@@ -36,34 +25,35 @@ struct Command {
     render: fn(&str) -> String,
 }
 
-/// Every command this plugin registers, in usage order.
-const COMMANDS: [Command; 5] = [
-    Command {
-        spec: BYTES,
-        usage: " <byte..>",
-        render: str_to_hex,
-    },
-    Command {
-        spec: LENGTH,
-        usage: " <string>",
-        render: character_count,
-    },
-    Command {
-        spec: ORD,
-        usage: " <chars..>",
-        render: code_points,
-    },
-    Command {
-        spec: REVERSE,
-        usage: " <string>",
-        render: reverse,
-    },
-    Command {
-        spec: UNICODE,
-        usage: " <chars>",
-        render: unicode::unicode_details,
-    },
-];
+/// Defines the fixed string commands and the [`COMMANDS`] table from one list of entries.
+///
+/// Keeping both in one place means a command cannot be registered without its renderer, or
+/// rendered without being registered.
+macro_rules! string_commands {
+    ($($spec:ident => $trigger:literal, $description:literal, $usage:literal, $render:path;)*) => {
+        $(
+            #[doc = concat!("The `", $trigger, "` command: ", $description, ".")]
+            const $spec: CommandSpec = CommandSpec::new($trigger, $description);
+        )*
+
+        /// Every command this plugin registers, in usage order.
+        const COMMANDS: &[Command] = &[
+            $(Command {
+                spec: $spec,
+                usage: $usage,
+                render: $render,
+            },)*
+        ];
+    };
+}
+
+string_commands! {
+    BYTES => ".b", "Show a string's UTF-8 bytes as hex escapes", " <byte..>", str_to_hex;
+    LENGTH => ".len", "Count the characters in a string", " <string>", character_count;
+    ORD => ".ord", "Show the Unicode codepoint of each character", " <chars..>", code_points;
+    REVERSE => ".rev", "Reverse a string", " <string>", reverse;
+    UNICODE => ".uni", "Show a character's Unicode properties", " <chars>", unicode::unicode_details;
+}
 
 /// Guards the one-time background warm-up of the Unicode tables.
 static UNICODE_INIT: Once = Once::new();
@@ -75,7 +65,7 @@ pub struct StringUtils;
 #[plugin(name = "string_utils")]
 impl StringUtils {
     fn new(subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
-        for command in &COMMANDS {
+        for command in COMMANDS {
             subscriptions.command(command.spec);
         }
         Ok(Self)
@@ -212,25 +202,21 @@ mod tests {
 
     #[test]
     fn usage_lines_cover_every_command() {
+        for command in COMMANDS {
+            let expected = format!("Usage: {}{RESET}{}", command.spec.trigger(), command.usage);
+
+            assert_eq!(
+                StringUtils::usage_line(command.spec).as_deref(),
+                Some(expected.as_str()),
+                "{}",
+                command.spec.trigger()
+            );
+        }
+
+        // Pin the exact spacing of the reset code and the usage arguments.
         assert_eq!(
             StringUtils::usage_line(BYTES).as_deref(),
             Some("Usage: .b\x0f <byte..>")
-        );
-        assert_eq!(
-            StringUtils::usage_line(LENGTH).as_deref(),
-            Some("Usage: .len\x0f <string>")
-        );
-        assert_eq!(
-            StringUtils::usage_line(ORD).as_deref(),
-            Some("Usage: .ord\x0f <chars..>")
-        );
-        assert_eq!(
-            StringUtils::usage_line(REVERSE).as_deref(),
-            Some("Usage: .rev\x0f <string>")
-        );
-        assert_eq!(
-            StringUtils::usage_line(UNICODE).as_deref(),
-            Some("Usage: .uni\x0f <chars>")
         );
         assert_eq!(
             StringUtils::usage_line(CommandSpec::new(".nope", "not a command")),
@@ -249,7 +235,7 @@ mod tests {
         )
         .unwrap();
 
-        for command in &COMMANDS {
+        for command in COMMANDS {
             assert!(subscriptions.commands().contains(&command.spec));
             assert!(
                 StringUtils::usage_line(command.spec).is_some(),

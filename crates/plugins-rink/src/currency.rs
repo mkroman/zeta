@@ -6,8 +6,10 @@
 //! cryptocurrency table; that refresh warns and keeps the previous table when it fails, and a
 //! table rink rejects at load time is logged so the fiat data still lands.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
+use rink_core::ast::Def;
 use rink_core::{Context as RinkContext, Value};
 use tracing::debug;
 
@@ -43,13 +45,6 @@ pub const CURRENCY_CHECK_INTERVAL: Duration = Duration::from_mins(10);
 /// The CoinMarketCap endpoint is charged one call credit per 250 coins returned (rounded up),
 /// so a limit of 100 costs a single credit per refresh.
 const CRYPTO_LISTINGS_LIMIT: u32 = 100;
-
-/// The static cryptocurrency subunit names defined in [`EXTRA_UNITS`]; a coin symbol that
-/// would shadow one of them is skipped by the synthesizer.
-const CRYPTO_SUBUNIT_NAMES: &[&str] = &[
-    "satoshi", "sats", "wei", "gwei", "lamport", "lovelace", "stroop", "piconero", "koinu",
-    "litoshi",
-];
 
 /// The dataset the current rink context was built from: rink's fiat dataset and, when the
 /// coinmarketcap plugin shared its client, the cryptocurrency listing table.
@@ -136,6 +131,32 @@ litoshi                  1e-8 LTC
 
 !endcategory
 "#;
+
+/// The category [`EXTRA_UNITS`] declares the cryptocurrency subunits under.
+const CRYPTO_UNITS_CATEGORY: &str = "crypto_units";
+
+/// The cryptocurrency subunit names [`EXTRA_UNITS`] defines, cached after the first parse.
+///
+/// Parsed from the DSL instead of repeated beside it, so adding a subunit cannot leave the
+/// synthesizer's skip list behind.
+static EXTRA_SUBUNIT_NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+
+/// Returns the lowercase cryptocurrency subunit names [`EXTRA_UNITS`] defines.
+///
+/// The DSL defines the names in lowercase while CoinMarketCap tickers are uppercase, so the
+/// names are lowercased for a case-insensitive comparison.
+fn extra_subunit_names() -> &'static HashSet<String> {
+    EXTRA_SUBUNIT_NAMES.get_or_init(|| {
+        rink_core::loader::gnu_units::parse_str(EXTRA_UNITS)
+            .expect("the bundled extra units parse")
+            .defs
+            .into_iter()
+            .filter(|entry| entry.category.as_deref() == Some(CRYPTO_UNITS_CATEGORY))
+            .filter(|entry| matches!(entry.def.as_ref(), Def::Unit { .. }))
+            .map(|entry| entry.name.to_ascii_lowercase())
+            .collect()
+    })
+}
 
 /// Fetches the fiat dataset and the cryptocurrency listings, then asks the actor to rebuild the
 /// context from them.
@@ -227,11 +248,13 @@ async fn fetch_fiat(client: &reqwest::Client, url: &str) -> Result<String, ZetaE
 /// unit definitions.
 ///
 /// Evaluation keeps saving results so `ans` resolves, and `previous` carries the result across
-/// context rebuilds. The cryptocurrency listings are synthesized after the fiat load, so coins
-/// whose symbol would shadow an already-known unit are skipped. Those synthesized definitions
-/// come from a third-party payload rink may reject (rink treats even a duplicate-name warning
-/// as a fatal load error), so a rejection is logged and the build carries on instead —
-/// otherwise one odd listing would block the fiat updates too.
+/// context rebuilds. The cryptocurrency listings are synthesized before the extra definitions
+/// load, so the extra subunits can resolve against the live coin units the listings define.
+/// A coin whose symbol would shadow an extra unit — e.g. a `SATOSHI` ticker — is skipped using
+/// the names parsed from [`EXTRA_UNITS`]. The synthesized definitions come from a third-party
+/// payload rink may reject (rink treats even a duplicate-name warning as a fatal load error),
+/// so a rejection is logged and the build carries on instead — otherwise one odd listing would
+/// block the fiat updates too.
 ///
 /// # Errors
 ///
@@ -264,6 +287,9 @@ pub fn build_context(
         }
     }
 
+    // Loaded after the listings so the cryptocurrency subunits resolve against the coin units
+    // the listings define; rink does not retry a pending definition when its dependency arrives
+    // in a later batch.
     ctx.load_definitions(EXTRA_UNITS)
         .map_err(|error| plugin_err(std::io::Error::other(error)))?;
 
@@ -274,11 +300,13 @@ pub fn build_context(
 /// quoted in USD.
 ///
 /// Coins whose symbol would fail rink's loader (e.g. `1INCH`), shadow an already-known unit
-/// (the euro, the liquid drop), or carry no USD price are skipped; so is every later listing
-/// that repeats a ticker already emitted here, because rink rejects a batch with a duplicate
-/// name. The returned text is empty when nothing qualifies.
+/// (the euro, the liquid drop, or one of the [`EXTRA_UNITS`] crypto subunits), or carry no USD
+/// price are skipped; so is every later listing that repeats a ticker already emitted here,
+/// because rink rejects a batch with a duplicate name. The returned text is empty when nothing
+/// qualifies.
 fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
     let date = DateTime::now();
+    let extra_subunit_names = extra_subunit_names();
     let mut text = String::new();
     let mut emitted = HashSet::new();
 
@@ -292,16 +320,20 @@ fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
             continue;
         };
 
+        let lowercase_symbol = listing.symbol.to_ascii_lowercase();
+
+        // The extra units are not loaded yet — their crypto subunits have to follow the coin
+        // listings so they can resolve — so their names are checked against the parsed DSL.
         if !valid_unit_symbol(&listing.symbol)
             || ctx.lookup(&listing.symbol).is_some()
-            || CRYPTO_SUBUNIT_NAMES.contains(&listing.symbol.to_ascii_lowercase().as_str())
+            || extra_subunit_names.contains(&lowercase_symbol)
         {
             continue;
         }
 
         // Listings are rank-ordered, so on a duplicate ticker the higher-ranked coin wins and
         // the batch stays loadable.
-        if !emitted.insert(listing.symbol.to_ascii_lowercase()) {
+        if !emitted.insert(lowercase_symbol) {
             continue;
         }
 
@@ -334,11 +366,16 @@ mod tests {
 
     /// A listing with the fields the currency synthesis reads.
     fn listing(name: &str) -> Listing {
+        listing_with_symbol(name, "TST")
+    }
+
+    /// A listing with `symbol` as its ticker and the fields the currency synthesis reads.
+    fn listing_with_symbol(name: &str, symbol: &str) -> Listing {
         Listing {
             id: 1,
             name: name.to_string(),
-            symbol: "TST".to_string(),
-            slug: "tst".to_string(),
+            symbol: symbol.to_string(),
+            slug: symbol.to_ascii_lowercase(),
             cmc_rank: None,
             num_market_pairs: None,
             circulating_supply: None,
@@ -369,5 +406,32 @@ mod tests {
             "{definition}"
         );
         assert!(!definition.contains("10Test"), "{definition}");
+    }
+
+    #[test]
+    fn skips_listings_that_shadow_extra_subunits() {
+        // The skip list is parsed from the extra-units DSL, so a coin ticker that would
+        // otherwise claim the same name as a static subunit is skipped without a second list
+        // to keep in sync.
+        let ctx = build_context(None, None).expect("the bundled context loads");
+        let listings = [
+            listing_with_symbol("Satoshi", "SATOSHI"),
+            listing_with_symbol("Gwei", "GWEI"),
+        ];
+        let text = synthesize_crypto_units(&ctx, &listings);
+
+        assert!(text.is_empty(), "{text}");
+
+        let data = CurrencyData {
+            fiat: crate::test_support::TEST_CURRENCY_DATA.to_string(),
+            crypto: Some(listings.to_vec()),
+        };
+        let ctx = build_context(Some(&data), None)
+            .expect("a listing that shadows an extra subunit must not fail the build");
+
+        assert!(
+            ctx.lookup("satoshi").is_some(),
+            "the static satoshi subunit must still be registered"
+        );
     }
 }

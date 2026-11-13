@@ -41,6 +41,15 @@ const REPLY_BODY_RESERVE: usize = 256;
 const LABELED_PREFIX_BYTES: usize =
     REPLY_MARKER.len() + RESET.len() + BOLD.len() + 1 + 1 + BOLD.len() + COLOR.len() + 1;
 
+/// The bytes [`write_labeled_reply_prefix`] writes before the message, `label` included.
+///
+/// Callers that build a labeled reply incrementally can reserve the prefix and their content
+/// in one allocation instead of re-deriving the format's byte length.
+#[must_use]
+pub const fn labeled_reply_prefix_len(label: &str) -> usize {
+    LABELED_PREFIX_BYTES + label.len()
+}
+
 /// Writes `message` into `reply`.
 ///
 /// Outlined and non-generic: the reply builders are generic over the message's `Display` type,
@@ -61,7 +70,7 @@ fn write_display(reply: &mut String, message: &dyn fmt::Display) {
 #[inline]
 #[must_use]
 pub fn labeled_reply(label: &str, message: impl fmt::Display) -> String {
-    let mut reply = String::with_capacity(LABELED_PREFIX_BYTES + label.len() + REPLY_BODY_RESERVE);
+    let mut reply = String::with_capacity(labeled_reply_prefix_len(label) + REPLY_BODY_RESERVE);
     write_labeled_reply_prefix(&mut reply, label);
     write_display(&mut reply, &message);
 
@@ -90,7 +99,7 @@ pub fn write_labeled_reply_prefix(reply: &mut String, label: &str) {
 /// from a `Display` implementation.
 #[must_use]
 pub fn labeled_reply_prefix(label: &str) -> String {
-    let mut prefix = String::with_capacity(LABELED_PREFIX_BYTES + label.len());
+    let mut prefix = String::with_capacity(labeled_reply_prefix_len(label));
     write_labeled_reply_prefix(&mut prefix, label);
 
     prefix
@@ -421,6 +430,17 @@ mod tests {
             labeled_reply("", ""),
             format!("{}{}", labeled_reply_prefix(""), "")
         );
+    }
+
+    #[test]
+    fn labeled_reply_prefix_len_matches_the_prefix() {
+        for label in ["Twitch", ""] {
+            assert_eq!(
+                labeled_reply_prefix_len(label),
+                labeled_reply_prefix(label).len(),
+                "for {label:?}"
+            );
+        }
     }
 
     #[test]
