@@ -102,6 +102,7 @@ pub fn expand(arguments: TokenStream, item: TokenStream) -> TokenStream {
             skip_all,
             err,
             fields(
+                otel.kind = "client",
                 db.system.name = "postgresql",
                 db.namespace = %::zeta_plugin::database::namespace(&self.db),
                 db.operation.name = #operation,
@@ -134,6 +135,8 @@ mod tests {
         assert!(expanded.contains(r#""SELECT filters""#), "{expanded}");
         assert!(expanded.contains(r#""SELECT""#), "{expanded}");
         assert!(expanded.contains(r#""filters""#), "{expanded}");
+        // The database conventions describe these spans as client spans.
+        assert!(expanded.contains(r#"otel . kind = "client""#), "{expanded}");
     }
 
     #[test]
