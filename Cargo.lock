@@ -658,7 +658,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "coinmarketcap"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "reqwest",
  "serde",
@@ -955,7 +955,7 @@ checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
 name = "dendanskeordbog"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "reqwest",
  "scraper",
@@ -2261,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "kagi"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "htmlize",
  "reqwest",
@@ -3980,7 +3980,7 @@ dependencies = [
 
 [[package]]
 name = "reddit"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "htmlize",
  "reqwest",

@@ -57,8 +57,11 @@ pub use model::{ImageResult, SearchResult};
 pub const BASE_URL: &str = "https://kagi.com";
 /// A realistic browser user agent sent with requests, as Kagi serves an altered experience to
 /// clients it identifies as non-browser.
+///
+/// Kept in step with the `zeta-http` default so the binary does not present two browser
+/// generations to different services.
 pub const USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0";
+    "Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0";
 /// The duration before a HTTP request times out.
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// The duration of a single session. Once this duration has passed, a new session will be created.

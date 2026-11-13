@@ -80,6 +80,7 @@ impl<T> TtlCache<T> {
     ///
     /// Stale values are served so callers that pair this with a preceding refresh attempt keep
     /// working with the last known data while the source is unavailable.
+    #[must_use]
     pub fn with_value<R>(&self, access: impl FnOnce(Option<&T>) -> R) -> R {
         let entry = self.entry.load();
 
@@ -303,6 +304,7 @@ where
     }
 
     /// Returns the cached value for `key` when it has not expired.
+    #[must_use]
     pub fn get(&self, key: &K) -> Option<V>
     where
         V: Clone,
@@ -313,6 +315,7 @@ where
     /// Returns the cached entry for `key` when it has not expired, including negative results.
     ///
     /// `Some(None)` is a cached negative result; `None` means nothing is cached for `key`.
+    #[must_use]
     pub fn peek(&self, key: &K) -> Option<Option<V>>
     where
         V: Clone,

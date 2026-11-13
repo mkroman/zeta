@@ -36,6 +36,7 @@ pub fn classify_reddit_url(url: &Url) -> Option<Link> {
 }
 
 /// Parses reddit.com URLs
+#[must_use]
 pub fn classify_reddit_com_url(url: &Url) -> Option<Link> {
     match zeta_url::path_segments(url)?.as_slice() {
         // Direct link to a subreddit

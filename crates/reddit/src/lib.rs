@@ -36,6 +36,3 @@ pub const TOKEN_URL: &str = "https://www.reddit.com/api/v1/access_token";
 pub const USER_AGENT: &str = concat!("rust:reddit:", env!("CARGO_PKG_VERSION"), " (by /u/drizz)");
 /// The duration before a HTTP request times out.
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// The maximum number of characters of an unparseable response body that reaches the logs.
-const LOGGED_BODY_LENGTH: usize = 512;

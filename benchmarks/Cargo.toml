@@ -2,9 +2,9 @@
 name = "zeta-benchmarks"
 version = "0.0.0"
 publish = false
-edition = "2024"
+edition.workspace = true
 description = "Gungraun benchmarks for the zeta workspace."
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [dependencies]
 chrono = { workspace = true }

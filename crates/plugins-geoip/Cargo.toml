@@ -2,10 +2,10 @@
 name = "plugins-geoip"
 version = "0.0.0"
 rust-version.workspace = true
-edition = "2024"
+edition.workspace = true
 description = "The geoip plugin for the zeta IRC bot."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/mkroman/zeta"
+license.workspace = true
+repository.workspace = true
 
 [features]
 default = []

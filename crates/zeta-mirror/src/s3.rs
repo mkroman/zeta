@@ -106,6 +106,9 @@ fn record_error<T>(result: &Result<T, Error>) {
 /// the `name` environment variable is used, so secrets can stay out of `config.toml`. Empty
 /// values count as unset on both sides.
 ///
+/// This mirrors `zeta_plugin::resolve_secret`: `zeta-mirror` cannot depend on `zeta-plugin`,
+/// and both funnel into `zeta_utils::settings`, so keep the two in step.
+///
 /// # Errors
 ///
 /// Returns [`Error::MissingConfig`] when neither the configured value nor the environment

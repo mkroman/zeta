@@ -46,12 +46,14 @@ struct JsonSearchResult {
 /// # Panics
 ///
 /// Panics if the static [`BASE_URL`] is not a valid URL.
+#[must_use]
 pub fn url_with_query(path: &str, params: &[(&str, &str)]) -> reqwest::Url {
     reqwest::Url::parse_with_params(&format!("{BASE_URL}{path}"), params)
         .expect("the static base url always produces a valid url")
 }
 
 /// Extracts the `window.sse_nonce` value from the raw HTML content.
+#[must_use]
 pub fn extract_nonce(html: &str) -> Option<String> {
     const MARKER: &str = "window.sse_nonce";
 
@@ -72,6 +74,7 @@ pub fn extract_nonce(html: &str) -> Option<String> {
 /// Parses a raw stream response body into a vector of `KagiMessage`s, detecting whether the
 /// server responded with the standard server-sent event framing or the legacy null-delimited
 /// wire format.
+#[must_use]
 pub fn parse_stream(raw_body: &str) -> Vec<KagiMessage> {
     if raw_body.lines().any(|line| line.starts_with("data:")) {
         parse_sse_stream(raw_body)
@@ -139,6 +142,7 @@ fn payload_content(message: &KagiMessage) -> Option<&str> {
     message.payload.as_ref()?.get("content")?.as_str()
 }
 
+#[must_use]
 pub fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResult> {
     // Prefer the structured results payload when the server provides one.
     for message in messages
@@ -248,6 +252,7 @@ fn parse_search_results_html(html: &str) -> Vec<SearchResult> {
     results
 }
 
+#[must_use]
 pub fn parse_image_result_messages(messages: &[KagiMessage]) -> Vec<ImageResult> {
     let mut result: Vec<ImageResult> = Vec::new();
 

@@ -70,7 +70,7 @@ name = "#zeta.dev"
 # timeout = "30s"
 
 # The `User-Agent` header sent with HTTP requests.
-# user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0"
+# user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0"
 
 # Media mirroring, shared by the plugins that mirror media (tiktok, reddit).
 #

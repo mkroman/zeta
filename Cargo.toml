@@ -5,6 +5,9 @@ members = ["benchmarks", "crates/*", "xtask"]
 default-members = ["crates/zeta"]
 
 [workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkroman/zeta"
 rust-version = "1.100"
 
 [workspace.dependencies]

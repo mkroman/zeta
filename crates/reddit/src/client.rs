@@ -10,13 +10,14 @@ use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
 use tracing::{debug, instrument, trace};
 use url::Url;
+use zeta_http::LOGGED_BODY_LENGTH;
 use zeta_http::oauth::{TokenCache, TokenResponse};
 use zeta_url::RedactedUrl;
 
 use crate::urls::classify_reddit_com_url;
 use crate::{
-    BASE_URL, Error, HTTP_TIMEOUT, Item, LOGGED_BODY_LENGTH, Link, OAUTH_BASE_URL, RequestError,
-    Submission, Subreddit, TOKEN_URL, USER_AGENT,
+    BASE_URL, Error, HTTP_TIMEOUT, Item, Link, OAUTH_BASE_URL, RequestError, Submission, Subreddit,
+    TOKEN_URL, USER_AGENT,
 };
 
 /// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string.
