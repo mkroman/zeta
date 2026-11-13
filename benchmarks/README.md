@@ -12,24 +12,33 @@ comparable between runs, machines, and CI environments.
 three groups:
 
 - `index` — `EventIndex::dispatch`: classification, command matching, message/CTCP construction,
-  URL extraction, and the mailbox hand-off. This is the control group for the plugin-API
-  refactor.
+  URL extraction, and the mailbox hand-off. The dispatch refactor also touches this side
+  (per-event span-name/channel hoisting), so the group is compared rather than assumed constant.
 - `handler` — invoking one already-built event through the generated plugin dispatch (the
   boxed-future forwarder before the static-dispatch refactor, the native future after it).
 - `pipeline` — dispatch plus handler in one call.
 
-Deliberately excluded: Tokio task scheduling and mailbox draining (the receiver is read in the
-same thread), tracing export (span construction is measured, export is not), and network,
-database, clock or randomness. Handlers are no-ops with fixed inputs.
+Deliberately excluded: Tokio task scheduling and wakeups (the mailbox is drained synchronously
+inside the measured body and the handler is polled directly), tracing export (span construction
+and the handler's span guard are measured, export is not), and network, database, clock or
+randomness. Handlers are no-ops with fixed inputs. Setup values are returned from the benchmark
+functions so their destructors run outside the measured entry point.
 
-The case ids are stable across the plugin dispatch refactor. Record the pre_refactor baseline
-and compare later work against it:
+The case ids are stable across the plugin dispatch refactor. The recorded comparison used the
+pushed branches `bench/dispatch-pipeline` (old boxed API, based on `71f4a72`) and
+`bench/dispatch-pipeline-static` (new `Plugin::handle` API); the only production-API difference
+in the suite is the `invoke` shim.
 
 ```shell
+git switch bench/dispatch-pipeline
 cargo bench -p zeta-benchmarks --bench dispatch -- --save-baseline=pre_refactor
-git switch main   # after the refactor
-cargo bench -p zeta-benchmarks --bench dispatch -- --baseline=pre_refactor --save-baseline=refactor
+git switch bench/dispatch-pipeline-static
+cargo bench -p zeta-benchmarks --bench dispatch -- --baseline=pre_refactor --save-baseline=post_refactor
 ```
+
+Keep both runs in one worktree: Gungraun baselines live under `target/gungraun` and are not
+portable between target directories. Once the suite is on `main`, CI records the baseline
+automatically and compares every pull request against it.
 
 The handler and pipeline groups are expected to lose the boxed-future allocations once the
 handler future is awaited inline; a DHAT `TotalBlocks` increase there is a regression.
@@ -53,20 +62,22 @@ handler future is awaited inline; a DHAT `TotalBlocks` increase there is a regre
 cargo bench -p zeta-benchmarks
 cargo bench -p zeta-benchmarks --bench join
 cargo bench -p zeta-benchmarks --bench duration
+cargo bench -p zeta-benchmarks --bench dispatch
 ```
 
-Each benchmark runs once. The default tool is Callgrind; the join benchmarks additionally run
-DHAT to track allocations.
+Each benchmark runs once. The default tool is Callgrind; the join and dispatch benchmarks
+additionally run DHAT to track allocations.
 
 ## Regression checks
 
 The benchmark files opt into regression limits:
 
 - Callgrind: `Ir` (instructions executed) with a soft limit of 1%.
-- DHAT (join only): `TotalBlocks` and `TotalBytes` with a soft limit of 0%, so an allocation
-  regression in any joining path fails the run. The borrowing slice path is expected to
-  allocate exactly once (the result `String`); the streaming iterator path can allocate
-  again when the result grows.
+- DHAT (join and dispatch): `TotalBlocks` and `TotalBytes` with a soft limit of 0%, so an
+  allocation regression in a measured path fails the run. The borrowing join path is expected
+  to allocate exactly once (the result `String`); the streaming iterator path can allocate
+  again when the result grows. The dispatch handler path allocates nothing for a no-op
+  handler; the pipeline's only remaining allocation is the shared message.
 
 A run that exceeds a limit exits with code `3` and prints the regressed benchmarks. Limits are
 compared with the previous run, so the first run only records data.
@@ -123,8 +134,8 @@ image changes before they show up as warnings) and manually via `workflow_dispat
   gate against it.
 - **Policy** — because the counts are deterministic, the workflow gates on any reproducible
   increase: `Ir` above a 16-instruction floor (single-instruction churn on trivial benches is
-  reported as drift instead), plus any growth in DHAT `TotalBlocks`/`TotalBytes` for the join
-  suite. The compiled-in ±1% Callgrind limit remains the backstop.
+  reported as drift instead), plus any growth in DHAT `TotalBlocks`/`TotalBytes` for the
+  suites that record DHAT (join and dispatch). The compiled-in ±1% Callgrind limit remains the backstop.
 - **Toolchain drift** — the baseline records rustc release/commit, Valgrind, gungraun-runner
   versions and the `Cargo.lock` hash. A mismatch downgrades regressions to warnings with a
   banner instead of producing false alarms. The next main run re-records the baseline under

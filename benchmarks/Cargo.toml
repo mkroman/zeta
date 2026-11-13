@@ -11,6 +11,7 @@ chrono = { workspace = true }
 irc.workspace = true
 time = { workspace = true }
 tokio.workspace = true
+tracing.workspace = true
 zeta-plugin = { path = "../crates/zeta-plugin", default-features = false }
 zeta-plugin-runtime = { path = "../crates/zeta-plugin-runtime" }
 zeta-test-support = { path = "../crates/zeta-test-support", default-features = false, features = [
