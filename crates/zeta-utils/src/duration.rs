@@ -1,8 +1,13 @@
-//! Helpers for formatting and parsing points in time and durations.
+//! Duration formatting, time-in-words rendering and ISO 8601 parsing.
 //!
-//! Anchor-free durations are formatted through fixed-length unit tables ([`format_seconds_in_words`]),
-//! while distances between two points in time are counted against the calendar
-//! ([`DistanceInWordsExt`]), so leap years and variable month lengths are exact.
+//! Durations are rendered compactly ([`format_duration`]) or through the fixed-length unit
+//! tables of [`format_seconds_in_words`]. [`TimeInWordsExt`] turns a duration or a point in time
+//! into words (`"1 year, 2 weeks, and 3 days"`), and [`DistanceInWordsExt`] counts the distance
+//! between two points in time against the calendar, so leap years and variable month lengths are
+//! exact. [`parse_iso8601_duration`] parses ISO 8601 duration strings.
+//!
+//! The `chrono` and `time` features extend the traits to `chrono::DateTime<Utc>` and
+//! `time::OffsetDateTime` respectively.
 
 use std::fmt::{self, Write};
 use std::time::Duration;

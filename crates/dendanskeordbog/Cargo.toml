@@ -1,16 +1,12 @@
 [package]
 name = "dendanskeordbog"
-version = "0.1.0"
+version = "0.0.0"
+publish = false
 rust-version.workspace = true
-edition = "2024"
+edition.workspace = true
 description = "A client and parser for the Danish Dictionary (Den Danske Ordbog)."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/mkroman/zeta"
-keywords = ["dictionary", "danish", "scraper", "ordnet", "ddo"]
-categories = ["api-bindings", "parser", "text-processing"]
-
-[package.metadata.docs.rs]
-all-features = true
+license.workspace = true
+repository.workspace = true
 
 [features]
 client = ["dep:reqwest", "reqwest/gzip", "dep:tokio"]

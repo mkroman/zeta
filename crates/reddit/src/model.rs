@@ -239,7 +239,7 @@ mod tests {
             serde_path_to_error::deserialize(jd).inspect_err(|err| {
                 let body = text
                     .chars()
-                    .take(crate::LOGGED_BODY_LENGTH)
+                    .take(zeta_http::LOGGED_BODY_LENGTH)
                     .collect::<String>();
 
                 error!(

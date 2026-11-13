@@ -2,10 +2,10 @@
 name = "zeta-cache"
 version = "0.0.0"
 rust-version.workspace = true
-edition = "2024"
+edition.workspace = true
 description = "Single-slot TTL caches for the zeta IRC bot."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/mkroman/zeta"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 arc-swap.workspace = true

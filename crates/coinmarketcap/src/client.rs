@@ -30,6 +30,9 @@ const FIAT_MAP_LIMIT: u32 = 5000;
 /// The maximum number of characters of an unparseable response body that reaches the logs.
 const LOGGED_BODY_LENGTH: usize = 512;
 
+/// The duration before a HTTP request times out.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Configuration for the CoinMarketCap client.
 #[derive(Clone, Debug)]
 pub struct ClientOptions {
@@ -40,11 +43,11 @@ pub struct ClientOptions {
 }
 
 impl Default for ClientOptions {
-    /// The default configuration: a 30-second timeout, and the crate's name and version as the
-    /// user agent.
+    /// The default configuration: the timeout from `HTTP_TIMEOUT`, and the crate's name and
+    /// version as the user agent.
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(30),
+            timeout: HTTP_TIMEOUT,
             user_agent: concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")).to_owned(),
         }
     }

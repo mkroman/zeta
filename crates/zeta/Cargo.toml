@@ -3,10 +3,10 @@ name = "zeta"
 version = "0.15.0"
 rust-version.workspace = true
 authors = ["Mikkel Kroman <mk@maero.dk>"]
-edition = "2024"
+edition.workspace = true
 description = "An opinionated IRC bot with a bunch of plugins."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/mkroman/zeta"
+license.workspace = true
+repository.workspace = true
 
 [package.metadata.cargo-machete]
 # `zeta-http` is referenced from the feature table only: the crate forwards the TLS and

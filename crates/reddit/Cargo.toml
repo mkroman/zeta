@@ -1,8 +1,12 @@
 [package]
 name = "reddit"
-version = "0.1.0"
+version = "0.0.0"
+publish = false
 rust-version.workspace = true
-edition = "2024"
+edition.workspace = true
+description = "A client for the Reddit API."
+license.workspace = true
+repository.workspace = true
 
 [features]
 default = ["default-tls"]
