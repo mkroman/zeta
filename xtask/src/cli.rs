@@ -110,6 +110,7 @@ pub struct ReportArgs {
     pub bench_exit_code: i32,
     pub report: PathBuf,
     pub verdict: PathBuf,
+    pub full: bool,
 }
 
 impl ReportArgs {
@@ -124,7 +125,7 @@ impl ReportArgs {
                 "report",
                 "verdict",
             ],
-            &["baseline-found"],
+            &["baseline-found", "full"],
         )?;
         let bench_exit_code = options.value("bench-exit-code").map_or(Ok(0), |value| {
             value
@@ -140,6 +141,7 @@ impl ReportArgs {
             bench_exit_code,
             report: options.path_or("report", "bench-report.md"),
             verdict: options.path_or("verdict", "verdict.json"),
+            full: options.flag("full"),
         })
     }
 }
@@ -252,7 +254,7 @@ Commands:
                 [--summaries <DIR>]
   report        Render the benchmark report and verdict from Gungraun summaries
                 [--summaries <DIR>] [--baseline-metadata <FILE>]
-                [--current-metadata <FILE>] [--baseline-found]
+                [--current-metadata <FILE>] [--baseline-found] [--full]
                 [--bench-exit-code <N>] [--report <FILE>] [--verdict <FILE>]
   gate          Fail (exit 1) unless the verdict is passing
                 [--verdict <FILE>]
@@ -366,6 +368,7 @@ mod tests {
         assert_eq!(args.report, workspace_root().join("bench-report.md"));
         assert_eq!(args.verdict, workspace_root().join("verdict.json"));
         assert!(!args.baseline_found);
+        assert!(!args.full);
         assert_eq!(args.bench_exit_code, 0);
     }
 
@@ -379,6 +382,7 @@ mod tests {
             "--summaries",
             "custom/summaries",
             "--baseline-found",
+            "--full",
             "--bench-exit-code",
             "3",
             "--verdict",
@@ -388,6 +392,7 @@ mod tests {
         };
         assert_eq!(args.summaries, workspace_root().join("custom/summaries"));
         assert!(args.baseline_found);
+        assert!(args.full);
         assert_eq!(args.bench_exit_code, 3);
         assert_eq!(args.verdict, PathBuf::from(verdict));
     }

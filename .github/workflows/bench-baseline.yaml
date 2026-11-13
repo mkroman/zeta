@@ -115,7 +115,7 @@ jobs:
         env:
           BENCH_EXIT_CODE: ${{ steps.bench.outputs.exit-code }}
         run: |
-          args=(--bench-exit-code "$BENCH_EXIT_CODE")
+          args=(--bench-exit-code "$BENCH_EXIT_CODE" --full)
           if [ -f target/gungraun/bench-metadata.txt ]; then
             args+=(--baseline-found)
           fi

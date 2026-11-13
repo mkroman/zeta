@@ -143,9 +143,13 @@ image changes before they show up as warnings) and manually via `workflow_dispat
 - **Baseline recording uses the same policy** — main runs apply the instruction floor and the
   waivers before the artifact is updated, so an accepted (waived) regression can become the
   new reference and main does not stay red after merging it.
-- **Report surfaces** — same-repo PRs get a `Bench report` check run (markdown report plus
-  annotations on regressions), `bench/join` and `bench/duration` commit statuses, and the full
-  report in the job summary. Fork PRs get the job summary and the gate; their token is
+- **Report surfaces** — the report leads with the verdict and counts and only lists the
+  benchmarks whose tier changed; unchanged rows collapse to a per-suite count inside the
+  `<details>` inventory. Same-repo PRs get a `Bench report` check run (the same concise report
+  plus annotations on regressions), `bench/join` and `bench/duration` commit statuses, and the
+  report in the job summary. The baseline job renders the full report (`--full`): every
+  inventory row plus the static cross-implementation ratios, which are not PR deltas and never
+  appear in a pull-request summary. Fork PRs get the job summary and the gate; their token is
   read-only, so API publishing is skipped. Regressions also upload the raw `summary.json`
   files and Callgrind flamegraph SVGs for old and new code.
 - **Waivers** — the `WAIVERS` constant in `xtask/src/bench/config.rs` documents accepted
@@ -172,6 +176,7 @@ Benchmark automation is a Rust xtask (`xtask/`), invoked through the cargo alias
 cargo xtask bench metadata --output bench-metadata.txt --toolchain stable
 cargo xtask bench check-config
 cargo xtask bench report --baseline-found --bench-exit-code 3
+cargo xtask bench report --baseline-found --full   # complete inventory + orientation ratios
 cargo xtask bench gate
 cargo xtask bench has-regressions
 cargo xtask bench post-report --dry-run
