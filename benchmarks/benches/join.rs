@@ -26,14 +26,12 @@ const ITEM_LENGTH_LIST_SIZE: usize = 8;
 
 /// Builds `size` string items of a realistic length.
 fn items(size: usize) -> Vec<String> {
-    (0..size).map(|index| format!("item-{index}")).collect()
+    Vec::from_fn(size, |index| format!("item-{index}"))
 }
 
 /// Builds a fixed-size list whose items are exactly `length` bytes.
 fn items_with_length(length: usize) -> Vec<String> {
-    (0..ITEM_LENGTH_LIST_SIZE)
-        .map(|index| format!("{index:0>length$}"))
-        .collect()
+    Vec::from_fn(ITEM_LENGTH_LIST_SIZE, |index| format!("{index:0>length$}"))
 }
 
 #[library_benchmark]

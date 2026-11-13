@@ -114,6 +114,11 @@ jobs:
   # Clippy as its own job: it doesn't reuse cargo test's artifacts anyway.
   clippy:
     name: Clippy Lints
+    # Stable Clippy is the authoritative gate and denies warnings. New lints land on nightly
+    # first, and nightly can suggest code that the MSRV cannot compile (e.g.
+    # `missing_const_for_fn` seeing a std API that is const on nightly but not on stable), so
+    # nightly only reports warnings as annotations and never blocks.
+    continue-on-error: ${{ inputs.toolchain == 'nightly' }}
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout source
@@ -133,4 +138,6 @@ jobs:
       - name: Run Clippy check
         uses: clechasseur/rs-clippy-check@ac75e246ebbd78d106ac9460c668ab7c8044ebe3 # v6.1.1
         with:
-          args: ${{ inputs.clippy-args }}
+          # Deny warnings only on stable, the authoritative gate. Nightly surfaces any new
+          # lints as annotations without failing the job.
+          args: "${{ inputs.clippy-args }}${{ inputs.toolchain == 'stable' && ' -- -D warnings' || '' }}"

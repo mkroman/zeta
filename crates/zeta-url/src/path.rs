@@ -59,7 +59,7 @@ pub fn query_param<'a>(url: &'a Url, name: &str) -> Option<Cow<'a, str>> {
 /// `www.` alias that links routinely carry.
 #[must_use]
 pub fn strip_www(host: &str) -> &str {
-    host.strip_prefix("www.").unwrap_or(host)
+    host.trim_prefix("www.")
 }
 
 /// Returns whether `segment` is non-empty and contains only ASCII digits.

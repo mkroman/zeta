@@ -5,7 +5,7 @@ members = ["benchmarks", "crates/*", "xtask"]
 default-members = ["crates/zeta"]
 
 [workspace.package]
-rust-version = "1.99"
+rust-version = "1.100"
 
 [workspace.dependencies]
 arc-swap = "1.9"

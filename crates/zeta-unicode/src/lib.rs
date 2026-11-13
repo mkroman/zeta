@@ -309,7 +309,7 @@ mod tests {
         let text = read_ucd("DerivedName.txt");
         let header = text
             .lines()
-            .map(|line| line.strip_prefix('\u{feff}').unwrap_or(line))
+            .map(|line| line.trim_prefix('\u{feff}'))
             .find_map(|line| line.strip_prefix("# DerivedName-"))
             .expect("a DerivedName version header")
             .strip_suffix(".txt")

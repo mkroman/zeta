@@ -369,11 +369,7 @@ mod tests {
             .iter()
             .flat_map(|file| {
                 let source = std::fs::read_to_string(file).expect("read source file");
-                let relative = file
-                    .strip_prefix(crates_dir)
-                    .unwrap_or(file)
-                    .display()
-                    .to_string();
+                let relative = file.trim_prefix(crates_dir).display().to_string();
 
                 source
                     .lines()
