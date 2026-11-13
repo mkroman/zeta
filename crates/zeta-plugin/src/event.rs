@@ -15,9 +15,12 @@
 //! Events are constructed by the host's dispatcher; the public constructors exist so tests (and
 //! plugin authors) can build events to exercise handlers directly.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::fmt::{self, Write as _};
 use std::sync::Arc;
 
+use irc::proto::message::Tag;
 use irc::proto::{Command, Message};
 use url::Url;
 
@@ -40,6 +43,23 @@ fn message_text(message: &Message) -> Option<(&str, &str)> {
         Command::PRIVMSG(target, text) | Command::NOTICE(target, text) => Some((target, text)),
         _ => None,
     }
+}
+
+/// Returns the IRCv3 `msgid` tag of a message, when it carries one.
+///
+/// Message identifiers are defined for `PRIVMSG` and `NOTICE`; a `msgid` on another command is
+/// ignored. Servers only send message tags to clients that negotiated the `message-tags`
+/// capability, so most messages have no identifier.
+#[must_use]
+pub fn message_id(message: &Message) -> Option<&str> {
+    message_text(message)?;
+
+    message
+        .tags
+        .as_deref()?
+        .iter()
+        .find(|Tag(key, _)| key.as_str() == "msgid")
+        .and_then(|Tag(_, value)| value.as_deref())
 }
 
 /// The sender of a message, as identified by its IRC prefix.
@@ -79,6 +99,58 @@ impl<'a> Sender<'a> {
             username,
             hostname,
         })
+    }
+}
+
+/// The IRC command an event was derived from, as an OpenTelemetry messaging operation.
+///
+/// The messaging conventions record the system-specific operation on every span as
+/// `messaging.operation.name`. For IRC that is the command that carried the event, lowercased —
+/// `privmsg`, `notice`, `join`, `part`, `quit`, `nick` or `kick`. An unmodeled command keeps its
+/// received name and is lowercased when rendered, so the value stays bounded by the protocol's
+/// command vocabulary instead of growing with message content.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessagingOperation<'a> {
+    /// A known IRC command with a static lowercase name.
+    Known(&'static str),
+    /// An unmodeled command, rendered lowercased.
+    Raw(&'a str),
+}
+
+impl<'a> MessagingOperation<'a> {
+    /// Returns the operation name as a [`Cow`] string.
+    ///
+    /// A known command borrows its static name, and an unmodeled command borrows its received
+    /// name when it is already lowercase; only an unmodeled command with uppercase ASCII
+    /// allocates the lowercased value. Callers that record the name once per event should call
+    /// this instead of formatting the operation for every subscriber.
+    #[must_use]
+    pub fn into_cow(self) -> Cow<'a, str> {
+        match self {
+            Self::Known(name) => Cow::Borrowed(name),
+            Self::Raw(name) => {
+                if name.bytes().any(|byte| byte.is_ascii_uppercase()) {
+                    Cow::Owned(name.to_ascii_lowercase())
+                } else {
+                    Cow::Borrowed(name)
+                }
+            }
+        }
+    }
+}
+
+impl fmt::Display for MessagingOperation<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(name) => f.write_str(name),
+            Self::Raw(name) => {
+                for character in name.chars() {
+                    f.write_char(character.to_ascii_lowercase())?;
+                }
+
+                Ok(())
+            }
+        }
     }
 }
 
@@ -188,6 +260,12 @@ impl CommandEvent {
         &privmsg(&self.message).1[self.args_start..]
     }
 
+    /// Returns the IRCv3 `msgid` of the invoking message, when it carries one.
+    #[must_use]
+    pub fn message_id(&self) -> Option<&str> {
+        message_id(&self.message)
+    }
+
     event_sender!();
 }
 
@@ -245,6 +323,12 @@ impl UrlEvent {
     #[must_use]
     pub fn text(&self) -> &str {
         privmsg(&self.message).1
+    }
+
+    /// Returns the IRCv3 `msgid` of the message the URL was posted in, when it carries one.
+    #[must_use]
+    pub fn message_id(&self) -> Option<&str> {
+        message_id(&self.message)
     }
 
     event_sender!();
@@ -730,6 +814,61 @@ event_kind_flags! {
         "raw, unmodeled IRC commands", "raw"),
 }
 
+impl Event {
+    /// Returns the IRCv3 `msgid` of the message the event was derived from, when it has one.
+    ///
+    /// The identifier is the same on every event built from one message, so a handler can
+    /// correlate its activity with the client's view of the message. See [`message_id`] for
+    /// which commands carry one.
+    #[must_use]
+    pub fn message_id(&self) -> Option<&str> {
+        message_id(self.message())
+    }
+
+    /// Returns the IRC command the event was derived from, as an `OTel` messaging operation.
+    ///
+    /// `CommandEvent`, `UrlEvent` and `MessageEvent` always come from a `PRIVMSG`; CTCP events
+    /// distinguish the `PRIVMSG` request from the `NOTICE` reply, and an unmodeled command keeps
+    /// its received name, rendered lowercased by [`MessagingOperation`].
+    #[must_use]
+    pub fn messaging_operation(&self) -> MessagingOperation<'_> {
+        match self {
+            Self::Command(_) | Self::Url(_) | Self::Message(_) => {
+                MessagingOperation::Known("privmsg")
+            }
+            Self::Join(_) => MessagingOperation::Known("join"),
+            Self::Part(_) => MessagingOperation::Known("part"),
+            Self::Quit(_) => MessagingOperation::Known("quit"),
+            Self::Nick(_) => MessagingOperation::Known("nick"),
+            Self::Kick(_) => MessagingOperation::Known("kick"),
+            Self::Ctcp(event) => {
+                if matches!(&event.message.command, Command::NOTICE(..)) {
+                    MessagingOperation::Known("notice")
+                } else {
+                    MessagingOperation::Known("privmsg")
+                }
+            }
+            Self::Raw(event) => MessagingOperation::Raw(event.command()),
+        }
+    }
+
+    /// Returns the message the event was derived from.
+    fn message(&self) -> &Message {
+        match self {
+            Self::Command(event) => &event.message,
+            Self::Url(event) => &event.message,
+            Self::Message(event) => &event.message,
+            Self::Join(event) => &event.message,
+            Self::Part(event) => &event.message,
+            Self::Quit(event) => &event.message,
+            Self::Nick(event) => &event.message,
+            Self::Kick(event) => &event.message,
+            Self::Ctcp(event) => &event.message,
+            Self::Raw(event) => &event.message,
+        }
+    }
+}
+
 /// The events a plugin registers interest in during initialization.
 ///
 /// The host passes a fresh, empty `Subscriptions` to
@@ -1115,6 +1254,134 @@ mod tests {
         assert_empty!(subscriptions.commands());
         assert_eq!(subscriptions.url_scope(), UrlScope::None);
         assert_empty!(subscriptions.events());
+    }
+
+    /// The IRCv3 `msgid` is read from the message tags of `PRIVMSG` and `NOTICE` only, and only
+    /// when the tag has a value.
+    #[test]
+    fn message_id_is_read_from_message_tags() {
+        let tagged = |command: &str, args: Vec<&str>, value: Option<&str>| {
+            Arc::new(
+                Message::with_tags(
+                    Some(vec![Tag("msgid".to_owned(), value.map(ToOwned::to_owned))]),
+                    Some("nick!user@host"),
+                    command,
+                    args,
+                )
+                .expect("message should parse"),
+            )
+        };
+
+        let privmsg = tagged("PRIVMSG", vec!["#test", "hello"], Some("m1"));
+        assert_eq!(message_id(&privmsg), Some("m1"));
+
+        let notice = tagged("NOTICE", vec!["#test", "hello"], Some("n1"));
+        assert_eq!(message_id(&notice), Some("n1"));
+
+        let join = tagged("JOIN", vec!["#test"], Some("j1"));
+        assert_eq!(
+            message_id(&join),
+            None,
+            "msgid is only defined for PRIVMSG and NOTICE"
+        );
+
+        let valueless = tagged("PRIVMSG", vec!["#test", "hello"], None);
+        assert_eq!(message_id(&valueless), None);
+
+        let untagged = message("nick!user@host", "PRIVMSG", &["#test", "hello"]);
+        assert_eq!(message_id(&untagged), None);
+    }
+
+    /// Every event reports the IRC command it was derived from as its `OTel` messaging operation;
+    /// a CTCP reply reports `notice`, and an unmodeled command stays bounded by the command name.
+    #[test]
+    fn events_report_their_messaging_operation() {
+        let privmsg = message("nick!user@host", "PRIVMSG", &["#test", ".dig example.com"]);
+
+        let command = Event::Command(
+            CommandEvent::new(Arc::clone(&privmsg), CommandSpec::new(".dig", "dig"))
+                .expect("command should match"),
+        );
+        assert_eq!(
+            command.messaging_operation(),
+            MessagingOperation::Known("privmsg")
+        );
+        assert_eq!(command.messaging_operation().to_string(), "privmsg");
+
+        let join = Event::Join(JoinEvent::new(message(
+            "nick!user@host",
+            "JOIN",
+            &["#test"],
+        )));
+        assert_eq!(
+            join.messaging_operation(),
+            MessagingOperation::Known("join")
+        );
+
+        let quit = Event::Quit(QuitEvent::new(message("nick!user@host", "QUIT", &["gone"])));
+        assert_eq!(
+            quit.messaging_operation(),
+            MessagingOperation::Known("quit")
+        );
+
+        let request = Event::Ctcp(
+            CtcpEvent::new(message(
+                "nick!user@host",
+                "PRIVMSG",
+                &["#test", "\x01VERSION\x01"],
+            ))
+            .expect("ctcp should parse"),
+        );
+        assert_eq!(
+            request.messaging_operation(),
+            MessagingOperation::Known("privmsg")
+        );
+
+        let reply = Event::Ctcp(
+            CtcpEvent::new(message(
+                "service.example",
+                "NOTICE",
+                &["zeta", "\x01VERSION 1.0\x01"],
+            ))
+            .expect("ctcp should parse"),
+        );
+        assert_eq!(
+            reply.messaging_operation(),
+            MessagingOperation::Known("notice")
+        );
+
+        let raw = Event::Raw(RawEvent::new(message(
+            "server.example",
+            "TAGMSG",
+            &["#test"],
+        )));
+        assert_eq!(raw.messaging_operation(), MessagingOperation::Raw("TAGMSG"));
+        assert_eq!(
+            raw.messaging_operation().to_string(),
+            "tagmsg",
+            "an unmodeled command is rendered lowercased"
+        );
+    }
+
+    /// Lowercasing for the span field must happen once per event, not per subscriber: a known
+    /// or already-lowercase operation stays borrowed, and only an uppercase unmodeled command
+    /// allocates.
+    #[test]
+    fn messaging_operation_lowercases_once() {
+        use std::borrow::Cow;
+
+        assert!(matches!(
+            MessagingOperation::Known("privmsg").into_cow(),
+            Cow::Borrowed("privmsg")
+        ));
+        assert!(matches!(
+            MessagingOperation::Raw("tagmsg").into_cow(),
+            Cow::Borrowed("tagmsg")
+        ));
+        assert!(matches!(
+            MessagingOperation::Raw("TAGMSG").into_cow(),
+            Cow::Owned(name) if name == "tagmsg"
+        ));
     }
 
     #[test]

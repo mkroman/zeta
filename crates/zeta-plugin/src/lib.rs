@@ -42,7 +42,8 @@ pub use error::Error as ZetaError;
 pub use error::{BoxError, plugin_err, resolve_secret};
 pub use event::{
     CommandEvent, CtcpEvent, CtcpKind, Event, EventKind, JoinEvent, KickEvent, MessageEvent,
-    NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent, UrlScope,
+    MessagingOperation, NickEvent, PartEvent, QuitEvent, RawEvent, Sender, Subscriptions, UrlEvent,
+    UrlScope,
 };
 pub use filtering::{EventFilter, FilterHandle};
 pub use hostmask::Hostmasks;
