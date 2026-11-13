@@ -376,6 +376,36 @@ mod tests {
         }
     }
 
+    /// Every plugin crate declares the three TLS features and forwards them to `zeta-plugin`.
+    ///
+    /// Cargo cannot derive the forwarding lists: the facade's `plugins-<name>?/<tls>` entries
+    /// only work when the plugin crate declares the matching feature. A missing entry is a
+    /// build failure in exactly one TLS configuration, which this test turns into an immediate
+    /// test failure instead.
+    #[test]
+    fn every_plugin_crate_declares_the_tls_features() {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the facade lives under crates/");
+
+        for plugin in plugin_crates() {
+            let manifest =
+                std::fs::read_to_string(crates.join(format!("plugins-{plugin}/Cargo.toml")))
+                    .expect("read the plugin manifest");
+
+            for tls in ["rustls", "native-tls", "native-tls-vendored"] {
+                assert!(
+                    manifest.contains(&format!("{tls} = [")),
+                    "`{plugin}` is missing the `{tls}` feature in its own Cargo.toml"
+                );
+                assert!(
+                    manifest.contains(&format!("zeta-plugin/{tls}")),
+                    "`{plugin}`'s `{tls}` feature does not forward to `zeta-plugin/{tls}`"
+                );
+            }
+        }
+    }
+
     /// Every bundled plugin self-registers through the `#[plugin]` macro, independently of any
     /// central list. `--all-features` compiles every one of them.
     #[cfg(feature = "all")]

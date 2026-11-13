@@ -228,7 +228,7 @@ mod tests {
 
     use futures::future;
     use url::Url;
-    use zeta_plugin::{EventFilter, LoadedPlugin, Plugin, Sender, Subscriptions};
+    use zeta_plugin::{CommandSpec, EventFilter, LoadedPlugin, Plugin, Sender, Subscriptions};
 
     use super::*;
 
@@ -327,6 +327,80 @@ mod tests {
 
         assert!(runtime.filters.ignores("#test", sender("ignored")));
         assert!(!runtime.filters.ignores("#test", sender("later")));
+    }
+
+    /// A plugin subscribed to both a command and the message kind observes one IRC line as two
+    /// events, in dispatcher order: the command first, then the message.
+    ///
+    /// This pins the interaction the mixed subscriptions rely on; a changed ordering would make
+    /// a command handler and a message handler see the same line in a different order.
+    #[tokio::test]
+    async fn command_and_message_subscriptions_observe_one_line_in_order() {
+        struct Mixed {
+            seen: Arc<std::sync::Mutex<Vec<&'static str>>>,
+        }
+
+        #[zeta_plugin::async_trait::async_trait]
+        impl Plugin for Mixed {
+            async fn handle_command(
+                &self,
+                _ctx: &Context,
+                _client: &Client,
+                _command: &zeta_plugin::CommandEvent,
+            ) -> Result<(), zeta_plugin::Error> {
+                self.seen.lock().expect("seen lock").push("command");
+
+                Ok(())
+            }
+
+            async fn handle_message(
+                &self,
+                _ctx: &Context,
+                _client: &Client,
+                _message: &zeta_plugin::MessageEvent,
+            ) -> Result<(), zeta_plugin::Error> {
+                self.seen.lock().expect("seen lock").push("message");
+
+                Ok(())
+            }
+        }
+
+        let ctx = Arc::new(zeta_test_support::test_context());
+        let client = Arc::new(zeta_test_support::mock_client().await);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let mut subscriptions = Subscriptions::new();
+        subscriptions.command(CommandSpec::new(".mixed", "mixed"));
+        subscriptions.receive_message();
+
+        let mut runtime = PluginRuntime::start(
+            vec![LoadedPlugin {
+                name: "mixed",
+                plugin: Box::new(Mixed {
+                    seen: Arc::clone(&seen),
+                }),
+                subscriptions,
+            }],
+            &ctx,
+            &client,
+        );
+        runtime.wait_loaded(Duration::from_secs(5)).await;
+
+        runtime.dispatch(
+            Message::new(
+                Some("nick!user@host.example"),
+                "PRIVMSG",
+                vec!["#test", ".mixed hello"],
+            )
+            .expect("message should parse"),
+        );
+        runtime.shutdown(Duration::from_secs(5)).await;
+
+        assert_eq!(
+            *seen.lock().expect("seen lock"),
+            ["command", "message"],
+            "the command event must be delivered before the message event"
+        );
     }
 
     /// Dispatching must not start while a `loaded` hook is still building the state the handlers

@@ -1,0 +1,5 @@
+error: unknown event kind `bogus`; expected one of `command`, `url`, `message`, `join`, `part`, `quit`, `nick`, `kick`, `ctcp`, `raw`, `loaded`, `shutdown`
+  --> tests/ui/unknown_handler_kind.rs:10:15
+   |
+10 |     #[handler(bogus)]
+   |               ^^^^^

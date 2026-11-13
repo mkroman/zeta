@@ -1,0 +1,5 @@
+error: a plugin cannot combine `#[command]` methods with `#[handler(command)]`; the generated dispatch and the forwarding handler would both implement `handle_command`
+  --> tests/ui/command_and_handler_conflict.rs:20:5
+   |
+20 |     #[handler(command)]
+   |     ^
