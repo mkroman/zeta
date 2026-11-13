@@ -26,6 +26,12 @@
 //! `all` (the default) enables every bundled plugin. Each plugin also has a feature named after
 //! it (`titles`, `youtube`, `unwall`, ...); the shared `database` and `http` features group the
 //! capabilities the plugin crates need. See `Cargo.toml` for the exact graph.
+//!
+//! # Migrations
+//!
+//! The `database` feature also embeds `migrations/` and exposes the result through [`migrator`],
+//! so the schema and the plugins that use it are owned by the same crate and the host never
+//! reaches into this crate's source tree to find the migration files.
 
 pub mod config;
 
@@ -43,6 +49,18 @@ for_each_bundled_plugin!(reexport_bundled_plugins);
 for_each_bundled_plugin!(define_bundled_plugin_enum);
 for_each_bundled_plugin!(impl_plugin_for_bundled_plugin);
 for_each_bundled_plugin!(impl_plugin_set_for_bundled_plugin);
+
+/// The bundled plugins' database migrations, embedded at compile time.
+///
+/// The path passed to [`sqlx::migrate!`] is relative to this crate's manifest, so the migrations
+/// stay next to the plugins that own them. The host applies them once at startup.
+#[cfg(feature = "database")]
+#[must_use]
+pub fn migrator() -> &'static sqlx::migrate::Migrator {
+    static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+    &MIGRATOR
+}
 
 /// Registers every compiled-in bundled plugin that its configuration enables.
 ///

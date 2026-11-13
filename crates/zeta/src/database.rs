@@ -3,16 +3,12 @@
 //! The host owns the database story end to end: it connects the pool, applies the plugins'
 //! migrations at startup, and hands the pool to the plugins through their context.
 
-use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
 
 use crate::Error;
 
 /// Database connection pool.
 pub use zeta_plugin::database::Database;
-
-/// The plugins' database migrations, applied at startup.
-static MIGRATOR: Migrator = sqlx::migrate!("../plugins/migrations");
 
 /// Connects to the database using `config`'s url and pool bounds.
 ///
@@ -42,7 +38,7 @@ pub async fn connect(config: &crate::config::DbConfig) -> Result<Database, Error
 pub async fn migrate(pool: &Database) -> Result<(), Error> {
     let mut conn = pool.acquire().await.map_err(Error::DatabasePool)?;
 
-    MIGRATOR
+    plugins::migrator()
         .run(&mut conn)
         .await
         .map_err(Error::DatabaseMigration)

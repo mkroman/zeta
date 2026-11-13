@@ -3067,6 +3067,7 @@ dependencies = [
  "plugins-youtube",
  "serde",
  "serde_json",
+ "sqlx",
  "syn 3.0.10",
  "tokio",
  "tracing",

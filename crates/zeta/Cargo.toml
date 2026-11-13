@@ -24,7 +24,12 @@ path = "src/main.rs"
 default = ["plugins/all", "rustls", "database", "mirror"]
 # Database-backed plugins: the context carries a connection pool, and the host connects to the
 # database and applies the plugins' migrations at startup.
-database = ["dep:sqlx", "zeta-plugin/database", "zeta-plugin-runtime/database"]
+database = [
+    "dep:sqlx",
+    "plugins/database",
+    "zeta-plugin/database",
+    "zeta-plugin-runtime/database",
+]
 # Plain reqwest HTTP wrappers (forwarded to zeta-http and the plugin context's shared client).
 http = ["zeta-http/http", "zeta-plugin/http"]
 # Browser-emulated HTTP client for anti-bot-protected sites, built on wreq.

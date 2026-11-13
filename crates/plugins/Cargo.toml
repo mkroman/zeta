@@ -18,7 +18,7 @@ default = ["all"]
 # `youtube` (the URL parser moved to `plugins-shared`) and `unwall` no longer enables `filter`
 # (the hostmask matcher moved to `zeta-plugin`). `all`, the default, still enables every plugin,
 # so only selections that list plugins individually are affected.
-database = ["zeta-plugin/database"]
+database = ["dep:sqlx", "zeta-plugin/database"]
 http = ["zeta-plugin/http"]
 native-tls = [
     "zeta-plugin/native-tls",
@@ -246,6 +246,9 @@ plugins-unwall = { path = "../plugins-unwall", default-features = false, optiona
 plugins-urban-dictionary = { path = "../plugins-urban-dictionary", default-features = false, optional = true }
 plugins-youtube = { path = "../plugins-youtube", default-features = false, optional = true }
 serde.workspace = true
+# Embeds `migrations/` for the `database` feature; the host's feature selection supplies the
+# database driver and runtime.
+sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros"], optional = true }
 tracing.workspace = true
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
 zeta-plugin-runtime = { path = "../zeta-plugin-runtime" }
