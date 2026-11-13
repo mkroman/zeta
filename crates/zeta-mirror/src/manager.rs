@@ -188,7 +188,10 @@ impl DownloadManager {
     ) -> Self {
         let removed = super::tempdir::cleanup_stale_downloads(&download_dir, None);
         if removed > 0 {
-            debug!(removed, "cleaned up stale download directories");
+            debug!(
+                media.download.stale_removed.count = removed,
+                "cleaned up stale download directories"
+            );
         }
 
         if max_concurrent == 0 {
@@ -473,13 +476,13 @@ impl Manager {
             if self.queue_full_warned {
                 debug!(
                     media.id = %request.id,
-                    queued = self.queue.len(),
+                    media.download.queued.count = self.queue.len(),
                     "rejecting download request, the queue is full"
                 );
             } else {
                 warn!(
                     media.id = %request.id,
-                    queued = self.queue.len(),
+                    media.download.queued.count = self.queue.len(),
                     "download queue is full; shedding load until a slot frees"
                 );
 
@@ -490,9 +493,9 @@ impl Manager {
         } else {
             debug!(
                 media.id = %request.id,
-                running = self.active.len(),
-                uploads = self.uploads.len(),
-                uploads_waiting = self.upload_queue.len(),
+                media.download.running.count = self.active.len(),
+                media.upload.running.count = self.uploads.len(),
+                media.upload.waiting.count = self.upload_queue.len(),
                 "queued download request"
             );
 
@@ -740,7 +743,7 @@ impl Manager {
         for file in files {
             if file.is_unsupported_codec() {
                 warn!(
-                    vcodec = ?file.vcodec,
+                    media.video.codec = ?file.vcodec,
                     "the media is in a format that isn't supported by browsers"
                 );
             }
@@ -809,8 +812,8 @@ impl DownloadTask {
     /// `media.download` span — instead of crossing the manager's status channel.
     fn progress(progress: Progress) {
         trace!(
-            percent = progress.fraction().map(|fraction| fraction * 100.0),
-            ?progress,
+            media.download.progress_percent = progress.fraction().map(|fraction| fraction * 100.0),
+            media.download.progress = ?progress,
             "download progress"
         );
     }

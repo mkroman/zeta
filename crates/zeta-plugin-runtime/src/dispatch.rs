@@ -483,7 +483,7 @@ impl EventIndex {
             if command.trigger().is_empty() || command.trigger().contains(char::is_whitespace) {
                 warn!(
                     zeta.plugin.name = %name,
-                    command = command.trigger(),
+                    zeta.plugin.command_trigger = command.trigger(),
                     "command trigger is empty or contains whitespace; it cannot be dispatched"
                 );
 

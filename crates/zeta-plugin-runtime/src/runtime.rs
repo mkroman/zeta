@@ -132,14 +132,14 @@ where
 
             if failed > 0 {
                 warn!(
-                    plugins = plugin_count,
-                    plugins.failed = failed,
+                    zeta.plugin.count = plugin_count,
+                    zeta.plugin.failed.count = failed,
                     "plugin task stopped before its loaded hook finished"
                 );
             }
         } else {
             warn!(
-                plugins = plugin_count,
+                zeta.plugin.count = plugin_count,
                 "timed out waiting for plugins to load; dispatching with whatever loaded"
             );
         }

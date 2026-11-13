@@ -13,6 +13,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use tracing::debug;
 use zeta_cache::TtlCache;
+use zeta_url::RedactedUrl;
 
 /// How long before its actual expiry a cached token is considered stale.
 ///
@@ -199,7 +200,10 @@ impl Credentials {
     ) -> Result<Arc<str>, crate::ApiError> {
         self.token
             .get_shared(|| async {
-                debug!(auth_url = %self.auth_url, "refreshing oauth2 access token");
+                debug!(
+                    url.full = %RedactedUrl::from_unparsed(&self.auth_url),
+                    "refreshing oauth2 access token"
+                );
                 let token = crate::get_json(grant(&self.client, self)).await?;
 
                 Ok(token)

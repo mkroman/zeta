@@ -49,7 +49,7 @@ impl AlertRepository {
     /// Returns [`Error::Load`] if the alerts could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "alerts")]
     pub async fn list_due_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<Alert>, Error> {
-        trace!(?cutoff, "loading alerts from database");
+        trace!(alert.cutoff = ?cutoff, "loading alerts from database");
 
         sqlx::query_as(
             r"SELECT id, nickname, channel, message, time
@@ -96,7 +96,7 @@ impl AlertRepository {
     /// Returns [`Error::Delete`] if the alerts could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "alerts")]
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
-        trace!(?ids, "deleting alerts from database");
+        trace!(alert.ids = ?ids, "deleting alerts from database");
 
         zeta_plugin::database::delete_ids(&self.db, "alerts", ids)
             .await

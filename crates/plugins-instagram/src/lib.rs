@@ -224,7 +224,7 @@ impl Instagram {
                 self.process_media(&kind, &id, channel, client).await?;
             }
             Some(InstagramLink::Story { username, id }) => {
-                debug!(instagram.media.id = %id, %username, "processing story");
+                debug!(instagram.media.id = %id, instagram.username = %username, "processing story");
 
                 self.process_story(&username, &id, channel, client).await?;
             }

@@ -229,7 +229,7 @@ impl Client {
             req
         };
 
-        debug!(%endpoint, "connecting to stream");
+        debug!(kagi.endpoint = %endpoint, "connecting to stream");
         let res = req.send().await.map_err(|error| {
             Error::StreamRequest(RequestError::from(error).logged(Level::DEBUG))
         })?;

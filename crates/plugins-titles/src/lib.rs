@@ -196,7 +196,7 @@ impl Titles {
         let url = event.url();
 
         if let Some(scheme) = event.repaired_from {
-            debug!(%scheme, url.full = %RedactedUrlRef::from_url(url), "posting repaired url");
+            debug!(url.scheme = %scheme, url.full = %RedactedUrlRef::from_url(url), "posting repaired url");
 
             if let Err(error) = send_reply(client, event.channel(), plain_reply(url)) {
                 warn!(exception.message = %error, "could not send repaired url");

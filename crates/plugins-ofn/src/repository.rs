@@ -22,7 +22,7 @@ impl OfnRepository {
     /// Returns [`Error::Database`] if the URL record could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "url_records")]
     pub async fn find_url(&self, record: &InsertUrlRecord) -> Result<Option<UrlRecord>, Error> {
-        trace!(host = %record.host, "loading url record from database");
+        trace!(url.domain = %record.host, "loading url record from database");
 
         sqlx::query_as(
             r"SELECT * FROM url_records
@@ -168,7 +168,7 @@ impl OfnRepository {
         summary = "SELECT ofn statistics"
     )]
     pub async fn statistics(&self, today: NaiveDate) -> Result<Statistics, Error> {
-        trace!(%today, "loading ofn statistics from database");
+        trace!(ofn.statistics.date = %today, "loading ofn statistics from database");
 
         let (num_urls, num_urls_today, num_yt_ids, num_yt_ids_today): (i64, i64, i64, i64) =
             sqlx::query_as(

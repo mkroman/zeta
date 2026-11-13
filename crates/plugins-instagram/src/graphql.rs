@@ -116,7 +116,7 @@ pub async fn fetch_media_details(
 
     let media_details = graphql(client, tokens, session_cookie, media_pk).await?;
 
-    debug!(%shortcode, "fetched media details through the graphql api");
+    debug!(instagram.media.shortcode = %shortcode, "fetched media details through the graphql api");
 
     Ok(media_details)
 }

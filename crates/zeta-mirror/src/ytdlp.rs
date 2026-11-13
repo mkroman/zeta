@@ -224,7 +224,7 @@ impl YtDlp {
 
         debug!(
             url.full = %RedactedUrl::from_unparsed(url),
-            command = %self.command,
+            process.command = %self.command,
             "downloading video with yt-dlp"
         );
 
@@ -466,7 +466,7 @@ async fn verify_paths(
         match path {
             Ok(path) if path.starts_with(&base) => verified.push(download),
             _ => warn!(
-                filepath = %download.filepath.display(),
+                file.path = %download.filepath.display(),
                 "ignoring downloaded file outside of the output directory"
             ),
         }

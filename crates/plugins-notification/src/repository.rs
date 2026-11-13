@@ -66,7 +66,7 @@ impl NotificationRepository {
     /// Returns [`Error::Delete`] if the notifications could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "notifications")]
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
-        trace!(?ids, "deleting notifications from database");
+        trace!(notification.ids = ?ids, "deleting notifications from database");
 
         zeta_plugin::database::delete_ids(&self.db, "notifications", ids)
             .await

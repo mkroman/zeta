@@ -68,7 +68,7 @@ impl FilterRepository {
     /// Returns [`Error::Delete`] if the filters could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "filters")]
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
-        trace!(?ids, "deleting filters from database");
+        trace!(filter.ids = ?ids, "deleting filters from database");
 
         zeta_plugin::database::delete_ids(&self.db, "filters", ids)
             .await

@@ -123,7 +123,11 @@ fn parse_kagi_stream(raw_body: &str) -> Vec<KagiMessage> {
             let mut message: KagiMessage = match serde_json::from_str(json_str) {
                 Ok(message) => message,
                 Err(error) => {
-                    debug!(wire_tag, exception.message = %error, "dropping an unparseable Kagi chunk");
+                    debug!(
+                        kagi.wire_tag = wire_tag,
+                        exception.message = %error,
+                        "dropping an unparseable Kagi chunk"
+                    );
                     return None;
                 }
             };

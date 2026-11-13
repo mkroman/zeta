@@ -150,11 +150,14 @@ impl UrbanDictionary {
     /// Returns an [`Error`] if the request to Urban Dictionary fails or the response cannot be
     /// parsed.
     pub async fn definitions(&self, term: &str) -> Result<Definitions, Error> {
-        debug!(%term, "requesting definitions");
+        debug!(urban_dictionary.term = %term, "requesting definitions");
         let params = [("term", term)];
         let request = self.client.get(DEFINE_URL).query(&params);
         let definitions: Definitions = http::get_json(request).await?;
-        debug!(num_definitions = %definitions.list.len(), "fetched definitions");
+        debug!(
+            urban_dictionary.definition.count = %definitions.list.len(),
+            "fetched definitions"
+        );
 
         Ok(definitions)
     }
