@@ -1,6 +1,6 @@
 //! Per-plugin configuration plumbing.
 //!
-//! Every bundled plugin is one variant of [`RuntimePlugin`], so its
+//! Every bundled plugin is one variant of [`BundledPlugin`], so its
 //! `[plugins.<name>]` section is validated by the generated
 //! [`PluginSet`] implementation instead of through a typed field per
 //! plugin: [`PluginsConfig`] keeps each section's raw settings next to the host-managed
@@ -16,7 +16,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use zeta_plugin::PluginSet;
 
-use crate::RuntimePlugin;
+use crate::BundledPlugin;
 
 /// One raw `[plugins.<name>]` section.
 ///
@@ -65,7 +65,7 @@ impl PluginSection {
 /// Per-plugin configuration extracted from the `[plugins]` section.
 ///
 /// Sections are keyed by plugin name, e.g. `[plugins.dig]`, and resolved against the compiled-in
-/// [`RuntimePlugin`] variants. Sections whose name matches no bundled plugin are collected in
+/// [`BundledPlugin`] variants. Sections whose name matches no bundled plugin are collected in
 /// [`PluginsConfig::unknown`] so the host can warn about likely typos; a section for a bundled
 /// plugin compiled out by its cargo feature is not a typo and stays out of that map.
 ///
@@ -143,7 +143,7 @@ impl<'de> Deserialize<'de> for PluginsConfig {
                 D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
             })?;
 
-            match RuntimePlugin::validate(&name, Some(&section.settings)) {
+            match BundledPlugin::validate(&name, Some(&section.settings)) {
                 Some(Ok(unknown_keys)) => {
                     unknown_setting_keys
                         .extend(unknown_keys.into_iter().map(|key| (name.clone(), key)));
