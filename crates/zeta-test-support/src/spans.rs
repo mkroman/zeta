@@ -33,6 +33,12 @@ impl RecordedSpan {
         &self.name
     }
 
+    /// Returns the span's identity, as assigned by the subscriber.
+    #[must_use]
+    pub const fn id(&self) -> &Id {
+        &self.id
+    }
+
     /// Returns the id of the span that was current when this one was created.
     #[must_use]
     pub const fn parent(&self) -> Option<&Id> {

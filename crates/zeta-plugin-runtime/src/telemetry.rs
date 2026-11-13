@@ -1,16 +1,26 @@
 //! The IRC-to-`OTel` mapping of one incoming line.
 //!
-//! The host's `irc.dispatch` span and the runtime's `zeta.event.handle` spans describe the same
-//! IRC line, so they must agree on the command, messaging operation, destination and message id.
-//! [`MessageTelemetry`] computes that mapping from the dispatcher's own route classification,
-//! and both span builders read it instead of re-deriving the values.
+//! The runtime owns both spans of an IRC line: `EventIndex::dispatch` creates the line's
+//! `irc.dispatch` span, and every delivery creates a `zeta.event.handle` span as its child. Both
+//! describe the same line, so they must agree on the command, messaging operation, destination
+//! and message id. [`MessageTelemetry`] computes that mapping from the dispatcher's own route
+//! classification, and both span builders read it instead of re-deriving the values.
+//!
+//! The host keeps only the operational `irc.error` span: a server `ERROR` is not routed, so it
+//! never reaches the dispatcher and has no messaging telemetry.
 //!
 //! The message is shared lazily with the events it produces, so one telemetry value cannot
 //! outlive the [`SharedMessage`](crate::dispatch) mutations of the whole line. The dispatcher
-//! therefore computes it once per delivery point — the command batch, the message/kind batch and
-//! the URL batch — from the line's already-classified route.
+//! wraps the message without sharing it, builds the line span from it and drops that telemetry
+//! before routing shares the message, then computes the delivery telemetry once per delivery
+//! point — the command batch, the message/kind batch and the URL batch — from the line's
+//! already-classified route.
+//!
+//! The module is private, so the `pub` items below are internal to the runtime crate; none of
+//! them is part of the `PluginRuntime` API.
 
 use irc::proto::{Command, Message};
+use tracing::Span;
 use zeta_plugin::event::{MessagingOperation, message_id};
 
 use crate::dispatch::CommandRoute;
@@ -24,40 +34,20 @@ use crate::dispatch::CommandRoute;
 pub struct MessageTelemetry<'a> {
     /// The IRC command as received, recorded as `irc.command` — `PRIVMSG`, `NOTICE`, `JOIN`, …
     /// and the received name for a raw command.
-    pub command: &'a str,
+    pub(crate) command: &'a str,
     /// The `OTel` messaging operation, recorded as `messaging.operation.name`. Both spans also
     /// record `messaging.operation.type = "process"`.
-    pub operation: MessagingOperation<'a>,
+    pub(crate) operation: MessagingOperation<'a>,
     /// The channel or nick the line targets, recorded as `irc.channel` and
     /// `messaging.destination.name`. [`None`] for commands without a destination (`QUIT`,
     /// `NICK`, raw commands).
-    pub channel: Option<&'a str>,
+    pub(crate) channel: Option<&'a str>,
     /// The IRCv3 `msgid` tag, recorded as `messaging.message.id`. [`None`] when the server
     /// attached no tag, which is the case on networks without the `message-tags` capability.
-    pub message_id: Option<&'a str>,
+    pub(crate) message_id: Option<&'a str>,
 }
 
 impl<'a> MessageTelemetry<'a> {
-    /// Computes the telemetry of `message`, or returns [`None`] when its command is not routed.
-    ///
-    /// This is the host-facing constructor: it classifies the command with the dispatcher's own
-    /// route table, so `irc.dispatch` exists exactly for the lines the runtime handles. Server
-    /// `ERROR` is the one addition — it is not routed, but its disconnect reason is logged
-    /// inside the span.
-    #[must_use]
-    pub fn from_message(message: &'a Message) -> Option<Self> {
-        if matches!(&message.command, Command::ERROR(..)) {
-            return Some(Self {
-                command: "ERROR",
-                operation: MessagingOperation::Modeled("error"),
-                channel: None,
-                message_id: message_id(message),
-            });
-        }
-
-        Self::from_route(CommandRoute::classify(&message.command), message)
-    }
-
     /// Computes the telemetry of a line already classified as `route`.
     ///
     /// The dispatcher classifies each line once and passes the route to every delivery point, so
@@ -75,12 +65,45 @@ impl<'a> MessageTelemetry<'a> {
     }
 }
 
+/// Builds the `irc.dispatch` span of one delivering IRC line.
+///
+/// The dispatcher creates and enters this span before routing, so every handler span of the line
+/// is its child and a line no subscription can receive leaves no trace. The span targets
+/// `zeta.plugins`, like the handler spans, so one filter decision enables the whole message
+/// trace. Its fields come from [`MessageTelemetry`], so the two spans cannot disagree about the
+/// command, operation, destination or message id.
+pub fn dispatch_span(telemetry: &MessageTelemetry<'_>) -> Span {
+    let span = tracing::info_span!(
+        target: "zeta.plugins",
+        "irc.dispatch",
+        irc.command = telemetry.command,
+        irc.channel = tracing::field::Empty,
+        otel.kind = "consumer",
+        messaging.system.name = "irc",
+        messaging.operation.name = %telemetry.operation,
+        messaging.operation.type = "process",
+        messaging.destination.name = tracing::field::Empty,
+        messaging.message.id = tracing::field::Empty,
+    );
+
+    if let Some(channel) = telemetry.channel {
+        span.record("irc.channel", channel);
+        span.record("messaging.destination.name", channel);
+    }
+
+    if let Some(message_id) = telemetry.message_id {
+        span.record("messaging.message.id", message_id);
+    }
+
+    span
+}
+
 /// Returns whether the handler spans are enabled for the current subscriber.
 ///
-/// The host's `irc.dispatch` span and the runtime's `zeta.event.handle` spans share the
-/// `zeta.plugins` target, so this one filter check decides whether either span — and the
-/// telemetry it needs — is built. The host calls it before creating a dispatch span, and the
-/// dispatcher passes the result down to every delivery point.
+/// The line span and the handler spans share the `zeta.plugins` target, so this one filter check
+/// decides whether either span — and the telemetry it needs — is built. The dispatcher calls it
+/// once per line that may deliver, before the span is built and before routing shares the
+/// message, and passes the result to every delivery point.
 #[must_use]
 pub fn handler_spans_enabled() -> bool {
     tracing::enabled!(target: "zeta.plugins", tracing::Level::INFO)

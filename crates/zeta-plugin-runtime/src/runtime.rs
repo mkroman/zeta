@@ -147,11 +147,10 @@ where
 
     /// Routes `message` to the plugins that subscribed to the events it matches.
     ///
-    /// A plugin whose task has stopped is logged and removed from the index.
+    /// The dispatcher owns the line's `irc.dispatch` span and logs a plugin whose task has
+    /// stopped from inside it; the runtime only hands the message over.
     pub fn dispatch(&mut self, message: Message) {
-        for stopped in self.index.dispatch(&self.filters, message) {
-            warn!(zeta.plugin.name = %stopped, "plugin task has stopped");
-        }
+        let _ = self.index.dispatch(&self.filters, message);
     }
 
     /// Closes every plugin mailbox and waits for the tasks to drain and stop.

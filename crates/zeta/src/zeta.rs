@@ -2,13 +2,13 @@
 use std::sync::Arc;
 
 use irc::client::prelude::{Capability, Client};
-use tracing::{Instrument, debug, error, info, trace, warn};
+use tracing::{Instrument, debug, error, info, warn};
 
 use crate::Error;
 use crate::config::Config;
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE, STARTUP_GRACE};
 use zeta_plugin::Context;
-use zeta_plugin_runtime::{MessageTelemetry, PluginRuntime, Registry, handler_spans_enabled};
+use zeta_plugin_runtime::{PluginRuntime, Registry};
 
 use plugins::BundledPlugin;
 
@@ -99,37 +99,6 @@ fn drive_outgoing(client: &mut Client) -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// Builds the per-line dispatch span from the line's telemetry.
-///
-/// The span targets `zeta.plugins`, like the runtime's handler spans, so one filter decision
-/// enables the whole message trace. Its fields come from the runtime's telemetry, so the two
-/// spans cannot disagree about the command, operation, destination or message id.
-fn dispatch_span(telemetry: &MessageTelemetry<'_>) -> tracing::Span {
-    let span = tracing::info_span!(
-        target: "zeta.plugins",
-        "irc.dispatch",
-        irc.command = telemetry.command,
-        irc.channel = tracing::field::Empty,
-        otel.kind = "consumer",
-        messaging.system.name = "irc",
-        messaging.operation.name = %telemetry.operation,
-        messaging.operation.type = "process",
-        messaging.destination.name = tracing::field::Empty,
-        messaging.message.id = tracing::field::Empty,
-    );
-
-    if let Some(channel) = telemetry.channel {
-        span.record("irc.channel", channel);
-        span.record("messaging.destination.name", channel);
-    }
-
-    if let Some(message_id) = telemetry.message_id {
-        span.record("messaging.message.id", message_id);
-    }
-
-    span
-}
-
 /// Dispatches incoming IRC messages as events to the plugins that registered interest, until
 /// the stream ends.
 ///
@@ -145,37 +114,28 @@ async fn dispatch_messages(
     use futures::stream::StreamExt;
 
     while let Some(message) = stream.next().await.transpose()? {
-        // Everything logged while this message is routed runs inside a span: the
-        // OpenTelemetry layer drops events that are not in the context of a span. Only the
-        // commands `EventIndex` routes get one — PING, PONG and numerics would otherwise
-        // produce a trace with no children. `ERROR` is covered by `from_message` because the
-        // disconnect reason is logged below. The span is at info level, not debug, because the
-        // loop below logs warnings: an `info` filter must not be what keeps them out of the
-        // backend.
-        //
-        // The gate is shared with the handler spans (same `zeta.plugins` target), and the
-        // telemetry is derived only when it is enabled, so a disabled subscriber does not pay
-        // for the route classification, channel lookup and `msgid` scan.
-        let telemetry = handler_spans_enabled()
-            .then(|| MessageTelemetry::from_message(&message))
-            .flatten();
-        let dispatch = telemetry.as_ref().map(dispatch_span);
-        let _dispatch = dispatch.as_ref().map(tracing::Span::enter);
-
         // `ERROR` carries the server's reason for closing the connection. It is not a `Raw`
-        // command, so without this check the reason would be dropped entirely.
+        // command and is not routed, so the runtime never sees it; the host logs it in its own
+        // `irc.error` span. The OpenTelemetry layer drops events that are not in the context of
+        // a span, and the span is at info level, not debug, so an `info` filter cannot be what
+        // keeps the reason out of the backend.
+        //
+        // Every line the dispatcher can deliver gets its `irc.dispatch` span — and the
+        // `irc.raw` trace — from the dispatcher. PING, PONG, numerics and lines no subscription
+        // can receive have no span.
         if let irc::proto::Command::ERROR(reason) = &message.command {
-            warn!(
-                zeta.shutdown.reason = %reason,
-                "the IRC server closed the connection"
-            );
+            let span = tracing::info_span!("irc.error", irc.command = "ERROR");
+            span.in_scope(|| {
+                warn!(
+                    zeta.shutdown.reason = %reason,
+                    "the IRC server closed the connection"
+                );
+            });
 
             return Err(Error::IrcDisconnected {
                 reason: reason.clone(),
             });
         }
-
-        trace!(irc.raw = %message, "processing irc message");
 
         runtime.dispatch(message);
     }
@@ -488,84 +448,6 @@ impl Zeta {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The dispatch span records the `OTel` messaging attributes next to the `irc.*` keys: the
-    /// operation is the lowercased command, a channel becomes the destination, and an IRCv3
-    /// `msgid` is recorded when the message carries one.
-    #[test]
-    fn dispatch_span_records_messaging_attributes() {
-        use tracing::subscriber::with_default;
-        use tracing_subscriber::prelude::*;
-        use zeta_test_support::SpanRecorder;
-
-        let recorder = SpanRecorder::default();
-        let subscriber = tracing_subscriber::registry().with(recorder.clone());
-
-        with_default(subscriber, || {
-            let privmsg = tagged_privmsg("hello", "m1");
-            let telemetry =
-                MessageTelemetry::from_message(&privmsg).expect("a privmsg is dispatched");
-            drop(dispatch_span(&telemetry));
-
-            let quit = message("nick!u@h", "QUIT", &["gone"]);
-            let telemetry = MessageTelemetry::from_message(&quit).expect("a quit is dispatched");
-            drop(dispatch_span(&telemetry));
-
-            let ping = message("server.example", "PING", &["server"]);
-            assert!(
-                MessageTelemetry::from_message(&ping).is_none(),
-                "PING is not dispatched and must not get a span"
-            );
-        });
-
-        let spans = recorder.spans();
-        assert_eq!(spans.len(), 2, "recorded: {spans:?}");
-
-        let privmsg = &spans[0];
-        assert_eq!(privmsg.name(), "irc.dispatch");
-        assert_eq!(privmsg.field("irc.command"), Some("PRIVMSG"));
-        assert_eq!(privmsg.field("irc.channel"), Some("#test"));
-        assert_eq!(privmsg.field("otel.kind"), Some("consumer"));
-        assert_eq!(privmsg.field("messaging.system.name"), Some("irc"));
-        assert_eq!(privmsg.field("messaging.operation.name"), Some("privmsg"));
-        assert_eq!(privmsg.field("messaging.operation.type"), Some("process"));
-        assert_eq!(privmsg.field("messaging.destination.name"), Some("#test"));
-        assert_eq!(privmsg.field("messaging.message.id"), Some("m1"));
-
-        let quit = &spans[1];
-        assert_eq!(quit.field("irc.command"), Some("QUIT"));
-        assert_eq!(quit.field("messaging.operation.name"), Some("quit"));
-        assert_eq!(quit.field("messaging.operation.type"), Some("process"));
-        assert!(
-            quit.field("messaging.destination.name").is_none(),
-            "a channel-less command has no destination: {quit:?}"
-        );
-        assert!(
-            quit.field("messaging.message.id").is_none(),
-            "a quit carries no msgid: {quit:?}"
-        );
-    }
-
-    /// Builds a `PRIVMSG` to `#test` carrying `text` and an IRCv3 `msgid` tag.
-    fn tagged_privmsg(text: &str, msgid: &str) -> irc::proto::Message {
-        irc::proto::Message::with_tags(
-            Some(vec![irc::proto::message::Tag(
-                "msgid".to_owned(),
-                Some(msgid.to_owned()),
-            )]),
-            Some("nick!user@host.example"),
-            "PRIVMSG",
-            vec!["#test", text],
-        )
-        .expect("message should parse")
-    }
-
-    /// Builds a message from `prefix` carrying `command` with `args`.
-    fn message(prefix: &str, command: &str, args: &[&str]) -> irc::proto::Message {
-        let prefix = (!prefix.is_empty()).then_some(prefix);
-
-        irc::proto::Message::new(prefix, command, args.to_vec()).expect("message should parse")
-    }
 
     /// A mirror whose manager can be started without network access.
     #[cfg(feature = "mirror")]

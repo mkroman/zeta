@@ -14,7 +14,6 @@
 use irc::proto::Message;
 use irc::proto::message::Tag;
 use tokio::sync::mpsc;
-use tracing::info_span;
 use tracing::span::Id;
 use tracing::subscriber::with_default;
 use tracing_subscriber::prelude::*;
@@ -23,12 +22,13 @@ use zeta_plugin::{CommandSpec, Event, FilterHandle};
 use zeta_plugin_runtime::EventIndex;
 use zeta_test_support::{RecordedSpan, SpanRecorder, assert_empty};
 
-/// The handler span is created by the dispatcher while the IRC line's dispatch span is current;
-/// it must therefore be a child of that span, not a new trace root. The plugin task relies on
-/// this when it instruments the handler with the envelope's span.
+/// The dispatcher creates and enters the IRC line's `irc.dispatch` span before routing; every
+/// handler span created for the line must therefore be a child of that span, not a new trace
+/// root. The plugin task relies on this when it instruments the handler with the envelope's
+/// span.
 ///
-/// The span also carries the OpenTelemetry messaging attributes alongside the `irc.*` keys: a
-/// command and a channel message report `privmsg` and their destination, while a channel-less
+/// The line span also carries the OpenTelemetry messaging attributes alongside the `irc.*` keys:
+/// a command and a channel message report `privmsg` and their destination, while a channel-less
 /// `QUIT` reports `quit` and no destination. The IRCv3 `msgid` is recorded only when the message
 /// carries one.
 #[test]
@@ -36,11 +36,7 @@ fn handler_spans_carry_parenting_and_messaging_attributes() {
     let recorder = SpanRecorder::default();
     let subscriber = tracing_subscriber::registry().with(recorder.clone());
 
-    let dispatch_id = with_default(subscriber, || {
-        let dispatch = info_span!("irc.dispatch");
-        let dispatch_id = dispatch.id().expect("the dispatch span should be enabled");
-        let _entered = dispatch.enter();
-
+    with_default(subscriber, || {
         let mut subscriptions = Subscriptions::new();
         subscriptions
             .command(CommandSpec::new(".dig", "dig"))
@@ -52,18 +48,14 @@ fn handler_spans_carry_parenting_and_messaging_attributes() {
         index.add("dig", &subscriptions, mailbox);
 
         // A command, a plain message (both tagged `PRIVMSG`s) and a channel-less quit.
-        let stopped = index.dispatch(
-            &FilterHandle::default(),
+        for message in [
             tagged_privmsg(".dig example.com", "m1"),
-        );
-        assert_empty!(stopped);
-        let stopped = index.dispatch(&FilterHandle::default(), tagged_privmsg("hello", "m2"));
-        assert_empty!(stopped);
-        let stopped = index.dispatch(
-            &FilterHandle::default(),
+            tagged_privmsg("hello", "m2"),
             message("nick!u@h", "QUIT", &["gone"]),
-        );
-        assert_empty!(stopped);
+        ] {
+            let stopped = index.dispatch(&FilterHandle::default(), message);
+            assert_empty!(stopped);
+        }
 
         let mut events = Vec::new();
         while let Ok(envelope) = receiver.try_recv() {
@@ -82,17 +74,78 @@ fn handler_spans_carry_parenting_and_messaging_attributes() {
             ),
             "unexpected events: {events:?}"
         );
-
-        dispatch_id
     });
 
     let spans = recorder.spans();
-    assert_handler_spans(&spans, &dispatch_id);
+    let dispatch_ids = assert_dispatch_spans(&spans);
+    assert_handler_spans(&spans, &dispatch_ids);
+}
+
+/// Asserts that every dispatched line got its own root `irc.dispatch` span, and that the command
+/// line's span carries the messaging attributes next to the `irc.*` keys: the operation is the
+/// lowercased command, a channel becomes the destination, and an IRCv3 `msgid` is recorded when
+/// the message carries one.
+///
+/// Returns the ids of the recorded line spans.
+fn assert_dispatch_spans(spans: &[RecordedSpan]) -> Vec<Id> {
+    let dispatches: Vec<_> = spans
+        .iter()
+        .filter(|span| span.name() == "irc.dispatch")
+        .collect();
+    assert_eq!(dispatches.len(), 3, "recorded: {dispatches:?}");
+
+    let ids: Vec<Id> = dispatches.iter().map(|span| span.id().clone()).collect();
+
+    for dispatch in &dispatches {
+        assert!(
+            dispatch.parent().is_none(),
+            "irc.dispatch must be a root span, recorded: {dispatch:?}"
+        );
+    }
+
+    for (index, id) in ids.iter().enumerate() {
+        assert!(
+            !ids[..index].contains(id),
+            "each line must get its own irc.dispatch span, recorded: {dispatches:?}"
+        );
+    }
+
+    let command = dispatches
+        .iter()
+        .copied()
+        .find(|span| span.field("messaging.message.id") == Some("m1"))
+        .unwrap_or_else(|| panic!("the command line span should be recorded: {dispatches:?}"));
+    assert_eq!(command.field("irc.command"), Some("PRIVMSG"));
+    assert_eq!(command.field("irc.channel"), Some("#test"));
+    assert_eq!(command.field("otel.kind"), Some("consumer"));
+    assert_eq!(command.field("messaging.system.name"), Some("irc"));
+    assert_eq!(command.field("messaging.operation.name"), Some("privmsg"));
+    assert_eq!(command.field("messaging.operation.type"), Some("process"));
+    assert_eq!(command.field("messaging.destination.name"), Some("#test"));
+    assert_eq!(command.field("messaging.message.id"), Some("m1"));
+
+    let quit = dispatches
+        .iter()
+        .copied()
+        .find(|span| span.field("irc.command") == Some("QUIT"))
+        .unwrap_or_else(|| panic!("the quit line span should be recorded: {dispatches:?}"));
+    assert_eq!(quit.field("messaging.operation.name"), Some("quit"));
+    assert_eq!(quit.field("messaging.operation.type"), Some("process"));
+    assert!(
+        quit.field("messaging.destination.name").is_none(),
+        "a channel-less command has no destination: {quit:?}"
+    );
+    assert!(
+        quit.field("messaging.message.id").is_none(),
+        "a quit carries no msgid: {quit:?}"
+    );
+
+    ids
 }
 
 /// Asserts the parenting and messaging attributes of the handler spans recorded for the
 /// command, plain message and quit dispatched by the test.
-fn assert_handler_spans(spans: &[RecordedSpan], dispatch_id: &Id) {
+fn assert_handler_spans(spans: &[RecordedSpan], dispatch_ids: &[Id]) {
     let handlers: Vec<_> = spans
         .iter()
         .filter(|span| span.name() == "zeta.event.handle")
@@ -100,10 +153,12 @@ fn assert_handler_spans(spans: &[RecordedSpan], dispatch_id: &Id) {
     assert_eq!(handlers.len(), 4, "recorded: {handlers:?}");
 
     for handler in &handlers {
-        assert_eq!(
-            handler.parent(),
-            Some(dispatch_id),
-            "zeta.event.handle must be a child of irc.dispatch, recorded: {handler:?}"
+        let parent = handler
+            .parent()
+            .unwrap_or_else(|| panic!("zeta.event.handle must have a parent: {handler:?}"));
+        assert!(
+            dispatch_ids.contains(parent),
+            "zeta.event.handle must be a child of one of the line spans, recorded: {handler:?}"
         );
         assert_eq!(
             handler.field("messaging.system.name"),
@@ -188,15 +243,6 @@ fn assert_handler_spans(spans: &[RecordedSpan], dispatch_id: &Id) {
     assert!(
         quit.field("messaging.message.id").is_none(),
         "the quit message carries no msgid, recorded: {quit:?}"
-    );
-
-    let dispatch_parent = spans
-        .iter()
-        .find_map(|span| (span.name() == "irc.dispatch").then(|| span.parent()))
-        .expect("irc.dispatch should be recorded");
-    assert!(
-        dispatch_parent.is_none(),
-        "irc.dispatch must be a root span, recorded: {spans:?}"
     );
 }
 
