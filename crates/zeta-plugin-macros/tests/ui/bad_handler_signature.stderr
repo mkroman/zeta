@@ -1,0 +1,5 @@
+error: `#[handler(url)]` methods must take `(&self, ctx: &Context, client: &Client, url: &UrlEvent)`
+  --> tests/ui/bad_handler_signature.rs:11:14
+   |
+11 |     async fn url(
+   |              ^^^

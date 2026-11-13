@@ -1,0 +1,5 @@
+error: unrecognized plugin constructor parameter; expected `&Context`, `&Settings`, or `&mut Subscriptions`, found `u32`
+  --> tests/ui/bad_constructor.rs:16:17
+   |
+16 |         _bogus: u32,
+   |                 ^^^

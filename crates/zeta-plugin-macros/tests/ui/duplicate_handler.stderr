@@ -1,0 +1,5 @@
+error: duplicate `#[handler(message)]` method; `first` already handles that event kind
+  --> tests/ui/duplicate_handler.rs:20:5
+   |
+20 |     #[handler(message)]
+   |     ^

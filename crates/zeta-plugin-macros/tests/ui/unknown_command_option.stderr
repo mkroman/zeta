@@ -1,0 +1,5 @@
+error: unknown command option `bogus`; expected `args`, `words`, `spec`, `label`, `event`, `usage`, `register_if`
+  --> tests/ui/unknown_command_option.rs:10:36
+   |
+10 |     #[command(".bad", "A command", bogus = 1)]
+   |                                    ^^^^^

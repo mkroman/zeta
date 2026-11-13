@@ -24,6 +24,7 @@ syn = { version = "3", default-features = false, features = [
 
 [dev-dependencies]
 clap.workspace = true
+trybuild.workspace = true
 zeta-plugin = { path = "../zeta-plugin", default-features = false }
 
 [lints]
