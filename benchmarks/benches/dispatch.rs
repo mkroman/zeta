@@ -5,8 +5,9 @@
 //! The suite is split into three groups that share the same fixtures:
 //!
 //! - `index` measures [`EventIndex::dispatch`]: IRC command classification, command-trigger
-//!   matching, message/CTCP construction, URL extraction and mailbox hand-off. It is the
-//!   control group: the plugin-API refactor changes the handler side, not the index.
+//!   matching, message/CTCP construction, URL extraction and mailbox hand-off. The static
+//!   dispatch refactor also touches this side (span-name/channel hoisting), so it is measured
+//!   rather than assumed constant.
 //! - `handler` measures invoking the plugin side for one already-built event: the generated
 //!   trait forwarder, the boxed future before the static-dispatch refactor, and the handler itself.
 //! - `pipeline` measures dispatch plus handler in one call — the complete synchronous path
@@ -40,6 +41,7 @@ use gungraun::prelude::*;
 use gungraun::{Callgrind, Dhat, DhatMetric, EventKind, FlamegraphConfig};
 use irc::proto::Message;
 use tokio::sync::mpsc::Receiver;
+use tracing::{Instrument, Span};
 
 use zeta_plugin::{
     Client, CommandSpec, Context, Event, FilterHandle, Subscriptions, UrlScope, handle_event,
@@ -106,8 +108,9 @@ fn invoke(
     ctx: &Context,
     client: &Client,
     event: &Event,
+    span: Span,
 ) -> Result<(), zeta_plugin::Error> {
-    block_on(handle_event(plugin, ctx, client, event))
+    block_on(handle_event(plugin, ctx, client, event).instrument(span))
 }
 
 /// Polls `future` to completion on the current thread with a no-op waker.
@@ -289,7 +292,7 @@ fn setup_url_any(
 
 /// Builds the index and the event for the handler benchmarks, then extracts the delivered
 /// event from the mailbox. Everything here runs in setup and is excluded from the measurement.
-fn setup_handler(kind: &'static str) -> (BenchPlugin, Context, Arc<Client>, Event) {
+fn setup_handler(kind: &'static str) -> (BenchPlugin, Context, Arc<Client>, Envelope) {
     let (mut index, mut receiver, filters, message) = match kind {
         "message" => one_subscriber(
             |subscriptions| {
@@ -318,16 +321,13 @@ fn setup_handler(kind: &'static str) -> (BenchPlugin, Context, Arc<Client>, Even
         "the benchmark subscriber should be alive"
     );
 
-    let event = receiver
-        .try_recv()
-        .expect("the event should be delivered")
-        .event;
+    let envelope = receiver.try_recv().expect("the event should be delivered");
     let (ctx, client) = fixture();
 
-    (BenchPlugin, ctx, client, event)
+    (BenchPlugin, ctx, client, envelope)
 }
 
-/// Registers one subscriber and dispatches one message, returning the index pieces.
+/// Builds an index with one subscriber; the caller dispatches the message.
 fn one_subscriber(
     register: impl FnOnce(&mut Subscriptions),
     message: Message,
@@ -390,24 +390,28 @@ fn setup_pipeline(kind: &'static str) -> Pipeline {
 
 #[library_benchmark]
 #[bench::privmsg(args = ("hello there"), setup = setup_unhandled)]
-fn bench_dispatch_unhandled((mut index, filters, message): (EventIndex, FilterHandle, Message)) {
+fn bench_dispatch_unhandled(
+    (mut index, filters, message): (EventIndex, FilterHandle, Message),
+) -> (EventIndex, FilterHandle) {
     let stopped = index.dispatch(&filters, message);
     black_box(stopped);
+    black_box((index, filters))
 }
 
 #[library_benchmark]
 #[bench::one_subscriber(args = ("hello there"), setup = setup_message_one)]
 #[bench::eight_subscribers(args = ("hello there"), setup = setup_message_eight)]
 fn bench_dispatch_message(
-    (mut index, _receivers, filters, message): (
+    (mut index, receivers, filters, message): (
         EventIndex,
         Vec<Receiver<Envelope>>,
         FilterHandle,
         Message,
     ),
-) {
+) -> (EventIndex, Vec<Receiver<Envelope>>, FilterHandle) {
     let stopped = index.dispatch(&filters, message);
     black_box(stopped);
+    black_box((index, receivers, filters))
 }
 
 #[library_benchmark]
@@ -415,30 +419,32 @@ fn bench_dispatch_message(
 #[bench::miss(args = (".other now"), setup = setup_command_subscribed)]
 #[bench::unsubscribed(args = (".bench now"), setup = setup_command_unsubscribed)]
 fn bench_dispatch_command(
-    (mut index, _receivers, filters, message): (
+    (mut index, receivers, filters, message): (
         EventIndex,
         Vec<Receiver<Envelope>>,
         FilterHandle,
         Message,
     ),
-) {
+) -> (EventIndex, Vec<Receiver<Envelope>>, FilterHandle) {
     let stopped = index.dispatch(&filters, message);
     black_box(stopped);
+    black_box((index, receivers, filters))
 }
 
 #[library_benchmark]
 #[bench::ctcp(args = (true), setup = setup_ctcp)]
 #[bench::plain_notice(args = (false), setup = setup_ctcp)]
 fn bench_dispatch_ctcp(
-    (mut index, _receivers, filters, message): (
+    (mut index, receivers, filters, message): (
         EventIndex,
         Vec<Receiver<Envelope>>,
         FilterHandle,
         Message,
     ),
-) {
+) -> (EventIndex, Vec<Receiver<Envelope>>, FilterHandle) {
     let stopped = index.dispatch(&filters, message);
     black_box(stopped);
+    black_box((index, receivers, filters))
 }
 
 #[library_benchmark]
@@ -446,31 +452,51 @@ fn bench_dispatch_ctcp(
 #[bench::host_miss(args = ("see https://other.example/path"), setup = setup_url_host)]
 #[bench::any(args = ("see https://example.com/path"), setup = setup_url_any)]
 fn bench_dispatch_url(
-    (mut index, _receivers, filters, message): (
+    (mut index, receivers, filters, message): (
         EventIndex,
         Vec<Receiver<Envelope>>,
         FilterHandle,
         Message,
     ),
-) {
+) -> (EventIndex, Vec<Receiver<Envelope>>, FilterHandle) {
     let stopped = index.dispatch(&filters, message);
     black_box(stopped);
+    black_box((index, receivers, filters))
 }
 
 #[library_benchmark]
 #[bench::message(args = ("message"), setup = setup_handler)]
 #[bench::command(args = ("command"), setup = setup_handler)]
 #[bench::url(args = ("url"), setup = setup_handler)]
-fn bench_handler((plugin, ctx, client, event): (BenchPlugin, Context, Arc<Client>, Event)) {
-    let result = invoke(&plugin, &ctx, &client, &event);
+fn bench_handler(
+    (plugin, ctx, client, envelope): (BenchPlugin, Context, Arc<Client>, Envelope),
+) -> (BenchPlugin, Context, Arc<Client>, Envelope) {
+    let result = invoke(
+        &plugin,
+        &ctx,
+        &client,
+        &envelope.event,
+        envelope.span.clone(),
+    );
     black_box(result).expect("the benchmark handler should succeed");
+    black_box((plugin, ctx, client, envelope))
 }
 
 #[library_benchmark]
 #[bench::message(args = ("message"), setup = setup_pipeline)]
 #[bench::command(args = ("command"), setup = setup_pipeline)]
 #[bench::url(args = ("url"), setup = setup_pipeline)]
-fn bench_pipeline(pipeline: Pipeline) {
+fn bench_pipeline(
+    pipeline: Pipeline,
+) -> (
+    EventIndex,
+    Receiver<Envelope>,
+    FilterHandle,
+    Envelope,
+    BenchPlugin,
+    Context,
+    Arc<Client>,
+) {
     let Pipeline {
         mut index,
         receiver: mut mailbox,
@@ -488,8 +514,15 @@ fn bench_pipeline(pipeline: Pipeline) {
     );
 
     let envelope = mailbox.try_recv().expect("the event should be delivered");
-    let result = invoke(&plugin, &ctx, &client, &envelope.event);
+    let result = invoke(
+        &plugin,
+        &ctx,
+        &client,
+        &envelope.event,
+        envelope.span.clone(),
+    );
     black_box(result).expect("the benchmark handler should succeed");
+    black_box((index, mailbox, filters, envelope, plugin, ctx, client))
 }
 
 library_benchmark_group!(

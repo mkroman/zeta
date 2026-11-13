@@ -6213,6 +6213,7 @@ dependencies = [
  "irc",
  "time",
  "tokio",
+ "tracing",
  "zeta-plugin",
  "zeta-plugin-runtime",
  "zeta-test-support",
