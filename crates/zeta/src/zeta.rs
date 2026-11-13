@@ -101,23 +101,15 @@ fn drive_outgoing(client: &mut Client) -> tokio::task::JoinHandle<()> {
 
 /// Returns the IRC command name when the event index routes it, for telemetry.
 ///
-/// `PING`, `PONG` and numerics are not routed and get no `irc.dispatch` span; `ERROR` is
-/// included because its disconnect reason is logged inside the span.
+/// The classification is the runtime's, so this span decision cannot drift from dispatch;
+/// `ERROR` is the one addition because its disconnect reason is logged inside the span even
+/// though it is not routed.
 fn routed_command_name(command: &irc::proto::Command) -> Option<&str> {
-    let name = match command {
-        irc::proto::Command::PRIVMSG(..) => "PRIVMSG",
-        irc::proto::Command::NOTICE(..) => "NOTICE",
-        irc::proto::Command::JOIN(..) => "JOIN",
-        irc::proto::Command::PART(..) => "PART",
-        irc::proto::Command::QUIT(..) => "QUIT",
-        irc::proto::Command::NICK(..) => "NICK",
-        irc::proto::Command::KICK(..) => "KICK",
-        irc::proto::Command::ERROR(..) => "ERROR",
-        irc::proto::Command::Raw(name, _) => name,
-        _ => return None,
-    };
+    if matches!(command, irc::proto::Command::ERROR(..)) {
+        return Some("ERROR");
+    }
 
-    Some(name)
+    zeta_plugin_runtime::routed_command_name(command)
 }
 
 /// Returns the channel a message targets, when it has one.
@@ -486,7 +478,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn routed_command_name_matches_the_event_index() {
+    fn routed_command_name_follows_the_runtime_classification() {
         use irc::proto::{Command, Response};
 
         let cases = [
@@ -515,6 +507,22 @@ mod tests {
 
         for (command, expected) in cases {
             assert_eq!(routed_command_name(&command), expected, "{command:?}");
+
+            // `ERROR` is the host's only addition to the dispatcher's classification: it gets
+            // a span for its disconnect reason, but dispatches no event.
+            if matches!(command, Command::ERROR(..)) {
+                assert_eq!(
+                    zeta_plugin_runtime::routed_command_name(&command),
+                    None,
+                    "{command:?}"
+                );
+            } else {
+                assert_eq!(
+                    routed_command_name(&command),
+                    zeta_plugin_runtime::routed_command_name(&command),
+                    "{command:?}"
+                );
+            }
         }
     }
 

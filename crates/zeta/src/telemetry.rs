@@ -200,7 +200,7 @@ mod tests {
             );
             assert!(
                 !tracing::span!(
-                    target: "zeta_plugin_runtime::dispatch",
+                    target: "zeta.plugins",
                     Level::INFO,
                     "zeta.event.handle"
                 )
