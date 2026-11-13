@@ -83,7 +83,10 @@ fn report(args: &ReportArgs) -> Result<()> {
         exit_code: args.bench_exit_code,
     };
 
-    write_text(&args.report, &render::build_report(&run))?;
+    write_text(
+        &args.report,
+        &render::build_report(&run, render::ReportOptions { full: args.full }),
+    )?;
     write_json(&args.verdict, &payload::verdict(&run))?;
     println!("{}", policy::verdict(&run).name());
     Ok(())

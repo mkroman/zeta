@@ -11,6 +11,7 @@ pub fn number(value: Option<u64>) -> String {
 pub fn signed(value: Option<i64>) -> String {
     match value {
         None => "—".to_owned(),
+        Some(0) => "0".to_owned(),
         Some(value) if value > 0 => format!("+{}", group_digits(value.unsigned_abs())),
         Some(value) => format!("-{}", group_digits(value.unsigned_abs())),
     }
@@ -36,6 +37,7 @@ pub fn percent(value: Option<f64>) -> String {
         None => "—".to_owned(),
         Some(value) if value.is_infinite() && value.is_sign_positive() => "new".to_owned(),
         Some(value) if value.is_infinite() => "gone".to_owned(),
+        Some(value) if value.abs() < 0.005 => "0.00%".to_owned(),
         Some(value) => format!("{value:+.2}%"),
     }
 }
@@ -101,7 +103,12 @@ mod tests {
         assert_eq!(number(None), "—");
         assert_eq!(signed(Some(5)), "+5");
         assert_eq!(signed(Some(-5)), "-5");
+        assert_eq!(signed(Some(0)), "0");
         assert_eq!(percent(Some(12.345)), "+12.35%");
+        assert_eq!(percent(Some(0.0)), "0.00%");
+        assert_eq!(percent(Some(-0.0)), "0.00%");
+        assert_eq!(percent(Some(0.0001)), "0.00%");
+        assert_eq!(percent(Some(-0.0001)), "0.00%");
         assert_eq!(percent(Some(f64::INFINITY)), "new");
     }
 

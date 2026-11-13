@@ -83,14 +83,6 @@ impl Benchmark {
     pub fn label(&self) -> String {
         config::label(&self.function, self.case.as_deref())
     }
-
-    #[must_use]
-    pub const fn has_allocations(&self) -> bool {
-        self.dhat_blocks.old.is_some()
-            || self.dhat_blocks.new.is_some()
-            || self.dhat_bytes.old.is_some()
-            || self.dhat_bytes.new.is_some()
-    }
 }
 
 /// One run's inputs for policy decisions and rendering.

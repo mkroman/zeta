@@ -61,6 +61,7 @@ fn bench_help_lists_the_task_options() {
         "--output",
         "--summaries",
         "--baseline-found",
+        "--full",
         "--bench-exit-code",
         "--verdict",
         "--dry-run",
