@@ -14,20 +14,18 @@
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::warn;
 
-use zeta_http as http;
 use zeta_http::RequestError;
 use zeta_plugin::irc::{COLOR, PLAIN_REPLY_PREFIX, RESET, plain_reply, send_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text::IteratorJoinExt;
 
-/// The direct-geocoding endpoint location names are resolved against.
-const GEOCODING_URL: &str = "https://api.openweathermap.org/geo/1.0/direct";
+mod api;
+mod model;
 
-/// The current-weather endpoint coordinates are fetched from.
-const WEATHER_URL: &str = "https://api.openweathermap.org/data/2.5/weather";
+use self::model::WeatherResponse;
 
 /// The unit system used for temperatures and wind speeds.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -117,75 +115,6 @@ pub enum Error {
     Api(String),
 }
 
-/// Result from the Geocoding API.
-#[derive(Deserialize, Debug)]
-struct GeocodingResult {
-    /// Latitude.
-    lat: f64,
-    /// Longitude.
-    lon: f64,
-}
-
-/// Result from the Current Weather Data API.
-#[derive(Deserialize, Debug)]
-struct WeatherResponse {
-    /// City name.
-    name: String,
-    /// System parameters.
-    sys: Sys,
-    /// Main weather data (temperature, etc.).
-    main: Main,
-    /// Weather condition descriptions.
-    weather: Vec<WeatherDescription>,
-    /// Wind data.
-    wind: Wind,
-    /// Cloud coverage.
-    clouds: Option<Clouds>,
-}
-
-/// System parameters (country, timestamps, etc.).
-#[derive(Deserialize, Debug)]
-struct Sys {
-    /// Country code (e.g. "DK", "US").
-    country: Option<String>,
-}
-
-/// Main weather parameters.
-#[derive(Deserialize, Debug)]
-struct Main {
-    /// Temperature in the configured unit.
-    temp: f64,
-    /// Feels-like temperature in the configured unit.
-    feels_like: f64,
-    /// Humidity percentage.
-    humidity: u8,
-    /// Atmospheric pressure in hPa.
-    pressure: u16,
-}
-
-/// Weather condition description.
-#[derive(Deserialize, Debug)]
-struct WeatherDescription {
-    /// Weather condition within the group.
-    description: String,
-}
-
-/// Wind statistics.
-#[derive(Deserialize, Debug)]
-struct Wind {
-    /// Wind speed in the configured unit.
-    speed: f64,
-    /// Wind gust in the configured unit.
-    gust: Option<f64>,
-}
-
-/// Cloud coverage.
-#[derive(Deserialize, Debug)]
-struct Clouds {
-    /// Cloudiness, %.
-    all: u8,
-}
-
 #[plugin(name = "openweathermap", settings = Settings)]
 impl OpenWeatherMap {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
@@ -236,65 +165,6 @@ impl OpenWeatherMap {
         send_reply(client, channel, message)?;
 
         Ok(())
-    }
-}
-
-impl OpenWeatherMap {
-    /// Fetches weather for a given location string.
-    ///
-    /// This involves two steps:
-    /// 1. Geocoding the location string to coordinates (lat, lon).
-    /// 2. Fetching the weather data for those coordinates.
-    async fn fetch_weather(&self, location: &str) -> Result<WeatherResponse, Error> {
-        let geo = self.geocode(location).await?;
-        self.current_weather(geo.lat, geo.lon).await
-    }
-
-    /// Geocodes a location query to coordinates.
-    async fn geocode(&self, query: &str) -> Result<GeocodingResult, Error> {
-        debug!(search.query = %query, "geocoding");
-        let params = [("q", query), ("limit", "1"), ("appid", &self.app_id)];
-
-        let results: Vec<GeocodingResult> =
-            http::get_json(self.client.get(GEOCODING_URL).query(&params))
-                .await
-                .map_err(|error| contextual_api_error("geocoding failed", error))?;
-        results.into_iter().next().ok_or(Error::LocationNotFound)
-    }
-
-    /// Fetches current weather data for specific coordinates.
-    async fn current_weather(&self, lat: f64, lon: f64) -> Result<WeatherResponse, Error> {
-        debug!(
-            geo.location.lat = lat,
-            geo.location.lon = lon,
-            "fetching current weather"
-        );
-        let lat_s = lat.to_string();
-        let lon_s = lon.to_string();
-        let mut params = vec![
-            ("lat", lat_s.as_str()),
-            ("lon", lon_s.as_str()),
-            ("appid", self.app_id.as_str()),
-            ("units", self.units.as_str()),
-        ];
-
-        if let Some(language) = self.language.as_deref() {
-            params.push(("lang", language));
-        }
-
-        http::get_json(self.client.get(WEATHER_URL).query(&params))
-            .await
-            .map_err(|error| contextual_api_error("weather fetch failed", error))
-    }
-}
-
-/// Maps an API error into an [`Error`], prefixing status errors with `context`.
-fn contextual_api_error(context: &str, error: http::ApiError) -> Error {
-    match error {
-        http::ApiError::Status { status, .. } => Error::Api(format!("{context}: {status}")),
-        http::ApiError::Request(error) => Error::Request(error),
-        http::ApiError::Deserialize(error) => Error::Api(error.to_string()),
-        other => Error::Api(other.to_string()),
     }
 }
 
@@ -358,6 +228,7 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::model::{Clouds, Main, Sys, WeatherDescription, Wind};
     use super::*;
     use zeta_test_support::settings_tests;
 
@@ -405,31 +276,6 @@ mod tests {
             assert_eq!(settings.language.as_deref(), Some("da"));
             assert_eq!(settings.default_location.as_deref(), Some("Copenhagen"));
         }
-    }
-
-    #[test]
-    fn decodes_the_api_response() {
-        // The field names follow the API's recorded responses; extra fields are ignored.
-        let response: WeatherResponse = serde_json::from_str(
-            r#"{
-                "name": "Copenhagen",
-                "sys": {"country": "DK"},
-                "main": {"temp": 12.5, "feels_like": 11.0, "humidity": 72, "pressure": 1013},
-                "weather": [{"id": 500, "main": "Rain", "description": "light rain", "icon": "10d"}],
-                "wind": {"speed": 3.0, "deg": 240, "gust": 6.5},
-                "clouds": {"all": 75},
-                "coord": {"lon": 12.56, "lat": 55.68},
-                "dt": 1758600000
-            }"#,
-        )
-        .expect("the api response should decode");
-
-        assert_eq!(response.name, "Copenhagen");
-        assert_eq!(response.sys.country.as_deref(), Some("DK"));
-        assert!((response.main.temp - 12.5).abs() < f64::EPSILON);
-        assert_eq!(response.weather[0].description, "light rain");
-        assert_eq!(response.wind.gust, Some(6.5));
-        assert_eq!(response.clouds.map(|clouds| clouds.all), Some(75));
     }
 
     #[test]

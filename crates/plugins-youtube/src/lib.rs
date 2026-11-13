@@ -40,14 +40,17 @@ use zeta_utils::duration;
 use zeta_utils::irc;
 use zeta_utils::text;
 
+mod api;
+mod model;
+
+pub use model::{
+    ApiListResponse, CategoriesResponse, Category, CategorySnippet, ContentDetails,
+    LiveStreamingDetails, Search, SearchId, SearchListResponse, SearchSnippet, Snippet, Statistics,
+    Video, VideosResponse,
+};
 pub use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
 
-/// The endpoint videos are searched against.
-const SEARCH_URL: &str = "https://www.googleapis.com/youtube/v3/search";
-/// The endpoint video details are fetched from.
-const VIDEOS_URL: &str = "https://www.googleapis.com/youtube/v3/videos";
-/// The endpoint video categories are fetched from.
-const VIDEO_CATEGORIES_URL: &str = "https://www.googleapis.com/youtube/v3/videoCategories";
+use self::api::fetch_video_categories;
 
 /// The time-to-live of the cached video categories.
 const CATEGORIES_TTL: Duration = Duration::from_hours(24);
@@ -150,119 +153,6 @@ pub enum Error {
     #[error("no results")]
     NoResults,
 }
-
-/// Basic details about the video, such as its title and category.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Snippet {
-    /// The video title, possibly containing HTML entities.
-    pub title: String,
-    /// The title of the channel that uploaded the video.
-    pub channel_title: String,
-    /// The video category id, resolvable through the video categories map.
-    pub category_id: String,
-    /// Whether the video is a `"live"`, `"upcoming"`, or regular broadcast.
-    pub live_broadcast_content: String,
-}
-
-/// Statistics about a video.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Statistics {
-    /// The number of times the video has been viewed, as a decimal string.
-    pub view_count: String,
-}
-
-/// Details about the content of a video, such as its duration.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContentDetails {
-    /// The video duration as an ISO 8601 duration string (e.g. `PT4M13S`).
-    pub duration: String,
-}
-
-/// Details about a live stream.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LiveStreamingDetails {
-    /// The number of concurrent viewers, present while the stream is live.
-    pub concurrent_viewers: Option<String>,
-}
-
-/// A YouTube video.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Video {
-    /// The video's basic details, present in the `snippet` API part.
-    pub snippet: Option<Snippet>,
-    /// The video's statistics, present in the `statistics` API part.
-    pub statistics: Option<Statistics>,
-    /// The video's content details, present in the `contentDetails` API part.
-    pub content_details: Option<ContentDetails>,
-    /// The video's live streaming details, present for live and upcoming streams.
-    pub live_streaming_details: Option<LiveStreamingDetails>,
-}
-
-/// Search Result.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Search {
-    /// The id of the matched resource, typed by its kind.
-    pub id: SearchId,
-    /// The matched resource's basic details.
-    pub snippet: SearchSnippet,
-}
-
-/// The id of a search result, typed by the kind of resource the search matched.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchId {
-    /// The video id, present for video results.
-    pub video_id: Option<String>,
-}
-
-/// The snippet of a search result.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchSnippet {
-    /// The matched resource's title, possibly containing HTML entities.
-    pub title: String,
-}
-
-/// Details about a video category.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CategorySnippet {
-    /// The category title, e.g. "Music".
-    pub title: String,
-}
-
-/// A video category result.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Category {
-    /// The category id.
-    pub id: String,
-    /// The category's details.
-    pub snippet: CategorySnippet,
-}
-
-/// Generic response type for list results.
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiListResponse<R> {
-    /// The list items.
-    pub items: Vec<R>,
-}
-
-/// Response with a list of YouTube videos.
-pub type VideosResponse = ApiListResponse<Video>;
-
-/// Response with a list of YouTube video categories.
-pub type CategoriesResponse = ApiListResponse<Category>;
-
-/// Response with a list of YouTube search results.
-pub type SearchListResponse = ApiListResponse<Search>;
 
 #[plugin(name = "youtube", settings = Settings, urls(hosts = URL_HOSTS))]
 impl YouTube {
@@ -438,84 +328,6 @@ impl YouTube {
                 .await;
             }
         });
-    }
-
-    /// Searches for videos using the given query.
-    async fn search(&self, query: &str) -> Result<Vec<Search>, Error> {
-        debug!(search.query = %query, "searching for videos");
-
-        let params = [
-            ("q", query),
-            ("key", &self.api_key),
-            ("part", "snippet"),
-            ("type", "video"),
-            ("safeSearch", self.safe_search.as_str()),
-        ];
-
-        let request = self.client.get(SEARCH_URL).query(&params);
-
-        let result: SearchListResponse = http::get_json(request).await?;
-
-        let items = result.items;
-
-        debug!(?items, "returning items");
-
-        Ok(items)
-    }
-
-    /// Fetches metadata for a YouTube video using its video ID.
-    ///
-    /// Returns `Err(Error::NoResults)` if no video is found with the given ID.
-    async fn get_video(&self, video_id: &str) -> Result<Video, Error> {
-        debug!(media.id = %video_id, "fetching video metadata");
-
-        let params = [
-            ("id", video_id),
-            ("key", &self.api_key),
-            (
-                "part",
-                "snippet,statistics,contentDetails,liveStreamingDetails",
-            ),
-        ];
-        let request = self.client.get(VIDEOS_URL).query(&params);
-        let list: VideosResponse = http::get_json(request).await?;
-
-        debug!("fetched metadata for video");
-
-        list.items.into_iter().next().ok_or(Error::NoResults)
-    }
-}
-
-/// Fetches the video categories map from the API, keyed by category id.
-///
-/// # Errors
-///
-/// Returns [`Error::Api`] if the request failed or the response could not be parsed, and
-/// [`Error::NoResults`] if the API returned no categories.
-async fn fetch_video_categories(
-    client: &reqwest::Client,
-    api_key: &str,
-    region_code: &str,
-) -> Result<HashMap<String, Category>, Error> {
-    debug!("fetching video categories");
-
-    let params = [
-        ("key", api_key),
-        ("part", "snippet"),
-        ("regionCode", region_code),
-    ];
-    let request = client.get(VIDEO_CATEGORIES_URL).query(&params);
-    let list: CategoriesResponse = http::get_json(request).await?;
-
-    debug!("fetched video category list");
-
-    let map: HashMap<String, Category> =
-        list.items.into_iter().map(|c| (c.id.clone(), c)).collect();
-
-    if map.is_empty() {
-        Err(Error::NoResults)
-    } else {
-        Ok(map)
     }
 }
 
