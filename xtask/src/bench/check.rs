@@ -194,6 +194,7 @@ mod tests {
             benchmark("bench_distance_in_words_chrono", "case_0", "duration"),
             benchmark("bench_distance_in_words_time", "case_0", "duration"),
             benchmark("bench_time_duration_in_words", "case_0", "duration"),
+            benchmark("bench_dispatch_unhandled", "privmsg", "dispatch"),
         ]
     }
 

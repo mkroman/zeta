@@ -52,6 +52,11 @@ pub const SUITES: &[Suite] = &[
         source: "benchmarks/benches/duration.rs",
         context: "bench/duration",
     },
+    Suite {
+        name: "dispatch",
+        source: "benchmarks/benches/dispatch.rs",
+        context: "bench/dispatch",
+    },
 ];
 
 /// Optional display overrides; functions not listed are humanized from their Rust names.
