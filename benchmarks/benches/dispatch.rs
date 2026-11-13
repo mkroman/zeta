@@ -42,8 +42,7 @@ use irc::proto::Message;
 use tokio::sync::mpsc::Receiver;
 
 use zeta_plugin::{
-    Client, CommandSpec, Context, Event, FilterHandle, Subscriptions, UrlScope, handle_event,
-    plugin,
+    Client, CommandSpec, Context, Event, FilterHandle, Plugin, Subscriptions, UrlScope, plugin,
 };
 use zeta_plugin_runtime::{Envelope, EventIndex};
 
@@ -107,7 +106,7 @@ fn invoke(
     client: &Client,
     event: &Event,
 ) -> Result<(), zeta_plugin::Error> {
-    block_on(handle_event(plugin, ctx, client, event))
+    block_on(plugin.handle(ctx, client, event))
 }
 
 /// Polls `future` to completion on the current thread with a no-op waker.
