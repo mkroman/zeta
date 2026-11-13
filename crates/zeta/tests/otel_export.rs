@@ -7,12 +7,10 @@
 //! point is to validate the layer boundary, not to repeat every attribute assertion.
 
 use irc::proto::Message;
-use opentelemetry::trace::{SpanKind, TraceContextExt, TracerProvider};
+use opentelemetry::trace::{SpanKind, TracerProvider};
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SpanData};
 use tokio::sync::mpsc;
-use tracing::info_span;
 use tracing::subscriber::with_default;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::prelude::*;
 
 use zeta_plugin::event::Subscriptions;
@@ -32,13 +30,9 @@ fn exported_handler_span_carries_name_kind_parent_and_messaging_operation() {
     let subscriber =
         tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
 
-    let (dispatch_id, handler) = with_default(subscriber, || {
-        // The host creates the line span before routing; the delivered handler span must join
-        // that trace. The OTel span id is captured to assert the exported parent id.
-        let dispatch = info_span!("irc.dispatch", irc.command = "PRIVMSG");
-        let dispatch_id = dispatch.context().span().span_context().span_id();
-        let _entered = dispatch.enter();
-
+    let handler = with_default(subscriber, || {
+        // The dispatcher creates the line span before routing; the delivered handler span must
+        // join that trace.
         let mut subscriptions = Subscriptions::new();
         subscriptions.command(CommandSpec::new(".bench", "bench"));
 
@@ -57,19 +51,29 @@ fn exported_handler_span_carries_name_kind_parent_and_messaging_operation() {
         );
         assert_empty!(stopped);
 
-        let envelope = receiver
+        receiver
             .try_recv()
-            .expect("the command should be delivered");
-
-        (dispatch_id, envelope.span)
+            .expect("the command should be delivered")
+            .span
     });
 
-    // Closing the handler span exports it through the provider's simple processor.
+    // Closing the handler span exports it through the provider's simple processor. The line span
+    // was closed when the dispatch returned.
     drop(handler);
 
     let spans = exporter
         .get_finished_spans()
         .expect("the in-memory exporter should return the finished spans");
+
+    let dispatch = spans
+        .iter()
+        .find(|span| span.name == "irc.dispatch")
+        .unwrap_or_else(|| {
+            panic!(
+                "the line span should be exported, exported: {:?}",
+                spans.iter().map(|span| &span.name).collect::<Vec<_>>()
+            )
+        });
     let span = spans
         .iter()
         .find(|span| span.name == "zeta.event.handle bench command")
@@ -82,7 +86,8 @@ fn exported_handler_span_carries_name_kind_parent_and_messaging_operation() {
 
     assert_eq!(span.span_kind, SpanKind::Consumer, "{span:?}");
     assert_eq!(
-        span.parent_span_id, dispatch_id,
+        span.parent_span_id,
+        dispatch.span_context.span_id(),
         "the handler span must be a child of the line span: {span:?}"
     );
     assert_eq!(

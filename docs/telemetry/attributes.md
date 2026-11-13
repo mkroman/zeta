@@ -104,13 +104,13 @@ These are consumed by the tracing layer and are not exported as span attributes.
 | Attribute | Type | Meaning | Source |
 | --- | --- | --- | --- |
 | `messaging.system.name` | string | Always `irc` | OTel |
-| `messaging.operation.name` | string | Lowercased IRC command: `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, …; `error` for server `ERROR` | OTel |
+| `messaging.operation.name` | string | Lowercased IRC command: `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | OTel |
 | `messaging.operation.type` | string | Always `process` | OTel |
 | `messaging.destination.name` | string | Channel or nick targeted by `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, or `KICK` | OTel |
 | `messaging.message.id` | string | IRCv3 `msgid` attached to any event, when present; the client requests the `message-tags` capability at registration | OTel |
-| `irc.command` | string | IRC command as received, e.g. `PRIVMSG` | custom |
+| `irc.command` | string | IRC command as received, e.g. `PRIVMSG`; `ERROR` on the host's `irc.error` span | custom |
 | `irc.channel` | string | Channel or nick target | custom |
-| `irc.raw` | string | Full IRC line, trace level | custom |
+| `irc.raw` | string | Full IRC line, trace level; inside `irc.dispatch` for a delivering line, stdout-only when the line has no span | custom |
 | `irc.hostname` | string | Configured server hostname on `zeta.startup` | custom |
 | `irc.nickname` | string | Configured bot nickname on `zeta.startup` | custom |
 | `irc.sender.nick` | string | Nick attributed to a database row | custom |

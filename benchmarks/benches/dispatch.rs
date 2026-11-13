@@ -17,7 +17,7 @@
 //!
 //! - No Tokio task scheduling: the mailbox receiver is drained in the same thread, so the
 //!   measurements exclude task wakeups and worker scheduling.
-//! - No tracing subscriber: the handler-span metadata path is disabled, so neither span
+//! - No tracing subscriber: the line- and handler-span paths are disabled, so neither span
 //!   construction nor span export is measured. The default filter (`zeta=info`) enables those
 //!   spans in production, so this suite measures the filtered-out dispatch path only. The
 //!   enabled path is measured separately by the `dispatch_telemetry` suite.

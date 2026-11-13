@@ -25,7 +25,7 @@ use zeta_plugin::{CommandSpec, Event, EventKind, FilterHandle, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrlRef};
 
 use crate::runtime::MAILBOX_CAPACITY;
-use crate::telemetry::{MessageTelemetry, handler_spans_enabled};
+use crate::telemetry::{MessageTelemetry, dispatch_span, handler_spans_enabled};
 
 /// An event queued for a plugin together with the handler span it must run inside.
 ///
@@ -433,7 +433,7 @@ impl SharedMessage {
 }
 
 /// What [`EventIndex::dispatch`] should do with a message's IRC command.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandRoute {
     /// A channel message: commands, messages, or URLs may match.
     Privmsg,
@@ -492,15 +492,154 @@ impl CommandRoute {
     }
 }
 
-/// Returns whether handler spans are enabled, resolving the filter once per line.
+/// The per-line dispatch plan: the checks the span guard and the routing path share.
 ///
-/// The dispatcher passes one cache through every delivery point of a line, so the filter is
-/// consulted at most once even when the line yields a command, a message and several URLs. A
-/// line that delivers nothing never resolves it: the check is made only when a delivery is
-/// about to build a span, so empty lines do not pay for the filter.
+/// A line's CTCP status, matching command targets, message interest and URL potential are
+/// computed once, from the still-unshared message, instead of being derived by the span guard
+/// and then again by [`EventIndex::dispatch_privmsg`]. The command targets borrow the index, not
+/// the message, so building the plan does not keep the message borrowed.
+#[derive(Clone, Copy, Debug)]
+struct DeliveryPlan<'a> {
+    /// The registered command targets the line's first word matches, if any.
+    ///
+    /// Kept as `&Vec` rather than `&[T]` so the option is one word: the plan then fits the
+    /// register-return ABI, which the dispatch benchmark measures as a per-line saving.
+    command_targets: Option<&'a Vec<CommandTarget>>,
+    /// The line's dispatch flags; see the bit constants below.
+    flags: u8,
+}
+
+impl<'a> DeliveryPlan<'a> {
+    /// The line carries a CTCP payload; CTCP lines bypass commands, messages and URLs.
+    const CTCP: u8 = 1 << 0;
+    /// Any plugin observes plain channel messages.
+    const MESSAGE_SUBSCRIBERS: u8 = 1 << 1;
+    /// The line could carry a URL for a URL subscriber: a scheme colon and a subscription.
+    const URLS_POSSIBLE: u8 = 1 << 2;
+    /// Any subscription can receive the line at all.
+    const DELIVERABLE: u8 = 1 << 3;
+
+    /// Returns `flag` when `condition` holds, or `0`.
+    const fn bit(condition: bool, flag: u8) -> u8 {
+        if condition { flag } else { 0 }
+    }
+
+    /// Builds the plan of `message` under `route`.
+    #[inline]
+    fn new(index: &'a EventIndex, route: CommandRoute, message: &Message) -> Self {
+        match route {
+            CommandRoute::Ignored => Self::undeliverable(),
+            CommandRoute::Event(kind) => {
+                let is_ctcp = kind == EventKind::Ctcp && is_ctcp(message);
+                let deliverable =
+                    !index.subscribers(kind).is_empty() && (kind != EventKind::Ctcp || is_ctcp);
+
+                Self {
+                    command_targets: None,
+                    flags: Self::bit(is_ctcp, Self::CTCP)
+                        | Self::bit(deliverable, Self::DELIVERABLE),
+                }
+            }
+            CommandRoute::Privmsg => {
+                let Command::PRIVMSG(_, text) = &message.command else {
+                    return Self::undeliverable();
+                };
+
+                let is_ctcp = is_ctcp(message);
+                // A CTCP message bypasses commands, so matching one would be wasted work.
+                let command_targets = if is_ctcp {
+                    None
+                } else {
+                    index.matched_command_targets(text)
+                };
+                let has_message_subscribers = !index.subscribers(EventKind::Message).is_empty();
+                // URL extraction needs a scheme, and a scheme contains `:`; a host-scoped
+                // subscriber may still miss, which only costs one undelivered span. The map
+                // checks come first so a line with no URL subscriber never scans its text.
+                let urls_possible = (!index.url_hosts.is_empty() || !index.url_any.is_empty())
+                    && text.contains(':');
+                let deliverable = if is_ctcp {
+                    !index.subscribers(EventKind::Ctcp).is_empty()
+                } else {
+                    has_message_subscribers || command_targets.is_some() || urls_possible
+                };
+                let flags = Self::bit(is_ctcp, Self::CTCP)
+                    | Self::bit(has_message_subscribers, Self::MESSAGE_SUBSCRIBERS)
+                    | Self::bit(urls_possible, Self::URLS_POSSIBLE)
+                    | Self::bit(deliverable, Self::DELIVERABLE);
+
+                Self {
+                    command_targets,
+                    flags,
+                }
+            }
+        }
+    }
+
+    /// Returns a plan for a line no subscription can receive.
+    const fn undeliverable() -> Self {
+        Self {
+            command_targets: None,
+            flags: 0,
+        }
+    }
+
+    /// Returns whether the line carries a CTCP payload.
+    const fn is_ctcp(&self) -> bool {
+        self.flags & Self::CTCP != 0
+    }
+
+    /// Returns whether any plugin observes plain channel messages.
+    const fn has_message_subscribers(&self) -> bool {
+        self.flags & Self::MESSAGE_SUBSCRIBERS != 0
+    }
+
+    /// Returns whether the line could carry a URL for a URL subscriber.
+    const fn urls_possible(&self) -> bool {
+        self.flags & Self::URLS_POSSIBLE != 0
+    }
+
+    /// Returns whether any subscription can receive the planned line.
+    ///
+    /// The dispatcher uses this to skip the line span for lines that cannot deliver anything: a
+    /// `PING`, a numeric, a `PRIVMSG` with no command, message or URL subscriber, or a plain
+    /// `NOTICE` with no CTCP subscriber. It is deliberately conservative: a false positive only
+    /// creates a span for a line that ends up delivering nothing, while a false negative would
+    /// leave every handler span of the line without its parent. Filters are not consulted here;
+    /// they can only remove deliveries, so ignoring them stays conservative.
+    #[must_use]
+    const fn may_deliver(&self) -> bool {
+        self.flags & Self::DELIVERABLE != 0
+    }
+}
+
+/// Returns the cached handler-span gate of the current line.
+///
+/// `EventIndex::dispatch` resolves the filter once, after [`DeliveryPlan::may_deliver`], and
+/// seeds this cache before routing; every delivery point reads the same value instead of
+/// consulting the filter again. A line no subscription can receive returns before the gate is
+/// resolved.
 #[inline]
 fn telemetry_enabled(cache: &mut Option<bool>) -> bool {
     *cache.get_or_insert_with(handler_spans_enabled)
+}
+
+/// Emits the raw IRC line at trace level.
+///
+/// One callsite is shared by the no-delivery early return and the routed path. On a routed
+/// line the event is inside `irc.dispatch`; on a line no subscription can receive it is outside
+/// a span, so it reaches stdout but not the span exporter.
+///
+/// `event!` rather than `trace!`: the shorthand macro cannot parse the dotted `irc.raw` field
+/// together with a `target:` prefix.
+#[inline]
+fn trace_raw(message: &Message) {
+    tracing::event!(
+        target: "zeta.plugins",
+        tracing::Level::TRACE,
+        { irc.raw = %message },
+        "processing irc message"
+    );
 }
 
 /// A URL retained for dispatch: its shared handle, the broken scheme prefix it was repaired
@@ -613,24 +752,55 @@ impl EventIndex {
 
     /// Routes `message` to the plugins that subscribed to events it matches.
     ///
+    /// The `irc.dispatch` span of the line is created and entered here, before routing, so every
+    /// handler span is its child and the raw line and the stopped-plugin warnings are logged
+    /// inside it. Lines no plugin can receive get no span at all
+    /// ([`DeliveryPlan::may_deliver`]).
+    ///
     /// Returns the names of the plugins whose mailboxes are closed — their tasks have stopped.
-    /// They are already evicted from the index, so the caller only needs to report them.
+    /// They are logged and evicted before this returns, so the caller may ignore the list.
     #[must_use]
     pub fn dispatch(&mut self, filters: &FilterHandle, message: Message) -> Vec<&'static str> {
         let mut message = SharedMessage::new(message);
-        let mut stopped = Vec::new();
-
-        // The line is classified once; the span gate is cached and resolved by the first
-        // delivery point that could build a span. The delivery telemetry borrows from the
-        // message only once it is shared.
         let route = CommandRoute::classify(&message.message().command);
-        let mut telemetry_enabled = None;
+        let plan = self.plan(route, message.message());
+
+        if !plan.may_deliver() {
+            trace_raw(message.message());
+
+            return Vec::new();
+        }
+
+        // The line span is built from the still-unshared message. Its telemetry borrows the
+        // message, so the whole computation stays in this block and is dropped before routing
+        // shares the message. Sharing eagerly would allocate on every delivering line,
+        // including the ones no route ends up delivering to.
+        let enabled = handler_spans_enabled();
+        let dispatch = {
+            let telemetry = if enabled {
+                MessageTelemetry::from_route(route, message.message())
+            } else {
+                None
+            };
+
+            telemetry.as_ref().map(dispatch_span)
+        };
+
+        // The gate is already known; the delivery points reuse it instead of consulting the
+        // filter again.
+        let mut telemetry_enabled = Some(enabled);
+        let _entered = dispatch.as_ref().map(Span::enter);
+
+        trace_raw(message.message());
+
+        let mut stopped = Vec::new();
 
         match route {
             CommandRoute::Privmsg => {
                 self.dispatch_privmsg(
                     filters,
                     route,
+                    plan,
                     &mut telemetry_enabled,
                     &mut message,
                     &mut stopped,
@@ -649,15 +819,46 @@ impl EventIndex {
         }
 
         // A stopped plugin can match several of the message's events (and several commands or
-        // URLs); report and evict it once.
+        // URLs); report and evict it once. The warning runs inside the line span, like every
+        // other message routed here.
         if !stopped.is_empty() {
             stopped.sort_unstable();
             stopped.dedup();
+
+            for name in &stopped {
+                warn!(zeta.plugin.name = %name, "plugin task has stopped");
+            }
 
             self.evict_stopped(&stopped);
         }
 
         stopped
+    }
+
+    /// Builds the per-line dispatch plan for `message` under `route`.
+    #[inline]
+    fn plan<'a>(&'a self, route: CommandRoute, message: &Message) -> DeliveryPlan<'a> {
+        DeliveryPlan::new(self, route, message)
+    }
+
+    /// Returns the registered command targets the first word of `text` matches.
+    ///
+    /// The first word must be an exact trigger, and leading whitespace makes the first word
+    /// non-matching; this is the command branch of [`Self::dispatch_privmsg`] with the targets
+    /// kept for the caller.
+    #[inline]
+    fn matched_command_targets(&self, text: &str) -> Option<&Vec<CommandTarget>> {
+        if !self.may_start_command(text) {
+            return None;
+        }
+
+        let word = text.split_whitespace().next()?;
+
+        if !text.starts_with(word) {
+            return None;
+        }
+
+        self.commands.get(word)
     }
 
     /// Removes the named stopped plugins from the index.
@@ -699,11 +900,11 @@ impl EventIndex {
         &self.kinds[kind.index()]
     }
 
-    /// Delivers `message` as an event of `kind` to its subscribers, if any are registered.
+    /// Delivers `message` as an event of `kind` to its subscribers.
     ///
-    /// The event, and the shared message it needs, is built only when a subscriber exists and
-    /// the message actually carries the event: most messages match no subscription, and CTCP
-    /// events only come from CTCP text.
+    /// The delivery plan has already established that a subscriber exists and, for CTCP, that
+    /// the message carries CTCP text, so this only builds the event and telemetry.
+    #[inline]
     fn deliver_kind(
         &self,
         kind: EventKind,
@@ -713,10 +914,6 @@ impl EventIndex {
         stopped: &mut Vec<&'static str>,
     ) {
         let subscribers = self.subscribers(kind);
-
-        if subscribers.is_empty() || (kind == EventKind::Ctcp && !is_ctcp(message.message())) {
-            return;
-        }
 
         let Some(event) = kind.event(message.shared()) else {
             return;
@@ -751,20 +948,24 @@ impl EventIndex {
     }
 
     /// Routes a `PRIVMSG` to the plugins whose subscriptions match.
+    ///
+    /// The plan already parsed the CTCP payload and matched the command triggers, so this only
+    /// applies the sender filter and delivers the planned events.
     fn dispatch_privmsg(
         &self,
         filters: &FilterHandle,
         route: CommandRoute,
+        plan: DeliveryPlan<'_>,
         cache: &mut Option<bool>,
         message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
-        let Command::PRIVMSG(target, text) = &message.message().command else {
+        let Command::PRIVMSG(target, _) = &message.message().command else {
             return;
         };
 
         // CTCP messages are their own event kind and are routed to nothing else.
-        if is_ctcp(message.message()) {
+        if plan.is_ctcp() {
             self.deliver_kind(EventKind::Ctcp, route, cache, message, stopped);
 
             return;
@@ -782,13 +983,8 @@ impl EventIndex {
         }
 
         // Commands — matched by the first word of the message, verified with the exact
-        // trigger semantics. Leading whitespace makes the first word non-matching, and checking
-        // it before sharing keeps such a message allocation-free.
-        if self.may_start_command(text)
-            && let Some(word) = text.split_whitespace().next()
-            && text.starts_with(word)
-            && let Some(targets) = self.commands.get(word)
-        {
+        // trigger semantics. The message is shared only when a target exists.
+        if let Some(targets) = plan.command_targets {
             let message = message.shared();
             let telemetry = telemetry_enabled(cache)
                 .then(|| MessageTelemetry::from_route(route, message.as_ref()))
@@ -805,14 +1001,14 @@ impl EventIndex {
         }
 
         // Message subscribers observe every remaining non-CTCP message.
-        self.deliver_kind(EventKind::Message, route, cache, message, stopped);
-
-        // URLs — extracted once per message, deduplicated and filtered before routing by host.
-        if self.url_hosts.is_empty() && self.url_any.is_empty() {
-            return;
+        if plan.has_message_subscribers() {
+            self.deliver_kind(EventKind::Message, route, cache, message, stopped);
         }
 
-        self.dispatch_urls(filters, route, cache, message, stopped);
+        // URLs — the plan already checked for a URL subscriber and a scheme colon.
+        if plan.urls_possible() {
+            self.dispatch_urls(filters, route, cache, message, stopped);
+        }
     }
 
     /// Returns whether `text` can start a registered command, judging by its first byte alone.
@@ -843,13 +1039,6 @@ impl EventIndex {
         let Command::PRIVMSG(target, text) = &message.message().command else {
             return;
         };
-
-        // An extracted URL always carries a scheme, and a scheme is terminated by `:`; text
-        // without one cannot yield a URL. Skipping the word scan here keeps the link-free
-        // message — the overwhelming majority of channel traffic — free of it.
-        if !text.contains(':') {
-            return;
-        }
 
         let sender = Sender::from_message(message.message());
 
@@ -1117,7 +1306,8 @@ mod tests {
         ];
 
         for (message, command, operation, channel) in cases {
-            let telemetry = MessageTelemetry::from_message(&message)
+            let route = CommandRoute::classify(&message.command);
+            let telemetry = MessageTelemetry::from_route(route, &message)
                 .unwrap_or_else(|| panic!("{message:?} should be routed"));
 
             assert_eq!(telemetry.command, command, "{message:?}");
@@ -1132,7 +1322,8 @@ mod tests {
     #[test]
     fn message_telemetry_keeps_raw_commands_uppercase() {
         let raw = message("server.example", "SOMECMD", &["#test"]);
-        let telemetry = MessageTelemetry::from_message(&raw).expect("a raw command is routed");
+        let route = CommandRoute::classify(&raw.command);
+        let telemetry = MessageTelemetry::from_route(route, &raw).expect("a raw command is routed");
 
         assert_eq!(telemetry.command, "SOMECMD");
         assert_eq!(
@@ -1140,18 +1331,6 @@ mod tests {
             MessagingOperation::Unmodeled("SOMECMD")
         );
         assert_eq!(telemetry.operation.to_string(), "somecmd");
-    }
-
-    /// `ERROR` is not routed but still gets a dispatch span: the host logs the disconnect reason
-    /// inside it. It has no channel and reports the `error` operation.
-    #[test]
-    fn message_telemetry_covers_server_error() {
-        let error = message("", "ERROR", &["closing link"]);
-        let telemetry = MessageTelemetry::from_message(&error).expect("ERROR gets a dispatch span");
-
-        assert_eq!(telemetry.command, "ERROR");
-        assert_eq!(telemetry.operation, MessagingOperation::Modeled("error"));
-        assert_eq!(telemetry.channel, None);
     }
 
     /// PING, PONG and numerics are connection protocol, not plugin events; they get no telemetry
@@ -1165,14 +1344,11 @@ mod tests {
         ];
 
         for message in unrouted {
-            assert!(
-                MessageTelemetry::from_message(&message).is_none(),
-                "{message:?}"
-            );
-        }
+            let route = CommandRoute::classify(&message.command);
 
-        let ping = message("server.example", "PING", &["server"]);
-        assert!(MessageTelemetry::from_route(CommandRoute::Ignored, &ping).is_none());
+            assert_eq!(route, CommandRoute::Ignored, "{message:?}");
+            assert!(MessageTelemetry::from_route(route, &message).is_none());
+        }
     }
 
     /// The message id is read from any tagged event, not just `PRIVMSG`/`NOTICE`; servers may
@@ -1180,13 +1356,15 @@ mod tests {
     #[test]
     fn message_telemetry_reads_the_message_id_of_any_tagged_event() {
         let join = tagged("JOIN", &["#test"], "j1");
-        let telemetry = MessageTelemetry::from_message(&join).expect("a join is routed");
+        let route = CommandRoute::classify(&join.command);
+        let telemetry = MessageTelemetry::from_route(route, &join).expect("a join is routed");
 
         assert_eq!(telemetry.message_id, Some("j1"));
         assert_eq!(telemetry.channel, Some("#test"));
 
         let privmsg = tagged("PRIVMSG", &["#test", "hello"], "m1");
-        let telemetry = MessageTelemetry::from_message(&privmsg).expect("a privmsg is routed");
+        let route = CommandRoute::classify(&privmsg.command);
+        let telemetry = MessageTelemetry::from_route(route, &privmsg).expect("a privmsg is routed");
         assert_eq!(telemetry.message_id, Some("m1"));
     }
 
@@ -1628,11 +1806,12 @@ mod tests {
         assert_eq!(cases.len(), EventKind::ALL.len());
 
         for (kind, message) in cases {
-            // The host's dispatch span needs the line's telemetry for every kind the dispatcher
-            // routes; a kind added without a command/operation would silently lose its dispatch
-            // span.
+            // The runtime's dispatch span needs the line's telemetry for every kind the
+            // dispatcher routes; a kind added without a command/operation would silently lose
+            // its dispatch span.
+            let route = CommandRoute::classify(&message.command);
             assert!(
-                MessageTelemetry::from_message(message).is_some(),
+                MessageTelemetry::from_route(route, message).is_some(),
                 "{kind:?} has no message telemetry"
             );
 
@@ -1674,6 +1853,213 @@ mod tests {
             assert_eq!(events.len(), 1, "{kind:?} was not dispatched exactly once");
             assert_eq!(events[0].kind(), Some(*kind), "{kind:?} was not dispatched");
         }
+    }
+
+    /// Nothing subscribed means nothing can be delivered: the dispatcher returns before building
+    /// the line span or sharing the message.
+    #[test]
+    fn may_deliver_rejects_unsubscribed_lines() {
+        let index = EventIndex::default();
+
+        for message in [
+            privmsg("hello"),
+            message("nick!u@h", "JOIN", &["#test"]),
+            message("server.example", "SOMECMD", &["data"]),
+            message("server.example", "NOTICE", &["#test", "\x01VERSION\x01"]),
+        ] {
+            let route = CommandRoute::classify(&message.command);
+
+            assert!(!index.plan(route, &message).may_deliver(), "{message:?}");
+        }
+
+        let ping = message("server.example", "PING", &["server"]);
+
+        assert_eq!(CommandRoute::classify(&ping.command), CommandRoute::Ignored);
+        assert!(!index.plan(CommandRoute::Ignored, &ping).may_deliver());
+    }
+
+    /// Every event kind a plugin can subscribe to makes the line that produces it deliverable.
+    #[test]
+    fn may_deliver_accepts_every_event_kind_subscription() {
+        let cases: &[(EventKind, Message)] = &[
+            (EventKind::Message, privmsg("hello")),
+            (EventKind::Join, message("nick!u@h", "JOIN", &["#test"])),
+            (EventKind::Part, message("nick!u@h", "PART", &["#test"])),
+            (EventKind::Quit, message("nick!u@h", "QUIT", &["bye"])),
+            (EventKind::Nick, message("nick!u@h", "NICK", &["nick_"])),
+            (
+                EventKind::Kick,
+                message("op!u@h", "KICK", &["#test", "nick", "flood"]),
+            ),
+            (EventKind::Ctcp, privmsg("\x01VERSION\x01")),
+            (
+                EventKind::Raw,
+                message("server.example", "SOMECMD", &["data"]),
+            ),
+        ];
+
+        assert_eq!(cases.len(), EventKind::ALL.len());
+
+        for (kind, message) in cases {
+            let mut index = EventIndex::default();
+            let _mailbox = subscribe(&mut index, "sub", |subscriptions| match kind {
+                EventKind::Message => {
+                    subscriptions.receive_message();
+                }
+                EventKind::Join => {
+                    subscriptions.receive_join();
+                }
+                EventKind::Part => {
+                    subscriptions.receive_part();
+                }
+                EventKind::Quit => {
+                    subscriptions.receive_quit();
+                }
+                EventKind::Nick => {
+                    subscriptions.receive_nick();
+                }
+                EventKind::Kick => {
+                    subscriptions.receive_kick();
+                }
+                EventKind::Ctcp => {
+                    subscriptions.receive_ctcp();
+                }
+                EventKind::Raw => {
+                    subscriptions.receive_raw();
+                }
+                // `cases` mirrors `EventKind::ALL`, so a new kind fails the length assertion
+                // above before it can reach this arm.
+                _ => unreachable!("every event kind has a subscription method"),
+            });
+
+            let route = CommandRoute::classify(&message.command);
+
+            assert!(
+                index.plan(route, message).may_deliver(),
+                "{kind:?} was suppressed"
+            );
+        }
+    }
+
+    /// CTCP is routed only to CTCP subscribers and only from CTCP text: neither a message
+    /// subscriber nor a plain `NOTICE` may keep the line dispatchable.
+    #[test]
+    fn may_deliver_requires_ctcp_text_and_subscribers() {
+        let ctcp = privmsg("\x01VERSION\x01");
+        let reply = message(
+            "service.example",
+            "NOTICE",
+            &["zeta", "\x01VERSION 1.0\x01"],
+        );
+        let notice = message("server.example", "NOTICE", &["zeta", "maintenance"]);
+
+        let mut ctcp_index = EventIndex::default();
+        let _ctcp = subscribe(&mut ctcp_index, "ctcp", |subscriptions| {
+            subscriptions.receive_ctcp();
+        });
+
+        assert!(ctcp_index.plan(CommandRoute::Privmsg, &ctcp).may_deliver());
+        assert!(
+            ctcp_index
+                .plan(CommandRoute::Event(EventKind::Ctcp), &reply)
+                .may_deliver()
+        );
+        assert!(
+            !ctcp_index
+                .plan(CommandRoute::Privmsg, &privmsg("hello"))
+                .may_deliver()
+        );
+        assert!(
+            !ctcp_index
+                .plan(CommandRoute::Event(EventKind::Ctcp), &notice)
+                .may_deliver()
+        );
+
+        let mut message_index = EventIndex::default();
+        let _messages = subscribe(&mut message_index, "messages", |subscriptions| {
+            subscriptions.receive_message();
+        });
+
+        assert!(
+            !message_index
+                .plan(CommandRoute::Privmsg, &ctcp)
+                .may_deliver()
+        );
+        assert!(
+            message_index
+                .plan(CommandRoute::Privmsg, &privmsg("hello"))
+                .may_deliver()
+        );
+    }
+
+    /// A command trigger or a URL subscription makes a `PRIVMSG` dispatchable; the command match
+    /// follows the first-word rule of the delivery path, and URL text may be a false positive
+    /// (a scheme colon without a subscribed URL) but never a false negative.
+    #[test]
+    fn may_deliver_matches_commands_and_urls() {
+        let mut command_index = EventIndex::default();
+        let _dig = subscribe(&mut command_index, "dig", |subscriptions| {
+            subscriptions.command(CommandSpec::new(".dig", "dig"));
+        });
+
+        assert!(
+            command_index
+                .plan(CommandRoute::Privmsg, &privmsg(".dig example.com"))
+                .may_deliver()
+        );
+
+        for text in [
+            ".digg example.com",
+            "  .dig example.com",
+            "look at .dig",
+            "hello",
+        ] {
+            assert!(
+                !command_index
+                    .plan(CommandRoute::Privmsg, &privmsg(text))
+                    .may_deliver(),
+                "`{text}` must be suppressed"
+            );
+        }
+
+        let mut url_index = EventIndex::default();
+        let _titles = subscribe(&mut url_index, "titles", |subscriptions| {
+            subscriptions.urls(UrlScope::Any);
+        });
+
+        assert!(
+            url_index
+                .plan(CommandRoute::Privmsg, &privmsg("see https://example.com/x"))
+                .may_deliver()
+        );
+        // Conservative: a colon is all URL extraction needs to look for a scheme.
+        assert!(
+            url_index
+                .plan(CommandRoute::Privmsg, &privmsg("note: no link"))
+                .may_deliver()
+        );
+        assert!(
+            !url_index
+                .plan(CommandRoute::Privmsg, &privmsg("no link"))
+                .may_deliver()
+        );
+
+        let mut host_index = EventIndex::default();
+        let _youtube = subscribe(&mut host_index, "youtube", |subscriptions| {
+            subscriptions.urls(UrlScope::Hosts(&["youtube.com"]));
+        });
+
+        // Host-scoped subscribers cannot know the host before extraction; a colon is enough.
+        assert!(
+            host_index
+                .plan(CommandRoute::Privmsg, &privmsg("see https://example.com/x"))
+                .may_deliver()
+        );
+        assert!(
+            !host_index
+                .plan(CommandRoute::Privmsg, &privmsg("no link"))
+                .may_deliver()
+        );
     }
 
     #[test]

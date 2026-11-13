@@ -51,9 +51,9 @@ the code and the matching doc in the same PR. The complete attribute list is in
 - Async fan-out opens its child span while the handler span is current, then moves the span
   into the task (`titles.fetch`, `unwall.resolve`, `media.download`). The unit stays in the
   message's trace after the handler returns.
-- Spans that parent HTTP/DNS/S3 client spans should set `target: "zeta.plugins"`. The host's
-  `irc.dispatch` and the runtime's `zeta.event.handle` also use that target, so one filter
-  decision (`zeta=info`) enables the whole message trace. The handler and async fan-out spans
+- Spans that parent HTTP/DNS/S3 client spans should set `target: "zeta.plugins"`. The runtime's
+  `irc.dispatch` and `zeta.event.handle` also use that target, so one filter decision
+  (`zeta=info`) enables the whole message trace. The handler and async fan-out spans
   parent the client spans; `#[instrument]` spans inside a `plugins-*` crate keep their crate
   target, which `plugins=info` enables by default. The explicit target keeps a span enabled by
   the `zeta` directive even when a `RUST_LOG` filter disables the plugin's own crate, so its
@@ -66,7 +66,8 @@ Current core spans:
 | Span | Unit | Notes |
 | --- | --- | --- |
 | `zeta.startup` | startup phases | DB connect/migrate and plugin construction in `main`; then the plugin load barrier in `run` |
-| `irc.dispatch` | one routed incoming IRC line | root of a message trace; INFO; target `zeta.plugins`; consumer kind |
+| `irc.dispatch` | one delivering incoming IRC line | root of a message trace; INFO; target `zeta.plugins`; consumer kind; lines no plugin can receive have no dispatch span |
+| `irc.error` | one server `ERROR` and its disconnect reason | root; INFO; host-owned |
 | `zeta.event.handle` | one event to one subscriber | INFO; target `zeta.plugins`; `otel.name` discriminator |
 | `zeta.plugin.load`, `zeta.plugin.shutdown` | one lifecycle hook | INFO; `otel.name` includes the plugin |
 | `zeta.shutdown` | plugin drain and shutdown hooks | INFO; parents the `zeta.plugin.shutdown` spans |
@@ -81,11 +82,14 @@ Current core spans:
 
 Both the per-line `irc.dispatch` span and the per-subscriber `zeta.event.handle` span carry the
 OTel messaging attributes. The handler span repeats the event's values so it is self-contained.
+The dispatcher builds both spans, so they cannot disagree. The host's `irc.error` span is
+operational: it carries `irc.command = "ERROR"` and the disconnect reason, but no messaging
+attributes, because a server `ERROR` is not routed.
 
 | Attribute | Value | Notes |
 | --- | --- | --- |
 | `messaging.system.name` | `irc` | always |
-| `messaging.operation.name` | `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | lowercased IRC command; an unmodeled command is lowercased; `error` for server `ERROR` |
+| `messaging.operation.name` | `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | lowercased IRC command; an unmodeled command is lowercased |
 | `messaging.operation.type` | `process` | inbound only |
 | `messaging.destination.name` | channel or nick | target of `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, `KICK`; absent for `QUIT`, `NICK`, `RAW`, and numerics |
 | `messaging.message.id` | IRCv3 `msgid` | read from any tagged event; the client requests the `message-tags` capability at registration, and the attribute is absent when the server sends none |
@@ -97,7 +101,7 @@ OTel messaging attributes. The handler span repeats the event's values so it is 
 | `error` | unhandled failure, data loss, fatal startup or shutdown |
 | `warn` | handled but unexpected: request failure, retry, dropped event, missing configuration |
 | `debug` | per-operation detail and expected misses: 404s, user input errors, cache hits |
-| `trace` | per-line payloads: `irc.raw`, download progress, deleted-id lists |
+| `trace` | per-line payloads: `irc.raw` (inside the runtime's `irc.dispatch` span for a delivering line; stdout-only when there is no span), download progress, deleted-id lists |
 
 - One failure, one log line, at the layer with the unique context. Do not log the same error at
   every level up the stack.

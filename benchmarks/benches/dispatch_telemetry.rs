@@ -3,10 +3,11 @@
 //! Run with `cargo bench -p zeta-benchmarks --bench dispatch_telemetry`.
 //!
 //! The main `dispatch` suite runs without a tracing subscriber, so `tracing::enabled!` is false
-//! and the handler-span metadata path is skipped. The default filter (`zeta=info`) enables
-//! those spans in production, so this suite installs a no-op subscriber in setup: the span
-//! macros evaluate their fields exactly as they do in production, while the subscriber stores
-//! and exports nothing, keeping span export out of the measurement.
+//! and the line- and handler-span paths are skipped. The default filter (`zeta=info`) enables
+//! those spans in production, so this suite installs a no-op subscriber in setup: each
+//! delivering line builds the runtime-owned `irc.dispatch` span and each delivery its
+//! `zeta.event.handle` span, while the subscriber stores and exports nothing, keeping span
+//! export out of the measurement.
 //!
 //! The subscriber is installed in setup (excluded from the measured body), not with a per-call
 //! `with_default`, so the dispatcher allocation is not counted as span-construction cost.

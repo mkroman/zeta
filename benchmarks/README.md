@@ -27,13 +27,16 @@ from the benchmark functions so their destructors run outside the measured entry
 
 The dispatch pipeline has two benchmark suites, one per telemetry path:
 
-- `benches/dispatch.rs` installs no subscriber. `tracing::enabled!` is false, so the handler-span
-  metadata and span construction are skipped — the path an operator gets when the handler spans
-  are filtered out.
+- `benches/dispatch.rs` installs no subscriber. `tracing::enabled!` is false, so the line span
+  and all handler-span construction are skipped — the path an operator gets when the IRC spans
+  are filtered out. The per-line delivery plan still runs, so a line that cannot deliver returns
+  before the span gate.
 - `benches/dispatch_telemetry.rs` installs a no-op subscriber in setup. `tracing::enabled!` is
-  true and the span macros evaluate their fields, while the subscriber's `new_span` returns an
-  id without storing or exporting a span. This is the production path: the default filter
-  (`zeta=info`) enables the handler spans.
+  true, so each delivering line builds the runtime-owned `irc.dispatch` span and each delivery
+  builds its `zeta.event.handle` span, while the subscriber's `new_span` returns an id without
+  storing or exporting a span. This is the production path: the default filter (`zeta=info`)
+  enables both spans. The enabled cases therefore measure the line span plus the handler spans;
+  `privmsg` has no subscriber, so its plan short-circuits before the line span.
 
 The suites are separate benchmark targets so their fixtures cannot shift each other's compiled
 binary and recorded baseline. They share the same case ids (`privmsg`, `one_subscriber`,
@@ -71,17 +74,21 @@ baselines (Callgrind, 2026-11-13) are:
 
 | Case | `dispatch` Ir | `dispatch_telemetry` Ir | Blocks | Bytes |
 | --- | ---: | ---: | ---: | ---: |
-| `privmsg` | 740 | 816 | 0 | 0 |
-| `one_subscriber` | 896 | 1766 | 1 | 256 |
-| `eight_subscribers` | 1638 | 5665 | 1 | 256 |
-| `hit` | 1227 | 2075 | 1 | 256 |
-| `ctcp` | 1169 | 2039 | 1 | 256 |
-| `host_match` | 4919 | 5737 | 3 | 384 |
-| `any` | 4847 | 5668 | 3 | 384 |
+| `privmsg` | 702 | 794 | 0 | 0 |
+| `one_subscriber` | 897 | 2471 | 1 | 256 |
+| `eight_subscribers` | 1639 | 6482 | 1 | 256 |
+| `hit` | 1162 | 2710 | 1 | 256 |
+| `ctcp` | 1056 | 2630 | 1 | 256 |
+| `host_match` | 4927 | 6475 | 3 | 384 |
+| `any` | 4855 | 6405 | 3 | 384 |
 
 The non-zero blocks are the shared message (one `Arc<Message>`) and, for URL cases, the
 retained URL handles; the span path adds no allocation of its own. A new block on a
 `dispatch_telemetry` case is a regression even when the `dispatch` case is unchanged.
+
+The `dispatch_telemetry` column now also measures the runtime-owned `irc.dispatch` span on
+delivering cases, so its Ir advances with this change; the temporary waivers in
+`xtask/src/bench/config.rs` cover the gap until the main baseline is re-recorded after the merge.
 
 ## Prerequisites
 
