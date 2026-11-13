@@ -4,5 +4,5 @@
 hack/
 target/
 Dockerfile
-.renovaterc.json5
+renovate.json
 compose.yaml
