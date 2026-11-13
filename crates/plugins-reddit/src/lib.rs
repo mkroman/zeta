@@ -63,15 +63,11 @@ impl Reddit {
         let client_id = resolve_secret(settings.client_id.as_deref(), "REDDIT_CLIENT_ID")?;
         let client_secret: SecretString =
             resolve_secret(settings.client_secret.as_deref(), "REDDIT_CLIENT_SECRET")?.into();
-        let client = reddit::Client::try_new_with_options(
-            client_id,
-            client_secret,
-            reddit::ClientOptions {
-                user_agent: Some(USER_AGENT.to_string()),
-                timeout: Some(ctx.config.http.timeout),
-            },
-        )
-        .map_err(plugin_err)?;
+        let mut options = reddit::ClientOptions::default();
+        options.user_agent = Some(USER_AGENT.to_string());
+        options.timeout = Some(ctx.config.http.timeout);
+        let client = reddit::Client::try_new_with_options(client_id, client_secret, options)
+            .map_err(plugin_err)?;
         let mirror = settings.mirror.resolve(ctx, "reddit");
 
         Ok(Self { client, mirror })

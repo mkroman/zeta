@@ -32,24 +32,24 @@ const FIAT_MAP_LIMIT: u32 = 5000;
 /// The duration before a HTTP request times out.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The default `User-Agent` header: the crate name and version.
+const DEFAULT_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
 /// Configuration for the CoinMarketCap client.
-#[derive(Clone, Debug)]
+///
+/// Unset options keep the crate's defaults: a 30-second timeout and the crate name and version as
+/// the user agent.
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct ClientOptions {
     /// The duration before a request times out.
-    pub timeout: Duration,
+    ///
+    /// Defaults to 30 seconds when unset.
+    pub timeout: Option<Duration>,
     /// The `User-Agent` header sent with requests.
-    pub user_agent: String,
-}
-
-impl Default for ClientOptions {
-    /// The default configuration: the timeout from `HTTP_TIMEOUT`, and the crate's name and
-    /// version as the user agent.
-    fn default() -> Self {
-        Self {
-            timeout: HTTP_TIMEOUT,
-            user_agent: concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")).to_owned(),
-        }
-    }
+    ///
+    /// Defaults to the crate name and version when unset.
+    pub user_agent: Option<String>,
 }
 
 /// A client for the CoinMarketCap API.
@@ -109,8 +109,8 @@ impl Client {
 
         let http = reqwest::ClientBuilder::new()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(options.timeout)
-            .user_agent(&options.user_agent)
+            .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
+            .user_agent(options.user_agent.as_deref().unwrap_or(DEFAULT_USER_AGENT))
             .default_headers(headers)
             .build()
             .map_err(RequestError::from)

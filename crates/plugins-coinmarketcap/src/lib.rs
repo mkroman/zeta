@@ -209,16 +209,11 @@ impl CoinMarketCap {
         subscriptions: &mut Subscriptions,
     ) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
-        let client = Arc::new(
-            CmcClient::try_new_with_options(
-                api_key,
-                &ClientOptions {
-                    timeout: ctx.config.http.timeout,
-                    user_agent: ctx.config.http.user_agent.clone(),
-                },
-            )
-            .map_err(plugin_err)?,
-        );
+        let mut options = ClientOptions::default();
+        options.timeout = Some(ctx.config.http.timeout);
+        options.user_agent = Some(ctx.config.http.user_agent.clone());
+        let client =
+            Arc::new(CmcClient::try_new_with_options(api_key, &options).map_err(plugin_err)?);
 
         // The keyed CoinMarketCap client is published for other plugins to reuse, e.g. the
         // rink plugin's live cryptocurrency units.
