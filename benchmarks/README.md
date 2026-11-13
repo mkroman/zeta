@@ -1,9 +1,38 @@
 # Benchmarks
 
-Gungraun benchmarks for [`zeta-utils`](../crates/zeta-utils): list joining and
-duration/calendar-distance formatting. Gungraun measures with Valgrind's Callgrind and DHAT
+Gungraun benchmarks for [`zeta-utils`](../crates/zeta-utils) (list joining and
+duration/calendar-distance formatting) and for the plugin dispatch pipeline
+(`zeta-plugin` + `zeta-plugin-runtime`). Gungraun measures with Valgrind's Callgrind and DHAT
 instead of wall-clock sampling, so the instruction and allocation counts are deterministic and
 comparable between runs, machines, and CI environments.
+
+## Dispatch pipeline
+
+`benches/dispatch.rs` measures the synchronous path from an IRC message to a plugin handler in
+three groups:
+
+- `index` — `EventIndex::dispatch`: classification, command matching, message/CTCP construction,
+  URL extraction, and the mailbox hand-off. This is the control group for the plugin-API
+  refactor.
+- `handler` — invoking one already-built event through the generated plugin dispatch (the
+  boxed-future forwarder before the static-dispatch refactor, the native future after it).
+- `pipeline` — dispatch plus handler in one call.
+
+Deliberately excluded: Tokio task scheduling and mailbox draining (the receiver is read in the
+same thread), tracing export (span construction is measured, export is not), and network,
+database, clock or randomness. Handlers are no-ops with fixed inputs.
+
+The case ids are stable across the plugin dispatch refactor. Record the pre_refactor baseline
+and compare later work against it:
+
+```shell
+cargo bench -p zeta-benchmarks --bench dispatch -- --save-baseline=pre_refactor
+git switch main   # after the refactor
+cargo bench -p zeta-benchmarks --bench dispatch -- --baseline=pre_refactor --save-baseline=refactor
+```
+
+The handler and pipeline groups are expected to lose the boxed-future allocations once the
+handler future is awaited inline; a DHAT `TotalBlocks` increase there is a regression.
 
 ## Prerequisites
 

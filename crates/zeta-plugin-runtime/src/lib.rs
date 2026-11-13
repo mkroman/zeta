@@ -19,6 +19,6 @@ mod task;
 // index directly (`tests/dispatch_spans.rs`). Hidden from the documentation and not a stability
 // promise — the supported API is `PluginRuntime`.
 #[doc(hidden)]
-pub use dispatch::EventIndex;
+pub use dispatch::{Envelope, EventIndex};
 pub use registry::Registry;
 pub use runtime::PluginRuntime;
