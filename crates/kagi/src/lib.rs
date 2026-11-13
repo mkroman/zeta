@@ -70,25 +70,27 @@ pub const SESSION_DURATION: Duration = Duration::from_mins(15);
 pub const LANGUAGE: &str = "en-US,en;q=0.9";
 
 /// Options for configuring a Kagi [`Client`].
-#[derive(Clone, Debug)]
+///
+/// Unset options keep the crate's defaults: [`HTTP_TIMEOUT`] for the timeout, [`USER_AGENT`] for
+/// the user agent, [`SESSION_DURATION`] for the session duration, and [`LANGUAGE`] for the
+/// `Accept-Language` header.
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct ClientOptions {
     /// The duration before an HTTP request times out.
-    pub timeout: Duration,
+    ///
+    /// Defaults to [`HTTP_TIMEOUT`] when unset.
+    pub timeout: Option<Duration>,
     /// The `User-Agent` header sent with requests.
-    pub user_agent: String,
+    ///
+    /// Defaults to [`USER_AGENT`] when unset.
+    pub user_agent: Option<String>,
     /// The duration of a single session.
-    pub session_duration: Duration,
+    ///
+    /// Defaults to [`SESSION_DURATION`] when unset.
+    pub session_duration: Option<Duration>,
     /// The `Accept-Language` header sent with requests.
-    pub language: String,
-}
-
-impl Default for ClientOptions {
-    fn default() -> Self {
-        Self {
-            timeout: HTTP_TIMEOUT,
-            user_agent: USER_AGENT.to_string(),
-            session_duration: SESSION_DURATION,
-            language: LANGUAGE.to_string(),
-        }
-    }
+    ///
+    /// Defaults to [`LANGUAGE`] when unset.
+    pub language: Option<String>,
 }

@@ -13,7 +13,8 @@ use tracing::{Level, debug};
 use zeta_http::RequestFailure as _;
 
 use crate::{
-    BASE_URL, ClientOptions, Error, ImageResult, RequestError, SearchResult,
+    BASE_URL, ClientOptions, Error, HTTP_TIMEOUT, ImageResult, LANGUAGE, RequestError,
+    SESSION_DURATION, SearchResult, USER_AGENT,
     parse::{
         KagiMessage, extract_nonce, parse_image_result_messages, parse_search_result_messages,
         parse_stream, url_with_query,
@@ -86,11 +87,16 @@ impl Client {
         token: impl Into<SecretString>,
         options: ClientOptions,
     ) -> Result<Self, Error> {
+        let timeout = options.timeout.unwrap_or(HTTP_TIMEOUT);
+        let user_agent = options.user_agent.unwrap_or_else(|| USER_AGENT.to_string());
+        let session_duration = options.session_duration.unwrap_or(SESSION_DURATION);
+        let language = options.language.unwrap_or_else(|| LANGUAGE.to_string());
+
         let client = reqwest::ClientBuilder::new()
             .cookie_store(true)
             .redirect(Policy::none())
-            .timeout(options.timeout)
-            .user_agent(options.user_agent)
+            .timeout(timeout)
+            .user_agent(user_agent)
             .build()
             .map_err(|error| Error::BuildClient(error.into()))?;
 
@@ -98,8 +104,8 @@ impl Client {
             http: client,
             token: token.into(),
             session: Mutex::new(None),
-            session_duration: options.session_duration,
-            language: HeaderValue::from_str(&options.language)?,
+            session_duration,
+            language: HeaderValue::from_str(&language)?,
         })
     }
 
@@ -286,7 +292,7 @@ mod tests {
     #[test]
     fn test_invalid_language_is_rejected() {
         let options = ClientOptions {
-            language: "invalid\nlanguage".to_string(),
+            language: Some("invalid\nlanguage".to_string()),
             ..ClientOptions::default()
         };
 

@@ -37,7 +37,11 @@ pub struct Client {
 }
 
 /// Options for building a Reddit [`Client`].
+///
+/// Unset options keep the crate's defaults: [`USER_AGENT`](crate::USER_AGENT) for the user agent
+/// and [`HTTP_TIMEOUT`](crate::HTTP_TIMEOUT) for the timeout.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct ClientOptions {
     /// The HTTP user agent sent with every request.
     ///
