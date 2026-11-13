@@ -16,7 +16,7 @@ use tracing::{debug, warn};
 use url::Url;
 
 use zeta_http as http;
-use zeta_http::RequestError;
+use zeta_http::{RedirectError, RequestError};
 use zeta_mirror::{MediaId, Mirror, MirrorHandle};
 use zeta_plugin::irc::{COLOR, RESET, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
@@ -199,15 +199,13 @@ impl Tiktok {
     /// Requests the redirect with the given id and returns the location it redirects to.
     async fn resolve_redirect_url(&self, id: &str) -> Result<Url, Error> {
         debug!(tiktok.short.id = %id, "fetching redirect url");
-        let response = http::send(self.client.get(short_url(id))).await?;
+        let url = http::redirect_location(self.client.get(short_url(id)))
+            .await
+            .map_err(|error| match error {
+                RedirectError::Request(error) => Error::Request(error),
+                _ => Error::InvalidRedirect,
+            })?;
 
-        let location = response
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .and_then(|value| value.to_str().ok())
-            .ok_or(Error::InvalidRedirect)?;
-
-        let url = Url::parse(location).map_err(|_| Error::InvalidRedirect)?;
         debug!(url.full = %RedactedUrl::from_url(&url), "fetched redirect url");
         debug_assert_eq!(url.host_str(), Some("www.tiktok.com"));
 

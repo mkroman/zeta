@@ -8,9 +8,10 @@ use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
-use tracing::{debug, instrument, trace};
+use tracing::{Level, debug, instrument, trace};
 use url::Url;
-use zeta_http::LOGGED_BODY_LENGTH;
+use zeta_http::RequestFailure as _;
+use zeta_http::json;
 use zeta_http::oauth::{TokenCache, TokenResponse};
 use zeta_url::RedactedUrl;
 
@@ -19,25 +20,6 @@ use crate::{
     BASE_URL, Error, HTTP_TIMEOUT, Item, Link, OAUTH_BASE_URL, RequestError, Submission, Subreddit,
     TOKEN_URL, USER_AGENT,
 };
-
-/// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string.
-///
-/// The failed request is logged once with its redacted URL and error type: the caller reports
-/// the short rendering, so this is the only line that names the request.
-fn request_error(error: reqwest::Error) -> RequestError {
-    let error = RequestError::from(error);
-
-    if let Some(url) = error.url() {
-        debug!(
-            url.full = %url,
-            error.type = error.error_type(),
-            exception.message = %error.full(),
-            "request failed"
-        );
-    }
-
-    error
-}
 
 /// Reddit client.
 // The fields keep Reddit's official OAuth2 `client_id`/`client_secret` terminology, which
@@ -135,10 +117,9 @@ impl Client {
             .post(TOKEN_URL)
             .basic_auth(&self.client_id, Some(self.client_secret.expose_secret()))
             .body("grant_type=client_credentials");
-        let response = request
-            .send()
-            .await
-            .map_err(|error| Error::RequestAuthToken(request_error(error)))?;
+        let response = request.send().await.map_err(|error| {
+            Error::RequestAuthToken(RequestError::from(error).logged(Level::DEBUG))
+        })?;
         let access_token = response
             .json::<TokenResponse>()
             .await
@@ -163,29 +144,16 @@ impl Client {
         let response = request
             .send()
             .await
-            .map_err(|error| Error::Reqwest(request_error(error)))?;
+            .map_err(|error| Error::Reqwest(RequestError::from(error).logged(Level::DEBUG)))?;
 
         match response.error_for_status() {
             Ok(response) => {
                 trace!("response is ok, parsing response");
 
-                let text = response
-                    .text()
-                    .await
-                    .map_err(|error| Error::Reqwest(request_error(error)))?;
-                let deserializer = &mut serde_json::Deserializer::from_str(&text);
-
-                let item = serde_path_to_error::deserialize(deserializer)
-                    .inspect_err(|err| {
-                        let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
-
-                        debug!(
-                            exception.message = ?err,
-                            http.response.body = %body,
-                            "could not parse response"
-                        );
-                    })
-                    .map_err(on_parse)?;
+                let text = response.text().await.map_err(|error| {
+                    Error::Reqwest(RequestError::from(error).logged(Level::DEBUG))
+                })?;
+                let item = json::from_str_with_level(&text, Level::DEBUG).map_err(on_parse)?;
 
                 Ok(Some(item))
             }
@@ -195,7 +163,7 @@ impl Client {
 
                 Ok(None)
             }
-            Err(err) => Err(Error::Http(request_error(err))),
+            Err(err) => Err(Error::Http(RequestError::from(err).logged(Level::DEBUG))),
         }
     }
 
@@ -326,7 +294,7 @@ impl Client {
         let response = request
             .send()
             .await
-            .map_err(|error| Error::Reqwest(request_error(error)))?;
+            .map_err(|error| Error::Reqwest(RequestError::from(error).logged(Level::DEBUG)))?;
         let location = response
             .headers()
             .get(LOCATION)

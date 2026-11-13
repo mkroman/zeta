@@ -34,6 +34,7 @@ serde_json.workspace = true
 serde_path_to_error.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+zeta-http = { path = "../zeta-http", default-features = false, features = ["http"] }
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]

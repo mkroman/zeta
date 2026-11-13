@@ -7,9 +7,11 @@ use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracing::debug;
+use tracing::{Level, debug};
+use zeta_http::RequestFailure as _;
+use zeta_http::json;
 
-use crate::error::{Error, ParseError, RequestError};
+use crate::error::{Error, RequestError};
 use crate::model::{Coin, CoinQuery, Envelope, Fiat, Listing, QuoteData};
 
 /// Base URL of the CoinMarketCap Pro API.
@@ -26,9 +28,6 @@ const COIN_MAP_LIMIT: u32 = 1000;
 /// The endpoint allows up to 5000 results per request and charges one credit regardless of
 /// size, so all supported currencies are fetched in a single request.
 const FIAT_MAP_LIMIT: u32 = 5000;
-
-/// The maximum number of characters of an unparseable response body that reaches the logs.
-const LOGGED_BODY_LENGTH: usize = 512;
 
 /// The duration before a HTTP request times out.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -234,57 +233,22 @@ impl Client {
     ) -> Result<T, Error> {
         let request = self.http.get(format!("{}{path}", self.base)).query(query);
 
-        let response = request.send().await.map_err(request_error)?;
+        let response = request
+            .send()
+            .await
+            .map_err(|error| RequestError::from(error).logged(Level::DEBUG))?;
         let status = response.status();
-        let text = response.text().await.map_err(request_error)?;
+        let text = response
+            .text()
+            .await
+            .map_err(|error| RequestError::from(error).logged(Level::DEBUG))?;
 
         if !status.is_success() {
             return Err(api_error(status, &text));
         }
 
-        decode(&text).map_err(Error::Deserialize)
+        json::from_str_with_level(&text, Level::DEBUG).map_err(Error::Deserialize)
     }
-}
-
-/// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string.
-///
-/// The failed request is logged once with its redacted URL and error type: the caller reports
-/// the short rendering, so this is the only line that names the request.
-fn request_error(error: reqwest::Error) -> Error {
-    let error = RequestError::from(error);
-
-    if let Some(url) = error.url() {
-        debug!(
-            url.full = %url,
-            error.type = error.error_type(),
-            exception.message = %error.full(),
-            "request failed"
-        );
-    }
-
-    Error::Request(error)
-}
-
-/// Deserializes a value of type `T` from a JSON string.
-///
-/// The offending body is logged if parsing fails.
-///
-/// # Errors
-///
-/// Returns the parse error, including the path to the offending part of the document, if
-/// `text` is not valid JSON for `T`.
-fn decode<T: DeserializeOwned>(text: &str) -> Result<T, ParseError> {
-    let deserializer = &mut serde_json::Deserializer::from_str(text);
-
-    serde_path_to_error::deserialize(deserializer).inspect_err(|error| {
-        let body = text.chars().take(LOGGED_BODY_LENGTH).collect::<String>();
-
-        debug!(
-            exception.message = ?error,
-            http.response.body = %body,
-            "could not deserialize json response"
-        );
-    })
 }
 
 /// Builds an API error from a non-success response, preserving the API error message if present.
@@ -316,7 +280,7 @@ mod tests {
     fn decodes_quote_response() {
         let text = r#"{"data":{"BTC":{"id":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","quote":{"USD":{"price":97231.504,"volume_24h":48000000000,"percent_change_1h":0.5,"percent_change_24h":-1.2,"percent_change_7d":10.25,"last_updated":"2026-09-09T00:00:00.000Z"}}}},"status":{"timestamp":"2026-09-09T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
 
-        let parsed: Envelope<HashMap<String, QuoteData>> = decode(text).unwrap();
+        let parsed: Envelope<HashMap<String, QuoteData>> = json::from_str(text).unwrap();
         let quote = parsed.data.unwrap().remove("BTC").unwrap();
 
         assert_eq!(quote.name, "Bitcoin");
@@ -329,7 +293,7 @@ mod tests {
     fn decodes_listings_response() {
         let text = r#"{"data":[{"id":1027,"name":"Ethereum","symbol":"ETH","slug":"ethereum","cmc_rank":2,"num_market_pairs":9001,"circulating_supply":120000000,"total_supply":120000000,"max_supply":null,"infinite_supply":false,"date_added":"2015-08-07T00:00:00.000Z","last_updated":"2026-09-29T11:13:00.000Z","quote":[{"id":2781,"symbol":"USD","price":2650.32,"volume_24h":1000000000,"percent_change_1h":0.4,"percent_change_24h":1.2,"percent_change_7d":3.4,"last_updated":"2026-09-29T11:13:00.000Z"}]}],"status":{"timestamp":"2026-09-29T11:13:55.525Z","error_code":"0","error_message":null,"elapsed":12,"credit_count":1}}"#;
 
-        let parsed: Envelope<Vec<Listing>> = decode(text).unwrap();
+        let parsed: Envelope<Vec<Listing>> = json::from_str(text).unwrap();
         let listings = parsed.data.unwrap();
 
         assert_eq!(listings.len(), 1);
@@ -344,7 +308,7 @@ mod tests {
     fn decodes_coin_map_response() {
         let text = r#"{"data":[{"id":1,"rank":1,"name":"Bitcoin","symbol":"BTC","slug":"bitcoin","is_active":1,"first_historical_data":"2013-04-28T18:47:21.000Z","last_historical_data":"2020-05-05T20:44:01.000Z","platform":null},{"id":1027,"rank":2,"name":"Ethereum","symbol":"ETH","slug":"ethereum","is_active":1,"first_historical_data":"2015-08-07T14:49:30.000Z","last_historical_data":"2020-05-05T20:44:02.000Z","platform":null}],"status":{"timestamp":"2026-09-13T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
 
-        let parsed: Envelope<Vec<Coin>> = decode(text).unwrap();
+        let parsed: Envelope<Vec<Coin>> = json::from_str(text).unwrap();
         let coins = parsed.data.unwrap();
 
         assert_eq!(coins.len(), 2);
@@ -356,7 +320,7 @@ mod tests {
     fn decodes_fiat_map_response() {
         let text = r#"{"data":[{"id":2781,"name":"United States Dollar","sign":"$","symbol":"USD"},{"id":2787,"name":"Chinese Yuan","sign":"¥","symbol":"CNY"}],"status":{"timestamp":"2026-09-13T00:00:00.000Z","error_code":0,"error_message":null,"elapsed":12,"credit_count":1}}"#;
 
-        let parsed: Envelope<Vec<Fiat>> = decode(text).unwrap();
+        let parsed: Envelope<Vec<Fiat>> = json::from_str(text).unwrap();
         let fiats = parsed.data.unwrap();
 
         assert_eq!(fiats.len(), 2);
@@ -396,7 +360,7 @@ mod tests {
 
     #[test]
     fn maps_deserialize_failures_to_a_user_facing_message() {
-        let err = decode::<Envelope<Value>>("{")
+        let err = json::from_str::<Envelope<Value>>("{")
             .map_err(Error::Deserialize)
             .expect_err("malformed json");
 

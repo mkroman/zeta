@@ -34,7 +34,7 @@ pub async fn send(request: wreq::RequestBuilder) -> Result<wreq::Response, Respo
     let uri = request.uri();
     let port = uri
         .port_u16()
-        .or_else(|| crate::uri::default_port(uri.scheme_str()));
+        .or_else(|| zeta_url::default_port(uri.scheme_str()));
 
     let span = info_span!(
         "http.client",

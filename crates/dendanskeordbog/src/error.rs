@@ -59,6 +59,20 @@ mod request {
         }
     }
 
+    impl zeta_http::RequestFailure for RequestError {
+        fn redacted_url(&self) -> Option<&RedactedUrl> {
+            self.url.as_ref()
+        }
+
+        fn error_type(&self) -> &'static str {
+            Self::error_type(self)
+        }
+
+        fn full(&self) -> &str {
+            &self.detail
+        }
+    }
+
     impl From<reqwest::Error> for RequestError {
         fn from(error: reqwest::Error) -> Self {
             let url = error.url().map(RedactedUrl::from_url);

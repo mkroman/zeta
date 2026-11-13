@@ -15,6 +15,8 @@ mod client;
 mod config;
 mod error;
 #[cfg(feature = "http")]
+mod redirect;
+#[cfg(feature = "http")]
 mod response;
 #[cfg(feature = "emulated")]
 mod uri;
@@ -37,6 +39,8 @@ pub mod oauth;
 pub use config::HttpConfig;
 #[cfg(any(feature = "request", feature = "http"))]
 pub use error::RequestError;
+#[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
+pub use error::RequestFailure;
 #[cfg(feature = "emulated")]
 pub use error::WreqError;
 #[cfg(feature = "emulated")]
@@ -46,6 +50,8 @@ pub(crate) use uri::RedactedUriRef;
 pub use client::send;
 #[cfg(feature = "http")]
 pub use client::{build_client, builder};
+#[cfg(feature = "http")]
+pub use redirect::{RedirectError, redirect_location};
 #[cfg(feature = "http")]
 pub use response::{
     ApiError, LOGGED_BODY_LENGTH, get_json, get_json_or_404, get_text, parse_response,

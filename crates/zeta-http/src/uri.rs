@@ -26,27 +26,15 @@ impl fmt::Display for RedactedUriRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let uri = self.0;
 
-        if let Some(scheme) = uri.scheme_str() {
-            f.write_str(scheme)?;
-            f.write_str(if uri.authority().is_some() {
-                "://"
-            } else {
-                ":"
-            })?;
-        }
-
-        if let Some(authority) = uri.authority() {
-            // `Authority::host` excludes the userinfo the URI may carry.
-            f.write_str(authority.host())?;
-
-            if let Some(port) = uri.port_u16()
-                && Some(port) != default_port(uri.scheme_str())
-            {
-                write!(f, ":{port}")?;
-            }
-        }
-
-        f.write_str(uri.path())
+        // `Authority::host` excludes the userinfo the URI may carry; the shared renderer drops
+        // the default port and keeps the IPv6 brackets as `http::uri` renders them.
+        zeta_url::write_redacted(
+            f,
+            uri.scheme_str(),
+            uri.authority().map(http::uri::Authority::host),
+            uri.port_u16(),
+            uri.path(),
+        )
     }
 }
 
@@ -55,16 +43,6 @@ impl fmt::Debug for RedactedUriRef<'_> {
         f.write_str("RedactedUriRef(")?;
         fmt::Display::fmt(self, f)?;
         f.write_str(")")
-    }
-}
-
-/// Returns the default port of `scheme`, which the URL serialization omits.
-pub fn default_port(scheme: Option<&str>) -> Option<u16> {
-    match scheme {
-        Some("http" | "ws") => Some(80),
-        Some("https" | "wss") => Some(443),
-        Some("ftp") => Some(21),
-        _ => None,
     }
 }
 
@@ -109,6 +87,25 @@ mod tests {
             RedactedUriRef::from_uri(&uri).to_string(),
             "https://example.com:8443/path"
         );
+    }
+
+    #[test]
+    fn redacted_uri_ref_should_not_allocate() {
+        use std::fmt::Write as _;
+
+        let uri: http::Uri = "https://user:secret@api.example.com:8443/v1/weather?appid=secret"
+            .parse()
+            .unwrap();
+        let mut out = String::with_capacity(256);
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                out.clear();
+                write!(out, "{}", RedactedUriRef::from_uri(&uri)).unwrap();
+            }
+        });
+
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(allocations.bytes_total, 0);
     }
 
     #[test]

@@ -9,7 +9,8 @@ use reqwest::header::{
 use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Mutex;
-use tracing::debug;
+use tracing::{Level, debug};
+use zeta_http::RequestFailure as _;
 
 use crate::{
     BASE_URL, ClientOptions, Error, ImageResult, RequestError, SearchResult,
@@ -18,26 +19,6 @@ use crate::{
         parse_stream, url_with_query,
     },
 };
-
-/// Wraps `error` in a [`RequestError`], whose URL keeps no credential from the query string:
-/// the login token is part of Kagi's query strings.
-///
-/// The failed request is logged once with its redacted URL and error type: the caller reports
-/// the short rendering, so this is the only line that names the request.
-fn request_error(error: reqwest::Error) -> RequestError {
-    let error = RequestError::from(error);
-
-    if let Some(url) = error.url() {
-        debug!(
-            url.full = %url,
-            error.type = error.error_type(),
-            exception.message = %error.full(),
-            "request failed"
-        );
-    }
-
-    error
-}
 
 /// The `Accept` header sent for document (navigation) requests.
 const ACCEPT_DOCUMENT: HeaderValue =
@@ -160,10 +141,9 @@ impl Client {
         let req = self.document_request(token_url.as_str());
         debug!("requesting session cookies");
 
-        let res = req
-            .send()
-            .await
-            .map_err(|error| Error::RequestSession(request_error(error)))?;
+        let res = req.send().await.map_err(|error| {
+            Error::RequestSession(RequestError::from(error).logged(Level::DEBUG))
+        })?;
         if !res.headers().contains_key(SET_COOKIE) {
             return Err(Error::SessionCookies);
         }
@@ -174,11 +154,11 @@ impl Client {
         let res = req
             .send()
             .await
-            .map_err(|error| Error::RequestNonce(request_error(error)))?;
+            .map_err(|error| Error::RequestNonce(RequestError::from(error).logged(Level::DEBUG)))?;
         let body = res
             .text()
             .await
-            .map_err(|error| Error::ReadNonce(request_error(error)))?;
+            .map_err(|error| Error::ReadNonce(RequestError::from(error).logged(Level::DEBUG)))?;
 
         extract_nonce(&body).ok_or(Error::Nonce)
     }
@@ -250,17 +230,15 @@ impl Client {
         };
 
         debug!(%endpoint, "connecting to stream");
-        let res = req
-            .send()
-            .await
-            .map_err(|error| Error::StreamRequest(request_error(error)))?;
+        let res = req.send().await.map_err(|error| {
+            Error::StreamRequest(RequestError::from(error).logged(Level::DEBUG))
+        })?;
         let res = res
             .error_for_status()
-            .map_err(|error| Error::StreamStatus(request_error(error)))?;
-        let body = res
-            .text()
-            .await
-            .map_err(|error| Error::StreamRequestBody(request_error(error)))?;
+            .map_err(|error| Error::StreamStatus(RequestError::from(error).logged(Level::DEBUG)))?;
+        let body = res.text().await.map_err(|error| {
+            Error::StreamRequestBody(RequestError::from(error).logged(Level::DEBUG))
+        })?;
 
         Ok(parse_stream(&body))
     }

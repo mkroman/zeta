@@ -5,8 +5,8 @@
 
 use serde_json::json;
 use zeta_http as http;
-use zeta_http::ApiError;
 use zeta_http::HttpConfig;
+use zeta_http::{ApiError, RedirectError};
 use zeta_test_support::wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{any, method, path, query_param},
@@ -139,4 +139,59 @@ async fn get_json_or_404_maps_not_found() {
         .expect_err("the missing resource should map to the not-found error");
 
     assert!(matches!(error, TestError::NotFound), "{error:?}");
+}
+
+#[tokio::test]
+async fn redirect_location_returns_the_location_header() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", "https://example.com/target?key=secret"),
+        )
+        .mount(&server)
+        .await;
+
+    // The shared builder disables redirects, so the first response still carries the header.
+    let client = http::build_client(&HttpConfig::default());
+    let url = http::redirect_location(client.get(server.uri()))
+        .await
+        .unwrap();
+
+    assert_eq!(url.as_str(), "https://example.com/target?key=secret");
+}
+
+#[tokio::test]
+async fn redirect_location_reports_a_missing_header() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(302))
+        .mount(&server)
+        .await;
+
+    let client = http::build_client(&HttpConfig::default());
+    let error = http::redirect_location(client.get(server.uri()))
+        .await
+        .expect_err("a redirect without a location must fail");
+
+    assert!(matches!(error, RedirectError::MissingLocation), "{error:?}");
+}
+
+#[tokio::test]
+async fn redirect_location_reports_an_unparseable_header() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "not a url"))
+        .mount(&server)
+        .await;
+
+    let client = http::build_client(&HttpConfig::default());
+    let error = http::redirect_location(client.get(server.uri()))
+        .await
+        .expect_err("a relative location must fail to parse as an absolute url");
+
+    assert!(matches!(error, RedirectError::LocationUrl(_)), "{error:?}");
 }
