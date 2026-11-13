@@ -71,13 +71,13 @@ baselines (Callgrind, 2026-11-13) are:
 
 | Case | `dispatch` Ir | `dispatch_telemetry` Ir | Blocks | Bytes |
 | --- | ---: | ---: | ---: | ---: |
-| `privmsg` | 736 | 816 | 0 | 0 |
-| `one_subscriber` | 890 | 2004 | 1 | 256 |
-| `eight_subscribers` | 1723 | 6862 | 1 | 256 |
-| `hit` | 1239 | 2318 | 1 | 256 |
-| `ctcp` | 1160 | 2280 | 1 | 256 |
-| `host_match` | 4919 | 6002 | 3 | 384 |
-| `any` | 4865 | 5932 | 3 | 384 |
+| `privmsg` | 740 | 816 | 0 | 0 |
+| `one_subscriber` | 896 | 1766 | 1 | 256 |
+| `eight_subscribers` | 1638 | 5665 | 1 | 256 |
+| `hit` | 1227 | 2075 | 1 | 256 |
+| `ctcp` | 1169 | 2039 | 1 | 256 |
+| `host_match` | 4919 | 5737 | 3 | 384 |
+| `any` | 4847 | 5668 | 3 | 384 |
 
 The non-zero blocks are the shared message (one `Arc<Message>`) and, for URL cases, the
 retained URL handles; the span path adds no allocation of its own. A new block on a

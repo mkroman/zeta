@@ -51,8 +51,10 @@ the code and the matching doc in the same PR. The complete attribute list is in
 - Async fan-out opens its child span while the handler span is current, then moves the span
   into the task (`titles.fetch`, `unwall.resolve`, `media.download`). The unit stays in the
   message's trace after the handler returns.
-- Spans that parent HTTP/DNS/S3 client spans should set `target: "zeta.plugins"`. The handler
-  and async fan-out spans do; `#[instrument]` spans inside a `plugins-*` crate keep their crate
+- Spans that parent HTTP/DNS/S3 client spans should set `target: "zeta.plugins"`. The host's
+  `irc.dispatch` and the runtime's `zeta.event.handle` also use that target, so one filter
+  decision (`zeta=info`) enables the whole message trace. The handler and async fan-out spans
+  parent the client spans; `#[instrument]` spans inside a `plugins-*` crate keep their crate
   target, which `plugins=info` enables by default. The explicit target keeps a span enabled by
   the `zeta` directive even when a `RUST_LOG` filter disables the plugin's own crate, so its
   client children do not become trace roots.
@@ -64,7 +66,7 @@ Current core spans:
 | Span | Unit | Notes |
 | --- | --- | --- |
 | `zeta.startup` | startup phases | DB connect/migrate and plugin construction in `main`; then the plugin load barrier in `run` |
-| `irc.dispatch` | one routed incoming IRC line | root of a message trace; INFO; consumer kind |
+| `irc.dispatch` | one routed incoming IRC line | root of a message trace; INFO; target `zeta.plugins`; consumer kind |
 | `zeta.event.handle` | one event to one subscriber | INFO; target `zeta.plugins`; `otel.name` discriminator |
 | `zeta.plugin.load`, `zeta.plugin.shutdown` | one lifecycle hook | INFO; `otel.name` includes the plugin |
 | `zeta.shutdown` | plugin drain and shutdown hooks | INFO; parents the `zeta.plugin.shutdown` spans |

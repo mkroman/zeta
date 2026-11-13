@@ -105,29 +105,30 @@ impl<'a> Sender<'a> {
 ///
 /// The messaging conventions record the system-specific operation on every span as
 /// `messaging.operation.name`. For IRC that is the command that carried the event, lowercased —
-/// `privmsg`, `notice`, `join`, `part`, `quit`, `nick` or `kick`. An unmodeled command keeps its
-/// received name and is lowercased when rendered, so the value stays bounded by the protocol's
-/// command vocabulary instead of growing with message content.
+/// `privmsg`, `notice`, `join`, `part`, `quit`, `nick` or `kick`. A modeled command has a static
+/// name; an unmodeled command keeps its received name and is lowercased when rendered, so the
+/// value stays bounded by the protocol's command vocabulary instead of growing with message
+/// content.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MessagingOperation<'a> {
-    /// A known IRC command with a static lowercase name.
-    Known(&'static str),
+    /// A modeled IRC command with a static lowercase name.
+    Modeled(&'static str),
     /// An unmodeled command, rendered lowercased.
-    Raw(&'a str),
+    Unmodeled(&'a str),
 }
 
 impl<'a> MessagingOperation<'a> {
     /// Returns the operation name as a [`Cow`] string.
     ///
-    /// A known command borrows its static name, and an unmodeled command borrows its received
+    /// A modeled command borrows its static name, and an unmodeled command borrows its received
     /// name when it is already lowercase; only an unmodeled command with uppercase ASCII
     /// allocates the lowercased value. Callers that record the name once per event should call
     /// this instead of formatting the operation for every subscriber.
     #[must_use]
     pub fn into_cow(self) -> Cow<'a, str> {
         match self {
-            Self::Known(name) => Cow::Borrowed(name),
-            Self::Raw(name) => {
+            Self::Modeled(name) => Cow::Borrowed(name),
+            Self::Unmodeled(name) => {
                 if name.bytes().any(|byte| byte.is_ascii_uppercase()) {
                     Cow::Owned(name.to_ascii_lowercase())
                 } else {
@@ -141,8 +142,8 @@ impl<'a> MessagingOperation<'a> {
 impl fmt::Display for MessagingOperation<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Known(name) => f.write_str(name),
-            Self::Raw(name) => {
+            Self::Modeled(name) => f.write_str(name),
+            Self::Unmodeled(name) => {
                 for character in name.chars() {
                     f.write_char(character.to_ascii_lowercase())?;
                 }
@@ -833,21 +834,21 @@ impl Event {
     pub fn messaging_operation(&self) -> MessagingOperation<'_> {
         match self {
             Self::Command(_) | Self::Url(_) | Self::Message(_) => {
-                MessagingOperation::Known("privmsg")
+                MessagingOperation::Modeled("privmsg")
             }
-            Self::Join(_) => MessagingOperation::Known("join"),
-            Self::Part(_) => MessagingOperation::Known("part"),
-            Self::Quit(_) => MessagingOperation::Known("quit"),
-            Self::Nick(_) => MessagingOperation::Known("nick"),
-            Self::Kick(_) => MessagingOperation::Known("kick"),
+            Self::Join(_) => MessagingOperation::Modeled("join"),
+            Self::Part(_) => MessagingOperation::Modeled("part"),
+            Self::Quit(_) => MessagingOperation::Modeled("quit"),
+            Self::Nick(_) => MessagingOperation::Modeled("nick"),
+            Self::Kick(_) => MessagingOperation::Modeled("kick"),
             Self::Ctcp(event) => {
                 if matches!(&event.message.command, Command::NOTICE(..)) {
-                    MessagingOperation::Known("notice")
+                    MessagingOperation::Modeled("notice")
                 } else {
-                    MessagingOperation::Known("privmsg")
+                    MessagingOperation::Modeled("privmsg")
                 }
             }
-            Self::Raw(event) => MessagingOperation::Raw(event.command()),
+            Self::Raw(event) => MessagingOperation::Unmodeled(event.command()),
         }
     }
 
@@ -1322,7 +1323,7 @@ mod tests {
         );
         assert_eq!(
             command.messaging_operation(),
-            MessagingOperation::Known("privmsg")
+            MessagingOperation::Modeled("privmsg")
         );
         assert_eq!(command.messaging_operation().to_string(), "privmsg");
 
@@ -1333,13 +1334,13 @@ mod tests {
         )));
         assert_eq!(
             join.messaging_operation(),
-            MessagingOperation::Known("join")
+            MessagingOperation::Modeled("join")
         );
 
         let quit = Event::Quit(QuitEvent::new(message("nick!user@host", "QUIT", &["gone"])));
         assert_eq!(
             quit.messaging_operation(),
-            MessagingOperation::Known("quit")
+            MessagingOperation::Modeled("quit")
         );
 
         let request = Event::Ctcp(
@@ -1352,7 +1353,7 @@ mod tests {
         );
         assert_eq!(
             request.messaging_operation(),
-            MessagingOperation::Known("privmsg")
+            MessagingOperation::Modeled("privmsg")
         );
 
         let reply = Event::Ctcp(
@@ -1365,7 +1366,7 @@ mod tests {
         );
         assert_eq!(
             reply.messaging_operation(),
-            MessagingOperation::Known("notice")
+            MessagingOperation::Modeled("notice")
         );
 
         let raw = Event::Raw(RawEvent::new(message(
@@ -1373,7 +1374,10 @@ mod tests {
             "TAGMSG",
             &["#test"],
         )));
-        assert_eq!(raw.messaging_operation(), MessagingOperation::Raw("TAGMSG"));
+        assert_eq!(
+            raw.messaging_operation(),
+            MessagingOperation::Unmodeled("TAGMSG")
+        );
         assert_eq!(
             raw.messaging_operation().to_string(),
             "tagmsg",
@@ -1389,15 +1393,15 @@ mod tests {
         use std::borrow::Cow;
 
         assert!(matches!(
-            MessagingOperation::Known("privmsg").into_cow(),
+            MessagingOperation::Modeled("privmsg").into_cow(),
             Cow::Borrowed("privmsg")
         ));
         assert!(matches!(
-            MessagingOperation::Raw("tagmsg").into_cow(),
+            MessagingOperation::Unmodeled("tagmsg").into_cow(),
             Cow::Borrowed("tagmsg")
         ));
         assert!(matches!(
-            MessagingOperation::Raw("TAGMSG").into_cow(),
+            MessagingOperation::Unmodeled("TAGMSG").into_cow(),
             Cow::Owned(name) if name == "tagmsg"
         ));
     }
