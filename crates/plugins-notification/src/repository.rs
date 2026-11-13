@@ -49,10 +49,10 @@ impl NotificationRepository {
             ) RETURNING id, target, nickname, channel, message, created_at",
         )
         .bind(notification.target)
-        .bind(notification.nickname)
-        .bind(notification.username)
-        .bind(notification.hostname)
-        .bind(notification.channel)
+        .bind(notification.attribution.nickname)
+        .bind(notification.attribution.username)
+        .bind(notification.attribution.hostname)
+        .bind(notification.attribution.channel)
         .bind(notification.message)
         .fetch_one(&self.db)
         .await

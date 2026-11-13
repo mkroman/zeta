@@ -44,7 +44,7 @@ use zeta_cache::{TtlCache, TtlMap};
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_http::emulated::ResponseError;
-use zeta_mirror::{MediaId, Mirror, MirrorHandle};
+use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrl;
@@ -79,17 +79,9 @@ pub struct Settings {
     /// The maximum length of a media caption before it gets truncated.
     #[serde(alias = "title_length")]
     pub caption_length: usize,
-    /// The key prefix that mirrored media are uploaded under.
-    ///
-    /// Falls back to the `INSTAGRAM_S3_PREFIX` environment variable, and to `instagram` when
-    /// neither is set.
-    pub prefix: Option<String>,
-    /// The base URL used when linking to mirrored media.
-    ///
-    /// Falls back to the `INSTAGRAM_PUBLIC_URL_BASE` environment variable when unset. Links are
-    /// built by appending the media id as a URL fragment, so the base must point at a viewer page
-    /// that resolves the fragment — not directly at the bucket.
-    pub public_url_base: Option<String>,
+    /// The prefix and public URL base of mirrored media.
+    #[serde(flatten)]
+    pub mirror: plugins_shared::mirror::MirrorSettings,
     /// An authenticated Instagram session cookie (the `sessionid` cookie value of a logged-in
     /// browser session).
     ///
@@ -108,8 +100,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             caption_length: 150,
-            prefix: None,
-            public_url_base: None,
+            mirror: plugins_shared::mirror::MirrorSettings::default(),
             session_cookie: None,
             metadata_proxy: None,
         }
@@ -182,12 +173,7 @@ impl Instagram {
             .build()
             .map_err(|error| plugin_err(WreqError::from(error)))?;
 
-        let mirror = MirrorHandle::resolve(
-            ctx.shared.get::<Mirror>(),
-            "instagram",
-            settings.prefix.as_deref(),
-            settings.public_url_base.as_deref(),
-        );
+        let mirror = settings.mirror.resolve(ctx, "instagram");
 
         let session_cookie = settings::resolve_optional_setting(
             settings.session_cookie.as_deref(),
@@ -660,8 +646,8 @@ mod tests {
         settings,
         default: {
             assert_eq!(settings.caption_length, 150);
-            assert!(settings.prefix.is_none());
-            assert!(settings.public_url_base.is_none());
+            assert!(settings.mirror.prefix.is_none());
+            assert!(settings.mirror.public_url_base.is_none());
             assert!(settings.session_cookie.is_none());
             assert!(settings.metadata_proxy.is_none());
         }
@@ -673,9 +659,9 @@ mod tests {
             "metadata_proxy": "https://d.example.com",
         } assert: {
             assert_eq!(settings.caption_length, 100);
-            assert_eq!(settings.prefix.as_deref(), Some("~meta/instagram"));
+            assert_eq!(settings.mirror.prefix.as_deref(), Some("~meta/instagram"));
             assert_eq!(
-                settings.public_url_base.as_deref(),
+                settings.mirror.public_url_base.as_deref(),
                 Some("https://pub.example.com/instagram")
             );
             assert_eq!(

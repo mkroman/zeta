@@ -69,7 +69,7 @@ impl UnwallRepository {
     pub async fn record_fetch(&self, fetch: &NewFetch) -> Result<(), Error> {
         trace!(
             host = fetch.host,
-            irc.channel = %fetch.channel,
+            irc.channel = %fetch.attribution.channel,
             "recording the unwall fetch in database"
         );
 
@@ -82,10 +82,10 @@ impl UnwallRepository {
         )
         .bind(&fetch.url)
         .bind(&fetch.host)
-        .bind(&fetch.nickname)
-        .bind(&fetch.username)
-        .bind(&fetch.hostname)
-        .bind(&fetch.channel)
+        .bind(&fetch.attribution.nickname)
+        .bind(&fetch.attribution.username)
+        .bind(&fetch.attribution.hostname)
+        .bind(&fetch.attribution.channel)
         .bind(&fetch.network_id)
         .execute(&self.db)
         .await

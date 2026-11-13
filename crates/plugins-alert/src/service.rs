@@ -374,14 +374,12 @@ mod tests {
     use chrono::TimeDelta;
 
     use super::*;
+    use zeta_plugin::database::Attribution;
 
     /// A new alert fixture.
     fn new_alert(nickname: &str, channel: &str, message: &str, time: DateTime<Utc>) -> NewAlert {
         NewAlert {
-            nickname: nickname.into(),
-            username: nickname.into(),
-            hostname: nickname.into(),
-            channel: channel.into(),
+            attribution: Attribution::new(nickname, nickname, nickname, channel),
             message: message.into(),
             time,
         }

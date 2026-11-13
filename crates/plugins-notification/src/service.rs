@@ -106,7 +106,7 @@ impl NotificationService {
                 .cache
                 .lock()
                 .await
-                .get(&notification.channel)
+                .get(&notification.attribution.channel)
                 .and_then(|targets| targets.get(&notification.target))
                 .map_or(0, Vec::len);
 
@@ -196,14 +196,12 @@ impl NotificationService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_plugin::database::Attribution;
 
     fn notification() -> NewNotification {
         NewNotification {
             target: "someone".into(),
-            nickname: "creator".into(),
-            username: "user".into(),
-            hostname: "host.example".into(),
-            channel: "#chan".into(),
+            attribution: Attribution::new("creator", "user", "host.example", "#chan"),
             message: "hello".into(),
         }
     }

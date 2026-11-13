@@ -249,6 +249,7 @@ mod tests {
     use super::*;
     use zeta_http as http;
     use zeta_http::HttpConfig;
+    use zeta_plugin::database::Attribution;
     use zeta_test_support::assert_empty;
     use zeta_test_support::wiremock::{
         Mock, MockServer, ResponseTemplate,
@@ -272,10 +273,7 @@ mod tests {
         NewFetch {
             url: url.as_str().to_owned(),
             host: url.host_str().unwrap_or_default().to_owned(),
-            nickname: "mk".into(),
-            username: "~mk".into(),
-            hostname: "user.example".into(),
-            channel: "#news".into(),
+            attribution: Attribution::new("mk", "~mk", "user.example", "#news"),
             network_id: "irc.rwx.im:6697".into(),
         }
     }

@@ -5,6 +5,8 @@ use sqlx::{
     types::chrono::{DateTime, Utc},
 };
 
+use zeta_plugin::database::Attribution;
+
 /// An unwalled URL, as cached in the database.
 ///
 /// The reader link is derivable from the article URL; caching it keeps the replied link stable
@@ -43,14 +45,8 @@ pub struct NewFetch {
     pub url: String,
     /// The host of the article URL.
     pub host: String,
-    /// The nickname of the user who posted the link.
-    pub nickname: String,
-    /// The username (ident) of the user who posted the link.
-    pub username: String,
-    /// The hostname of the user who posted the link.
-    pub hostname: String,
-    /// The channel the link was posted in.
-    pub channel: String,
+    /// The user who posted the link, and the channel it was posted in.
+    pub attribution: Attribution,
     /// The identifier of the network the link was posted on.
     pub network_id: String,
 }

@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
 use tracing::{error, warn};
 
+use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{COLOR, RESET, labeled_reply, plain_reply, send_reply, unstyle_text};
 use zeta_plugin::{
     Client, CommandEvent, CommandSpec, Context, MessageEvent, Subscriptions, ZetaError, plugin,
@@ -90,8 +91,6 @@ impl NotificationPlugin {
             return Ok(());
         };
 
-        let (nickname, username, hostname) = (sender.nick, sender.username, sender.hostname);
-
         let Some((target, message)) = parse_args(command.args()) else {
             send_reply(
                 client,
@@ -104,10 +103,7 @@ impl NotificationPlugin {
 
         let notification = NewNotification {
             target: target.to_owned(),
-            nickname: nickname.to_owned(),
-            username: username.to_owned(),
-            hostname: hostname.to_owned(),
-            channel: channel.to_owned(),
+            attribution: Attribution::from_sender(sender, channel),
             message: message.to_owned(),
         };
 

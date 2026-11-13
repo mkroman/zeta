@@ -25,6 +25,7 @@ native-tls-vendored = [
 arc-swap.workspace = true
 clap.workspace = true
 humantime-serde.workspace = true
+plugins-shared = { path = "../plugins-shared" }
 reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"] }
 serde.workspace = true
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }

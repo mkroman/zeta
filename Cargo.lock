@@ -3451,6 +3451,8 @@ name = "plugins-shared"
 version = "0.0.0"
 dependencies = [
  "irc",
+ "serde",
+ "tokio",
  "tracing",
  "url",
  "zeta-mirror",
@@ -3533,6 +3535,7 @@ dependencies = [
  "futures",
  "html5ever",
  "irc",
+ "plugins-shared",
  "serde",
  "thiserror 2.0.21",
  "tokio",
@@ -3605,6 +3608,7 @@ dependencies = [
  "arc-swap",
  "clap",
  "humantime-serde",
+ "plugins-shared",
  "reqwest",
  "serde",
  "sqlx",

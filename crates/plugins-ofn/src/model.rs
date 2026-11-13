@@ -5,6 +5,8 @@ use sqlx::{
     types::chrono::{DateTime, Utc},
 };
 
+use zeta_plugin::database::Attribution;
+
 /// A URL record, as stored in the database.
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
@@ -75,14 +77,8 @@ pub struct InsertUrlRecord {
     pub query: Option<String>,
     /// The fragment of the posted URL.
     pub fragment: Option<String>,
-    /// The nickname of the user who posted the URL.
-    pub nickname: String,
-    /// The username of the user who posted the URL.
-    pub username: String,
-    /// The hostname of the user who posted the URL.
-    pub hostname: String,
-    /// The channel the URL was posted in.
-    pub channel: String,
+    /// The user who posted the URL, and the channel it was posted in.
+    pub attribution: Attribution,
     /// The identifier of the network the URL was posted on.
     pub network_id: String,
 }
@@ -93,14 +89,8 @@ pub struct InsertUrlRecord {
 pub struct InsertYouTubeRecord {
     /// The video id of the posted YouTube video.
     pub video_id: String,
-    /// The nickname of the user who posted the video.
-    pub nickname: String,
-    /// The username of the user who posted the video.
-    pub username: String,
-    /// The hostname of the user who posted the video.
-    pub hostname: String,
-    /// The channel the video was posted in.
-    pub channel: String,
+    /// The user who posted the video, and the channel it was posted in.
+    pub attribution: Attribution,
     /// The identifier of the network the video was posted on.
     pub network_id: String,
 }

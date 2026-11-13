@@ -5,6 +5,8 @@ use sqlx::{
     types::chrono::{DateTime, Utc},
 };
 
+use zeta_plugin::database::Attribution;
+
 /// A pending notification, as stored in the database.
 ///
 /// The username and hostname columns are written on insert but not part of the row model,
@@ -30,14 +32,8 @@ pub struct Notification {
 pub struct NewNotification {
     /// The nickname the notification is aimed at.
     pub target: String,
-    /// The nickname of the user creating the notification.
-    pub nickname: String,
-    /// The username of the user creating the notification.
-    pub username: String,
-    /// The hostname of the user creating the notification.
-    pub hostname: String,
-    /// The channel the notification is created in.
-    pub channel: String,
+    /// The user who created the notification, and the channel it is created in.
+    pub attribution: Attribution,
     /// The notification message.
     pub message: String,
 }

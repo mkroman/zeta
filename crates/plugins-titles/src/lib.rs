@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
-use tracing::{Instrument, debug, warn};
+use tracing::{debug, warn};
 use url::Url;
 use wreq::redirect::Policy;
 
@@ -207,36 +207,16 @@ impl Titles {
     /// The caller waits for one of [`FETCH_CONCURRENCY`] permits before the task is spawned, so
     /// a burst of URLs queues in the handler instead of spawning an unbounded number of tasks.
     async fn process_url(&self, url: Arc<Url>, channel: &str, client: &Client) {
-        // The permit is acquired before the task exists, so only a bounded number of tasks are
-        // alive at once. It is moved into the task and released by its drop, on success, error
-        // and cancellation alike.
-        let permit = Arc::clone(&self.fetches)
-            .acquire_owned()
-            .await
-            .expect("the fetch semaphore is never closed");
-
         let http_client = self.client.clone();
-        let sender = client.sender();
-        let channel = channel.to_string();
         let settings = Arc::clone(&self.settings);
 
-        // The span carries the redacted URL: without it, this task's logs would only ever
-        // reach stdout. It is a child of the handler span, created while the handler is
-        // current, so the fetch stays in the message's trace even though the handler returns
-        // (and its span closes) first. The target stays under `zeta`: the span parents the
-        // HTTP client span, and disabling it with a plugin log filter would leave that span as
-        // a trace root of its own.
-        let span = tracing::info_span!(
-            target: "zeta.plugins",
-            parent: tracing::Span::current(),
+        plugins_shared::spawn_reply_task!(
+            Arc::clone(&self.fetches),
+            client,
+            channel,
             "titles.fetch",
-            url.full = %RedactedUrlRef::from_url(&url)
-        );
-
-        tokio::spawn(
-            async move {
-                let _permit = permit;
-
+            &url,
+            move |sender, channel| async move {
                 let metadata = match fetch_metadata(&http_client, &url).await {
                     Ok(metadata) => metadata,
                     Err(error) => {
@@ -260,9 +240,9 @@ impl Titles {
                 {
                     warn!(exception.message = %error, "could not send page metadata");
                 }
-            }
-            .instrument(span),
-        );
+            },
+        )
+        .await;
     }
 }
 

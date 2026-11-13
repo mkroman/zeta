@@ -81,10 +81,7 @@ impl OfnService {
 
             let insert = InsertYouTubeRecord {
                 video_id: video_id.into_owned(),
-                nickname: origin.nickname.to_owned(),
-                username: origin.username.to_owned(),
-                hostname: origin.hostname.to_owned(),
-                channel: origin.channel.to_owned(),
+                attribution: origin.attribution(),
                 network_id: origin.network.to_owned(),
             };
 
@@ -150,10 +147,7 @@ fn url_record(origin: &ChannelMessageOrigin<'_>, url: &Url) -> Result<InsertUrlR
         path: url.path().to_owned(),
         query: url.query().map(String::from),
         fragment: url.fragment().map(String::from),
-        nickname: origin.nickname.to_owned(),
-        username: origin.username.to_owned(),
-        hostname: origin.hostname.to_owned(),
-        channel: origin.channel.to_owned(),
+        attribution: origin.attribution(),
         network_id: origin.network.to_owned(),
     })
 }

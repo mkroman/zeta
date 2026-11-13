@@ -5,6 +5,8 @@ use sqlx::{
     types::chrono::{DateTime, Utc},
 };
 
+use zeta_plugin::database::Attribution;
+
 /// A scheduled alert, as stored in the database.
 ///
 /// The username, hostname and creation time columns are written on insert but not part of the
@@ -26,14 +28,8 @@ pub struct Alert {
 /// An alert to be inserted into the database.
 #[derive(Debug, Clone)]
 pub struct NewAlert {
-    /// The nickname of the user creating the alert.
-    pub nickname: String,
-    /// The username of the user creating the alert.
-    pub username: String,
-    /// The hostname of the user creating the alert.
-    pub hostname: String,
-    /// The channel the alert is delivered in.
-    pub channel: String,
+    /// The user who created the alert, and the channel it is delivered in.
+    pub attribution: Attribution,
     /// The alert message.
     pub message: String,
     /// The time the alert is scheduled for.

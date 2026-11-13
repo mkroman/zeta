@@ -28,6 +28,7 @@ use num_format::{Locale, ToFormattedString};
 use url::Url;
 
 use self::service::OfnService;
+use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_utils::duration::TimeInWordsExt;
@@ -168,6 +169,13 @@ pub struct ChannelMessageOrigin<'a> {
     username: &'a str,
     /// The hostname of the sender.
     hostname: &'a str,
+}
+
+impl ChannelMessageOrigin<'_> {
+    /// The attribution of a record to the sender and channel of this message.
+    fn attribution(&self) -> Attribution {
+        Attribution::new(self.nickname, self.username, self.hostname, self.channel)
+    }
 }
 
 /// Look up whether a URL has been posted before.
