@@ -130,38 +130,6 @@ pub const WAIVERS: &[Waiver] = &[
     //     reason: "Keeps the zero-allocation contract; +4.5% Ir accepted for the API shape.",
     //     expires: Some("2027-05-01"),
     // },
-    Waiver {
-        benchmark: "bench_telemetry_message",
-        case: None,
-        metric: Metric::Ir,
-        reason: "The enabled suite now measures the runtime-owned irc.dispatch span; the main \
-                 baseline advances after this merge.",
-        expires: Some("2026-12-13"),
-    },
-    Waiver {
-        benchmark: "bench_telemetry_command",
-        case: None,
-        metric: Metric::Ir,
-        reason: "The enabled suite now measures the runtime-owned irc.dispatch span; the main \
-                 baseline advances after this merge.",
-        expires: Some("2026-12-13"),
-    },
-    Waiver {
-        benchmark: "bench_telemetry_ctcp",
-        case: None,
-        metric: Metric::Ir,
-        reason: "The enabled suite now measures the runtime-owned irc.dispatch span; the main \
-                 baseline advances after this merge.",
-        expires: Some("2026-12-13"),
-    },
-    Waiver {
-        benchmark: "bench_telemetry_url",
-        case: None,
-        metric: Metric::Ir,
-        reason: "The enabled suite now measures the runtime-owned irc.dispatch span; the main \
-                 baseline advances after this merge.",
-        expires: Some("2026-12-13"),
-    },
 ];
 
 impl Waiver {
