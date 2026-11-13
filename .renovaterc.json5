@@ -47,10 +47,16 @@
       "groupName": "pinned CI tools",
       "minimumReleaseAge": "7 days"
     },
-    // Group the mise CLI version across workflows, the Dockerfile, and tool constraints
+    // Group mise CLI and mise-action updates across workflows, the Dockerfile,
+    // and tool constraints
     {
-      "matchPackageNames": ["jdx/mise", "ghcr.io/jdx/mise", "mise"],
-      "groupName": "mise CLI"
+      "matchPackageNames": [
+        "jdx/mise",
+        "jdx/mise-action",
+        "ghcr.io/jdx/mise",
+        "mise"
+      ],
+      "groupName": "mise"
     },
     // Group Docker build tool updates in mise.docker.toml
     {
