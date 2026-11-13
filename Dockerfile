@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG RUST_VERSION=1.99-bookworm
+ARG RUST_VERSION=1.100-bookworm
 
 # Official mise image, pinned by digest so the tool bootstrap is reproducible.
 FROM ghcr.io/jdx/mise:2026.11.6@sha256:d4de1845114f6d73e90e15f7642885f74f3ca93074491038a2b9c43e4b897f21 AS mise
