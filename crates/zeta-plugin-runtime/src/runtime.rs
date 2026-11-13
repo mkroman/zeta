@@ -331,26 +331,23 @@ mod tests {
             seen: Arc<std::sync::Mutex<Vec<&'static str>>>,
         }
 
-        #[zeta_plugin::async_trait::async_trait]
+        #[allow(clippy::unused_async_trait_impl)]
         impl Plugin for Mixed {
-            async fn handle_command(
+            async fn handle(
                 &self,
                 _ctx: &Context,
                 _client: &Client,
-                _command: &zeta_plugin::CommandEvent,
-            ) -> Result<(), zeta_plugin::Error> {
-                self.seen.lock().expect("seen lock").push("command");
-
-                Ok(())
-            }
-
-            async fn handle_message(
-                &self,
-                _ctx: &Context,
-                _client: &Client,
-                _message: &zeta_plugin::MessageEvent,
-            ) -> Result<(), zeta_plugin::Error> {
-                self.seen.lock().expect("seen lock").push("message");
+                event: &Event,
+            ) -> Result<(), Error> {
+                match event {
+                    Event::Command(_) => {
+                        self.seen.lock().expect("seen lock").push("command");
+                    }
+                    Event::Message(_) => {
+                        self.seen.lock().expect("seen lock").push("message");
+                    }
+                    _ => {}
+                }
 
                 Ok(())
             }
@@ -367,9 +364,9 @@ mod tests {
         let mut runtime = PluginRuntime::start(
             vec![LoadedPlugin {
                 name: "mixed",
-                plugin: Box::new(Mixed {
+                plugin: Mixed {
                     seen: Arc::clone(&seen),
-                }),
+                },
                 subscriptions,
             }],
             &ctx,

@@ -2034,15 +2034,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "inventory"
-version = "0.3.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6928282826c822ad91bf1c9a1cb90a30ba1c26770749929b4656cd6be829cd7c"
-dependencies = [
- "rustversion",
-]
-
-[[package]]
 name = "ipconfig"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3074,6 +3065,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 3.0.10",
+ "tokio",
  "tracing",
  "zeta-plugin",
  "zeta-plugin-runtime",
@@ -6280,10 +6272,8 @@ name = "zeta-plugin"
 version = "0.0.0"
 dependencies = [
  "arc-swap",
- "async-trait",
  "clap",
  "figment",
- "inventory",
  "irc",
  "parking_lot 0.13.0",
  "reqwest",
@@ -6307,11 +6297,14 @@ name = "zeta-plugin-macros"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "irc",
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+ "tokio",
  "trybuild",
  "zeta-plugin",
+ "zeta-test-support",
 ]
 
 [[package]]
