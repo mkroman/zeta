@@ -96,6 +96,11 @@ zeta-plugin-runtime = { path = "../zeta-plugin-runtime" }
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]
+# The in-memory exporter pins the `otel.*` contract once, at the export boundary.
+opentelemetry_sdk = { version = "0.33.0", default-features = false, features = [
+    "testing",
+    "trace",
+] }
 tempfile.workspace = true
 zeta-test-support = { path = "../zeta-test-support", features = ["spans"] }
 

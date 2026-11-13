@@ -19,10 +19,33 @@ three groups:
 - `pipeline` — dispatch plus handler in one call.
 
 Deliberately excluded: Tokio task scheduling and wakeups (the mailbox is drained synchronously
-inside the measured body and the handler is polled directly), tracing export (span construction
-and the handler's span guard are measured, export is not), and network, database, clock or
-randomness. Handlers are no-ops with fixed inputs. Setup values are returned from the benchmark
-functions so their destructors run outside the measured entry point.
+inside the measured body and the handler is polled directly), tracing export, and network,
+database, clock or randomness. Handlers are no-ops with fixed inputs. Setup values are returned
+from the benchmark functions so their destructors run outside the measured entry point.
+
+### Telemetry paths
+
+The dispatch pipeline has two benchmark suites, one per telemetry path:
+
+- `benches/dispatch.rs` installs no subscriber. `tracing::enabled!` is false, so the handler-span
+  metadata and span construction are skipped — the path an operator gets when the handler spans
+  are filtered out.
+- `benches/dispatch_telemetry.rs` installs a no-op subscriber in setup. `tracing::enabled!` is
+  true and the span macros evaluate their fields, while the subscriber's `new_span` returns an
+  id without storing or exporting a span. This is the production path: the default filter
+  (`zeta=info`) enables the handler spans.
+
+The suites are separate benchmark targets so their fixtures cannot shift each other's compiled
+binary and recorded baseline. They share the same case ids (`privmsg`, `one_subscriber`,
+`eight_subscribers`, `hit`, `ctcp`, `host_match`, `any`), and `dispatch_telemetry` mirrors the
+`dispatch` fixtures.
+
+The no-op subscriber is installed in the setup function (excluded from the measurement), not
+with a per-call `with_default` in the measured body, so the dispatcher allocation is not counted
+as span-construction cost. `register_callsite` reports `Interest::sometimes` so the enabled state
+follows the thread's current dispatcher. That also means the enabled cases pay the `enabled`
+checks a permanently installed production subscriber may cache at the callsite; treat their
+instruction counts as a stable regression baseline, not as an exact production measurement.
 
 The case ids are stable across the plugin dispatch refactor. The recorded comparison used the
 pushed branches `bench/dispatch-pipeline` (old boxed API, based on `71f4a72`) and
@@ -37,11 +60,28 @@ cargo bench -p zeta-benchmarks --bench dispatch -- --baseline=pre_refactor --sav
 ```
 
 Keep both runs in one worktree: Gungraun baselines live under `target/gungraun` and are not
-portable between target directories. Once the suite is on `main`, CI records the baseline
+portable between target directories. Once the suites are on `main`, CI records the baseline
 automatically and compares every pull request against it.
 
 The handler and pipeline groups are expected to lose the boxed-future allocations once the
-handler future is awaited inline; a DHAT `TotalBlocks` increase there is a regression.
+handler future is awaited inline; a DHAT `TotalBlocks` increase there is a regression. Each
+telemetry suite keeps its own baseline, and the enabled path must keep the filtered-out path's
+allocations block for block: span construction itself stores nothing. The recorded index
+baselines (Callgrind, 2026-11-13) are:
+
+| Case | `dispatch` Ir | `dispatch_telemetry` Ir | Blocks | Bytes |
+| --- | ---: | ---: | ---: | ---: |
+| `privmsg` | 736 | 816 | 0 | 0 |
+| `one_subscriber` | 890 | 2004 | 1 | 256 |
+| `eight_subscribers` | 1723 | 6862 | 1 | 256 |
+| `hit` | 1239 | 2318 | 1 | 256 |
+| `ctcp` | 1160 | 2280 | 1 | 256 |
+| `host_match` | 4919 | 6002 | 3 | 384 |
+| `any` | 4865 | 5932 | 3 | 384 |
+
+The non-zero blocks are the shared message (one `Arc<Message>`) and, for URL cases, the
+retained URL handles; the span path adds no allocation of its own. A new block on a
+`dispatch_telemetry` case is a regression even when the `dispatch` case is unchanged.
 
 ## Prerequisites
 
@@ -63,18 +103,19 @@ cargo bench -p zeta-benchmarks
 cargo bench -p zeta-benchmarks --bench join
 cargo bench -p zeta-benchmarks --bench duration
 cargo bench -p zeta-benchmarks --bench dispatch
+cargo bench -p zeta-benchmarks --bench dispatch_telemetry
 ```
 
-Each benchmark runs once. The default tool is Callgrind; the join and dispatch benchmarks
-additionally run DHAT to track allocations.
+Each benchmark runs once. The default tool is Callgrind; the join, dispatch, and
+dispatch_telemetry benchmarks additionally run DHAT to track allocations.
 
 ## Regression checks
 
 The benchmark files opt into regression limits:
 
 - Callgrind: `Ir` (instructions executed) with a soft limit of 1%.
-- DHAT (join and dispatch): `TotalBlocks` and `TotalBytes` with a soft limit of 0%, so an
-  allocation regression in a measured path fails the run. The borrowing join path is expected
+- DHAT (join, dispatch, and dispatch_telemetry): `TotalBlocks` and `TotalBytes` with a soft
+  limit of 0%, so an allocation regression in a measured path fails the run. The borrowing join path is expected
   to allocate exactly once (the result `String`); the streaming iterator path can allocate
   again when the result grows. The dispatch handler path allocates nothing for a no-op
   handler; the pipeline's only remaining allocation is the shared message.

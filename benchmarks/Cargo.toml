@@ -34,5 +34,9 @@ harness = false
 name = "dispatch"
 harness = false
 
+[[bench]]
+name = "dispatch_telemetry"
+harness = false
+
 [lints]
 workspace = true
