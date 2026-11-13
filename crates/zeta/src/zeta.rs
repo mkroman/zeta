@@ -8,6 +8,7 @@ use crate::Error;
 use crate::config::Config;
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE, STARTUP_GRACE};
 use zeta_plugin::Context;
+use zeta_plugin::event::MessagingOperation;
 use zeta_plugin_runtime::{PluginRuntime, Registry};
 
 use plugins::BundledPlugin;
@@ -112,6 +113,19 @@ fn routed_command_name(command: &irc::proto::Command) -> Option<&str> {
     zeta_plugin_runtime::routed_command_name(command)
 }
 
+/// Returns the `OTel` messaging operation when the event index routes the command, for telemetry.
+///
+/// Like [`routed_command_name`], the classification is the runtime's; `ERROR` is the one
+/// addition because its disconnect reason is logged inside the span even though it is not
+/// routed.
+fn messaging_operation(command: &irc::proto::Command) -> Option<MessagingOperation<'_>> {
+    if matches!(command, irc::proto::Command::ERROR(..)) {
+        return Some(MessagingOperation::Known("error"));
+    }
+
+    zeta_plugin_runtime::routed_messaging_operation(command)
+}
+
 /// Returns the channel a message targets, when it has one.
 fn message_channel(command: &irc::proto::Command) -> Option<&str> {
     match command {
@@ -121,6 +135,65 @@ fn message_channel(command: &irc::proto::Command) -> Option<&str> {
         | irc::proto::Command::PART(target, ..)
         | irc::proto::Command::KICK(target, ..) => Some(target),
         _ => None,
+    }
+}
+
+/// The telemetry fields of one IRC line, computed once before its dispatch span is created.
+///
+/// The route classification is shared with the dispatcher, so the span records exactly the
+/// operations the runtime routes; the channel and IRCv3 message id are read from the message
+/// once. The span carries the OpenTelemetry messaging attributes alongside the transitional
+/// `irc.*` keys.
+struct DispatchMeta<'a> {
+    /// The IRC command, recorded as `irc.command`.
+    command: &'a str,
+    /// The `OTel` messaging operation, recorded as `messaging.operation.name`.
+    operation: MessagingOperation<'a>,
+    /// The channel the message targets, recorded as `irc.channel` and
+    /// `messaging.destination.name`.
+    channel: Option<&'a str>,
+    /// The IRCv3 message identifier, recorded as `messaging.message.id`.
+    message_id: Option<&'a str>,
+}
+
+impl<'a> DispatchMeta<'a> {
+    /// Classifies `message` for telemetry, or returns [`None`] when it is not dispatched.
+    fn of(message: &'a irc::proto::Message) -> Option<Self> {
+        let command = routed_command_name(&message.command)?;
+        let operation = messaging_operation(&message.command)?;
+
+        Some(Self {
+            command,
+            operation,
+            channel: message_channel(&message.command),
+            message_id: zeta_plugin::event::message_id(message),
+        })
+    }
+
+    /// Builds the per-message dispatch span.
+    fn span(self) -> tracing::Span {
+        let span = tracing::info_span!(
+            "irc.dispatch",
+            irc.command = self.command,
+            irc.channel = tracing::field::Empty,
+            otel.kind = "consumer",
+            messaging.system.name = "irc",
+            messaging.operation.name = %self.operation,
+            messaging.operation.type = "process",
+            messaging.destination.name = tracing::field::Empty,
+            messaging.message.id = tracing::field::Empty,
+        );
+
+        if let Some(channel) = self.channel {
+            span.record("irc.channel", channel);
+            span.record("messaging.destination.name", channel);
+        }
+
+        if let Some(message_id) = self.message_id {
+            span.record("messaging.message.id", message_id);
+        }
+
+        span
     }
 }
 
@@ -145,19 +218,13 @@ async fn dispatch_messages(
         // produce a trace with no children. `ERROR` is included because the disconnect reason
         // is logged below. The span is at info level, not debug, because the loop below logs
         // warnings: an `info` filter must not be what keeps them out of the backend.
-        let dispatch = routed_command_name(&message.command).map(|command| {
-            let span = tracing::info_span!(
-                "irc.dispatch",
-                irc.command = command,
-                irc.channel = tracing::field::Empty,
-            );
-
-            if let Some(channel) = message_channel(&message.command) {
-                span.record("irc.channel", channel);
-            }
-
-            span
-        });
+        //
+        // The span fields are derived only when the span is enabled, so a disabled subscriber
+        // does not pay for the route classification, channel lookup and `msgid` scan.
+        let dispatch = tracing::enabled!(tracing::Level::INFO)
+            .then(|| DispatchMeta::of(&message))
+            .flatten()
+            .map(DispatchMeta::span);
         let _dispatch = dispatch.as_ref().map(tracing::Span::enter);
 
         // `ERROR` carries the server's reason for closing the connection. It is not a `Raw`
@@ -507,6 +574,11 @@ mod tests {
 
         for (command, expected) in cases {
             assert_eq!(routed_command_name(&command), expected, "{command:?}");
+            assert_eq!(
+                messaging_operation(&command).map(|operation| operation.to_string()),
+                expected.map(str::to_ascii_lowercase),
+                "{command:?}"
+            );
 
             // `ERROR` is the host's only addition to the dispatcher's classification: it gets
             // a span for its disconnect reason, but dispatches no event.
@@ -516,13 +588,182 @@ mod tests {
                     None,
                     "{command:?}"
                 );
+                assert!(zeta_plugin_runtime::routed_messaging_operation(&command).is_none());
             } else {
                 assert_eq!(
                     routed_command_name(&command),
                     zeta_plugin_runtime::routed_command_name(&command),
                     "{command:?}"
                 );
+                assert_eq!(
+                    messaging_operation(&command).map(|operation| operation.to_string()),
+                    zeta_plugin_runtime::routed_messaging_operation(&command)
+                        .map(|operation| operation.to_string()),
+                    "{command:?}"
+                );
             }
+        }
+    }
+
+    /// The dispatch span records the `OTel` messaging attributes next to the transitional `irc.*`
+    /// keys: the operation is the lowercased command, a channel becomes the destination, and an
+    /// IRCv3 `msgid` is recorded when the message carries one.
+    #[test]
+    fn dispatch_span_records_messaging_attributes() {
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::prelude::*;
+
+        let recorder = SpanRecorder::default();
+        let subscriber = tracing_subscriber::registry().with(recorder.clone());
+
+        with_default(subscriber, || {
+            let privmsg = tagged_privmsg("hello", "m1");
+            let span = DispatchMeta::of(&privmsg)
+                .expect("a privmsg is dispatched")
+                .span();
+            drop(span);
+
+            let quit = message("nick!u@h", "QUIT", &["gone"]);
+            let span = DispatchMeta::of(&quit)
+                .expect("a quit is dispatched")
+                .span();
+            drop(span);
+
+            let ping = message("server.example", "PING", &["server"]);
+            assert!(
+                DispatchMeta::of(&ping).is_none(),
+                "PING is not dispatched and must not get a span"
+            );
+        });
+
+        let spans = recorder.spans();
+        assert_eq!(spans.len(), 2, "recorded: {spans:?}");
+
+        let privmsg = &spans[0];
+        assert_eq!(privmsg.field("irc.command"), Some("PRIVMSG"));
+        assert_eq!(privmsg.field("irc.channel"), Some("#test"));
+        assert_eq!(privmsg.field("otel.kind"), Some("consumer"));
+        assert_eq!(privmsg.field("messaging.system.name"), Some("irc"));
+        assert_eq!(privmsg.field("messaging.operation.name"), Some("privmsg"));
+        assert_eq!(privmsg.field("messaging.operation.type"), Some("process"));
+        assert_eq!(privmsg.field("messaging.destination.name"), Some("#test"));
+        assert_eq!(privmsg.field("messaging.message.id"), Some("m1"));
+
+        let quit = &spans[1];
+        assert_eq!(quit.field("irc.command"), Some("QUIT"));
+        assert_eq!(quit.field("messaging.operation.name"), Some("quit"));
+        assert_eq!(quit.field("messaging.operation.type"), Some("process"));
+        assert!(
+            quit.field("messaging.destination.name").is_none(),
+            "a channel-less command has no destination: {quit:?}"
+        );
+        assert!(
+            quit.field("messaging.message.id").is_none(),
+            "a quit carries no msgid: {quit:?}"
+        );
+    }
+
+    /// Builds a `PRIVMSG` to `#test` carrying `text` and an IRCv3 `msgid` tag.
+    fn tagged_privmsg(text: &str, msgid: &str) -> irc::proto::Message {
+        irc::proto::Message::with_tags(
+            Some(vec![irc::proto::message::Tag(
+                "msgid".to_owned(),
+                Some(msgid.to_owned()),
+            )]),
+            Some("nick!user@host.example"),
+            "PRIVMSG",
+            vec!["#test", text],
+        )
+        .expect("message should parse")
+    }
+
+    /// Builds a message from `prefix` carrying `command` with `args`.
+    fn message(prefix: &str, command: &str, args: &[&str]) -> irc::proto::Message {
+        let prefix = (!prefix.is_empty()).then_some(prefix);
+
+        irc::proto::Message::new(prefix, command, args.to_vec()).expect("message should parse")
+    }
+
+    /// One span as the recorder observed it.
+    #[derive(Clone, Debug)]
+    struct RecordedSpan {
+        /// The span's identity, used to merge fields recorded after creation.
+        id: tracing::span::Id,
+        /// Every field recorded on the span, at creation or later.
+        fields: std::collections::BTreeMap<String, String>,
+    }
+
+    impl RecordedSpan {
+        /// Returns the string value of `field`.
+        fn field(&self, field: &str) -> Option<&str> {
+            self.fields.get(field).map(String::as_str)
+        }
+    }
+
+    /// Records every span created while it is installed.
+    #[derive(Clone, Default)]
+    struct SpanRecorder(Arc<std::sync::Mutex<Vec<RecordedSpan>>>);
+
+    impl SpanRecorder {
+        /// Returns a copy of the spans recorded so far.
+        fn spans(&self) -> Vec<RecordedSpan> {
+            self.0
+                .lock()
+                .expect("span recorder should not be poisoned")
+                .clone()
+        }
+    }
+
+    /// Collects the fields of a span, rendered as their exported values.
+    #[derive(Default)]
+    struct Fields(std::collections::BTreeMap<String, String>);
+
+    impl tracing::field::Visit for Fields {
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            self.0.insert(field.name().to_owned(), value.to_owned());
+        }
+
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            self.0.insert(field.name().to_owned(), format!("{value:?}"));
+        }
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::layer::Layer<S> for SpanRecorder {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            id: &tracing::span::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut fields = Fields::default();
+            attrs.record(&mut fields);
+
+            self.0
+                .lock()
+                .expect("span recorder should not be poisoned")
+                .push(RecordedSpan {
+                    id: id.clone(),
+                    fields: fields.0,
+                });
+        }
+
+        fn on_record(
+            &self,
+            id: &tracing::span::Id,
+            values: &tracing::span::Record<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut fields = Fields::default();
+            values.record(&mut fields);
+
+            self.0
+                .lock()
+                .expect("span recorder should not be poisoned")
+                .iter_mut()
+                .find(|span| span.id == *id)
+                .expect("recorded spans should exist")
+                .fields
+                .extend(fields.0);
         }
     }
 

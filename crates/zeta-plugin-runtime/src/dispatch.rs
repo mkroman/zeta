@@ -7,6 +7,7 @@
 //! matching events on each plugin's mailbox. A plugin is only woken for events it asked for;
 //! for the indexed kinds the lookup cost is independent of the number of plugins.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -18,7 +19,9 @@ use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{Span, debug, warn};
 use url::Url;
-use zeta_plugin::event::{CommandEvent, Sender, Subscriptions, UrlEvent, is_ctcp};
+use zeta_plugin::event::{
+    CommandEvent, MessagingOperation, Sender, Subscriptions, UrlEvent, is_ctcp,
+};
 use zeta_plugin::{CommandSpec, Event, EventKind, FilterHandle, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrlRef};
 
@@ -51,19 +54,27 @@ struct SpanNames {
     kinds: [Arc<str>; EventKind::ALL.len()],
 }
 
-/// The per-event values a handler span is built from, computed once per delivered event.
+/// The per-event values a handler span is built from, computed once per delivered event when
+/// handler spans are enabled.
 ///
 /// The span itself stays per subscriber — it carries the plugin name and has to be created
 /// while the dispatch span is current — but everything that only depends on the event is
 /// computed once and shared by the whole subscriber list, instead of repeating the channel
 /// lookup and span-name selection for every plugin. The kind is already known by the call site,
 /// so it is never re-derived from the event.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 struct EventMeta<'a> {
     /// The event's low-cardinality kind name, recorded as `zeta.event.kind`.
     kind_name: &'static str,
-    /// The channel the event belongs to, recorded as `irc.channel`.
+    /// The channel the event belongs to, recorded as `irc.channel` and
+    /// `messaging.destination.name`.
     channel: Option<&'a str>,
+    /// The IRCv3 message identifier, recorded as `messaging.message.id`.
+    message_id: Option<&'a str>,
+    /// The lowercased IRC command the event was derived from, recorded as
+    /// `messaging.operation.name`. Lowercasing happens here, once per event, rather than for
+    /// every subscriber span.
+    operation: Cow<'a, str>,
     /// The selector for a plugin's precomputed handler span name.
     span: EventSpan,
 }
@@ -80,11 +91,24 @@ enum EventSpan {
 }
 
 impl<'a> EventMeta<'a> {
+    /// Returns whether handler spans are enabled for the current subscriber.
+    ///
+    /// The metadata only feeds span fields, so the dispatcher skips building it entirely when
+    /// the filter would not create the span: the channel lookup and IRCv3 tag scan never run on
+    /// the production hot path.
+    #[inline]
+    fn enabled() -> bool {
+        tracing::enabled!(target: "zeta.plugins", tracing::Level::INFO)
+    }
+
     /// Computes the metadata of a command event.
     fn command(event: &'a CommandEvent) -> Self {
         Self {
             kind_name: "command",
             channel: Some(event.channel()),
+            message_id: event.message_id(),
+            // Commands are matched on `PRIVMSG` text only.
+            operation: Cow::Borrowed("privmsg"),
             span: EventSpan::Command,
         }
     }
@@ -94,6 +118,8 @@ impl<'a> EventMeta<'a> {
         Self {
             kind_name: kind.name(),
             channel: event.channel(),
+            message_id: event.message_id(),
+            operation: event.messaging_operation().into_cow(),
             span: EventSpan::Kind(kind),
         }
     }
@@ -103,6 +129,9 @@ impl<'a> EventMeta<'a> {
         Self {
             kind_name: "url",
             channel: Some(event.channel()),
+            message_id: event.message_id(),
+            // URLs are extracted from `PRIVMSG` text only.
+            operation: Cow::Borrowed("privmsg"),
             span: EventSpan::Url,
         }
     }
@@ -220,8 +249,10 @@ impl Subscriber {
     /// healthy plugin.
     ///
     /// `meta` is computed once per event by the dispatcher and shared by the subscriber list, so
-    /// the kind name, channel and span-name selector are not looked up again per plugin.
-    fn send(&self, event: Event, meta: EventMeta<'_>, stopped: &mut Vec<&'static str>) {
+    /// the kind name, channel and span-name selector are not looked up again per plugin. It is
+    /// [`None`] when handler spans are disabled, in which case no metadata was computed.
+    #[inline]
+    fn send(&self, event: Event, meta: Option<&EventMeta<'_>>, stopped: &mut Vec<&'static str>) {
         let span = self.handler_span(meta);
 
         self.enqueue(Envelope { event, span }, stopped);
@@ -232,7 +263,8 @@ impl Subscriber {
     /// Taking the event by value saves the clone a shared delivery would need. The metadata is
     /// derived here from the already-known command route, with a single channel lookup.
     fn send_owned(&self, event: CommandEvent, stopped: &mut Vec<&'static str>) {
-        let span = self.handler_span(EventMeta::command(&event));
+        let meta = EventMeta::enabled().then(|| EventMeta::command(&event));
+        let span = self.handler_span(meta.as_ref());
 
         self.enqueue(
             Envelope {
@@ -246,15 +278,32 @@ impl Subscriber {
     /// Builds the handler span for one delivery.
     ///
     /// Created here, while the dispatch span is current, so the handler joins the message's
-    /// trace. The span also covers the time the event waits in the mailbox. When the handler
-    /// span is disabled by the filter, the current span — the IRC line's dispatch span — is
-    /// carried instead, so the handler logs still have a trace context; with no subscriber at
-    /// all that is [`Span::none()`].
-    fn handler_span(&self, meta: EventMeta<'_>) -> Span {
+    /// trace. The span also covers the time the event waits in the mailbox. When `meta` is
+    /// [`None`] — the filter disabled handler spans — the current span, the IRC line's dispatch
+    /// span, is carried instead, so the handler logs still have a trace context; with no
+    /// subscriber at all that is [`Span::none()`].
+    ///
+    /// Kept small and inline so the disabled path stays a cheap check in the per-subscriber send
+    /// path; the span construction lives in [`Self::build_handler_span`].
+    #[inline]
+    fn handler_span(&self, meta: Option<&EventMeta<'_>>) -> Span {
         if !tracing::enabled!(target: "zeta.plugins", tracing::Level::INFO) {
             return Span::current();
         }
 
+        let Some(meta) = meta else {
+            return Span::current();
+        };
+
+        self.build_handler_span(meta)
+    }
+
+    /// Creates the enabled handler span from `meta`.
+    ///
+    /// Outlined from [`Self::handler_span`]: the span macro is large, and inlining it into every
+    /// delivery would make the disabled path pay for the code size.
+    #[inline(never)]
+    fn build_handler_span(&self, meta: &EventMeta<'_>) -> Span {
         // The name is precomputed: formatting it here would allocate on every event even when
         // `tracing` is disabled and the macro never evaluates its fields.
         let name = self.names.event(meta.span);
@@ -267,10 +316,20 @@ impl Subscriber {
             zeta.plugin.name = %self.name,
             zeta.event.kind = meta.kind_name,
             irc.channel = tracing::field::Empty,
+            messaging.system.name = "irc",
+            messaging.operation.name = %meta.operation,
+            messaging.operation.type = "process",
+            messaging.destination.name = tracing::field::Empty,
+            messaging.message.id = tracing::field::Empty,
         );
 
         if let Some(channel) = meta.channel {
             span.record("irc.channel", channel);
+            span.record("messaging.destination.name", channel);
+        }
+
+        if let Some(message_id) = meta.message_id {
+            span.record("messaging.message.id", message_id);
         }
 
         span.or_current()
@@ -414,6 +473,30 @@ impl Route {
             Self::Kind(_) | Self::Ignore => None,
         }
     }
+
+    /// Returns the `OTel` messaging operation of a routed command, for telemetry.
+    ///
+    /// The operation is the lowercased IRC command. An unmodeled command keeps its received
+    /// name and is lowercased when the span field is rendered.
+    fn messaging_operation(self, command: &Command) -> Option<MessagingOperation<'_>> {
+        match self {
+            Self::Privmsg => Some(MessagingOperation::Known("privmsg")),
+            // A NOTICE is the only command routed as a CTCP event.
+            Self::Kind(EventKind::Ctcp) => Some(MessagingOperation::Known("notice")),
+            Self::Kind(EventKind::Join) => Some(MessagingOperation::Known("join")),
+            Self::Kind(EventKind::Part) => Some(MessagingOperation::Known("part")),
+            Self::Kind(EventKind::Quit) => Some(MessagingOperation::Known("quit")),
+            Self::Kind(EventKind::Nick) => Some(MessagingOperation::Known("nick")),
+            Self::Kind(EventKind::Kick) => Some(MessagingOperation::Known("kick")),
+            Self::Kind(EventKind::Raw) => match command {
+                Command::Raw(name, _) => Some(MessagingOperation::Raw(name)),
+                _ => None,
+            },
+            // `Message` has no IRC command of its own, and future kinds need a runtime that
+            // knows how to route them.
+            Self::Kind(_) | Self::Ignore => None,
+        }
+    }
 }
 
 /// Returns the IRC command name when [`EventIndex::dispatch`] routes the command, for telemetry.
@@ -424,6 +507,17 @@ impl Route {
 #[must_use]
 pub fn routed_command_name(command: &Command) -> Option<&str> {
     Route::of(command).command_name(command)
+}
+
+/// Returns the `OTel` messaging operation when [`EventIndex::dispatch`] routes the command.
+///
+/// Derived from the same route table as [`routed_command_name`], so the host's `irc.dispatch`
+/// span cannot drift from what the dispatcher actually handles. The operation is the IRC
+/// command, which keeps `messaging.operation.name` low-cardinality; `Command::ERROR` is not
+/// routed and therefore has no operation of its own.
+#[must_use]
+pub fn routed_messaging_operation(command: &Command) -> Option<MessagingOperation<'_>> {
+    Route::of(command).messaging_operation(command)
 }
 
 /// A URL retained for dispatch: its shared handle, the broken scheme prefix it was repaired
@@ -627,10 +721,10 @@ impl EventIndex {
         subscribers: &[Subscriber],
         stopped: &mut Vec<&'static str>,
     ) {
-        let meta = EventMeta::kind(kind, event);
+        let meta = EventMeta::enabled().then(|| EventMeta::kind(kind, event));
 
         for subscriber in subscribers {
-            subscriber.send(event.clone(), meta, stopped);
+            subscriber.send(event.clone(), meta.as_ref(), stopped);
         }
     }
 
@@ -766,14 +860,14 @@ impl EventIndex {
 
         for (url, repaired_from, subscribers) in seen {
             let event = UrlEvent::new(Arc::clone(&message), url, repaired_from);
-            let meta = EventMeta::url(&event);
+            let meta = EventMeta::enabled().then(|| EventMeta::url(&event));
 
             for subscriber in subscribers {
-                subscriber.send(Event::Url(event.clone()), meta, stopped);
+                subscriber.send(Event::Url(event.clone()), meta.as_ref(), stopped);
             }
 
             for subscriber in &self.url_any {
-                subscriber.send(Event::Url(event.clone()), meta, stopped);
+                subscriber.send(Event::Url(event.clone()), meta.as_ref(), stopped);
             }
         }
     }
@@ -1359,6 +1453,18 @@ mod tests {
         assert_eq!(cases.len(), EventKind::ALL.len());
 
         for (kind, message) in cases {
+            // The host's dispatch span needs both a command name and a messaging operation for
+            // every kind the dispatcher routes; a kind added without either would silently lose
+            // its dispatch span.
+            assert!(
+                routed_command_name(&message.command).is_some(),
+                "{kind:?} has no routed command name"
+            );
+            assert!(
+                routed_messaging_operation(&message.command).is_some(),
+                "{kind:?} has no messaging operation"
+            );
+
             let mut index = EventIndex::default();
             let mut mailbox = subscribe(&mut index, "sub", |subscriptions| match kind {
                 EventKind::Message => {

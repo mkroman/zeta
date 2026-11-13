@@ -15,7 +15,7 @@ mod registry;
 mod runtime;
 mod task;
 
-pub use dispatch::routed_command_name;
+pub use dispatch::{routed_command_name, routed_messaging_operation};
 // Test- and benchmark-facing internals: the dispatch span test (`tests/dispatch_spans.rs`) and
 // `benchmarks/benches/dispatch.rs` drive the index and the event envelope directly. Hidden from
 // the documentation and not a stability promise — the supported API is `PluginRuntime`.
