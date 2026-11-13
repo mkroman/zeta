@@ -410,36 +410,15 @@ macro_rules! settings_tests {
     };
 }
 
-/// Generates a `#[::sqlx::test]` database test running the shared plugin migrations.
+/// The workspace migrations, embedded once for database tests.
 ///
-/// The test function keeps its signature and body, so an invocation reads like the attribute it
-/// replaces, with the migrations path named once here instead of in every test:
-///
-/// ```ignore
-/// zeta_test_support::db_test! {
-///     async fn stored_filters_are_listed(db: sqlx::PgPool) {
-///         // ...
-///     }
-/// }
-/// ```
-///
-/// The calling crate must sit next to `crates/plugins` (i.e. `crates/plugins-<name>`): `sqlx`
-/// resolves `migrations = "../plugins/migrations"` against the caller's manifest directory and
-/// rejects absolute paths, so the path cannot be made caller-independent.
+/// Use it as `#[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]`: the path is resolved
+/// relative to this crate, so a test module needs no migrations path of its own.
 ///
 /// Like `#[sqlx::test]`, the test needs `DATABASE_URL` to name an existing database, from which a
 /// fresh database is cloned and migrated for the test.
-#[macro_export]
-macro_rules! db_test {
-    (
-        $(#[$meta:meta])*
-        async fn $name:ident ( $($args:tt)* ) $body:block
-    ) => {
-        $(#[$meta])*
-        #[::sqlx::test(migrations = "../plugins/migrations")]
-        async fn $name($($args)*) $body
-    };
-}
+#[cfg(feature = "database")]
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../plugins/migrations");
 
 /// Asserts that the expression is empty, naming the value in the panic.
 ///
