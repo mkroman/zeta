@@ -55,8 +55,9 @@ struct SpanNames {
 ///
 /// The span itself stays per subscriber — it carries the plugin name and has to be created
 /// while the dispatch span is current — but everything that only depends on the event is
-/// computed once and shared by the whole subscriber list, instead of repeating the kind match,
-/// `kind_name` and channel lookup for every plugin.
+/// computed once and shared by the whole subscriber list, instead of repeating the channel
+/// lookup and span-name selection for every plugin. The kind is already known by the call site,
+/// so it is never re-derived from the event.
 #[derive(Clone, Copy, Debug)]
 struct EventMeta<'a> {
     /// The event's low-cardinality kind name, recorded as `zeta.event.kind`.
@@ -79,18 +80,21 @@ enum EventSpan {
 }
 
 impl<'a> EventMeta<'a> {
-    /// Computes the metadata of an event.
-    fn of(event: &'a Event) -> Self {
-        let span = match event.kind() {
-            Some(kind) => EventSpan::Kind(kind),
-            None if matches!(event, Event::Command(_)) => EventSpan::Command,
-            None => EventSpan::Url,
-        };
-
+    /// Computes the metadata of a command event.
+    fn command(event: &'a CommandEvent) -> Self {
         Self {
-            kind_name: event.kind_name(),
+            kind_name: "command",
+            channel: Some(event.channel()),
+            span: EventSpan::Command,
+        }
+    }
+
+    /// Computes the metadata of a flag-based event of `kind`.
+    fn kind(kind: EventKind, event: &'a Event) -> Self {
+        Self {
+            kind_name: kind.name(),
             channel: event.channel(),
-            span,
+            span: EventSpan::Kind(kind),
         }
     }
 
@@ -223,28 +227,40 @@ impl Subscriber {
         self.enqueue(Envelope { event, span }, stopped);
     }
 
-    /// Queues an event that is delivered to this plugin only, computing its span metadata here.
+    /// Queues a command event that is delivered to this plugin only.
     ///
-    /// Taking the event by value saves the clone a shared delivery would need; the metadata
-    /// lookups happen once either way, because the event has a single subscriber.
-    fn send_owned(&self, event: Event, stopped: &mut Vec<&'static str>) {
-        let span = self.handler_span(EventMeta::of(&event));
+    /// Taking the event by value saves the clone a shared delivery would need. The metadata is
+    /// derived here from the already-known command route, with a single channel lookup.
+    fn send_owned(&self, event: CommandEvent, stopped: &mut Vec<&'static str>) {
+        let span = self.handler_span(EventMeta::command(&event));
 
-        self.enqueue(Envelope { event, span }, stopped);
+        self.enqueue(
+            Envelope {
+                event: Event::Command(event),
+                span,
+            },
+            stopped,
+        );
     }
 
     /// Builds the handler span for one delivery.
     ///
     /// Created here, while the dispatch span is current, so the handler joins the message's
-    /// trace. The span also covers the time the event waits in the mailbox. `or_current`
-    /// falls back to the dispatch span when the handler span is disabled by the filter, so
-    /// the handler logs still have a trace context.
+    /// trace. The span also covers the time the event waits in the mailbox. When the handler
+    /// span is disabled by the filter, the current span — the IRC line's dispatch span — is
+    /// carried instead, so the handler logs still have a trace context; with no subscriber at
+    /// all that is [`Span::none()`].
     fn handler_span(&self, meta: EventMeta<'_>) -> Span {
+        if !tracing::enabled!(target: "zeta.plugins", tracing::Level::INFO) {
+            return Span::current();
+        }
+
         // The name is precomputed: formatting it here would allocate on every event even when
         // `tracing` is disabled and the macro never evaluates its fields.
         let name = self.names.event(meta.span);
 
         let span = tracing::info_span!(
+            target: "zeta.plugins",
             "zeta.event.handle",
             otel.name = %name,
             otel.kind = "consumer",
@@ -360,9 +376,9 @@ enum Route {
 }
 
 impl Route {
-    /// Classifies `message` by the events its command can produce.
-    const fn of(message: &Message) -> Self {
-        match &message.command {
+    /// Classifies `command` by the events it can produce.
+    const fn of(command: &Command) -> Self {
+        match command {
             Command::PRIVMSG(..) => Self::Privmsg,
             // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
             // ordinary notices are not an event kind.
@@ -377,6 +393,37 @@ impl Route {
             _ => Self::Ignore,
         }
     }
+
+    /// Returns the IRC command name of a routed command, for telemetry.
+    fn command_name(self, command: &Command) -> Option<&str> {
+        match self {
+            Self::Privmsg => Some("PRIVMSG"),
+            // A NOTICE is the only command routed as a CTCP event.
+            Self::Kind(EventKind::Ctcp) => Some("NOTICE"),
+            Self::Kind(EventKind::Join) => Some("JOIN"),
+            Self::Kind(EventKind::Part) => Some("PART"),
+            Self::Kind(EventKind::Quit) => Some("QUIT"),
+            Self::Kind(EventKind::Nick) => Some("NICK"),
+            Self::Kind(EventKind::Kick) => Some("KICK"),
+            Self::Kind(EventKind::Raw) => match command {
+                Command::Raw(name, _) => Some(name),
+                _ => None,
+            },
+            // `Message` has no IRC command of its own, and future kinds need a runtime that
+            // knows how to route them.
+            Self::Kind(_) | Self::Ignore => None,
+        }
+    }
+}
+
+/// Returns the IRC command name when [`EventIndex::dispatch`] routes the command, for telemetry.
+///
+/// The classification comes from the dispatcher's route table, so the host's `irc.dispatch`
+/// span cannot drift from what the dispatcher actually handles. `Command::ERROR` is not
+/// routed; the host adds it because the disconnect reason is logged inside the span.
+#[must_use]
+pub fn routed_command_name(command: &Command) -> Option<&str> {
+    Route::of(command).command_name(command)
 }
 
 /// A URL retained for dispatch: its shared handle, the broken scheme prefix it was repaired
@@ -489,7 +536,7 @@ impl EventIndex {
         let mut message = SharedMessage::new(message);
         let mut stopped = Vec::new();
 
-        match Route::of(message.message()) {
+        match Route::of(&message.message().command) {
             Route::Privmsg => self.dispatch_privmsg(filters, &mut message, &mut stopped),
             Route::Kind(kind) => self.deliver_kind(kind, &mut message, &mut stopped),
             Route::Ignore => {}
@@ -567,12 +614,20 @@ impl EventIndex {
             return;
         };
 
-        Self::deliver(&event, subscribers, stopped);
+        Self::deliver(&event, kind, subscribers, stopped);
     }
 
     /// Delivers one event to every subscriber of a list.
-    fn deliver(event: &Event, subscribers: &[Subscriber], stopped: &mut Vec<&'static str>) {
-        let meta = EventMeta::of(event);
+    ///
+    /// The metadata depends only on the event and its already-known kind, so it is computed once
+    /// and shared by the subscriber list instead of re-deriving the kind per plugin.
+    fn deliver(
+        event: &Event,
+        kind: EventKind,
+        subscribers: &[Subscriber],
+        stopped: &mut Vec<&'static str>,
+    ) {
+        let meta = EventMeta::kind(kind, event);
 
         for subscriber in subscribers {
             subscriber.send(event.clone(), meta, stopped);
@@ -620,7 +675,7 @@ impl EventIndex {
 
             for target in targets {
                 if let Some(event) = CommandEvent::new(Arc::clone(&message), target.spec) {
-                    target.subscriber.send_owned(Event::Command(event), stopped);
+                    target.subscriber.send_owned(event, stopped);
                 }
             }
         }
