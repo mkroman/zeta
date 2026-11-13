@@ -27,10 +27,10 @@ use zeta_test_support::{RecordedSpan, SpanRecorder, assert_empty};
 /// it must therefore be a child of that span, not a new trace root. The plugin task relies on
 /// this when it instruments the handler with the envelope's span.
 ///
-/// The span also carries the OpenTelemetry messaging attributes alongside the transitional
-/// `irc.*` keys: a command and a channel message report `privmsg` and their destination, while a
-/// channel-less `QUIT` reports `quit` and no destination. The IRCv3 `msgid` is recorded only when
-/// the message carries one.
+/// The span also carries the OpenTelemetry messaging attributes alongside the `irc.*` keys: a
+/// command and a channel message report `privmsg` and their destination, while a channel-less
+/// `QUIT` reports `quit` and no destination. The IRCv3 `msgid` is recorded only when the message
+/// carries one.
 #[test]
 fn handler_spans_carry_parenting_and_messaging_attributes() {
     let recorder = SpanRecorder::default();
@@ -133,7 +133,7 @@ fn assert_handler_spans(spans: &[RecordedSpan], dispatch_id: &Id) {
         Some("#test"),
         "recorded: {command:?}"
     );
-    // The transitional key stays for one release, with the same value as the `OTel` attribute.
+    // The `irc.channel` key carries the same value as the `OTel` attribute.
     assert_eq!(
         command.field("irc.channel"),
         Some("#test"),
@@ -207,6 +207,60 @@ fn handler_with_kind<'a>(handlers: &[&'a RecordedSpan], kind: &str) -> &'a Recor
         .copied()
         .find(|span| span.field("zeta.event.kind") == Some(kind))
         .unwrap_or_else(|| panic!("no handler span with kind `{kind}`, recorded: {handlers:?}"))
+}
+
+/// A full mailbox sheds the event before its handler span is built, so a delivery the plugin
+/// never receives does not export an empty span.
+///
+/// The mailbox is given exactly one slot: the first dispatch is accepted and gets a handler
+/// span, the second is shed before the span is created.
+#[test]
+fn shed_events_do_not_build_handler_spans() {
+    let recorder = SpanRecorder::default();
+    let subscriber = tracing_subscriber::registry().with(recorder.clone());
+
+    with_default(subscriber, || {
+        let mut subscriptions = Subscriptions::new();
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+
+        let (mailbox, mut receiver) = mpsc::channel(1);
+        let mut index = EventIndex::default();
+        index.add("dig", &subscriptions, mailbox);
+
+        let stopped = index.dispatch(
+            &FilterHandle::default(),
+            message("nick!u@h", "PRIVMSG", &["#test", ".dig accepted"]),
+        );
+        assert_empty!(stopped);
+
+        let stopped = index.dispatch(
+            &FilterHandle::default(),
+            message("nick!u@h", "PRIVMSG", &["#test", ".dig shed"]),
+        );
+        assert_empty!(stopped, "a full mailbox must not evict the plugin");
+
+        let mut events = Vec::new();
+        while let Ok(envelope) = receiver.try_recv() {
+            events.push(envelope.event);
+        }
+
+        assert!(
+            matches!(events.as_slice(), [Event::Command(command)] if command.args() == "accepted"),
+            "the full mailbox should keep only the accepted event: {events:?}"
+        );
+    });
+
+    let handlers: Vec<_> = recorder
+        .spans()
+        .into_iter()
+        .filter(|span| span.name() == "zeta.event.handle")
+        .collect();
+
+    assert_eq!(
+        handlers.len(),
+        1,
+        "a shed event must not build a handler span, recorded: {handlers:?}"
+    );
 }
 
 /// Builds a `PRIVMSG` from `nick` to `#test` carrying `text` and an IRCv3 `msgid` tag.

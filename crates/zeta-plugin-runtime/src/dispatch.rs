@@ -7,7 +7,6 @@
 //! matching events on each plugin's mailbox. A plugin is only woken for events it asked for;
 //! for the indexed kinds the lookup cost is independent of the number of plugins.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -20,12 +19,13 @@ use tokio::sync::mpsc;
 use tracing::{Span, debug, warn};
 use url::Url;
 use zeta_plugin::event::{
-    CommandEvent, MessagingOperation, Sender, Subscriptions, UrlEvent, is_ctcp, message_id,
+    CommandEvent, MessagingOperation, Sender, Subscriptions, UrlEvent, is_ctcp,
 };
 use zeta_plugin::{CommandSpec, Event, EventKind, FilterHandle, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrlRef};
 
 use crate::runtime::MAILBOX_CAPACITY;
+use crate::telemetry::{MessageTelemetry, handler_spans_enabled};
 
 /// An event queued for a plugin together with the handler span it must run inside.
 ///
@@ -51,92 +51,63 @@ struct SpanNames {
     /// The name for URL events.
     url: Arc<str>,
     /// The names for the flag-based kinds, indexed like [`EventKind::ALL`].
-    kinds: [Arc<str>; EventKind::ALL.len()],
+    kind_names: [Arc<str>; EventKind::ALL.len()],
 }
 
-/// The per-event values a handler span is built from, computed once per delivered event when
+/// The per-delivery values a handler span is built from, computed once per delivery point when
 /// handler spans are enabled.
 ///
 /// The span itself stays per subscriber — it carries the plugin name and has to be created
-/// while the dispatch span is current — but everything that only depends on the event is
-/// computed once and shared by the whole subscriber list, instead of repeating the channel
-/// lookup and span-name selection for every plugin. The kind is already known by the call site,
-/// so it is never re-derived from the event.
+/// while the dispatch span is current — but everything that only depends on the line and the
+/// event batch is computed once and shared by the whole subscriber list, instead of repeating
+/// the channel lookup, message-id scan and span-name selection for every plugin. The kind is
+/// already known by the call site, so it is never re-derived from the event.
 #[derive(Debug)]
-struct EventMeta<'a> {
+struct DeliveryTelemetry<'a> {
     /// The event's low-cardinality kind name, recorded as `zeta.event.kind`.
     kind_name: &'static str,
-    /// The channel the event belongs to, recorded as `irc.channel` and
-    /// `messaging.destination.name`.
-    channel: Option<&'a str>,
-    /// The IRCv3 message identifier, recorded as `messaging.message.id`.
-    message_id: Option<&'a str>,
-    /// The lowercased IRC command the event was derived from, recorded as
-    /// `messaging.operation.name`. Lowercasing happens here, once per event, rather than for
-    /// every subscriber span.
-    operation: Cow<'a, str>,
     /// The selector for a plugin's precomputed handler span name.
-    span: EventSpan,
+    span: SpanSelector,
+    /// The line's telemetry, shared by the whole delivery batch.
+    message: &'a MessageTelemetry<'a>,
 }
 
 /// The event-kind discriminator a subscriber turns into its precomputed span name.
 #[derive(Clone, Copy, Debug)]
-enum EventSpan {
+enum SpanSelector {
     /// A command event.
     Command,
     /// A URL event.
     Url,
     /// A flag-based event kind.
-    Kind(EventKind),
+    Event(EventKind),
 }
 
-impl<'a> EventMeta<'a> {
-    /// Returns whether handler spans are enabled for the current subscriber.
-    ///
-    /// The metadata only feeds span fields, so the dispatcher skips building it when the filter
-    /// would not create the span. The default filter (`zeta=info`) enables these spans, so the
-    /// channel lookup and IRCv3 tag scan do run for every delivered event in production; they
-    /// are only skipped when the operator filters the spans out.
-    #[inline]
-    fn enabled() -> bool {
-        tracing::enabled!(target: "zeta.plugins", tracing::Level::INFO)
-    }
-
-    /// Computes the metadata of a command message.
-    fn command(message: &'a Message) -> Self {
+impl<'a> DeliveryTelemetry<'a> {
+    /// Computes the telemetry of one command batch.
+    const fn for_command(message: &'a MessageTelemetry<'a>) -> Self {
         Self {
             kind_name: "command",
-            // Commands are matched on `PRIVMSG` text only.
-            channel: match &message.command {
-                Command::PRIVMSG(target, _) => Some(target.as_str()),
-                _ => None,
-            },
-            message_id: message_id(message),
-            operation: Cow::Borrowed("privmsg"),
-            span: EventSpan::Command,
+            span: SpanSelector::Command,
+            message,
         }
     }
 
-    /// Computes the metadata of a flag-based event of `kind`.
-    fn kind(kind: EventKind, event: &'a Event) -> Self {
+    /// Computes the telemetry of one batch of flag-based events of `kind`.
+    const fn for_kind(kind: EventKind, message: &'a MessageTelemetry<'a>) -> Self {
         Self {
             kind_name: kind.name(),
-            channel: event.channel(),
-            message_id: event.message_id(),
-            operation: event.messaging_operation().into_cow(),
-            span: EventSpan::Kind(kind),
+            span: SpanSelector::Event(kind),
+            message,
         }
     }
 
-    /// Computes the metadata of a URL event.
-    fn url(event: &'a UrlEvent) -> Self {
+    /// Computes the telemetry of one URL batch.
+    const fn for_url(message: &'a MessageTelemetry<'a>) -> Self {
         Self {
             kind_name: "url",
-            channel: Some(event.channel()),
-            message_id: event.message_id(),
-            // URLs are extracted from `PRIVMSG` text only.
-            operation: Cow::Borrowed("privmsg"),
-            span: EventSpan::Url,
+            span: SpanSelector::Url,
+            message,
         }
     }
 }
@@ -149,16 +120,16 @@ impl SpanNames {
         Self {
             command: composite("command"),
             url: composite("url"),
-            kinds: std::array::from_fn(|index| composite(EventKind::ALL[index].name())),
+            kind_names: std::array::from_fn(|index| composite(EventKind::ALL[index].name())),
         }
     }
 
     /// Returns the exported name for the event with the given span selector.
-    fn event(&self, span: EventSpan) -> &str {
+    fn name(&self, span: SpanSelector) -> &str {
         match span {
-            EventSpan::Kind(kind) => &self.kinds[kind.index()],
-            EventSpan::Command => &self.command,
-            EventSpan::Url => &self.url,
+            SpanSelector::Event(kind) => &self.kind_names[kind.index()],
+            SpanSelector::Command => &self.command,
+            SpanSelector::Url => &self.url,
         }
     }
 }
@@ -169,7 +140,7 @@ struct Subscriber {
     /// The plugin's name, used for logging.
     name: &'static str,
     /// The precomputed handler span names of the plugin.
-    names: Arc<SpanNames>,
+    span_names: Arc<SpanNames>,
     /// The mailbox events are queued on.
     mailbox: mpsc::Sender<Envelope>,
     /// The mailbox's overflow state, shared by every subscription of the plugin.
@@ -252,35 +223,48 @@ impl Subscriber {
     /// the plugin stays registered. Evicting it here would let a burst permanently unregister a
     /// healthy plugin.
     ///
-    /// `meta` is computed once per event by the dispatcher and shared by the subscriber list, so
-    /// the kind name, channel and span-name selector are not looked up again per plugin. It is
-    /// [`None`] when handler spans are disabled, in which case no metadata was computed.
-    #[inline]
-    fn send(&self, event: Event, meta: Option<&EventMeta<'_>>, stopped: &mut Vec<&'static str>) {
-        let span = self.handler_span(meta);
+    /// `meta` is computed once per delivery batch by the dispatcher and shared by the subscriber
+    /// list, so the kind name, channel and span-name selector are not looked up again per
+    /// plugin. It is [`None`] when handler spans are disabled, in which case no metadata was
+    /// computed.
+    ///
+    /// Forced inline into the subscriber loops: the reservation/build/hand-off split otherwise
+    /// turns every delivery into a call, which the dispatch benchmark measures as a regression.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn send(
+        &self,
+        event: Event,
+        meta: Option<&DeliveryTelemetry<'_>>,
+        stopped: &mut Vec<&'static str>,
+    ) {
+        let Some(permit) = self.reserve(stopped) else {
+            return;
+        };
 
-        self.enqueue(Envelope { event, span }, stopped);
+        let span = self.handler_span(meta);
+        permit.send(Envelope { event, span });
     }
 
     /// Queues a command event that is delivered to this plugin only.
     ///
     /// Taking the event by value saves the clone a shared delivery would need. The metadata is
     /// computed once per message by the dispatcher and shared by the command's subscribers.
-    fn send_owned(
+    fn send_command(
         &self,
         event: CommandEvent,
-        meta: Option<&EventMeta<'_>>,
+        meta: Option<&DeliveryTelemetry<'_>>,
         stopped: &mut Vec<&'static str>,
     ) {
-        let span = self.handler_span(meta);
+        let Some(permit) = self.reserve(stopped) else {
+            return;
+        };
 
-        self.enqueue(
-            Envelope {
-                event: Event::Command(event),
-                span,
-            },
-            stopped,
-        );
+        let span = self.handler_span(meta);
+        permit.send(Envelope {
+            event: Event::Command(event),
+            span,
+        });
     }
 
     /// Builds the handler span for one delivery.
@@ -294,11 +278,7 @@ impl Subscriber {
     /// Kept small and inline so the disabled path stays a cheap check in the per-subscriber send
     /// path; the span construction lives in [`Self::build_handler_span`].
     #[inline]
-    fn handler_span(&self, meta: Option<&EventMeta<'_>>) -> Span {
-        if !tracing::enabled!(target: "zeta.plugins", tracing::Level::INFO) {
-            return Span::current();
-        }
-
+    fn handler_span(&self, meta: Option<&DeliveryTelemetry<'_>>) -> Span {
         let Some(meta) = meta else {
             return Span::current();
         };
@@ -311,10 +291,11 @@ impl Subscriber {
     /// Outlined from [`Self::handler_span`]: the span macro is large, and inlining it into every
     /// delivery would make the disabled path pay for the code size.
     #[inline(never)]
-    fn build_handler_span(&self, meta: &EventMeta<'_>) -> Span {
+    fn build_handler_span(&self, meta: &DeliveryTelemetry<'_>) -> Span {
         // The name is precomputed: formatting it here would allocate on every event even when
         // `tracing` is disabled and the macro never evaluates its fields.
-        let name = self.names.event(meta.span);
+        let name = self.span_names.name(meta.span);
+        let message = meta.message;
 
         let span = tracing::info_span!(
             target: "zeta.plugins",
@@ -325,30 +306,50 @@ impl Subscriber {
             zeta.event.kind = meta.kind_name,
             irc.channel = tracing::field::Empty,
             messaging.system.name = "irc",
-            messaging.operation.name = %meta.operation,
+            messaging.operation.name = %message.operation,
             messaging.operation.type = "process",
             messaging.destination.name = tracing::field::Empty,
             messaging.message.id = tracing::field::Empty,
         );
 
-        if let Some(channel) = meta.channel {
+        if let Some(channel) = message.channel {
             span.record("irc.channel", channel);
             span.record("messaging.destination.name", channel);
         }
 
-        if let Some(message_id) = meta.message_id {
+        if let Some(message_id) = message.message_id {
             span.record("messaging.message.id", message_id);
         }
 
         span.or_current()
     }
 
-    /// Queues `envelope` on the mailbox, shedding it or reporting the stopped plugin.
-    fn enqueue(&self, envelope: Envelope, stopped: &mut Vec<&'static str>) {
-        match self.mailbox.try_send(envelope) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Closed(_)) => stopped.push(self.name),
-            Err(mpsc::error::TrySendError::Full(_)) => self.shed(),
+    /// Reserves a mailbox slot for one delivery.
+    ///
+    /// Reserving before building the handler span means a shed or closed delivery never creates
+    /// a span for an event the plugin will not receive. A full mailbox is not a stopped plugin:
+    /// the event is shed, the overflow is counted, and the plugin stays registered. Evicting it
+    /// here would let a burst permanently unregister a healthy plugin.
+    ///
+    /// Returns [`None`] after shedding the event or recording the stopped plugin.
+    ///
+    /// Inlined together with [`Self::send`] so the reservation and the hand-off stay one hot
+    /// path.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn reserve(&self, stopped: &mut Vec<&'static str>) -> Option<mpsc::Permit<'_, Envelope>> {
+        match self.mailbox.try_reserve() {
+            Ok(permit) => Some(permit),
+            Err(mpsc::error::TrySendError::Closed(())) => {
+                stopped.push(self.name);
+
+                None
+            }
+            Err(mpsc::error::TrySendError::Full(())) => {
+                self.shed();
+
+                None
+            }
         }
     }
 
@@ -433,104 +434,85 @@ impl SharedMessage {
 
 /// What [`EventIndex::dispatch`] should do with a message's IRC command.
 #[derive(Clone, Copy)]
-enum Route {
+pub enum CommandRoute {
     /// A channel message: commands, messages, or URLs may match.
     Privmsg,
     /// A flag-based event kind.
-    Kind(EventKind),
+    Event(EventKind),
     /// Connection protocol or another command no plugin can observe.
-    Ignore,
+    Ignored,
 }
 
-impl Route {
+impl CommandRoute {
     /// Classifies `command` by the events it can produce.
-    const fn of(command: &Command) -> Self {
+    pub(crate) const fn classify(command: &Command) -> Self {
         match command {
             Command::PRIVMSG(..) => Self::Privmsg,
             // CTCP replies arrive as NOTICE-wrapped messages; only CTCP subscribers see them —
             // ordinary notices are not an event kind.
-            Command::NOTICE(..) => Self::Kind(EventKind::Ctcp),
-            Command::JOIN(..) => Self::Kind(EventKind::Join),
-            Command::PART(..) => Self::Kind(EventKind::Part),
-            Command::QUIT(..) => Self::Kind(EventKind::Quit),
-            Command::NICK(..) => Self::Kind(EventKind::Nick),
-            Command::KICK(..) => Self::Kind(EventKind::Kick),
-            Command::Raw(..) => Self::Kind(EventKind::Raw),
+            Command::NOTICE(..) => Self::Event(EventKind::Ctcp),
+            Command::JOIN(..) => Self::Event(EventKind::Join),
+            Command::PART(..) => Self::Event(EventKind::Part),
+            Command::QUIT(..) => Self::Event(EventKind::Quit),
+            Command::NICK(..) => Self::Event(EventKind::Nick),
+            Command::KICK(..) => Self::Event(EventKind::Kick),
+            Command::Raw(..) => Self::Event(EventKind::Raw),
             // Everything else is connection protocol the plugins have no events for.
-            _ => Self::Ignore,
+            _ => Self::Ignored,
         }
     }
 
-    /// Returns the IRC command name of a routed command, for telemetry.
-    fn command_name(self, command: &Command) -> Option<&str> {
-        match self {
-            Self::Privmsg => Some("PRIVMSG"),
-            // A NOTICE is the only command routed as a CTCP event.
-            Self::Kind(EventKind::Ctcp) => Some("NOTICE"),
-            Self::Kind(EventKind::Join) => Some("JOIN"),
-            Self::Kind(EventKind::Part) => Some("PART"),
-            Self::Kind(EventKind::Quit) => Some("QUIT"),
-            Self::Kind(EventKind::Nick) => Some("NICK"),
-            Self::Kind(EventKind::Kick) => Some("KICK"),
-            Self::Kind(EventKind::Raw) => match command {
-                Command::Raw(name, _) => Some(name),
-                _ => None,
-            },
-            // `Message` has no IRC command of its own, and future kinds need a runtime that
-            // knows how to route them.
-            Self::Kind(_) | Self::Ignore => None,
-        }
-    }
-
-    /// Returns the `OTel` messaging operation of a routed command, for telemetry.
+    /// Returns the IRC command name and `OTel` messaging operation of a routed command.
     ///
-    /// The operation is the lowercased IRC command. An unmodeled command keeps its received
-    /// name and is lowercased when the span field is rendered.
-    fn messaging_operation(self, command: &Command) -> Option<MessagingOperation<'_>> {
+    /// The name is the command as received — uppercase for modeled commands, the received name
+    /// for raw ones. The operation is the lowercased modeled command; an unmodeled command
+    /// keeps its received name and is lowercased when the span field is rendered. [`None`] for
+    /// [`Self::Ignored`] and for event kinds without an IRC command of their own.
+    pub(crate) fn command_operation(
+        self,
+        command: &Command,
+    ) -> Option<(&str, MessagingOperation<'_>)> {
         match self {
-            Self::Privmsg => Some(MessagingOperation::Known("privmsg")),
+            Self::Privmsg => Some(("PRIVMSG", MessagingOperation::Modeled("privmsg"))),
             // A NOTICE is the only command routed as a CTCP event.
-            Self::Kind(EventKind::Ctcp) => Some(MessagingOperation::Known("notice")),
-            Self::Kind(EventKind::Join) => Some(MessagingOperation::Known("join")),
-            Self::Kind(EventKind::Part) => Some(MessagingOperation::Known("part")),
-            Self::Kind(EventKind::Quit) => Some(MessagingOperation::Known("quit")),
-            Self::Kind(EventKind::Nick) => Some(MessagingOperation::Known("nick")),
-            Self::Kind(EventKind::Kick) => Some(MessagingOperation::Known("kick")),
-            Self::Kind(EventKind::Raw) => match command {
-                Command::Raw(name, _) => Some(MessagingOperation::Raw(name)),
+            Self::Event(EventKind::Ctcp) => Some(("NOTICE", MessagingOperation::Modeled("notice"))),
+            Self::Event(EventKind::Join) => Some(("JOIN", MessagingOperation::Modeled("join"))),
+            Self::Event(EventKind::Part) => Some(("PART", MessagingOperation::Modeled("part"))),
+            Self::Event(EventKind::Quit) => Some(("QUIT", MessagingOperation::Modeled("quit"))),
+            Self::Event(EventKind::Nick) => Some(("NICK", MessagingOperation::Modeled("nick"))),
+            Self::Event(EventKind::Kick) => Some(("KICK", MessagingOperation::Modeled("kick"))),
+            Self::Event(EventKind::Raw) => match command {
+                Command::Raw(name, _) => Some((name, MessagingOperation::Unmodeled(name))),
                 _ => None,
             },
             // `Message` has no IRC command of its own, and future kinds need a runtime that
             // knows how to route them.
-            Self::Kind(_) | Self::Ignore => None,
+            Self::Event(_) | Self::Ignored => None,
         }
     }
 }
 
-/// Returns the IRC command name when [`EventIndex::dispatch`] routes the command, for telemetry.
+/// Returns whether handler spans are enabled, resolving the filter once per line.
 ///
-/// The classification comes from the dispatcher's route table, so the host's `irc.dispatch`
-/// span cannot drift from what the dispatcher actually handles. `Command::ERROR` is not
-/// routed; the host adds it because the disconnect reason is logged inside the span.
-#[must_use]
-pub fn routed_command_name(command: &Command) -> Option<&str> {
-    Route::of(command).command_name(command)
-}
-
-/// Returns the `OTel` messaging operation when [`EventIndex::dispatch`] routes the command.
-///
-/// Derived from the same route table as [`routed_command_name`], so the host's `irc.dispatch`
-/// span cannot drift from what the dispatcher actually handles. The operation is the IRC
-/// command, which keeps `messaging.operation.name` low-cardinality; `Command::ERROR` is not
-/// routed and therefore has no operation of its own.
-#[must_use]
-pub fn routed_messaging_operation(command: &Command) -> Option<MessagingOperation<'_>> {
-    Route::of(command).messaging_operation(command)
+/// The dispatcher passes one cache through every delivery point of a line, so the filter is
+/// consulted at most once even when the line yields a command, a message and several URLs. A
+/// line that delivers nothing never resolves it: the check is made only when a delivery is
+/// about to build a span, so empty lines do not pay for the filter.
+#[inline]
+fn telemetry_enabled(cache: &mut Option<bool>) -> bool {
+    *cache.get_or_insert_with(handler_spans_enabled)
 }
 
 /// A URL retained for dispatch: its shared handle, the broken scheme prefix it was repaired
 /// from, and the host subscribers it must reach, resolved before the URL was shared.
-type RetainedUrl<'a> = (Arc<Url>, Option<&'static str>, &'a [Subscriber]);
+struct UrlDispatch<'a> {
+    /// The shared URL handle.
+    url: Arc<Url>,
+    /// The broken scheme prefix as posted, when extraction repaired it (e.g. `ttps`).
+    repaired_from: Option<&'static str>,
+    /// The host subscribers the URL must reach.
+    subscribers: &'a [Subscriber],
+}
 
 /// A hash map for the per-message dispatch lookups, keyed by command trigger and URL host.
 ///
@@ -576,7 +558,7 @@ impl EventIndex {
     ) {
         let subscriber = Subscriber {
             name,
-            names: Arc::new(SpanNames::new(name)),
+            span_names: Arc::new(SpanNames::new(name)),
             mailbox,
             overflow: Arc::new(Overflow::default()),
         };
@@ -638,10 +620,32 @@ impl EventIndex {
         let mut message = SharedMessage::new(message);
         let mut stopped = Vec::new();
 
-        match Route::of(&message.message().command) {
-            Route::Privmsg => self.dispatch_privmsg(filters, &mut message, &mut stopped),
-            Route::Kind(kind) => self.deliver_kind(kind, &mut message, &mut stopped),
-            Route::Ignore => {}
+        // The line is classified once; the span gate is cached and resolved by the first
+        // delivery point that could build a span. The delivery telemetry borrows from the
+        // message only once it is shared.
+        let route = CommandRoute::classify(&message.message().command);
+        let mut telemetry_enabled = None;
+
+        match route {
+            CommandRoute::Privmsg => {
+                self.dispatch_privmsg(
+                    filters,
+                    route,
+                    &mut telemetry_enabled,
+                    &mut message,
+                    &mut stopped,
+                );
+            }
+            CommandRoute::Event(kind) => {
+                self.deliver_kind(
+                    kind,
+                    route,
+                    &mut telemetry_enabled,
+                    &mut message,
+                    &mut stopped,
+                );
+            }
+            CommandRoute::Ignored => {}
         }
 
         // A stopped plugin can match several of the message's events (and several commands or
@@ -703,6 +707,8 @@ impl EventIndex {
     fn deliver_kind(
         &self,
         kind: EventKind,
+        route: CommandRoute,
+        cache: &mut Option<bool>,
         message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
@@ -716,23 +722,31 @@ impl EventIndex {
             return;
         };
 
-        Self::deliver(&event, kind, subscribers, stopped);
+        // Computed once for the whole batch; the message stays shared, so borrowing it for the
+        // telemetry needs no extra handle.
+        let telemetry = telemetry_enabled(cache)
+            .then(|| MessageTelemetry::from_route(route, message.message()))
+            .flatten();
+        let telemetry = telemetry
+            .as_ref()
+            .map(|telemetry| DeliveryTelemetry::for_kind(kind, telemetry));
+
+        Self::deliver(&event, telemetry.as_ref(), subscribers, stopped);
     }
 
     /// Delivers one event to every subscriber of a list.
     ///
-    /// The metadata depends only on the event and its already-known kind, so it is computed once
-    /// and shared by the subscriber list instead of re-deriving the kind per plugin.
+    /// The delivery telemetry depends only on the line and the already-known kind, so it is
+    /// computed once and shared by the subscriber list instead of re-deriving the kind per
+    /// plugin.
     fn deliver(
         event: &Event,
-        kind: EventKind,
+        telemetry: Option<&DeliveryTelemetry<'_>>,
         subscribers: &[Subscriber],
         stopped: &mut Vec<&'static str>,
     ) {
-        let meta = EventMeta::enabled().then(|| EventMeta::kind(kind, event));
-
         for subscriber in subscribers {
-            subscriber.send(event.clone(), meta.as_ref(), stopped);
+            subscriber.send(event.clone(), telemetry, stopped);
         }
     }
 
@@ -740,6 +754,8 @@ impl EventIndex {
     fn dispatch_privmsg(
         &self,
         filters: &FilterHandle,
+        route: CommandRoute,
+        cache: &mut Option<bool>,
         message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
@@ -749,7 +765,7 @@ impl EventIndex {
 
         // CTCP messages are their own event kind and are routed to nothing else.
         if is_ctcp(message.message()) {
-            self.deliver_kind(EventKind::Ctcp, message, stopped);
+            self.deliver_kind(EventKind::Ctcp, route, cache, message, stopped);
 
             return;
         }
@@ -774,24 +790,29 @@ impl EventIndex {
             && let Some(targets) = self.commands.get(word)
         {
             let message = message.shared();
-            let meta = EventMeta::enabled().then(|| EventMeta::command(message.as_ref()));
+            let telemetry = telemetry_enabled(cache)
+                .then(|| MessageTelemetry::from_route(route, message.as_ref()))
+                .flatten();
+            let telemetry = telemetry.as_ref().map(DeliveryTelemetry::for_command);
 
             for target in targets {
                 if let Some(event) = CommandEvent::new(Arc::clone(&message), target.spec) {
-                    target.subscriber.send_owned(event, meta.as_ref(), stopped);
+                    target
+                        .subscriber
+                        .send_command(event, telemetry.as_ref(), stopped);
                 }
             }
         }
 
         // Message subscribers observe every remaining non-CTCP message.
-        self.deliver_kind(EventKind::Message, message, stopped);
+        self.deliver_kind(EventKind::Message, route, cache, message, stopped);
 
         // URLs — extracted once per message, deduplicated and filtered before routing by host.
         if self.url_hosts.is_empty() && self.url_any.is_empty() {
             return;
         }
 
-        self.dispatch_urls(filters, message, stopped);
+        self.dispatch_urls(filters, route, cache, message, stopped);
     }
 
     /// Returns whether `text` can start a registered command, judging by its first byte alone.
@@ -814,6 +835,8 @@ impl EventIndex {
     fn dispatch_urls(
         &self,
         filters: &FilterHandle,
+        route: CommandRoute,
+        cache: &mut Option<bool>,
         message: &mut SharedMessage,
         stopped: &mut Vec<&'static str>,
     ) {
@@ -833,12 +856,12 @@ impl EventIndex {
         // The retained URLs are collected before the message is shared, so a `PRIVMSG` that
         // carries no URL (or only filtered ones) still does not allocate the shared message.
         // The subscriber list is resolved by borrowed host while the URL is still unshared.
-        let mut seen: SmallVec<[RetainedUrl<'_>; 4]> = SmallVec::new();
+        let mut seen: SmallVec<[UrlDispatch<'_>; 4]> = SmallVec::new();
 
         // Deduplication shares the parsed URL with the event instead of hashing a deep copy
         // into a set; a message rarely carries more than a handful of URLs.
         for ExtractedUrl { url, repaired_from } in ExtractUrls::with_schemes(text, HTTP_SCHEMES) {
-            if seen.iter().any(|(seen, ..)| seen.as_str() == url.as_str()) {
+            if seen.iter().any(|seen| seen.url.as_str() == url.as_str()) {
                 continue;
             }
 
@@ -858,7 +881,11 @@ impl EventIndex {
                 continue;
             }
 
-            seen.push((Arc::new(url), repaired_from, subscribers));
+            seen.push(UrlDispatch {
+                url: Arc::new(url),
+                repaired_from,
+                subscribers,
+            });
         }
 
         if seen.is_empty() {
@@ -866,17 +893,25 @@ impl EventIndex {
         }
 
         let message = message.shared();
+        let telemetry = telemetry_enabled(cache)
+            .then(|| MessageTelemetry::from_route(route, message.as_ref()))
+            .flatten();
+        let telemetry = telemetry.as_ref().map(DeliveryTelemetry::for_url);
 
-        for (url, repaired_from, subscribers) in seen {
+        for UrlDispatch {
+            url,
+            repaired_from,
+            subscribers,
+        } in seen
+        {
             let event = UrlEvent::new(Arc::clone(&message), url, repaired_from);
-            let meta = EventMeta::enabled().then(|| EventMeta::url(&event));
 
             for subscriber in subscribers {
-                subscriber.send(Event::Url(event.clone()), meta.as_ref(), stopped);
+                subscriber.send(Event::Url(event.clone()), telemetry.as_ref(), stopped);
             }
 
             for subscriber in &self.url_any {
-                subscriber.send(Event::Url(event.clone()), meta.as_ref(), stopped);
+                subscriber.send(Event::Url(event.clone()), telemetry.as_ref(), stopped);
             }
         }
     }
@@ -886,6 +921,7 @@ impl EventIndex {
 mod tests {
     use std::sync::Arc;
 
+    use irc::proto::message::Tag;
     use url::Url;
     use zeta_plugin::CtcpKind;
     use zeta_plugin::EventFilter;
@@ -1022,6 +1058,136 @@ mod tests {
             "PRIVMSG",
             &["#test", text],
         )
+    }
+
+    /// Builds a message carrying an IRCv3 `msgid` tag.
+    fn tagged(command: &str, args: &[&str], msgid: &str) -> Message {
+        Message::with_tags(
+            Some(vec![Tag("msgid".to_owned(), Some(msgid.to_owned()))]),
+            Some("nick!user@host.example"),
+            command,
+            args.to_vec(),
+        )
+        .expect("message should parse")
+    }
+
+    /// The telemetry of every routed command: the IRC command as received, the lowercased
+    /// messaging operation, and the destination when the command targets one.
+    #[test]
+    fn message_telemetry_covers_every_routed_command() {
+        let cases = [
+            (
+                message("nick!u@h", "PRIVMSG", &["#test", "hello"]),
+                "PRIVMSG",
+                "privmsg",
+                Some("#test"),
+            ),
+            (
+                message("service.example", "NOTICE", &["#test", "\x01VERSION\x01"]),
+                "NOTICE",
+                "notice",
+                Some("#test"),
+            ),
+            (
+                message("nick!u@h", "JOIN", &["#test"]),
+                "JOIN",
+                "join",
+                Some("#test"),
+            ),
+            (
+                message("nick!u@h", "PART", &["#test", "bye"]),
+                "PART",
+                "part",
+                Some("#test"),
+            ),
+            (message("nick!u@h", "QUIT", &["gone"]), "QUIT", "quit", None),
+            (message("nick!u@h", "NICK", &["new"]), "NICK", "nick", None),
+            (
+                message("oper!u@h", "KICK", &["#test", "victim", "flood"]),
+                "KICK",
+                "kick",
+                Some("#test"),
+            ),
+            (
+                message("server.example", "SOMECMD", &["#test"]),
+                "SOMECMD",
+                "somecmd",
+                None,
+            ),
+        ];
+
+        for (message, command, operation, channel) in cases {
+            let telemetry = MessageTelemetry::from_message(&message)
+                .unwrap_or_else(|| panic!("{message:?} should be routed"));
+
+            assert_eq!(telemetry.command, command, "{message:?}");
+            assert_eq!(telemetry.operation.to_string(), operation, "{message:?}");
+            assert_eq!(telemetry.channel, channel, "{message:?}");
+            assert_eq!(telemetry.message_id, None, "{message:?}");
+        }
+    }
+
+    /// A raw command keeps its received (uppercase) name in `irc.command` and is lowercased only
+    /// when the operation is rendered.
+    #[test]
+    fn message_telemetry_keeps_raw_commands_uppercase() {
+        let raw = message("server.example", "SOMECMD", &["#test"]);
+        let telemetry = MessageTelemetry::from_message(&raw).expect("a raw command is routed");
+
+        assert_eq!(telemetry.command, "SOMECMD");
+        assert_eq!(
+            telemetry.operation,
+            MessagingOperation::Unmodeled("SOMECMD")
+        );
+        assert_eq!(telemetry.operation.to_string(), "somecmd");
+    }
+
+    /// `ERROR` is not routed but still gets a dispatch span: the host logs the disconnect reason
+    /// inside it. It has no channel and reports the `error` operation.
+    #[test]
+    fn message_telemetry_covers_server_error() {
+        let error = message("", "ERROR", &["closing link"]);
+        let telemetry = MessageTelemetry::from_message(&error).expect("ERROR gets a dispatch span");
+
+        assert_eq!(telemetry.command, "ERROR");
+        assert_eq!(telemetry.operation, MessagingOperation::Modeled("error"));
+        assert_eq!(telemetry.channel, None);
+    }
+
+    /// PING, PONG and numerics are connection protocol, not plugin events; they get no telemetry
+    /// and therefore no dispatch span. The ignored route is [`None`] as well.
+    #[test]
+    fn message_telemetry_ignores_unrouted_commands() {
+        let unrouted = [
+            message("server.example", "PING", &["server"]),
+            message("server.example", "PONG", &["server"]),
+            message("server.example", "001", &["zeta", "Welcome"]),
+        ];
+
+        for message in unrouted {
+            assert!(
+                MessageTelemetry::from_message(&message).is_none(),
+                "{message:?}"
+            );
+        }
+
+        let ping = message("server.example", "PING", &["server"]);
+        assert!(MessageTelemetry::from_route(CommandRoute::Ignored, &ping).is_none());
+    }
+
+    /// The message id is read from any tagged event, not just `PRIVMSG`/`NOTICE`; servers may
+    /// attach it to any event.
+    #[test]
+    fn message_telemetry_reads_the_message_id_of_any_tagged_event() {
+        let join = tagged("JOIN", &["#test"], "j1");
+        let telemetry = MessageTelemetry::from_message(&join).expect("a join is routed");
+
+        assert_eq!(telemetry.message_id, Some("j1"));
+        assert_eq!(telemetry.channel, Some("#test"));
+
+        let privmsg = tagged("PRIVMSG", &["#test", "hello"], "m1");
+        let telemetry = MessageTelemetry::from_message(&privmsg).expect("a privmsg is routed");
+        assert_eq!(telemetry.message_id, Some("m1"));
     }
 
     /// Registers a test subscriber and returns the mailbox its events arrive on.
@@ -1462,16 +1628,12 @@ mod tests {
         assert_eq!(cases.len(), EventKind::ALL.len());
 
         for (kind, message) in cases {
-            // The host's dispatch span needs both a command name and a messaging operation for
-            // every kind the dispatcher routes; a kind added without either would silently lose
-            // its dispatch span.
+            // The host's dispatch span needs the line's telemetry for every kind the dispatcher
+            // routes; a kind added without a command/operation would silently lose its dispatch
+            // span.
             assert!(
-                routed_command_name(&message.command).is_some(),
-                "{kind:?} has no routed command name"
-            );
-            assert!(
-                routed_messaging_operation(&message.command).is_some(),
-                "{kind:?} has no messaging operation"
+                MessageTelemetry::from_message(message).is_some(),
+                "{kind:?} has no message telemetry"
             );
 
             let mut index = EventIndex::default();
@@ -1646,8 +1808,8 @@ mod tests {
     }
 
     /// An accepted event does not touch the overflow state: it neither resets the cumulative
-    /// count nor re-arms the warning. `Subscriber::send` only calls into [`Overflow`] on `Full`,
-    /// so the old episode reset — a warning per accepted event — cannot reappear here.
+    /// count nor re-arms the warning. `Subscriber::reserve` only calls into [`Overflow`] on
+    /// `Full`, so the old episode reset — a warning per accepted event — cannot reappear here.
     #[test]
     fn accepted_events_do_not_reset_the_overflow_state() {
         let overflow = Overflow::default();
@@ -1701,10 +1863,10 @@ mod tests {
         let names = SpanNames::new("dig");
 
         assert_eq!(
-            names.event(EventSpan::Command),
+            names.name(SpanSelector::Command),
             "zeta.event.handle dig command"
         );
-        assert_eq!(names.event(EventSpan::Url), "zeta.event.handle dig url");
+        assert_eq!(names.name(SpanSelector::Url), "zeta.event.handle dig url");
 
         for kind in EventKind::ALL {
             // Only a CTCP event is conditional on the message; the other kinds wrap any of them.
@@ -1717,7 +1879,7 @@ mod tests {
                 .expect("every flag-based kind builds an event from its message");
 
             assert_eq!(
-                names.event(EventSpan::Kind(*kind)),
+                names.name(SpanSelector::Event(*kind)),
                 format!("zeta.event.handle dig {}", event.kind_name())
             );
         }

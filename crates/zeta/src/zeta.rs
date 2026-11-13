@@ -8,8 +8,7 @@ use crate::Error;
 use crate::config::Config;
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE, STARTUP_GRACE};
 use zeta_plugin::Context;
-use zeta_plugin::event::MessagingOperation;
-use zeta_plugin_runtime::{PluginRuntime, Registry};
+use zeta_plugin_runtime::{MessageTelemetry, PluginRuntime, Registry, handler_spans_enabled};
 
 use plugins::BundledPlugin;
 
@@ -100,101 +99,35 @@ fn drive_outgoing(client: &mut Client) -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// Returns the IRC command name when the event index routes it, for telemetry.
+/// Builds the per-line dispatch span from the line's telemetry.
 ///
-/// The classification is the runtime's, so this span decision cannot drift from dispatch;
-/// `ERROR` is the one addition because its disconnect reason is logged inside the span even
-/// though it is not routed.
-fn routed_command_name(command: &irc::proto::Command) -> Option<&str> {
-    if matches!(command, irc::proto::Command::ERROR(..)) {
-        return Some("ERROR");
+/// The span targets `zeta.plugins`, like the runtime's handler spans, so one filter decision
+/// enables the whole message trace. Its fields come from the runtime's telemetry, so the two
+/// spans cannot disagree about the command, operation, destination or message id.
+fn dispatch_span(telemetry: &MessageTelemetry<'_>) -> tracing::Span {
+    let span = tracing::info_span!(
+        target: "zeta.plugins",
+        "irc.dispatch",
+        irc.command = telemetry.command,
+        irc.channel = tracing::field::Empty,
+        otel.kind = "consumer",
+        messaging.system.name = "irc",
+        messaging.operation.name = %telemetry.operation,
+        messaging.operation.type = "process",
+        messaging.destination.name = tracing::field::Empty,
+        messaging.message.id = tracing::field::Empty,
+    );
+
+    if let Some(channel) = telemetry.channel {
+        span.record("irc.channel", channel);
+        span.record("messaging.destination.name", channel);
     }
 
-    zeta_plugin_runtime::routed_command_name(command)
-}
-
-/// Returns the `OTel` messaging operation when the event index routes the command, for telemetry.
-///
-/// Like [`routed_command_name`], the classification is the runtime's; `ERROR` is the one
-/// addition because its disconnect reason is logged inside the span even though it is not
-/// routed.
-fn messaging_operation(command: &irc::proto::Command) -> Option<MessagingOperation<'_>> {
-    if matches!(command, irc::proto::Command::ERROR(..)) {
-        return Some(MessagingOperation::Known("error"));
+    if let Some(message_id) = telemetry.message_id {
+        span.record("messaging.message.id", message_id);
     }
 
-    zeta_plugin_runtime::routed_messaging_operation(command)
-}
-
-/// Returns the channel a message targets, when it has one.
-fn message_channel(command: &irc::proto::Command) -> Option<&str> {
-    match command {
-        irc::proto::Command::PRIVMSG(target, _)
-        | irc::proto::Command::NOTICE(target, _)
-        | irc::proto::Command::JOIN(target, ..)
-        | irc::proto::Command::PART(target, ..)
-        | irc::proto::Command::KICK(target, ..) => Some(target),
-        _ => None,
-    }
-}
-
-/// The telemetry fields of one IRC line, computed once before its dispatch span is created.
-///
-/// The route classification is shared with the dispatcher, so the span records exactly the
-/// operations the runtime routes; the channel and IRCv3 message id are read from the message
-/// once. The span carries the OpenTelemetry messaging attributes alongside the transitional
-/// `irc.*` keys.
-struct DispatchMeta<'a> {
-    /// The IRC command, recorded as `irc.command`.
-    command: &'a str,
-    /// The `OTel` messaging operation, recorded as `messaging.operation.name`.
-    operation: MessagingOperation<'a>,
-    /// The channel the message targets, recorded as `irc.channel` and
-    /// `messaging.destination.name`.
-    channel: Option<&'a str>,
-    /// The IRCv3 message identifier, recorded as `messaging.message.id`.
-    message_id: Option<&'a str>,
-}
-
-impl<'a> DispatchMeta<'a> {
-    /// Classifies `message` for telemetry, or returns [`None`] when it is not dispatched.
-    fn of(message: &'a irc::proto::Message) -> Option<Self> {
-        let command = routed_command_name(&message.command)?;
-        let operation = messaging_operation(&message.command)?;
-
-        Some(Self {
-            command,
-            operation,
-            channel: message_channel(&message.command),
-            message_id: zeta_plugin::event::message_id(message),
-        })
-    }
-
-    /// Builds the per-message dispatch span.
-    fn span(self) -> tracing::Span {
-        let span = tracing::info_span!(
-            "irc.dispatch",
-            irc.command = self.command,
-            irc.channel = tracing::field::Empty,
-            otel.kind = "consumer",
-            messaging.system.name = "irc",
-            messaging.operation.name = %self.operation,
-            messaging.operation.type = "process",
-            messaging.destination.name = tracing::field::Empty,
-            messaging.message.id = tracing::field::Empty,
-        );
-
-        if let Some(channel) = self.channel {
-            span.record("irc.channel", channel);
-            span.record("messaging.destination.name", channel);
-        }
-
-        if let Some(message_id) = self.message_id {
-            span.record("messaging.message.id", message_id);
-        }
-
-        span
-    }
+    span
 }
 
 /// Dispatches incoming IRC messages as events to the plugins that registered interest, until
@@ -215,16 +148,18 @@ async fn dispatch_messages(
         // Everything logged while this message is routed runs inside a span: the
         // OpenTelemetry layer drops events that are not in the context of a span. Only the
         // commands `EventIndex` routes get one — PING, PONG and numerics would otherwise
-        // produce a trace with no children. `ERROR` is included because the disconnect reason
-        // is logged below. The span is at info level, not debug, because the loop below logs
-        // warnings: an `info` filter must not be what keeps them out of the backend.
+        // produce a trace with no children. `ERROR` is covered by `from_message` because the
+        // disconnect reason is logged below. The span is at info level, not debug, because the
+        // loop below logs warnings: an `info` filter must not be what keeps them out of the
+        // backend.
         //
-        // The span fields are derived only when the span is enabled, so a disabled subscriber
-        // does not pay for the route classification, channel lookup and `msgid` scan.
-        let dispatch = tracing::enabled!(tracing::Level::INFO)
-            .then(|| DispatchMeta::of(&message))
-            .flatten()
-            .map(DispatchMeta::span);
+        // The gate is shared with the handler spans (same `zeta.plugins` target), and the
+        // telemetry is derived only when it is enabled, so a disabled subscriber does not pay
+        // for the route classification, channel lookup and `msgid` scan.
+        let telemetry = handler_spans_enabled()
+            .then(|| MessageTelemetry::from_message(&message))
+            .flatten();
+        let dispatch = telemetry.as_ref().map(dispatch_span);
         let _dispatch = dispatch.as_ref().map(tracing::Span::enter);
 
         // `ERROR` carries the server's reason for closing the connection. It is not a `Raw`
@@ -554,70 +489,9 @@ impl Zeta {
 mod tests {
     use super::*;
 
-    #[test]
-    fn routed_command_name_follows_the_runtime_classification() {
-        use irc::proto::{Command, Response};
-
-        let cases = [
-            (
-                Command::PRIVMSG("#zeta".to_owned(), "hello".to_owned()),
-                Some("PRIVMSG"),
-            ),
-            (
-                Command::NOTICE("#zeta".to_owned(), "hello".to_owned()),
-                Some("NOTICE"),
-            ),
-            (Command::JOIN("#zeta".to_owned(), None, None), Some("JOIN")),
-            (Command::PART("#zeta".to_owned(), None), Some("PART")),
-            (Command::QUIT(None), Some("QUIT")),
-            (Command::NICK("zeta".to_owned()), Some("NICK")),
-            (
-                Command::KICK("#zeta".to_owned(), "nick".to_owned(), None),
-                Some("KICK"),
-            ),
-            (Command::Raw("BATCH".to_owned(), Vec::new()), Some("BATCH")),
-            (Command::ERROR("closing link".to_owned()), Some("ERROR")),
-            (Command::PING("server".to_owned(), None), None),
-            (Command::PONG("server".to_owned(), None), None),
-            (Command::Response(Response::RPL_WELCOME, Vec::new()), None),
-        ];
-
-        for (command, expected) in cases {
-            assert_eq!(routed_command_name(&command), expected, "{command:?}");
-            assert_eq!(
-                messaging_operation(&command).map(|operation| operation.to_string()),
-                expected.map(str::to_ascii_lowercase),
-                "{command:?}"
-            );
-
-            // `ERROR` is the host's only addition to the dispatcher's classification: it gets
-            // a span for its disconnect reason, but dispatches no event.
-            if matches!(command, Command::ERROR(..)) {
-                assert_eq!(
-                    zeta_plugin_runtime::routed_command_name(&command),
-                    None,
-                    "{command:?}"
-                );
-                assert!(zeta_plugin_runtime::routed_messaging_operation(&command).is_none());
-            } else {
-                assert_eq!(
-                    routed_command_name(&command),
-                    zeta_plugin_runtime::routed_command_name(&command),
-                    "{command:?}"
-                );
-                assert_eq!(
-                    messaging_operation(&command).map(|operation| operation.to_string()),
-                    zeta_plugin_runtime::routed_messaging_operation(&command)
-                        .map(|operation| operation.to_string()),
-                    "{command:?}"
-                );
-            }
-        }
-    }
-
-    /// The dispatch span records the `OTel` messaging attributes next to the transitional `irc.*`
-    /// keys: the operation is the lowercased command, a channel becomes the destination, and an
-    /// IRCv3 `msgid` is recorded when the message carries one.
+    /// The dispatch span records the `OTel` messaging attributes next to the `irc.*` keys: the
+    /// operation is the lowercased command, a channel becomes the destination, and an IRCv3
+    /// `msgid` is recorded when the message carries one.
     #[test]
     fn dispatch_span_records_messaging_attributes() {
         use tracing::subscriber::with_default;
@@ -629,20 +503,17 @@ mod tests {
 
         with_default(subscriber, || {
             let privmsg = tagged_privmsg("hello", "m1");
-            let span = DispatchMeta::of(&privmsg)
-                .expect("a privmsg is dispatched")
-                .span();
-            drop(span);
+            let telemetry =
+                MessageTelemetry::from_message(&privmsg).expect("a privmsg is dispatched");
+            drop(dispatch_span(&telemetry));
 
             let quit = message("nick!u@h", "QUIT", &["gone"]);
-            let span = DispatchMeta::of(&quit)
-                .expect("a quit is dispatched")
-                .span();
-            drop(span);
+            let telemetry = MessageTelemetry::from_message(&quit).expect("a quit is dispatched");
+            drop(dispatch_span(&telemetry));
 
             let ping = message("server.example", "PING", &["server"]);
             assert!(
-                DispatchMeta::of(&ping).is_none(),
+                MessageTelemetry::from_message(&ping).is_none(),
                 "PING is not dispatched and must not get a span"
             );
         });
@@ -651,6 +522,7 @@ mod tests {
         assert_eq!(spans.len(), 2, "recorded: {spans:?}");
 
         let privmsg = &spans[0];
+        assert_eq!(privmsg.name(), "irc.dispatch");
         assert_eq!(privmsg.field("irc.command"), Some("PRIVMSG"));
         assert_eq!(privmsg.field("irc.channel"), Some("#test"));
         assert_eq!(privmsg.field("otel.kind"), Some("consumer"));
