@@ -105,26 +105,30 @@ pub struct RecordingPlugin {
 }
 
 #[cfg(feature = "context")]
-#[zeta_plugin::async_trait::async_trait]
+// The trait's handlers are awaited by the plugin runtime; the recording only appends to a log,
+// so there is nothing to `.await` inside them.
+#[allow(clippy::unused_async_trait_impl)]
 impl zeta_plugin::Plugin for RecordingPlugin {
-    async fn handle_message(
-        &self,
-        _: &zeta_plugin::Context,
-        _: &zeta_plugin::Client,
-        _: &zeta_plugin::MessageEvent,
+    async fn handle<'a>(
+        &'a self,
+        _: &'a zeta_plugin::Context,
+        _: &'a zeta_plugin::Client,
+        event: &'a zeta_plugin::Event,
     ) -> Result<(), zeta_plugin::Error> {
-        self.recording
-            .lock()
-            .expect("recording log lock")
-            .push("message");
+        if let zeta_plugin::Event::Message(_) = event {
+            self.recording
+                .lock()
+                .expect("recording log lock")
+                .push("message");
+        }
 
         Ok(())
     }
 
-    async fn shutdown(
-        &mut self,
-        _: &zeta_plugin::Context,
-        _: &zeta_plugin::Client,
+    async fn shutdown<'a>(
+        &'a mut self,
+        _: &'a zeta_plugin::Context,
+        _: &'a zeta_plugin::Client,
     ) -> Result<(), zeta_plugin::Error> {
         self.recording
             .lock()

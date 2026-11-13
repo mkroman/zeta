@@ -3,10 +3,12 @@
 //! The expansion tests in the crate verify classification; this test makes the generated
 //! `Plugin` implementation itself compile for the edge cases that need special handling.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use clap::Parser;
 use zeta_plugin::{
-    Client, CommandEvent, Context, CtcpEvent, Error, JoinEvent, KickEvent, MessageEvent, NickEvent,
-    PartEvent, PluginRegistration, QuitEvent, RawEvent, Subscriptions, UrlEvent, plugin,
+    Client, CommandEvent, Context, CtcpEvent, Error, Event, JoinEvent, KickEvent, MessageEvent,
+    NickEvent, PartEvent, Plugin, QuitEvent, RawEvent, Subscriptions, UrlEvent, plugin,
 };
 
 /// A plugin whose command and URL handler are gated out.
@@ -143,7 +145,7 @@ impl Full {
 
 /// A plugin with one handler per event kind.
 ///
-/// The macro derives each trait method and event type from the kind keyword, so this is what
+/// The macro derives each `Event` variant and event type from the kind keyword, so this is what
 /// verifies every derived name against the real `Plugin` trait — including the kinds no bundled
 /// plugin uses yet.
 #[derive(Default)]
@@ -230,16 +232,100 @@ impl Partial {
     }
 }
 
+/// Asserts that the generated implementation implements `Plugin`.
+///
+/// `handle` is a generated method with an `impl Future + Send` return type, so naming the bound
+/// here is what checks the spelling; a plain `Registered` bound would not.
+const fn assert_plugin<P: Plugin>() {}
 #[test]
-fn every_plugin_shape_registers_itself() {
-    let names: Vec<&str> = zeta_plugin::inventory::iter::<PluginRegistration>()
-        .map(|registration| registration.name)
-        .collect();
+fn every_plugin_shape_implements_plugin() {
+    assert_plugin::<Full>();
+    assert_plugin::<Gated>();
+    assert_plugin::<Helper>();
+    assert_plugin::<Kinds>();
+    assert_plugin::<Partial>();
+    assert_plugin::<Words>();
+}
 
-    for expected in ["full", "gated", "helper", "kinds", "partial", "words"] {
-        assert!(
-            names.contains(&expected),
-            "{expected} missing from {names:?}"
-        );
+/// A plugin recording which generated `handle` arm ran.
+#[derive(Default)]
+struct Routing {
+    /// The number of command events routed to the `#[command]` dispatch.
+    command: AtomicUsize,
+    /// The number of message events routed to the `#[handler(message)]` method.
+    message: AtomicUsize,
+    /// The number of `loaded` hooks routed to the `#[handler(loaded)]` method.
+    loaded: AtomicUsize,
+}
+
+#[plugin(name = "routing")]
+impl Routing {
+    #[command(".route", "Route a command")]
+    async fn route(&self, _: &Context, _: &Client, _: &str) -> Result<(), Error> {
+        self.command.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
     }
+
+    #[handler(message)]
+    async fn message(&self, _: &Context, _: &Client, _: &MessageEvent) -> Result<(), Error> {
+        self.message.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    #[handler(loaded)]
+    async fn loaded(&mut self, _: &Context, _: &Client) -> Result<(), Error> {
+        self.loaded.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
+fn message(text: &str) -> MessageEvent {
+    MessageEvent::new(std::sync::Arc::new(
+        irc::proto::Message::new(
+            Some("nick!user@host.example"),
+            "PRIVMSG",
+            vec!["#test", text],
+        )
+        .expect("message should parse"),
+    ))
+}
+
+fn command(trigger: &str) -> CommandEvent {
+    CommandEvent::new(
+        std::sync::Arc::new(
+            irc::proto::Message::new(
+                Some("nick!user@host.example"),
+                "PRIVMSG",
+                vec!["#test", trigger],
+            )
+            .expect("message should parse"),
+        ),
+        zeta_plugin::CommandSpec::new(".route", "route"),
+    )
+    .expect("command should match")
+}
+
+#[tokio::test]
+async fn the_generated_handle_routes_each_event_kind() {
+    let ctx = zeta_test_support::test_context();
+    let client = zeta_test_support::mock_client().await;
+    let mut plugin = Routing::default();
+
+    plugin.loaded(&ctx, &client).await.expect("load");
+
+    plugin
+        .handle(&ctx, &client, &Event::Message(message("hello")))
+        .await
+        .expect("message");
+    plugin
+        .handle(&ctx, &client, &Event::Command(command(".route")))
+        .await
+        .expect("command");
+
+    assert_eq!(plugin.loaded.load(Ordering::SeqCst), 1);
+    assert_eq!(plugin.message.load(Ordering::SeqCst), 1);
+    assert_eq!(plugin.command.load(Ordering::SeqCst), 1);
 }

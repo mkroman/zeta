@@ -1,8 +1,13 @@
 //! The plugin API for the zeta IRC bot.
 //!
 //! Plugins implement the [`Plugin`] trait: they register the events they want to receive in
-//! [`Registered::new`] through a [`Subscriptions`] set and handle them by overloading the
-//! corresponding per-kind handler methods. See the [`event`] module for the event vocabulary.
+//! [`Registered::new`] through a [`Subscriptions`] set and handle them in a single
+//! [`Plugin::handle`] that matches the [`Event`]. See the [`event`] module for the event
+//! vocabulary.
+//!
+//! The host keeps the compiled-in plugins as one statically known value each —
+//! [`PluginSet`] implemented by the facade's generated enum — and awaits each handler future
+//! inline, so no plugin or handler future is boxed by the dispatch path.
 //!
 //! Alongside the plugin vocabulary, this crate carries the machinery shared by the host and the
 //! bundled plugins: the plugin [`Context`], the plugin-facing configuration, the shared event
@@ -17,8 +22,8 @@ pub mod irc;
 
 mod catalog;
 mod error;
+mod loaded;
 mod plugin;
-mod registration;
 mod types;
 
 pub mod config;
@@ -28,7 +33,6 @@ pub mod database;
 pub mod filtering;
 pub mod hostmask;
 
-pub use async_trait;
 pub use catalog::{CatalogEntry, PluginCatalog};
 pub use command::{ArgsError, ArgsMode, CommandSpec};
 pub use config::HostConfig;
@@ -42,10 +46,10 @@ pub use event::{
 };
 pub use filtering::{EventFilter, FilterHandle};
 pub use hostmask::Hostmasks;
-pub use inventory;
-pub use plugin::{Plugin, Registered, handle_event};
 #[doc(hidden)]
-pub use registration::{LoadedPlugin, PluginRegistration};
+pub use loaded::validate_settings;
+pub use loaded::{LoadedPlugin, PluginSet};
+pub use plugin::{Plugin, Registered};
 #[cfg(feature = "database")]
 pub use sqlx;
 pub use types::NoSettings;

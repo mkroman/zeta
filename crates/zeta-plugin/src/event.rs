@@ -579,10 +579,9 @@ pub enum UrlScope {
 /// doc fragments of both (the variant summary and "Registers interest in *…*."), and the
 /// low-cardinality name the dispatcher puts in `otel.name` and `zeta.event.kind`.
 ///
-/// The per-kind `Plugin::handle_*` defaults in `zeta-plugin/src/plugin.rs` are deliberately
-/// *not* generated from this table: `#[async_trait]` expands before the trait body's macro
-/// invocations, so generated `async fn` defaults would not be desugared and would mismatch
-/// every `#[async_trait]`-generated impl.
+/// The generated `Event` enum and the `#[handler(kind)]` routing in `zeta-plugin-macros` share
+/// this table's vocabulary, but not this macro: the macro crate cannot invoke a
+/// `macro_rules!` macro from here.
 macro_rules! event_kind_flags {
     ($(
         $kind:ident(
@@ -592,10 +591,9 @@ macro_rules! event_kind_flags {
     ),* $(,)?) => {
         /// An event delivered to a plugin.
         ///
-        /// A plugin receives only the event kinds it registered during initialization; each
-        /// kind is handled through its own [`Plugin`](super::Plugin) method
-        /// (`handle_command`, `handle_url`, `handle_join`, ...), which is only called when the
-        /// plugin registered that kind.
+        /// A plugin receives only the event kinds it registered during initialization; every
+        /// event is passed to the plugin's single [`Plugin::handle`](super::Plugin::handle),
+        /// which is only called for the kinds the plugin registered.
         #[derive(Clone, Debug)]
         #[non_exhaustive]
         pub enum Event {
@@ -760,8 +758,8 @@ event_kind_flags! {
 /// );
 /// ```
 ///
-/// Events of kinds the plugin did not register are never delivered to it, even though the
-/// corresponding handler methods exist as no-op defaults.
+/// Events of kinds the plugin did not register are never delivered to it, even though every
+/// event kind is routable through [`Plugin::handle`](super::Plugin::handle).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Subscriptions {
     /// The commands the plugin handles.
@@ -786,7 +784,8 @@ impl Subscriptions {
     /// Registers interest in a command.
     ///
     /// Every channel message whose first word matches the command's trigger is delivered to
-    /// [`Plugin::handle_command`](super::Plugin::handle_command).
+    /// [`Plugin::handle`](super::Plugin::handle) as a
+    /// [`CommandEvent`].
     pub fn command(&mut self, command: CommandSpec) -> &mut Self {
         self.commands.push(command);
         self

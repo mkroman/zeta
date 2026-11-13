@@ -51,6 +51,59 @@ struct SpanNames {
     kinds: [Arc<str>; EventKind::ALL.len()],
 }
 
+/// The per-event values a handler span is built from, computed once per delivered event.
+///
+/// The span itself stays per subscriber — it carries the plugin name and has to be created
+/// while the dispatch span is current — but everything that only depends on the event is
+/// computed once and shared by the whole subscriber list, instead of repeating the kind match,
+/// `kind_name` and channel lookup for every plugin.
+#[derive(Clone, Copy, Debug)]
+struct EventMeta<'a> {
+    /// The event's low-cardinality kind name, recorded as `zeta.event.kind`.
+    kind_name: &'static str,
+    /// The channel the event belongs to, recorded as `irc.channel`.
+    channel: Option<&'a str>,
+    /// The selector for a plugin's precomputed handler span name.
+    span: EventSpan,
+}
+
+/// The event-kind discriminator a subscriber turns into its precomputed span name.
+#[derive(Clone, Copy, Debug)]
+enum EventSpan {
+    /// A command event.
+    Command,
+    /// A URL event.
+    Url,
+    /// A flag-based event kind.
+    Kind(EventKind),
+}
+
+impl<'a> EventMeta<'a> {
+    /// Computes the metadata of an event.
+    fn of(event: &'a Event) -> Self {
+        let span = match event.kind() {
+            Some(kind) => EventSpan::Kind(kind),
+            None if matches!(event, Event::Command(_)) => EventSpan::Command,
+            None => EventSpan::Url,
+        };
+
+        Self {
+            kind_name: event.kind_name(),
+            channel: event.channel(),
+            span,
+        }
+    }
+
+    /// Computes the metadata of a URL event.
+    fn url(event: &'a UrlEvent) -> Self {
+        Self {
+            kind_name: "url",
+            channel: Some(event.channel()),
+            span: EventSpan::Url,
+        }
+    }
+}
+
 impl SpanNames {
     /// Builds the handler span names for `plugin`.
     fn new(plugin: &str) -> Self {
@@ -63,12 +116,12 @@ impl SpanNames {
         }
     }
 
-    /// Returns the exported name for `event`.
-    fn event(&self, event: &Event) -> &str {
-        match event.kind() {
-            Some(kind) => &self.kinds[kind.index()],
-            None if matches!(event, Event::Command(_)) => &self.command,
-            None => &self.url,
+    /// Returns the exported name for the event with the given span selector.
+    fn event(&self, span: EventSpan) -> &str {
+        match span {
+            EventSpan::Kind(kind) => &self.kinds[kind.index()],
+            EventSpan::Command => &self.command,
+            EventSpan::Url => &self.url,
         }
     }
 }
@@ -161,32 +214,54 @@ impl Subscriber {
     /// A full mailbox is not a stopped plugin: the event is shed, the overflow is counted, and
     /// the plugin stays registered. Evicting it here would let a burst permanently unregister a
     /// healthy plugin.
-    fn send(&self, event: Event, stopped: &mut Vec<&'static str>) {
-        // Created here, while the dispatch span is current, so the handler joins the message's
-        // trace. The span also covers the time the event waits in the mailbox. `or_current`
-        // falls back to the dispatch span when the handler span is disabled by the filter, so
-        // the handler logs still have a trace context.
-        //
+    ///
+    /// `meta` is computed once per event by the dispatcher and shared by the subscriber list, so
+    /// the kind name, channel and span-name selector are not looked up again per plugin.
+    fn send(&self, event: Event, meta: EventMeta<'_>, stopped: &mut Vec<&'static str>) {
+        let span = self.handler_span(meta);
+
+        self.enqueue(Envelope { event, span }, stopped);
+    }
+
+    /// Queues an event that is delivered to this plugin only, computing its span metadata here.
+    ///
+    /// Taking the event by value saves the clone a shared delivery would need; the metadata
+    /// lookups happen once either way, because the event has a single subscriber.
+    fn send_owned(&self, event: Event, stopped: &mut Vec<&'static str>) {
+        let span = self.handler_span(EventMeta::of(&event));
+
+        self.enqueue(Envelope { event, span }, stopped);
+    }
+
+    /// Builds the handler span for one delivery.
+    ///
+    /// Created here, while the dispatch span is current, so the handler joins the message's
+    /// trace. The span also covers the time the event waits in the mailbox. `or_current`
+    /// falls back to the dispatch span when the handler span is disabled by the filter, so
+    /// the handler logs still have a trace context.
+    fn handler_span(&self, meta: EventMeta<'_>) -> Span {
         // The name is precomputed: formatting it here would allocate on every event even when
         // `tracing` is disabled and the macro never evaluates its fields.
-        let name = self.names.event(&event);
+        let name = self.names.event(meta.span);
 
         let span = tracing::info_span!(
             "zeta.event.handle",
             otel.name = %name,
             otel.kind = "consumer",
             zeta.plugin.name = %self.name,
-            zeta.event.kind = event.kind_name(),
+            zeta.event.kind = meta.kind_name,
             irc.channel = tracing::field::Empty,
         );
 
-        if let Some(channel) = event.channel() {
+        if let Some(channel) = meta.channel {
             span.record("irc.channel", channel);
         }
 
-        let span = span.or_current();
-        let envelope = Envelope { event, span };
+        span.or_current()
+    }
 
+    /// Queues `envelope` on the mailbox, shedding it or reporting the stopped plugin.
+    fn enqueue(&self, envelope: Envelope, stopped: &mut Vec<&'static str>) {
         match self.mailbox.try_send(envelope) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Closed(_)) => stopped.push(self.name),
@@ -497,8 +572,10 @@ impl EventIndex {
 
     /// Delivers one event to every subscriber of a list.
     fn deliver(event: &Event, subscribers: &[Subscriber], stopped: &mut Vec<&'static str>) {
+        let meta = EventMeta::of(event);
+
         for subscriber in subscribers {
-            subscriber.send(event.clone(), stopped);
+            subscriber.send(event.clone(), meta, stopped);
         }
     }
 
@@ -543,7 +620,7 @@ impl EventIndex {
 
             for target in targets {
                 if let Some(event) = CommandEvent::new(Arc::clone(&message), target.spec) {
-                    target.subscriber.send(Event::Command(event), stopped);
+                    target.subscriber.send_owned(Event::Command(event), stopped);
                 }
             }
         }
@@ -634,13 +711,14 @@ impl EventIndex {
 
         for (url, repaired_from, subscribers) in seen {
             let event = UrlEvent::new(Arc::clone(&message), url, repaired_from);
+            let meta = EventMeta::url(&event);
 
             for subscriber in subscribers {
-                subscriber.send(Event::Url(event.clone()), stopped);
+                subscriber.send(Event::Url(event.clone()), meta, stopped);
             }
 
             for subscriber in &self.url_any {
-                subscriber.send(Event::Url(event.clone()), stopped);
+                subscriber.send(Event::Url(event.clone()), meta, stopped);
             }
         }
     }
@@ -1451,20 +1529,12 @@ mod tests {
     #[test]
     fn span_names_match_the_event_kinds() {
         let names = SpanNames::new("dig");
-        let message = Arc::new(privmsg(".dig example.com"));
-        let command = CommandEvent::new(Arc::clone(&message), CommandSpec::new(".dig", "dig"))
-            .expect("command should match");
-        let url = UrlEvent::new(
-            Arc::clone(&message),
-            Arc::new("https://example.com/".parse().expect("url")),
-            None,
-        );
 
         assert_eq!(
-            names.event(&Event::Command(command)),
+            names.event(EventSpan::Command),
             "zeta.event.handle dig command"
         );
-        assert_eq!(names.event(&Event::Url(url)), "zeta.event.handle dig url");
+        assert_eq!(names.event(EventSpan::Url), "zeta.event.handle dig url");
 
         for kind in EventKind::ALL {
             // Only a CTCP event is conditional on the message; the other kinds wrap any of them.
@@ -1477,7 +1547,7 @@ mod tests {
                 .expect("every flag-based kind builds an event from its message");
 
             assert_eq!(
-                names.event(&event),
+                names.event(EventSpan::Kind(*kind)),
                 format!("zeta.event.handle dig {}", event.kind_name())
             );
         }

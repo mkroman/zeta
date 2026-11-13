@@ -1,22 +1,17 @@
 use std::future::Future;
-use std::pin::Pin;
 
-use async_trait::async_trait;
 use irc::client::Client;
 use serde::de::DeserializeOwned;
 
 use crate::Error;
 use crate::context::Context;
-use crate::event::{
-    CommandEvent, CtcpEvent, Event, JoinEvent, KickEvent, MessageEvent, NickEvent, PartEvent,
-    QuitEvent, RawEvent, Subscriptions, UrlEvent,
-};
+use crate::event::{Event, Subscriptions};
 
 /// Construction-time metadata and the constructor for a plugin type.
 ///
-/// Kept separate from [`Plugin`] so that trait stays object-safe: every plugin runs behind
-/// `Box<dyn Plugin>`, while the name, settings and constructor are only needed once, when the
-/// host builds the plugin from its registration.
+/// Kept separate from [`Plugin`] so the settings type and constructor are only needed once, when
+/// the host builds the plugin from its configuration; the running plugin is handed to the
+/// runtime as a plain value. The facade's generated registry calls it once per variant.
 ///
 /// The `#[plugin]` attribute macro generates this implementation, including [`Registered::NAME`]
 /// and the constructor that registers the plugin's subscriptions.
@@ -25,8 +20,8 @@ pub trait Registered: Plugin + Sized + 'static {
     ///
     /// The name identifies the plugin in the help system and the plugin catalog, and must match
     /// the plugin's module name. The `#[plugin]` attribute macro sets it from its `name`
-    /// argument and submits a [`PluginRegistration`](crate::PluginRegistration) under it, so the
-    /// host discovers every compiled-in plugin without a central list.
+    /// argument; the facade's generated registry lists the same name, so the host discovers
+    /// every compiled-in plugin without a runtime registration mechanism.
     const NAME: &'static str;
 
     /// This plugin's deserialized `[plugins.<name>]` settings.
@@ -57,29 +52,30 @@ pub trait Registered: Plugin + Sized + 'static {
     ) -> Result<Self, Error>;
 }
 
-/// The behaviour shared by every plugin: the event handlers the host calls.
+/// The behaviour shared by every plugin: one event handler and the lifecycle hooks.
 ///
 /// A plugin declares the events it wants to receive during construction, through the
 /// [`Subscriptions`] it registers — the commands it handles, the URL hosts it reacts to, and the
 /// presence, message, CTCP or raw traffic it observes. The host routes only the matching events
-/// to the plugin, where each kind is handled by overloading the corresponding handler method:
-/// [`Plugin::handle_command`], [`Plugin::handle_url`], [`Plugin::handle_join`], and so on.
-/// Handlers the plugin did not register are never called; their default implementations do
-/// nothing.
+/// to the plugin and calls [`Plugin::handle`] with each of them; the handler matches the
+/// [`Event`] to reach the plugin's own per-kind code.
 ///
-/// This trait carries only behaviour, so it is object-safe: the host stores every plugin behind
-/// `Box<dyn Plugin>`. Construction — the plugin's name, its settings type and its constructor —
-/// lives in [`Registered`].
-///
-/// Most plugins are written with the `#[plugin]` attribute macro instead of implementing these
-/// traits by hand: it reads the container attributes and the `#[command]`/`#[handler]` method
+/// Most plugins are written with the `#[plugin]` attribute macro instead of implementing this
+/// trait by hand: it reads the container attributes and the `#[command]`/`#[handler]` method
 /// annotations off an inherent impl block and generates both implementations, including the
-/// name constant, the settings plumbing and the command dispatch.
+/// name constant, the settings plumbing, the single [`Plugin::handle`] match and the command
+/// dispatch.
 ///
 /// Each plugin runs in its own long-lived task, and the calls to a plugin's handlers are
 /// serialized. Handlers therefore must not block the task; spawn a task for work that outlives
 /// the call. Plugins that need to share state with other plugins can publish it through their
 /// context.
+///
+/// The trait is closed at three methods and is deliberately not object-safe: the host keeps one
+/// statically known plugin value per variant of the facade's generated enum and awaits the
+/// handler future inline, so no plugin is boxed behind `dyn` and no future is allocated. A
+/// hand-written implementation therefore has to spell the `impl Future + Send` return types the
+/// macro would generate.
 ///
 /// # Examples
 ///
@@ -150,197 +146,58 @@ pub trait Registered: Plugin + Sized + 'static {
 ///     }
 /// }
 /// ```
-#[async_trait]
+///
+/// A plugin that serves several commands from one method — or wants the matched
+/// [`CommandSpec`](crate::CommandSpec) itself — takes the event with `#[handler(command)]`:
+///
+/// ```
+/// use zeta_plugin::{Client, CommandEvent, Context, Error, plugin, send_reply};
+///
+/// /// Handles `.foo` and `.bar` from one method.
+/// #[derive(Default)]
+/// struct Multi;
+///
+/// #[plugin(name = "multi")]
+/// impl Multi {
+///     #[handler(command)]
+///     async fn command(
+///         &self,
+///         _: &Context,
+///         client: &Client,
+///         command: &CommandEvent,
+///     ) -> Result<(), Error> {
+///         send_reply(client, command.channel(), format!("got {}", command.spec.trigger()))?;
+///
+///         Ok(())
+///     }
+/// }
+/// ```
 pub trait Plugin: Send + Sync {
-    /// Handles a command invocation.
+    /// Handles one event the plugin subscribed to.
     ///
-    /// Called when a channel message's first word matches the trigger of one of the commands
-    /// registered in [`Registered::new`]. The event carries the
-    /// [`CommandSpec`](super::CommandSpec) that matched and the trailing arguments of the
-    /// invocation.
+    /// The dispatcher only delivers events whose kind the plugin registered, so a handler that
+    /// matches every event kind may still assume the others never arrive. Commands carry the
+    /// [`CommandSpec`](crate::CommandSpec) that matched and the trailing arguments of the
+    /// invocation; URLs are already deduplicated and checked against the shared URL filters.
     ///
     /// For plugins written with the `#[plugin]` macro, the generated implementation matches the
-    /// event's trigger against each `#[command]`'s trigger, parses the arguments, and calls the
-    /// annotated method — one method per command. Hand-written plugins that register several
-    /// commands can instead dispatch on the identity of their declared constants (see
-    /// [`CommandSpec`](super::CommandSpec)'s documentation on matching by identity):
+    /// event's kind, routes commands by trigger, parses their arguments, and calls the annotated
+    /// method — one method per command or event kind.
     ///
-    /// ```
-    /// use zeta_plugin::{Client, Context, Error, plugin};
-    ///
-    /// # #[derive(Default)]
-    /// # struct MyPlugin;
-    /// #[plugin(name = "my_plugin")]
-    /// impl MyPlugin {
-    ///     #[command(".foo", "Handle `.foo`")]
-    ///     async fn foo(&self, _: &Context, _: &Client, _channel: &str) -> Result<(), Error> {
-    ///         // Handle `.foo`.
-    ///         Ok(())
-    ///     }
-    ///
-    ///     #[command(".bar", "Handle `.bar`")]
-    ///     async fn bar(&self, _: &Context, _: &Client, _channel: &str) -> Result<(), Error> {
-    ///         // Handle `.bar`.
-    ///         Ok(())
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// Overriding `handle_command` by hand — for example with `#[handler(command)]` — serves
-    /// every registered command from one method instead.
+    /// The default implementation ignores every event. It exists for hand-written plugins that
+    /// only need the lifecycle hooks; the `#[plugin]` macro always generates an implementation.
     ///
     /// # Errors
     ///
-    /// Returns an error if handling the command failed; the error is logged and never
-    /// propagated to the other plugins.
-    async fn handle_command(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _command: &CommandEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Handles a URL posted in a channel.
-    ///
-    /// Called once per extracted URL whose host the plugin registered (or for every URL, for
-    /// plugins that registered with [`Subscriptions::urls`]). The URL has already been
-    /// deduplicated and checked against the shared URL filters.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the URL failed; the error is logged and never propagated.
-    async fn handle_url(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _url: &UrlEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    // The per-kind `handle_message`..`handle_raw` defaults below stay hand-written: they
-    // cannot be generated from the event kind table, because `#[async_trait]` expands before
-    // the trait body's macro invocations — the generated `async fn`s would never be desugared
-    // and would mismatch every `#[async_trait]`-generated impl (lifetime error E0195).
-    /// Handles a channel message.
-    ///
-    /// Called for every channel `PRIVMSG` that is not a CTCP message, whether or not it
-    /// matches a registered command — for plugins that need to observe all traffic (e.g.
-    /// message history or free-form text parsing).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the message failed; the error is logged and never
-    /// propagated.
-    async fn handle_message(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _message: &MessageEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Handles a user joining a channel.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_join(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _join: &JoinEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Handles a user leaving a channel.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_part(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _part: &PartEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Handles a user quitting the network.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_quit(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _quit: &QuitEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Handles a user changing their nickname.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_nick(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _nick: &NickEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Handles a user being kicked from a channel.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_kick(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _kick: &KickEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Handles a CTCP request or reply.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_ctcp(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _ctcp: &CtcpEvent,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Handles a raw, unmodeled IRC command.
-    ///
-    /// Only delivered to plugins that registered with [`Subscriptions::receive_raw`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if handling the event failed; the error is logged and never propagated.
-    async fn handle_raw(
-        &self,
-        _ctx: &Context,
-        _client: &Client,
-        _raw: &RawEvent,
-    ) -> Result<(), Error> {
-        Ok(())
+    /// Returns an error if handling the event failed; the error is logged and never propagated
+    /// to the other plugins.
+    fn handle<'a>(
+        &'a self,
+        _ctx: &'a Context,
+        _client: &'a Client,
+        _event: &'a Event,
+    ) -> impl Future<Output = Result<(), Error>> + Send + 'a {
+        async { Ok(()) }
     }
 
     /// Called once when the plugin's task starts, after the client has connected to the network.
@@ -353,8 +210,12 @@ pub trait Plugin: Send + Sync {
     ///
     /// Returns an error if the plugin failed to load; the error is logged and the plugin task
     /// exits without processing any events.
-    async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), Error> {
-        Ok(())
+    fn loaded<'a>(
+        &'a mut self,
+        _ctx: &'a Context,
+        _client: &'a Client,
+    ) -> impl Future<Output = Result<(), Error>> + Send + 'a {
+        async { Ok(()) }
     }
 
     /// Called once while the bot is shutting down, after the plugin's event queue has been
@@ -389,40 +250,11 @@ pub trait Plugin: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if flushing failed; the error is logged and the shutdown continues.
-    async fn shutdown(&mut self, _ctx: &Context, _client: &Client) -> Result<(), Error> {
-        Ok(())
-    }
-}
-
-/// Routes `event` to `plugin`'s handler for its kind.
-///
-/// The dispatcher only delivers events whose kind the plugin registered, so handlers for other
-/// kinds are never reached. The match is exhaustive, so adding an event kind without a routing
-/// arm is a compile error.
-///
-/// The handler's own future is returned rather than awaited inside another boxed future, so
-/// routing an event costs one heap allocation, not two.
-///
-/// # Errors
-///
-/// Returns the error of the handler the event was routed to.
-#[must_use = "the returned future must be awaited; dropping it discards the event"]
-pub fn handle_event<'a>(
-    plugin: &'a dyn Plugin,
-    ctx: &'a Context,
-    client: &'a Client,
-    event: &'a Event,
-) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
-    match event {
-        Event::Command(event) => plugin.handle_command(ctx, client, event),
-        Event::Url(event) => plugin.handle_url(ctx, client, event),
-        Event::Message(event) => plugin.handle_message(ctx, client, event),
-        Event::Join(event) => plugin.handle_join(ctx, client, event),
-        Event::Part(event) => plugin.handle_part(ctx, client, event),
-        Event::Quit(event) => plugin.handle_quit(ctx, client, event),
-        Event::Nick(event) => plugin.handle_nick(ctx, client, event),
-        Event::Kick(event) => plugin.handle_kick(ctx, client, event),
-        Event::Ctcp(event) => plugin.handle_ctcp(ctx, client, event),
-        Event::Raw(event) => plugin.handle_raw(ctx, client, event),
+    fn shutdown<'a>(
+        &'a mut self,
+        _ctx: &'a Context,
+        _client: &'a Client,
+    ) -> impl Future<Output = Result<(), Error>> + Send + 'a {
+        async { Ok(()) }
     }
 }

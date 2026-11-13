@@ -1,5 +1,6 @@
 //! The long-lived task that runs one plugin.
 
+use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -11,7 +12,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{Instrument, Span, debug, error, warn};
 
-use zeta_plugin::{Context, Plugin, handle_event};
+use zeta_plugin::{Context, Plugin};
 
 use crate::dispatch::Envelope;
 
@@ -25,14 +26,19 @@ use crate::dispatch::Envelope;
 /// drain its queued events, run the shutdown hook and exit. A panicking handler still runs the
 /// shutdown hook; the panic is re-raised afterwards so the task keeps its panic status.
 #[must_use = "dropping the task handle detaches the plugin task instead of stopping it"]
-pub struct PluginTask {
+pub struct PluginTask<P> {
     /// The name of the plugin, used for logging.
     pub name: &'static str,
     /// The handle of the spawned plugin task.
     handle: JoinHandle<()>,
+    /// The plugin type, named only so the runtime that spawns the tasks stays generic over it.
+    plugin: PhantomData<fn() -> P>,
 }
 
-impl PluginTask {
+impl<P> PluginTask<P>
+where
+    P: Plugin + 'static,
+{
     /// Spawns `plugin` into a task that loads it and processes events until the channel closes.
     ///
     /// If the plugin fails to load, the error is logged and the task exits. When the channel
@@ -46,7 +52,7 @@ impl PluginTask {
     /// a hook that stalls instead.
     pub fn spawn(
         name: &'static str,
-        mut plugin: Box<dyn Plugin>,
+        mut plugin: P,
         ctx: Arc<Context>,
         client: Arc<Client>,
         mut receiver: mpsc::Receiver<Envelope>,
@@ -93,10 +99,12 @@ impl PluginTask {
                     // The span was created by the dispatcher while the IRC line's dispatch span
                     // was current, so the handler joins the message's trace. It also covers the
                     // time the event waited in the mailbox.
+                    //
+                    // The handler future is created and awaited on this task's stack: the plugin
+                    // is a statically known value, so there is no boxed future on the dispatch
+                    // path.
                     async {
-                        if let Err(error) =
-                            handle_event(plugin.as_ref(), &ctx, &client, &event).await
-                        {
+                        if let Err(error) = plugin.handle(&ctx, &client, &event).await {
                             // The handler span is `.or_current()`: when it is filtered out, the
                             // fallback `irc.dispatch` span does not carry the plugin name, so the
                             // error event keeps it.
@@ -148,7 +156,11 @@ impl PluginTask {
             debug!(zeta.plugin.name = %name, "plugin task stopped");
         });
 
-        Self { name, handle }
+        Self {
+            name,
+            handle,
+            plugin: PhantomData,
+        }
     }
 
     /// Consumes the plugin task and returns its name with the task's handle.
@@ -168,6 +180,7 @@ mod tests {
 
     use super::*;
     use zeta_plugin::event::MessageEvent;
+    use zeta_plugin::{Error, Event};
     use zeta_test_support::{Recording, RecordingPlugin, publish_recording, test_context};
 
     /// A plugin whose message handler panics, recording that the shutdown hook still ran.
@@ -176,18 +189,18 @@ mod tests {
         recording: Recording,
     }
 
-    #[zeta_plugin::async_trait::async_trait]
+    #[allow(clippy::unused_async_trait_impl)]
     impl Plugin for PanickingPlugin {
-        async fn handle_message(
-            &self,
-            _: &Context,
-            _: &Client,
-            _: &MessageEvent,
-        ) -> Result<(), zeta_plugin::Error> {
+        async fn handle<'a>(
+            &'a self,
+            _: &'a Context,
+            _: &'a Client,
+            _: &'a Event,
+        ) -> Result<(), Error> {
             panic!("handler panic");
         }
 
-        async fn shutdown(&mut self, _: &Context, _: &Client) -> Result<(), zeta_plugin::Error> {
+        async fn shutdown<'a>(&'a mut self, _: &'a Context, _: &'a Client) -> Result<(), Error> {
             self.recording
                 .lock()
                 .expect("the recording lock is not poisoned")
@@ -200,10 +213,10 @@ mod tests {
     /// A plugin whose `loaded` hook fails, modelling a plugin that gives up at startup.
     struct FailingLoader;
 
-    #[zeta_plugin::async_trait::async_trait]
+    #[allow(clippy::unused_async_trait_impl)]
     impl Plugin for FailingLoader {
-        async fn loaded(&mut self, _: &Context, _: &Client) -> Result<(), zeta_plugin::Error> {
-            Err(zeta_plugin::Error::Message("load failed".to_owned()))
+        async fn loaded<'a>(&'a mut self, _: &'a Context, _: &'a Client) -> Result<(), Error> {
+            Err(Error::Message("load failed".to_owned()))
         }
     }
 
@@ -217,9 +230,9 @@ mod tests {
         let (sender, receiver) = mpsc::channel(8);
         let task = PluginTask::spawn(
             "recording",
-            Box::new(RecordingPlugin {
+            RecordingPlugin {
                 recording: Arc::clone(&recording),
-            }),
+            },
             Arc::clone(&ctx),
             Arc::clone(&client),
             receiver,
@@ -233,7 +246,7 @@ mod tests {
 
             sender
                 .send(Envelope {
-                    event: zeta_plugin::Event::Message(MessageEvent::new(Arc::new(message))),
+                    event: Event::Message(MessageEvent::new(Arc::new(message))),
                     span: Span::none(),
                 })
                 .await
@@ -263,9 +276,9 @@ mod tests {
         let (sender, receiver) = mpsc::channel(8);
         let task = PluginTask::spawn(
             "panicking",
-            Box::new(PanickingPlugin {
+            PanickingPlugin {
                 recording: Arc::clone(&recording),
-            }),
+            },
             Arc::clone(&ctx),
             Arc::clone(&client),
             receiver,
@@ -278,7 +291,7 @@ mod tests {
 
         sender
             .send(Envelope {
-                event: zeta_plugin::Event::Message(MessageEvent::new(Arc::new(message))),
+                event: Event::Message(MessageEvent::new(Arc::new(message))),
                 span: Span::none(),
             })
             .await
@@ -311,7 +324,7 @@ mod tests {
         let (started, startup) = oneshot::channel();
         let task = PluginTask::spawn(
             "failing",
-            Box::new(FailingLoader),
+            FailingLoader,
             Arc::clone(&ctx),
             Arc::clone(&client),
             receiver,

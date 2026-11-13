@@ -30,11 +30,11 @@ use crate::task::PluginTask;
 pub const MAILBOX_CAPACITY: usize = 4_096;
 
 /// The running plugins: their dispatch index and their tasks.
-pub struct PluginRuntime {
+pub struct PluginRuntime<P> {
     /// Routes incoming messages to the plugins that registered interest.
     index: EventIndex,
     /// The long-lived task of every running plugin.
-    tasks: Vec<PluginTask>,
+    tasks: Vec<PluginTask<P>>,
     /// The shared filters, resolved once after every plugin was constructed.
     ///
     /// The filter plugin publishes its handle from its constructor, so the handle exists by the
@@ -55,7 +55,10 @@ pub struct PluginRuntime {
     shutdown_span: Arc<OnceLock<Span>>,
 }
 
-impl PluginRuntime {
+impl<P> PluginRuntime<P>
+where
+    P: zeta_plugin::Plugin + 'static,
+{
     /// Spawns every plugin into its own long-lived task and indexes its subscriptions.
     ///
     /// Each task gets a bounded mailbox, so a slow or failing plugin cannot block the IRC
@@ -68,7 +71,7 @@ impl PluginRuntime {
     /// Every task also reports on the startup barrier once its `loaded` hook has finished;
     /// [`Self::wait_loaded`] waits for all of them.
     #[must_use]
-    pub fn start(plugins: Vec<LoadedPlugin>, ctx: &Arc<Context>, client: &Arc<Client>) -> Self {
+    pub fn start(plugins: Vec<LoadedPlugin<P>>, ctx: &Arc<Context>, client: &Arc<Client>) -> Self {
         // The plugins are already constructed: the filter plugin published its handle from its
         // constructor, and nothing replaces it later. Resolve it once, before any task can
         // dispatch a message.
@@ -227,8 +230,11 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use futures::future;
+    use irc::proto::Message;
     use url::Url;
-    use zeta_plugin::{CommandSpec, EventFilter, LoadedPlugin, Plugin, Sender, Subscriptions};
+    use zeta_plugin::{
+        CommandSpec, Error, Event, EventFilter, LoadedPlugin, Plugin, Sender, Subscriptions,
+    };
 
     use super::*;
 
@@ -251,13 +257,8 @@ mod tests {
         delay: Duration,
     }
 
-    #[zeta_plugin::async_trait::async_trait]
     impl Plugin for Loader {
-        async fn loaded(
-            &mut self,
-            _ctx: &Context,
-            _client: &Client,
-        ) -> Result<(), zeta_plugin::Error> {
+        async fn loaded<'a>(&'a mut self, _: &'a Context, _: &'a Client) -> Result<(), Error> {
             tokio::time::sleep(self.delay).await;
             self.loaded.store(true, Ordering::SeqCst);
 
@@ -268,13 +269,8 @@ mod tests {
     /// A plugin whose `loaded` hook never finishes, modelling a stalled hook.
     struct PendingLoader(Arc<AtomicBool>);
 
-    #[zeta_plugin::async_trait::async_trait]
     impl Plugin for PendingLoader {
-        async fn loaded(
-            &mut self,
-            _ctx: &Context,
-            _client: &Client,
-        ) -> Result<(), zeta_plugin::Error> {
+        async fn loaded<'a>(&'a mut self, _: &'a Context, _: &'a Client) -> Result<(), Error> {
             future::pending::<()>().await;
             self.0.store(true, Ordering::SeqCst);
 
@@ -285,22 +281,17 @@ mod tests {
     /// A plugin whose `loaded` hook panics before it can report on the startup barrier.
     struct PanicLoader;
 
-    #[zeta_plugin::async_trait::async_trait]
     impl Plugin for PanicLoader {
-        async fn loaded(
-            &mut self,
-            _ctx: &Context,
-            _client: &Client,
-        ) -> Result<(), zeta_plugin::Error> {
+        async fn loaded<'a>(&'a mut self, _: &'a Context, _: &'a Client) -> Result<(), Error> {
             panic!("loaded hook panic");
         }
     }
 
-    /// Wraps `loader` into a plugin with no subscriptions.
-    fn loaded_plugin(name: &'static str, loader: Loader) -> LoadedPlugin {
+    /// Wraps `plugin` into a loaded plugin with no subscriptions.
+    fn loaded_plugin<P>(name: &'static str, plugin: P) -> LoadedPlugin<P> {
         LoadedPlugin {
             name,
-            plugin: Box::new(loader),
+            plugin,
             subscriptions: Subscriptions::new(),
         }
     }
@@ -316,7 +307,7 @@ mod tests {
             )))));
 
         let client = Arc::new(zeta_test_support::mock_client().await);
-        let runtime = PluginRuntime::start(Vec::new(), &ctx, &client);
+        let runtime = PluginRuntime::<Loader>::start(Vec::new(), &ctx, &client);
         let sender = |nick| Some(Sender::new(nick, "user", "host.example"));
 
         assert!(runtime.filters.ignores("#test", sender("ignored")));
@@ -452,11 +443,7 @@ mod tests {
         // A hook that stalls models the case the grace exists for; a panicking hook drops its
         // sender instead and is covered by its own test below.
         let mut runtime = PluginRuntime::start(
-            vec![LoadedPlugin {
-                name: "stalled",
-                plugin: Box::new(PendingLoader(Arc::clone(&loaded))),
-                subscriptions: Subscriptions::new(),
-            }],
+            vec![loaded_plugin("stalled", PendingLoader(Arc::clone(&loaded)))],
             &ctx,
             &client,
         );
@@ -488,15 +475,8 @@ mod tests {
         let ctx = Arc::new(zeta_test_support::test_context());
         let client = Arc::new(zeta_test_support::mock_client().await);
 
-        let mut runtime = PluginRuntime::start(
-            vec![LoadedPlugin {
-                name: "panicking",
-                plugin: Box::new(PanicLoader),
-                subscriptions: Subscriptions::new(),
-            }],
-            &ctx,
-            &client,
-        );
+        let mut runtime =
+            PluginRuntime::start(vec![loaded_plugin("panicking", PanicLoader)], &ctx, &client);
 
         let started = tokio::time::Instant::now();
         runtime.wait_loaded(Duration::from_secs(30)).await;
@@ -533,5 +513,59 @@ mod tests {
         .await;
 
         assert!(*finished.lock().await);
+    }
+
+    /// A plugin that records every event it receives, so dispatch is observable.
+    struct Recorder(Arc<std::sync::Mutex<Vec<&'static str>>>);
+
+    #[allow(clippy::unused_async_trait_impl)]
+    impl Plugin for Recorder {
+        async fn handle<'a>(
+            &'a self,
+            _: &'a Context,
+            _: &'a Client,
+            event: &'a Event,
+        ) -> Result<(), Error> {
+            self.0
+                .lock()
+                .expect("the recording lock is not poisoned")
+                .push(event.kind_name());
+
+            Ok(())
+        }
+    }
+
+    /// Dispatching a message reaches the plugin's handler through its mailbox.
+    #[tokio::test]
+    async fn dispatch_reaches_the_plugin_handler() {
+        let ctx = Arc::new(zeta_test_support::test_context());
+        let client = Arc::new(zeta_test_support::mock_client().await);
+        let recording = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let mut subscriptions = Subscriptions::new();
+        subscriptions.receive_message();
+
+        let mut runtime = PluginRuntime::start(
+            vec![LoadedPlugin {
+                name: "recorder",
+                plugin: Recorder(Arc::clone(&recording)),
+                subscriptions,
+            }],
+            &ctx,
+            &client,
+        );
+
+        runtime.dispatch(
+            Message::new(Some("nick!user@host"), "PRIVMSG", vec!["#test", "hello"])
+                .expect("message should parse"),
+        );
+        runtime.shutdown(Duration::from_secs(1)).await;
+
+        assert_eq!(
+            *recording
+                .lock()
+                .expect("the recording lock is not poisoned"),
+            ["message"]
+        );
     }
 }

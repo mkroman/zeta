@@ -10,6 +10,8 @@ use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE, STARTUP_GRACE};
 use zeta_plugin::Context;
 use zeta_plugin_runtime::{PluginRuntime, Registry};
 
+use plugins::RuntimePlugin;
+
 /// The signal that triggered a graceful shutdown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ShutdownSignal {
@@ -140,7 +142,7 @@ fn message_channel(command: &irc::proto::Command) -> Option<&str> {
 /// process exits non-zero rather than looking like a successful run to its supervisor.
 async fn dispatch_messages(
     stream: &mut irc::client::ClientStream,
-    runtime: &mut PluginRuntime,
+    runtime: &mut PluginRuntime<RuntimePlugin>,
 ) -> Result<(), Error> {
     use futures::stream::StreamExt;
 
@@ -234,8 +236,8 @@ fn start_mirror(shared: &zeta_plugin::SharedState) -> bool {
 pub struct Zeta {
     /// The complete configuration loaded from file or environment
     config: Config,
-    /// The plugin containing all loaded plugins
-    registry: Registry,
+    /// The plugin registry holding every loaded plugin
+    registry: Registry<RuntimePlugin>,
     /// The shared context for plugins
     context: Arc<Context>,
 }
