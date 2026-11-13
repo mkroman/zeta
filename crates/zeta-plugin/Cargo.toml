@@ -20,10 +20,8 @@ rustls = ["sqlx?/tls-rustls-aws-lc-rs", "zeta-http?/rustls"]
 
 [dependencies]
 arc-swap.workspace = true
-async-trait.workspace = true
 clap.workspace = true
 figment.workspace = true
-inventory = "0.3.24"
 irc.workspace = true
 parking_lot.workspace = true
 reqwest = { workspace = true, optional = true }

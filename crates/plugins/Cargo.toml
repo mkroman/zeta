@@ -254,6 +254,7 @@ zeta-plugin-runtime = { path = "../zeta-plugin-runtime" }
 plugins-dig = { path = "../plugins-dig" }
 serde_json.workspace = true
 syn = { version = "=3.0.10", default-features = false, features = ["derive", "full", "parsing"] }
+tokio.workspace = true
 zeta-test-support = { path = "../zeta-test-support" }
 
 [lints]

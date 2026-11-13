@@ -1,25 +1,28 @@
 //! Per-plugin configuration plumbing.
 //!
-//! Every bundled plugin registers itself through [`zeta_plugin::PluginRegistration`], so its
-//! `[plugins.<name>]` section is resolved by name instead of through a typed field per plugin:
-//! [`PluginsConfig`] keeps each section's raw settings next to the host-managed `enabled`
-//! toggle; the plugin's settings type is validated when the configuration is loaded (even when
-//! the plugin is disabled) and deserialized again when the plugin is constructed. Unrecognized
-//! settings keys are collected rather than logged here, so the host can report them once its
-//! logging is initialized.
+//! Every bundled plugin is one variant of [`BundledPlugin`], so its
+//! `[plugins.<name>]` section is validated by the generated
+//! [`PluginSet`] implementation instead of through a typed field per
+//! plugin: [`PluginsConfig`] keeps each section's raw settings next to the host-managed
+//! `enabled` toggle; the plugin's settings type is validated when the configuration is loaded
+//! (even when the plugin is disabled) and deserialized again when the plugin is constructed.
+//! Unrecognized settings keys are collected rather than logged here, so the host can report them
+//! once its logging is initialized.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use figment::value::{Dict, Value};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
-use zeta_plugin::inventory;
+use zeta_plugin::PluginSet;
+
+use crate::BundledPlugin;
 
 /// One raw `[plugins.<name>]` section.
 ///
-/// The settings stay a [`figment::value::Value`] until the plugin's registration deserializes
-/// them into its own settings type; `enabled` is already resolved against the global
-/// [`PluginsConfig::enabled_by_default`] toggle.
+/// The settings stay a [`figment::value::Value`] until the plugin's generated `PluginSet`
+/// implementation deserializes them into its own settings type; `enabled` is already resolved
+/// against the global [`PluginsConfig::enabled_by_default`] toggle.
 #[derive(Clone, Debug, Serialize)]
 pub struct PluginSection {
     /// Whether the plugin should be registered, with an omitted key resolved against
@@ -61,16 +64,14 @@ impl PluginSection {
 
 /// Per-plugin configuration extracted from the `[plugins]` section.
 ///
-/// Sections are keyed by plugin name, e.g. `[plugins.dig]`, and resolved against the plugins
-/// that registered themselves through [`zeta_plugin::PluginRegistration`]. Sections whose name
-/// matches no bundled plugin are collected in [`PluginsConfig::unknown`] so the host can warn
-/// about likely typos; a section for a bundled plugin compiled out by its cargo feature is not
-/// a typo and stays out of that map.
+/// Sections are keyed by plugin name, e.g. `[plugins.dig]`, and resolved against the compiled-in
+/// [`BundledPlugin`] variants. Sections whose name matches no bundled plugin are collected in
+/// [`PluginsConfig::unknown`] so the host can warn about likely typos; a section for a bundled
+/// plugin compiled out by its cargo feature is not a typo and stays out of that map.
 ///
 /// A section that is omitted entirely follows the global [`PluginsConfig::enabled_by_default`]
 /// and gives the plugin its default settings. The `enabled` key is managed by the host; every
-/// other key belongs to the plugin's settings type, deserialized by the plugin's registration
-/// when it is constructed.
+/// other key belongs to the plugin's settings type, deserialized when the plugin is constructed.
 #[derive(Clone, Debug, Serialize)]
 pub struct PluginsConfig {
     /// Whether a plugin that does not set `enabled` explicitly — or has no section at all — is
@@ -82,7 +83,7 @@ pub struct PluginsConfig {
     pub enabled_by_default: bool,
     /// The configuration sections, keyed by plugin name.
     ///
-    /// Holds every section in the table, whether or not a plugin registration matches it.
+    /// Holds every section in the table, whether or not a compiled-in plugin matches it.
     /// Sections whose name is not a bundled plugin are also listed in
     /// [`PluginsConfig::unknown`]. Flattened so the table serializes back to its flat
     /// `[plugins.<name>]` shape.
@@ -91,8 +92,8 @@ pub struct PluginsConfig {
     /// Sections that match no bundled plugin name.
     ///
     /// Collected during deserialization so the host can warn about likely typos. Compiled-out
-    /// bundled plugins are not included: their sections are known, even though no registration
-    /// consumed them. Not part of the serialized shape: those sections already live in
+    /// bundled plugins are not included: their sections are known, even though nothing consumed
+    /// them. Not part of the serialized shape: those sections already live in
     /// [`PluginsConfig::sections`].
     #[serde(skip)]
     pub unknown: BTreeSet<String>,
@@ -133,11 +134,6 @@ impl<'de> Deserialize<'de> for PluginsConfig {
 
         // Validate the settings of every plugin that is compiled in, whether it is enabled or
         // not: a malformed section is a configuration error, not a reason to skip the plugin.
-        let registrations: BTreeMap<&'static str, &zeta_plugin::PluginRegistration> =
-            inventory::iter::<zeta_plugin::PluginRegistration>()
-                .map(|registration| (registration.name, registration))
-                .collect();
-
         let mut sections = BTreeMap::new();
         let mut unknown = BTreeSet::new();
         let mut unknown_setting_keys = Vec::new();
@@ -147,17 +143,18 @@ impl<'de> Deserialize<'de> for PluginsConfig {
                 D::Error::custom(format!("invalid `{name}` plugin section: {error}"))
             })?;
 
-            if let Some(registration) = registrations.get(name.as_str()) {
-                let unknown_keys = registration
-                    .validate_settings(Some(&section.settings))
-                    .map_err(D::Error::custom)?;
-
-                unknown_setting_keys
-                    .extend(unknown_keys.into_iter().map(|key| (name.clone(), key)));
-            } else if !crate::BUNDLED_PLUGIN_NAMES.contains(&name.as_str()) {
-                // The section names no bundled plugin at all, so it is a likely typo. A bundled
-                // plugin compiled out of this build is known and stays out of `unknown`.
-                unknown.insert(name.clone());
+            match BundledPlugin::validate(&name, Some(&section.settings)) {
+                Some(Ok(unknown_keys)) => {
+                    unknown_setting_keys
+                        .extend(unknown_keys.into_iter().map(|key| (name.clone(), key)));
+                }
+                Some(Err(error)) => return Err(D::Error::custom(error)),
+                // A bundled plugin compiled out of this build is known and stays out of
+                // `unknown`; every other name is a likely typo.
+                None if !crate::BUNDLED_PLUGIN_NAMES.contains(&name.as_str()) => {
+                    unknown.insert(name.clone());
+                }
+                None => {}
             }
 
             sections.insert(name, section);
@@ -340,9 +337,9 @@ enabled = false
     }
 
     #[test]
-    fn bundled_plugins_without_a_registration_are_known() {
-        // The feature-gated plugin modules are declared whether or not their cargo feature is
-        // enabled, so their sections are only unknown when the name itself is misspelled.
+    fn bundled_plugins_without_a_variant_are_known() {
+        // The bundled names are listed whether or not the plugin's cargo feature is enabled, so
+        // their sections are only unknown when the name itself is misspelled.
         assert!(crate::BUNDLED_PLUGIN_NAMES.contains(&"youtube"));
         assert!(crate::BUNDLED_PLUGIN_NAMES.contains(&"urban_dictionary"));
         assert!(!crate::BUNDLED_PLUGIN_NAMES.contains(&"youtub"));

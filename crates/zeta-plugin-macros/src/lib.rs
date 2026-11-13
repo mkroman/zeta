@@ -2,14 +2,14 @@
 //!
 //! `#[plugin]` is applied to an **inherent impl block** and generates the
 //! `zeta_plugin::Plugin` implementation for the block's type: the plugin's name and settings
-//! type, the constructor that registers the declarative subscriptions, and the event handlers.
-//! The impl block itself — its methods and their logic — is emitted unchanged beside it, with
-//! only the macro's own annotations stripped.
+//! type, the constructor that registers the declarative subscriptions, and a single `handle`
+//! that routes each subscribed event to its annotated method. The impl block itself — its
+//! methods and their logic — is emitted unchanged beside it, with only the macro's own
+//! annotations stripped.
 //!
-//! Besides the implementation, the macro submits a `zeta_plugin::PluginRegistration` through
-//! `inventory`, so the host discovers every compiled-in plugin at startup without a central
-//! list. Adding a plugin therefore needs only its module and cargo feature, not an entry
-//! anywhere else.
+//! The plugin is registered with the host statically: the facade's `bundled_plugins!` list names
+//! the crate and type, and the generated registry constructs it. Adding a plugin therefore needs
+//! its module, cargo feature and facade entry, not a runtime registration mechanism.
 //!
 //! ```
 //! use zeta_plugin::{Client, Context, Error, plugin, send_reply};
@@ -94,10 +94,10 @@
 //! `channel` parameter may be omitted. `command` appears only with `event`, and `opts` only with
 //! `args`.
 //!
-//! `#[handler(kind)]` on an inherent async method forwards one of the trait's event handlers to
-//! it verbatim, where `kind` is one of `command`, `url`, `message`, `join`, `part`, `quit`,
-//! `nick`, `kick`, `ctcp`, `raw`, `loaded`, or `shutdown`. Kinds the block does not annotate
-//! keep the trait's default implementation.
+//! `#[handler(kind)]` on an inherent async method routes one of the `Plugin::handle`'s event
+//! kinds to it, where `kind` is one of `command`, `url`, `message`, `join`, `part`, `quit`,
+//! `nick`, `kick`, `ctcp`, `raw`, `loaded`, or `shutdown`. Kinds the block does not annotate are
+//! ignored by the generated match.
 //!
 //! A `#[cfg]` or `#[cfg_attr]` on a `#[command]` or `#[handler]` method is copied to the
 //! generated constant, registration, dispatch arm, and forwarding method, so feature-gated

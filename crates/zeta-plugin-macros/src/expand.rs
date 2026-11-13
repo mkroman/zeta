@@ -106,9 +106,10 @@ struct Handler {
 
 /// Generates [`HandlerKind`] from one table of keywords.
 ///
-/// Every event kind follows a single convention: the keyword `k` is forwarded through
-/// `handle_k` with a `KEvent` parameter. Only the lifecycle hooks take no event, which the
-/// table marks as such instead of naming their trait method and parameter separately.
+/// Every event kind follows a single convention: the keyword `k` names the `Event::K` variant
+/// and the `KEvent` parameter type, and the generated `Plugin::handle` match routes that variant
+/// to the annotated method. The lifecycle hooks take no event, which the table marks as such
+/// instead of naming their event type separately.
 macro_rules! handler_kinds {
     ($($variant:ident($keyword:literal, $role:ident)),* $(,)?) => {
         /// The event kinds a `#[handler(kind)]` method can handle.
@@ -154,16 +155,13 @@ macro_rules! handler_kinds {
                 }
             }
 
-            /// The trait method the handler is forwarded through.
+            /// The `Event` variant the handler receives.
             ///
-            /// Event handlers follow `handle_<kind>`; the lifecycle hooks are the methods
-            /// themselves (`loaded`, `shutdown`).
-            fn trait_method(self) -> String {
-                if self.is_lifecycle() {
-                    self.name().to_owned()
-                } else {
-                    format!("handle_{}", self.name())
-                }
+            /// Event kinds follow the keyword convention: `message` is `Event::Message` and
+            /// `MessageEvent`, `url` is `Event::Url` and `UrlEvent`, and so on. Only called for
+            /// event kinds; the lifecycle hooks have no event variant.
+            fn event_variant(self) -> Ident {
+                format_ident!("{}", pascal_case(self.name()))
             }
 
             /// The trait method's event parameter: its name and the event type at the
@@ -300,7 +298,7 @@ fn classify(args: &PluginArgs, inherent: &syn::ItemImpl) -> syn::Result<Plugin> 
                     return Err(syn::Error::new(
                         span,
                         "a method cannot be both `#[command]` and `#[handler]`; a `#[command]` \
-                         method is dispatched through the generated `handle_command`",
+                         method is dispatched through the generated `handle`",
                     ));
                 }
 
@@ -595,8 +593,8 @@ fn validate_conflicts(commands: &[Command], handlers: &[Handler]) -> syn::Result
         return Err(syn::Error::new(
             handler.span,
             "a plugin cannot combine `#[command]` methods with `#[handler(command)]`; the \
-             generated dispatch and the forwarding handler would both implement \
-             `handle_command`",
+             generated dispatch and the forwarding handler would both handle \
+             `Event::Command`",
         ));
     }
 
@@ -1088,8 +1086,8 @@ fn strip_annotations(plugin: &Plugin, inherent: &mut syn::ItemImpl) {
                             clippy::unused_async,
                             clippy::unused_async_trait_impl,
                             clippy::needless_pass_by_ref_mut
-                        )
-                    ]));
+                        )]
+                    ));
                 } else {
                     method.attrs.push(syn::parse_quote!(
                         #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
@@ -1131,17 +1129,20 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
     let (context_parameter, settings_parameter, subscriptions_parameter) =
         constructor_parameters(plugin, !registrations.is_empty());
 
-    let handle_command = handle_command_impl(plugin);
-    let handlers = plugin.handlers.iter().map(handler_impl);
+    let handle = handle_impl(plugin);
+    let lifecycle = plugin
+        .handlers
+        .iter()
+        .filter(|handler| handler.kind.is_lifecycle())
+        .map(lifecycle_impl);
 
     quote! {
         #(#constants)*
 
-        #[::zeta_plugin::async_trait::async_trait]
         impl ::zeta_plugin::Plugin for #self_ty {
-            #handle_command
+            #handle
 
-            #(#handlers)*
+            #(#lifecycle)*
         }
 
         /// The construction half of the plugin: name, settings and constructor.
@@ -1159,12 +1160,6 @@ fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
 
                 #constructor_tail
             }
-        }
-
-        // Self-register the plugin with the host: the registration is collected by `inventory`
-        // when the crate is linked, so no central plugin list has to be maintained.
-        ::zeta_plugin::inventory::submit! {
-            ::zeta_plugin::PluginRegistration::new::<#self_ty>()
         }
 
         #inherent
@@ -1192,8 +1187,63 @@ fn command_constants(plugin: &Plugin) -> impl Iterator<Item = TokenStream> {
     })
 }
 
-/// The generated `handle_command`, or `None` for a plugin with no `#[command]` methods.
-fn handle_command_impl(plugin: &Plugin) -> Option<TokenStream> {
+/// The generated `Plugin::handle`: one match over the event, routing each kind the plugin
+/// handles to its annotated method, plus the command dispatch for `#[command]` methods.
+///
+/// The match lives inside an `async` block, so every arm contributes to one future type — the
+/// arms await different handler futures, which a plain `match` in return position cannot
+/// unify. The future borrows the plugin and the event and is `Send`, so the runtime awaits it
+/// inline without boxing.
+fn handle_impl(plugin: &Plugin) -> TokenStream {
+    let command = command_arm(plugin);
+    let handlers = plugin
+        .handlers
+        .iter()
+        .filter(|handler| !handler.kind.is_lifecycle())
+        .map(forward_arm);
+
+    quote! {
+        #[allow(unused_variables)]
+        fn handle<'a>(
+            &'a self,
+            ctx: &'a ::zeta_plugin::Context,
+            client: &'a ::zeta_plugin::Client,
+            event: &'a ::zeta_plugin::Event,
+        ) -> impl ::core::future::Future<
+            Output = ::core::result::Result<(), ::zeta_plugin::Error>,
+        > + ::core::marker::Send + 'a {
+            async move {
+                match event {
+                    #command
+                    #(#handlers)*
+                    _ => {}
+                }
+
+                ::core::result::Result::Ok(())
+            }
+        }
+    }
+}
+
+/// The `Event::Command` arm: the trigger dispatch for `#[command]` methods, or the forward to a
+/// `#[handler(command)]` method. `None` when the plugin has neither.
+fn command_arm(plugin: &Plugin) -> Option<TokenStream> {
+    if let Some(handler) = plugin
+        .handlers
+        .iter()
+        .find(|handler| handler.kind == HandlerKind::Command)
+    {
+        let cfg = &handler.cfg;
+        let method = &handler.method;
+
+        return Some(quote! {
+            #(#cfg)*
+            ::zeta_plugin::Event::Command(command) => {
+                self.#method(ctx, client, command).await?;
+            }
+        });
+    }
+
     if plugin.commands.is_empty() {
         return None;
     }
@@ -1204,21 +1254,29 @@ fn handle_command_impl(plugin: &Plugin) -> Option<TokenStream> {
         .map(|command| dispatch_arm(command, &plugin.name));
 
     Some(quote! {
-        #[allow(unused_variables)]
-        async fn handle_command(
-            &self,
-            ctx: &::zeta_plugin::Context,
-            client: &::zeta_plugin::Client,
-            command: &::zeta_plugin::CommandEvent,
-        ) -> ::core::result::Result<(), ::zeta_plugin::Error> {
+        ::zeta_plugin::Event::Command(command) => {
             match command.spec.trigger() {
                 #(#arms)*
                 _ => {}
             }
-
-            ::core::result::Result::Ok(())
         }
     })
+}
+
+/// The `Event::K` arm forwarding one `#[handler(kind)]` event method.
+fn forward_arm(handler: &Handler) -> TokenStream {
+    let kind = handler.kind;
+    let method = &handler.method;
+    let cfg = &handler.cfg;
+    let variant = kind.event_variant();
+    let parameter = format_ident!("{}", kind.name());
+
+    quote! {
+        #(#cfg)*
+        ::zeta_plugin::Event::#variant(#parameter) => {
+            self.#method(ctx, client, #parameter).await?;
+        }
+    }
 }
 
 /// The declarative registration statements, in registration order: `urls`, `messages`, then the
@@ -1405,41 +1463,26 @@ fn dispatch_arm(command: &Command, default_label: &syn::LitStr) -> TokenStream {
     }
 }
 
-/// The trait handler forwarding to one `#[handler(kind)]` method.
-fn handler_impl(handler: &Handler) -> TokenStream {
-    let kind = handler.kind;
+/// The generated `loaded` or `shutdown` implementation forwarding to one `#[handler(kind)]`
+/// method.
+///
+/// The inherent method shadows the trait method here, so a handler named `loaded` forwards to
+/// itself rather than recursing.
+fn lifecycle_impl(handler: &Handler) -> TokenStream {
     let method = &handler.method;
     let cfg = &handler.cfg;
-    let trait_method = format_ident!("{}", kind.trait_method());
-    let receiver = if kind.mutable_receiver() {
-        quote!(&mut self)
-    } else {
-        quote!(&self)
-    };
-
-    // Event handlers declare the event parameter; the lifecycle hooks take none.
-    let (event_parameter, event_arguments) = kind.event_parameter().map_or_else(
-        || (TokenStream::new(), TokenStream::new()),
-        |(parameter, event)| {
-            let parameter = format_ident!("{parameter}");
-            let event = format_ident!("{event}");
-
-            (
-                quote!(, #parameter: &::zeta_plugin::#event),
-                quote!(, #parameter),
-            )
-        },
-    );
+    let name = format_ident!("{}", handler.kind.name());
 
     quote! {
         #(#cfg)*
-        async fn #trait_method(
-            #receiver,
-            ctx: &::zeta_plugin::Context,
-            client: &::zeta_plugin::Client
-            #event_parameter,
-        ) -> ::core::result::Result<(), ::zeta_plugin::Error> {
-            self.#method(ctx, client #event_arguments).await
+        fn #name<'a>(
+            &'a mut self,
+            ctx: &'a ::zeta_plugin::Context,
+            client: &'a ::zeta_plugin::Client,
+        ) -> impl ::core::future::Future<
+            Output = ::core::result::Result<(), ::zeta_plugin::Error>,
+        > + ::core::marker::Send + 'a {
+            async move { self.#method(ctx, client).await }
         }
     }
 }
@@ -2214,7 +2257,7 @@ mod tests {
             "#,
         )
         .err()
-        .expect("both would implement `handle_command`");
+        .expect("both would handle `Event::Command`");
 
         assert!(error.to_string().contains("cannot combine"), "{error}");
     }
@@ -2465,7 +2508,7 @@ mod tests {
 
         let rendered = render(&plugin, &inherent).to_string();
 
-        assert!(rendered.contains("inventory"), "{rendered}");
+        assert!(rendered.contains("fn handle"), "{rendered}");
         for (index, _) in rendered.match_indices("zeta_plugin") {
             assert!(
                 rendered[..index].ends_with(":: "),

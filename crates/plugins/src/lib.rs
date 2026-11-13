@@ -1,14 +1,25 @@
 //! The bundled plugins for the zeta IRC bot.
 //!
 //! Every plugin lives in its own `plugins-<name>` crate and implements
-//! [`Plugin`](zeta_plugin::Plugin) from `zeta-plugin` through the `#[plugin]` attribute macro,
-//! which also registers the plugin with the host through `inventory`.
-//! [`register_bundled_plugins`] discovers the compiled-in plugins from those registrations,
-//! resolves each one's section in [`PluginsConfig`], and registers the enabled ones with
-//! [`Registry`](zeta_plugin_runtime::Registry).
-//!
+//! [`Plugin`](zeta_plugin::Plugin) from `zeta-plugin` through the `#[plugin]` attribute macro.
 //! This crate is the facade over those crates: its cargo features select which plugin crates are
 //! compiled in, preserving the feature names the host has always used.
+//!
+//! The `bundled_plugins!` list below is the single source of truth for that set. It generates:
+//!
+//! - one re-export per plugin crate, so the crate is linked;
+//! - the [`BundledPlugin`] enum, with one variant per compiled-in plugin and every arm gated on
+//!   the same cargo feature as the crate;
+//! - the static construction contract ([`PluginSet`](zeta_plugin::PluginSet)): name lookup,
+//!   settings validation and construction to a `LoadedPlugin<BundledPlugin>`;
+//! - [`BundledPlugin::NAMES`], the compiled-in names the configuration layer and the registration
+//!   loop iterate;
+//! - `BUNDLED_PLUGIN_NAMES`, the names of every bundled plugin whether or not it is compiled in,
+//!   so a configuration section for a compiled-out plugin is reported as such instead of as a
+//!   typo.
+//!
+//! The runtime instantiates [`PluginRuntime`](zeta_plugin_runtime::PluginRuntime) with that enum,
+//! so no plugin or handler future is boxed on the dispatch path.
 //!
 //! # Features
 //!
@@ -16,81 +27,35 @@
 //! it (`titles`, `youtube`, `unwall`, ...); the shared `database` and `http` features group the
 //! capabilities the plugin crates need. See `Cargo.toml` for the exact graph.
 
-use std::collections::BTreeSet;
-
 pub mod config;
 
 pub use config::{PluginSection, PluginsConfig};
 
-// Declares each bundled plugin crate once: the re-export that links it (and with it the
-// crate's `inventory` registration) and its entry in `BUNDLED_PLUGIN_NAMES`. An unreferenced
-// optional dependency is not necessarily linked, which would silently drop its plugin.
-macro_rules! bundled_plugins {
-    ($($feature:literal => $krate:ident as $name:ident),+ $(,)?) => {
-        $(
-            #[cfg(feature = $feature)]
-            pub use $krate as $name;
-        )+
+mod macros;
 
-        /// The names of every bundled plugin, whether or not its cargo feature is enabled.
-        ///
-        /// Configuration sections for these names describe a plugin that was compiled out,
-        /// not a typo, so the host can report the two cases differently.
-        pub(crate) const BUNDLED_PLUGIN_NAMES: &[&str] = &[$(stringify!($name)),+];
-    };
-}
+use macros::{
+    define_bundled_plugin_enum, for_each_bundled_plugin, impl_plugin_for_bundled_plugin,
+    impl_plugin_set_for_bundled_plugin, reexport_bundled_plugins,
+};
 
-bundled_plugins! {
-    "alert" => plugins_alert as alert,
-    "chaturbate" => plugins_chaturbate as chaturbate,
-    "choices" => plugins_choices as choices,
-    "coinmarketcap" => plugins_coinmarketcap as coinmarketcap,
-    "dendanskeordbog" => plugins_dendanskeordbog as dendanskeordbog,
-    "dig" => plugins_dig as dig,
-    "filter" => plugins_filter as filter,
-    "gay" => plugins_gay as gay,
-    "geoip" => plugins_geoip as geoip,
-    "github" => plugins_github as github,
-    "health" => plugins_health as health,
-    "help" => plugins_help as help,
-    "howlongtobeat" => plugins_howlongtobeat as howlongtobeat,
-    "imdb" => plugins_imdb as imdb,
-    "instagram" => plugins_instagram as instagram,
-    "isitopen" => plugins_isitopen as isitopen,
-    "kagi" => plugins_kagi as kagi,
-    "notification" => plugins_notification as notification,
-    "ofn" => plugins_ofn as ofn,
-    "openweathermap" => plugins_openweathermap as openweathermap,
-    "pornhub" => plugins_pornhub as pornhub,
-    "reddit" => plugins_reddit as reddit,
-    "rink" => plugins_rink as rink,
-    "rust-playground" => plugins_rust_playground as rust_playground,
-    "spotify" => plugins_spotify as spotify,
-    "string-utils" => plugins_string_utils as string_utils,
-    "thingiverse" => plugins_thingiverse as thingiverse,
-    "tiktok" => plugins_tiktok as tiktok,
-    "titles" => plugins_titles as titles,
-    "trustpilot" => plugins_trustpilot as trustpilot,
-    "tvmaze" => plugins_tvmaze as tvmaze,
-    "twitch" => plugins_twitch as twitch,
-    "unwall" => plugins_unwall as unwall,
-    "urban-dictionary" => plugins_urban_dictionary as urban_dictionary,
-    "youtube" => plugins_youtube as youtube,
-}
+// The single bundled-plugin list, expanded once per generated item. See `macros.rs`.
+for_each_bundled_plugin!(reexport_bundled_plugins);
+for_each_bundled_plugin!(define_bundled_plugin_enum);
+for_each_bundled_plugin!(impl_plugin_for_bundled_plugin);
+for_each_bundled_plugin!(impl_plugin_set_for_bundled_plugin);
 
 /// Registers every compiled-in bundled plugin that its configuration enables.
 ///
-/// The host calls this once at startup, before the catalog is published. Plugins register
-/// themselves through `inventory` when their `#[plugin]` implementation is linked in, so this
-/// function only has to iterate the registrations — sorted by name for a deterministic catalog
-/// and log order.
+/// The host calls this once at startup, before the catalog is published. The compiled-in plugin
+/// set is [`BundledPlugin::NAMES`] — one entry per generated variant, in declaration order for a
+/// deterministic catalog and log order — so registration is a plain loop over static data.
 ///
 /// Configuration sections matching no bundled plugin are warned about as likely typos; enabled
 /// sections for a bundled plugin whose cargo feature is disabled are reported together as
 /// compiled out rather than silently ignored. Plugins that fail to initialize are logged and
 /// skipped by the registry.
 pub fn register_bundled_plugins(
-    registry: &mut zeta_plugin_runtime::Registry,
+    registry: &mut zeta_plugin_runtime::Registry<BundledPlugin>,
     ctx: &zeta_plugin::Context,
     plugins: &PluginsConfig,
 ) {
@@ -106,28 +71,16 @@ pub fn register_bundled_plugins(
         );
     }
 
-    // Sorted by name for a deterministic catalog and log order. Duplicate names are a build
-    // error and are reported here regardless of whether the plugin is enabled; the registry
-    // rejects them again for callers that bypass this function.
-    let mut registrations: Vec<&'static zeta_plugin::PluginRegistration> =
-        zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().collect();
-    registrations.sort_unstable_by_key(|registration| registration.name);
-
-    // A bundled plugin whose cargo feature is disabled has no registration, so an enabled
-    // section for it would otherwise be parsed and silently ignored. Report them together once
-    // instead of emitting one line per plugin (a minimal build of the repository config can
-    // omit many).
-    let registered: BTreeSet<&'static str> = registrations
-        .iter()
-        .map(|registration| registration.name)
-        .collect();
+    // A bundled plugin whose cargo feature is disabled has no variant, so an enabled section for
+    // it would otherwise be parsed and silently ignored. Report them together once instead of
+    // emitting one line per plugin (a minimal build of the repository config can omit many).
     let compiled_out: Vec<&str> = plugins
         .sections
         .iter()
         .filter(|(name, section)| {
             section.enabled
                 && BUNDLED_PLUGIN_NAMES.contains(&name.as_str())
-                && !registered.contains(name.as_str())
+                && !BundledPlugin::NAMES.contains(&name.as_str())
         })
         .map(|(name, _)| name.as_str())
         .collect();
@@ -139,29 +92,19 @@ pub fn register_bundled_plugins(
         );
     }
 
-    let mut previous: Option<&'static str> = None;
-    for registration in registrations {
-        if previous == Some(registration.name) {
-            tracing::error!(
-                zeta.plugin.name = registration.name,
-                "duplicate plugin registration; the later one is ignored"
-            );
-            continue;
-        }
-        previous = Some(registration.name);
-
+    for name in BundledPlugin::NAMES {
         let (enabled, section) = plugins
             .sections
-            .get(registration.name)
+            .get(*name)
             .map_or((plugins.enabled_by_default, None), |section| {
                 (section.enabled, Some(&section.settings))
             });
 
         if enabled {
-            registry.register_with(registration, ctx, section);
+            registry.register(ctx, name, section);
         } else {
             tracing::info!(
-                zeta.plugin.name = registration.name,
+                zeta.plugin.name = %name,
                 "plugin is disabled by configuration"
             );
         }
@@ -177,7 +120,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[cfg(feature = "all")]
-    use crate::BUNDLED_PLUGIN_NAMES;
+    use crate::{BUNDLED_PLUGIN_NAMES, BundledPlugin};
 
     /// The crate roots under `src`: `lib.rs`, `main.rs`, and the implicit binaries in `src/bin/`.
     ///
@@ -340,8 +283,10 @@ mod tests {
     fn every_plugin_crate_is_wired_into_the_facade() {
         let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
             .expect("read the facade manifest");
-        let lib = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
-            .expect("read the facade source");
+        let list = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/macros.rs"))
+            .expect("read the facade macros");
+        // Normalize whitespace so the list's column alignment does not affect the check.
+        let list = list.split_whitespace().collect::<Vec<_>>().join(" ");
 
         for plugin in plugin_crates() {
             let snake = plugin.replace('-', "_");
@@ -370,8 +315,8 @@ mod tests {
             }
 
             assert!(
-                lib.contains(&format!("\"{plugin}\" => plugins_{snake} as {snake},")),
-                "`{plugin}` is missing from the `bundled_plugins!` list"
+                list.contains(&format!("\"{plugin}\" => plugins_{snake}::")),
+                "`{plugin}` is missing from the `for_each_bundled_plugin!` list"
             );
         }
     }
@@ -406,27 +351,44 @@ mod tests {
         }
     }
 
-    /// Every bundled plugin self-registers through the `#[plugin]` macro, independently of any
-    /// central list. `--all-features` compiles every one of them.
+    /// Every bundled plugin has a generated variant when every plugin is compiled in, and the
+    /// variant's name matches the bundled-name list the configuration layer reports against.
     #[cfg(feature = "all")]
     #[test]
-    fn all_bundled_plugins_register_themselves() {
-        assert_eq!(
-            zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>().count(),
-            BUNDLED_PLUGIN_NAMES.len()
+    fn every_bundled_plugin_has_a_variant() {
+        let generated: BTreeSet<&str> = BundledPlugin::NAMES.iter().copied().collect();
+        let bundled: BTreeSet<&str> = BUNDLED_PLUGIN_NAMES.iter().copied().collect();
+
+        assert_eq!(generated, bundled);
+        assert!(
+            BundledPlugin::NAMES
+                .windows(2)
+                .all(|pair| pair[0] <= pair[1]),
+            "the generated names must stay sorted for a deterministic catalog and log order: {:?}",
+            BundledPlugin::NAMES
         );
     }
 
-    /// Every name the host knows about has a registration when every plugin is compiled in.
+    /// The generated lookup finds a compiled-in plugin and reports an unknown name as absent.
     #[cfg(feature = "all")]
-    #[test]
-    fn every_bundled_plugin_name_has_a_registration() {
-        let registered: BTreeSet<&str> =
-            zeta_plugin::inventory::iter::<zeta_plugin::PluginRegistration>()
-                .map(|registration| registration.name)
-                .collect();
-        let bundled: BTreeSet<&str> = BUNDLED_PLUGIN_NAMES.iter().copied().collect();
+    #[tokio::test]
+    async fn runtime_plugin_lookup_matches_the_generated_variants() {
+        use zeta_plugin::PluginSet;
 
-        assert_eq!(registered, bundled);
+        let ctx = zeta_test_support::test_context();
+
+        let loaded = BundledPlugin::construct(&ctx, "help", None)
+            .expect("the help plugin should construct")
+            .expect("`help` should have a BundledPlugin variant");
+
+        assert_eq!(loaded.name, "help");
+        assert_eq!(loaded.plugin.name(), "help");
+
+        assert!(
+            BundledPlugin::construct(&ctx, "not_a_plugin", None)
+                .expect("an unknown name is not an error")
+                .is_none()
+        );
+        assert!(BundledPlugin::validate("not_a_plugin", None).is_none());
     }
 }
