@@ -63,8 +63,15 @@ COPY --from=planner /usr/src/app/recipe.json recipe.json
 
 # Cook dependencies — cached as long as recipe.json is unchanged.
 # Cache mounts speed up cold builds and partial cache hits.
+#
+# cargo-chef 0.1.78 reconstructs the recipe's manifests with per-target `edition` keys and empty
+# stubs, so Cargo 1.100 reports a deprecation warning per target (LukeMathWalker/cargo-chef#350,
+# fixed by unmerged #369) and `cargo::unused_dependencies` warnings for dependencies the stubs do
+# not use. Both are false positives for this step only. `CARGO_TERM_QUIET` hides the hard-coded
+# manifest warning, and `CARGO_BUILD_WARNINGS` silences the Cargo lint; real builds are unaffected.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    CARGO_TERM_QUIET=true CARGO_BUILD_WARNINGS=allow \
     cargo chef cook --release --recipe-path recipe.json
 
 # Now bring in real sources and build the app. Only copy build inputs so
