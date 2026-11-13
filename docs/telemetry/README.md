@@ -86,7 +86,7 @@ OTel messaging attributes. The handler span repeats the event's values so it is 
 | `messaging.operation.name` | `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | lowercased IRC command; an unmodeled command is lowercased; `error` for server `ERROR` |
 | `messaging.operation.type` | `process` | inbound only |
 | `messaging.destination.name` | channel or nick | target of `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, `KICK`; absent for `QUIT`, `NICK`, `RAW`, and numerics |
-| `messaging.message.id` | IRCv3 `msgid` | only when the server sent one (requires the `message-tags` capability); absent otherwise |
+| `messaging.message.id` | IRCv3 `msgid` | read from any tagged event; the client requests the `message-tags` capability at registration, and the attribute is absent when the server sends none |
 
 ## Log levels and default filter
 
