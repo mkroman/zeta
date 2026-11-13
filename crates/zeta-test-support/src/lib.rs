@@ -410,6 +410,16 @@ macro_rules! settings_tests {
     };
 }
 
+/// The workspace migrations, embedded once for database tests.
+///
+/// Use it as `#[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]`: the path is resolved
+/// relative to this crate, so a test module needs no migrations path of its own.
+///
+/// Like `#[sqlx::test]`, the test needs `DATABASE_URL` to name an existing database, from which a
+/// fresh database is cloned and migrated for the test.
+#[cfg(feature = "database")]
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../plugins/migrations");
+
 /// Asserts that the expression is empty, naming the value in the panic.
 ///
 /// A plain `assert!(value.is_empty())` only prints the condition on failure — useless for

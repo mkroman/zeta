@@ -387,7 +387,7 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn scheduler_delivers_created_alerts(db: sqlx::PgPool) {
         let mut service = AlertService::new(db.clone(), &Settings::default());
         let mut receiver = service.take_receiver().unwrap();
@@ -454,7 +454,7 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn closing_the_channel_drains_queued_alerts(db: sqlx::PgPool) {
         let mut service = AlertService::new(db, &Settings::default());
         let mut receiver = service.take_receiver().unwrap();
@@ -475,7 +475,7 @@ mod tests {
         assert_eq!(receiver.recv().await, None);
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn pending_for_filters_by_channel_and_nickname(db: sqlx::PgPool) {
         let service = AlertService::new(db, &Settings::default());
 
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(pending, vec![sooner, later]);
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn sync_only_caches_alerts_within_the_window(db: sqlx::PgPool) {
         let service = AlertService::new(db, &Settings::default());
 
@@ -563,5 +563,35 @@ mod tests {
         );
 
         drop(cached);
+    }
+
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
+    async fn delete_ids_returns_the_removed_row_count(db: sqlx::PgPool) {
+        let service = AlertService::new(db, &Settings::default());
+
+        let alert = service
+            .create(new_alert("counter", "#smoke", "hello", Utc::now()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            service
+                .scheduler
+                .repo
+                .delete_ids(&[alert.id])
+                .await
+                .unwrap(),
+            1
+        );
+        // A repeated delete removes nothing: the count reports rows, not the ids asked for.
+        assert_eq!(
+            service
+                .scheduler
+                .repo
+                .delete_ids(&[alert.id])
+                .await
+                .unwrap(),
+            0
+        );
     }
 }

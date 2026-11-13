@@ -162,7 +162,7 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn added_filters_are_listed_with_their_fields(db: sqlx::PgPool) {
         let service = FilterService::new(db);
 
@@ -181,7 +181,7 @@ mod tests {
         assert!(service.list().iter().any(|f| f.id == added.id));
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn deleted_filters_leave_the_database_and_the_index(db: sqlx::PgPool) {
         let service = FilterService::new(db);
 
@@ -219,7 +219,7 @@ mod tests {
         assert!(service.is_empty());
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
         let service = FilterService::new(db);
 
@@ -235,7 +235,7 @@ mod tests {
         ));
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn matches_and_ignores_through_the_event_filter_trait(db: sqlx::PgPool) {
         let url: Url = "https://imdb.com/title/tt0111161".parse().unwrap();
         let matching = Some(Sender::new("nick", "someuser", "host.example"));

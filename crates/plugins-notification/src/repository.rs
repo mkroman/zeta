@@ -59,19 +59,17 @@ impl NotificationRepository {
         .map_err(Error::insert)
     }
 
-    /// Deletes the notification with the given `ids`.
+    /// Deletes the notifications with the given `ids`, returning the number of rows removed.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Delete`] if the notification could not be deleted.
+    /// Returns [`Error::Delete`] if the notifications could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "notifications")]
-    pub async fn delete_ids(&self, ids: &[i32]) -> Result<(), Error> {
+    pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         trace!(?ids, "deleting notifications from database");
 
         zeta_plugin::database::delete_ids(&self.db, "notifications", ids)
             .await
-            .map_err(Error::delete)?;
-
-        Ok(())
+            .map_err(Error::delete)
     }
 }

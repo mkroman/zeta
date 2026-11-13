@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(lowercase_host("WWW.Bloomberg.com"), "www.bloomberg.com");
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn nothing_is_covered_before_an_admin_adds_a_site(db: sqlx::PgPool) {
         let service = db_service(db);
         service.load().await.unwrap();
@@ -299,7 +299,7 @@ mod tests {
         assert_empty!(service.sites());
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn added_sites_cover_their_host_www_variant_and_wildcards(db: sqlx::PgPool) {
         let service = db_service(db);
         service.load().await.unwrap();
@@ -330,7 +330,7 @@ mod tests {
         assert!(service.covers("api.bloomberg.com"));
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn removing_matches_the_added_sites_and_survives_a_reload(db: sqlx::PgPool) {
         let service = db_service(db);
         service.load().await.unwrap();
@@ -363,7 +363,7 @@ mod tests {
         assert!(service.covers("bloomberg.com"));
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn removing_without_a_match_removes_nothing(db: sqlx::PgPool) {
         let service = db_service(db);
         service.load().await.unwrap();
@@ -379,7 +379,7 @@ mod tests {
         assert!(service.covers("bloomberg.com"));
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn resolve_submits_once_then_answers_from_the_cache(db: sqlx::PgPool) {
         let server = MockServer::start().await;
 
