@@ -345,8 +345,8 @@ async fn read_output(
         }
 
         // `read_line` keeps the line terminator that `Lines::next_line` stripped.
-        let output = line.strip_suffix('\n').unwrap_or(&line);
-        let output = output.strip_suffix('\r').unwrap_or(output);
+        let output = line.trim_suffix('\n');
+        let output = output.trim_suffix('\r');
 
         if let Some(progress) = parse_progress_line(output) {
             on_progress(progress);

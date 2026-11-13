@@ -544,7 +544,7 @@ pub fn is_ctcp(message: &Message) -> bool {
 /// tolerated, as some clients omit it.
 fn parse_ctcp(text: &str) -> Option<(&str, &str)> {
     let body = text.strip_prefix('\x01')?;
-    let body = body.strip_suffix('\x01').unwrap_or(body);
+    let body = body.trim_suffix('\x01');
 
     Some(match body.split_once(' ') {
         Some((command, args)) => (command, args),

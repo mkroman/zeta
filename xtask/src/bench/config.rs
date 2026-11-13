@@ -147,10 +147,7 @@ impl Waiver {
 /// Turn a Rust benchmark function name into a readable label.
 #[must_use]
 pub fn humanize(function: &str) -> String {
-    function
-        .strip_prefix("bench_")
-        .unwrap_or(function)
-        .replace('_', " ")
+    function.trim_prefix("bench_").replace('_', " ")
 }
 
 /// Turn a benchmark case id into a readable label.

@@ -95,11 +95,7 @@ impl RedactedUrl {
             && let Ok(parsed) = Url::parse(&format!("https:{url}"))
         {
             let redacted = Self::from_url(&parsed);
-            let relative = redacted
-                .0
-                .strip_prefix("https:")
-                .unwrap_or(&redacted.0)
-                .to_string();
+            let relative = redacted.0.trim_prefix("https:").to_string();
 
             return Self(relative);
         }

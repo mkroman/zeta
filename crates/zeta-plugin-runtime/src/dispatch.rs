@@ -1575,7 +1575,7 @@ mod tests {
         filters: &FilterHandle,
         make: impl Fn() -> Message,
     ) {
-        let messages: Vec<Message> = (0..dispatches).map(|_| make()).collect();
+        let messages: Vec<Message> = Vec::from_fn(dispatches, |_| make());
         let start = std::time::Instant::now();
 
         for message in messages {

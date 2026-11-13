@@ -31,7 +31,7 @@ pub fn normalize_site(input: &str) -> Option<String> {
 
     let input = input.trim().to_lowercase();
     let wildcard = input.starts_with(WILDCARD);
-    let host = input.strip_prefix(WILDCARD).unwrap_or(&input);
+    let host = input.trim_prefix(WILDCARD);
 
     is_hostname(host).then(|| {
         if wildcard {

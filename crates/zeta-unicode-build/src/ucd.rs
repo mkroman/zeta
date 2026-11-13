@@ -189,9 +189,9 @@ const EMOJI_TEST: InputSpec = InputSpec {
 ///
 /// A leading byte-order mark is ignored, so a BOM-prefixed file parses like a plain one.
 pub fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let text = text.trim_prefix('\u{feff}');
     text.lines()
-        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .map(|line| line.trim_suffix('\r'))
         .enumerate()
         .filter(|(_, line)| !line.is_empty() && !line.trim_start().starts_with('#'))
         .map(|(index, line)| (index + 1, line))
@@ -351,9 +351,9 @@ fn check_version(
 
 /// Reads the `# <Stem>-<major>.<minor>.<patch>.txt` header shared by the UCD files.
 fn header_version(file: &'static str, text: &str, path: &Path) -> Result<(u8, u8, u8), InputError> {
-    let stem = file.strip_suffix(".txt").unwrap_or(file);
+    let stem = file.trim_suffix(".txt");
     for line in text.lines().take(32) {
-        let line = line.strip_prefix('\u{feff}').unwrap_or(line).trim_end();
+        let line = line.trim_prefix('\u{feff}').trim_end();
         let Some(rest) = line.strip_prefix("# ") else {
             continue;
         };
@@ -395,7 +395,7 @@ fn header_version(file: &'static str, text: &str, path: &Path) -> Result<(u8, u8
 /// `emoji-test.txt` does not use the `<Stem>-<version>.txt` form and has no patch component.
 fn emoji_test_version(text: &str, path: &Path) -> Result<(u8, u8), InputError> {
     for line in text.lines().take(32) {
-        let line = line.strip_prefix('\u{feff}').unwrap_or(line);
+        let line = line.trim_prefix('\u{feff}');
         let Some(rest) = line.strip_prefix("# Version:") else {
             continue;
         };

@@ -97,7 +97,7 @@ fn extract_options<'a>(s: &'a str, settings: &Settings) -> Option<Vec<&'a str>> 
     };
 
     // If the last option ends with a question mark, skip it.
-    options.push(last.strip_suffix('?').unwrap_or(last));
+    options.push(last.trim_suffix('?'));
 
     Some(options)
 }

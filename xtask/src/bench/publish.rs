@@ -130,8 +130,7 @@ fn annotations(verdict: &Value) -> Vec<Value> {
         let reasons: Vec<&str> = regression
             .get("reasons")
             .and_then(Value::as_array)
-            .map(|reasons| reasons.iter().filter_map(Value::as_str).collect())
-            .unwrap_or_default();
+            .map_or_default(|reasons| reasons.iter().filter_map(Value::as_str).collect());
         annotations.push(Value::object([
             ("path", Value::from(source)),
             ("start_line", Value::from(1_u64)),
