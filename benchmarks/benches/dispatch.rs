@@ -19,7 +19,8 @@
 //!   measurements exclude task wakeups and worker scheduling.
 //! - No tracing subscriber: the handler-span metadata path is disabled, so neither span
 //!   construction nor span export is measured. The default filter (`zeta=info`) enables those
-//!   spans in production, so this suite measures the filtered-out dispatch path only.
+//!   spans in production, so this suite measures the filtered-out dispatch path only. The
+//!   enabled path is measured separately by the `dispatch_telemetry` suite.
 //! - No network, database, clock or randomness: handlers are no-ops with fixed inputs.
 //! - One dispatch per measured run; setup (context construction, mock client, event building)
 //!   is excluded from the measurement.

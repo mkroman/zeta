@@ -57,6 +57,11 @@ pub const SUITES: &[Suite] = &[
         source: "benchmarks/benches/dispatch.rs",
         context: "bench/dispatch",
     },
+    Suite {
+        name: "dispatch_telemetry",
+        source: "benchmarks/benches/dispatch_telemetry.rs",
+        context: "bench/dispatch_telemetry",
+    },
 ];
 
 /// Optional display overrides; functions not listed are humanized from their Rust names.
