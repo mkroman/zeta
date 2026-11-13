@@ -10,7 +10,7 @@ repository.workspace = true
 [features]
 default = []
 # The reply flow, mirror settings and mirror handle shared by the plugins that mirror media.
-mirror = ["dep:serde", "dep:zeta-mirror", "dep:zeta-plugin"]
+mirror = ["dep:serde", "dep:zeta-mirror"]
 
 [dependencies]
 irc.workspace = true
@@ -19,7 +19,7 @@ tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 zeta-mirror = { path = "../zeta-mirror", optional = true }
-zeta-plugin = { path = "../zeta-plugin", default-features = false, optional = true }
+zeta-plugin = { path = "../zeta-plugin", default-features = false }
 zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]

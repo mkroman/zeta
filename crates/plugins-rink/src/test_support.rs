@@ -6,12 +6,16 @@
 
 #![cfg(test)]
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use coinmarketcap::Client as CmcClient;
+use plugins_shared::crypto::{CryptoListing, CryptoSource};
 use zeta_cache::TtlCache;
 use zeta_http::HttpConfig;
+use zeta_plugin::{ZetaError, plugin_err};
 use zeta_test_support::wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path},
@@ -79,65 +83,84 @@ pub const TEST_CURRENCY_DATA: &str = r#"[
     }
 ]"#;
 
-/// Builds a CoinMarketCap client configuration for the tests.
-pub fn test_client_options() -> coinmarketcap::ClientOptions {
-    coinmarketcap::ClientOptions::default()
-}
-
 /// A ranked cryptocurrency listing fixture: Ethereum and a faked euro coin, plus a symbol
 /// rink's loader would reject.
-pub const TEST_LISTINGS_DATA: &str = r#"{
-    "data": [
-        {
-            "id": 1027,
-            "name": "Ethereum",
-            "symbol": "ETH",
-            "slug": "ethereum",
-            "cmc_rank": 2,
-            "quote": [
-                {
-                    "id": 2781,
-                    "symbol": "USD",
-                    "price": 2650.32,
-                    "last_updated": "2026-09-29T11:13:00.000Z"
-                }
-            ]
+pub fn test_listings() -> Vec<CryptoListing> {
+    vec![
+        CryptoListing {
+            symbol: "ETH".to_string(),
+            name: "Ethereum".to_string(),
+            usd_price: Some(2650.32),
         },
-        {
-            "id": 8017,
-            "name": "1inch",
-            "symbol": "1INCH",
-            "slug": "1inch",
-            "quote": [
-                {
-                    "id": 2781,
-                    "symbol": "USD",
-                    "price": 0.31
-                }
-            ]
+        CryptoListing {
+            symbol: "1INCH".to_string(),
+            name: "1inch".to_string(),
+            usd_price: Some(0.31),
         },
-        {
-            "id": 1,
-            "name": "Fake Euro",
-            "symbol": "EUR",
-            "slug": "fake-euro",
-            "quote": [
-                {
-                    "id": 2781,
-                    "symbol": "USD",
-                    "price": 1.2
-                }
-            ]
-        }
-    ],
-    "status": {
-        "timestamp": "2026-09-29T11:13:55.525Z",
-        "error_code": "0",
-        "error_message": null,
-        "elapsed": 12,
-        "credit_count": 1
+        CryptoListing {
+            symbol: "EUR".to_string(),
+            name: "Fake Euro".to_string(),
+            usd_price: Some(1.2),
+        },
+    ]
+}
+
+/// A [`CryptoSource`] fake that serves [`test_listings`] or fails, counting its calls.
+#[derive(Debug)]
+pub struct FakeCryptoSource {
+    /// The listings served when the source does not fail.
+    listings: Vec<CryptoListing>,
+    /// Whether every fetch fails.
+    fail: bool,
+    /// The number of fetches requested.
+    calls: AtomicUsize,
+}
+
+impl FakeCryptoSource {
+    /// Creates a source serving the cryptocurrency listing fixture.
+    #[must_use]
+    pub fn serving() -> Arc<Self> {
+        Arc::new(Self {
+            listings: test_listings(),
+            fail: false,
+            calls: AtomicUsize::new(0),
+        })
     }
-}"#;
+
+    /// Creates a source whose fetches always fail.
+    #[must_use]
+    pub fn failing() -> Arc<Self> {
+        Arc::new(Self {
+            listings: Vec::new(),
+            fail: true,
+            calls: AtomicUsize::new(0),
+        })
+    }
+
+    /// Returns how many times the source was asked for listings.
+    #[must_use]
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::Relaxed)
+    }
+}
+
+impl CryptoSource for FakeCryptoSource {
+    fn listings<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CryptoListing>, ZetaError>> + Send + 'a>> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+
+        let result = if self.fail {
+            Err(plugin_err(std::io::Error::other(
+                "the fake crypto source failed",
+            )))
+        } else {
+            Ok(self.listings.clone())
+        };
+
+        Box::pin(std::future::ready(result))
+    }
+}
 
 /// Builds a plugin with a bundled-only context, with currency fetching enabled and pointed
 /// at `url` when given.
@@ -148,7 +171,7 @@ pub fn test_plugin(url: Option<String>) -> Rink {
         currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
         refresh_task: None,
         client: Some(zeta_http::build_client(&HttpConfig::default())),
-        cmc: None,
+        crypto: None,
         currency_url: url.unwrap_or_else(|| currency::CURRENCY_URL.to_string()),
         crypto_enabled: true,
     };
@@ -166,7 +189,7 @@ pub fn offline_plugin() -> Rink {
         currency: Arc::new(TtlCache::new(Duration::from_mins(10))),
         refresh_task: None,
         client: None,
-        cmc: None,
+        crypto: None,
         currency_url: currency::CURRENCY_URL.to_string(),
         crypto_enabled: true,
     };
@@ -189,40 +212,23 @@ pub async fn currency_server(status: u16) -> MockServer {
     server
 }
 
-/// Starts a wiremock server serving `TEST_LISTINGS_DATA` at the CoinMarketCap listings
-/// path.
-pub async fn listings_server(status: u16) -> MockServer {
-    let server = MockServer::start().await;
-
-    Mock::given(method("GET"))
-        .and(path("/v3/cryptocurrency/listings/latest"))
-        .respond_with(ResponseTemplate::new(status).set_body_string(TEST_LISTINGS_DATA))
-        .mount(&server)
-        .await;
-
-    server
-}
-
-/// Builds a plugin whose CoinMarketCap client issues requests against the returned
-/// listings server, with the fiat dataset served by the returned fiat server.
+/// Builds a plugin with the cryptocurrency source serving the listing fixture (`serving`) or
+/// failing, and the fiat dataset served by the returned fiat server.
 ///
-/// The servers travel with the plugin because dropping a `MockServer` returns it to
-/// wiremock's pool, where another test can acquire it: the pooled server is reset,
-/// unmounting these mocks, and this plugin's requests would then be recorded against
-/// whichever test happened to borrow it.
-pub async fn plugin_with_listings(status: u16) -> (Rink, MockServer, MockServer) {
+/// The server travels with the plugin because dropping a `MockServer` returns it to wiremock's
+/// pool, where another test can acquire it: the pooled server is reset, unmounting these mocks,
+/// and this plugin's requests would then be recorded against whichever test happened to borrow
+/// it.
+pub async fn plugin_with_listings(serving: bool) -> (Rink, MockServer, Arc<FakeCryptoSource>) {
     let fiat_server = currency_server(200).await;
-    let listings_server = listings_server(status).await;
+    let source = if serving {
+        FakeCryptoSource::serving()
+    } else {
+        FakeCryptoSource::failing()
+    };
 
     let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat_server.uri())));
-    rink.cmc = Some(Arc::new(
-        CmcClient::try_new_with_base(
-            "test-api-key",
-            &test_client_options(),
-            &listings_server.uri(),
-        )
-        .unwrap(),
-    ));
+    rink.crypto = Some(source.clone());
 
-    (rink, fiat_server, listings_server)
+    (rink, fiat_server, source)
 }

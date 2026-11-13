@@ -22,10 +22,10 @@
 //!
 //! When the `currency` setting is enabled (the default), live currency data is fetched from
 //! rink's dataset — fiat rates from the European Central Bank and Bitcoin from blockchain.info
-//! — and, when the coinmarketcap plugin is loaded and shares its
-//! client, the ranked cryptocurrency table from the CoinMarketCap API; without that feature
-//! the cryptocurrency units stay pending. The `crypto` setting turns the cryptocurrency
-//! loading off. Both datasets are rebuilt into a fresh context by a background task started
+//! — and, when the coinmarketcap plugin is loaded and publishes its listings source, the
+//! ranked cryptocurrency table from the CoinMarketCap API; without that source the
+//! cryptocurrency units stay pending. The `crypto` setting turns the cryptocurrency loading
+//! off. Both datasets are rebuilt into a fresh context by a background task started
 //! when the plugin loads, once per `currency_ttl`; the task asks the actor to swap it in. A
 //! query that runs into missing currency data re-evaluates after an inline refresh — mirroring
 //! upstream rink's REPL, which fetches on demand in the same situation — but that refresh only
@@ -52,7 +52,7 @@ use actor::{EvalOutcome, Handle, Rewrite};
 use currency::{CurrencyData, build_context, refresh_data};
 use render::{error_message, render_reply};
 
-use coinmarketcap::Client as CmcClient;
+use plugins_shared::crypto::{CryptoSource, CryptoSourceHandle};
 use zeta_cache::TtlCache;
 use zeta_http::RequestError;
 use zeta_plugin::irc::send_reply;
@@ -71,13 +71,13 @@ pub struct Rink {
     /// The HTTP client used to fetch currency data; `None` when the `currency` setting is
     /// disabled, leaving currency queries to answer with rink's missing-dependencies error.
     client: Option<reqwest::Client>,
-    /// The keyed CoinMarketCap client shared by the coinmarketcap plugin, used to fetch the
-    /// cryptocurrency listings; `None` when the coinmarketcap plugin is not loaded.
-    cmc: Option<Arc<CmcClient>>,
+    /// The cryptocurrency listings source published by the coinmarketcap plugin, used to fetch
+    /// the cryptocurrency table; `None` when the coinmarketcap plugin is not loaded.
+    crypto: Option<Arc<dyn CryptoSource>>,
     /// The URL the live currency dataset is fetched from.
     currency_url: String,
     /// Whether to load live cryptocurrency units; effective only when the coinmarketcap plugin
-    /// has shared its client.
+    /// has published its listings source.
     crypto_enabled: bool,
 }
 
@@ -94,8 +94,8 @@ pub struct Settings {
     pub currency_url: String,
     /// Whether to load live cryptocurrency units through the coinmarketcap plugin.
     ///
-    /// Effective only when the plugin has shared its client; without it the cryptocurrency
-    /// units stay pending.
+    /// Effective only when the plugin has published its listings source; without it the
+    /// cryptocurrency units stay pending.
     pub crypto: bool,
 }
 
@@ -129,7 +129,7 @@ impl Rink {
             currency: Arc::new(TtlCache::new(settings.currency_ttl)),
             refresh_task: None,
             client,
-            cmc: None,
+            crypto: None,
             currency_url: settings.currency_url.clone(),
             crypto_enabled: settings.crypto,
         })
@@ -137,8 +137,12 @@ impl Rink {
 
     #[handler(loaded)]
     async fn loaded(&mut self, ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        // The coinmarketcap plugin publishes its keyed client for other plugins to reuse.
-        self.cmc = ctx.shared.get::<CmcClient>();
+        // The coinmarketcap plugin publishes its cryptocurrency listings source for other
+        // plugins to reuse.
+        self.crypto = ctx
+            .shared
+            .get::<CryptoSourceHandle>()
+            .map(|handle| handle.source());
 
         self.spawn_actor();
         self.spawn_refresh_task();
@@ -227,7 +231,7 @@ impl Rink {
         };
 
         let (currency, url) = (Arc::clone(&self.currency), self.currency_url.clone());
-        let (cmc, crypto_enabled) = (self.cmc.clone(), self.crypto_enabled);
+        let (crypto, crypto_enabled) = (self.crypto.clone(), self.crypto_enabled);
 
         self.refresh_task = Some(tokio::spawn(async move {
             tracing::info_span!("currency.refresh.start").in_scope(|| {
@@ -246,7 +250,7 @@ impl Rink {
                             refresh_data(
                                 &client,
                                 &currency,
-                                cmc.as_deref(),
+                                crypto.as_deref(),
                                 crypto_enabled,
                                 &url,
                                 &actor,
@@ -334,7 +338,7 @@ impl Rink {
                 refresh_data(
                     client,
                     &self.currency,
-                    self.cmc.as_deref(),
+                    self.crypto.as_deref(),
                     self.crypto_enabled,
                     &self.currency_url,
                     actor,
@@ -357,14 +361,14 @@ impl Rink {
 
     /// Returns whether a requested cryptocurrency table is absent from the cached dataset.
     ///
-    /// `true` when the `crypto` setting is on and the coinmarketcap plugin shared its client,
-    /// but nothing is cached yet or the cached entry carries no listings. Only in that state
-    /// does an unconditional fetch pay off: the fiat data may be fresh while the table a query
-    /// needs is still missing. In every other case the cache already holds what the context
-    /// was built from, and re-fetching cannot resolve a pending dependency.
+    /// `true` when the `crypto` setting is on and the coinmarketcap plugin published its
+    /// listings source, but nothing is cached yet or the cached entry carries no listings. Only
+    /// in that state does an unconditional fetch pay off: the fiat data may be fresh while the
+    /// table a query needs is still missing. In every other case the cache already holds what
+    /// the context was built from, and re-fetching cannot resolve a pending dependency.
     fn crypto_table_pending(&self) -> bool {
         self.crypto_enabled
-            && self.cmc.is_some()
+            && self.crypto.is_some()
             && self
                 .currency
                 .with_value(|data| data.is_none_or(|entry| entry.crypto.is_none()))
@@ -380,8 +384,8 @@ mod tests {
     use zeta_utils::irc;
 
     use crate::test_support::{
-        TEST_CURRENCY_DATA, currency_server, evaluate, listings_server, offline_plugin,
-        plugin_with_listings, test_client_options, test_plugin,
+        FakeCryptoSource, TEST_CURRENCY_DATA, currency_server, evaluate, offline_plugin,
+        plugin_with_listings, test_plugin,
     };
 
     #[tokio::test]
@@ -423,7 +427,7 @@ mod tests {
 
     #[tokio::test]
     async fn crypto_units_and_subunits_convert() {
-        let (rink, _fiat, _listings) = plugin_with_listings(200).await;
+        let (rink, _fiat, _listings) = plugin_with_listings(true).await;
 
         rink.ensure_currency_cached().await;
 
@@ -449,7 +453,7 @@ mod tests {
 
     #[tokio::test]
     async fn synthesis_skips_colliding_and_invalid_symbols() {
-        let (rink, _fiat, _listings) = plugin_with_listings(200).await;
+        let (rink, _fiat, _listings) = plugin_with_listings(true).await;
 
         rink.ensure_currency_cached().await;
 
@@ -463,26 +467,26 @@ mod tests {
 
     #[test]
     fn a_duplicate_ticker_keeps_the_whole_context_build_loadable() {
-        use coinmarketcap::model::{Envelope, Listing};
+        use plugins_shared::crypto::CryptoListing;
 
         // Two listings sharing a ticker: rink rejects a definitions batch that defines the
         // same name twice, and a rejected crypto batch used to fail the whole build — taking
         // the fiat data fetched alongside it down too.
-        let text = r#"{
-            "data": [
-                {"id":1,"name":"Foo","symbol":"FOO","slug":"foo","cmc_rank":1,
-                 "quote":[{"id":2781,"symbol":"USD","price":1.0}]},
-                {"id":2,"name":"Bar","symbol":"FOO","slug":"bar","cmc_rank":2,
-                 "quote":[{"id":2781,"symbol":"USD","price":2.0}]}
-            ],
-            "status":{"timestamp":"2026-09-29T00:00:00Z","error_code":"0",
-                      "error_message":null,"elapsed":1,"credit_count":1}
-        }"#;
-        let parsed: Envelope<Vec<Listing>> =
-            zeta_http::json::from_str(text).expect("the fixture should decode");
+        let listings = vec![
+            CryptoListing {
+                symbol: "FOO".to_string(),
+                name: "Foo".to_string(),
+                usd_price: Some(1.0),
+            },
+            CryptoListing {
+                symbol: "FOO".to_string(),
+                name: "Bar".to_string(),
+                usd_price: Some(2.0),
+            },
+        ];
         let data = CurrencyData {
             fiat: TEST_CURRENCY_DATA.to_string(),
-            crypto: parsed.data,
+            crypto: Some(listings),
         };
 
         let ctx = build_context(Some(&data), None)
@@ -498,22 +502,22 @@ mod tests {
 
     #[tokio::test]
     async fn missing_crypto_answers_missing_dependencies() {
-        // No coinmarketcap client was published: the crypto units stay unloaded even though
-        // the crypto setting is on. The subunits' pending dependency declaration surfaces ETH
-        // in the missing-dependencies error.
+        // No listings source was published: the crypto units stay unloaded even though the
+        // crypto setting is on. The subunits' pending dependency declaration surfaces ETH in
+        // the missing-dependencies error.
         let mut rink = offline_plugin();
         rink.crypto_enabled = true;
-        rink.cmc = None;
+        rink.crypto = None;
         rink.ensure_currency_cached().await;
 
         let disabled =
             irc::strip_formatting(&evaluate(&rink, "1 eth to usd", Rewrite::Classify).await);
         assert!(disabled.contains("Missing dependencies: ETH"), "{disabled}");
 
-        // The fiat dataset is fine; the listings endpoint is not. The refresh fails as a
-        // whole, so the last known context — without crypto — stays in place, and the
-        // pending dependency still surfaces ETH.
-        let (rink, _fiat, _listings) = plugin_with_listings(500).await;
+        // The fiat dataset is fine; the listings source is not. The refresh fails as a whole,
+        // so the last known context — without crypto — stays in place, and the pending
+        // dependency still surfaces ETH.
+        let (rink, _fiat, _listings) = plugin_with_listings(false).await;
         rink.ensure_currency_cached().await;
 
         let failed =
@@ -524,16 +528,13 @@ mod tests {
     #[tokio::test]
     async fn a_pending_crypto_table_is_retried_inline() {
         let fiat = currency_server(200).await;
-        let listings = listings_server(500).await;
+        let source = FakeCryptoSource::failing();
 
         let mut rink = test_plugin(Some(format!("{}/data/currency.json", fiat.uri())));
-        rink.cmc = Some(Arc::new(
-            CmcClient::try_new_with_base("test-api-key", &test_client_options(), &listings.uri())
-                .unwrap(),
-        ));
+        rink.crypto = Some(source.clone());
 
         rink.ensure_currency_cached().await;
-        assert_eq!(listings.received_requests().await.unwrap().len(), 1);
+        assert_eq!(source.calls(), 1);
 
         // The listings fetch failed, so the requested table is absent even though the fiat
         // entry is fresh: unlike an unresolvable dependency, this state a refetch can fix,
@@ -541,7 +542,7 @@ mod tests {
         let reply = evaluate(&rink, "1 gwei to usd", Rewrite::Classify).await;
         assert!(reply.contains("Missing dependencies"), "{reply}");
 
-        assert_eq!(listings.received_requests().await.unwrap().len(), 2);
+        assert_eq!(source.calls(), 2);
     }
 
     #[tokio::test]
@@ -567,9 +568,9 @@ mod tests {
         rink.ensure_currency_cached().await;
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
 
-        // `gwei` rests on the ETH dependency, which no coinmarketcap client can resolve
-        // here, so it stays pending — but the cached dataset is fresh and re-fetching it
-        // cannot add the missing table. The queries must not reach the network again.
+        // `gwei` rests on the ETH dependency, which no listings source can resolve here, so
+        // it stays pending — but the cached dataset is fresh and re-fetching it cannot add the
+        // missing table. The queries must not reach the network again.
         for _ in 0..3 {
             // `.c` case-corrects `usd`, so the pending `gwei` dependency is what surfaces.
             let reply = evaluate(&rink, "1 gwei to usd", Rewrite::Classify).await;

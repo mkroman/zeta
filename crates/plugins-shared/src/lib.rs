@@ -4,6 +4,7 @@
 //! for the pieces more than one plugin needs, so sharing them never pulls in the plugin that
 //! introduced them.
 
+pub mod crypto;
 pub mod task;
 pub mod urls;
 

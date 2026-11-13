@@ -2,20 +2,19 @@
 //!
 //! Rink's own dataset (fiat reference rates from the European Central Bank, plus Bitcoin
 //! properties from blockchain.info) feeds the context and is required. When the coinmarketcap
-//! plugin feature is compiled in, the CoinMarketCap top listings additionally feed the
-//! cryptocurrency table; that refresh warns and keeps the previous table when it fails, and a
-//! table rink rejects at load time is logged so the fiat data still lands.
+//! plugin publishes its cryptocurrency listings source, the ranked top listings additionally
+//! feed the cryptocurrency table; that refresh warns and keeps the previous table when it
+//! fails, and a table rink rejects at load time is logged so the fiat data still lands.
 
 use std::time::Duration;
 
+use plugins_shared::crypto::{CryptoListing, CryptoSource};
 use rink_core::{Context as RinkContext, Value};
 use tracing::debug;
 
 use zeta_plugin::{ZetaError, plugin_err};
 
 use super::actor::Handle;
-use coinmarketcap::Client as CmcClient;
-use coinmarketcap::model::Listing;
 use rink_core::types::DateTime;
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -38,12 +37,6 @@ pub const CURRENCY_TTL: Duration = Duration::from_hours(1);
 /// retry within minutes instead of after a full TTL.
 pub const CURRENCY_CHECK_INTERVAL: Duration = Duration::from_mins(10);
 
-/// The number of top cryptocurrencies (by market cap) fetched for the money unit table.
-///
-/// The CoinMarketCap endpoint is charged one call credit per 250 coins returned (rounded up),
-/// so a limit of 100 costs a single credit per refresh.
-const CRYPTO_LISTINGS_LIMIT: u32 = 100;
-
 /// The static cryptocurrency subunit names defined in [`EXTRA_UNITS`]; a coin symbol that
 /// would shadow one of them is skipped by the synthesizer.
 const CRYPTO_SUBUNIT_NAMES: &[&str] = &[
@@ -52,13 +45,13 @@ const CRYPTO_SUBUNIT_NAMES: &[&str] = &[
 ];
 
 /// The dataset the current rink context was built from: rink's fiat dataset and, when the
-/// coinmarketcap plugin shared its client, the cryptocurrency listing table.
+/// coinmarketcap plugin published its listings source, the cryptocurrency listing table.
 #[derive(Clone)]
 pub struct CurrencyData {
     /// The body of rink's live currency dataset.
     pub fiat: String,
     /// The ranked cryptocurrency listings, when the coinmarketcap plugin is available.
-    pub crypto: Option<Vec<Listing>>,
+    pub crypto: Option<Vec<CryptoListing>>,
 }
 
 /// Extra unit definitions loaded on top of rink's bundled dataset.
@@ -157,13 +150,13 @@ litoshi                  1e-8 LTC
 pub async fn refresh_data(
     client: &reqwest::Client,
     currency: &zeta_cache::TtlCache<CurrencyData>,
-    cmc: Option<&CmcClient>,
+    crypto: Option<&dyn CryptoSource>,
     crypto_enabled: bool,
     url: &str,
     actor: &Handle,
 ) -> Result<CurrencyData, ZetaError> {
     let fiat = fetch_fiat(client, url).await?;
-    let crypto = fetch_crypto(currency, cmc, crypto_enabled).await;
+    let crypto = fetch_crypto(currency, crypto, crypto_enabled).await;
     let data = CurrencyData { fiat, crypto };
 
     actor.update_context(data.clone()).await?;
@@ -191,15 +184,15 @@ pub fn swap_in(ctx: &mut RinkContext, data: &CurrencyData) -> Result<(), ZetaErr
 /// fails.
 ///
 /// Returns `None` when the `crypto` setting is disabled or the coinmarketcap plugin has not
-/// shared its client.
+/// published its listings source.
 async fn fetch_crypto(
     currency: &zeta_cache::TtlCache<CurrencyData>,
-    cmc: Option<&CmcClient>,
+    crypto: Option<&dyn CryptoSource>,
     enabled: bool,
-) -> Option<Vec<Listing>> {
-    let cmc = cmc.filter(|_| enabled)?;
+) -> Option<Vec<CryptoListing>> {
+    let crypto = crypto.filter(|_| enabled)?;
 
-    match cmc.listings(CRYPTO_LISTINGS_LIMIT).await {
+    match crypto.listings().await {
         Ok(listings) => Some(listings),
         Err(error) => {
             warn!(
@@ -277,18 +270,13 @@ pub fn build_context(
 /// (the euro, the liquid drop), or carry no USD price are skipped; so is every later listing
 /// that repeats a ticker already emitted here, because rink rejects a batch with a duplicate
 /// name. The returned text is empty when nothing qualifies.
-fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
+fn synthesize_crypto_units(ctx: &RinkContext, listings: &[CryptoListing]) -> String {
     let date = DateTime::now();
     let mut text = String::new();
     let mut emitted = HashSet::new();
 
     for listing in listings {
-        let Some(quote) = listing
-            .quote
-            .iter()
-            .find(|quote| quote.symbol == "USD")
-            .and_then(|quote| quote.price)
-        else {
+        let Some(price) = listing.usd_price else {
             continue;
         };
 
@@ -311,7 +299,7 @@ fn synthesize_crypto_units(ctx: &RinkContext, listings: &[Listing]) -> String {
             "?? {name} ({}). Sourced from CoinMarketCap. Current as of {date}.",
             listing.symbol
         );
-        let _ = writeln!(text, "{} {quote} USD", listing.symbol);
+        let _ = writeln!(text, "{} {price} USD", listing.symbol);
     }
 
     text
@@ -328,30 +316,14 @@ fn valid_unit_symbol(symbol: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use coinmarketcap::model::ListingQuote;
-
     use super::*;
 
     /// A listing with the fields the currency synthesis reads.
-    fn listing(name: &str) -> Listing {
-        Listing {
-            id: 1,
-            name: name.to_string(),
+    fn listing(name: &str) -> CryptoListing {
+        CryptoListing {
             symbol: "TST".to_string(),
-            slug: "tst".to_string(),
-            cmc_rank: None,
-            num_market_pairs: None,
-            circulating_supply: None,
-            total_supply: None,
-            max_supply: None,
-            infinite_supply: None,
-            date_added: None,
-            last_updated: None,
-            quote: vec![ListingQuote {
-                id: 2781,
-                symbol: "USD".to_string(),
-                price: Some(1.0),
-            }],
+            name: name.to_string(),
+            usd_price: Some(1.0),
         }
     }
 

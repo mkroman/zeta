@@ -21,6 +21,7 @@ native-tls-vendored = ["zeta-plugin/native-tls-vendored", "coinmarketcap/native-
 clap.workspace = true
 coinmarketcap = { path = "../coinmarketcap", default-features = false }
 humantime-serde.workspace = true
+plugins-shared = { path = "../plugins-shared" }
 serde.workspace = true
 strsim = "0.11"
 tokio.workspace = true

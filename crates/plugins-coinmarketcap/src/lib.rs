@@ -19,6 +19,8 @@
 //! `max_name_typos` (2) settings tune quoting and fuzzy name lookups.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,6 +28,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
+use plugins_shared::crypto::{CryptoListing, CryptoSource, CryptoSourceHandle};
 use zeta_cache::TtlCache;
 use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{
@@ -186,10 +189,51 @@ impl From<Vec<Fiat>> for FiatCache {
     }
 }
 
+/// The number of top cryptocurrencies (by market cap) shared for the rink plugin's money unit
+/// table.
+///
+/// The listings endpoint is charged one call credit per 250 coins returned (rounded up), so a
+/// limit of 100 costs a single credit per refresh.
+const CRYPTO_LISTINGS_LIMIT: u32 = 100;
+
+/// Adapts this plugin's keyed CoinMarketCap client to the neutral [`CryptoSource`] shared with
+/// other plugins.
+struct ListingsSource {
+    /// The keyed CoinMarketCap client, kept private to this plugin.
+    client: Arc<CmcClient>,
+}
+
+impl CryptoSource for ListingsSource {
+    fn listings<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CryptoListing>, ZetaError>> + Send + 'a>> {
+        Box::pin(async move {
+            let listings = self
+                .client
+                .listings(CRYPTO_LISTINGS_LIMIT)
+                .await
+                .map_err(plugin_err)?;
+
+            Ok(listings
+                .into_iter()
+                .map(|listing| CryptoListing {
+                    symbol: listing.symbol,
+                    name: listing.name,
+                    usd_price: listing
+                        .quote
+                        .into_iter()
+                        .find(|quote| quote.symbol == DEFAULT_CURRENCY)
+                        .and_then(|quote| quote.price),
+                })
+                .collect())
+        })
+    }
+}
+
 /// Crypto currency quotes plugin, backed by the CoinMarketCap API.
 pub struct CoinMarketCap {
     /// Client for CoinMarketCap API requests, with the API key set as a default header.
-    /// Shared with other plugins through [`Context::shared`].
+    /// Published to other plugins only through a [`CryptoSource`] adapter.
     client: Arc<CmcClient>,
     /// The top cryptocurrencies by market cap, cached for the cache TTL.
     coins: TtlCache<CoinCache>,
@@ -215,9 +259,13 @@ impl CoinMarketCap {
         let client =
             Arc::new(CmcClient::try_new_with_options(api_key, &options).map_err(plugin_err)?);
 
-        // The keyed CoinMarketCap client is published for other plugins to reuse, e.g. the
-        // rink plugin's live cryptocurrency units.
-        ctx.shared.publish(Arc::clone(&client));
+        // A neutral listings source is published for other plugins to reuse, e.g. the rink
+        // plugin's live cryptocurrency units; the keyed client stays private to this plugin.
+        let source: Arc<dyn CryptoSource> = Arc::new(ListingsSource {
+            client: Arc::clone(&client),
+        });
+        ctx.shared
+            .publish(Arc::new(CryptoSourceHandle::new(source)));
 
         for (command, _) in COIN_COMMANDS {
             subscriptions.command(*command);
@@ -516,9 +564,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publishes_its_client_for_other_plugins() {
-        // The keyed CoinMarketCap client must be discoverable through the shared state, e.g.
-        // by the rink plugin's live cryptocurrency units.
+    async fn publishes_a_listing_source_for_other_plugins() {
+        // The neutral listings source must be discoverable through the shared state, e.g. by
+        // the rink plugin's live cryptocurrency units; the keyed client stays private.
         let ctx = zeta_test_support::test_context();
         let mut subscriptions = Subscriptions::new();
         let settings = Settings {
@@ -528,7 +576,7 @@ mod tests {
 
         <CoinMarketCap as Registered>::new(&ctx, &settings, &mut subscriptions).unwrap();
 
-        assert!(ctx.shared.get::<CmcClient>().is_some());
+        assert!(ctx.shared.get::<CryptoSourceHandle>().is_some());
     }
 
     /// The default cache lifetime, as configured in [`Settings::default`].
