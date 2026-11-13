@@ -174,7 +174,8 @@ impl NotificationService {
         }
     }
 
-    /// Deletes the given notifications from the database.
+    /// Deletes the given notifications from the database, returning the number of notifications
+    /// removed.
     ///
     /// The cache is not touched: the notifications being delivered were already removed by
     /// `take`, and undelivered ones are returned to the cache with `restore`.
@@ -183,9 +184,9 @@ impl NotificationService {
     ///
     /// Returns [`Error::Database`] if the notifications could not be deleted from the database.
     #[instrument(name = "notification.delete", skip_all, err)]
-    pub async fn delete_ids(&self, ids: &[i32]) -> Result<(), Error> {
+    pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         if ids.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         self.repo.delete_ids(ids).await
@@ -195,6 +196,7 @@ impl NotificationService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::db_test;
 
     fn notification() -> NewNotification {
         NewNotification {
@@ -226,48 +228,65 @@ mod tests {
         assert!(taken.is_empty());
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
-    async fn take_with_missing_channel_or_target_keeps_the_pending_count(db: sqlx::PgPool) {
-        let service = NotificationService::new(db, &Settings::default());
+    db_test! {
+        async fn take_with_missing_channel_or_target_keeps_the_pending_count(db: sqlx::PgPool) {
+            let service = NotificationService::new(db, &Settings::default());
 
-        service.create(notification()).await.unwrap();
+            service.create(notification()).await.unwrap();
 
-        // A miss must not decrement the counter: it would reach zero while a notification
-        // remains, and the final `take` would wrongly fast-path to an empty result.
-        assert!(service.take("#other", "someone").await.is_empty());
-        assert!(service.take("#chan", "someone-else").await.is_empty());
+            // A miss must not decrement the counter: it would reach zero while a notification
+            // remains, and the final `take` would wrongly fast-path to an empty result.
+            assert!(service.take("#other", "someone").await.is_empty());
+            assert!(service.take("#chan", "someone-else").await.is_empty());
 
-        assert_eq!(service.take("#chan", "someone").await.len(), 1);
+            assert_eq!(service.take("#chan", "someone").await.len(), 1);
+        }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
-    async fn take_removes_pending_notifications_and_restore_puts_them_back(db: sqlx::PgPool) {
-        let service = NotificationService::new(db, &Settings::default());
+    db_test! {
+        async fn take_removes_pending_notifications_and_restore_puts_them_back(db: sqlx::PgPool) {
+            let service = NotificationService::new(db, &Settings::default());
 
-        service.create(notification()).await.unwrap();
+            service.create(notification()).await.unwrap();
 
-        let taken = service.take("#chan", "someone").await;
+            let taken = service.take("#chan", "someone").await;
 
-        assert_eq!(taken.len(), 1);
-        assert!(service.take("#chan", "someone").await.is_empty());
+            assert_eq!(taken.len(), 1);
+            assert!(service.take("#chan", "someone").await.is_empty());
 
-        service.restore(taken).await;
+            service.restore(taken).await;
 
-        assert_eq!(service.take("#chan", "someone").await.len(), 1);
+            assert_eq!(service.take("#chan", "someone").await.len(), 1);
+        }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
-    async fn load_makes_stored_notifications_takeable(db: sqlx::PgPool) {
-        NotificationService::new(db.clone(), &Settings::default())
-            .create(notification())
-            .await
-            .unwrap();
+    db_test! {
+        async fn load_makes_stored_notifications_takeable(db: sqlx::PgPool) {
+            NotificationService::new(db.clone(), &Settings::default())
+                .create(notification())
+                .await
+                .unwrap();
 
-        // A fresh service only sees the notification through `load`, which must also update the
-        // pending counter so the lock-free `take` path does not skip it.
-        let loaded = NotificationService::new(db, &Settings::default());
-        loaded.load().await.unwrap();
+            // A fresh service only sees the notification through `load`, which must also update the
+            // pending counter so the lock-free `take` path does not skip it.
+            let loaded = NotificationService::new(db, &Settings::default());
+            loaded.load().await.unwrap();
 
-        assert_eq!(loaded.take("#chan", "someone").await.len(), 1);
+            assert_eq!(loaded.take("#chan", "someone").await.len(), 1);
+        }
+    }
+
+    db_test! {
+        async fn delete_ids_returns_the_removed_row_count(db: sqlx::PgPool) {
+            let service = NotificationService::new(db, &Settings::default());
+
+            let first = service.create(notification()).await.unwrap();
+            let second = service.create(notification()).await.unwrap();
+
+            assert_eq!(service.delete_ids(&[first.id]).await.unwrap(), 1);
+            // A repeated delete removes nothing: the count reports rows, not the ids asked for.
+            assert_eq!(service.delete_ids(&[first.id]).await.unwrap(), 0);
+            assert_eq!(service.delete_ids(&[second.id]).await.unwrap(), 1);
+        }
     }
 }

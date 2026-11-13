@@ -4,8 +4,65 @@
 //! through their context and persist their state through the [`DbError`] and
 //! [`impl_repository_error!`](crate::impl_repository_error) helpers here.
 
+use std::future::Future;
+use std::time::Duration;
+
+use tracing::warn;
+
 /// Database connection pool.
 pub type Database = sqlx::PgPool;
+
+/// The number of times a failed startup load is attempted before the plugin gives up.
+pub const LOAD_ATTEMPTS: u32 = 4;
+
+/// The first delay between startup load attempts; each further delay doubles it.
+pub const LOAD_BACKOFF: Duration = Duration::from_millis(250);
+
+/// Loads a plugin's stored state with `load`, retrying a failed attempt with exponential
+/// backoff.
+///
+/// A transient database failure during the `loaded` hook must not strand the plugin's stored
+/// state for the rest of the process lifetime. The host waits for the hook before dispatching
+/// (bounded by its startup grace), so retrying here keeps that window short instead of leaving
+/// the plugin with empty in-memory state — e.g. no filters or no coverage — until the next
+/// restart. Every failed attempt but the last is logged at `warn`; the error of the last attempt
+/// is returned, so a `loaded` hook that still cannot load fails initialization as it would
+/// without a retry (and the plugin task logs that error).
+///
+/// The delay starts at [`LOAD_BACKOFF`] and doubles after each failed attempt, for
+/// [`LOAD_ATTEMPTS`] attempts in total.
+///
+/// # Errors
+///
+/// Returns the error of the last failed `load` attempt.
+pub async fn load_with_retry<E, F, Fut>(mut load: F) -> Result<(), E>
+where
+    E: std::fmt::Display,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), E>>,
+{
+    let mut delay = LOAD_BACKOFF;
+
+    for attempt in 1..=LOAD_ATTEMPTS {
+        match load().await {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < LOAD_ATTEMPTS => {
+                warn!(
+                    attempt,
+                    max_attempts = LOAD_ATTEMPTS,
+                    exception.message = %error,
+                    "startup load failed; retrying"
+                );
+
+                tokio::time::sleep(delay).await;
+                delay = delay.saturating_mul(2);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("the last attempt returns")
+}
 
 /// Returns the name of the database the pool connects to, for `db.namespace` span fields.
 #[must_use]
@@ -140,7 +197,64 @@ macro_rules! impl_repository_error {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
     use super::*;
+
+    /// A transient load failure is retried with a doubled delay: 250 ms, then 500 ms, before the
+    /// third attempt succeeds.
+    #[tokio::test(start_paused = true)]
+    async fn retries_a_transient_load_failure() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&attempts);
+        let started = tokio::time::Instant::now();
+
+        let result = load_with_retry(|| {
+            let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
+
+            async move {
+                if attempt < 3 {
+                    Err(format!("attempt {attempt}"))
+                } else {
+                    Ok(())
+                }
+            }
+        })
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        assert!(
+            started.elapsed() >= Duration::from_millis(750),
+            "250 ms + 500 ms of backoff, elapsed {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A persistent failure is returned only after every attempt, so the error logged by the
+    /// plugin task is the one from the last attempt.
+    #[tokio::test(start_paused = true)]
+    async fn a_persistent_load_failure_is_returned_after_every_attempt() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&attempts);
+        let started = tokio::time::Instant::now();
+
+        let result = load_with_retry(|| {
+            let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
+
+            async move { Err::<(), _>(format!("attempt {attempt}")) }
+        })
+        .await;
+
+        assert_eq!(attempts.load(Ordering::SeqCst), LOAD_ATTEMPTS);
+        assert_eq!(result.unwrap_err(), format!("attempt {LOAD_ATTEMPTS}"));
+        assert!(
+            started.elapsed() >= Duration::from_millis(1_750),
+            "250 ms + 500 ms + 1 s of backoff, elapsed {:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn db_error_display_and_source_match_the_manual_impl() {

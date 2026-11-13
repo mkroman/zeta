@@ -238,7 +238,12 @@ impl AlertPlugin {
 
     #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, client: &Client) -> Result<(), ZetaError> {
-        self.service.load().await.map_err(plugin_err)?;
+        // A transient database failure must not leave the cache empty for the run: without the
+        // retry, every alert due within the window is skipped until the next restart.
+        zeta_plugin::database::load_with_retry(|| self.service.load())
+            .await
+            .map_err(plugin_err)?;
+
         self.scheduler = Some(self.service.start_scheduler());
 
         if let Some(receiver) = self.receiver.take() {

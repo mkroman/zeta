@@ -147,6 +147,7 @@ impl EventFilter for FilterService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_test_support::db_test;
 
     /// A filter fixture. The `created_by` column is part of the model; with per-test databases
     /// the value no longer doubles as a cleanup marker.
@@ -162,105 +163,109 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
-    async fn added_filters_are_listed_with_their_fields(db: sqlx::PgPool) {
-        let service = FilterService::new(db);
+    db_test! {
+        async fn added_filters_are_listed_with_their_fields(db: sqlx::PgPool) {
+            let service = FilterService::new(db);
 
-        let added = service
-            .add(new_filter(
-                Some("#smoke"),
-                Some("example.com"),
-                Some("*other"),
-            ))
-            .await
-            .unwrap();
+            let added = service
+                .add(new_filter(
+                    Some("#smoke"),
+                    Some("example.com"),
+                    Some("*other"),
+                ))
+                .await
+                .unwrap();
 
-        assert_eq!(added.channel.as_deref(), Some("#smoke"));
-        assert_eq!(added.host.as_deref(), Some("example.com"));
-        assert_eq!(added.username.as_deref(), Some("*other"));
-        assert!(service.list().iter().any(|f| f.id == added.id));
+            assert_eq!(added.channel.as_deref(), Some("#smoke"));
+            assert_eq!(added.host.as_deref(), Some("example.com"));
+            assert_eq!(added.username.as_deref(), Some("*other"));
+            assert!(service.list().iter().any(|f| f.id == added.id));
+        }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
-    async fn deleted_filters_leave_the_database_and_the_index(db: sqlx::PgPool) {
-        let service = FilterService::new(db);
+    db_test! {
+        async fn deleted_filters_leave_the_database_and_the_index(db: sqlx::PgPool) {
+            let service = FilterService::new(db);
 
-        let added = service
-            .add(new_filter(
-                Some("#smoke"),
-                Some("example.com"),
-                Some("*other"),
-            ))
-            .await
-            .unwrap();
+            let added = service
+                .add(new_filter(
+                    Some("#smoke"),
+                    Some("example.com"),
+                    Some("*other"),
+                ))
+                .await
+                .unwrap();
 
-        assert_eq!(
-            service.find(added.id).map(|filter| filter.id),
-            Some(added.id)
-        );
-        assert!(!service.is_empty());
+            assert_eq!(
+                service.find(added.id).map(|filter| filter.id),
+                Some(added.id)
+            );
+            assert!(!service.is_empty());
 
-        let removed = service.delete_ids(&[added.id]).await.unwrap();
+            let removed = service.delete_ids(&[added.id]).await.unwrap();
 
-        assert_eq!(removed, 1);
+            assert_eq!(removed, 1);
 
-        assert!(!service.is_filtered(
-            "#smoke",
-            Some(Sender::new("someone", "~cliother", "host.example")),
-            &"https://example.com/page".parse().unwrap()
-        ));
+            assert!(!service.is_filtered(
+                "#smoke",
+                Some(Sender::new("someone", "~cliother", "host.example")),
+                &"https://example.com/page".parse().unwrap()
+            ));
 
-        // The database is the source of truth: a fresh load restores the index without the
-        // deleted filter.
-        service.load().await.unwrap();
+            // The database is the source of truth: a fresh load restores the index without the
+            // deleted filter.
+            service.load().await.unwrap();
 
-        assert!(!service.list().iter().any(|f| f.id == added.id));
-        assert!(service.find(added.id).is_none());
-        assert!(service.is_empty());
+            assert!(!service.list().iter().any(|f| f.id == added.id));
+            assert!(service.find(added.id).is_none());
+            assert!(service.is_empty());
+        }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
-    async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
-        let service = FilterService::new(db);
+    db_test! {
+        async fn wildcard_filters_match_any_channel(db: sqlx::PgPool) {
+            let service = FilterService::new(db);
 
-        service
-            .add(new_filter(None, Some("*.com"), None))
-            .await
-            .unwrap();
+            service
+                .add(new_filter(None, Some("*.com"), None))
+                .await
+                .unwrap();
 
-        assert!(service.is_filtered(
-            "#anywhere",
-            Some(Sender::new("nick", "user", "host.example")),
-            &"https://reuters.com/article".parse().unwrap()
-        ));
+            assert!(service.is_filtered(
+                "#anywhere",
+                Some(Sender::new("nick", "user", "host.example")),
+                &"https://reuters.com/article".parse().unwrap()
+            ));
+        }
     }
 
-    #[sqlx::test(migrations = "../plugins/migrations")]
-    async fn matches_and_ignores_through_the_event_filter_trait(db: sqlx::PgPool) {
-        let url: Url = "https://imdb.com/title/tt0111161".parse().unwrap();
-        let matching = Some(Sender::new("nick", "someuser", "host.example"));
-        let other = Some(Sender::new("nick", "other", "host.example"));
+    db_test! {
+        async fn matches_and_ignores_through_the_event_filter_trait(db: sqlx::PgPool) {
+            let url: Url = "https://imdb.com/title/tt0111161".parse().unwrap();
+            let matching = Some(Sender::new("nick", "someuser", "host.example"));
+            let other = Some(Sender::new("nick", "other", "host.example"));
 
-        let url_only = FilterService::new(db.clone());
+            let url_only = FilterService::new(db.clone());
 
-        url_only
-            .add(new_filter(None, Some("imdb.com"), Some("someuser")))
-            .await
-            .unwrap();
+            url_only
+                .add(new_filter(None, Some("imdb.com"), Some("someuser")))
+                .await
+                .unwrap();
 
-        assert!(EventFilter::is_filtered(&url_only, "#chan", matching, &url));
-        assert!(!EventFilter::is_filtered(&url_only, "#chan", other, &url));
-        // A filter with URL criteria filters those URLs without ignoring the sender entirely.
-        assert!(!EventFilter::ignores(&url_only, "#chan", matching));
+            assert!(EventFilter::is_filtered(&url_only, "#chan", matching, &url));
+            assert!(!EventFilter::is_filtered(&url_only, "#chan", other, &url));
+            // A filter with URL criteria filters those URLs without ignoring the sender entirely.
+            assert!(!EventFilter::ignores(&url_only, "#chan", matching));
 
-        let sender_only = FilterService::new(db);
+            let sender_only = FilterService::new(db);
 
-        sender_only
-            .add(new_filter(None, None, Some("someuser")))
-            .await
-            .unwrap();
+            sender_only
+                .add(new_filter(None, None, Some("someuser")))
+                .await
+                .unwrap();
 
-        assert!(EventFilter::ignores(&sender_only, "#chan", matching));
-        assert!(!EventFilter::ignores(&sender_only, "#chan", other));
+            assert!(EventFilter::ignores(&sender_only, "#chan", matching));
+            assert!(!EventFilter::ignores(&sender_only, "#chan", other));
+        }
     }
 }

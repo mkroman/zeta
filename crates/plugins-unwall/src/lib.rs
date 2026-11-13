@@ -532,7 +532,11 @@ impl Unwall {
 
     #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        self.service.load().await.map_err(plugin_err)?;
+        // A transient database failure must not leave the covered set empty for the run, which
+        // would silently stop unwalling links until the next restart.
+        zeta_plugin::database::load_with_retry(|| self.service.load())
+            .await
+            .map_err(plugin_err)?;
 
         Ok(())
     }

@@ -410,6 +410,37 @@ macro_rules! settings_tests {
     };
 }
 
+/// Generates a `#[::sqlx::test]` database test running the shared plugin migrations.
+///
+/// The test function keeps its signature and body, so an invocation reads like the attribute it
+/// replaces, with the migrations path named once here instead of in every test:
+///
+/// ```ignore
+/// zeta_test_support::db_test! {
+///     async fn stored_filters_are_listed(db: sqlx::PgPool) {
+///         // ...
+///     }
+/// }
+/// ```
+///
+/// The calling crate must sit next to `crates/plugins` (i.e. `crates/plugins-<name>`): `sqlx`
+/// resolves `migrations = "../plugins/migrations"` against the caller's manifest directory and
+/// rejects absolute paths, so the path cannot be made caller-independent.
+///
+/// Like `#[sqlx::test]`, the test needs `DATABASE_URL` to name an existing database, from which a
+/// fresh database is cloned and migrated for the test.
+#[macro_export]
+macro_rules! db_test {
+    (
+        $(#[$meta:meta])*
+        async fn $name:ident ( $($args:tt)* ) $body:block
+    ) => {
+        $(#[$meta])*
+        #[::sqlx::test(migrations = "../plugins/migrations")]
+        async fn $name($($args)*) $body
+    };
+}
+
 /// Asserts that the expression is empty, naming the value in the panic.
 ///
 /// A plain `assert!(value.is_empty())` only prints the condition on failure — useless for

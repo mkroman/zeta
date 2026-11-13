@@ -69,7 +69,11 @@ impl NotificationPlugin {
 
     #[handler(loaded)]
     async fn loaded(&mut self, _ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        self.service.load().await.map_err(plugin_err)?;
+        // The pending counter is only raised by a successful load, and `take` fast-paths on a
+        // zero count; without the retry, stored notifications stay unreadable until restart.
+        zeta_plugin::database::load_with_retry(|| self.service.load())
+            .await
+            .map_err(plugin_err)?;
 
         Ok(())
     }
