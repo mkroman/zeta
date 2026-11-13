@@ -107,7 +107,7 @@ These are consumed by the tracing layer and are not exported as span attributes.
 | `messaging.operation.name` | string | Lowercased IRC command: `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, …; `error` for server `ERROR` | OTel |
 | `messaging.operation.type` | string | Always `process` | OTel |
 | `messaging.destination.name` | string | Channel or nick targeted by `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, or `KICK` | OTel |
-| `messaging.message.id` | string | IRCv3 `msgid` from a `PRIVMSG` or `NOTICE`, when present | OTel |
+| `messaging.message.id` | string | IRCv3 `msgid` attached to any event, when present; the client requests the `message-tags` capability at registration | OTel |
 | `irc.command` | string | IRC command as received, e.g. `PRIVMSG` | custom |
 | `irc.channel` | string | Channel or nick target | custom |
 | `irc.raw` | string | Full IRC line, trace level | custom |
