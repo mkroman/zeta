@@ -28,6 +28,10 @@ use zeta_plugin::{Client, Context, MessageEvent, UrlEvent, ZetaError, plugin, re
 use zeta_utils::irc;
 use zeta_utils::text::{self, ListJoinExt};
 
+mod model;
+
+use self::model::{Album, Artist, ArtistSimple, Playlist, Track};
+
 /// The Spotify hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["open.spotify.com", "play.spotify.com"];
 
@@ -55,69 +59,6 @@ pub struct Spotify {
 
 /// Errors that can occur while talking to the Spotify API.
 pub type Error = http::ApiError;
-
-#[derive(Deserialize)]
-struct Track {
-    name: String,
-    artists: Vec<ArtistSimple>,
-    album: AlbumSimple,
-    external_urls: ExternalUrls,
-}
-
-#[derive(Deserialize)]
-struct Album {
-    name: String,
-    artists: Vec<ArtistSimple>,
-    external_urls: ExternalUrls,
-}
-
-#[derive(Deserialize)]
-struct Artist {
-    name: String,
-    genres: Vec<String>,
-    followers: Followers,
-    external_urls: ExternalUrls,
-}
-
-#[derive(Deserialize)]
-struct Playlist {
-    name: String,
-    owner: Owner,
-    followers: Followers,
-    tracks: PlaylistTracks,
-    external_urls: ExternalUrls,
-}
-
-#[derive(Deserialize)]
-struct ArtistSimple {
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct AlbumSimple {
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct ExternalUrls {
-    spotify: String,
-}
-
-#[derive(Deserialize)]
-struct Followers {
-    total: u64,
-}
-
-#[derive(Deserialize)]
-struct Owner {
-    display_name: Option<String>,
-    id: String,
-}
-
-#[derive(Deserialize)]
-struct PlaylistTracks {
-    total: u64,
-}
 
 #[plugin(
     name = "spotify",
