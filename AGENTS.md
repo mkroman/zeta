@@ -112,4 +112,4 @@ Cheapest first; each step catches something the others don't:
 - Rustdoc: in a module whose `mod` line carries an outer `///` doc (e.g. modules in `crates/zeta/src/lib.rs`), its `//!` links need full `crate::` paths.
 - Releases: tag `0.x.y` must equal `version` in `crates/zeta/Cargo.toml` (checked by `release.yaml`).
 - Commits: short imperative subjects. PRs target `main`, title under 50 chars, unwrapped body. Only include a verification section when it's relevant beyond the basic cargo commands.
-- `AGENTS.md` is gitignored: don't commit it or reference it in checked-in docs.
+- `AGENTS.md` is tracked in the repository: keep it up to date when conventions change.
