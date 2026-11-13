@@ -193,6 +193,12 @@ pub enum Error {
     /// The submission does not exist.
     #[error("submission not found")]
     SubmissionNotFound,
+    /// The submission, comment, or video id is not a valid Reddit id.
+    #[error("invalid reddit id")]
+    InvalidId,
+    /// The subreddit name is not a valid Reddit subreddit name.
+    #[error("invalid subreddit name")]
+    InvalidSubreddit,
     /// The server responded with an error status code.
     #[error("http error: {0}")]
     Http(#[source] RequestError),

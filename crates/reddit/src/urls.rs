@@ -35,6 +35,35 @@ pub fn classify_reddit_url(url: &Url) -> Option<Link> {
     }
 }
 
+/// The characters a subreddit name may contain beyond ASCII alphanumerics.
+const SUBREDDIT_ALLOWED: &str = "_";
+
+/// The characters a username may contain beyond ASCII alphanumerics.
+const USERNAME_ALLOWED: &str = "_-";
+
+/// Returns whether `segment` is a valid Reddit id.
+///
+/// Submission, comment and gallery ids are base36 while short-link ids are mixed-case base62,
+/// so the shared alphabet is ASCII alphanumerics. Anything else — a percent-encoded separator,
+/// a `t3_` fullname, a path or query fragment — is rejected before it can be interpolated into
+/// a request URL.
+#[must_use]
+pub fn is_id(segment: &str) -> bool {
+    zeta_url::is_identifier(segment, "")
+}
+
+/// Returns whether `segment` is a valid subreddit name — ASCII alphanumerics and underscores.
+#[must_use]
+pub fn is_subreddit(segment: &str) -> bool {
+    zeta_url::is_identifier(segment, SUBREDDIT_ALLOWED)
+}
+
+/// Returns whether `segment` is a valid username — ASCII alphanumerics, hyphens and underscores.
+#[must_use]
+pub fn is_username(segment: &str) -> bool {
+    zeta_url::is_identifier(segment, USERNAME_ALLOWED)
+}
+
 /// Parses reddit.com URLs
 #[must_use]
 pub fn classify_reddit_com_url(url: &Url) -> Option<Link> {
@@ -43,12 +72,16 @@ pub fn classify_reddit_com_url(url: &Url) -> Option<Link> {
         //
         // Parameters: `/r/<subreddit>`
         // Example: `/r/worldnews`
-        ["r", subreddit] => Some(Link::Subreddit((*subreddit).to_string())),
+        ["r", subreddit] if is_subreddit(subreddit) => {
+            Some(Link::Subreddit((*subreddit).to_string()))
+        }
         // Direct link link to a submission page (i.e. full thread and comments)
         //
         // Parameters: `/r/<subreddit>/comments/<id>/[title_slug][/]`
         // Example: `/r/nottheonion/comments/1u7eqe9/microsofts_new_outlook_takes_10_seconds_to_do/`
-        ["r", subreddit, "comments", id] | ["r", subreddit, "comments", id, _] => {
+        ["r", subreddit, "comments", id] | ["r", subreddit, "comments", id, _]
+            if is_subreddit(subreddit) && is_id(id) =>
+        {
             Some(Link::Submission {
                 id: (*id).to_string(),
                 subreddit: (*subreddit).to_string(),
@@ -58,26 +91,32 @@ pub fn classify_reddit_com_url(url: &Url) -> Option<Link> {
         //
         // Parameters: `/r/<subreddit>/comments/<id>/[title_slug]/<comment_id>[/]`
         // Example: `/r/AskElectronics/comments/1u7evrr/what_is_the_best_course_of_action_for_wrong_width/orzo90y/`
-        ["r", subreddit, "comments", submission_id, _, comment_id] => Some(Link::Comment {
-            id: (*comment_id).to_string(),
-            submission: (*submission_id).to_string(),
-            subreddit: (*subreddit).to_string(),
-        }),
+        ["r", subreddit, "comments", submission_id, _, comment_id]
+            if is_subreddit(subreddit) && is_id(submission_id) && is_id(comment_id) =>
+        {
+            Some(Link::Comment {
+                id: (*comment_id).to_string(),
+                submission: (*submission_id).to_string(),
+                subreddit: (*subreddit).to_string(),
+            })
+        }
         // /r/<subreddit>/s/<id>[/]
-        ["r", subreddit, "s", id] => Some(Link::Shortened {
-            id: (*id).to_string(),
-            subreddit: (*subreddit).to_string(),
-        }),
+        ["r", subreddit, "s", id] if is_subreddit(subreddit) && is_id(id) => {
+            Some(Link::Shortened {
+                id: (*id).to_string(),
+                subreddit: (*subreddit).to_string(),
+            })
+        }
         // /comments/<id>[/]
-        ["comments", id] => Some(Link::CommentsPage {
+        ["comments", id] if is_id(id) => Some(Link::CommentsPage {
             id: (*id).to_string(),
         }),
         // /gallery/<id>
-        ["gallery", id] => Some(Link::Gallery((*id).to_string())),
+        ["gallery", id] if is_id(id) => Some(Link::Gallery((*id).to_string())),
         // /video/<id>
-        ["video", id] => Some(Link::Video((*id).to_string())),
+        ["video", id] if is_id(id) => Some(Link::Video((*id).to_string())),
         // /user/<name>[/]
-        ["user", username] => Some(Link::User((*username).to_string())),
+        ["user", username] if is_username(username) => Some(Link::User((*username).to_string())),
         _ => None,
     }
 }
@@ -89,6 +128,7 @@ fn classify_redd_it_url(url: &Url) -> Option<Link> {
         Some("v.redd.it") => url
             .path_segments()
             .and_then(|mut segment| segment.next())
+            .filter(|id| is_id(id))
             .map(|id| Link::Video(id.to_string())),
         Some("preview.redd.it") => {
             let mut request_uri = url.path().to_string();
@@ -214,6 +254,74 @@ mod tests {
                 "https://redd.it/",
                 "https://redd.it/1nh144u/extra",
                 "https://redd.it/not an id",
+            ],
+            None,
+        );
+    }
+
+    #[test]
+    fn accepts_only_the_reddit_id_and_name_alphabet() {
+        for id in ["1nh144u", "1NJ9601", "dmwUYLKTjd", "b2l87x1pyn7h1"] {
+            assert!(is_id(id), "{id} should be a valid id");
+        }
+
+        for id in [
+            "",
+            "..",
+            "a/b",
+            "a?x",
+            "a#frag",
+            "%2F",
+            "a b",
+            "a-b",
+            "t3_1nh144u",
+        ] {
+            assert!(!is_id(id), "{id:?} should not be a valid id");
+        }
+
+        for name in ["rust", "interestingasfuck", "some_sub", "Rust"] {
+            assert!(is_subreddit(name), "{name} should be a valid subreddit");
+        }
+
+        for name in ["", "a-b", "a/b", "%2F", "a b", "..", "a.b"] {
+            assert!(
+                !is_subreddit(name),
+                "{name:?} should not be a valid subreddit"
+            );
+        }
+
+        for name in ["cealild", "some-user", "some_user"] {
+            assert!(is_username(name), "{name} should be a valid username");
+        }
+
+        for name in ["", "a/b", "a.b", "%2F", "a b", ".."] {
+            assert!(
+                !is_username(name),
+                "{name:?} should not be a valid username"
+            );
+        }
+    }
+
+    /// A crafted path segment must not classify: its value can be interpolated into request
+    /// URLs, so a separator, query or fragment smuggled into the segment has to be rejected at
+    /// the boundary.
+    #[test]
+    fn rejects_crafted_path_segments() {
+        assert_classifies(
+            &[
+                "https://www.reddit.com/r/rust%2Fmemes",
+                "https://www.reddit.com/r/rust%20memes",
+                "https://www.reddit.com/r/rust-memes",
+                "https://www.reddit.com/r/rust/comments/1nh144u%2Fextra",
+                "https://www.reddit.com/r/rust/comments/1nh144u%3Ffoo",
+                "https://www.reddit.com/r/rust/s/dmwUYLKTjd%2Fextra",
+                "https://www.reddit.com/comments/1nh144u%3Ffoo",
+                "https://www.reddit.com/gallery/1nj9601%23frag",
+                "https://www.reddit.com/video/%2F",
+                "https://www.reddit.com/video/%2e%2e",
+                "https://www.reddit.com/user/a%2Fb",
+                "https://v.redd.it/b2l87x1pyn7h1%2Fextra",
+                "https://redd.it/1nh144u%2Fextra",
             ],
             None,
         );
