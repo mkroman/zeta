@@ -5,5 +5,9 @@ publish = false
 edition.workspace = true
 description = "Workspace automation for the zeta repository."
 
+[dependencies]
+# Dependency-free crate: the shared UCD input table and fetch paths.
+zeta-unicode-format = { path = "../crates/zeta-unicode-format", version = "0.0.0" }
+
 [lints]
 workspace = true

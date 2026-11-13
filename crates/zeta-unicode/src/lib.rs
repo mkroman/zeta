@@ -51,7 +51,7 @@ use nomina::gc::Gc;
 use nomina::image;
 
 #[doc(inline)]
-pub use gc::GeneralCategory;
+pub use gc::{GeneralCategory, general_category};
 
 mod gc;
 mod nomina;
@@ -105,7 +105,7 @@ fn emoji() -> &'static Emoji {
 }
 
 /// Returns the parsed general-category section, building it on first use.
-fn gc() -> &'static Gc {
+pub(crate) fn gc_table() -> &'static Gc {
     GC.get_or_init(|| {
         let section = image::section(IMAGE, image::GC)
             .expect("the Nomina image has a general-category section");
@@ -125,7 +125,7 @@ fn gc() -> &'static Gc {
 /// process-wide panic the first corresponding lookup raises.
 pub fn init() {
     emoji();
-    gc();
+    gc_table();
 }
 
 /// Returns the `Name` property of `c`, a formal alias from `NameAliases.txt` when the `Name`
@@ -178,15 +178,6 @@ pub fn name_or_label(c: char) -> String {
     format!("<{kind}-{code_point:04X}>")
 }
 
-/// Returns the general category of `c`; unassigned points answer with
-/// [`GeneralCategory::Unassigned`].
-#[must_use]
-pub fn general_category(c: char) -> GeneralCategory {
-    gc().general_category(u32::from(c))
-        .and_then(|id| GeneralCategory::from_id(usize::from(id)))
-        .unwrap_or(GeneralCategory::Unassigned)
-}
-
 /// Is `cp` one of Unicode's noncharacters (`U+FDD0..U+FDEF` or `*FFFE`/`*FFFF`)?
 ///
 /// Values above `U+10FFFF` are not code points and answer `false`.
@@ -228,7 +219,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use bytes::Buf;
-    use zeta_unicode_format::VERSION_AT;
+    use zeta_unicode_format::{INPUTS, VERSION_AT};
 
     use super::*;
 
@@ -241,19 +232,17 @@ mod tests {
         )
     }
 
-    /// Reads one UCD text from a flat or versioned layout.
+    /// Reads one UCD text from the shared flat-or-extracted candidate layout.
     fn read_ucd(name: &str) -> String {
         let dir = data_dir();
-        let mut candidates = vec![dir.join(name)];
-        for prefix in ["extracted", "ucd", "ucd/extracted"] {
-            candidates.push(dir.join(prefix).join(name));
-        }
-        if name == "emoji-test.txt" {
-            candidates.push(dir.join("emoji/emoji-test.txt"));
-            candidates.push(dir.join("ucd/emoji/emoji-test.txt"));
-        }
-        let path = candidates
-            .into_iter()
+        let spec = INPUTS
+            .iter()
+            .find(|spec| spec.file == name)
+            .unwrap_or_else(|| panic!("unknown UCD file {name}"));
+        let path = spec
+            .candidates
+            .iter()
+            .map(|relative| dir.join(*relative))
             .find(|path| path.is_file())
             .unwrap_or_else(|| panic!("no UCD file {name} under {}", dir.display()));
         std::fs::read_to_string(path).expect("read the UCD file")

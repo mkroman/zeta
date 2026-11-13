@@ -1,18 +1,21 @@
-//! Layout constants and the emoji grammar shared by `zeta-unicode` and `zeta-unicode-build`.
+//! Layout constants and the Unicode data tables shared by `zeta-unicode` and its tooling.
 //!
-//! The runtime crate and the offline trainer share the wire-format constants, the byte
-//! primitives, the general-category encoding, the Hangul and emoji tone tables, the name-pattern
-//! hex formatter and the emoji name grammar. The generator has to reproduce the runtime's
-//! wording exactly, because it selects the rule that the runtime later replays; keeping one
-//! implementation means the two can never drift.
+//! The runtime crate, the offline trainer and `cargo xtask` share the wire-format constants,
+//! the UCD input table, the byte primitives, the general-category encoding, the Hangul and
+//! emoji tone tables, the name-pattern hex formatter and the emoji name grammar. The generator
+//! has to reproduce the runtime's wording exactly, because it selects the rule that the runtime
+//! later replays; keeping one implementation means the two can never drift.
 //!
 //! This crate is deliberately dependency-free: it is linked into the bot through
-//! `zeta-unicode` and into the build script through `zeta-unicode-build`.
+//! `zeta-unicode`, into the build script through `zeta-unicode-build`, and into workspace
+//! automation through `xtask`.
 //!
 //! The modules group the parts by concern:
 //!
-//! - [`layout`] — image header parsing, section ids, name and category table constants and
-//!   the Hangul name generator;
+//! - [`layout`] — image header parsing, section ids, name-table constants and the Hangul name
+//!   generator;
+//! - [`gc`] — the general-category variants, their id order and both name tables;
+//! - [`inputs`] — the UCD files the trainer reads and their accepted paths;
 //! - [`names`] — the name section's fixed index and Huffman model area;
 //! - [`primitives`] — varints, hex placeholders, UTF-8 code-point encoding and packed bit
 //!   fields;
@@ -22,7 +25,9 @@
 //! Everything is re-exported at the crate root so callers can keep using the flat paths.
 
 pub mod emoji;
+pub mod gc;
 pub mod huffman;
+pub mod inputs;
 pub mod layout;
 pub mod names;
 pub mod primitives;
@@ -33,16 +38,20 @@ pub use emoji::{
     rule_name, rule_needs_sequence, swap_person, tone_indices, tone_phrase, tone_positions,
     ucd_mask_name,
 };
+pub use gc::{ALL, GC_LONG_NAMES, GC_SHORT_NAMES, GeneralCategory};
 pub use huffman::{BitReader, Code, Codebook, Model};
+pub use inputs::{
+    DERIVED_NAME, EMOJI_TEST, GENERAL_CATEGORY, INPUTS, InputSpec, NAME_ALIASES, NAMED_SEQUENCES,
+};
 pub use layout::{
     DIRECTORY_AT, DIRECTORY_ENTRY_LEN, EMOJI, GC, GC_ID_BITS, GC_ID_MASK, GC_PAGE_SHIFT,
-    GC_PAGE_SHIFT_AT, GC_PAGES, GC_SHIFT, GC_SHORT_NAMES, HANGUL_COUNT, HANGUL_END, HANGUL_START,
-    HEADER_LEN, Header, MAGIC, MAX_CODE_BITS, MAX_NAME_BLOCK_SHIFT, MAX_NAME_BYTES,
-    MAX_NAME_MODELS, MIN_NAME_BLOCK_SHIFT, NAME_BLOCK_SHIFT_AT, NAME_CONTEXT_MAP_LEN,
-    NAME_INDEX_HEADER_LEN, NAME_LAYOUT_AT, NAME_MODEL_COUNT_LEN, NAME_MODEL_DIRECTORY_ENTRY_LEN,
-    NAME_PAGE_COUNT, NAME_PAGE_DIRECTORY_ENTRY_LEN, NAME_PAGE_SHIFT, NAME_RUN_LEN, NAMES,
-    NameLayout, PATTERNS, SECTION_COUNT, SECTION_COUNT_AT, UNICODE_END, UNICODE_LIMIT,
-    UNICODE_START, VERSION_AT, write_hangul,
+    GC_PAGE_SHIFT_AT, GC_PAGES, GC_SHIFT, HANGUL_COUNT, HANGUL_END, HANGUL_START, HEADER_LEN,
+    Header, MAGIC, MAX_CODE_BITS, MAX_NAME_BLOCK_SHIFT, MAX_NAME_BYTES, MAX_NAME_MODELS,
+    MIN_NAME_BLOCK_SHIFT, NAME_BLOCK_SHIFT_AT, NAME_CONTEXT_MAP_LEN, NAME_INDEX_HEADER_LEN,
+    NAME_LAYOUT_AT, NAME_MODEL_COUNT_LEN, NAME_MODEL_DIRECTORY_ENTRY_LEN, NAME_PAGE_COUNT,
+    NAME_PAGE_DIRECTORY_ENTRY_LEN, NAME_PAGE_SHIFT, NAME_RUN_LEN, NAMES, NameLayout, PATTERNS,
+    SECTION_COUNT, SECTION_COUNT_AT, UNICODE_END, UNICODE_LIMIT, UNICODE_START, VERSION_AT,
+    write_hangul,
 };
 pub use names::{NameIndex, NameModels};
 pub use primitives::{

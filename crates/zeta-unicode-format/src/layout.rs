@@ -1,8 +1,9 @@
-//! The Nomina wire layout: image header, section ids, name and category tables.
+//! The Nomina wire layout: image header, section ids and name-table constants.
 //!
 //! These constants are the contract between `zeta_unicode_build::nomina` and the runtime
 //! decoders in `zeta_unicode`. Both crates import them from here instead of spelling the same
 //! offsets and shifts twice, so a format change is one edit rather than two that can drift.
+//! The general-category variants and their id order live in [`crate::gc`].
 
 /// The image magic.
 pub const MAGIC: &[u8; 4] = b"NOM1";
@@ -193,15 +194,6 @@ pub const GC_ID_BITS: u32 = 5;
 /// The mask that extracts the category id from a general-category record.
 pub const GC_ID_MASK: u16 = (1u16 << GC_ID_BITS) - 1;
 
-/// The general category abbreviations in table id order (id = position + 1).
-///
-/// The generator writes these ids and the runtime indexes this array, so both must use the same
-/// order.
-pub const GC_SHORT_NAMES: [&str; 30] = [
-    "Cc", "Cf", "Cn", "Co", "Cs", "Ll", "Lm", "Lo", "Lt", "Lu", "Mc", "Me", "Mn", "Nd", "Nl", "No",
-    "Pc", "Pd", "Pe", "Pf", "Pi", "Po", "Ps", "Sc", "Sk", "Sm", "So", "Zl", "Zp", "Zs",
-];
-
 /// The code-point page shift of the name-run directory.
 pub const NAME_PAGE_SHIFT: u32 = GC_SHIFT;
 
@@ -303,8 +295,6 @@ mod tests {
         assert_eq!(GC_PAGES, 545);
         assert_eq!(NAME_PAGE_COUNT, GC_PAGES);
         assert_eq!(GC_PAGE_SHIFT, 11);
-        assert_eq!(GC_SHORT_NAMES.len(), 30);
-        assert!(GC_SHORT_NAMES.len() < 1usize << GC_ID_BITS);
         assert_eq!(1u16 << GC_ID_BITS, GC_ID_MASK + 1);
         assert_eq!(UNICODE_START, 0);
         assert_eq!(UNICODE_LIMIT, UNICODE_END + 1);
