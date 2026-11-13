@@ -72,7 +72,7 @@ impl Chaturbate {
         let channel = url.channel();
 
         if let Some(username) = extract_username(url.url()) {
-            debug!(%username, "processing chaturbate url");
+            debug!(chaturbate.username = %username, "processing chaturbate url");
             if let Err(e) = self.process_broadcaster(&username, channel, client).await {
                 send_reply(client, channel, labeled_reply("Chaturbate", e.to_string()))?;
             }

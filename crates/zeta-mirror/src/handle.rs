@@ -91,7 +91,7 @@ fn resolve_public_url_base(setting: Option<&str>, env: &str, default: &str) -> O
         Err(error) => {
             warn!(
                 exception.message = %error,
-                %value,
+                zeta.mirror.public_url_base = %value,
                 "invalid public url base, mirroring is disabled"
             );
 

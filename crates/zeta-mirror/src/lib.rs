@@ -257,7 +257,7 @@ impl Mirror {
     {
         if self.is_mirrored(prefix, id.as_str()).await? {
             let link = public_url_for(public_url_base, id.as_str());
-            debug!(media.id = %id, %link, "media has already been mirrored");
+            debug!(media.id = %id, media.link = %link, "media has already been mirrored");
 
             return Ok(Some(link));
         }

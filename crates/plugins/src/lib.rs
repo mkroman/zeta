@@ -60,7 +60,10 @@ pub fn register_bundled_plugins(
     plugins: &PluginsConfig,
 ) {
     for name in &plugins.unknown {
-        tracing::warn!(section = %name, "unknown plugin configuration section (typo?)");
+        tracing::warn!(
+            zeta.plugin.section = %name,
+            "unknown plugin configuration section (typo?)"
+        );
     }
 
     for (plugin, key) in &plugins.unknown_setting_keys {
@@ -87,7 +90,7 @@ pub fn register_bundled_plugins(
 
     if !compiled_out.is_empty() {
         tracing::warn!(
-            plugins = ?compiled_out,
+            zeta.plugin.compiled_out.names = ?compiled_out,
             "configured plugins are not compiled into this build"
         );
     }

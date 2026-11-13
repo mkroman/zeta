@@ -180,7 +180,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the sites could not be deleted or reloaded.
-    #[instrument(name = "unwall.site.remove", skip_all, err, fields(pattern = %pattern))]
+    #[instrument(name = "unwall.site.remove", skip_all, err, fields(unwall.site.pattern = %pattern))]
     pub async fn remove_matching(&self, pattern: &str) -> Result<Vec<String>, Error> {
         let mut affected: Vec<String> = {
             let covered = self.covered.load();

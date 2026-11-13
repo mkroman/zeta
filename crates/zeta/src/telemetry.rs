@@ -172,8 +172,15 @@ pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<TelemetryGuar
 /// per-progress debug lines; production starts at info and the debug detail is opt-in with
 /// `RUST_LOG`. `plugins=info` keeps the plugin spans (and the HTTP, DNS and S3 children under
 /// them) in the export: without them the client spans would become roots of their own traces.
-const DEFAULT_FILTER: &str =
-    "zeta=info,plugins=info,reddit=debug,dendanskeordbog=debug,kagi=debug,coinmarketcap=debug";
+///
+/// The client crates' request-failure and response-parse lines live in the shared
+/// `zeta_http::error::request` and `zeta_http::json` helpers since #525, so the crates' own
+/// debug directives no longer reach them. Enable exactly those two targets at debug rather than
+/// `zeta_http=debug`, which would also turn on the per-request client and response detail.
+const DEFAULT_FILTER: &str = concat!(
+    "zeta=info,plugins=info,reddit=debug,dendanskeordbog=debug,kagi=debug,coinmarketcap=debug,",
+    "zeta_http::error=debug,zeta_http::json=debug"
+);
 
 #[cfg(test)]
 mod tests {
@@ -209,6 +216,29 @@ mod tests {
             assert!(
                 tracing::span!(target: "plugins_titles::lib", Level::DEBUG, "titles.debug")
                     .is_disabled()
+            );
+        });
+    }
+
+    /// The request-failure and response-parse lines moved into `zeta_http` must stay visible at
+    /// debug, while the rest of `zeta_http` keeps its info-level default.
+    #[test]
+    fn the_default_filter_keeps_client_failure_detail_visible() {
+        let subscriber =
+            tracing_subscriber::registry().with(tracing_subscriber::EnvFilter::new(DEFAULT_FILTER));
+
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(
+                tracing::enabled!(target: "zeta_http::error::request", Level::DEBUG),
+                "the moved request-failure log must stay visible at debug"
+            );
+            assert!(
+                tracing::enabled!(target: "zeta_http::json", Level::DEBUG),
+                "the moved response-parse log must stay visible at debug"
+            );
+            assert!(
+                !tracing::enabled!(target: "zeta_http::client", Level::DEBUG),
+                "unrelated zeta_http debug detail must stay off by default"
             );
         });
     }

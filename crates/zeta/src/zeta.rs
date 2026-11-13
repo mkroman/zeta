@@ -163,7 +163,10 @@ async fn dispatch_messages(
         // `ERROR` carries the server's reason for closing the connection. It is not a `Raw`
         // command, so without this check the reason would be dropped entirely.
         if let irc::proto::Command::ERROR(reason) = &message.command {
-            warn!(reason = %reason, "the IRC server closed the connection");
+            warn!(
+                zeta.shutdown.reason = %reason,
+                "the IRC server closed the connection"
+            );
 
             return Err(Error::IrcDisconnected {
                 reason: reason.clone(),
@@ -275,11 +278,11 @@ impl Zeta {
         let failed = registry.failed_plugin_names().collect::<Vec<_>>();
 
         if failed.is_empty() {
-            info!(plugins.loaded = registry.len(), "plugins registered");
+            info!(zeta.plugin.count = registry.len(), "plugins registered");
         } else {
             warn!(
-                plugins.loaded = registry.len(),
-                plugins.failed = ?failed,
+                zeta.plugin.count = registry.len(),
+                zeta.plugin.failed.names = ?failed,
                 "some plugins failed to initialize"
             );
         }

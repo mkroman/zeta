@@ -43,7 +43,7 @@ impl UnwallRepository {
     /// Returns [`Error::Insert`] if the URL could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "unwall_urls")]
     pub async fn insert_url(&self, url: &str, host: &str, unwall_url: &str) -> Result<(), Error> {
-        trace!(host, "caching the unwalled URL in database");
+        trace!(url.domain = %host, "caching the unwalled URL in database");
 
         sqlx::query(
             r"INSERT INTO unwall_urls (url, host, unwall_url)
@@ -68,7 +68,7 @@ impl UnwallRepository {
     #[instrument_database(operation = "INSERT", collection = "unwall_fetches")]
     pub async fn record_fetch(&self, fetch: &NewFetch) -> Result<(), Error> {
         trace!(
-            host = fetch.host,
+            url.domain = %fetch.host,
             irc.channel = %fetch.attribution.channel,
             "recording the unwall fetch in database"
         );
@@ -120,7 +120,7 @@ impl UnwallRepository {
     /// Returns [`Error::Insert`] if the site could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "unwall_sites")]
     pub async fn insert_site(&self, host: &str, nickname: &str) -> Result<(), Error> {
-        trace!(host, "adding the unwalled site to database");
+        trace!(url.domain = %host, "adding the unwalled site to database");
 
         sqlx::query(
             r"INSERT INTO unwall_sites (host, nickname)
@@ -167,7 +167,7 @@ impl UnwallRepository {
         summary = "SELECT unwall statistics"
     )]
     pub async fn statistics(&self, today: NaiveDate) -> Result<Statistics, Error> {
-        trace!(%today, "loading the unwall statistics from database");
+        trace!(unwall.statistics.date = %today, "loading the unwall statistics from database");
 
         let (urls, urls_today, hosts, fetches, fetches_today, users): (
             i64,
@@ -215,7 +215,11 @@ impl UnwallRepository {
         host: &str,
         today: NaiveDate,
     ) -> Result<Option<HostStatistics>, Error> {
-        trace!(host, %today, "loading the unwall host statistics from database");
+        trace!(
+            url.domain = %host,
+            unwall.statistics.date = %today,
+            "loading the unwall host statistics from database"
+        );
 
         let (urls, urls_today, users, latest): (i64, i64, i64, Option<DateTime<Utc>>) =
             sqlx::query_as(

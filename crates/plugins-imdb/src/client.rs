@@ -227,7 +227,7 @@ impl GraphQlClient {
                 .map(|error| error.message.unwrap_or_else(|| "unknown error".to_string()))
                 .collect::<Vec<_>>()
                 .join("; ");
-            warn!(%messages, "graphql query failed");
+            warn!(imdb.errors = %messages, "graphql query failed");
 
             return Err(Error::GraphQL(messages));
         }

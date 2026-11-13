@@ -102,7 +102,7 @@ impl Thingiverse {
 
         // Extract ID from path
         if let Some(thing_id) = thing_id(url) {
-            debug!(%thing_id, "fetching thingiverse thing");
+            debug!(thingiverse.thing.id = %thing_id, "fetching thingiverse thing");
 
             let message = match self.fetch_thing(thing_id).await {
                 Ok(thing) => labeled_reply("Thingiverse", thing.to_string()),

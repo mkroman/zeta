@@ -306,7 +306,7 @@ impl IsItOpen {
             .place_id
             .clone();
 
-        debug!(%place_id, "fetching place details");
+        debug!(isitopen.place.id = %place_id, "fetching place details");
 
         let details_params = [("placeid", &place_id), ("key", &self.api_key)];
 

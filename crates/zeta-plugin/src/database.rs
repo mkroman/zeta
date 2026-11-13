@@ -50,8 +50,8 @@ where
             Ok(()) => return Ok(()),
             Err(error) if attempt < LOAD_ATTEMPTS => {
                 warn!(
-                    attempt,
-                    max_attempts = LOAD_ATTEMPTS,
+                    zeta.plugin.load.attempt = attempt,
+                    zeta.plugin.load.max_attempts = LOAD_ATTEMPTS,
                     exception.message = %error,
                     "startup load failed; retrying"
                 );

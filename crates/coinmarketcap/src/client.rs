@@ -130,7 +130,10 @@ impl Client {
     /// Returns an [`Error`] if the request fails, the API responds with an error status, or
     /// the response cannot be parsed.
     pub async fn coin_map(&self) -> Result<Vec<Coin>, Error> {
-        debug!(limit = COIN_MAP_LIMIT, "fetching the top cryptocurrencies");
+        debug!(
+            coinmarketcap.limit = COIN_MAP_LIMIT,
+            "fetching the top cryptocurrencies"
+        );
 
         let parsed: Envelope<Vec<Coin>> = self
             .get_json(
@@ -157,7 +160,10 @@ impl Client {
     /// Returns an [`Error`] if the request fails, the API responds with an error status, or
     /// the response cannot be parsed.
     pub async fn listings(&self, limit: u32) -> Result<Vec<Listing>, Error> {
-        debug!(limit, "fetching the top cryptocurrency listings");
+        debug!(
+            coinmarketcap.limit = limit,
+            "fetching the top cryptocurrency listings"
+        );
 
         let parsed: Envelope<Vec<Listing>> = self
             .get_json(
