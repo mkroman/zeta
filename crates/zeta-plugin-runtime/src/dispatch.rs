@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use tracing::{Span, debug, warn};
 use url::Url;
 use zeta_plugin::event::{
-    CommandEvent, MessagingOperation, Sender, Subscriptions, UrlEvent, is_ctcp,
+    CommandEvent, MessagingOperation, Sender, Subscriptions, UrlEvent, is_ctcp, message_id,
 };
 use zeta_plugin::{CommandSpec, Event, EventKind, FilterHandle, UrlScope};
 use zeta_url::{ExtractUrls, ExtractedUrl, HTTP_SCHEMES, RedactedUrlRef};
@@ -93,21 +93,25 @@ enum EventSpan {
 impl<'a> EventMeta<'a> {
     /// Returns whether handler spans are enabled for the current subscriber.
     ///
-    /// The metadata only feeds span fields, so the dispatcher skips building it entirely when
-    /// the filter would not create the span: the channel lookup and IRCv3 tag scan never run on
-    /// the production hot path.
+    /// The metadata only feeds span fields, so the dispatcher skips building it when the filter
+    /// would not create the span. The default filter (`zeta=info`) enables these spans, so the
+    /// channel lookup and IRCv3 tag scan do run for every delivered event in production; they
+    /// are only skipped when the operator filters the spans out.
     #[inline]
     fn enabled() -> bool {
         tracing::enabled!(target: "zeta.plugins", tracing::Level::INFO)
     }
 
-    /// Computes the metadata of a command event.
-    fn command(event: &'a CommandEvent) -> Self {
+    /// Computes the metadata of a command message.
+    fn command(message: &'a Message) -> Self {
         Self {
             kind_name: "command",
-            channel: Some(event.channel()),
-            message_id: event.message_id(),
             // Commands are matched on `PRIVMSG` text only.
+            channel: match &message.command {
+                Command::PRIVMSG(target, _) => Some(target.as_str()),
+                _ => None,
+            },
+            message_id: message_id(message),
             operation: Cow::Borrowed("privmsg"),
             span: EventSpan::Command,
         }
@@ -261,10 +265,14 @@ impl Subscriber {
     /// Queues a command event that is delivered to this plugin only.
     ///
     /// Taking the event by value saves the clone a shared delivery would need. The metadata is
-    /// derived here from the already-known command route, with a single channel lookup.
-    fn send_owned(&self, event: CommandEvent, stopped: &mut Vec<&'static str>) {
-        let meta = EventMeta::enabled().then(|| EventMeta::command(&event));
-        let span = self.handler_span(meta.as_ref());
+    /// computed once per message by the dispatcher and shared by the command's subscribers.
+    fn send_owned(
+        &self,
+        event: CommandEvent,
+        meta: Option<&EventMeta<'_>>,
+        stopped: &mut Vec<&'static str>,
+    ) {
+        let span = self.handler_span(meta);
 
         self.enqueue(
             Envelope {
@@ -766,10 +774,11 @@ impl EventIndex {
             && let Some(targets) = self.commands.get(word)
         {
             let message = message.shared();
+            let meta = EventMeta::enabled().then(|| EventMeta::command(message.as_ref()));
 
             for target in targets {
                 if let Some(event) = CommandEvent::new(Arc::clone(&message), target.spec) {
-                    target.subscriber.send_owned(event, stopped);
+                    target.subscriber.send_owned(event, meta.as_ref(), stopped);
                 }
             }
         }

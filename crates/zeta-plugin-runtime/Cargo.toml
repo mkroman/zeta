@@ -25,7 +25,7 @@ zeta-url = { path = "../zeta-url" }
 [dev-dependencies]
 allocation-counter = "=0.8.1"
 tracing-subscriber.workspace = true
-zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["context"] }
+zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["context", "spans"] }
 
 [lints]
 workspace = true

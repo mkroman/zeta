@@ -1,7 +1,7 @@
 //! The main process for communicating over IRC and managing state.
 use std::sync::Arc;
 
-use irc::client::prelude::Client;
+use irc::client::prelude::{Capability, Client};
 use tracing::{Instrument, debug, error, info, trace, warn};
 
 use crate::Error;
@@ -415,6 +415,13 @@ impl Zeta {
             .await
             .map_err(Error::IrcClient)?;
 
+        // Request the IRCv3 message tags so servers attach tags such as `msgid` to delivered
+        // messages. A server that does not support `message-tags` answers with a `NAK`, which
+        // is harmless; registration continues without tags.
+        client
+            .send_cap_req(&[Capability::Custom("message-tags")])
+            .map_err(Error::IrcRegistration)?;
+
         client.identify().map_err(Error::IrcRegistration)?;
 
         let mut outgoing = drive_outgoing(&mut client);
@@ -615,6 +622,7 @@ mod tests {
     fn dispatch_span_records_messaging_attributes() {
         use tracing::subscriber::with_default;
         use tracing_subscriber::prelude::*;
+        use zeta_test_support::SpanRecorder;
 
         let recorder = SpanRecorder::default();
         let subscriber = tracing_subscriber::registry().with(recorder.clone());
@@ -685,89 +693,6 @@ mod tests {
         let prefix = (!prefix.is_empty()).then_some(prefix);
 
         irc::proto::Message::new(prefix, command, args.to_vec()).expect("message should parse")
-    }
-
-    /// One span as the recorder observed it.
-    #[derive(Clone, Debug)]
-    struct RecordedSpan {
-        /// The span's identity, used to merge fields recorded after creation.
-        id: tracing::span::Id,
-        /// Every field recorded on the span, at creation or later.
-        fields: std::collections::BTreeMap<String, String>,
-    }
-
-    impl RecordedSpan {
-        /// Returns the string value of `field`.
-        fn field(&self, field: &str) -> Option<&str> {
-            self.fields.get(field).map(String::as_str)
-        }
-    }
-
-    /// Records every span created while it is installed.
-    #[derive(Clone, Default)]
-    struct SpanRecorder(Arc<std::sync::Mutex<Vec<RecordedSpan>>>);
-
-    impl SpanRecorder {
-        /// Returns a copy of the spans recorded so far.
-        fn spans(&self) -> Vec<RecordedSpan> {
-            self.0
-                .lock()
-                .expect("span recorder should not be poisoned")
-                .clone()
-        }
-    }
-
-    /// Collects the fields of a span, rendered as their exported values.
-    #[derive(Default)]
-    struct Fields(std::collections::BTreeMap<String, String>);
-
-    impl tracing::field::Visit for Fields {
-        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-            self.0.insert(field.name().to_owned(), value.to_owned());
-        }
-
-        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-            self.0.insert(field.name().to_owned(), format!("{value:?}"));
-        }
-    }
-
-    impl<S: tracing::Subscriber> tracing_subscriber::layer::Layer<S> for SpanRecorder {
-        fn on_new_span(
-            &self,
-            attrs: &tracing::span::Attributes<'_>,
-            id: &tracing::span::Id,
-            _ctx: tracing_subscriber::layer::Context<'_, S>,
-        ) {
-            let mut fields = Fields::default();
-            attrs.record(&mut fields);
-
-            self.0
-                .lock()
-                .expect("span recorder should not be poisoned")
-                .push(RecordedSpan {
-                    id: id.clone(),
-                    fields: fields.0,
-                });
-        }
-
-        fn on_record(
-            &self,
-            id: &tracing::span::Id,
-            values: &tracing::span::Record<'_>,
-            _ctx: tracing_subscriber::layer::Context<'_, S>,
-        ) {
-            let mut fields = Fields::default();
-            values.record(&mut fields);
-
-            self.0
-                .lock()
-                .expect("span recorder should not be poisoned")
-                .iter_mut()
-                .find(|span| span.id == *id)
-                .expect("recorded spans should exist")
-                .fields
-                .extend(fields.0);
-        }
     }
 
     /// A mirror whose manager can be started without network access.

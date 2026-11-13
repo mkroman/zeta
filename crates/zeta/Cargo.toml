@@ -97,7 +97,7 @@ zeta-url = { path = "../zeta-url" }
 
 [dev-dependencies]
 tempfile.workspace = true
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { path = "../zeta-test-support", features = ["spans"] }
 
 [lints]
 workspace = true

@@ -16,6 +16,8 @@ database = ["dep:sqlx"]
 context = ["database", "dep:irc", "dep:zeta-plugin", "zeta-plugin/database"]
 # The HTTP transport helpers: connection-refused, timeout, and 404 servers.
 http = ["dep:reqwest", "dep:wiremock"]
+# The `tracing` span recorder shared by dispatch and telemetry span tests.
+spans = ["dep:tracing", "dep:tracing-subscriber"]
 
 [dependencies]
 irc = { workspace = true, optional = true }
@@ -24,6 +26,8 @@ serde_json.workspace = true
 # The test context carries an unreachable (lazily connected) database pool; the plugin
 # interface is needed to construct the context at all.
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "runtime-tokio"], optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 url.workspace = true
 wiremock = { version = "0.6", optional = true }
 zeta-plugin = { path = "../zeta-plugin", default-features = false, optional = true }
