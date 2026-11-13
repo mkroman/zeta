@@ -7,12 +7,12 @@
 
 #[cfg(feature = "http")]
 use tracing::Span;
-use tracing::{Instrument, error, info_span};
-use zeta_url::{RedactedUrl, RedactedUrlRef};
+use tracing::{Instrument, Level, info_span};
+use zeta_url::RedactedUrlRef;
 
 #[cfg(feature = "http")]
 use crate::HttpConfig;
-use crate::{BoxFuture, RequestError};
+use crate::{BoxFuture, RequestError, RequestFailure};
 
 /// The client span of a response, carried in its extensions so the body read and the parse run
 /// inside the span the request opened.
@@ -60,7 +60,7 @@ pub fn send(
             Ok(request) => request,
             // A request that cannot be built never reaches the network, so there is nothing for a
             // client span to measure; the log still names the URL when the error carries one.
-            Err(error) => return Err(log_request_failure(RequestError::from(error))),
+            Err(error) => return Err(RequestError::from(error).logged(Level::ERROR)),
         };
         let method = request.method().clone();
 
@@ -93,7 +93,7 @@ pub fn send(
 
                 // Logged inside the span: the event marks the span as failed and is exported with
                 // its attributes, also when the caller has no enabled span of its own.
-                Err(span.in_scope(|| log_request_failure(error)))
+                Err(span.in_scope(|| error.logged(Level::ERROR)))
             }
         }
     })
@@ -106,25 +106,6 @@ fn attach_span(mut response: reqwest::Response, span: Span) -> reqwest::Response
     response.extensions_mut().insert(ClientSpan(span));
 
     response
-}
-
-/// Logs a failed request once, when the error names its URL, and returns the error.
-fn log_request_failure(error: RequestError) -> RequestError {
-    if let Some(url) = error.url() {
-        log_request_error(&error, url);
-    }
-
-    error
-}
-
-/// Logs a failed request once, with its redacted URL and error type.
-fn log_request_error(error: &RequestError, url: &RedactedUrl) {
-    error!(
-        url.full = %url,
-        error.type = error.error_type(),
-        exception.message = %error.full(),
-        "request failed"
-    );
 }
 
 /// Returns a default HTTP client configured by [`HttpConfig`].

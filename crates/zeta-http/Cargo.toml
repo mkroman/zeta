@@ -17,6 +17,7 @@ http = [
     "dep:serde_json",
     "dep:serde_path_to_error",
     "dep:thiserror",
+    "dep:url",
     "dep:zeta-utils",
 ]
 # The transport-error wrapper alone (used by the mirror crate without the HTTP stack).
@@ -52,6 +53,7 @@ serde_json = { workspace = true, optional = true }
 serde_path_to_error = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 tracing.workspace = true
+url = { workspace = true, optional = true }
 zeta-cache = { path = "../zeta-cache", optional = true }
 zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils", optional = true }

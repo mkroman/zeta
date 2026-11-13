@@ -1,9 +1,8 @@
 //! Redaction of URLs for logs and error messages.
 
 use std::fmt;
-use std::fmt::Write as _;
 
-use url::{Position, Url};
+use url::Url;
 
 /// A URL rendered for logs and error messages, without its query string, fragment, or userinfo.
 ///
@@ -43,35 +42,21 @@ impl RedactedUrl {
     // one string that was about to be built anyway.
     #[must_use]
     pub fn from_url(url: &Url) -> Self {
-        // A URL that cannot be a base (e.g. `mailto:`) has no authority to redact and no `//`
-        // after the scheme, and a URL without a host serializes its path differently — compose
-        // those the generic way: clone, strip the query and fragment, and let the userinfo
-        // calls fail (there is no authority to take it from).
-        if url.cannot_be_a_base() || !url.has_host() {
-            let mut redacted = url.clone();
-
-            redacted.set_query(None);
-            redacted.set_fragment(None);
-            let _ = redacted.set_username("");
-            let _ = redacted.set_password(None);
-
-            return Self(redacted.to_string());
-        }
+        let mut redacted = String::with_capacity(url.as_str().len());
 
         // The userinfo is left out rather than removed, the port only when it is non-default
         // (`Url::port` answers `None` for the scheme's default), and the path is the encoded
         // form the URL serializes with — so the composed string matches what a clone with the
-        // query, fragment and userinfo stripped serializes to.
-        let mut redacted = String::with_capacity(url.as_str().len());
-        redacted.push_str(url.scheme());
-        redacted.push_str("://");
-        redacted.push_str(url.host_str().unwrap_or_default());
-
-        if let Some(port) = url.port() {
-            let _ = write!(redacted, ":{port}");
-        }
-
-        redacted.push_str(url.path());
+        // query, fragment and userinfo stripped serializes to. A URL that cannot be a base
+        // (`mailto:`) has no authority and serializes with `scheme:` only; one with an
+        // authority but no host (`file:///path`) keeps the `//` with an empty host.
+        let _ = write_redacted(
+            &mut redacted,
+            Some(url.scheme()),
+            (!url.cannot_be_a_base()).then_some(url.host_str().unwrap_or_default()),
+            url.port(),
+            url.path(),
+        );
 
         Self(redacted)
     }
@@ -151,15 +136,15 @@ impl fmt::Display for RedactedUrlRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let url = self.0;
 
-        // Write the serialization piecewise, skipping the pieces `RedactedUrl` clears. The slice
-        // between the scheme and the username is `://` for a URL with an authority and `:`
-        // otherwise; the host slice keeps IPv6 brackets, and the slice up to the port's end is
-        // empty unless the URL carries a non-default port — exactly as `Url` serializes them.
-        f.write_str(&url[Position::BeforeScheme..Position::AfterScheme])?;
-        f.write_str(&url[Position::AfterScheme..Position::BeforeUsername])?;
-        f.write_str(&url[Position::BeforeHost..Position::AfterHost])?;
-        f.write_str(&url[Position::AfterHost..Position::AfterPort])?;
-        f.write_str(&url[Position::BeforePath..Position::AfterPath])
+        // The userinfo is dropped by taking the host, not the authority; the port and path are
+        // the serialized components, so the borrowed form matches the owned one exactly.
+        write_redacted(
+            f,
+            Some(url.scheme()),
+            (!url.cannot_be_a_base()).then_some(url.host_str().unwrap_or_default()),
+            url.port(),
+            url.path(),
+        )
     }
 }
 
@@ -168,6 +153,60 @@ impl fmt::Debug for RedactedUrlRef<'_> {
         f.write_str("RedactedUrlRef(\"")?;
         fmt::Display::fmt(self, f)?;
         f.write_str("\")")
+    }
+}
+
+/// Writes the redacted form of a URL or URI: scheme, authority and path, without userinfo,
+/// query string, fragment, or a default port.
+///
+/// `scheme`, `authority` (the host, with IPv6 brackets but without userinfo), `port` and `path`
+/// are the components the serialization is composed from. An `authority` of `Some("")` keeps the
+/// `//` of a URL that has an authority but no host (`file:///path`); `None` marks a reference
+/// that cannot have one (`mailto:` or an origin-form URI).
+///
+/// `port` may be the explicit port as parsed; it is only written when it differs from the
+/// scheme's default (see [`default_port`]).
+///
+/// This is the single renderer behind [`RedactedUrl`] and [`RedactedUrlRef`], and the borrowed
+/// forms of other crates' URIs; it writes directly into the formatter or string and allocates
+/// nothing.
+///
+/// # Errors
+///
+/// Returns the error of the underlying writer.
+pub fn write_redacted(
+    f: &mut impl fmt::Write,
+    scheme: Option<&str>,
+    authority: Option<&str>,
+    port: Option<u16>,
+    path: &str,
+) -> fmt::Result {
+    if let Some(scheme) = scheme {
+        f.write_str(scheme)?;
+        f.write_str(if authority.is_some() { "://" } else { ":" })?;
+    }
+
+    if let Some(authority) = authority {
+        f.write_str(authority)?;
+
+        if let Some(port) = port
+            && Some(port) != default_port(scheme)
+        {
+            write!(f, ":{port}")?;
+        }
+    }
+
+    f.write_str(path)
+}
+
+/// Returns the default port of `scheme`, which URL serialization omits.
+#[must_use]
+pub fn default_port(scheme: Option<&str>) -> Option<u16> {
+    match scheme {
+        Some("http" | "ws") => Some(80),
+        Some("https" | "wss") => Some(443),
+        Some("ftp") => Some(21),
+        _ => None,
     }
 }
 
@@ -277,25 +316,44 @@ mod tests {
     }
 
     #[test]
-    fn redacted_url_ref_should_match_the_owned_form() {
-        let urls = [
-            "https://api.example.com/v1/weather?q=horsens&appid=secret",
-            "https://user:secret@example.com:8443/path?token=secret",
-            "https://example.com/path#access_token=secret",
-            "http://[::1]:8080/path?token=secret",
-            "https://example.com:443/path?token=secret",
-            "https://example.com",
-            "file:///tmp/with%20space",
-            "mailto:user@example.com?subject=secret",
-        ];
+    fn redacted_url_ref_should_keep_the_authority_of_a_hostless_url() {
+        let url = Url::parse("file:///tmp/with%20space?token=secret").unwrap();
 
-        for raw in urls {
-            let url = Url::parse(raw).unwrap();
-            let borrowed = RedactedUrlRef::from_url(&url);
-            let owned = RedactedUrl::from_url(&url);
+        assert_eq!(
+            RedactedUrlRef::from_url(&url).to_string(),
+            "file:///tmp/with%20space"
+        );
+        assert_eq!(
+            RedactedUrl::from_url(&url).as_str(),
+            "file:///tmp/with%20space"
+        );
+    }
 
-            assert_eq!(borrowed.to_string(), owned.as_str(), "{raw}");
-        }
+    #[test]
+    fn redacted_url_ref_should_cut_a_cannot_be_a_base_url_at_its_query() {
+        let url = Url::parse("mailto:user@example.com?subject=secret").unwrap();
+        let redacted = RedactedUrlRef::from_url(&url);
+
+        assert_eq!(redacted.to_string(), "mailto:user@example.com");
+        assert!(!redacted.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn redacted_url_ref_should_not_allocate() {
+        use std::fmt::Write as _;
+
+        let url =
+            Url::parse("https://user:secret@api.example.com:8443/v1/weather?appid=secret").unwrap();
+        let mut out = String::with_capacity(256);
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                out.clear();
+                write!(out, "{}", RedactedUrlRef::from_url(&url)).unwrap();
+            }
+        });
+
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(allocations.bytes_total, 0);
     }
 
     #[test]

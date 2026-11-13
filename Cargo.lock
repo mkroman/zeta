@@ -667,6 +667,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "zeta-http",
  "zeta-test-support",
  "zeta-url",
 ]
@@ -963,6 +964,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "zeta-http",
  "zeta-test-support",
  "zeta-url",
 ]
@@ -2263,6 +2265,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "zeta-http",
  "zeta-test-support",
  "zeta-url",
  "zeta-utils",
@@ -6240,6 +6243,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "wreq",
  "wreq-util",
  "zeta-cache",
