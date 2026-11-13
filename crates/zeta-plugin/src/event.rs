@@ -47,13 +47,12 @@ fn message_text(message: &Message) -> Option<(&str, &str)> {
 
 /// Returns the IRCv3 `msgid` tag of a message, when it carries one.
 ///
-/// Message identifiers are defined for `PRIVMSG` and `NOTICE`; a `msgid` on another command is
-/// ignored. Servers only send message tags to clients that negotiated the `message-tags`
-/// capability, so most messages have no identifier.
+/// The tag is read from any message: servers may attach it to any event, and normally do so for
+/// `PRIVMSG` and `NOTICE`. Message tags only reach clients that negotiated the `message-tags`
+/// capability; the client requests it at registration, but a network that does not advertise it
+/// sends no tags.
 #[must_use]
 pub fn message_id(message: &Message) -> Option<&str> {
-    message_text(message)?;
-
     message
         .tags
         .as_deref()?
@@ -818,8 +817,8 @@ impl Event {
     /// Returns the IRCv3 `msgid` of the message the event was derived from, when it has one.
     ///
     /// The identifier is the same on every event built from one message, so a handler can
-    /// correlate its activity with the client's view of the message. See [`message_id`] for
-    /// which commands carry one.
+    /// correlate its activity with the client's view of the message. See [`message_id`] for when
+    /// a server attaches one.
     #[must_use]
     pub fn message_id(&self) -> Option<&str> {
         message_id(self.message())
@@ -1256,8 +1255,8 @@ mod tests {
         assert_empty!(subscriptions.events());
     }
 
-    /// The IRCv3 `msgid` is read from the message tags of `PRIVMSG` and `NOTICE` only, and only
-    /// when the tag has a value.
+    /// The IRCv3 `msgid` is read from the message tags of any command, and only when the tag has
+    /// a value.
     #[test]
     fn message_id_is_read_from_message_tags() {
         let tagged = |command: &str, args: Vec<&str>, value: Option<&str>| {
@@ -1281,15 +1280,34 @@ mod tests {
         let join = tagged("JOIN", vec!["#test"], Some("j1"));
         assert_eq!(
             message_id(&join),
-            None,
-            "msgid is only defined for PRIVMSG and NOTICE"
+            Some("j1"),
+            "servers may attach msgid to any event"
         );
+
+        let tagmsg = tagged("TAGMSG", vec!["#test"], Some("t1"));
+        assert_eq!(message_id(&tagmsg), Some("t1"));
 
         let valueless = tagged("PRIVMSG", vec!["#test", "hello"], None);
         assert_eq!(message_id(&valueless), None);
 
         let untagged = message("nick!user@host", "PRIVMSG", &["#test", "hello"]);
         assert_eq!(message_id(&untagged), None);
+    }
+
+    /// `Event::message_id` exposes the tag for every event kind, not just text messages.
+    #[test]
+    fn events_expose_the_message_id_of_any_kind() {
+        let join = Event::Join(JoinEvent::new(Arc::new(
+            Message::with_tags(
+                Some(vec![Tag("msgid".to_owned(), Some("j1".to_owned()))]),
+                Some("nick!user@host"),
+                "JOIN",
+                vec!["#test"],
+            )
+            .expect("message should parse"),
+        )));
+
+        assert_eq!(join.message_id(), Some("j1"));
     }
 
     /// Every event reports the IRC command it was derived from as its `OTel` messaging operation;

@@ -18,8 +18,14 @@ use std::time::Duration;
 
 use url::Url;
 
+#[cfg(feature = "spans")]
+mod spans;
+
 #[cfg(feature = "http")]
 pub use wiremock;
+
+#[cfg(feature = "spans")]
+pub use spans::{RecordedSpan, SpanRecorder};
 
 /// Implementation details the exported test macros resolve through `$crate`.
 ///

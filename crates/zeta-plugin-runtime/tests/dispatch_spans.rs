@@ -11,23 +11,17 @@
 //! The index is built through the public `Subscriptions`/`CommandSpec` API and driven directly,
 //! so the test needs no plugin runtime.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
-
 use irc::proto::Message;
 use irc::proto::message::Tag;
 use tokio::sync::mpsc;
-use tracing::field::{Field, Visit};
-use tracing::span::{Attributes, Id, Record};
+use tracing::info_span;
+use tracing::span::Id;
 use tracing::subscriber::with_default;
-use tracing::{Subscriber, info_span};
-use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::registry::LookupSpan;
 use zeta_plugin::event::Subscriptions;
 use zeta_plugin::{CommandSpec, Event, FilterHandle};
 use zeta_plugin_runtime::EventIndex;
-use zeta_test_support::assert_empty;
+use zeta_test_support::{RecordedSpan, SpanRecorder, assert_empty};
 
 /// The handler span is created by the dispatcher while the IRC line's dispatch span is current;
 /// it must therefore be a child of that span, not a new trace root. The plugin task relies on
@@ -101,14 +95,14 @@ fn handler_spans_carry_parenting_and_messaging_attributes() {
 fn assert_handler_spans(spans: &[RecordedSpan], dispatch_id: &Id) {
     let handlers: Vec<_> = spans
         .iter()
-        .filter(|span| span.name == "zeta.event.handle")
+        .filter(|span| span.name() == "zeta.event.handle")
         .collect();
     assert_eq!(handlers.len(), 4, "recorded: {handlers:?}");
 
     for handler in &handlers {
         assert_eq!(
-            handler.parent,
-            Some(dispatch_id.clone()),
+            handler.parent(),
+            Some(dispatch_id),
             "zeta.event.handle must be a child of irc.dispatch, recorded: {handler:?}"
         );
         assert_eq!(
@@ -198,7 +192,7 @@ fn assert_handler_spans(spans: &[RecordedSpan], dispatch_id: &Id) {
 
     let dispatch_parent = spans
         .iter()
-        .find_map(|span| (span.name == "irc.dispatch").then_some(&span.parent))
+        .find_map(|span| (span.name() == "irc.dispatch").then(|| span.parent()))
         .expect("irc.dispatch should be recorded");
     assert!(
         dispatch_parent.is_none(),
@@ -231,90 +225,4 @@ fn message(prefix: &str, command: &str, args: &[&str]) -> Message {
     let prefix = (!prefix.is_empty()).then_some(prefix);
 
     Message::new(prefix, command, args.to_vec()).expect("message should parse")
-}
-
-/// One span as the recorder observed it.
-#[derive(Clone, Debug)]
-struct RecordedSpan {
-    /// The span's identity, used to merge fields recorded after creation.
-    id: Id,
-    /// The span's static name.
-    name: String,
-    /// The span that was current when this one was created; a root has no parent.
-    parent: Option<Id>,
-    /// Every field recorded on the span, at creation or later.
-    fields: BTreeMap<String, String>,
-}
-
-impl RecordedSpan {
-    /// Returns the string value of `field`.
-    fn field(&self, field: &str) -> Option<&str> {
-        self.fields.get(field).map(String::as_str)
-    }
-}
-
-/// Records every span created while it is installed.
-#[derive(Clone, Default)]
-struct SpanRecorder(Arc<Mutex<Vec<RecordedSpan>>>);
-
-impl SpanRecorder {
-    /// Returns a copy of the spans recorded so far.
-    fn spans(&self) -> Vec<RecordedSpan> {
-        self.0
-            .lock()
-            .expect("span recorder should not be poisoned")
-            .clone()
-    }
-}
-
-/// Collects the fields of a span, rendered as their exported values.
-#[derive(Default)]
-struct Fields(BTreeMap<String, String>);
-
-impl Visit for Fields {
-    fn record_str(&mut self, field: &Field, value: &str) {
-        self.0.insert(field.name().to_owned(), value.to_owned());
-    }
-
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        self.0.insert(field.name().to_owned(), format!("{value:?}"));
-    }
-}
-
-impl<S> Layer<S> for SpanRecorder
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-{
-    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        let parent = if attrs.is_contextual() {
-            ctx.lookup_current().map(|span| span.id())
-        } else {
-            None
-        };
-
-        let mut fields = Fields::default();
-        attrs.record(&mut fields);
-
-        let mut spans = self.0.lock().expect("span recorder should not be poisoned");
-        spans.push(RecordedSpan {
-            id: id.clone(),
-            name: attrs.metadata().name().to_owned(),
-            parent,
-            fields: fields.0,
-        });
-    }
-
-    fn on_record(&self, id: &Id, values: &Record<'_>, _ctx: Context<'_, S>) {
-        let mut fields = Fields::default();
-        values.record(&mut fields);
-
-        self.0
-            .lock()
-            .expect("span recorder should not be poisoned")
-            .iter_mut()
-            .find(|span| span.id == *id)
-            .expect("recorded spans should exist")
-            .fields
-            .extend(fields.0);
-    }
 }
