@@ -121,6 +121,26 @@ the disconnect reason, but no messaging attributes, because a server `ERROR` is 
 - Override with `RUST_LOG`, e.g. `RUST_LOG=info,plugins=debug,zeta=debug` for per-operation
   detail. `RUST_LOG` replaces the default filter entirely.
 
+## Failure replies
+
+- A command replies once: the outcome, or a user-facing failure. A failure carries a stable
+  domain reason when one exists (`subreddit not found`, `not a usable article URL`) and a
+  fixed string otherwise. Never reply with the raw `Display` of an `ApiError`, `DbError`,
+  `sqlx::Error`, transport error, HTTP-body detail, or serde error.
+- Reply text is formatted at the reply site, not by a reply error type: a safe domain variant
+  contributes its `#[error]` `Display` (or a fixed reason where the API text is too terse), and
+  an internal failure falls back to the operation's context alone. The original error is logged
+  and never sent to the channel.
+- Expected failures get that reason plus a `warn` log with `exception.message`; `error` is
+  reserved for unhandled failures and data loss.
+- Unsolicited URL and message failures are logged, not posted with their internal error; a flow
+  that still answers uses a domain reason or a fixed string.
+- A failed send in a handler propagates with `?` where the plugin's error type can carry it,
+  and is otherwise logged at `warn`; a send in a spawned task is always logged, since no
+  handler is left to report it.
+- Do not repeat a failure another layer already logged with its own context (the HTTP client,
+  the service); log once, where the unique context is.
+
 ## Checklist: adding a span or attribute
 
 1. Search the [OTel registry](https://opentelemetry.io/docs/specs/semconv/registry/attributes/)

@@ -113,7 +113,11 @@ impl NotificationPlugin {
                 "Notification",
                 format_args!("{target} already has {max} pending notifications in this channel"),
             ),
-            Err(_) => labeled_reply("Notification", "could not store the notification"),
+            Err(error) => {
+                warn!(exception.message = %error, "could not store the notification");
+
+                labeled_reply("Notification", "could not store the notification")
+            }
         };
 
         send_reply(client, channel, message)?;

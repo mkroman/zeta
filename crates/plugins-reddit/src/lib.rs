@@ -7,7 +7,7 @@
 //! Mirroring is configured through the top-level `[mirror]` configuration section (or the `S3_*`
 //! environment variables); without it, the plugin only posts summaries.
 
-use reddit::{Link, Submission, Subreddit, URL_HOSTS};
+use reddit::{Error as RedditError, Link, Submission, Subreddit, URL_HOSTS};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -113,11 +113,9 @@ impl Reddit {
                         .await?;
                 }
                 Err(err) => {
-                    send_reply(
-                        client,
-                        channel,
-                        plain_reply(format_args!("could not resolve video link: {err}")),
-                    )?;
+                    warn!(exception.message = %err, "could not resolve the reddit video link");
+
+                    send_reply(client, channel, plain_reply(video_reply(&err)))?;
                 }
             },
             Link::Shortened { id, subreddit } => {
@@ -128,11 +126,12 @@ impl Reddit {
                         }
                     }
                     Err(err) => {
-                        send_reply(
-                            client,
-                            channel,
-                            plain_reply(format_args!("could not resolve shortened link: {err}")),
-                        )?;
+                        warn!(
+                            exception.message = %err,
+                            "could not resolve the reddit shortened link"
+                        );
+
+                        send_reply(client, channel, plain_reply(short_link_reply(&err)))?;
                     }
                 }
             }
@@ -142,11 +141,12 @@ impl Reddit {
                         send_reply(client, channel, format_subreddit(&subreddit))?;
                     }
                     Err(err) => {
-                        send_reply(
-                            client,
-                            channel,
-                            plain_reply(format_args!("could not fetch subreddit details: {err}")),
-                        )?;
+                        warn!(
+                            exception.message = %err,
+                            "could not fetch the reddit subreddit details"
+                        );
+
+                        send_reply(client, channel, plain_reply(subreddit_reply(&err)))?;
                     }
                 }
             }
@@ -169,11 +169,12 @@ impl Reddit {
                     .await?;
             }
             Err(err) => {
-                send_reply(
-                    client,
-                    channel,
-                    plain_reply(format_args!("could not fetch submission details: {err}")),
-                )?;
+                warn!(
+                    exception.message = %err,
+                    "could not fetch the reddit submission details"
+                );
+
+                send_reply(client, channel, plain_reply(submission_reply(&err)))?;
             }
         }
 
@@ -216,6 +217,55 @@ impl Reddit {
         }
 
         Ok(())
+    }
+}
+
+/// Formats a failed submission lookup.
+///
+/// Only the stable domain reasons are appended; an internal error is reduced to the context
+/// alone, because the caller logs it.
+fn submission_reply(error: &RedditError) -> String {
+    const CONTEXT: &str = "could not fetch the submission details";
+
+    match error {
+        RedditError::SubmissionNotFound | RedditError::InvalidId => format!("{CONTEXT}: {error}"),
+        _ => CONTEXT.to_owned(),
+    }
+}
+
+/// Formats a failed subreddit lookup.
+fn subreddit_reply(error: &RedditError) -> String {
+    const CONTEXT: &str = "could not fetch the subreddit details";
+
+    match error {
+        RedditError::SubredditNotFound | RedditError::InvalidSubreddit => {
+            format!("{CONTEXT}: {error}")
+        }
+        _ => CONTEXT.to_owned(),
+    }
+}
+
+/// Formats a failed video lookup.
+fn video_reply(error: &RedditError) -> String {
+    const CONTEXT: &str = "could not resolve the video link";
+
+    match error {
+        RedditError::InvalidId
+        | RedditError::VideoRedirect
+        | RedditError::VideoRedirectsToNonSubmission => format!("{CONTEXT}: {error}"),
+        _ => CONTEXT.to_owned(),
+    }
+}
+
+/// Formats a failed short-link resolution.
+fn short_link_reply(error: &RedditError) -> String {
+    const CONTEXT: &str = "could not resolve the shortened link";
+
+    match error {
+        RedditError::RedirectRedditLink
+        | RedditError::InvalidId
+        | RedditError::InvalidSubreddit => format!("{CONTEXT}: {error}"),
+        _ => CONTEXT.to_owned(),
     }
 }
 
@@ -304,6 +354,85 @@ mod tests {
         assert_eq!(
             irc::strip_formatting(&format_subreddit(&subreddit)),
             "> r/Denmark: News and discussion"
+        );
+    }
+
+    #[test]
+    fn replies_name_the_safe_domain_reasons() {
+        assert_eq!(
+            submission_reply(&RedditError::SubmissionNotFound),
+            "could not fetch the submission details: submission not found"
+        );
+        assert_eq!(
+            submission_reply(&RedditError::InvalidId),
+            "could not fetch the submission details: invalid reddit id"
+        );
+        assert_eq!(
+            subreddit_reply(&RedditError::SubredditNotFound),
+            "could not fetch the subreddit details: subreddit not found"
+        );
+        assert_eq!(
+            subreddit_reply(&RedditError::InvalidSubreddit),
+            "could not fetch the subreddit details: invalid subreddit name"
+        );
+        assert_eq!(
+            video_reply(&RedditError::InvalidId),
+            "could not resolve the video link: invalid reddit id"
+        );
+        assert_eq!(
+            video_reply(&RedditError::VideoRedirect),
+            "could not resolve the video link: video did not redirect to a reddit submission"
+        );
+        assert_eq!(
+            video_reply(&RedditError::VideoRedirectsToNonSubmission),
+            "could not resolve the video link: the video link redirects to something other than a \
+             submission"
+        );
+        assert_eq!(
+            short_link_reply(&RedditError::RedirectRedditLink),
+            "could not resolve the shortened link: expected the short link to redirect to a \
+             submission or comment"
+        );
+        assert_eq!(
+            short_link_reply(&RedditError::InvalidSubreddit),
+            "could not resolve the shortened link: invalid subreddit name"
+        );
+    }
+
+    #[test]
+    fn replies_hide_internal_errors() {
+        assert_eq!(
+            submission_reply(&RedditError::InvalidResponse),
+            "could not fetch the submission details"
+        );
+        assert_eq!(
+            subreddit_reply(&RedditError::InvalidResponse),
+            "could not fetch the subreddit details"
+        );
+        assert_eq!(
+            video_reply(&RedditError::InvalidResponse),
+            "could not resolve the video link"
+        );
+        assert_eq!(
+            short_link_reply(&RedditError::InvalidResponse),
+            "could not resolve the shortened link"
+        );
+        assert!(!submission_reply(&RedditError::InvalidResponse).contains("deserialize"));
+    }
+
+    #[test]
+    fn replies_only_surface_the_reasons_safe_for_the_operation() {
+        assert_eq!(
+            submission_reply(&RedditError::SubredditNotFound),
+            "could not fetch the submission details"
+        );
+        assert_eq!(
+            video_reply(&RedditError::SubmissionNotFound),
+            "could not resolve the video link"
+        );
+        assert_eq!(
+            short_link_reply(&RedditError::SubmissionNotFound),
+            "could not resolve the shortened link"
         );
     }
 

@@ -25,6 +25,7 @@ pub use service::Resource;
 
 use clap::Parser;
 use num_format::{Locale, ToFormattedString};
+use tracing::warn;
 use url::Url;
 
 use self::service::OfnService;
@@ -32,6 +33,17 @@ use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_utils::duration::TimeInWordsExt;
+
+/// Formats a failed URL record.
+///
+/// A URL without a host names the domain reason; a database failure is reduced to the context,
+/// because the caller logs the error.
+fn record_reply(error: &Error) -> String {
+    match error {
+        Error::InsertUrlNoHost => "could not record the URL: it has no host".to_owned(),
+        Error::Database(_) => "could not record the URL".to_owned(),
+    }
+}
 
 /// The ofn plugin: records posted URLs and reports reposts.
 pub struct Ofn {
@@ -43,8 +55,8 @@ impl Ofn {
     /// Scrapes a URL posted in chat and updates/checks the database.
     ///
     /// The host's dispatcher has already applied the shared filters, so every URL delivered
-    /// here is recorded. A failed insert is logged by [`OfnService::record_url`] and left
-    /// unannounced.
+    /// here is recorded. A failed record is logged and answered with a fixed reply, so the
+    /// database error never reaches the channel.
     #[tracing::instrument(
         name = "ofn.record_url",
         skip_all,
@@ -79,7 +91,9 @@ impl Ofn {
             }
             Ok(None) => {}
             Err(error) => {
-                send_reply(client, origin.channel, formatted_err(&error.to_string()))?;
+                warn!(exception.message = %error, "could not record the url");
+
+                send_reply(client, origin.channel, formatted_err(record_reply(&error)))?;
             }
         }
 
@@ -194,8 +208,8 @@ enum Subcommand {
 #[derive(clap::Args, Debug, PartialEq, Eq)]
 pub struct Stats {}
 
-fn formatted_err(s: &str) -> String {
-    labeled_reply("OFN", format_args!("Error:\x0f {s}"))
+fn formatted_err(error: impl std::fmt::Display) -> String {
+    labeled_reply("OFN", format_args!("Error:\x0f {error}"))
 }
 
 #[cfg(test)]
@@ -208,5 +222,24 @@ mod tests {
         // clap reports contradictory definitions through asserts; evaluating them here turns a
         // bad definition into a test failure instead of a panic in debug builds.
         Opts::command().debug_assert();
+    }
+
+    #[test]
+    fn record_reply_names_a_url_without_a_host() {
+        let reply = record_reply(&Error::InsertUrlNoHost);
+
+        assert_eq!(reply, "could not record the URL: it has no host");
+    }
+
+    #[test]
+    fn record_reply_hides_database_errors() {
+        let error = Error::Database(zeta_plugin::database::DbError::insert(
+            "ofn records",
+            sqlx::Error::RowNotFound,
+        ));
+        let reply = record_reply(&error);
+
+        assert_eq!(reply, "could not record the URL");
+        assert!(!reply.contains("ofn records"));
     }
 }

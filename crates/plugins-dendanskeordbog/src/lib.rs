@@ -40,6 +40,27 @@ impl Default for Settings {
     }
 }
 
+/// Formats a failed dictionary lookup.
+///
+/// A missing entry and a `404` are no results; every other failure is reduced to the context,
+/// because the caller logs the error.
+fn lookup_reply(error: &dendanskeordbog::Error) -> String {
+    const NO_RESULTS: &str = "No results found";
+    const CONTEXT: &str = "could not look up the word";
+
+    let no_results = match error {
+        dendanskeordbog::Error::MissingElement(_) => true,
+        dendanskeordbog::Error::Status(status) => status.as_u16() == 404,
+        _ => false,
+    };
+
+    if no_results {
+        NO_RESULTS.to_owned()
+    } else {
+        CONTEXT.to_owned()
+    }
+}
+
 /// The Den Danske Ordbog plugin: looks up Danish words on behalf of `.ddo` commands.
 pub struct DenDanskeOrdbog {
     client: dendanskeordbog::Client,
@@ -124,7 +145,8 @@ impl DenDanskeOrdbog {
             |document| format_message(&document, &self.settings),
             |error| {
                 warn!(exception.message = %error, "ddo lookup failed");
-                plain_reply(error)
+
+                plain_reply(lookup_reply(&error))
             },
         )
         .await?;
@@ -155,5 +177,20 @@ mod tests {
             assert!(!settings.show_etymology);
             assert!(!settings.show_examples);
         }
+    }
+
+    #[test]
+    fn lookup_reply_maps_a_missing_entry_to_no_results() {
+        let reply = lookup_reply(&dendanskeordbog::Error::MissingElement("head".to_owned()));
+
+        assert_eq!(reply, "No results found");
+    }
+
+    #[test]
+    fn lookup_reply_hides_internal_errors() {
+        let reply = lookup_reply(&dendanskeordbog::Error::Parse("boom".to_owned()));
+
+        assert_eq!(reply, "could not look up the word");
+        assert!(!reply.contains("boom"));
     }
 }
