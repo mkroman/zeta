@@ -69,7 +69,7 @@ Current core spans:
 | `zeta.startup` | startup phases | DB connect/migrate and plugin construction in `main`; then the plugin load barrier in `run` |
 | `irc.connect` | one IRC connection setup (DNS, TCP/TLS, registration) | root; INFO; client kind; `server.address`, `server.port`, `network.transport`, `network.protocol.name` |
 | `irc.dispatch` | one delivering incoming IRC line | root of a message trace; INFO; target `zeta.plugins`; consumer kind; lines no plugin can receive have no dispatch span |
-| `irc.send` | one plugin reply queued for the server | INFO; target `zeta.plugins`; producer kind; child of the handler span |
+| `irc.send` | one plugin reply queued for the server | INFO; target `zeta.plugins`; producer kind; child of the current handler span when one is current |
 | `irc.error` | one server `ERROR` and its disconnect reason | root; INFO; host-owned |
 | `zeta.event.handle` | one event to one subscriber | INFO; target `zeta.plugins`; `otel.name` discriminator |
 | `zeta.plugin.load`, `zeta.plugin.shutdown` | one lifecycle hook | INFO; `otel.name` includes the plugin |
@@ -94,7 +94,7 @@ the disconnect reason, but no messaging attributes, because a server `ERROR` is 
 | Attribute | Value | Notes |
 | --- | --- | --- |
 | `messaging.system.name` | `irc` | always |
-| `messaging.operation.name` | `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | `privmsg` on `irc.send`; otherwise the lowercased IRC command, with an unmodeled command lowercased |
+| `messaging.operation.name` | `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | `privmsg` on `irc.send`; otherwise the lowercased IRC command, with an unmodeled command lowercased when rendered |
 | `messaging.operation.type` | `process` for inbound events, `send` on `irc.send` | |
 | `messaging.destination.name` | channel or nick | target of an inbound `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, `KICK`, or the reply channel on `irc.send`; absent for inbound `QUIT`, `NICK`, `RAW`, and numerics |
 | `messaging.message.id` | IRCv3 `msgid` | read from any tagged event; the client requests the `message-tags` capability at registration, and the attribute is absent when the server sends none |

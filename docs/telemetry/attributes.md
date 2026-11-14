@@ -25,7 +25,7 @@ a struct. Fields recorded with `%` are strings on the wire regardless of the log
 | `url.scheme` | string | Scheme of a repaired URL (`http`, `https`) | OTel |
 | `url.domain` | string | Host used in a database lookup or URL record | OTel |
 | `server.address` | string | Host of the HTTP endpoint or IRC server | OTel |
-| `server.port` | int | Port of the HTTP endpoint or IRC server; the scheme default when the URL omits it | OTel |
+| `server.port` | int | Port of the HTTP endpoint (the scheme default when the URL omits it) or the IRC server (the TLS or plaintext default when unset) | OTel |
 | `network.transport` | string | `tcp` on `irc.connect` | OTel |
 | `network.protocol.name` | string | `irc` on `irc.connect` | OTel |
 
@@ -106,7 +106,7 @@ These are consumed by the tracing layer and are not exported as span attributes.
 | Attribute | Type | Meaning | Source |
 | --- | --- | --- | --- |
 | `messaging.system.name` | string | Always `irc` | OTel |
-| `messaging.operation.name` | string | `privmsg` on `irc.send`; otherwise the lowercased IRC command: `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | OTel |
+| `messaging.operation.name` | string | `privmsg` on `irc.send`; otherwise the lowercased IRC command: `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, …; an unmodeled command is lowercased when rendered | OTel |
 | `messaging.operation.type` | string | `process` for inbound events, `send` on `irc.send` | OTel |
 | `messaging.destination.name` | string | Channel or nick targeted by an inbound `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, or `KICK`, or the reply channel on `irc.send` | OTel |
 | `messaging.message.id` | string | IRCv3 `msgid` attached to any event, when present; the client requests the `message-tags` capability at registration | OTel |
