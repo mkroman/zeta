@@ -4,6 +4,7 @@ use serde::Deserialize;
 use tracing::debug;
 
 use zeta_http as http;
+use zeta_http::reqwest;
 use zeta_url::RedactedUrl;
 
 /// The URL to the oEmbed endpoint.

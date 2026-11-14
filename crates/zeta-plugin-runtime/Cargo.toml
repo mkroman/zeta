@@ -19,13 +19,13 @@ smallvec.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
-zeta-url = { path = "../zeta-url" }
+zeta-plugin = { workspace = true, default-features = false }
+zeta-url = { workspace = true }
 
 [dev-dependencies]
 allocation-counter = "=0.8.1"
 tracing-subscriber.workspace = true
-zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["context", "spans"] }
+zeta-test-support = { workspace = true, default-features = false, features = ["context", "spans"] }
 
 [lints]
 workspace = true

@@ -27,8 +27,8 @@ clap.workspace = true
 irc.workspace = true
 tokio.workspace = true
 trybuild.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
-zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["context"] }
+zeta-plugin = { workspace = true, default-features = false }
+zeta-test-support = { workspace = true, default-features = false, features = ["context"] }
 
 [lints]
 workspace = true

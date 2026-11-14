@@ -19,6 +19,7 @@ use tracing::warn;
 
 use zeta_http as http;
 use zeta_http::oauth::Credentials;
+use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;

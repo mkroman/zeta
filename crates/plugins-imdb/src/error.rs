@@ -2,6 +2,7 @@
 
 use zeta_http as http;
 use zeta_http::RequestError;
+use zeta_http::reqwest;
 
 /// Errors that can occur during IMDb interaction.
 #[derive(Debug, thiserror::Error)]

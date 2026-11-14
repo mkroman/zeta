@@ -296,10 +296,10 @@ mod tests {
 
     /// Every `plugins-*` crate must be wired into the facade everywhere Cargo cannot derive it.
     ///
-    /// Adding a plugin touches seven places across two files; a missed entry either fails the
+    /// Adding a plugin touches four places across two files; a missed entry either fails the
     /// build (the dependency, the re-export) or silently ships a plugin that is never compiled
-    /// (the `all` list, the TLS lists) or never named (the bundled-name list). This test turns
-    /// the silent cases into a failure.
+    /// (the `all` list) or never named (the bundled-name list). This test turns the silent cases
+    /// into a failure.
     #[test]
     fn every_plugin_crate_is_wired_into_the_facade() {
         let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
@@ -328,47 +328,10 @@ mod tests {
                 "`{plugin}` is missing from the `all` feature list"
             );
 
-            for tls in ["native-tls", "native-tls-vendored", "rustls"] {
-                assert!(
-                    manifest.contains(&format!("\"plugins-{plugin}?/{tls}\"")),
-                    "`{plugin}` is missing from the `{tls}` feature list"
-                );
-            }
-
             assert!(
                 list.contains(&format!("\"{plugin}\" => plugins_{snake}::")),
                 "`{plugin}` is missing from the `for_each_bundled_plugin!` list"
             );
-        }
-    }
-
-    /// Every plugin crate declares the three TLS features and forwards them to `zeta-plugin`.
-    ///
-    /// Cargo cannot derive the forwarding lists: the facade's `plugins-<name>?/<tls>` entries
-    /// only work when the plugin crate declares the matching feature. A missing entry is a
-    /// build failure in exactly one TLS configuration, which this test turns into an immediate
-    /// test failure instead.
-    #[test]
-    fn every_plugin_crate_declares_the_tls_features() {
-        let crates = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("the facade lives under crates/");
-
-        for plugin in plugin_crates() {
-            let manifest =
-                std::fs::read_to_string(crates.join(format!("plugins-{plugin}/Cargo.toml")))
-                    .expect("read the plugin manifest");
-
-            for tls in ["rustls", "native-tls", "native-tls-vendored"] {
-                assert!(
-                    manifest.contains(&format!("{tls} = [")),
-                    "`{plugin}` is missing the `{tls}` feature in its own Cargo.toml"
-                );
-                assert!(
-                    manifest.contains(&format!("zeta-plugin/{tls}")),
-                    "`{plugin}`'s `{tls}` feature does not forward to `zeta-plugin/{tls}`"
-                );
-            }
         }
     }
 

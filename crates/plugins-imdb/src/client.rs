@@ -1,6 +1,5 @@
 //! Client for IMDb's internal GraphQL API.
 
-use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue, ORIGIN, REFERER};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -12,6 +11,8 @@ use super::model::{Person, SearchResult, SeriesInfo, Title};
 use zeta_http as http;
 use zeta_http::HttpConfig;
 use zeta_http::RequestError;
+use zeta_http::reqwest;
+use zeta_http::reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue, ORIGIN, REFERER};
 
 /// GraphQL endpoint of IMDb's internal API.
 pub const GRAPHQL_URL: &str = "https://api.graphql.imdb.com/";

@@ -13,9 +13,10 @@
 use serde::Deserialize;
 use tracing::debug;
 use url::form_urlencoded::Serializer;
-use wreq::header::{COOKIE, SET_COOKIE};
 
 use zeta_http::emulated::ResponseError;
+use zeta_http::wreq;
+use zeta_http::wreq::header::{COOKIE, SET_COOKIE};
 use zeta_utils::text;
 
 use super::meta::{MediaDetails, shortcode_to_media_pk};

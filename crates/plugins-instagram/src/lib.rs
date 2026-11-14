@@ -38,12 +38,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use url::Url;
-use wreq::redirect::Policy;
 
 use zeta_cache::{TtlCache, TtlMap};
 use zeta_http as http;
 use zeta_http::WreqError;
 use zeta_http::emulated::ResponseError;
+use zeta_http::wreq;
+use zeta_http::wreq::redirect::Policy;
 use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};

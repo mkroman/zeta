@@ -13,6 +13,7 @@ use tracing::debug;
 use url::Url;
 
 use zeta_http as http;
+use zeta_http::reqwest;
 use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_utils::irc;

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_http as http;
+use zeta_http::reqwest;
 use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{Client, Context, MessageEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;

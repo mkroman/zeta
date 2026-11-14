@@ -22,6 +22,7 @@ use tracing::{Instrument, debug, warn};
 use url::Host;
 
 use zeta_http as http;
+use zeta_http::reqwest;
 use zeta_plugin::irc::{
     COLOR, RESET, labeled_reply, labeled_reply_prefix, send_reply, unstyle_text,
 };

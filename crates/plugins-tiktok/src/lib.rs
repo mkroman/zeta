@@ -16,6 +16,7 @@ use tracing::{debug, warn};
 use url::Url;
 
 use zeta_http as http;
+use zeta_http::reqwest;
 use zeta_http::{RedirectError, RequestError};
 use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::irc::{COLOR, RESET, plain_reply, send_reply};

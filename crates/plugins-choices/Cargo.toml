@@ -9,18 +9,15 @@ repository.workspace = true
 
 [features]
 default = []
-rustls = ["zeta-plugin/rustls"]
-native-tls = ["zeta-plugin/native-tls"]
-native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
 rand = "0.10.1"
 serde.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
-zeta-utils = { path = "../zeta-utils" }
+zeta-plugin = { workspace = true, default-features = false }
+zeta-utils = { workspace = true }
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

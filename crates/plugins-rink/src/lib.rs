@@ -54,7 +54,7 @@ use render::{error_message, render_reply};
 
 use coinmarketcap::Client as CmcClient;
 use zeta_cache::TtlCache;
-use zeta_http::RequestError;
+use zeta_http::reqwest;
 use zeta_plugin::irc::send_reply;
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
 
@@ -113,15 +113,7 @@ impl Default for Settings {
 #[plugin(name = "rink", settings = Settings)]
 impl Rink {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
-        let client = if settings.currency {
-            Some(
-                zeta_http::builder(&ctx.config.http)
-                    .build()
-                    .map_err(|error| plugin_err(RequestError::from(error)))?,
-            )
-        } else {
-            None
-        };
+        let client = settings.currency.then(|| ctx.http().clone());
 
         Ok(Self {
             engine: Some(build_context(None, None)?),

@@ -13,19 +13,19 @@ ignored = ["humantime-serde"]
 
 [features]
 default = []
-rustls = ["zeta-plugin/rustls", "kagi/rustls"]
-native-tls = ["zeta-plugin/native-tls", "kagi/native-tls"]
-native-tls-vendored = ["zeta-plugin/native-tls-vendored", "kagi/native-tls-vendored"]
+rustls = ["kagi/rustls"]
+native-tls = ["kagi/native-tls"]
+native-tls-vendored = ["kagi/native-tls-vendored"]
 
 [dependencies]
 humantime-serde.workspace = true
 kagi = { path = "../kagi", default-features = false }
 serde.workspace = true
 tracing.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["http"] }
+zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

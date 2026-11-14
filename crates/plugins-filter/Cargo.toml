@@ -9,9 +9,6 @@ repository.workspace = true
 
 [features]
 default = []
-rustls = ["zeta-plugin/rustls"]
-native-tls = ["zeta-plugin/native-tls"]
-native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
 arc-swap.workspace = true
@@ -22,14 +19,14 @@ thiserror.workspace = true
 tracing.workspace = true
 url.workspace = true
 wildmatch.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["database"] }
-zeta-url = { path = "../zeta-url" }
-zeta-utils = { path = "../zeta-utils" }
+zeta-plugin = { workspace = true, default-features = false, features = ["database"] }
+zeta-url = { workspace = true }
+zeta-utils = { workspace = true }
 
 [dev-dependencies]
 allocation-counter = "=0.8.1"
 tokio = { workspace = true, features = ["test-util"] }
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

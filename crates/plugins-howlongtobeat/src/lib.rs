@@ -13,15 +13,16 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use reqwest::{
-    StatusCode,
-    header::{CONTENT_TYPE, REFERER},
-};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use zeta_cache::TtlCache;
 use zeta_http as http;
+use zeta_http::reqwest;
+use zeta_http::reqwest::{
+    StatusCode,
+    header::{CONTENT_TYPE, REFERER},
+};
 use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, unstyle_text};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_utils::duration::{self, HOURS_AND_MINUTES};

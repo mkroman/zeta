@@ -31,6 +31,14 @@ pub(crate) type BoxFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = T> + Se
 
 #[cfg(feature = "emulated")]
 pub mod emulated;
+/// The `reqwest` client crate, re-exported so its API is named through `zeta-http`
+/// rather than declared as a direct dependency by every caller.
+#[cfg(any(feature = "request", feature = "http"))]
+pub use reqwest;
+/// The `wreq` client crate behind the browser-emulated stack, re-exported for the same
+/// reason.
+#[cfg(feature = "emulated")]
+pub use wreq;
 #[cfg(feature = "http")]
 pub mod json;
 #[cfg(feature = "oauth")]

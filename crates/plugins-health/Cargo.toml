@@ -10,18 +10,15 @@ repository.workspace = true
 [features]
 default = ["database"]
 database = ["zeta-plugin/database"]
-rustls = ["zeta-plugin/rustls"]
-native-tls = ["zeta-plugin/native-tls"]
-native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
 memory-stats = "1.2.0"
 tokio.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
+zeta-plugin = { workspace = true, default-features = false }
 
 [dev-dependencies]
 wildmatch.workspace = true
-zeta-utils = { path = "../zeta-utils" }
+zeta-utils = { workspace = true }
 
 [lints]
 workspace = true

@@ -18,10 +18,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 use url::Url;
-use wreq::redirect::Policy;
 
 use zeta_http as http;
 use zeta_http::WreqError;
+use zeta_http::wreq;
+use zeta_http::wreq::redirect::Policy;
 use zeta_plugin::irc::{
     BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, plain_reply, send_reply, send_reply_via,
 };

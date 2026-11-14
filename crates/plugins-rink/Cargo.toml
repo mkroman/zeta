@@ -13,40 +13,24 @@ ignored = ["humantime-serde"]
 
 [features]
 default = []
-rustls = [
-    "zeta-plugin/rustls",
-    "reqwest/rustls",
-    "coinmarketcap/rustls",
-    "zeta-http/rustls",
-]
-native-tls = [
-    "zeta-plugin/native-tls",
-    "reqwest/native-tls",
-    "coinmarketcap/native-tls",
-    "zeta-http/native-tls",
-]
-native-tls-vendored = [
-    "zeta-plugin/native-tls-vendored",
-    "reqwest/native-tls-vendored",
-    "coinmarketcap/native-tls-vendored",
-    "zeta-http/native-tls-vendored",
-]
+rustls = ["coinmarketcap/rustls"]
+native-tls = ["coinmarketcap/native-tls"]
+native-tls-vendored = ["coinmarketcap/native-tls-vendored"]
 
 [dependencies]
 coinmarketcap = { path = "../coinmarketcap", default-features = false }
 humantime-serde.workspace = true
-reqwest = { workspace = true, features = ["json", "cookies", "form", "query", "gzip", "brotli", "deflate", "zstd"] }
 rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "61be392a0d605ea6c4192934134683d63fbe7f7d", features = ["bundle-files", "serde_json"] }
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-zeta-cache = { path = "../zeta-cache" }
-zeta-http = { path = "../zeta-http", default-features = false, features = ["http"] }
-zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["http"] }
-zeta-utils = { path = "../zeta-utils" }
+zeta-cache = { workspace = true }
+zeta-http = { workspace = true, default-features = false, features = ["http"] }
+zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
+zeta-utils = { workspace = true }
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

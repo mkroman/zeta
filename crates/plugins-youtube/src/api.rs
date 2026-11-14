@@ -9,6 +9,7 @@ use super::model::{
 };
 use super::{Error, YouTube};
 use zeta_http as http;
+use zeta_http::reqwest;
 
 /// The endpoint videos are searched against.
 const SEARCH_URL: &str = "https://www.googleapis.com/youtube/v3/search";
