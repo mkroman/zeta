@@ -71,7 +71,8 @@ pub fn parse_or_usage<T: Parser + 'static>(
 /// Sends `message` to `channel` as a single `PRIVMSG` through the client's [`Sender`].
 ///
 /// A thin wrapper over [`send_reply_via`] on [`Client::sender`], so both entry points share one
-/// body and cannot drift apart.
+/// body and cannot drift apart. The enqueue is measured by an `irc.send` producer span, a child
+/// of the current handler span when one is current.
 ///
 /// # Errors
 ///
@@ -99,6 +100,9 @@ pub fn send_reply(
 /// once instead of once per call-site argument type; callers that hold a `&str` allocate at the
 /// call site with `to_owned`.
 ///
+/// The enqueue is measured by an `irc.send` producer span, a child of the current handler span
+/// when one is current.
+///
 /// # Errors
 ///
 /// Returns any error produced while sending the message.
@@ -107,6 +111,18 @@ pub fn send_reply_via(
     channel: &str,
     message: String,
 ) -> Result<(), irc::error::Error> {
+    let span = tracing::info_span!(
+        target: "zeta.plugins",
+        "irc.send",
+        otel.kind = "producer",
+        messaging.system.name = "irc",
+        messaging.operation.name = "privmsg",
+        messaging.operation.type = "send",
+        messaging.destination.name = %channel,
+        irc.channel = %channel,
+    );
+    let _guard = span.enter();
+
     if message.contains("\r\n") {
         return sender.send_privmsg(channel, message);
     }

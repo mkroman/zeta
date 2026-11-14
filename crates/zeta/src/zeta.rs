@@ -5,7 +5,7 @@ use irc::client::prelude::{Capability, Client};
 use tracing::{Instrument, debug, error, info, warn};
 
 use crate::Error;
-use crate::config::Config;
+use crate::config::{Config, IrcConfig};
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE, STARTUP_GRACE};
 use zeta_plugin::Context;
 use zeta_plugin_runtime::{PluginRuntime, Registry};
@@ -67,6 +67,24 @@ async fn shutdown_signal() -> ShutdownSignal {
     }
 
     ShutdownSignal::Interrupt
+}
+
+/// Returns the span covering one IRC connection's setup.
+///
+/// The span is bounded to the setup steps — DNS resolution, the TCP/TLS connection, capability
+/// negotiation and registration — and is not held for the connection's lifetime. The connection
+/// itself is not a span: a process- or connection-lifetime span never closes, so the exporter
+/// keeps buffering it. Every line and reply opens its own short span instead.
+fn connect_span(config: &IrcConfig) -> tracing::Span {
+    tracing::info_span!(
+        "irc.connect",
+        otel.kind = "client",
+        server.address = %config.hostname,
+        server.port = u64::from(config.resolved_port()),
+        network.transport = "tcp",
+        network.protocol.name = "irc",
+        irc.nickname = %config.nickname,
+    )
 }
 
 /// Drives the client's outgoing sink independently of the dispatch loop.
@@ -306,22 +324,32 @@ impl Zeta {
         #[cfg(feature = "mirror")]
         start_mirror(&self.context.shared);
 
-        let mut client = Client::from_config((&self.config.irc).into())
-            .await
-            .map_err(Error::IrcClient)?;
+        // The connection setup — DNS, TCP/TLS, capability negotiation and registration — gets one
+        // bounded `irc.connect` span. The connection itself has no span; the dispatcher and every
+        // reply open their own short spans, so nothing hangs from a never-closing root.
+        let (client, mut stream, mut outgoing) = async {
+            let mut client = Client::from_config((&self.config.irc).into())
+                .await
+                .map_err(Error::IrcClient)?;
 
-        // Request the IRCv3 message tags so servers attach tags such as `msgid` to delivered
-        // messages. A server that does not support `message-tags` answers with a `NAK`, which
-        // is harmless; registration continues without tags.
-        client
-            .send_cap_req(&[Capability::Custom("message-tags")])
-            .map_err(Error::IrcRegistration)?;
+            // Request the IRCv3 message tags so servers attach tags such as `msgid` to delivered
+            // messages. A server that does not support `message-tags` answers with a `NAK`, which
+            // is harmless; registration continues without tags.
+            client
+                .send_cap_req(&[Capability::Custom("message-tags")])
+                .map_err(Error::IrcRegistration)?;
 
-        client.identify().map_err(Error::IrcRegistration)?;
+            client.identify().map_err(Error::IrcRegistration)?;
 
-        let mut outgoing = drive_outgoing(&mut client);
+            let outgoing = drive_outgoing(&mut client);
 
-        let mut stream = client.stream()?;
+            let stream = client.stream()?;
+
+            Ok::<_, Error>((client, stream, outgoing))
+        }
+        .instrument(connect_span(&self.config.irc))
+        .await?;
+
         let client = Arc::new(client);
 
         // Each plugin gets its own long-lived task with a bounded mailbox, so a slow or failing
@@ -484,6 +512,37 @@ mod tests {
         );
 
         assert!(start_mirror(&shared), "A second startup call is a no-op.");
+    }
+
+    #[test]
+    fn connect_span_records_server_and_network_attributes() {
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::prelude::*;
+        use zeta_test_support::SpanRecorder;
+
+        let recorder = SpanRecorder::default();
+        let subscriber = tracing_subscriber::registry().with(recorder.clone());
+        let config = IrcConfig {
+            hostname: "irc.example.com".to_owned(),
+            port: Some(6697),
+            nickname: "zeta".to_owned(),
+            ..IrcConfig::default()
+        };
+
+        with_default(subscriber, || drop(connect_span(&config)));
+
+        let spans = recorder.spans();
+        let span = spans
+            .iter()
+            .find(|span| span.name() == "irc.connect")
+            .expect("the connection setup span should be recorded");
+
+        assert_eq!(span.field("otel.kind"), Some("client"));
+        assert_eq!(span.field("server.address"), Some("irc.example.com"));
+        assert_eq!(span.field("server.port"), Some("6697"));
+        assert_eq!(span.field("network.transport"), Some("tcp"));
+        assert_eq!(span.field("network.protocol.name"), Some("irc"));
+        assert_eq!(span.field("irc.nickname"), Some("zeta"));
     }
 
     #[cfg(unix)]
