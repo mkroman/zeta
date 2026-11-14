@@ -25,6 +25,7 @@ pub use service::Resource;
 
 use clap::Parser;
 use num_format::{Locale, ToFormattedString};
+use tracing::warn;
 use url::Url;
 
 use self::service::OfnService;
@@ -43,8 +44,8 @@ impl Ofn {
     /// Scrapes a URL posted in chat and updates/checks the database.
     ///
     /// The host's dispatcher has already applied the shared filters, so every URL delivered
-    /// here is recorded. A failed insert is logged by [`OfnService::record_url`] and left
-    /// unannounced.
+    /// here is recorded. A failed record is logged and answered with a fixed reply, so the
+    /// database error never reaches the channel.
     #[tracing::instrument(
         name = "ofn.record_url",
         skip_all,
@@ -79,7 +80,13 @@ impl Ofn {
             }
             Ok(None) => {}
             Err(error) => {
-                send_reply(client, origin.channel, formatted_err(&error.to_string()))?;
+                warn!(exception.message = %error, "could not record the url");
+
+                send_reply(
+                    client,
+                    origin.channel,
+                    formatted_err("could not record the URL"),
+                )?;
             }
         }
 

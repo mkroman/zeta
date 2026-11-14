@@ -121,6 +121,21 @@ the disconnect reason, but no messaging attributes, because a server `ERROR` is 
 - Override with `RUST_LOG`, e.g. `RUST_LOG=info,plugins=debug,zeta=debug` for per-operation
   detail. `RUST_LOG` replaces the default filter entirely.
 
+## Failure replies
+
+- A command replies once: the outcome, or a fixed, user-facing failure string. Never reply with
+  the `Display` of an `ApiError`, `DbError`, `sqlx::Error`, client-crate error, or serde error.
+- Expected failures — a store that could not write, a lookup that did not answer — get a fixed
+  string and a `warn` log with `exception.message`. `error` is reserved for unhandled failures
+  and data loss.
+- Unsolicited URL and message failures are logged, not posted with their error; a flow that
+  still answers uses a fixed string.
+- A failed send in a handler propagates with `?` where the plugin's error type can carry it,
+  and is otherwise logged at `warn`; a send in a spawned task is always logged, since no
+  handler is left to report it.
+- Do not repeat a failure another layer already logged with its own context (the HTTP client,
+  the service); log once, where the unique context is.
+
 ## Checklist: adding a span or attribute
 
 1. Search the [OTel registry](https://opentelemetry.io/docs/specs/semconv/registry/attributes/)

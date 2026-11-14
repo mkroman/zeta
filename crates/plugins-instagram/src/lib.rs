@@ -335,8 +335,9 @@ impl Instagram {
         if let Some(summary) = details
             .as_ref()
             .and_then(|details| format_summary(details, label, self.settings.caption_length))
+            && let Err(error) = send_reply(client, channel, plain_reply(&summary))
         {
-            let _ = send_reply(client, channel, plain_reply(&summary));
+            warn!(exception.message = %error, "could not send the instagram summary");
         }
 
         let Some(mirror) = self.mirror.as_ref() else {

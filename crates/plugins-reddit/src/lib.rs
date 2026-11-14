@@ -113,10 +113,12 @@ impl Reddit {
                         .await?;
                 }
                 Err(err) => {
+                    warn!(exception.message = %err, "could not resolve the reddit video link");
+
                     send_reply(
                         client,
                         channel,
-                        plain_reply(format_args!("could not resolve video link: {err}")),
+                        plain_reply("could not resolve the video link"),
                     )?;
                 }
             },
@@ -128,10 +130,15 @@ impl Reddit {
                         }
                     }
                     Err(err) => {
+                        warn!(
+                            exception.message = %err,
+                            "could not resolve the reddit shortened link"
+                        );
+
                         send_reply(
                             client,
                             channel,
-                            plain_reply(format_args!("could not resolve shortened link: {err}")),
+                            plain_reply("could not resolve the shortened link"),
                         )?;
                     }
                 }
@@ -142,10 +149,15 @@ impl Reddit {
                         send_reply(client, channel, format_subreddit(&subreddit))?;
                     }
                     Err(err) => {
+                        warn!(
+                            exception.message = %err,
+                            "could not fetch the reddit subreddit details"
+                        );
+
                         send_reply(
                             client,
                             channel,
-                            plain_reply(format_args!("could not fetch subreddit details: {err}")),
+                            plain_reply("could not fetch the subreddit details"),
                         )?;
                     }
                 }
@@ -169,10 +181,15 @@ impl Reddit {
                     .await?;
             }
             Err(err) => {
+                warn!(
+                    exception.message = %err,
+                    "could not fetch the reddit submission details"
+                );
+
                 send_reply(
                     client,
                     channel,
-                    plain_reply(format_args!("could not fetch submission details: {err}")),
+                    plain_reply("could not fetch the submission details"),
                 )?;
             }
         }

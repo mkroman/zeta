@@ -2,14 +2,13 @@
 //!
 //! `view_video.php?viewkey=<id>` links on `www.pornhub.com` are looked up through the legacy
 //! webmasters API and replied to with the video title and view count. A missing video maps to
-//! a not-found error; every other lookup failure is silently ignored, leaving the link
-//! unexpanded.
+//! a not-found error; every other lookup failure is logged and leaves the link unexpanded.
 //!
 //! The plugin has no settings.
 
 use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, warn};
 use url::Url;
 
 use zeta_http as http;
@@ -152,7 +151,9 @@ impl PornHub {
         client: &Client,
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        let _ = self.process_url(url.url(), url.channel(), client).await;
+        if let Err(error) = self.process_url(url.url(), url.channel(), client).await {
+            debug!(exception.message = %error, "could not process url");
+        }
 
         Ok(())
     }
@@ -168,7 +169,9 @@ impl PornHub {
             let video = self.video_by_id(&video_id).await?;
             debug!(?video, "fetched video");
 
-            let _ = send_reply(client, channel, Self::format_video_message(&video));
+            if let Err(error) = send_reply(client, channel, Self::format_video_message(&video)) {
+                warn!(exception.message = %error, "could not send the pornhub summary");
+            }
         }
 
         Ok(())
