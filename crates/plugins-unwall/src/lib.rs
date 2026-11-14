@@ -238,7 +238,7 @@ impl Unwall {
             send_reply(
                 client,
                 channel,
-                labeled_reply(NAME, format_args!("could not add the sites:{RESET}")),
+                labeled_reply(NAME, "could not add the sites."),
             )?;
 
             return Ok(());
@@ -283,7 +283,7 @@ impl Unwall {
                 send_reply(
                     client,
                     channel,
-                    labeled_reply(NAME, format_args!("could not remove the sites:{RESET}")),
+                    labeled_reply(NAME, "could not remove the sites."),
                 )?;
 
                 return Ok(());
@@ -351,7 +351,7 @@ impl Unwall {
             Err(error) => {
                 warn!(exception.message = %error, "could not load the unwall statistics");
 
-                labeled_reply(NAME, format_args!("could not load the statistics:{RESET}"))
+                labeled_reply(NAME, "could not load the statistics.")
             }
         };
 
@@ -382,7 +382,7 @@ impl Unwall {
             Err(error) => {
                 warn!(exception.message = %error, "could not load the unwall statistics");
 
-                labeled_reply(NAME, format_args!("could not load the statistics:{RESET}"))
+                labeled_reply(NAME, "could not load the statistics.")
             }
         };
 
@@ -456,7 +456,7 @@ impl Unwall {
                         if let Err(error) = send_reply_via(
                             &irc,
                             &channel,
-                            plain_reply(format_args!("could not unwall the article:{RESET}")),
+                            plain_reply("could not unwall the article."),
                         ) {
                             warn!(exception.message = %error, "could not send the unwall failure");
                         }
