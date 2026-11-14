@@ -154,6 +154,34 @@ struct Info {
     host: String,
 }
 
+/// The user-facing reply for an article that could not be unwalled.
+///
+/// The internal resolution error is retained as the source, never rendered in the reply. The
+/// status variant names only the HTTP code the API rejected the article with.
+#[derive(Debug, thiserror::Error)]
+enum ResolveFailure {
+    /// The unwall API rejected the article with an error status.
+    #[error("could not unwall the article (HTTP {0})")]
+    Status(u16),
+    /// The article URL is not usable.
+    #[error("the article URL is not usable")]
+    InvalidUrl,
+    /// The article could not be resolved for another reason.
+    #[error("could not unwall the article")]
+    Other(#[source] Error),
+}
+
+impl ResolveFailure {
+    /// Renders a failed article resolution.
+    fn new(error: Error) -> Self {
+        match error {
+            Error::Status(status) => Self::Status(status),
+            Error::InvalidUrl => Self::InvalidUrl,
+            other => Self::Other(other),
+        }
+    }
+}
+
 /// Unwall plugin.
 ///
 /// Unwalls covered paywalled news links posted in a channel and manages the covered sites.
@@ -453,11 +481,9 @@ impl Unwall {
                             "could not unwall the article"
                         );
 
-                        if let Err(error) = send_reply_via(
-                            &irc,
-                            &channel,
-                            plain_reply("could not unwall the article."),
-                        ) {
+                        let reply = ResolveFailure::new(error);
+
+                        if let Err(error) = send_reply_via(&irc, &channel, plain_reply(reply)) {
                             warn!(exception.message = %error, "could not send the unwall failure");
                         }
                     }
@@ -616,5 +642,25 @@ mod tests {
             join_and(&["a".into(), "b".into(), "c".into()]),
             format!("{RESET}a{COLOR},{RESET} b{COLOR} and{RESET} c")
         );
+    }
+
+    #[test]
+    fn resolve_failure_renders_domain_reasons() {
+        assert_eq!(
+            ResolveFailure::new(Error::Status(503)).to_string(),
+            "could not unwall the article (HTTP 503)"
+        );
+        assert_eq!(
+            ResolveFailure::new(Error::InvalidUrl).to_string(),
+            "the article URL is not usable"
+        );
+    }
+
+    #[test]
+    fn resolve_failure_hides_internal_errors() {
+        let failure = ResolveFailure::new(Error::BaseUrl(url::ParseError::EmptyHost));
+
+        assert_eq!(failure.to_string(), "could not unwall the article");
+        assert!(std::error::Error::source(&failure).is_some());
     }
 }

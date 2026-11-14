@@ -8,7 +8,7 @@
 //! The inflection, etymology, and example are optional; each is shown by default and can be
 //! turned off in `[plugins.dendanskeordbog]`.
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
 use dendanskeordbog::DictionaryDocument;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,52 @@ impl Default for Settings {
             show_morphology: true,
             show_etymology: true,
             show_examples: true,
+        }
+    }
+}
+
+/// The user-facing reply for a failed dictionary lookup.
+///
+/// The internal lookup error is retained as the source, never rendered in the reply.
+#[derive(Debug)]
+enum LookupFailure {
+    /// The dictionary has no entry for the word.
+    NoResults,
+    /// The lookup failed internally.
+    Lookup(dendanskeordbog::Error),
+}
+
+impl LookupFailure {
+    /// Renders a failed lookup, treating a missing entry and a `404` as no results.
+    fn new(error: dendanskeordbog::Error) -> Self {
+        let no_results = match &error {
+            dendanskeordbog::Error::MissingElement(_) => true,
+            dendanskeordbog::Error::Status(status) => status.as_u16() == 404,
+            _ => false,
+        };
+
+        if no_results {
+            Self::NoResults
+        } else {
+            Self::Lookup(error)
+        }
+    }
+}
+
+impl fmt::Display for LookupFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoResults => f.write_str("No results found"),
+            Self::Lookup(_) => f.write_str("could not look up the word"),
+        }
+    }
+}
+
+impl std::error::Error for LookupFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::NoResults => None,
+            Self::Lookup(error) => Some(error),
         }
     }
 }
@@ -125,7 +171,7 @@ impl DenDanskeOrdbog {
             |error| {
                 warn!(exception.message = %error, "ddo lookup failed");
 
-                plain_reply("could not look up the word")
+                plain_reply(LookupFailure::new(error))
             },
         )
         .await?;
@@ -156,5 +202,22 @@ mod tests {
             assert!(!settings.show_etymology);
             assert!(!settings.show_examples);
         }
+    }
+
+    #[test]
+    fn lookup_failure_maps_a_missing_entry_to_no_results() {
+        let failure = LookupFailure::new(dendanskeordbog::Error::MissingElement("head".to_owned()));
+
+        assert_eq!(failure.to_string(), "No results found");
+        assert!(std::error::Error::source(&failure).is_none());
+    }
+
+    #[test]
+    fn lookup_failure_hides_internal_errors() {
+        let failure = LookupFailure::new(dendanskeordbog::Error::Parse("boom".to_owned()));
+
+        assert_eq!(failure.to_string(), "could not look up the word");
+        assert!(!failure.to_string().contains("boom"));
+        assert!(std::error::Error::source(&failure).is_some());
     }
 }
