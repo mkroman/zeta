@@ -32,8 +32,6 @@ tokio = { workspace = true, optional = true, default-features = false, features 
 tracing = { workspace = true, optional = true }
 zeta-http = { path = "../zeta-http", default-features = false, features = ["request"], optional = true }
 
-zeta-url = { path = "../zeta-url" }
-
 [dev-dependencies]
 tokio = { workspace = true, features = ["net"] }
 zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["http"] }
