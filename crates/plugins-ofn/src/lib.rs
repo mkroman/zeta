@@ -34,24 +34,14 @@ use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_utils::duration::TimeInWordsExt;
 
-/// The user-facing reply for a URL that could not be recorded.
-#[derive(Debug, thiserror::Error)]
-enum RecordFailure {
-    /// The URL has no host and cannot be recorded.
-    #[error("could not record the URL: it has no host")]
-    NoHost,
-    /// The record could not be stored.
-    #[error("could not record the URL")]
-    Database(#[source] Error),
-}
-
-impl RecordFailure {
-    /// Renders a failed record, naming the domain reason for a URL without a host.
-    fn new(error: Error) -> Self {
-        match error {
-            Error::InsertUrlNoHost => Self::NoHost,
-            other @ Error::Database(_) => Self::Database(other),
-        }
+/// Formats a failed URL record.
+///
+/// A URL without a host names the domain reason; a database failure is reduced to the context,
+/// because the caller logs the error.
+fn record_reply(error: &Error) -> String {
+    match error {
+        Error::InsertUrlNoHost => "could not record the URL: it has no host".to_owned(),
+        Error::Database(_) => "could not record the URL".to_owned(),
     }
 }
 
@@ -103,11 +93,7 @@ impl Ofn {
             Err(error) => {
                 warn!(exception.message = %error, "could not record the url");
 
-                send_reply(
-                    client,
-                    origin.channel,
-                    formatted_err(RecordFailure::new(error)),
-                )?;
+                send_reply(client, origin.channel, formatted_err(record_reply(&error)))?;
             }
         }
 
@@ -239,26 +225,21 @@ mod tests {
     }
 
     #[test]
-    fn record_failure_names_a_url_without_a_host() {
-        let failure = RecordFailure::new(Error::InsertUrlNoHost);
+    fn record_reply_names_a_url_without_a_host() {
+        let reply = record_reply(&Error::InsertUrlNoHost);
 
-        assert_eq!(
-            failure.to_string(),
-            "could not record the URL: it has no host"
-        );
-        assert!(std::error::Error::source(&failure).is_none());
+        assert_eq!(reply, "could not record the URL: it has no host");
     }
 
     #[test]
-    fn record_failure_hides_database_errors() {
+    fn record_reply_hides_database_errors() {
         let error = Error::Database(zeta_plugin::database::DbError::insert(
             "ofn records",
             sqlx::Error::RowNotFound,
         ));
-        let failure = RecordFailure::new(error);
+        let reply = record_reply(&error);
 
-        assert_eq!(failure.to_string(), "could not record the URL");
-        assert!(!failure.to_string().contains("ofn records"));
-        assert!(std::error::Error::source(&failure).is_some());
+        assert_eq!(reply, "could not record the URL");
+        assert!(!reply.contains("ofn records"));
     }
 }

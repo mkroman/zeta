@@ -40,33 +40,24 @@ impl Default for Settings {
     }
 }
 
-/// The user-facing reply for a failed dictionary lookup.
+/// Formats a failed dictionary lookup.
 ///
-/// The internal lookup error is retained as the source, never rendered in the reply.
-#[derive(Debug, thiserror::Error)]
-enum LookupFailure {
-    /// The dictionary has no entry for the word.
-    #[error("No results found")]
-    NoResults,
-    /// The lookup failed internally.
-    #[error("could not look up the word")]
-    Lookup(#[source] dendanskeordbog::Error),
-}
+/// A missing entry and a `404` are no results; every other failure is reduced to the context,
+/// because the caller logs the error.
+fn lookup_reply(error: &dendanskeordbog::Error) -> String {
+    const NO_RESULTS: &str = "No results found";
+    const CONTEXT: &str = "could not look up the word";
 
-impl LookupFailure {
-    /// Renders a failed lookup, treating a missing entry and a `404` as no results.
-    fn new(error: dendanskeordbog::Error) -> Self {
-        let no_results = match &error {
-            dendanskeordbog::Error::MissingElement(_) => true,
-            dendanskeordbog::Error::Status(status) => status.as_u16() == 404,
-            _ => false,
-        };
+    let no_results = match error {
+        dendanskeordbog::Error::MissingElement(_) => true,
+        dendanskeordbog::Error::Status(status) => status.as_u16() == 404,
+        _ => false,
+    };
 
-        if no_results {
-            Self::NoResults
-        } else {
-            Self::Lookup(error)
-        }
+    if no_results {
+        NO_RESULTS.to_owned()
+    } else {
+        CONTEXT.to_owned()
     }
 }
 
@@ -155,7 +146,7 @@ impl DenDanskeOrdbog {
             |error| {
                 warn!(exception.message = %error, "ddo lookup failed");
 
-                plain_reply(LookupFailure::new(error))
+                plain_reply(lookup_reply(&error))
             },
         )
         .await?;
@@ -189,19 +180,17 @@ mod tests {
     }
 
     #[test]
-    fn lookup_failure_maps_a_missing_entry_to_no_results() {
-        let failure = LookupFailure::new(dendanskeordbog::Error::MissingElement("head".to_owned()));
+    fn lookup_reply_maps_a_missing_entry_to_no_results() {
+        let reply = lookup_reply(&dendanskeordbog::Error::MissingElement("head".to_owned()));
 
-        assert_eq!(failure.to_string(), "No results found");
-        assert!(std::error::Error::source(&failure).is_none());
+        assert_eq!(reply, "No results found");
     }
 
     #[test]
-    fn lookup_failure_hides_internal_errors() {
-        let failure = LookupFailure::new(dendanskeordbog::Error::Parse("boom".to_owned()));
+    fn lookup_reply_hides_internal_errors() {
+        let reply = lookup_reply(&dendanskeordbog::Error::Parse("boom".to_owned()));
 
-        assert_eq!(failure.to_string(), "could not look up the word");
-        assert!(!failure.to_string().contains("boom"));
-        assert!(std::error::Error::source(&failure).is_some());
+        assert_eq!(reply, "could not look up the word");
+        assert!(!reply.contains("boom"));
     }
 }

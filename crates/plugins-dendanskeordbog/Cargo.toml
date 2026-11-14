@@ -16,7 +16,6 @@ native-tls-vendored = ["dendanskeordbog/native-tls-vendored"]
 [dependencies]
 dendanskeordbog = { path = "../dendanskeordbog", features = ["client", "log"] }
 serde.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
 

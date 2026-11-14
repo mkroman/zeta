@@ -124,12 +124,13 @@ the disconnect reason, but no messaging attributes, because a server `ERROR` is 
 ## Failure replies
 
 - A command replies once: the outcome, or a user-facing failure. A failure carries a stable
-  domain reason when one exists (`subreddit not found`, `the article URL is not usable`) and a
+  domain reason when one exists (`subreddit not found`, `not a usable article URL`) and a
   fixed string otherwise. Never reply with the raw `Display` of an `ApiError`, `DbError`,
   `sqlx::Error`, transport error, HTTP-body detail, or serde error.
-- User-facing reply errors are typed `thiserror` enums whose `Display` is the concise IRC-safe
-  text; a wrapped client error is kept via `#[source]` and never rendered in `Display`, so
-  internal errors do not use `#[error(transparent)]`.
+- Reply text is formatted at the reply site, not by a reply error type: a safe domain variant
+  contributes its `#[error]` `Display` (or a fixed reason where the API text is too terse), and
+  an internal failure falls back to the operation's context alone. The original error is logged
+  and never sent to the channel.
 - Expected failures get that reason plus a `warn` log with `exception.message`; `error` is
   reserved for unhandled failures and data loss.
 - Unsolicited URL and message failures are logged, not posted with their internal error; a flow
