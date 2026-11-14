@@ -3147,6 +3147,7 @@ version = "0.0.0"
 dependencies = [
  "dendanskeordbog",
  "serde",
+ "thiserror 2.0.21",
  "tracing",
  "zeta-plugin",
  "zeta-test-support",
