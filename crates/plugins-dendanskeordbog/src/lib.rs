@@ -124,7 +124,8 @@ impl DenDanskeOrdbog {
             |document| format_message(&document, &self.settings),
             |error| {
                 warn!(exception.message = %error, "ddo lookup failed");
-                plain_reply(error)
+
+                plain_reply("could not look up the word")
             },
         )
         .await?;

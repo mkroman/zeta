@@ -451,4 +451,32 @@ mod tests {
         assert_eq!(MediaKind::from_segment("tv"), Some(MediaKind::Tv));
         assert_eq!(MediaKind::from_segment("stories"), None);
     }
+
+    /// Every host the plugin subscribes to is one the parser classifies, and vice versa: a host
+    /// in `URL_HOSTS` that the parser rejects would receive events it never handles.
+    #[test]
+    fn url_hosts_cover_the_classified_hosts() {
+        let cases = [
+            ("instagram.com", "/p/DdUGmgAifcq"),
+            ("instagr.am", "/nike/"),
+            (
+                "l.instagram.com",
+                "/?u=https%3A%2F%2Fwww.instagram.com%2Fp%2FDdUGmgAifcq%2F",
+            ),
+            ("m.instagram.com", "/p/DdUGmgAifcq"),
+            ("www.instagram.com", "/p/DdUGmgAifcq"),
+        ];
+
+        assert_eq!(cases.len(), URL_HOSTS.len());
+
+        for (host, path) in cases {
+            assert!(URL_HOSTS.contains(&host), "{host} is not advertised");
+
+            let url = Url::parse(&format!("https://{host}{path}")).unwrap();
+            assert!(
+                parse_instagram_url(&url).is_some(),
+                "{host}{path} is advertised but does not classify"
+            );
+        }
+    }
 }

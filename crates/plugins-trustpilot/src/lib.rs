@@ -136,8 +136,8 @@ impl Trustpilot {
                 Error::NotFound => plain_reply("No results found"),
                 Error::Api(error) => {
                     warn!(exception.message = ?error, "trustpilot error");
-                    // The error is already safe for display.
-                    plain_reply(error)
+
+                    plain_reply("could not look up the business")
                 }
             },
         )

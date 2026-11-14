@@ -33,7 +33,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use clap::Parser;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use zeta_plugin::irc::{labeled_reply, parse_or_usage, send_reply};
 use zeta_plugin::{
@@ -345,11 +345,17 @@ impl FilterPlugin {
             match self.service.add(new_filter).await {
                 Ok(filter) => added.push(filter),
                 Err(error) => {
+                    warn!(
+                        exception.message = %error,
+                        filter.count = total,
+                        "could not add the filter"
+                    );
+
                     let response = if added.is_empty() {
-                        format!("could not add the filter: {error}")
+                        "could not add the filter".to_owned()
                     } else {
                         format!(
-                            "added {} of {total} filters, then could not add the rest: {error}",
+                            "added {} of {total} filters, then could not add the rest",
                             added.len()
                         )
                     };
@@ -425,7 +431,11 @@ impl FilterPlugin {
             let response = match self.service.delete_ids(&[id]).await {
                 Ok(1) => format!("Removed {}.", describe(&filter)),
                 Ok(_) => format!("No filter with id {id}."),
-                Err(error) => format!("could not delete the filter: {error}"),
+                Err(error) => {
+                    warn!(exception.message = %error, "could not delete the filter");
+
+                    "could not delete the filter".to_owned()
+                }
             };
 
             send_reply(client, channel, labeled_reply("Filter", &response))?;
@@ -491,10 +501,15 @@ impl FilterPlugin {
                 "Filter",
                 format_args!("Removed {removed} of {} matching filters.", filters.len()),
             ),
-            Err(error) => labeled_reply(
-                "Filter",
-                format_args!("could not delete the filters: {error}"),
-            ),
+            Err(error) => {
+                warn!(
+                    exception.message = %error,
+                    filter.count = ids.len(),
+                    "could not delete the filters"
+                );
+
+                labeled_reply("Filter", "could not delete the filters")
+            }
         };
 
         send_reply(client, channel, response)?;

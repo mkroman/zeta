@@ -152,4 +152,27 @@ mod tests {
             ],
         );
     }
+
+    /// Every host the plugin subscribes to is one the parser classifies, and vice versa: a host
+    /// in `URL_HOSTS` that the parser rejects would receive events it never handles.
+    #[test]
+    fn url_hosts_cover_the_classified_hosts() {
+        let cases = [
+            ("clips.twitch.tv", "/AbrasiveFurryDolphGJ7K8WfDb4g"),
+            ("twitch.tv", "/lirik"),
+            ("www.twitch.tv", "/lirik"),
+        ];
+
+        assert_eq!(cases.len(), URL_HOSTS.len());
+
+        for (host, path) in cases {
+            assert!(URL_HOSTS.contains(&host), "{host} is not advertised");
+
+            let url = Url::parse(&format!("https://{host}{path}")).unwrap();
+            assert!(
+                parse_twitch_url(&url).is_some(),
+                "{host}{path} is advertised but does not classify"
+            );
+        }
+    }
 }
