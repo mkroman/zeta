@@ -6,6 +6,7 @@ use url::Url;
 
 use super::error::Error;
 use zeta_http as http;
+use zeta_http::reqwest;
 
 /// The default base URL of the unwall API.
 pub const DEFAULT_API_BASE: &str = "https://api.unwall.app/";

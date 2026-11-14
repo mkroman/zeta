@@ -19,6 +19,7 @@ use url::Url;
 
 use zeta_http as http;
 use zeta_http::emulated::ResponseError;
+use zeta_http::wreq;
 
 /// The default maximum size of a response before we stop processing it.
 const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;

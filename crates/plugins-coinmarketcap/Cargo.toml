@@ -13,9 +13,9 @@ ignored = ["humantime-serde"]
 
 [features]
 default = []
-rustls = ["zeta-plugin/rustls", "coinmarketcap/rustls"]
-native-tls = ["zeta-plugin/native-tls", "coinmarketcap/native-tls"]
-native-tls-vendored = ["zeta-plugin/native-tls-vendored", "coinmarketcap/native-tls-vendored"]
+rustls = ["coinmarketcap/rustls"]
+native-tls = ["coinmarketcap/native-tls"]
+native-tls-vendored = ["coinmarketcap/native-tls-vendored"]
 
 [dependencies]
 clap.workspace = true
@@ -25,12 +25,12 @@ serde.workspace = true
 strsim = "0.11"
 tokio.workspace = true
 tracing.workspace = true
-zeta-cache = { path = "../zeta-cache" }
-zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["http"] }
-zeta-utils = { path = "../zeta-utils" }
+zeta-cache = { workspace = true }
+zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
+zeta-utils = { workspace = true }
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

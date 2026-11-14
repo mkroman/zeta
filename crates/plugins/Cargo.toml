@@ -22,117 +22,27 @@ database = ["dep:sqlx", "zeta-plugin/database"]
 http = ["zeta-plugin/http"]
 native-tls = [
     "zeta-plugin/native-tls",
-    "plugins-alert?/native-tls",
-    "plugins-chaturbate?/native-tls",
-    "plugins-choices?/native-tls",
     "plugins-coinmarketcap?/native-tls",
     "plugins-dendanskeordbog?/native-tls",
-    "plugins-dig?/native-tls",
-    "plugins-filter?/native-tls",
-    "plugins-gay?/native-tls",
-    "plugins-geoip?/native-tls",
-    "plugins-github?/native-tls",
-    "plugins-health?/native-tls",
-    "plugins-help?/native-tls",
-    "plugins-howlongtobeat?/native-tls",
-    "plugins-imdb?/native-tls",
-    "plugins-instagram?/native-tls",
-    "plugins-isitopen?/native-tls",
     "plugins-kagi?/native-tls",
-    "plugins-notification?/native-tls",
-    "plugins-ofn?/native-tls",
-    "plugins-openweathermap?/native-tls",
-    "plugins-pornhub?/native-tls",
     "plugins-reddit?/native-tls",
     "plugins-rink?/native-tls",
-    "plugins-rust-playground?/native-tls",
-    "plugins-spotify?/native-tls",
-    "plugins-string-utils?/native-tls",
-    "plugins-thingiverse?/native-tls",
-    "plugins-tiktok?/native-tls",
-    "plugins-titles?/native-tls",
-    "plugins-trustpilot?/native-tls",
-    "plugins-tvmaze?/native-tls",
-    "plugins-twitch?/native-tls",
-    "plugins-unwall?/native-tls",
-    "plugins-urban-dictionary?/native-tls",
-    "plugins-youtube?/native-tls",
 ]
 native-tls-vendored = [
     "zeta-plugin/native-tls-vendored",
-    "plugins-alert?/native-tls-vendored",
-    "plugins-chaturbate?/native-tls-vendored",
-    "plugins-choices?/native-tls-vendored",
     "plugins-coinmarketcap?/native-tls-vendored",
     "plugins-dendanskeordbog?/native-tls-vendored",
-    "plugins-dig?/native-tls-vendored",
-    "plugins-filter?/native-tls-vendored",
-    "plugins-gay?/native-tls-vendored",
-    "plugins-geoip?/native-tls-vendored",
-    "plugins-github?/native-tls-vendored",
-    "plugins-health?/native-tls-vendored",
-    "plugins-help?/native-tls-vendored",
-    "plugins-howlongtobeat?/native-tls-vendored",
-    "plugins-imdb?/native-tls-vendored",
-    "plugins-instagram?/native-tls-vendored",
-    "plugins-isitopen?/native-tls-vendored",
     "plugins-kagi?/native-tls-vendored",
-    "plugins-notification?/native-tls-vendored",
-    "plugins-ofn?/native-tls-vendored",
-    "plugins-openweathermap?/native-tls-vendored",
-    "plugins-pornhub?/native-tls-vendored",
     "plugins-reddit?/native-tls-vendored",
     "plugins-rink?/native-tls-vendored",
-    "plugins-rust-playground?/native-tls-vendored",
-    "plugins-spotify?/native-tls-vendored",
-    "plugins-string-utils?/native-tls-vendored",
-    "plugins-thingiverse?/native-tls-vendored",
-    "plugins-tiktok?/native-tls-vendored",
-    "plugins-titles?/native-tls-vendored",
-    "plugins-trustpilot?/native-tls-vendored",
-    "plugins-tvmaze?/native-tls-vendored",
-    "plugins-twitch?/native-tls-vendored",
-    "plugins-unwall?/native-tls-vendored",
-    "plugins-urban-dictionary?/native-tls-vendored",
-    "plugins-youtube?/native-tls-vendored",
 ]
 rustls = [
     "zeta-plugin/rustls",
-    "plugins-alert?/rustls",
-    "plugins-chaturbate?/rustls",
-    "plugins-choices?/rustls",
     "plugins-coinmarketcap?/rustls",
     "plugins-dendanskeordbog?/rustls",
-    "plugins-dig?/rustls",
-    "plugins-filter?/rustls",
-    "plugins-gay?/rustls",
-    "plugins-geoip?/rustls",
-    "plugins-github?/rustls",
-    "plugins-health?/rustls",
-    "plugins-help?/rustls",
-    "plugins-howlongtobeat?/rustls",
-    "plugins-imdb?/rustls",
-    "plugins-instagram?/rustls",
-    "plugins-isitopen?/rustls",
     "plugins-kagi?/rustls",
-    "plugins-notification?/rustls",
-    "plugins-ofn?/rustls",
-    "plugins-openweathermap?/rustls",
-    "plugins-pornhub?/rustls",
     "plugins-reddit?/rustls",
     "plugins-rink?/rustls",
-    "plugins-rust-playground?/rustls",
-    "plugins-spotify?/rustls",
-    "plugins-string-utils?/rustls",
-    "plugins-thingiverse?/rustls",
-    "plugins-tiktok?/rustls",
-    "plugins-titles?/rustls",
-    "plugins-trustpilot?/rustls",
-    "plugins-tvmaze?/rustls",
-    "plugins-twitch?/rustls",
-    "plugins-unwall?/rustls",
-    "plugins-urban-dictionary?/rustls",
-    "plugins-youtube?/rustls",
 ]
 
 alert = ["database", "dep:plugins-alert"]
@@ -250,15 +160,15 @@ serde.workspace = true
 # database driver and runtime.
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros"], optional = true }
 tracing.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
-zeta-plugin-runtime = { path = "../zeta-plugin-runtime" }
+zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin-runtime = { workspace = true }
 
 [dev-dependencies]
 plugins-dig = { path = "../plugins-dig" }
 serde_json.workspace = true
 syn = { version = "=3.0.10", default-features = false, features = ["derive", "full", "parsing"] }
 tokio.workspace = true
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

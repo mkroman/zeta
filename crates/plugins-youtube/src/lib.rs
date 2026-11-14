@@ -34,6 +34,7 @@ use url::Url;
 use plugins_shared::urls::youtube::URL_HOSTS;
 use zeta_cache::TtlCache;
 use zeta_http as http;
+use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, send_reply};
 use zeta_plugin::{Client, CommandEvent, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::duration;

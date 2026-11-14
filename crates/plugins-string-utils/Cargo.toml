@@ -9,19 +9,16 @@ repository.workspace = true
 
 [features]
 default = []
-rustls = ["zeta-plugin/rustls"]
-native-tls = ["zeta-plugin/native-tls"]
-native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
 tracing.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false }
-zeta-unicode = { path = "../zeta-unicode" }
-zeta-utils = { path = "../zeta-utils" }
+zeta-plugin = { workspace = true, default-features = false }
+zeta-unicode = { workspace = true }
+zeta-utils = { workspace = true }
 
 [dev-dependencies]
 tokio.workspace = true
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

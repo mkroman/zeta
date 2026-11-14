@@ -3101,7 +3101,6 @@ name = "plugins-chaturbate"
 version = "0.0.0"
 dependencies = [
  "irc",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3208,7 +3207,6 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "hickory-resolver",
- "reqwest",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -3222,7 +3220,6 @@ dependencies = [
 name = "plugins-github"
 version = "0.0.0"
 dependencies = [
- "reqwest",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -3256,7 +3253,6 @@ dependencies = [
 name = "plugins-howlongtobeat"
 version = "0.0.0"
 dependencies = [
- "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -3273,7 +3269,6 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "num-format",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3300,7 +3295,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "wreq",
  "zeta-cache",
  "zeta-http",
  "zeta-mirror",
@@ -3314,7 +3308,6 @@ dependencies = [
 name = "plugins-isitopen"
 version = "0.0.0"
 dependencies = [
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3371,7 +3364,6 @@ dependencies = [
 name = "plugins-openweathermap"
 version = "0.0.0"
 dependencies = [
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3387,7 +3379,6 @@ name = "plugins-pornhub"
 version = "0.0.0"
 dependencies = [
  "num-format",
- "reqwest",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -3422,7 +3413,6 @@ version = "0.0.0"
 dependencies = [
  "coinmarketcap",
  "humantime-serde",
- "reqwest",
  "rink-core",
  "serde",
  "tokio",
@@ -3438,7 +3428,6 @@ dependencies = [
 name = "plugins-rust-playground"
 version = "0.0.0"
 dependencies = [
- "reqwest",
  "serde",
  "tracing",
  "zeta-http",
@@ -3468,7 +3457,6 @@ version = "0.0.0"
 dependencies = [
  "base64 0.23.1",
  "num-format",
- "reqwest",
  "serde",
  "similar-asserts",
  "tracing",
@@ -3497,7 +3485,6 @@ name = "plugins-thingiverse"
 version = "0.0.0"
 dependencies = [
  "num-format",
- "reqwest",
  "serde",
  "similar-asserts",
  "thiserror 2.0.21",
@@ -3515,7 +3502,6 @@ name = "plugins-tiktok"
 version = "0.0.0"
 dependencies = [
  "plugins-shared",
- "reqwest",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -3542,7 +3528,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "wreq",
  "zeta-http",
  "zeta-plugin",
  "zeta-test-support",
@@ -3555,7 +3540,6 @@ name = "plugins-trustpilot"
 version = "0.0.0"
 dependencies = [
  "num-format",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3571,7 +3555,6 @@ dependencies = [
 name = "plugins-tvmaze"
 version = "0.0.0"
 dependencies = [
- "reqwest",
  "serde",
  "serde_json",
  "similar-asserts",
@@ -3590,7 +3573,6 @@ version = "0.0.0"
 dependencies = [
  "irc",
  "num-format",
- "reqwest",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -3610,7 +3592,6 @@ dependencies = [
  "clap",
  "humantime-serde",
  "plugins-shared",
- "reqwest",
  "serde",
  "sqlx",
  "thiserror 2.0.21",
@@ -3629,7 +3610,6 @@ dependencies = [
 name = "plugins-urban-dictionary"
 version = "0.0.0"
 dependencies = [
- "reqwest",
  "serde",
  "serde_json",
  "similar-asserts",
@@ -3648,7 +3628,6 @@ dependencies = [
  "htmlize",
  "num-format",
  "plugins-shared",
- "reqwest",
  "serde",
  "thiserror 2.0.21",
  "tokio",

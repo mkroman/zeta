@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_http::RequestError;
+use zeta_http::reqwest;
 use zeta_plugin::irc::{COLOR, PLAIN_REPLY_PREFIX, RESET, plain_reply, send_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;

@@ -20,6 +20,7 @@ use rink_core::types::DateTime;
 use std::collections::HashSet;
 use std::fmt::Write;
 use tracing::warn;
+use zeta_http::reqwest;
 use zeta_utils::irc;
 
 /// The URL of rink's live currency dataset.

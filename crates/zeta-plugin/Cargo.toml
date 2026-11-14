@@ -34,13 +34,13 @@ tokio = { workspace = true, optional = true }
 tracing.workspace = true
 url.workspace = true
 wildmatch.workspace = true
-zeta-http = { path = "../zeta-http", default-features = false, features = ["http"], optional = true }
-zeta-plugin-macros = { path = "../zeta-plugin-macros" }
-zeta-utils = { path = "../zeta-utils" }
+zeta-http = { workspace = true, default-features = false, features = ["http"], optional = true }
+zeta-plugin-macros = { workspace = true }
+zeta-utils = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-zeta-test-support = { path = "../zeta-test-support", default-features = false }
+zeta-test-support = { workspace = true, default-features = false }
 
 [lints]
 workspace = true

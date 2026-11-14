@@ -12,12 +12,13 @@
 use std::fmt::{self, Display};
 
 use num_format::{Locale, ToFormattedString};
-use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
 
 use zeta_http as http;
+use zeta_http::reqwest;
+use zeta_http::reqwest::header::AUTHORIZATION;
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;

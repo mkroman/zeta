@@ -11,16 +11,16 @@
 
 use std::fmt::Write;
 
-use reqwest::{
-    self,
-    header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
-};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::HttpConfig;
 use zeta_http::RequestError;
+use zeta_http::reqwest::{
+    self,
+    header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
+};
 use zeta_plugin::irc::{labeled_reply, reply_lookup};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
 use zeta_utils::irc;

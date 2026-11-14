@@ -7,11 +7,12 @@
 //! are reported in the channel.
 //!
 //! The TVmaze API is public and needs no credentials. The plugin has no settings.
-use reqwest::Url;
 use serde::Deserialize;
 use tracing::{debug, instrument};
 
 use zeta_http as http;
+use zeta_http::reqwest;
+use zeta_http::reqwest::Url;
 use zeta_plugin::irc::{labeled_reply, reply_lookup};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_url::RedactedUrl;

@@ -10,6 +10,7 @@ use scraper::{Html, Selector};
 use tracing::debug;
 
 use zeta_http::emulated::ResponseError;
+use zeta_http::wreq;
 use zeta_url::RedactedUrl;
 
 /// The CSS selector for the `og:title` meta tag.

@@ -9,18 +9,18 @@ repository.workspace = true
 
 [features]
 default = []
-rustls = ["zeta-plugin/rustls", "dendanskeordbog/rustls"]
-native-tls = ["zeta-plugin/native-tls", "dendanskeordbog/native-tls"]
-native-tls-vendored = ["zeta-plugin/native-tls-vendored", "dendanskeordbog/native-tls-vendored"]
+rustls = ["dendanskeordbog/rustls"]
+native-tls = ["dendanskeordbog/native-tls"]
+native-tls-vendored = ["dendanskeordbog/native-tls-vendored"]
 
 [dependencies]
 dendanskeordbog = { path = "../dendanskeordbog", features = ["client", "log"] }
 serde.workspace = true
 tracing.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["http"] }
+zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
 
 [dev-dependencies]
-zeta-test-support = { path = "../zeta-test-support" }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

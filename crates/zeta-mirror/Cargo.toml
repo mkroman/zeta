@@ -28,14 +28,14 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
-zeta-http = { path = "../zeta-http", default-features = false, features = ["request"] }
-zeta-url = { path = "../zeta-url" }
-zeta-utils = { path = "../zeta-utils" }
+zeta-http = { workspace = true, default-features = false, features = ["request"] }
+zeta-url = { workspace = true }
+zeta-utils = { workspace = true }
 
 [dev-dependencies]
 allocation-counter = "=0.8.1"
 tokio = { workspace = true, features = ["test-util"] }
-zeta-test-support = { path = "../zeta-test-support", default-features = false, features = ["http"] }
+zeta-test-support = { workspace = true, default-features = false, features = ["http"] }
 
 [lints]
 workspace = true

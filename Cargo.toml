@@ -23,6 +23,7 @@ humantime-serde = "1.1.1"
 irc = { version = "1.1.0", default-features = false, features = ["serde", "tls-rust"] }
 miette = { version = "7.2.0", default-features = false, features = ["derive", "fancy-no-backtrace"] }
 parking_lot = "0.13"
+plugins-shared = { path = "crates/plugins-shared" }
 proc-macro2 = "1"
 quote = "1"
 reqwest = { version = "0.13.1", default-features = false, features = ["charset", "http2", "system-proxy", "json", "query"] }
@@ -54,6 +55,18 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 trybuild = "1.0"
 url = "2.5.8"
 wildmatch = "=2.7.0"
+zeta-cache = { path = "crates/zeta-cache" }
+zeta-http = { path = "crates/zeta-http" }
+zeta-mirror = { path = "crates/zeta-mirror" }
+zeta-plugin = { path = "crates/zeta-plugin" }
+zeta-plugin-macros = { path = "crates/zeta-plugin-macros" }
+zeta-plugin-runtime = { path = "crates/zeta-plugin-runtime" }
+zeta-test-support = { path = "crates/zeta-test-support" }
+zeta-unicode = { path = "crates/zeta-unicode" }
+zeta-unicode-build = { path = "crates/zeta-unicode-build", version = "0.0.0" }
+zeta-unicode-format = { path = "crates/zeta-unicode-format", version = "0.0.0" }
+zeta-url = { path = "crates/zeta-url" }
+zeta-utils = { path = "crates/zeta-utils" }
 
 [workspace.lints.clippy]
 # Enable all basic clippy lints. The groups run at a higher priority than the individually

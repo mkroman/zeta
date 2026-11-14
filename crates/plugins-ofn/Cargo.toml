@@ -9,21 +9,18 @@ repository.workspace = true
 
 [features]
 default = []
-rustls = ["zeta-plugin/rustls"]
-native-tls = ["zeta-plugin/native-tls"]
-native-tls-vendored = ["zeta-plugin/native-tls-vendored"]
 
 [dependencies]
 clap.workspace = true
 num-format = "0.4.4"
-plugins-shared = { path = "../plugins-shared" }
+plugins-shared = { workspace = true }
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }
 thiserror.workspace = true
 tracing.workspace = true
 url.workspace = true
-zeta-plugin = { path = "../zeta-plugin", default-features = false, features = ["database"] }
-zeta-url = { path = "../zeta-url" }
-zeta-utils = { path = "../zeta-utils", features = ["chrono"] }
+zeta-plugin = { workspace = true, default-features = false, features = ["database"] }
+zeta-url = { workspace = true }
+zeta-utils = { workspace = true, features = ["chrono"] }
 
 [lints]
 workspace = true
