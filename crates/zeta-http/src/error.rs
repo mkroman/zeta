@@ -125,9 +125,8 @@ mod request {
 
     /// The redacted fields a failed request is logged with.
     ///
-    /// Implemented by [`TransportError`] (exported as `RequestError`/`WreqError`) and by the
-    /// standalone client crates' own wrappers, so each can log a failed request through
-    /// [`RequestFailure::logged`] without sharing an error enum.
+    /// Implemented by [`TransportError`] (exported as `RequestError`/`WreqError`), so any client
+    /// holding one can log a failed request through [`RequestFailure::logged`].
     pub trait RequestFailure {
         /// Returns the request URL without its query string, fragment, or userinfo, if the
         /// error carries one.
@@ -420,16 +419,9 @@ mod tests {
         line.contains("without_url()") || line.contains("without_uri()")
     }
 
-    /// The wrapper files across the workspace — the only places that may strip a transport
-    /// error's URL. The standalone client crates keep their own copy of the wrapper, which
-    /// cannot be shared with them.
-    const WRAPPER_FILES: &[&str] = &[
-        "zeta-http/src/error.rs",
-        "coinmarketcap/src/error.rs",
-        "kagi/src/error.rs",
-        "reddit/src/error.rs",
-        "dendanskeordbog/src/error.rs",
-    ];
+    /// The wrapper file — the only place that may strip a transport error's URL. Every client
+    /// crate reuses it instead of keeping a copy.
+    const WRAPPER_FILES: &[&str] = &["zeta-http/src/error.rs"];
 
     /// The rule that keeps credentials out of formatted output is enforced here, because
     /// `AGENTS.md` — which states it — is not committed: no error enum anywhere may hold a raw

@@ -669,7 +669,6 @@ dependencies = [
  "tracing",
  "zeta-http",
  "zeta-test-support",
- "zeta-url",
 ]
 
 [[package]]
@@ -966,7 +965,6 @@ dependencies = [
  "tracing",
  "zeta-http",
  "zeta-test-support",
- "zeta-url",
 ]
 
 [[package]]
@@ -2267,7 +2265,6 @@ dependencies = [
  "tracing",
  "zeta-http",
  "zeta-test-support",
- "zeta-url",
  "zeta-utils",
 ]
 

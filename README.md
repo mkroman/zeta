@@ -48,9 +48,9 @@ and [`crates/zeta-unicode-format/README.md`](crates/zeta-unicode-format/README.m
 Two rules keep the graph honest:
 
 - **API client crates** exist for domain APIs that stand alone (or are consumed by more than
-  one plugin): they carry their own model, error and transport-redaction wrapper, and never
-  depend on the plugin interface. Plugins with a single consumer keep their client in the
-  plugin (e.g. `imdb`, `unwall`).
+  one plugin): they carry their own model and error types, reuse `zeta-http`'s transport-error
+  redaction, and never depend on the plugin interface. Plugins with a single consumer keep
+  their client in the plugin (e.g. `imdb`, `unwall`).
 - **`zeta-plugin` is only the contract** between the host and the plugins — anything that is
   implementation rather than vocabulary belongs in an infrastructure crate.
 

@@ -38,8 +38,6 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 zeta-http = { path = "../zeta-http", default-features = false, features = ["request"] }
-
-zeta-url = { path = "../zeta-url" }
 zeta-utils = { path = "../zeta-utils" }
 
 [dev-dependencies]
