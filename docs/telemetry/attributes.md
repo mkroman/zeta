@@ -24,10 +24,12 @@ a struct. Fields recorded with `%` are strings on the wire regardless of the log
 | `url.full` | string | Request or resource URL, redacted by `RedactedUrl`/`RedactedUrlRef` (no userinfo, query, or fragment) | OTel |
 | `url.scheme` | string | Scheme of a repaired URL (`http`, `https`) | OTel |
 | `url.domain` | string | Host used in a database lookup or URL record | OTel |
-| `server.address` | string | Host of the HTTP endpoint | OTel |
-| `server.port` | int | Port of the HTTP endpoint; the scheme default when the URL omits it | OTel |
+| `server.address` | string | Host of the HTTP endpoint or IRC server | OTel |
+| `server.port` | int | Port of the HTTP endpoint or IRC server; the scheme default when the URL omits it | OTel |
+| `network.transport` | string | `tcp` on `irc.connect` | OTel |
+| `network.protocol.name` | string | `irc` on `irc.connect` | OTel |
 
-`server.*` belongs to HTTP client spans.
+`server.*` belongs to HTTP client spans and `irc.connect`.
 
 ## Database
 
@@ -73,7 +75,7 @@ DB spans come from `#[instrument_database]`, which also sets the span name to
 | Attribute | Type | Meaning | Source |
 | --- | --- | --- | --- |
 | `otel.name` | string | Overrides the exported span name; used for the bounded `{plugin} {kind}` discriminator | otel.* |
-| `otel.kind` | string | Sets the OTel span kind: `client` for HTTP/S3/DB, `consumer` for inbound IRC | otel.* |
+| `otel.kind` | string | Sets the OTel span kind: `client` for HTTP/S3/DB and IRC connect, `producer` for outbound IRC replies, `consumer` for inbound IRC | otel.* |
 
 These are consumed by the tracing layer and are not exported as span attributes.
 
@@ -104,15 +106,15 @@ These are consumed by the tracing layer and are not exported as span attributes.
 | Attribute | Type | Meaning | Source |
 | --- | --- | --- | --- |
 | `messaging.system.name` | string | Always `irc` | OTel |
-| `messaging.operation.name` | string | Lowercased IRC command: `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | OTel |
-| `messaging.operation.type` | string | Always `process` | OTel |
-| `messaging.destination.name` | string | Channel or nick targeted by `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, or `KICK` | OTel |
+| `messaging.operation.name` | string | `privmsg` on `irc.send`; otherwise the lowercased IRC command: `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | OTel |
+| `messaging.operation.type` | string | `process` for inbound events, `send` on `irc.send` | OTel |
+| `messaging.destination.name` | string | Channel or nick targeted by an inbound `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, or `KICK`, or the reply channel on `irc.send` | OTel |
 | `messaging.message.id` | string | IRCv3 `msgid` attached to any event, when present; the client requests the `message-tags` capability at registration | OTel |
 | `irc.command` | string | IRC command as received, e.g. `PRIVMSG`; `ERROR` on the host's `irc.error` span | custom |
 | `irc.channel` | string | Channel or nick target | custom |
 | `irc.raw` | string | Full IRC line, trace level; inside `irc.dispatch` for a delivering line, stdout-only when the line has no span | custom |
 | `irc.hostname` | string | Configured server hostname on `zeta.startup` | custom |
-| `irc.nickname` | string | Configured bot nickname on `zeta.startup` | custom |
+| `irc.nickname` | string | Configured bot nickname on `zeta.startup` and `irc.connect` | custom |
 | `irc.sender.nick` | string | Nick attributed to a database row | custom |
 | `irc.user.nick` | string | Nick of the user who posted a URL (OFN) | custom |
 | `irc.user.name` | string | Username (ident) of the user who posted a URL (OFN) | custom |

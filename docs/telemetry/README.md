@@ -46,8 +46,9 @@ the code and the matching doc in the same PR. The complete attribute list is in
 - Repeated spans under one parent carry a bounded discriminator in `otel.name`
   (`zeta.event.handle dig command`), keeping the span name itself stable for filters and
   metrics.
-- `otel.kind` sets the OTel span kind where the default is wrong: `client` for HTTP, S3, and
-  database spans, `consumer` for inbound IRC.
+- `otel.kind` sets the OTel span kind where the default is wrong: `client` for HTTP, S3,
+  database, and IRC connect spans, `producer` for outbound IRC replies, `consumer` for inbound
+  IRC.
 - Async fan-out opens its child span while the handler span is current, then moves the span
   into the task (`titles.fetch`, `unwall.resolve`, `media.download`). The unit stays in the
   message's trace after the handler returns.
@@ -66,7 +67,9 @@ Current core spans:
 | Span | Unit | Notes |
 | --- | --- | --- |
 | `zeta.startup` | startup phases | DB connect/migrate and plugin construction in `main`; then the plugin load barrier in `run` |
+| `irc.connect` | one IRC connection setup (DNS, TCP/TLS, registration) | root; INFO; client kind; `server.address`, `server.port`, `network.transport`, `network.protocol.name` |
 | `irc.dispatch` | one delivering incoming IRC line | root of a message trace; INFO; target `zeta.plugins`; consumer kind; lines no plugin can receive have no dispatch span |
+| `irc.send` | one plugin reply queued for the server | INFO; target `zeta.plugins`; producer kind; child of the handler span |
 | `irc.error` | one server `ERROR` and its disconnect reason | root; INFO; host-owned |
 | `zeta.event.handle` | one event to one subscriber | INFO; target `zeta.plugins`; `otel.name` discriminator |
 | `zeta.plugin.load`, `zeta.plugin.shutdown` | one lifecycle hook | INFO; `otel.name` includes the plugin |
@@ -82,16 +85,18 @@ Current core spans:
 
 Both the per-line `irc.dispatch` span and the per-subscriber `zeta.event.handle` span carry the
 OTel messaging attributes. The handler span repeats the event's values so it is self-contained.
-The dispatcher builds both spans, so they cannot disagree. The host's `irc.error` span is
-operational: it carries `irc.command = "ERROR"` and the disconnect reason, but no messaging
-attributes, because a server `ERROR` is not routed.
+The dispatcher builds both spans, so they cannot disagree. The outbound `irc.send` span carries
+`messaging.system.name = irc`, `messaging.operation.name = privmsg`,
+`messaging.operation.type = send`, and `messaging.destination.name`; the inbound spans keep
+`process`. The host's `irc.error` span is operational: it carries `irc.command = "ERROR"` and
+the disconnect reason, but no messaging attributes, because a server `ERROR` is not routed.
 
 | Attribute | Value | Notes |
 | --- | --- | --- |
 | `messaging.system.name` | `irc` | always |
-| `messaging.operation.name` | `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | lowercased IRC command; an unmodeled command is lowercased |
-| `messaging.operation.type` | `process` | inbound only |
-| `messaging.destination.name` | channel or nick | target of `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, `KICK`; absent for `QUIT`, `NICK`, `RAW`, and numerics |
+| `messaging.operation.name` | `privmsg`, `notice`, `join`, `part`, `quit`, `nick`, `kick`, … | `privmsg` on `irc.send`; otherwise the lowercased IRC command, with an unmodeled command lowercased |
+| `messaging.operation.type` | `process` for inbound events, `send` on `irc.send` | |
+| `messaging.destination.name` | channel or nick | target of an inbound `PRIVMSG`, `NOTICE`, `JOIN`, `PART`, `KICK`, or the reply channel on `irc.send`; absent for inbound `QUIT`, `NICK`, `RAW`, and numerics |
 | `messaging.message.id` | IRCv3 `msgid` | read from any tagged event; the client requests the `message-tags` capability at registration, and the attribute is absent when the server sends none |
 
 ## Log levels and default filter
