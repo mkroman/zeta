@@ -8,7 +8,7 @@
 //! The inflection, etymology, and example are optional; each is shown by default and can be
 //! turned off in `[plugins.dendanskeordbog]`.
 
-use std::fmt::{self, Write};
+use std::fmt::Write;
 
 use dendanskeordbog::DictionaryDocument;
 use serde::{Deserialize, Serialize};
@@ -43,12 +43,14 @@ impl Default for Settings {
 /// The user-facing reply for a failed dictionary lookup.
 ///
 /// The internal lookup error is retained as the source, never rendered in the reply.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum LookupFailure {
     /// The dictionary has no entry for the word.
+    #[error("No results found")]
     NoResults,
     /// The lookup failed internally.
-    Lookup(dendanskeordbog::Error),
+    #[error("could not look up the word")]
+    Lookup(#[source] dendanskeordbog::Error),
 }
 
 impl LookupFailure {
@@ -64,24 +66,6 @@ impl LookupFailure {
             Self::NoResults
         } else {
             Self::Lookup(error)
-        }
-    }
-}
-
-impl fmt::Display for LookupFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoResults => f.write_str("No results found"),
-            Self::Lookup(_) => f.write_str("could not look up the word"),
-        }
-    }
-}
-
-impl std::error::Error for LookupFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::NoResults => None,
-            Self::Lookup(error) => Some(error),
         }
     }
 }
