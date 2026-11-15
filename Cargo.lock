@@ -3336,6 +3336,7 @@ dependencies = [
  "tracing",
  "zeta-plugin",
  "zeta-test-support",
+ "zeta-utils",
 ]
 
 [[package]]
@@ -3372,7 +3373,6 @@ dependencies = [
 name = "plugins-pornhub"
 version = "0.0.0"
 dependencies = [
- "num-format",
  "serde",
  "thiserror 2.0.21",
  "tracing",

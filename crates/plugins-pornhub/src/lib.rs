@@ -6,7 +6,6 @@
 //!
 //! The plugin has no settings.
 
-use num_format::{Locale, ToFormattedString};
 use serde::Deserialize;
 use tracing::{debug, warn};
 use url::Url;
@@ -16,6 +15,7 @@ use zeta_http::reqwest;
 use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_utils::irc;
+use zeta_utils::text::{format_number, pluralize_noun};
 
 /// The hostname for PornHub URLs.
 const PORNHUB_HOST: &str = "www.pornhub.com";
@@ -210,10 +210,11 @@ impl PornHub {
     /// Formats a message about the video.
     fn format_video_message(video: &Video) -> String {
         let title = irc::unstyle_text(&video.title);
-        let views = video.views.to_formatted_string(&Locale::en);
+        let views = format_number(video.views);
+        let view_noun = pluralize_noun(video.views, "view");
 
         plain_reply(format_args!(
-            "“\x0f{title}\x0310” is a PornHub video with\x0f {views}\x0310 views"
+            "“\x0f{title}\x0310” is a PornHub video with\x0f {views}\x0310 {view_noun}"
         ))
     }
 }

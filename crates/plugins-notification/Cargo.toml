@@ -17,6 +17,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 zeta-plugin = { workspace = true, default-features = false, features = ["database"] }
+zeta-utils = { workspace = true }
 
 [dev-dependencies]
 zeta-test-support = { workspace = true }
