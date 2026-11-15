@@ -300,7 +300,7 @@ mod tests {
     #[tokio::test]
     async fn start_resolves_the_filters_published_by_the_constructors() {
         let ctx = Arc::new(zeta_test_support::test_context());
-        ctx.shared
+        ctx.shared()
             .publish(Arc::new(FilterHandle::new(Arc::new(IgnoresNick(
                 "ignored",
             )))));
@@ -312,7 +312,7 @@ mod tests {
         assert!(runtime.filters.ignores("#test", sender("ignored")));
 
         // A later publish does not replace the handle the dispatcher already holds.
-        ctx.shared
+        ctx.shared()
             .publish(Arc::new(FilterHandle::new(Arc::new(IgnoresNick("later")))));
 
         assert!(runtime.filters.ignores("#test", sender("ignored")));

@@ -518,10 +518,10 @@ impl Unwall {
         let reader_base = client::base_url(&settings.reader_base).map_err(plugin_err)?;
         let client = UnwallClient::new(ctx.http().clone(), settings.submit_timeout, api_base);
 
-        let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage unwall sites");
+        let admins = Hostmasks::compile(&ctx.config().admin_hostmasks, "manage unwall sites");
 
         Ok(Self {
-            service: Arc::new(UnwallService::new(ctx.db.clone(), client, reader_base)),
+            service: Arc::new(UnwallService::new(ctx.db().clone(), client, reader_base)),
             admins,
             submits: Arc::new(tokio::sync::Semaphore::new(SUBMIT_CONCURRENCY)),
         })

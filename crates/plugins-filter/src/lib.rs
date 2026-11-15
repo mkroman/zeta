@@ -525,15 +525,15 @@ impl FilterPlugin {
 impl FilterPlugin {
     fn new(ctx: &Context, subscriptions: &mut Subscriptions) -> Result<Self, ZetaError> {
         subscriptions.command(FILTER);
-        let service = Arc::new(FilterService::new(ctx.db.clone()));
+        let service = Arc::new(FilterService::new(ctx.db().clone()));
 
         // The host resolves this handle once, when it starts the runtime, so it must be
         // published here rather than from the `loaded` hook: a later publication never reaches
         // the dispatcher. Filter changes go through the service's own index instead.
-        ctx.shared
+        ctx.shared()
             .publish(Arc::new(FilterHandle::new(service.clone())));
 
-        let admins = Hostmasks::compile(&ctx.config.admin_hostmasks, "manage filters");
+        let admins = Hostmasks::compile(&ctx.config().admin_hostmasks, "manage filters");
 
         Ok(Self { service, admins })
     }
@@ -659,7 +659,7 @@ mod tests {
 
         <FilterPlugin as Registered>::new(&ctx, &NoSettings {}, &mut subscriptions).unwrap();
 
-        assert!(ctx.shared.get::<FilterHandle>().is_some());
+        assert!(ctx.shared().get::<FilterHandle>().is_some());
     }
 
     /// Parses `input` with the filter command spec and unpacks the `add` subcommand.

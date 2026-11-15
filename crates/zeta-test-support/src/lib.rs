@@ -93,7 +93,7 @@ pub fn publish_recording(ctx: &zeta_plugin::Context) -> Recording {
     let recording: Recording = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
     assert!(
-        ctx.shared
+        ctx.shared()
             .publish(std::sync::Arc::clone(&recording))
             .is_none()
     );
@@ -163,7 +163,7 @@ impl zeta_plugin::Registered for RecordingPlugin {
         ));
 
         let recording = ctx
-            .shared
+            .shared()
             .get::<std::sync::Mutex<Vec<&'static str>>>()
             .expect("recording log should be published through `publish_recording`");
 

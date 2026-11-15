@@ -130,7 +130,7 @@ impl Rink {
     #[handler(loaded)]
     async fn loaded(&mut self, ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
         // The coinmarketcap plugin publishes its keyed client for other plugins to reuse.
-        self.cmc = ctx.shared.get::<CmcClient>();
+        self.cmc = ctx.shared().get::<CmcClient>();
 
         self.spawn_actor();
         self.spawn_refresh_task();

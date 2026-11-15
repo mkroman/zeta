@@ -63,7 +63,7 @@ impl FilterHandle {
     /// loaded.
     #[must_use]
     pub fn from_context(ctx: &Context) -> Self {
-        ctx.shared
+        ctx.shared()
             .get::<Self>()
             .map_or_else(Self::default, |filters| (*filters).clone())
     }

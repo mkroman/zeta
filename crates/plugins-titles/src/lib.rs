@@ -109,10 +109,10 @@ pub struct Titles {
 #[plugin(name = "titles", settings = Settings, urls(any))]
 impl Titles {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
-        let client = http::emulated::builder(Some(&ctx.config.http.user_agent))
+        let client = http::emulated::builder(Some(&ctx.config().http.user_agent))
             .map_err(plugin_err)?
             .redirect(Policy::limited(settings.max_redirects))
-            .timeout(ctx.config.http.timeout)
+            .timeout(ctx.config().http.timeout)
             .build()
             .map_err(|error| plugin_err(WreqError::from(error)))?;
 
@@ -126,7 +126,7 @@ impl Titles {
 
     #[handler(loaded)]
     async fn loaded(&mut self, ctx: &Context, _client: &Client) -> Result<(), ZetaError> {
-        if let Some(catalog) = ctx.shared.get::<PluginCatalog>() {
+        if let Some(catalog) = ctx.shared().get::<PluginCatalog>() {
             self.cache_catalog(catalog);
         }
 
@@ -199,7 +199,7 @@ impl Titles {
     /// the first handle found is cached for the following events.
     fn catalog(&self, ctx: &Context) -> Option<&PluginCatalog> {
         if self.catalog.get().is_none()
-            && let Some(catalog) = ctx.shared.get::<PluginCatalog>()
+            && let Some(catalog) = ctx.shared().get::<PluginCatalog>()
         {
             self.cache_catalog(catalog);
         }
@@ -505,7 +505,7 @@ mod tests {
     #[tokio::test]
     async fn caches_the_catalog_on_load() {
         let ctx = zeta_test_support::test_context();
-        ctx.shared.publish(Arc::new(catalog_with(
+        ctx.shared().publish(Arc::new(catalog_with(
             "imdb",
             &["imdb.com", "www.imdb.com"],
         )));
@@ -516,7 +516,7 @@ mod tests {
         titles.loaded(&ctx, &client).await.expect("plugin loads");
 
         // A catalog published after the load hook does not replace the cached one.
-        ctx.shared.publish(Arc::new(catalog_with(
+        ctx.shared().publish(Arc::new(catalog_with(
             "youtube",
             &["youtube.com", "youtu.be"],
         )));
@@ -574,7 +574,7 @@ mod tests {
     #[tokio::test]
     async fn resolves_an_uncached_catalog_from_shared_state() {
         let ctx = zeta_test_support::test_context();
-        ctx.shared.publish(Arc::new(catalog_with(
+        ctx.shared().publish(Arc::new(catalog_with(
             "imdb",
             &["imdb.com", "www.imdb.com"],
         )));
@@ -592,7 +592,7 @@ mod tests {
         ));
 
         // The fallback is cached too, so later events do not consult shared state again.
-        ctx.shared.publish(Arc::new(catalog_with(
+        ctx.shared().publish(Arc::new(catalog_with(
             "youtube",
             &["youtube.com", "youtu.be"],
         )));

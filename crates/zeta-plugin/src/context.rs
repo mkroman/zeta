@@ -60,19 +60,27 @@ impl SharedState {
 }
 
 /// Shared context for plugin invocations.
+///
+/// The context carries the resources every plugin shares: the database pool, the plugin-visible
+/// [`HostConfig`], the type-keyed [`SharedState`] registry, and a lazily built HTTP client.
+/// The state is private and read-only through [`Context::db`], [`Context::config`],
+/// [`Context::shared`] and [`Context::http`]; the context is immutable after construction, so a
+/// plugin cannot replace what another plugin observes.
+///
+/// Per-plugin settings are not part of the context: each plugin receives its own settings
+/// through [`Registered::new`](crate::Registered::new), not through the context.
 #[non_exhaustive]
 pub struct Context {
-    /// The database connection pool.
+    /// The database connection pool, exposed through [`Context::db`].
     #[cfg(feature = "database")]
-    pub db: crate::database::Database,
-    /// The plugin-visible subset of the bot configuration.
-    ///
-    /// Per-plugin settings are not part of the context; each plugin receives its own settings
-    /// through its constructor.
-    pub config: HostConfig,
-    /// State published by plugins for other plugins to access.
-    pub shared: SharedState,
-    /// The HTTP client shared by every plugin, built on first use.
+    db: crate::database::Database,
+    /// The plugin-visible subset of the bot configuration, exposed through [`Context::config`].
+    config: HostConfig,
+    /// State published by plugins for other plugins to access, exposed through
+    /// [`Context::shared`].
+    shared: SharedState,
+    /// The HTTP client shared by every plugin, built on first use, exposed through
+    /// [`Context::http`].
     #[cfg(feature = "http")]
     http: OnceLock<reqwest::Client>,
 }
@@ -92,6 +100,31 @@ impl Context {
             #[cfg(feature = "http")]
             http: OnceLock::new(),
         }
+    }
+
+    /// Returns the database connection pool.
+    ///
+    /// The pool is shared by every plugin and is connected by the host before the plugins are
+    /// constructed. Repositories clone the handle and keep it for their own queries.
+    #[cfg(feature = "database")]
+    #[must_use]
+    pub const fn db(&self) -> &crate::database::Database {
+        &self.db
+    }
+
+    /// Returns the plugin-visible subset of the bot configuration.
+    ///
+    /// Per-plugin settings are not part of the context; each plugin receives its own settings
+    /// through its constructor.
+    #[must_use]
+    pub const fn config(&self) -> &HostConfig {
+        &self.config
+    }
+
+    /// Returns the registry of state published by plugins for other plugins to access.
+    #[must_use]
+    pub const fn shared(&self) -> &SharedState {
+        &self.shared
     }
 
     /// Returns the HTTP client shared by every plugin.

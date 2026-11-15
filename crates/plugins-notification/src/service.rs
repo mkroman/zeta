@@ -209,8 +209,10 @@ mod tests {
     #[tokio::test]
     async fn taking_without_pending_notifications_does_not_lock_the_cache() {
         // `take` never touches the database, so a lazy pool is enough.
-        let service =
-            NotificationService::new(zeta_test_support::test_context().db, &Settings::default());
+        let service = NotificationService::new(
+            zeta_test_support::test_context().db().clone(),
+            &Settings::default(),
+        );
 
         // Hold the cache lock across `take`: only the lock-free fast path can complete.
         let cache = service.cache.lock().await;

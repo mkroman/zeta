@@ -41,7 +41,7 @@ impl Health {
         if let Some(snapshot) = Snapshot::capture() {
             #[cfg(feature = "database")]
             let snapshot = Snapshot {
-                db: Some(PoolStats::capture(&ctx.db)),
+                db: Some(PoolStats::capture(ctx.db())),
                 ..snapshot
             };
 

@@ -244,7 +244,7 @@ impl Zeta {
         #[cfg(feature = "mirror")]
         match zeta_mirror::Mirror::from_config(&config.mirror) {
             Ok(mirror) => {
-                context.shared.publish(Arc::new(mirror));
+                context.shared().publish(Arc::new(mirror));
             }
             Err(error) => {
                 warn!(exception.message = %error, "mirroring is disabled");
@@ -322,7 +322,7 @@ impl Zeta {
         // while the first mirrored URL is handled. Nothing is dispatched yet either, because the
         // plugin tasks only start below.
         #[cfg(feature = "mirror")]
-        start_mirror(&self.context.shared);
+        start_mirror(self.context.shared());
 
         // The connection setup — DNS, TCP/TLS, capability negotiation and registration — gets one
         // bounded `irc.connect` span. The connection itself has no span; the dispatcher and every

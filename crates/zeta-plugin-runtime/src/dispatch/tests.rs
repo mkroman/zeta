@@ -478,7 +478,7 @@ async fn filtered_urls_are_not_dispatched() {
     // The facade only sees the filter through the type-erased handle published to the
     // shared state — the same route the filter plugin takes at construction.
     let ctx = zeta_test_support::test_context();
-    ctx.shared
+    ctx.shared()
         .publish(Arc::new(FilterHandle::new(Arc::new(TestFilter))));
 
     let mut index = EventIndex::default();
@@ -502,7 +502,7 @@ async fn filtered_urls_are_not_dispatched() {
 #[tokio::test]
 async fn ignored_senders_trigger_nothing() {
     let ctx = zeta_test_support::test_context();
-    ctx.shared
+    ctx.shared()
         .publish(Arc::new(FilterHandle::new(Arc::new(TestFilter))));
 
     let mut index = EventIndex::default();

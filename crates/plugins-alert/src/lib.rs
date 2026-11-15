@@ -222,12 +222,12 @@ impl AlertPlugin {
     ) -> Result<Self, ZetaError> {
         subscriptions.command(ALERT);
 
-        let mut service = AlertService::new(ctx.db.clone(), settings);
+        let mut service = AlertService::new(ctx.db().clone(), settings);
         let receiver = service.take_receiver();
         let service = Arc::new(service);
 
         // Intentional: other plugins register alerts through the shared service.
-        ctx.shared.publish(Arc::clone(&service));
+        ctx.shared().publish(Arc::clone(&service));
 
         Ok(Self {
             service,
