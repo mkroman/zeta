@@ -24,7 +24,6 @@ pub use model::Statistics;
 pub use service::Resource;
 
 use clap::Parser;
-use num_format::{Locale, ToFormattedString};
 use tracing::warn;
 use url::Url;
 
@@ -33,6 +32,7 @@ use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_utils::duration::TimeInWordsExt;
+use zeta_utils::text::format_number;
 
 /// Formats a failed URL record.
 ///
@@ -153,10 +153,12 @@ impl Ofn {
         match opts.command {
             Subcommand::Stats(_) => {
                 let stats = self.service.stats().await.map_err(plugin_err)?;
-                let num_urls = stats.num_urls.to_formatted_string(&Locale::en);
-                let num_urls_today = stats.num_urls_today.to_formatted_string(&Locale::en);
-                let num_yt_ids = stats.num_yt_ids.to_formatted_string(&Locale::en);
-                let num_yt_ids_today = stats.num_yt_ids_today.to_formatted_string(&Locale::en);
+                let num_urls = format_number(u64::try_from(stats.num_urls).unwrap_or_default());
+                let num_urls_today =
+                    format_number(u64::try_from(stats.num_urls_today).unwrap_or_default());
+                let num_yt_ids = format_number(u64::try_from(stats.num_yt_ids).unwrap_or_default());
+                let num_yt_ids_today =
+                    format_number(u64::try_from(stats.num_yt_ids_today).unwrap_or_default());
 
                 let output = format!(
                     "URLs:\x0f {num_urls}\x0310 (\x0f{num_urls_today}\x0310 today) YouTube Videos:\x0f {num_yt_ids}\x0310 (\x0f{num_yt_ids_today}\x0310 today)"

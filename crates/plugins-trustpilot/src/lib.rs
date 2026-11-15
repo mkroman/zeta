@@ -9,7 +9,6 @@
 //! environment variable; a missing key fails plugin initialization and the plugin is skipped
 //! at startup.
 
-use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -19,6 +18,7 @@ use zeta_plugin::irc::{labeled_reply, plain_reply, send_lookup_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
+use zeta_utils::text::format_number;
 
 /// The business-unit search endpoint reviews are looked up against.
 const FIND_URL: &str = "https://api.trustpilot.com/v1/business-units/find";
@@ -182,7 +182,7 @@ impl Trustpilot {
 /// Formats a business unit into an IRC-friendly string.
 fn format_business(b: &BusinessUnit, review_domain: &str) -> String {
     let score = normalized_score(b.score.trust_score);
-    let reviews = b.number_of_reviews.total.to_formatted_string(&Locale::en);
+    let reviews = format_number(b.number_of_reviews.total);
     let identifying = irc::unstyle_text(&b.name.identifying);
     let url = format!("https://{review_domain}.trustpilot.com/review/{identifying}");
     let name = irc::unstyle_text(&b.display_name);

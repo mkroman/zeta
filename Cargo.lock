@@ -3344,7 +3344,6 @@ name = "plugins-ofn"
 version = "0.0.0"
 dependencies = [
  "clap",
- "num-format",
  "plugins-shared",
  "sqlx",
  "thiserror 2.0.21",
@@ -3531,7 +3530,6 @@ dependencies = [
 name = "plugins-trustpilot"
 version = "0.0.0"
 dependencies = [
- "num-format",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
