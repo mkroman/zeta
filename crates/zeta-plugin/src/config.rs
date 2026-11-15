@@ -22,6 +22,9 @@ use crate::hostmask::Hostmasks;
 /// the configured list themselves, which also logs the "no admin hostmasks configured" warning
 /// exactly once.
 ///
+/// The host attaches the HTTP settings with [`HostConfig::with_http`] before the context reaches
+/// a plugin.
+///
 /// The configuration is read through accessors rather than fields: [`HostConfig::http`] returns
 /// the HTTP settings and [`HostConfig::admins`] the compiled admin hostmasks.
 #[derive(Clone, Debug, Default)]
@@ -35,17 +38,32 @@ pub struct HostConfig {
 }
 
 impl HostConfig {
-    /// Builds the plugin-visible configuration from the host's sections.
+    /// Builds the plugin-visible configuration from the host's compiled admin hostmasks.
     ///
     /// `admins` is the matcher the host compiled from `[irc].admin_hostmasks` at startup, so
-    /// every plugin matches senders against the same patterns.
+    /// every plugin matches senders against the same patterns. The host attaches the HTTP
+    /// configuration with [`HostConfig::with_http`] before the context reaches a plugin.
     #[must_use]
-    pub const fn new(#[cfg(feature = "http")] http: HttpConfig, admins: Hostmasks) -> Self {
+    // `HttpConfig::default` allocates the default user agent, so this cannot be `const`; the
+    // lint is allowed because the `http` feature decides whether that call is in the body.
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn new(admins: Hostmasks) -> Self {
         Self {
             #[cfg(feature = "http")]
-            http,
+            http: HttpConfig::default(),
             admins,
         }
+    }
+
+    /// Attaches the HTTP configuration from the host's `[http]` section.
+    ///
+    /// The host calls this once while building the context, so the shared client and any client
+    /// a plugin builds itself use the same timeout and user agent.
+    #[cfg(feature = "http")]
+    #[must_use]
+    pub fn with_http(mut self, http: HttpConfig) -> Self {
+        self.http = http;
+        self
     }
 
     /// Returns the HTTP configuration for the shared client

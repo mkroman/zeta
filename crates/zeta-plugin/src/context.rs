@@ -67,13 +67,20 @@ impl SharedState {
 /// [`Context::shared`] and [`Context::http`]; the context is immutable after construction, so a
 /// plugin cannot replace what another plugin observes.
 ///
+/// The host constructs the context with [`Context::new`] and attaches the resources a build
+/// feature enables — the database pool through [`Context::with_database`] — before any plugin is
+/// constructed, so a plugin always finds them in place.
+///
 /// Per-plugin settings are not part of the context: each plugin receives its own settings
 /// through [`Registered::new`](crate::Registered::new), not through the context.
 #[non_exhaustive]
 pub struct Context {
     /// The database connection pool, exposed through [`Context::db`].
+    ///
+    /// Always `Some` by the time a plugin runs: the host attaches the pool with
+    /// [`Context::with_database`] before constructing the plugins.
     #[cfg(feature = "database")]
-    db: crate::database::Database,
+    db: Option<crate::database::Database>,
     /// The plugin-visible subset of the bot configuration, exposed through [`Context::config`].
     config: HostConfig,
     /// State published by plugins for other plugins to access, exposed through
@@ -86,15 +93,16 @@ pub struct Context {
 }
 
 impl Context {
-    /// Creates a new context.
+    /// Creates a new context with the plugin-visible configuration.
+    ///
+    /// The context starts without the resources that are attached after construction: the host
+    /// calls [`Context::new`] once at startup and then attaches the database pool with
+    /// [`Context::with_database`] before any plugin is constructed.
     #[must_use]
-    pub fn new(
-        #[cfg(feature = "database")] db: crate::database::Database,
-        config: HostConfig,
-    ) -> Self {
+    pub fn new(config: HostConfig) -> Self {
         Self {
             #[cfg(feature = "database")]
-            db,
+            db: None,
             config,
             shared: SharedState::new(),
             #[cfg(feature = "http")]
@@ -102,14 +110,32 @@ impl Context {
         }
     }
 
+    /// Attaches the database connection pool.
+    ///
+    /// The host calls this immediately after [`Context::new`], before any plugin is constructed
+    /// and therefore before [`Context::db`] can be reached.
+    #[cfg(feature = "database")]
+    #[must_use]
+    pub fn with_database(mut self, db: crate::database::Database) -> Self {
+        self.db = Some(db);
+        self
+    }
+
     /// Returns the database connection pool.
     ///
     /// The pool is shared by every plugin and is connected by the host before the plugins are
     /// constructed. Repositories clone the handle and keep it for their own queries.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the host did not attach a pool with [`Context::with_database`] before plugins
+    /// were constructed, which is a host bug.
     #[cfg(feature = "database")]
     #[must_use]
     pub const fn db(&self) -> &crate::database::Database {
-        &self.db
+        self.db
+            .as_ref()
+            .expect("the host attaches the database pool before constructing plugins")
     }
 
     /// Returns the plugin-visible subset of the bot configuration.
@@ -187,14 +213,12 @@ mod tests {
     #[cfg(feature = "http")]
     #[tokio::test]
     async fn http_client_is_built_once_and_shared() {
+        let context = Context::new(HostConfig::default());
         #[cfg(feature = "database")]
-        let db = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgresql://invalid/zeta_test")
-            .expect("lazy database pool");
-        let context = Context::new(
-            #[cfg(feature = "database")]
-            db,
-            HostConfig::default(),
+        let context = context.with_database(
+            sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgresql://invalid/zeta_test")
+                .expect("lazy database pool"),
         );
 
         assert!(std::ptr::eq(context.http(), context.http()));

@@ -76,11 +76,9 @@ where
     match section {
         Some(value) => {
             let (settings, unknown_keys) =
-                deserialize_with_unknown_keys(value).map_err(|error| {
-                    Error::Message(format!(
-                        "invalid settings for plugin `{}`: {error}",
-                        P::NAME
-                    ))
+                deserialize_with_unknown_keys(value).map_err(|source| Error::InvalidSettings {
+                    plugin: P::NAME,
+                    source,
                 })?;
 
             Ok((settings, unknown_keys))
@@ -178,16 +176,15 @@ mod tests {
     /// `zeta_test_support::test_context` cannot be used here: it depends on this crate, and the
     /// dev-dependency cycle gives the test target a separate copy of `Context`.
     fn context() -> Context {
+        let context = Context::new(crate::HostConfig::default());
         #[cfg(feature = "database")]
-        let db = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgresql://invalid/zeta_test")
-            .expect("lazy database pool");
+        let context = context.with_database(
+            sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgresql://invalid/zeta_test")
+                .expect("lazy database pool"),
+        );
 
-        Context::new(
-            #[cfg(feature = "database")]
-            db,
-            crate::HostConfig::default(),
-        )
+        context
     }
 
     /// Builds the `[plugins.<name>]` section value the host hands to the plugin.
@@ -233,9 +230,15 @@ mod tests {
         )])))
         .expect_err("a string is not a number");
 
-        let message = error.to_string();
-        assert!(message.contains("invalid settings"), "{message}");
-        assert!(message.contains(TestPlugin::NAME), "{message}");
+        // The reply names the plugin without the deserialization detail.
+        assert_eq!(
+            error.to_string(),
+            format!("invalid settings for plugin `{}`", TestPlugin::NAME)
+        );
+
+        // The operator log keeps the detail in the source chain.
+        let chain = crate::Chain(&error).to_string();
+        assert!(chain.contains("invalid type"), "{chain}");
     }
 
     #[tokio::test]
