@@ -3608,6 +3608,7 @@ dependencies = [
  "serde",
  "serde_json",
  "similar-asserts",
+ "thiserror 2.0.21",
  "time",
  "tracing",
  "zeta-http",

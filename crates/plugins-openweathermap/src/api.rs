@@ -29,9 +29,8 @@ impl OpenWeatherMap {
         let params = [("q", query), ("limit", "1"), ("appid", &self.app_id)];
 
         let results: Vec<GeocodingResult> =
-            http::get_json(self.client.get(GEOCODING_URL).query(&params))
-                .await
-                .map_err(|error| contextual_api_error("geocoding failed", error))?;
+            http::get_json(self.client.get(GEOCODING_URL).query(&params)).await?;
+
         results.into_iter().next().ok_or(Error::LocationNotFound)
     }
 
@@ -57,16 +56,6 @@ impl OpenWeatherMap {
 
         http::get_json(self.client.get(WEATHER_URL).query(&params))
             .await
-            .map_err(|error| contextual_api_error("weather fetch failed", error))
-    }
-}
-
-/// Maps an API error into an [`Error`], prefixing status errors with `context`.
-fn contextual_api_error(context: &str, error: http::ApiError) -> Error {
-    match error {
-        http::ApiError::Status { status, .. } => Error::Api(format!("{context}: {status}")),
-        http::ApiError::Request(error) => Error::Request(error),
-        http::ApiError::Deserialize(error) => Error::Api(error.to_string()),
-        other => Error::Api(other.to_string()),
+            .map_err(Error::from)
     }
 }

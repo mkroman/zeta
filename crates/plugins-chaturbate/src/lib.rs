@@ -6,13 +6,13 @@
 //! JSON blob rather than an API; the plugin has no settings.
 
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, warn};
 use url::Url;
 
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, send_reply};
-use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
+use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
 use zeta_utils::text;
@@ -29,16 +29,16 @@ pub struct Chaturbate {
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// The request failed or returned an error status.
-    #[error("request error: {0}")]
+    #[error("the chaturbate request failed")]
     Request(#[from] http::ApiError),
     /// The room page did not contain a room dossier.
-    #[error("room dossier not found in page")]
+    #[error("room details not found")]
     DossierNotFound,
     /// The room dossier could not be deserialized.
-    #[error("failed to deserialize room dossier: {0}")]
+    #[error("the room details could not be read")]
     Deserialize(#[from] serde_json::Error),
     /// An irc error occurred while sending the reply.
-    #[error("irc error: {0}")]
+    #[error("could not send the reply")]
     Irc(#[from] ::irc::error::Error),
 }
 
@@ -74,12 +74,39 @@ impl Chaturbate {
 
         if let Some(username) = extract_username(url.url()) {
             debug!(chaturbate.username = %username, "processing chaturbate url");
-            if let Err(e) = self.process_broadcaster(&username, channel, client).await {
-                send_reply(client, channel, labeled_reply("Chaturbate", e.to_string()))?;
+            if let Err(error) = self.process_broadcaster(&username, channel, client).await {
+                // `zeta-http` already logs a failed request; only the room context is missing.
+                if let Error::Request(_) = &error {
+                    debug!(
+                        exception.message = %Chain(&error),
+                        "chaturbate room lookup failed"
+                    );
+                } else {
+                    warn!(
+                        exception.message = %Chain(&error),
+                        "chaturbate room lookup failed"
+                    );
+                }
+
+                send_reply(
+                    client,
+                    channel,
+                    labeled_reply("Chaturbate", room_reply(&error)),
+                )?;
             }
         }
 
         Ok(())
+    }
+}
+
+/// Formats a failed room lookup.
+fn room_reply(error: &Error) -> String {
+    const CONTEXT: &str = "could not show the room";
+
+    match error {
+        Error::DossierNotFound => format!("{CONTEXT}: {error}"),
+        Error::Request(_) | Error::Deserialize(_) | Error::Irc(_) => CONTEXT.to_owned(),
     }
 }
 
@@ -176,6 +203,28 @@ mod tests {
 
     fn fixture_html(name: &str) -> String {
         zeta_test_support::fixture!(format!("chaturbate/{name}.html"))
+    }
+
+    /// Returns an API failure for the reply-mapper tests.
+    fn api_error() -> http::ApiError {
+        let error = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        http::ApiError::from(http::RequestError::from(error))
+    }
+
+    #[test]
+    fn formats_room_failures() {
+        assert_eq!(
+            room_reply(&Error::DossierNotFound),
+            "could not show the room: room details not found"
+        );
+        assert_eq!(
+            room_reply(&Error::Request(api_error())),
+            "could not show the room"
+        );
     }
 
     #[test]

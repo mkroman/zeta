@@ -14,12 +14,12 @@
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::debug;
 
-use zeta_http::RequestError;
+use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{COLOR, PLAIN_REPLY_PREFIX, RESET, plain_reply, send_reply};
-use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
+use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text::IteratorJoinExt;
 
@@ -105,15 +105,22 @@ pub struct OpenWeatherMap {
 /// Errors that can occur during weather lookups.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// An error occurred while performing the HTTP request.
-    #[error("request error: {0}")]
-    Request(#[from] RequestError),
+    /// The geocoding or weather request failed, or its response was unusable.
+    #[error("the weather request failed")]
+    Api(#[from] http::ApiError),
     /// The location could not be found via the geocoding API.
     #[error("location not found")]
     LocationNotFound,
-    /// The API returned an error status or message.
-    #[error("api error: {0}")]
-    Api(String),
+}
+
+/// Formats a failed weather lookup.
+fn weather_reply(error: &Error) -> String {
+    const CONTEXT: &str = "could not fetch the weather";
+
+    match error {
+        Error::LocationNotFound => format!("{CONTEXT}: {error}"),
+        Error::Api(_) => CONTEXT.to_owned(),
+    }
 }
 
 #[plugin(name = "openweathermap", settings = Settings)]
@@ -156,10 +163,16 @@ impl OpenWeatherMap {
 
         let message = match self.fetch_weather(location).await {
             Ok(weather) => format_weather(&weather, self.units),
-            Err(Error::LocationNotFound) => plain_reply("Location not found"),
-            Err(e) => {
-                warn!(exception.message = ?e, "openweathermap error");
-                plain_reply(e)
+            Err(error) => {
+                // `zeta-http` already logs a failed request; only the lookup context is missing.
+                if matches!(error, Error::Api(_)) {
+                    debug!(
+                        exception.message = %Chain(&error),
+                        "openweathermap lookup failed"
+                    );
+                }
+
+                plain_reply(weather_reply(&error))
             }
         };
 
@@ -277,6 +290,25 @@ mod tests {
             assert_eq!(settings.language.as_deref(), Some("da"));
             assert_eq!(settings.default_location.as_deref(), Some("Copenhagen"));
         }
+    }
+
+    /// Returns an API failure for the reply-mapper tests.
+    fn api_error() -> Error {
+        let error = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        Error::Api(http::ApiError::from(http::RequestError::from(error)))
+    }
+
+    #[test]
+    fn formats_weather_failures() {
+        assert_eq!(
+            weather_reply(&Error::LocationNotFound),
+            "could not fetch the weather: location not found"
+        );
+        assert_eq!(weather_reply(&api_error()), "could not fetch the weather");
     }
 
     #[test]

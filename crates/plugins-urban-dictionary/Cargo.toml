@@ -12,6 +12,7 @@ default = []
 
 [dependencies]
 serde.workspace = true
+thiserror.workspace = true
 time.workspace = true
 tracing.workspace = true
 zeta-http = { workspace = true, default-features = false, features = ["http"] }

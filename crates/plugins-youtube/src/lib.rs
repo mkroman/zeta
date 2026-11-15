@@ -36,7 +36,9 @@ use zeta_cache::TtlCache;
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, send_reply};
-use zeta_plugin::{Client, CommandEvent, Context, UrlEvent, ZetaError, plugin, resolve_secret};
+use zeta_plugin::{
+    Chain, Client, CommandEvent, Context, UrlEvent, ZetaError, plugin, resolve_secret,
+};
 use zeta_utils::duration;
 use zeta_utils::irc;
 use zeta_utils::text;
@@ -147,8 +149,8 @@ pub struct YouTube {
 /// YouTube API and plugin-specific error types.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// The API responded with a non-success status or an invalid body.
-    #[error(transparent)]
+    /// The API request failed, or the response could not be read or parsed.
+    #[error("the youtube request failed")]
     Api(#[from] http::ApiError),
     /// The search or video lookup matched nothing.
     #[error("no results")]
@@ -207,7 +209,7 @@ impl YouTube {
             command.channel(),
             self.search(args),
             search_reply,
-            plain_reply,
+            |error| plain_reply(search_error_reply(&error)),
         )
         .await?;
 
@@ -231,7 +233,7 @@ impl YouTube {
         let video = match self.get_video(&video_id).await {
             Ok(video) => video,
             Err(error) => {
-                send_reply(client, channel, plain_reply(error))?;
+                send_reply(client, channel, plain_reply(video_error_reply(&error)))?;
 
                 return Ok(());
             }
@@ -317,7 +319,10 @@ impl YouTube {
                         .await;
 
                     if let Err(error) = refreshed {
-                        warn!(exception.message = %error, "could not refresh video categories");
+                        warn!(
+                            exception.message = %Chain(&error),
+                            "could not refresh video categories"
+                        );
                     }
                 }
                 // The target stays under `zeta`: the tick parents the HTTP calls, and a plugin
@@ -360,6 +365,26 @@ fn search_reply(results: Vec<Search>) -> String {
                 )
             },
         )
+}
+
+/// Formats a failed `.yt` search.
+fn search_error_reply(error: &Error) -> String {
+    const CONTEXT: &str = "could not search youtube";
+
+    match error {
+        Error::NoResults => format!("{CONTEXT}: {error}"),
+        Error::Api(_) => CONTEXT.to_owned(),
+    }
+}
+
+/// Formats a failed video lookup.
+fn video_error_reply(error: &Error) -> String {
+    const CONTEXT: &str = "could not look up the video";
+
+    match error {
+        Error::NoResults => format!("{CONTEXT}: {error}"),
+        Error::Api(_) => CONTEXT.to_owned(),
+    }
 }
 
 /// Formats the message describing `video`, using the resolved `category` and `view_count`.
@@ -463,6 +488,48 @@ mod tests {
                 concurrent_viewers: Some(viewers.to_string()),
             }),
         }
+    }
+
+    /// Returns an API failure for the reply-mapper tests.
+    fn api_error() -> Error {
+        let error = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        Error::Api(http::ApiError::from(http::RequestError::from(error)))
+    }
+
+    #[test]
+    fn formats_search_failures() {
+        assert_eq!(
+            search_error_reply(&Error::NoResults),
+            "could not search youtube: no results"
+        );
+        assert_eq!(search_error_reply(&api_error()), "could not search youtube");
+    }
+
+    #[test]
+    fn api_failures_keep_their_source_for_logs() {
+        let error = api_error();
+        let message = Chain(&error).to_string();
+
+        assert!(
+            message.len() > error.to_string().len(),
+            "the log line keeps the source chain: {message}"
+        );
+    }
+
+    #[test]
+    fn formats_video_failures() {
+        assert_eq!(
+            video_error_reply(&Error::NoResults),
+            "could not look up the video: no results"
+        );
+        assert_eq!(
+            video_error_reply(&api_error()),
+            "could not look up the video"
+        );
     }
 
     #[test]
