@@ -10,12 +10,12 @@
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use zeta_plugin::irc::{parse_or_usage, send_lookup_reply, send_reply};
 use zeta_plugin::{
-    ArgsMode, Client, CommandEvent, CommandSpec, Context, Subscriptions, UrlEvent, ZetaError,
-    plugin, plugin_err,
+    ArgsMode, Chain, Client, CommandEvent, CommandSpec, Context, Subscriptions, UrlEvent,
+    ZetaError, plugin, plugin_err,
 };
 
 mod client;
@@ -128,8 +128,8 @@ impl Imdb {
 
         let results = match self.client.search(&query, SEARCH_LIMIT).await {
             Ok(results) => results,
-            Err(err) => {
-                send_reply(client, channel, format!("{} {err}", format::prefix()))?;
+            Err(error) => {
+                send_reply(client, channel, search_error_reply(&error))?;
                 return Ok(());
             }
         };
@@ -144,7 +144,7 @@ impl Imdb {
             channel,
             self.client.title(&result.id),
             |title| format_title(&title),
-            |error| format!("{} {error}", format::prefix()),
+            |error| title_error_reply(&error),
         )
         .await?;
 
@@ -170,7 +170,7 @@ impl Imdb {
                     channel,
                     self.client.title(&id),
                     |title| format_title(&title),
-                    |error| format!("{} {error}", format::prefix()),
+                    |error| title_error_reply(&error),
                 )
                 .await?;
             }
@@ -182,7 +182,7 @@ impl Imdb {
                     channel,
                     self.client.person(&id),
                     |person| format_person(&person),
-                    |error| format!("{} {error}", format::prefix()),
+                    |error| person_error_reply(&error),
                 )
                 .await?;
             }
@@ -193,12 +193,63 @@ impl Imdb {
     }
 }
 
+/// Formats a failed `!imdb` search.
+fn search_error_reply(error: &Error) -> String {
+    log_internal_error(error, "imdb search failed");
+
+    format!("{} could not search imdb", format::prefix())
+}
+
+/// Formats a failed title lookup.
+fn title_error_reply(error: &Error) -> String {
+    log_internal_error(error, "imdb title lookup failed");
+
+    let message = match error {
+        Error::NotFound => "no results",
+        Error::Api(_) | Error::InvalidHeader(_) | Error::GraphQL(_) | Error::UnexpectedResponse => {
+            "could not look up the title"
+        }
+    };
+
+    format!("{} {message}", format::prefix())
+}
+
+/// Formats a failed person lookup.
+fn person_error_reply(error: &Error) -> String {
+    log_internal_error(error, "imdb person lookup failed");
+
+    let message = match error {
+        Error::NotFound => "person not found",
+        Error::Api(_) | Error::InvalidHeader(_) | Error::GraphQL(_) | Error::UnexpectedResponse => {
+            "could not look up the person"
+        }
+    };
+
+    format!("{} {message}", format::prefix())
+}
+
+/// Logs the operator detail of a plugin-owned internal failure.
+///
+/// [`Error::Api`] failures are already logged once by `zeta-http` when the request or response
+/// fails, and [`Error::NotFound`] is an expected miss, so neither is logged here.
+fn log_internal_error(error: &Error, message: &str) {
+    match error {
+        Error::Api(_) | Error::NotFound => {}
+        Error::InvalidHeader(_) | Error::GraphQL(_) | Error::UnexpectedResponse => {
+            warn!(exception.message = %Chain(error), "{message}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use zeta_http as http;
     use zeta_http::HttpConfig;
+    use zeta_http::reqwest;
     use zeta_test_support::settings_tests;
+    use zeta_utils::irc;
 
     #[test]
     fn cli_definition_is_valid() {
@@ -239,6 +290,94 @@ mod tests {
 
             assert_eq!(opts.query(), expected, "{case}");
         }
+    }
+
+    /// Builds an API failure whose body must never reach a reply.
+    fn api_error() -> Error {
+        Error::Api(http::ApiError::Status {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "secret body".to_owned(),
+        })
+    }
+
+    /// Builds an invalid-header failure, which only the client constructor can produce.
+    fn invalid_header_error() -> Error {
+        let error = reqwest::header::HeaderValue::from_str("\n")
+            .expect_err("a newline is not a valid header value");
+
+        Error::InvalidHeader(error)
+    }
+
+    #[test]
+    fn formats_search_failures() {
+        let reply = irc::strip_formatting(&search_error_reply(&api_error()));
+
+        assert_eq!(reply, "> IMDb: could not search imdb");
+        assert!(!reply.contains("secret body"), "{reply}");
+    }
+
+    #[test]
+    fn formats_title_lookup_failures() {
+        let cases = [
+            (Error::NotFound, "no results"),
+            (api_error(), "could not look up the title"),
+            (
+                Error::GraphQL("internal detail".to_string()),
+                "could not look up the title",
+            ),
+            (invalid_header_error(), "could not look up the title"),
+            (Error::UnexpectedResponse, "could not look up the title"),
+        ];
+
+        for (error, expected) in cases {
+            let reply = irc::strip_formatting(&title_error_reply(&error));
+
+            assert_eq!(reply, format!("> IMDb: {expected}"));
+            assert!(!reply.contains("internal detail"), "{reply}");
+            assert!(!reply.contains("secret body"), "{reply}");
+        }
+    }
+
+    #[test]
+    fn formats_person_lookup_failures() {
+        let cases = [
+            (Error::NotFound, "person not found"),
+            (api_error(), "could not look up the person"),
+            (
+                Error::GraphQL("internal detail".to_string()),
+                "could not look up the person",
+            ),
+            (invalid_header_error(), "could not look up the person"),
+            (Error::UnexpectedResponse, "could not look up the person"),
+        ];
+
+        for (error, expected) in cases {
+            let reply = irc::strip_formatting(&person_error_reply(&error));
+
+            assert_eq!(reply, format!("> IMDb: {expected}"));
+            assert!(!reply.contains("internal detail"), "{reply}");
+            assert!(!reply.contains("secret body"), "{reply}");
+        }
+    }
+
+    #[test]
+    fn api_failures_display_a_reply_grade_sentence() {
+        let error = api_error();
+
+        assert_eq!(error.to_string(), "the imdb request failed");
+        assert!(!error.to_string().contains("secret body"));
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "the api failure stays in the source chain"
+        );
+    }
+
+    #[test]
+    fn chain_carries_the_api_error_detail() {
+        let message = Chain(&api_error()).to_string();
+
+        assert!(message.contains("the imdb request failed"), "{message}");
+        assert!(message.contains("500"), "{message}");
     }
 
     /// Live smoke test against IMDb's GraphQL API, to catch contract drift that the recorded

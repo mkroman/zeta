@@ -5,11 +5,17 @@ use zeta_http::RequestError;
 use zeta_http::reqwest;
 
 /// Errors that can occur during IMDb interaction.
+///
+/// [`Display`](std::fmt::Display) is reply-grade for [`Error::Api`] and [`Error::NotFound`];
+/// the plugin-owned internal variants render operator detail and must be mapped to a literal
+/// reply by the per-operation reply builders.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     /// The API request failed or its response could not be handled.
-    #[error(transparent)]
+    ///
+    /// `Display` is reply-grade; the underlying failure stays in the source chain.
+    #[error("the imdb request failed")]
     Api(#[from] http::ApiError),
     /// A configured request header is not a valid header value.
     #[error("invalid header value: {0}")]
