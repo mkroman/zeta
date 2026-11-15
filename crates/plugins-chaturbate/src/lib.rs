@@ -11,7 +11,7 @@ use url::Url;
 
 use zeta_http as http;
 use zeta_http::reqwest;
-use zeta_plugin::irc::{labeled_reply, send_reply};
+use zeta_plugin::irc::{IrcError, labeled_reply, send_reply};
 use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
@@ -39,7 +39,7 @@ pub enum Error {
     Deserialize(#[from] serde_json::Error),
     /// An irc error occurred while sending the reply.
     #[error("could not send the reply")]
-    Irc(#[from] ::irc::error::Error),
+    Irc(#[from] IrcError),
 }
 
 /// The parsed contents of `window.initialRoomDossier`.

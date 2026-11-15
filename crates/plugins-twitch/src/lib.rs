@@ -19,7 +19,7 @@ use tracing::warn;
 use zeta_http as http;
 use zeta_http::oauth::Credentials;
 use zeta_http::reqwest;
-use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
+use zeta_plugin::irc::{IrcError, labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text::{format_number, pluralize_noun};
@@ -66,7 +66,7 @@ pub enum Error {
     Api(#[from] http::ApiError),
     /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
-    Irc(#[from] ::irc::error::Error),
+    Irc(#[from] IrcError),
 }
 
 /// Generic response wrapper for Twitch Helix API endpoints.

@@ -2,13 +2,13 @@
 //!
 //! [`for_each_bundled_plugin!`] owns the list; the other macros each expand one item and are
 //! only invoked through it, so the list stays the single source of truth. Splitting the
-//! expansions keeps each one readable on its own: the re-exports and name list, the enum, the
-//! `Plugin` forwarding and the `PluginSet` construction.
+//! expansions keeps each one readable on its own: the name list, the enum, the `Plugin`
+//! forwarding and the `PluginSet` construction.
 //!
 //! These macros are internal to the crate. They expand to items that rely on names in scope at
-//! the invocation site (the `BundledPlugin` enum and the plugin crates re-exported by
-//! [`reexport_bundled_plugins!`]), so they are re-exported to the crate root with
-//! `pub(crate) use` instead of `#[macro_export]`, per the reference's path-based macro scope.
+//! the invocation site (the `BundledPlugin` enum declared by [`define_bundled_plugin_enum!`]), so
+//! they are re-exported to the crate root with `pub(crate) use` instead of `#[macro_export]`,
+//! per the reference's path-based macro scope.
 
 /// Invokes `$expand` with the one list of bundled plugins.
 ///
@@ -65,19 +65,14 @@ macro_rules! for_each_bundled_plugin {
 
 pub(crate) use for_each_bundled_plugin;
 
-/// Re-exports the compiled-in plugin crates and declares every bundled plugin's name.
+/// Declares every bundled plugin's name, compiled in or not.
 ///
-/// The re-export keeps an optional dependency linked: an unreferenced optional crate is not
-/// necessarily linked, which would silently drop its plugin. The name list includes plugins
-/// whose feature is disabled, so configuration sections can distinguish a compiled-out plugin
-/// from a typo.
-macro_rules! reexport_bundled_plugins {
+/// The name list includes plugins whose feature is disabled, so configuration sections can
+/// distinguish a compiled-out plugin from a typo. The list is the only item here that needs the
+/// whole row: linking an enabled plugin crate is [`define_bundled_plugin_enum!`]'s job, because
+/// its variants name the concrete plugin types.
+macro_rules! declare_bundled_plugin_names {
     ($($feature:literal => $plugin_crate:ident::$plugin_type:ident as $plugin_name:ident),+ $(,)?) => {
-        $(
-            #[cfg(feature = $feature)]
-            pub use $plugin_crate as $plugin_name;
-        )+
-
         /// The names of every bundled plugin, whether or not its cargo feature is enabled.
         ///
         /// Configuration sections for these names describe a plugin that was compiled out,
@@ -86,12 +81,13 @@ macro_rules! reexport_bundled_plugins {
     };
 }
 
-pub(crate) use reexport_bundled_plugins;
+pub(crate) use declare_bundled_plugin_names;
 
 /// Declares [`BundledPlugin`], the compiled-in plugin set, and its name metadata.
 ///
 /// One variant exists per plugin whose cargo feature is enabled. The runtime dispatches to the
-/// concrete plugin type, so no plugin is boxed or type-erased.
+/// concrete plugin type, so no plugin is boxed or type-erased. Naming that type is also what
+/// keeps an enabled plugin's optional crate linked; the facade re-exports none of the crates.
 macro_rules! define_bundled_plugin_enum {
     ($($feature:literal => $plugin_crate:ident::$plugin_type:ident as $plugin_name:ident),+ $(,)?) => {
         /// A compiled-in bundled plugin.

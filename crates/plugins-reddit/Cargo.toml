@@ -14,7 +14,6 @@ native-tls = ["reddit/native-tls"]
 native-tls-vendored = ["reddit/native-tls-vendored"]
 
 [dependencies]
-irc.workspace = true
 plugins-shared = { workspace = true, features = ["mirror"] }
 reddit = { workspace = true }
 secrecy.workspace = true

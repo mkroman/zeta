@@ -3079,7 +3079,6 @@ dependencies = [
 name = "plugins-chaturbate"
 version = "0.0.0"
 dependencies = [
- "irc",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3370,7 +3369,6 @@ dependencies = [
 name = "plugins-reddit"
 version = "0.0.0"
 dependencies = [
- "irc",
  "plugins-shared",
  "reddit",
  "secrecy",
@@ -3496,7 +3494,6 @@ dependencies = [
  "bytes",
  "futures",
  "html5ever",
- "irc",
  "plugins-shared",
  "serde",
  "thiserror 2.0.21",
@@ -3545,7 +3542,6 @@ dependencies = [
 name = "plugins-twitch"
 version = "0.0.0"
 dependencies = [
- "irc",
  "serde",
  "thiserror 2.0.21",
  "tracing",

@@ -17,6 +17,12 @@ use irc::proto::Command;
 use crate::command::{ArgsError, ArgsMode};
 use crate::event::CommandEvent;
 
+/// The `irc` crate's error type, as returned by this module's send and reply helpers.
+///
+/// Re-exported so a plugin crate can wrap a failed send in its own error enum without adding a
+/// direct `irc` dependency; plugins otherwise only see the plugin API's re-exported vocabulary.
+pub use ::irc::error::Error as IrcError;
+
 pub use zeta_utils::irc::{
     BOLD, COLOR, LABELED_PREFIX_BYTES, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply,
     labeled_reply_prefix, plain_reply, unstyle_text, usage_line, write_labeled_reply_prefix,

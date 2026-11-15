@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_mirror::{MediaId, MirrorHandle};
-use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
+use zeta_plugin::irc::{IrcError, labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{
     Chain, Client, Context, UrlEvent, ZetaError, plugin, plugin_err, resolve_secret,
 };
@@ -48,7 +48,7 @@ pub enum Error {
     Reddit(#[from] reddit::Error),
     /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
-    Irc(#[from] ::irc::error::Error),
+    Irc(#[from] IrcError),
 }
 
 /// Reddit integration plugin.
