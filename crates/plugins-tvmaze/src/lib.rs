@@ -8,13 +8,13 @@
 //!
 //! The TVmaze API is public and needs no credentials. The plugin has no settings.
 use serde::Deserialize;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, instrument};
 
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_http::reqwest::Url;
 use zeta_plugin::irc::{labeled_reply, reply_lookup};
-use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::duration::DistanceInWordsExt;
 use zeta_utils::irc;
@@ -223,12 +223,7 @@ impl Tvmaze {
     fn format_error_message(error: &Error) -> String {
         let content = match error {
             Error::NotFound => "show not found",
-            Error::Api(_) => {
-                // `zeta-http` already logs the failed request; only the lookup context is missing.
-                warn!(exception.message = %Chain(error), "tvmaze lookup failed");
-
-                "could not fetch show information"
-            }
+            Error::Api(_) => "could not fetch show information",
         };
 
         Self::build_formatted_message(None, content)

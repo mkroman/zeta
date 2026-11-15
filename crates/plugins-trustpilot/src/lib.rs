@@ -11,12 +11,12 @@
 
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup};
-use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
+use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
 
@@ -134,14 +134,7 @@ impl Trustpilot {
             command.channel(),
             self.search(command.args()),
             |business| format_business(&business, &self.review_domain),
-            |error| {
-                // `zeta-http` already logs the failed request; only the lookup context is missing.
-                if matches!(error, Error::Api(_)) {
-                    warn!(exception.message = %Chain(&error), "trustpilot lookup failed");
-                }
-
-                plain_reply(lookup_reply(&error))
-            },
+            |error| plain_reply(lookup_reply(&error)),
         )
         .await?;
 
