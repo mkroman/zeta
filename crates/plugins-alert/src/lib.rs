@@ -29,7 +29,7 @@ use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::{DateTime, Local, Utc};
 use tokio::sync::mpsc;
-use tracing::{Instrument, debug, error, trace};
+use tracing::{Instrument, debug, error, trace, warn};
 
 use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{
@@ -152,7 +152,7 @@ impl AlertPlugin {
         let pending = match self.service.pending_for(channel, nickname).await {
             Ok(pending) => pending,
             Err(err) => {
-                error!(exception.message = %Chain(&err), "could not list pending alerts");
+                warn!(exception.message = %Chain(&err), "could not list pending alerts");
 
                 send_reply(
                     client,
@@ -335,7 +335,7 @@ impl AlertPlugin {
                 )?;
             }
             Err(err) => {
-                error!(exception.message = %Chain(&err), "could not store alert");
+                warn!(exception.message = %Chain(&err), "could not store alert");
                 send_reply(
                     client,
                     channel,
