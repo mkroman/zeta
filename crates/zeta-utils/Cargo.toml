@@ -13,7 +13,6 @@ time = ["dep:time"]
 
 [dependencies]
 chrono = { workspace = true, optional = true }
-num-format = { workspace = true }
 time = { workspace = true, optional = true }
 
 [lints]
