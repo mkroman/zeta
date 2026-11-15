@@ -59,7 +59,7 @@ DB spans come from `#[instrument_database]`, which also sets the span name to
 | `process.command` | string | Executable passed to `Command::new` (yt-dlp), not a command line | OTel |
 | `file.path` | string | Filesystem path of a download directory, file, or upload | OTel |
 | `error.type` | string | Low-cardinality failure class; see values below | OTel |
-| `exception.message` | string | Rendered error message | OTel |
+| `exception.message` | string | Error message and its `source` chain, rendered through `Chain` | OTel |
 
 `error.type` values:
 
