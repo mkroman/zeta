@@ -20,7 +20,7 @@ use zeta_http::reqwest;
 use zeta_http::{RedirectError, RequestError};
 use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::irc::{COLOR, RESET, plain_reply, send_reply};
-use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
+use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
@@ -102,7 +102,7 @@ impl Tiktok {
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
         if let Err(err) = self.process_url(url.url(), url.channel(), client).await {
-            warn!(exception.message = %err, "could not process url");
+            warn!(exception.message = %Chain(&err), "could not process url");
         }
 
         Ok(())

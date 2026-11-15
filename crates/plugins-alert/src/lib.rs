@@ -36,7 +36,7 @@ use zeta_plugin::irc::{
     COLOR, RESET, labeled_reply, parse_or_usage, send_reply, send_reply_via, unstyle_text,
 };
 use zeta_plugin::{
-    ArgsMode, Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin,
+    ArgsMode, Chain, Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin,
     plugin_err,
 };
 use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
@@ -152,7 +152,7 @@ impl AlertPlugin {
         let pending = match self.service.pending_for(channel, nickname).await {
             Ok(pending) => pending,
             Err(err) => {
-                error!(exception.message = ?err, "could not list pending alerts");
+                error!(exception.message = %Chain(&err), "could not list pending alerts");
 
                 send_reply(
                     client,
@@ -199,7 +199,7 @@ impl AlertPlugin {
                         &alert.channel,
                         format!("{}: {message}", alert.nickname),
                     ) {
-                        error!(exception.message = ?err, "could not deliver alert");
+                        error!(exception.message = %Chain(&err), "could not deliver alert");
                     }
                 }
                 .instrument(span)
@@ -335,7 +335,7 @@ impl AlertPlugin {
                 )?;
             }
             Err(err) => {
-                error!(exception.message = ?err, "could not store alert");
+                error!(exception.message = %Chain(&err), "could not store alert");
                 send_reply(
                     client,
                     channel,

@@ -29,8 +29,8 @@ use tracing::{debug, warn};
 use zeta_cache::TtlCache;
 use zeta_plugin::irc::{plain_reply, send_reply, usage_line};
 use zeta_plugin::{
-    Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin, plugin_err,
-    resolve_secret,
+    Chain, Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin,
+    plugin_err, resolve_secret,
 };
 use zeta_utils::irc;
 
@@ -367,7 +367,7 @@ impl CoinMarketCap {
         // Unknown coins and unsupported currencies are user errors: they are replied to
         // verbatim, without logging. Anything else is unexpected and worth a warning.
         if !matches!(err, Error::NotFound | Error::InvalidCurrency(_)) {
-            warn!(exception.message = %err, "coin lookup failed");
+            warn!(exception.message = %Chain(err), "coin lookup failed");
         }
 
         send_reply(client, channel, plain_reply(err.to_string()))?;
@@ -409,7 +409,10 @@ impl CoinMarketCap {
             })
             .await
         {
-            warn!(exception.message = %err, "could not cache the top cryptocurrencies");
+            warn!(
+                exception.message = %Chain(&err),
+                "could not cache the top cryptocurrencies"
+            );
         }
     }
 
@@ -432,7 +435,10 @@ impl CoinMarketCap {
             })
             .await
         {
-            warn!(exception.message = %err, "could not cache the supported fiat currencies");
+            warn!(
+                exception.message = %Chain(&err),
+                "could not cache the supported fiat currencies"
+            );
         }
     }
 

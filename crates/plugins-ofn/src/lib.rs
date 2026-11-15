@@ -31,7 +31,7 @@ use url::Url;
 use self::service::OfnService;
 use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{labeled_reply, send_reply};
-use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
+use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_utils::duration::TimeInWordsExt;
 
 /// Formats a failed URL record.
@@ -91,7 +91,7 @@ impl Ofn {
             }
             Ok(None) => {}
             Err(error) => {
-                warn!(exception.message = %error, "could not record the url");
+                warn!(exception.message = %Chain(&error), "could not record the url");
 
                 send_reply(client, origin.channel, formatted_err(record_reply(&error)))?;
             }

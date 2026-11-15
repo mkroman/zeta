@@ -174,7 +174,10 @@ impl NotificationPlugin {
                 ) {
                     Ok(()) => delivered += 1,
                     Err(err) => {
-                        warn!(exception.message = ?err, "could not deliver notification");
+                        warn!(
+                            exception.message = %Chain(&err),
+                            "could not deliver notification"
+                        );
 
                         break;
                     }

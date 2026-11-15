@@ -14,7 +14,9 @@ use tracing::warn;
 
 use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
-use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err, resolve_secret};
+use zeta_plugin::{
+    Chain, Client, Context, UrlEvent, ZetaError, plugin, plugin_err, resolve_secret,
+};
 use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
 
@@ -84,7 +86,9 @@ impl Reddit {
             let _ = self
                 .process_url(link, url.channel(), client)
                 .await
-                .inspect_err(|e| warn!(exception.message = %e, "could not process url"));
+                .inspect_err(|e| {
+                    warn!(exception.message = %Chain(e), "could not process url");
+                });
         }
 
         Ok(())
@@ -113,7 +117,10 @@ impl Reddit {
                         .await?;
                 }
                 Err(err) => {
-                    warn!(exception.message = %err, "could not resolve the reddit video link");
+                    warn!(
+                        exception.message = %Chain(&err),
+                        "could not resolve the reddit video link"
+                    );
 
                     send_reply(client, channel, plain_reply(video_reply(&err)))?;
                 }
@@ -122,12 +129,15 @@ impl Reddit {
                 match self.client.resolve_shortened_link(&subreddit, &id).await {
                     Ok(link) => {
                         if let Err(e) = Box::pin(self.process_url(link, channel, client)).await {
-                            warn!(exception.message = %e, "failed to process resolved link");
+                            warn!(
+                                exception.message = %Chain(&e),
+                                "failed to process resolved link"
+                            );
                         }
                     }
                     Err(err) => {
                         warn!(
-                            exception.message = %err,
+                            exception.message = %Chain(&err),
                             "could not resolve the reddit shortened link"
                         );
 
@@ -142,7 +152,7 @@ impl Reddit {
                     }
                     Err(err) => {
                         warn!(
-                            exception.message = %err,
+                            exception.message = %Chain(&err),
                             "could not fetch the reddit subreddit details"
                         );
 
@@ -170,7 +180,7 @@ impl Reddit {
             }
             Err(err) => {
                 warn!(
-                    exception.message = %err,
+                    exception.message = %Chain(&err),
                     "could not fetch the reddit submission details"
                 );
 
