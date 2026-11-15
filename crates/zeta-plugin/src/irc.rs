@@ -130,15 +130,16 @@ pub fn send_reply_via(
     sender.send(Command::PRIVMSG(channel.to_owned(), message))
 }
 
-/// Awaits a lookup and replies with its outcome to `channel`.
+/// Awaits `lookup` and sends its rendered outcome to `channel`.
 ///
-/// `render` formats a successful value and `on_error` a failed lookup, so a handler that only
-/// differs in how it presents the two does not repeat the `match` and [`send_reply`] scaffold.
+/// `lookup` resolves to the value or error being reported, `render` formats a successful value
+/// and `on_error` a failed lookup, so a handler that only differs in how it presents the two
+/// does not repeat the `match` and [`send_reply`] scaffold.
 ///
 /// # Errors
 ///
 /// Returns any error produced while sending the reply.
-pub async fn reply_lookup<T, E>(
+pub async fn send_lookup_reply<T, E>(
     client: &Client,
     channel: &str,
     lookup: impl Future<Output = Result<T, E>>,

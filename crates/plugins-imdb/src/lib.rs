@@ -12,7 +12,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use zeta_plugin::irc::{parse_or_usage, reply_lookup, send_reply};
+use zeta_plugin::irc::{parse_or_usage, send_lookup_reply, send_reply};
 use zeta_plugin::{
     ArgsMode, Client, CommandEvent, CommandSpec, Context, Subscriptions, UrlEvent, ZetaError,
     plugin, plugin_err,
@@ -139,7 +139,7 @@ impl Imdb {
             return Ok(());
         };
 
-        reply_lookup(
+        send_lookup_reply(
             client,
             channel,
             self.client.title(&result.id),
@@ -165,7 +165,7 @@ impl Imdb {
             Some(Link::Title(id)) => {
                 debug!(imdb.title.id = %id, "fetching details for posted title link");
 
-                reply_lookup(
+                send_lookup_reply(
                     client,
                     channel,
                     self.client.title(&id),
@@ -177,7 +177,7 @@ impl Imdb {
             Some(Link::Person(id)) => {
                 debug!(imdb.person.id = %id, "fetching details for posted person link");
 
-                reply_lookup(
+                send_lookup_reply(
                     client,
                     channel,
                     self.client.person(&id),

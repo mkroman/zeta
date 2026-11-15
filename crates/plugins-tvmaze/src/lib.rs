@@ -13,7 +13,7 @@ use tracing::{debug, instrument};
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_http::reqwest::Url;
-use zeta_plugin::irc::{labeled_reply, reply_lookup};
+use zeta_plugin::irc::{labeled_reply, send_lookup_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::duration::DistanceInWordsExt;
@@ -142,7 +142,7 @@ impl Tvmaze {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        reply_lookup(
+        send_lookup_reply(
             client,
             command.channel(),
             self.single_search(command.args()),

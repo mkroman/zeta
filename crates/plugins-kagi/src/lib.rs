@@ -15,7 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, unstyle_text};
+use zeta_plugin::irc::{labeled_reply, plain_reply, send_lookup_reply, unstyle_text};
 use zeta_plugin::{
     Chain, Client, CommandEvent, Context, ZetaError, plugin, plugin_err, resolve_secret,
 };
@@ -78,7 +78,7 @@ impl Kagi {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        reply_lookup(
+        send_lookup_reply(
             client,
             command.channel(),
             self.client.search(command.args()),
@@ -116,7 +116,7 @@ impl Kagi {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        reply_lookup(
+        send_lookup_reply(
             client,
             command.channel(),
             self.client.images(command.args()),

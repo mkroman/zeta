@@ -23,7 +23,7 @@ use zeta_http::reqwest::{
     StatusCode,
     header::{CONTENT_TYPE, REFERER},
 };
-use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, unstyle_text};
+use zeta_plugin::irc::{labeled_reply, plain_reply, send_lookup_reply, unstyle_text};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_utils::duration::{self, HOURS_AND_MINUTES};
 
@@ -235,7 +235,7 @@ impl HowLongToBeat {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        reply_lookup(
+        send_lookup_reply(
             client,
             command.channel(),
             self.search(command.args()),
