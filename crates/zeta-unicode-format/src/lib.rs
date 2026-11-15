@@ -21,7 +21,8 @@
 //! - [`names`] — the name section's fixed index and Huffman model area;
 //! - [`primitives`] — varints, hex placeholders, UTF-8 code-point encoding and packed bit
 //!   fields;
-//! - [`emoji`] — the rule ids, tone tables, name grammar helpers and the rule renderer;
+//! - [`emoji`] — the rule ids, tone tables, name grammar helpers and the rule renderer, plus
+//!   [`emoji::decode`] for the emoji section shared by both sides;
 //! - [`huffman`] — the canonical Huffman codec used by every compressed section.
 //!
 //! The items the runtime, trainer and tooling share are re-exported at the crate root; the
@@ -37,6 +38,7 @@ pub mod names;
 pub mod primitives;
 
 pub use decode::NameDecoder;
+pub use emoji::decode::{EmojiDecoder, NameLookup};
 pub use emoji::{
     MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, RuleContext, TONE_NAMES, TONE_RULE_PRIORITY, TONES,
     VARIATION_SELECTOR_16, VARIATION_SELECTOR_16_UTF8, ZWJ, canonical_emoji_cps, clock_name,

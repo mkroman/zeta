@@ -5,6 +5,12 @@
 //! the runtime replays the same rule. The two sides therefore share the wording of every rule,
 //! not just its wire id: [`swap_person`], [`join_family`], [`ucd_mask_name`], [`format_toned`]
 //! and the small lookup tables are the single implementation.
+//!
+//! [`decode::EmojiDecoder`] owns the other half: it turns an emoji section into the key and
+//! name arenas, the packed rules and the tone arrays, then materializes a name through the
+//! rules above.
+
+pub mod decode;
 
 /// The five emoji skin-tone code points, in tone order.
 pub const TONES: [u32; 5] = [0x1F3FB, 0x1F3FC, 0x1F3FD, 0x1F3FE, 0x1F3FF];
@@ -158,9 +164,10 @@ const _: () = assert!(Rule::COUNT <= 1 << RULE_BITS);
 
 /// Supplies the table lookups a rule needs to render its name.
 ///
-/// The runtime implements it over its decoded section and name lookup; the trainer implements
-/// it over its in-memory entry table. Keeping the renderer here means the wording of every rule
-/// has one implementation, so a trainer-verified name cannot drift from the runtime's replay.
+/// The emoji decoder implements it over its decoded section and a name lookup; the trainer also
+/// implements it over its in-memory entry table to select a rule. Keeping the renderer here
+/// means the wording of every rule has one implementation, so a trainer-verified name cannot
+/// drift from the runtime's replay.
 pub trait RuleContext {
     /// The `DerivedName.txt` name of `cp`, if it has one.
     fn ucd_name(&mut self, cp: u32) -> Option<String>;

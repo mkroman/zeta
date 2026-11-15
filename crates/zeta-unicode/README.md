@@ -43,7 +43,9 @@ panics on first use; the build verifies it, so that is an invariant.
 - **General category:** decode the run streams once, then binary-search one 2,048-code-point
   page of a two-level table.
 - **Emoji:** strip `U+FE0F`, binary-search the key arena, then materialize a rule. Unknown keys
-  are retried with skin tones stripped to synthesize the base variant.
+  are retried with skin tones stripped to synthesize the base variant. The decoder lives in
+  `zeta-unicode-format` and is shared with the trainer, so verification replays the runtime
+  path.
 
 `write_name` allocates nothing; `name` allocates only its result. The public API is `name`,
 `write_name`, `name_or_label`, `general_category`, `is_noncharacter`, `emoji_name`,

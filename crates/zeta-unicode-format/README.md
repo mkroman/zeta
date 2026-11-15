@@ -10,9 +10,9 @@
 
 ## What it does
 
-Shared Nomina layout, byte primitives, canonical Huffman codec, front-coding name decoder and
-emoji grammar for [`zeta-unicode`](../zeta-unicode/README.md) and
-[`zeta-unicode-build`](../zeta-unicode-build/README.md). It has no dependencies: the trainer
+Shared Nomina layout, byte primitives, canonical Huffman codec, the front-coding name decoder,
+the emoji-section decoder and the emoji grammar for [`zeta-unicode`](../zeta-unicode/README.md)
+and [`zeta-unicode-build`](../zeta-unicode-build/README.md). It has no dependencies: the trainer
 uses it to encode and the runtime to decode, so both sides share one definition.
 
 ## Wire contract
@@ -54,6 +54,10 @@ Tone code points and names, `format_toned`/`tone_phrase`, family/keycap/pair hel
 `ucd_mask_name` and `Rule::pack`/`unpack` live here. A wording change still needs a new image
 and verification run.
 
+`emoji::decode::EmojiDecoder` parses a section into the key and name arenas, the packed rules
+and the tone arrays, and materializes names through the rules. The runtime re-exports it and
+the trainer verifies the assembled section with it.
+
 ## Testing
 
 ```sh
@@ -61,4 +65,4 @@ cargo test -p zeta-unicode-format --all-features
 ```
 
 Tests cover varints, hex padding, UTF-8, packed fields, both Huffman orders, truncation, Kraft
-validation, the name-decoder fast table, rule ids and grammar helpers.
+validation, the name-decoder fast table, emoji materialization, rule ids and grammar helpers.
