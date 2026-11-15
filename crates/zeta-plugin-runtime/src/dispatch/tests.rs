@@ -1,0 +1,1278 @@
+//! Unit tests for the dispatch index, the per-line delivery plan and the subscriber bookkeeping.
+
+use std::sync::Arc;
+
+use ::url::Url;
+use irc::proto::Message;
+use irc::proto::message::Tag;
+use tokio::sync::mpsc;
+use zeta_plugin::event::{MessagingOperation, Sender, Subscriptions};
+use zeta_plugin::{CommandSpec, CtcpKind, Event, EventFilter, EventKind, FilterHandle, UrlScope};
+use zeta_test_support::assert_empty;
+
+use super::*;
+
+use super::subscriber::{Overflow, SpanNames, SpanSelector};
+use crate::telemetry::MessageTelemetry;
+
+/// Measures the allocations and requested bytes of one `dispatch` call.
+fn measure(
+    label: &str,
+    index: &mut EventIndex,
+    filters: &FilterHandle,
+    message: Message,
+) -> allocation_counter::AllocationInfo {
+    let info = allocation_counter::measure(|| {
+        let stopped = index.dispatch(filters, message);
+        std::hint::black_box(&stopped);
+    });
+
+    println!(
+        "dispatch_allocations: {label}: allocations={} bytes_allocated={}",
+        info.count_total, info.bytes_total
+    );
+
+    info
+}
+
+/// Dispatching a message that produces no event must not touch the heap, whether or not a
+/// filter handle is published.
+///
+/// A posted URL is excluded: extraction parses and allocates it before the filter can drop
+/// it, so URL filtering is covered by [`filtered_urls_are_not_dispatched`] instead.
+#[test]
+fn dispatch_without_events_does_not_allocate() {
+    println!(
+        "sizes: EventIndex={} Message={} Arc<Message>={} ArcInner<Message>-equivalent={}",
+        size_of::<EventIndex>(),
+        size_of::<Message>(),
+        size_of::<Arc<Message>>(),
+        size_of::<Message>() + 2 * size_of::<usize>(),
+    );
+
+    let no_filters = FilterHandle::default();
+    let mut index = EventIndex::default();
+
+    let unhandled = measure(
+        "unhandled privmsg",
+        &mut index,
+        &no_filters,
+        privmsg("hello"),
+    );
+    let numeric = measure(
+        "numeric 001",
+        &mut index,
+        &no_filters,
+        message("server.example", "001", &["zeta", "Welcome"]),
+    );
+    let join = measure(
+        "join",
+        &mut index,
+        &no_filters,
+        message("nick!u@h", "JOIN", &["#test"]),
+    );
+
+    let mut ctcp_index = EventIndex::default();
+    let _ctcp = subscribe(&mut ctcp_index, "ctcp", |subscriptions| {
+        subscriptions.receive_ctcp();
+    });
+    let plain_notice = measure(
+        "plain notice",
+        &mut ctcp_index,
+        &no_filters,
+        message("server.example", "NOTICE", &["zeta", "maintenance"]),
+    );
+
+    let mut url_index = EventIndex::default();
+    let _titles = subscribe(&mut url_index, "titles", |subscriptions| {
+        subscriptions.urls(UrlScope::Any);
+    });
+    let urlless_privmsg = measure(
+        "url-less privmsg",
+        &mut url_index,
+        &no_filters,
+        privmsg("no link here"),
+    );
+
+    // A published filter handle is consulted before routing; an ignored sender still takes
+    // the allocation-free path out of dispatch.
+    let filters = FilterHandle::new(Arc::new(TestFilter));
+    let ignored = measure(
+        "ignored sender",
+        &mut url_index,
+        &filters,
+        privmsg_from("ignored", ".dig https://example.com/x"),
+    );
+
+    for (label, info) in [
+        ("unhandled privmsg", unhandled),
+        ("numeric 001", numeric),
+        ("join", join),
+        ("plain notice", plain_notice),
+        ("url-less privmsg", urlless_privmsg),
+        ("ignored sender", ignored),
+    ] {
+        assert_eq!(info.count_total, 0, "{label} allocated");
+        assert_eq!(info.bytes_total, 0, "{label} allocated bytes");
+    }
+}
+
+/// Collects every event a test subscriber received from its mailbox.
+fn drain(mailbox: &mut mpsc::Receiver<Envelope>) -> Vec<Event> {
+    let mut events = Vec::new();
+
+    while let Ok(envelope) = mailbox.try_recv() {
+        events.push(envelope.event);
+    }
+
+    events
+}
+
+fn message(prefix: &str, command: &str, args: &[&str]) -> Message {
+    let prefix = (!prefix.is_empty()).then_some(prefix);
+
+    Message::new(prefix, command, args.to_vec()).expect("message should parse")
+}
+
+fn privmsg(text: &str) -> Message {
+    privmsg_from("nick", text)
+}
+
+fn privmsg_from(nick: &str, text: &str) -> Message {
+    message(
+        &format!("{nick}!user@host.example"),
+        "PRIVMSG",
+        &["#test", text],
+    )
+}
+
+/// Builds a message carrying an IRCv3 `msgid` tag.
+fn tagged(command: &str, args: &[&str], msgid: &str) -> Message {
+    Message::with_tags(
+        Some(vec![Tag("msgid".to_owned(), Some(msgid.to_owned()))]),
+        Some("nick!user@host.example"),
+        command,
+        args.to_vec(),
+    )
+    .expect("message should parse")
+}
+
+/// The telemetry of every routed command: the IRC command as received, the lowercased
+/// messaging operation, and the destination when the command targets one.
+#[test]
+fn message_telemetry_covers_every_routed_command() {
+    let cases = [
+        (
+            message("nick!u@h", "PRIVMSG", &["#test", "hello"]),
+            "PRIVMSG",
+            "privmsg",
+            Some("#test"),
+        ),
+        (
+            message("service.example", "NOTICE", &["#test", "\x01VERSION\x01"]),
+            "NOTICE",
+            "notice",
+            Some("#test"),
+        ),
+        (
+            message("nick!u@h", "JOIN", &["#test"]),
+            "JOIN",
+            "join",
+            Some("#test"),
+        ),
+        (
+            message("nick!u@h", "PART", &["#test", "bye"]),
+            "PART",
+            "part",
+            Some("#test"),
+        ),
+        (message("nick!u@h", "QUIT", &["gone"]), "QUIT", "quit", None),
+        (message("nick!u@h", "NICK", &["new"]), "NICK", "nick", None),
+        (
+            message("oper!u@h", "KICK", &["#test", "victim", "flood"]),
+            "KICK",
+            "kick",
+            Some("#test"),
+        ),
+        (
+            message("server.example", "SOMECMD", &["#test"]),
+            "SOMECMD",
+            "somecmd",
+            None,
+        ),
+    ];
+
+    for (message, command, operation, channel) in cases {
+        let route = CommandRoute::classify(&message.command);
+        let telemetry = MessageTelemetry::from_route(route, &message)
+            .unwrap_or_else(|| panic!("{message:?} should be routed"));
+
+        assert_eq!(telemetry.command, command, "{message:?}");
+        assert_eq!(telemetry.operation.to_string(), operation, "{message:?}");
+        assert_eq!(telemetry.channel, channel, "{message:?}");
+        assert_eq!(telemetry.message_id, None, "{message:?}");
+    }
+}
+
+/// A raw command keeps its received (uppercase) name in `irc.command` and is lowercased only
+/// when the operation is rendered.
+#[test]
+fn message_telemetry_keeps_raw_commands_uppercase() {
+    let raw = message("server.example", "SOMECMD", &["#test"]);
+    let route = CommandRoute::classify(&raw.command);
+    let telemetry = MessageTelemetry::from_route(route, &raw).expect("a raw command is routed");
+
+    assert_eq!(telemetry.command, "SOMECMD");
+    assert_eq!(
+        telemetry.operation,
+        MessagingOperation::Unmodeled("SOMECMD")
+    );
+    assert_eq!(telemetry.operation.to_string(), "somecmd");
+}
+
+/// PING, PONG and numerics are connection protocol, not plugin events; they get no telemetry
+/// and therefore no dispatch span. The ignored route is [`None`] as well.
+#[test]
+fn message_telemetry_ignores_unrouted_commands() {
+    let unrouted = [
+        message("server.example", "PING", &["server"]),
+        message("server.example", "PONG", &["server"]),
+        message("server.example", "001", &["zeta", "Welcome"]),
+    ];
+
+    for message in unrouted {
+        let route = CommandRoute::classify(&message.command);
+
+        assert_eq!(route, CommandRoute::Ignored, "{message:?}");
+        assert!(MessageTelemetry::from_route(route, &message).is_none());
+    }
+}
+
+/// The message id is read from any tagged event, not just `PRIVMSG`/`NOTICE`; servers may
+/// attach it to any event.
+#[test]
+fn message_telemetry_reads_the_message_id_of_any_tagged_event() {
+    let join = tagged("JOIN", &["#test"], "j1");
+    let route = CommandRoute::classify(&join.command);
+    let telemetry = MessageTelemetry::from_route(route, &join).expect("a join is routed");
+
+    assert_eq!(telemetry.message_id, Some("j1"));
+    assert_eq!(telemetry.channel, Some("#test"));
+
+    let privmsg = tagged("PRIVMSG", &["#test", "hello"], "m1");
+    let route = CommandRoute::classify(&privmsg.command);
+    let telemetry = MessageTelemetry::from_route(route, &privmsg).expect("a privmsg is routed");
+    assert_eq!(telemetry.message_id, Some("m1"));
+}
+
+/// Registers a test subscriber and returns the mailbox its events arrive on.
+fn subscribe(
+    index: &mut EventIndex,
+    name: &'static str,
+    register: impl FnOnce(&mut Subscriptions),
+) -> mpsc::Receiver<Envelope> {
+    let mut subscriptions = Subscriptions::new();
+    register(&mut subscriptions);
+
+    let (mailbox, receiver) = mpsc::channel(8);
+    index.add(name, &subscriptions, mailbox);
+
+    receiver
+}
+
+/// Registers a subscriber for [`dispatch_benchmark`] with a `capacity`-slot mailbox.
+///
+/// The benchmark never drains its mailboxes. The regular [`subscribe`] helper uses the
+/// 8-slot mailbox of the unit tests, which would make the benchmark measure the overflow path
+/// after the eighth dispatch instead of accepted delivery.
+fn benchmark_subscriber(
+    index: &mut EventIndex,
+    name: &'static str,
+    capacity: usize,
+    register: impl FnOnce(&mut Subscriptions),
+) -> mpsc::Receiver<Envelope> {
+    let mut subscriptions = Subscriptions::new();
+    register(&mut subscriptions);
+
+    let (mailbox, receiver) = mpsc::channel(capacity);
+    index.add(name, &subscriptions, mailbox);
+
+    receiver
+}
+
+#[test]
+fn registered_command_is_dispatched() {
+    let mut index = EventIndex::default();
+    let mut mailbox = subscribe(&mut index, "dig", |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+
+    let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig example.com"));
+
+    assert_empty!(stopped);
+    assert!(matches!(
+        drain(&mut mailbox)[..],
+        [Event::Command(ref command)] if command.args() == "example.com"
+    ));
+}
+
+#[test]
+fn command_is_matched_by_first_word() {
+    let mut index = EventIndex::default();
+    let mut mailbox = subscribe(&mut index, "dig", |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+
+    // Longer words are not matched, and leading whitespace breaks the first word.
+    for text in [".digg example.com", "  .dig example.com", "look at .dig"] {
+        let _ = index.dispatch(&FilterHandle::default(), privmsg(text));
+
+        assert_empty!(drain(&mut mailbox), "`{text}` must not dispatch");
+    }
+}
+
+#[test]
+fn empty_and_whitespace_triggers_are_not_indexed() {
+    let mut index = EventIndex::default();
+    let _ = subscribe(&mut index, "invalid", |subscriptions| {
+        subscriptions
+            .command(CommandSpec::new("", "empty"))
+            .command(CommandSpec::new(".two words", "whitespace"));
+    });
+
+    assert_empty!(index.commands);
+}
+
+/// Triggers whose first byte is outside the command-initial mask cannot be pre-filtered by
+/// it; they must still take the exact first-word path.
+#[test]
+fn non_ascii_triggers_are_still_dispatched() {
+    let mut index = EventIndex::default();
+    let mut mailbox = subscribe(&mut index, "unicode", |subscriptions| {
+        subscriptions.command(CommandSpec::new("écho", "echo"));
+    });
+
+    let _ = index.dispatch(&FilterHandle::default(), privmsg("écho bonjour"));
+
+    assert!(matches!(
+        drain(&mut mailbox)[..],
+        [Event::Command(ref command)] if command.args() == "bonjour"
+    ));
+}
+
+/// Without a trigger starting outside the ASCII bitmap, a non-ASCII message must not take
+/// the first-word split and command hash lookup at all.
+#[test]
+fn non_ascii_messages_are_rejected_without_non_ascii_triggers() {
+    let mut index = EventIndex::default();
+    let _dig = subscribe(&mut index, "dig", |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+
+    assert!(!index.may_start_command("æble grød"));
+    assert!(!index.may_start_command("🦀 rust"));
+    assert!(!index.may_start_command(""));
+    assert!(index.may_start_command(".dig example.com"));
+}
+
+#[test]
+fn multiple_registered_commands_dispatch_independently() {
+    let mut index = EventIndex::default();
+    let mut kagi = subscribe(&mut index, "kagi", |subscriptions| {
+        subscriptions
+            .command(CommandSpec::new(".g", "search"))
+            .command(CommandSpec::new(".gis", "images"));
+    });
+
+    let _ = index.dispatch(&FilterHandle::default(), privmsg(".gis black cats"));
+
+    assert!(matches!(
+        drain(&mut kagi)[..],
+        [Event::Command(ref command)] if command.spec.trigger() == ".gis"
+    ));
+}
+
+#[test]
+fn urls_route_to_registered_hosts_and_generic_handlers() {
+    let mut index = EventIndex::default();
+    let mut youtube = subscribe(&mut index, "youtube", |subscriptions| {
+        subscriptions.urls(UrlScope::Hosts(&["youtube.com", "www.youtube.com"]));
+    });
+    let mut titles = subscribe(&mut index, "titles", |s| {
+        s.urls(UrlScope::Any);
+    });
+
+    // A claimed host is delivered to its plugin and to generic handlers.
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        privmsg("https://youtube.com/watch?v=1"),
+    );
+
+    assert!(matches!(drain(&mut youtube)[..], [Event::Url(..)]));
+    assert!(matches!(drain(&mut titles)[..], [Event::Url(..)]));
+
+    // Host matching is case-insensitive.
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        privmsg("https://WWW.YOUTUBE.COM/x"),
+    );
+
+    assert_eq!(drain(&mut youtube).len(), 1);
+    assert_eq!(drain(&mut titles).len(), 1);
+
+    // An unclaimed host only reaches generic handlers.
+    let _ = index.dispatch(&FilterHandle::default(), privmsg("https://example.com/x"));
+
+    assert_empty!(drain(&mut youtube));
+    assert_eq!(drain(&mut titles).len(), 1);
+}
+
+#[test]
+fn multiple_urls_yield_one_event_each() {
+    let mut index = EventIndex::default();
+    let mut titles = subscribe(&mut index, "titles", |s| {
+        s.urls(UrlScope::Any);
+    });
+
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        privmsg("https://a.example/x https://a.example/x https://b.example/y"),
+    );
+
+    assert_eq!(
+        drain(&mut titles).len(),
+        2,
+        "duplicate URLs are deduplicated"
+    );
+}
+
+#[test]
+fn url_hosts_are_lowercased_by_the_url_parser() {
+    let mut index = EventIndex::default();
+    let mut ipv6 = subscribe(&mut index, "ipv6", |subscriptions| {
+        subscriptions.urls(UrlScope::Hosts(&["[2001:db8::1]"]));
+    });
+
+    // The registered host is lowercased, and `Url::host_str` already returns the parsed,
+    // normalized host — hexadecimal IPv6 digits included — so the lookup needs no copy.
+    let _ = index.dispatch(&FilterHandle::default(), privmsg("https://[2001:DB8::1]/x"));
+
+    assert_eq!(drain(&mut ipv6).len(), 1);
+}
+
+/// A filter that ignores the `ignored` nick entirely and matches every URL on the
+/// `filtered.example` host.
+struct TestFilter;
+
+impl EventFilter for TestFilter {
+    fn is_filtered(&self, _channel: &str, _sender: Option<Sender<'_>>, url: &Url) -> bool {
+        url.host_str() == Some("filtered.example")
+    }
+
+    fn ignores(&self, _channel: &str, sender: Option<Sender<'_>>) -> bool {
+        sender.is_some_and(|sender| sender.nick == "ignored")
+    }
+}
+#[tokio::test]
+async fn filtered_urls_are_not_dispatched() {
+    // The facade only sees the filter through the type-erased handle published to the
+    // shared state — the same route the filter plugin takes at construction.
+    let ctx = zeta_test_support::test_context();
+    ctx.shared
+        .publish(Arc::new(FilterHandle::new(Arc::new(TestFilter))));
+
+    let mut index = EventIndex::default();
+    let mut filtered = subscribe(&mut index, "filtered", |subscriptions| {
+        subscriptions.urls(UrlScope::Hosts(&["filtered.example"]));
+    });
+    let mut titles = subscribe(&mut index, "titles", |s| {
+        s.urls(UrlScope::Any);
+    });
+
+    let filters = FilterHandle::from_context(&ctx);
+    let _ = index.dispatch(
+        &filters,
+        privmsg("https://filtered.example/x https://open.example/y"),
+    );
+
+    assert_empty!(drain(&mut filtered));
+    assert!(matches!(drain(&mut titles)[..], [Event::Url(..)]));
+}
+
+#[tokio::test]
+async fn ignored_senders_trigger_nothing() {
+    let ctx = zeta_test_support::test_context();
+    ctx.shared
+        .publish(Arc::new(FilterHandle::new(Arc::new(TestFilter))));
+
+    let mut index = EventIndex::default();
+    let mut dig = subscribe(&mut index, "dig", |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+    let mut messages = subscribe(&mut index, "messages", |s| {
+        s.receive_message();
+    });
+    let mut titles = subscribe(&mut index, "titles", |s| {
+        s.urls(UrlScope::Any);
+    });
+
+    let filters = FilterHandle::from_context(&ctx);
+
+    // The ignored sender's commands do not trigger, their messages are not delivered and
+    // their URLs are not dispatched.
+    let _ = index.dispatch(&filters, privmsg_from("ignored", ".dig example.com"));
+    let _ = index.dispatch(
+        &filters,
+        privmsg_from("ignored", "hello https://open.example/y"),
+    );
+
+    assert_empty!(drain(&mut dig));
+    assert_empty!(drain(&mut messages));
+    assert_empty!(drain(&mut titles));
+
+    // Everyone else is dispatched normally.
+    let _ = index.dispatch(&filters, privmsg_from("someone", ".dig example.com"));
+
+    assert!(matches!(
+        drain(&mut dig)[..],
+        [Event::Command(ref command)] if command.args() == "example.com"
+    ));
+    assert!(matches!(drain(&mut messages)[..], [Event::Message(_)]));
+}
+
+#[test]
+fn ctcp_messages_bypass_everything_else() {
+    let mut index = EventIndex::default();
+    let mut ctcp = subscribe(&mut index, "ctcp", |s| {
+        s.receive_ctcp();
+    });
+    let mut messages = subscribe(&mut index, "messages", |s| {
+        s.receive_message();
+    });
+    let mut dig = subscribe(&mut index, "dig", |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        privmsg("\x01ACTION slaps .dig\x01"),
+    );
+
+    assert!(matches!(
+        drain(&mut ctcp)[..],
+        [Event::Ctcp(ref event)] if event.kind == CtcpKind::Action
+    ));
+    assert_empty!(drain(&mut messages));
+    assert_empty!(drain(&mut dig));
+}
+
+#[test]
+fn ctcp_replies_arrive_through_notices() {
+    let mut index = EventIndex::default();
+    let mut ctcp = subscribe(&mut index, "ctcp", |s| {
+        s.receive_ctcp();
+    });
+    let mut watcher = subscribe(&mut index, "watcher", |s| {
+        s.receive_message();
+    });
+
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        message(
+            "service.example",
+            "NOTICE",
+            &["zeta", "\x01VERSION 1.0\x01"],
+        ),
+    );
+
+    assert!(matches!(
+        drain(&mut ctcp)[..],
+        [Event::Ctcp(ref event)] if event.kind == CtcpKind::Version
+    ));
+    assert_empty!(drain(&mut watcher));
+}
+
+#[test]
+fn plain_notices_are_not_delivered() {
+    let mut index = EventIndex::default();
+    let mut ctcp = subscribe(&mut index, "ctcp", |s| {
+        s.receive_ctcp();
+    });
+
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        message("server.example", "NOTICE", &["zeta", "server maintenance"]),
+    );
+
+    assert_empty!(drain(&mut ctcp));
+}
+
+#[test]
+fn messages_reach_subscribers_regardless_of_matches() {
+    let mut index = EventIndex::default();
+    let mut watcher = subscribe(&mut index, "watcher", |s| {
+        s.receive_message();
+    });
+    let mut dig = subscribe(&mut index, "dig", |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+
+    let _ = index.dispatch(&FilterHandle::default(), privmsg(".dig example.com"));
+
+    assert!(matches!(drain(&mut dig)[..], [Event::Command(..)]));
+    assert!(matches!(drain(&mut watcher)[..], [Event::Message(..)]));
+
+    let _ = index.dispatch(&FilterHandle::default(), privmsg("no events at all?"));
+
+    assert_empty!(drain(&mut dig));
+    assert_eq!(drain(&mut watcher).len(), 1);
+}
+
+#[test]
+fn presence_events_route_by_kind() {
+    let mut index = EventIndex::default();
+    let mut joins = subscribe(&mut index, "joins", |s| {
+        s.receive_join();
+    });
+    let mut quits = subscribe(&mut index, "quits", |s| {
+        s.receive_quit();
+    });
+    let mut parts = subscribe(&mut index, "parts", |s| {
+        s.receive_part();
+    });
+
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        message("nick!u@h", "JOIN", &["#test"]),
+    );
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        message("nick!u@h", "QUIT", &["gone"]),
+    );
+
+    assert!(matches!(
+        drain(&mut joins)[..],
+        [Event::Join(ref join)] if join.channel() == "#test"
+    ));
+    assert!(matches!(
+        drain(&mut quits)[..],
+        [Event::Quit(ref quit)] if quit.reason() == Some("gone")
+    ));
+    assert_empty!(drain(&mut parts));
+}
+
+#[test]
+fn unmodeled_commands_reach_raw_subscribers() {
+    let mut index = EventIndex::default();
+    let mut raw = subscribe(&mut index, "raw", |s| {
+        s.receive_raw();
+    });
+
+    let _ = index.dispatch(
+        &FilterHandle::default(),
+        message("server.example", "SOMECMD", &["#test", "data"]),
+    );
+
+    assert!(matches!(
+        drain(&mut raw)[..],
+        [Event::Raw(ref event)] if event.command() == "SOMECMD"
+    ));
+}
+
+/// Every flag-based event kind must have a dispatch arm: a kind added to the subscription
+/// table without routing would otherwise compile and never be delivered.
+#[test]
+fn every_event_kind_is_dispatched() {
+    let cases: &[(EventKind, Message)] = &[
+        (EventKind::Message, privmsg("hello")),
+        (EventKind::Join, message("nick!u@h", "JOIN", &["#test"])),
+        (EventKind::Part, message("nick!u@h", "PART", &["#test"])),
+        (EventKind::Quit, message("nick!u@h", "QUIT", &["bye"])),
+        (EventKind::Nick, message("nick!u@h", "NICK", &["nick_"])),
+        (
+            EventKind::Kick,
+            message("op!u@h", "KICK", &["#test", "nick", "flood"]),
+        ),
+        (EventKind::Ctcp, privmsg("\x01VERSION\x01")),
+        (
+            EventKind::Raw,
+            message("server.example", "SOMECMD", &["data"]),
+        ),
+    ];
+
+    assert_eq!(cases.len(), EventKind::ALL.len());
+
+    for (kind, message) in cases {
+        // The runtime's dispatch span needs the line's telemetry for every kind the
+        // dispatcher routes; a kind added without a command/operation would silently lose
+        // its dispatch span.
+        let route = CommandRoute::classify(&message.command);
+        assert!(
+            MessageTelemetry::from_route(route, message).is_some(),
+            "{kind:?} has no message telemetry"
+        );
+
+        let mut index = EventIndex::default();
+        let mut mailbox = subscribe(&mut index, "sub", |subscriptions| match kind {
+            EventKind::Message => {
+                subscriptions.receive_message();
+            }
+            EventKind::Join => {
+                subscriptions.receive_join();
+            }
+            EventKind::Part => {
+                subscriptions.receive_part();
+            }
+            EventKind::Quit => {
+                subscriptions.receive_quit();
+            }
+            EventKind::Nick => {
+                subscriptions.receive_nick();
+            }
+            EventKind::Kick => {
+                subscriptions.receive_kick();
+            }
+            EventKind::Ctcp => {
+                subscriptions.receive_ctcp();
+            }
+            EventKind::Raw => {
+                subscriptions.receive_raw();
+            }
+            // `cases` mirrors `EventKind::ALL`, so a new kind fails the length assertion
+            // above before it can reach this arm.
+            _ => unreachable!("every event kind has a subscription method"),
+        });
+
+        let _ = index.dispatch(&FilterHandle::default(), message.clone());
+
+        let events = drain(&mut mailbox);
+
+        assert_eq!(events.len(), 1, "{kind:?} was not dispatched exactly once");
+        assert_eq!(events[0].kind(), Some(*kind), "{kind:?} was not dispatched");
+    }
+}
+
+/// Nothing subscribed means nothing can be delivered: the dispatcher returns before building
+/// the line span or sharing the message.
+#[test]
+fn may_deliver_rejects_unsubscribed_lines() {
+    let index = EventIndex::default();
+
+    for message in [
+        privmsg("hello"),
+        message("nick!u@h", "JOIN", &["#test"]),
+        message("server.example", "SOMECMD", &["data"]),
+        message("server.example", "NOTICE", &["#test", "\x01VERSION\x01"]),
+    ] {
+        let route = CommandRoute::classify(&message.command);
+
+        assert!(!index.plan(route, &message).may_deliver(), "{message:?}");
+    }
+
+    let ping = message("server.example", "PING", &["server"]);
+
+    assert_eq!(CommandRoute::classify(&ping.command), CommandRoute::Ignored);
+    assert!(!index.plan(CommandRoute::Ignored, &ping).may_deliver());
+}
+
+/// Every event kind a plugin can subscribe to makes the line that produces it deliverable.
+#[test]
+fn may_deliver_accepts_every_event_kind_subscription() {
+    let cases: &[(EventKind, Message)] = &[
+        (EventKind::Message, privmsg("hello")),
+        (EventKind::Join, message("nick!u@h", "JOIN", &["#test"])),
+        (EventKind::Part, message("nick!u@h", "PART", &["#test"])),
+        (EventKind::Quit, message("nick!u@h", "QUIT", &["bye"])),
+        (EventKind::Nick, message("nick!u@h", "NICK", &["nick_"])),
+        (
+            EventKind::Kick,
+            message("op!u@h", "KICK", &["#test", "nick", "flood"]),
+        ),
+        (EventKind::Ctcp, privmsg("\x01VERSION\x01")),
+        (
+            EventKind::Raw,
+            message("server.example", "SOMECMD", &["data"]),
+        ),
+    ];
+
+    assert_eq!(cases.len(), EventKind::ALL.len());
+
+    for (kind, message) in cases {
+        let mut index = EventIndex::default();
+        let _mailbox = subscribe(&mut index, "sub", |subscriptions| match kind {
+            EventKind::Message => {
+                subscriptions.receive_message();
+            }
+            EventKind::Join => {
+                subscriptions.receive_join();
+            }
+            EventKind::Part => {
+                subscriptions.receive_part();
+            }
+            EventKind::Quit => {
+                subscriptions.receive_quit();
+            }
+            EventKind::Nick => {
+                subscriptions.receive_nick();
+            }
+            EventKind::Kick => {
+                subscriptions.receive_kick();
+            }
+            EventKind::Ctcp => {
+                subscriptions.receive_ctcp();
+            }
+            EventKind::Raw => {
+                subscriptions.receive_raw();
+            }
+            // `cases` mirrors `EventKind::ALL`, so a new kind fails the length assertion
+            // above before it can reach this arm.
+            _ => unreachable!("every event kind has a subscription method"),
+        });
+
+        let route = CommandRoute::classify(&message.command);
+
+        assert!(
+            index.plan(route, message).may_deliver(),
+            "{kind:?} was suppressed"
+        );
+    }
+}
+
+/// CTCP is routed only to CTCP subscribers and only from CTCP text: neither a message
+/// subscriber nor a plain `NOTICE` may keep the line dispatchable.
+#[test]
+fn may_deliver_requires_ctcp_text_and_subscribers() {
+    let ctcp = privmsg("\x01VERSION\x01");
+    let reply = message(
+        "service.example",
+        "NOTICE",
+        &["zeta", "\x01VERSION 1.0\x01"],
+    );
+    let notice = message("server.example", "NOTICE", &["zeta", "maintenance"]);
+
+    let mut ctcp_index = EventIndex::default();
+    let _ctcp = subscribe(&mut ctcp_index, "ctcp", |subscriptions| {
+        subscriptions.receive_ctcp();
+    });
+
+    assert!(ctcp_index.plan(CommandRoute::Privmsg, &ctcp).may_deliver());
+    assert!(
+        ctcp_index
+            .plan(CommandRoute::Event(EventKind::Ctcp), &reply)
+            .may_deliver()
+    );
+    assert!(
+        !ctcp_index
+            .plan(CommandRoute::Privmsg, &privmsg("hello"))
+            .may_deliver()
+    );
+    assert!(
+        !ctcp_index
+            .plan(CommandRoute::Event(EventKind::Ctcp), &notice)
+            .may_deliver()
+    );
+
+    let mut message_index = EventIndex::default();
+    let _messages = subscribe(&mut message_index, "messages", |subscriptions| {
+        subscriptions.receive_message();
+    });
+
+    assert!(
+        !message_index
+            .plan(CommandRoute::Privmsg, &ctcp)
+            .may_deliver()
+    );
+    assert!(
+        message_index
+            .plan(CommandRoute::Privmsg, &privmsg("hello"))
+            .may_deliver()
+    );
+}
+
+/// A command trigger or a URL subscription makes a `PRIVMSG` dispatchable; the command match
+/// follows the first-word rule of the delivery path, and URL text may be a false positive
+/// (a scheme colon without a subscribed URL) but never a false negative.
+#[test]
+fn may_deliver_matches_commands_and_urls() {
+    let mut command_index = EventIndex::default();
+    let _dig = subscribe(&mut command_index, "dig", |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+
+    assert!(
+        command_index
+            .plan(CommandRoute::Privmsg, &privmsg(".dig example.com"))
+            .may_deliver()
+    );
+
+    for text in [
+        ".digg example.com",
+        "  .dig example.com",
+        "look at .dig",
+        "hello",
+    ] {
+        assert!(
+            !command_index
+                .plan(CommandRoute::Privmsg, &privmsg(text))
+                .may_deliver(),
+            "`{text}` must be suppressed"
+        );
+    }
+
+    let mut url_index = EventIndex::default();
+    let _titles = subscribe(&mut url_index, "titles", |subscriptions| {
+        subscriptions.urls(UrlScope::Any);
+    });
+
+    assert!(
+        url_index
+            .plan(CommandRoute::Privmsg, &privmsg("see https://example.com/x"))
+            .may_deliver()
+    );
+    // Conservative: a colon is all URL extraction needs to look for a scheme.
+    assert!(
+        url_index
+            .plan(CommandRoute::Privmsg, &privmsg("note: no link"))
+            .may_deliver()
+    );
+    assert!(
+        !url_index
+            .plan(CommandRoute::Privmsg, &privmsg("no link"))
+            .may_deliver()
+    );
+
+    let mut host_index = EventIndex::default();
+    let _youtube = subscribe(&mut host_index, "youtube", |subscriptions| {
+        subscriptions.urls(UrlScope::Hosts(&["youtube.com"]));
+    });
+
+    // Host-scoped subscribers cannot know the host before extraction; a colon is enough.
+    assert!(
+        host_index
+            .plan(CommandRoute::Privmsg, &privmsg("see https://example.com/x"))
+            .may_deliver()
+    );
+    assert!(
+        !host_index
+            .plan(CommandRoute::Privmsg, &privmsg("no link"))
+            .may_deliver()
+    );
+}
+
+#[test]
+fn stopped_plugins_are_evicted() {
+    let mut index = EventIndex::default();
+    let dig = subscribe(&mut index, "dig", |subscriptions| {
+        subscriptions
+            .command(CommandSpec::new(".dig", "dig"))
+            .receive_join();
+    });
+
+    drop(dig);
+
+    let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig example.com"));
+    assert_eq!(stopped, ["dig"]);
+
+    // The evicted plugin receives nothing further.
+    let stopped = index.dispatch(
+        &FilterHandle::default(),
+        message("n!u@h", "JOIN", &["#test"]),
+    );
+
+    assert_empty!(stopped);
+}
+
+#[test]
+fn stopped_plugins_are_reported_once_per_message() {
+    let mut index = EventIndex::default();
+    let dig = subscribe(&mut index, "dig", |subscriptions| {
+        subscriptions
+            .command(CommandSpec::new(".dig", "dig"))
+            .urls(UrlScope::Any)
+            .receive_message();
+    });
+
+    drop(dig);
+
+    // The message matches the command, the message subscription, and the URL
+    // subscription; the stopped plugin is still reported only once.
+    let stopped = index.dispatch(
+        &FilterHandle::default(),
+        privmsg(".dig https://example.com/x"),
+    );
+
+    assert_eq!(stopped, ["dig"]);
+}
+
+/// A full mailbox sheds events instead of growing without bound, and `Full` must not be
+/// treated as `Closed`: a burst would otherwise permanently unregister a healthy plugin.
+#[test]
+fn a_full_mailbox_drops_events_without_evicting_the_plugin() {
+    const CAPACITY: usize = 8;
+
+    let mut index = EventIndex::default();
+    let mut subscriptions = Subscriptions::new();
+    subscriptions.command(CommandSpec::new(".dig", "dig"));
+
+    // The mailbox is registered directly instead of through `subscribe`, so the test can
+    // fill its 8 slots and reach the full state in a few dispatches.
+    let (mailbox, mut receiver) = mpsc::channel(CAPACITY);
+    index.add("dig", &subscriptions, mailbox);
+
+    for argument in 0..CAPACITY {
+        let stopped = index.dispatch(
+            &FilterHandle::default(),
+            privmsg(&format!(".dig {argument}")),
+        );
+
+        assert_empty!(stopped, "accepted event {argument}");
+    }
+
+    let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig overflow"));
+    assert_empty!(stopped, "a full mailbox must not evict the plugin");
+
+    let arguments = drain(&mut receiver)
+        .into_iter()
+        .map(|event| match event {
+            Event::Command(command) => command.args().to_string(),
+            other => panic!("expected a command event, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(arguments.len(), CAPACITY);
+    assert_eq!(
+        arguments,
+        (0..CAPACITY)
+            .map(|argument| argument.to_string())
+            .collect::<Vec<_>>(),
+        "accepted events must preserve FIFO order"
+    );
+
+    // Draining the mailbox frees a slot: the plugin is still registered and receives the
+    // next event.
+    let stopped = index.dispatch(&FilterHandle::default(), privmsg(".dig after"));
+    assert_empty!(stopped);
+    assert!(matches!(
+        drain(&mut receiver)[..],
+        [Event::Command(ref command)] if command.args() == "after"
+    ));
+}
+
+/// The first drop of a mailbox overflow warns with the cumulative count.
+#[test]
+fn the_first_drop_warns() {
+    let overflow = Overflow::default();
+
+    assert_eq!(overflow.record_drop(1), Some(1));
+    assert_eq!(overflow.dropped(), 1);
+}
+
+/// Further drops inside the warning interval only count; they do not warn.
+#[test]
+fn drops_within_the_warning_interval_stay_at_debug() {
+    let overflow = Overflow::default();
+
+    assert_eq!(overflow.record_drop(1), Some(1));
+    assert_eq!(overflow.record_drop(2), None);
+    assert_eq!(overflow.record_drop(30), None);
+    assert_eq!(overflow.dropped(), 3);
+}
+
+/// A drop at or after the interval warns again, carrying the cumulative count, so the warning
+/// alone says how many events were shed in total.
+#[test]
+fn a_drop_after_the_warning_interval_warns_again() {
+    let overflow = Overflow::default();
+
+    assert_eq!(overflow.record_drop(10), Some(1));
+    assert_eq!(overflow.record_drop(39), None);
+    assert_eq!(overflow.record_drop(40), Some(3));
+    assert_eq!(overflow.record_drop(70), Some(4));
+}
+
+/// An accepted event does not touch the overflow state: it neither resets the cumulative
+/// count nor re-arms the warning. `Subscriber::reserve` only calls into [`Overflow`] on
+/// `Full`, so the old episode reset — a warning per accepted event — cannot reappear here.
+#[test]
+fn accepted_events_do_not_reset_the_overflow_state() {
+    let overflow = Overflow::default();
+
+    assert_eq!(overflow.record_drop(1), Some(1));
+
+    // The mailbox accepted an event: `send`'s `Ok` arm does nothing.
+    assert_eq!(overflow.record_drop(2), None);
+    assert_eq!(overflow.record_drop(15), None);
+    assert_eq!(overflow.dropped(), 3);
+
+    // The window still starts at the first warning, so the count keeps growing across it.
+    assert_eq!(overflow.record_drop(31), Some(4));
+}
+
+/// A mailbox that keeps accepting an event between drops is the case the old episode logic
+/// mishandled: every accepted event re-armed the warning, so it warned once per accepted
+/// event. The time window caps that at one warning per [`WARN_INTERVAL`], while the count
+/// still reflects every drop.
+#[test]
+fn drops_interleaved_with_accepts_warn_once_per_window() {
+    const EVENTS: u64 = 100_000;
+
+    let overflow = Overflow::default();
+    let mut drops = 0;
+    let mut warnings = 0;
+
+    // One event per millisecond for 100 s; every second event is accepted, the rest shed.
+    // The timestamps are the event's second, so the drops of one second share a window slot.
+    for event in 0..EVENTS {
+        if event % 2 == 0 {
+            continue;
+        }
+
+        drops += 1;
+
+        if overflow.record_drop(event / 1_000).is_some() {
+            warnings += 1;
+        }
+    }
+
+    assert_eq!(drops, EVENTS / 2);
+    assert_eq!(warnings, 4, "one warning per 30 s window over 100 s");
+    assert_eq!(overflow.dropped(), 50_000);
+}
+
+/// The precomputed handler span names must follow the event kinds: the array is derived
+/// from [`EventKind::ALL`], so it cannot drift from the enum.
+#[test]
+fn span_names_match_the_event_kinds() {
+    let names = SpanNames::new("dig");
+
+    assert_eq!(
+        names.name(SpanSelector::Command),
+        "zeta.event.handle dig command"
+    );
+    assert_eq!(names.name(SpanSelector::Url), "zeta.event.handle dig url");
+
+    for kind in EventKind::ALL {
+        // Only a CTCP event is conditional on the message; the other kinds wrap any of them.
+        let message = match kind {
+            EventKind::Ctcp => privmsg("\x01VERSION\x01"),
+            _ => privmsg("hello"),
+        };
+        let event = kind
+            .event(Arc::new(message))
+            .expect("every flag-based kind builds an event from its message");
+
+        assert_eq!(
+            names.name(SpanSelector::Event(*kind)),
+            format!("zeta.event.handle dig {}", event.kind_name())
+        );
+    }
+}
+
+/// Prints the per-dispatch cost of representative messages against a small index.
+///
+/// The numbers are only comparable with another run in the same profile (debug by default):
+///
+/// `cargo test -p zeta-plugin-runtime --lib --all-features -- --ignored --nocapture dispatch_benchmark`
+#[test]
+#[ignore = "benchmark; run with --ignored --nocapture"]
+fn dispatch_benchmark() {
+    const DISPATCHES: usize = 100_000;
+
+    // The benchmark never drains a mailbox, so each subscriber gets one that accepts every
+    // event its case dispatches; the 8-slot unit-test mailbox would shed after eight sends.
+    // Each subscriber receives at most `DISPATCHES` events, one per dispatched message.
+
+    let mut index = EventIndex::default();
+    let _dig = benchmark_subscriber(&mut index, "dig", DISPATCHES, |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+    let _joiner = benchmark_subscriber(&mut index, "joiner", DISPATCHES, |subscriptions| {
+        subscriptions.receive_join();
+    });
+    let _ctcp = benchmark_subscriber(&mut index, "ctcp", DISPATCHES, |subscriptions| {
+        subscriptions.receive_ctcp();
+    });
+
+    let filters = FilterHandle::default();
+
+    benchmark(
+        "unhandled privmsg",
+        DISPATCHES,
+        &mut index,
+        &filters,
+        || privmsg("hello there"),
+    );
+    benchmark("handled command", DISPATCHES, &mut index, &filters, || {
+        privmsg(".dig example.com")
+    });
+    benchmark("join", DISPATCHES, &mut index, &filters, || {
+        message("nick!u@h", "JOIN", &["#test"])
+    });
+
+    // The index above has no URL subscribers, so all of its cases return before extraction.
+    // This second index reaches the scheme-colon gate and, past it, the URL scan: a generic
+    // subscriber like `titles` and a host-scoped one like `youtube`.
+    let mut url_index = EventIndex::default();
+    let _url_dig = benchmark_subscriber(&mut url_index, "dig", DISPATCHES, |subscriptions| {
+        subscriptions.command(CommandSpec::new(".dig", "dig"));
+    });
+    let _titles = benchmark_subscriber(&mut url_index, "titles", DISPATCHES, |subscriptions| {
+        subscriptions.urls(UrlScope::Any);
+    });
+    let _example = benchmark_subscriber(&mut url_index, "example", DISPATCHES, |subscriptions| {
+        subscriptions.urls(UrlScope::Hosts(&["example.com"]));
+    });
+
+    benchmark(
+        "unhandled privmsg, url subscriber",
+        DISPATCHES,
+        &mut url_index,
+        &filters,
+        || privmsg("hello there"),
+    );
+    benchmark(
+        "colon but no url",
+        DISPATCHES,
+        &mut url_index,
+        &filters,
+        || privmsg("note: no link here"),
+    );
+    benchmark("one url", DISPATCHES, &mut url_index, &filters, || {
+        privmsg("look at https://example.com/page")
+    });
+    benchmark(
+        "non-ascii initial, ascii triggers",
+        DISPATCHES,
+        &mut url_index,
+        &filters,
+        || privmsg("æble grød"),
+    );
+}
+
+/// Times `dispatches` calls to [`EventIndex::dispatch`] with pre-built messages.
+///
+/// The messages are built before the timer starts, so the measurement covers dispatch only.
+fn benchmark(
+    label: &str,
+    dispatches: usize,
+    index: &mut EventIndex,
+    filters: &FilterHandle,
+    make: impl Fn() -> Message,
+) {
+    let messages: Vec<Message> = Vec::from_fn(dispatches, |_| make());
+    let start = std::time::Instant::now();
+
+    for message in messages {
+        let stopped = index.dispatch(filters, message);
+        std::hint::black_box(&stopped);
+    }
+
+    let elapsed = start.elapsed();
+    let count = f64::from(u32::try_from(dispatches).expect("dispatch count fits in u32"));
+    let ns_per_dispatch = elapsed.as_secs_f64() * 1_000_000_000.0 / count;
+
+    println!(
+        "dispatch_benchmark: {label}: {dispatches} dispatches in {elapsed:?} \
+         ({ns_per_dispatch:.1} ns/dispatch)"
+    );
+}
