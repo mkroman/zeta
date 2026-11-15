@@ -14,7 +14,7 @@ use zeta_plugin::irc::plain_reply;
 use zeta_plugin::{ZetaError, plugin_err};
 
 use super::currency::CurrencyData;
-use super::{error_message, render_reply};
+use super::render::{error_message, render_reply};
 
 /// A handle to the rink actor task.
 #[derive(Clone)]
