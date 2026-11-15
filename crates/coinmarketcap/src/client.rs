@@ -107,14 +107,14 @@ impl Client {
             ),
         ]);
 
-        let http = reqwest::ClientBuilder::new()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
-            .user_agent(options.user_agent.as_deref().unwrap_or(DEFAULT_USER_AGENT))
-            .default_headers(headers)
-            .build()
-            .map_err(RequestError::from)
-            .map_err(Error::Build)?;
+        let http = zeta_http::client_builder(
+            options.timeout.unwrap_or(HTTP_TIMEOUT),
+            Some(options.user_agent.as_deref().unwrap_or(DEFAULT_USER_AGENT)),
+        )
+        .default_headers(headers)
+        .build()
+        .map_err(RequestError::from)
+        .map_err(Error::Build)?;
 
         Ok(Self {
             http,

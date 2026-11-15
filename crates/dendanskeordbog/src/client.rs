@@ -5,9 +5,6 @@
 
 use std::time::Duration;
 
-use reqwest::ClientBuilder;
-use reqwest::redirect::Policy;
-
 use crate::{DictionaryDocument, Error, RequestError};
 
 /// Parses a dictionary page on a blocking thread.
@@ -47,12 +44,10 @@ impl Client {
     /// # Errors
     ///
     /// Returns an [`Error::BuildClient`] if the underlying `reqwest` client fails to build. See
-    /// [`ClientBuilder::build`] for more details on potential failures.
+    /// [`reqwest::ClientBuilder::build`] for more details on potential failures.
     pub fn try_new() -> Result<Self, Error> {
-        let client = ClientBuilder::new()
+        let client = zeta_http::client_builder(Duration::from_secs(30), None)
             .gzip(true)
-            .redirect(Policy::none())
-            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|error| Error::BuildClient(error.into()))?;
 

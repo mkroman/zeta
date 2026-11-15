@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION};
-use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
@@ -91,12 +90,10 @@ impl Client {
         let client_id = client_id.into();
         let client_secret = client_secret.into();
         let user_agent = options.user_agent.unwrap_or_else(|| USER_AGENT.to_string());
-        let http = reqwest::ClientBuilder::new()
-            .redirect(Policy::none())
-            .timeout(options.timeout.unwrap_or(HTTP_TIMEOUT))
-            .user_agent(user_agent)
-            .build()
-            .map_err(|error| Error::BuildClient(error.into()))?;
+        let http =
+            zeta_http::client_builder(options.timeout.unwrap_or(HTTP_TIMEOUT), Some(&user_agent))
+                .build()
+                .map_err(|error| Error::BuildClient(error.into()))?;
 
         debug!(reddit.client.id = %client_id, "using client id");
 

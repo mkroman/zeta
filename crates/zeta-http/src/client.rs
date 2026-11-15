@@ -3,7 +3,10 @@
 //! [`send`] opens one `http.client` span around the request — so name resolution, connect, TLS,
 //! the time to first byte and the body read are on the span — logs a failed request once before
 //! the error comes back as a [`RequestError`], and hands the response to [`crate::response`]
-//! with the span attached. [`builder`]/[`build_client`] build the client from [`HttpConfig`].
+//! with the span attached. [`client_builder`] carries the policy every API client shares,
+//! [`builder`]/[`build_client`] build the shared client from [`HttpConfig`].
+
+use std::time::Duration;
 
 #[cfg(feature = "http")]
 use tracing::Span;
@@ -108,6 +111,30 @@ fn attach_span(mut response: reqwest::Response, span: Span) -> reqwest::Response
     response
 }
 
+/// Returns a client builder with the policy the standalone API clients share: no redirects, the
+/// given timeout, and the given user agent when one is configured.
+///
+/// The APIs these clients talk to report a redirect as the response the caller asked for, so
+/// following it would hide the `Location` header; and a bounded timeout keeps a stalled
+/// connection from holding the caller. Callers add what their own API needs on top — a cookie
+/// store, default headers, or response compression.
+///
+/// [`builder`] is the same policy for the shared client configured by [`HttpConfig`], whose user
+/// agent is never optional.
+#[must_use = "the builder does nothing until `.build()` is called"]
+#[cfg(any(feature = "request", feature = "http"))]
+pub fn client_builder(timeout: Duration, user_agent: Option<&str>) -> reqwest::ClientBuilder {
+    let mut builder = reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout);
+
+    if let Some(user_agent) = user_agent {
+        builder = builder.user_agent(user_agent);
+    }
+
+    builder
+}
+
 /// Returns a default HTTP client configured by [`HttpConfig`].
 ///
 /// # Panics
@@ -125,8 +152,5 @@ pub fn build_client(config: &HttpConfig) -> reqwest::Client {
 #[must_use = "the builder does nothing until `.build()` is called"]
 #[cfg(feature = "http")]
 pub fn builder(config: &HttpConfig) -> reqwest::ClientBuilder {
-    reqwest::ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(config.timeout)
-        .user_agent(config.user_agent.clone())
+    client_builder(config.timeout, Some(&config.user_agent))
 }
