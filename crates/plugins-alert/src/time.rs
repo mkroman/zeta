@@ -46,10 +46,7 @@ fn rfind_ignore_case(s: &str, needle: &str) -> Option<usize> {
 ///
 /// Returns [`ParseTimeError::Ambiguous`] if the expression could not be parsed, or
 /// [`ParseTimeError::Past`] if the expression contains a date that occurs in the past.
-pub fn parse_time(
-    spec: &str,
-    now: DateTime<Local>,
-) -> Result<DateTime<Utc>, ParseTimeError> {
+pub fn parse_time(spec: &str, now: DateTime<Local>) -> Result<DateTime<Utc>, ParseTimeError> {
     // Tolerate a leading article in the datetime expression, e.g. "at the weekend".
     let spec = strip_article(spec.trim());
 
