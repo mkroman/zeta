@@ -10,8 +10,8 @@
 
 ## What it does
 
-Shared Nomina layout, byte primitives, canonical Huffman codec and emoji grammar for
-[`zeta-unicode`](../zeta-unicode/README.md) and
+Shared Nomina layout, byte primitives, canonical Huffman codec, front-coding name decoder and
+emoji grammar for [`zeta-unicode`](../zeta-unicode/README.md) and
 [`zeta-unicode-build`](../zeta-unicode-build/README.md). It has no dependencies: the trainer
 uses it to encode and the runtime to decode, so both sides share one definition.
 
@@ -61,4 +61,4 @@ cargo test -p zeta-unicode-format --all-features
 ```
 
 Tests cover varints, hex padding, UTF-8, packed fields, both Huffman orders, truncation, Kraft
-validation, rule ids and grammar helpers.
+validation, the name-decoder fast table, rule ids and grammar helpers.

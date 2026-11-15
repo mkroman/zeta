@@ -2,9 +2,9 @@
 //!
 //! Both halves of the format read the same structural fields: the runtime builds its lookup
 //! tables from them and the trainer's verifier replays the entries through the same index. This
-//! module owns that structure, so a layout change is one edit. Only the entry reconstruction
-//! itself stays duplicated: the build verifier keeps its own front-coding decoder as an
-//! independent oracle.
+//! module owns that structure, so a layout change is one edit. The entry reconstruction lives
+//! in [`crate::decode::NameDecoder`], which the runtime and the trainer share, so verification
+//! exercises the exact decoder the image links.
 //!
 //! ```text
 //! off  field
