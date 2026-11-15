@@ -61,7 +61,7 @@ pub struct Definitions {
 
 /// An Urban Dictionary definition.
 #[derive(Debug, Deserialize)]
-#[allow(unused)]
+#[allow(dead_code)]
 pub struct Definition {
     /// The unique id of the definition.
     #[serde(rename = "defid")]

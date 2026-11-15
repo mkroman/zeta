@@ -76,7 +76,7 @@ pub struct Opts {
 /// Represents geographical and network information for an IP address.
 /// This struct is designed to be deserialized from a JSON response
 /// providing details like location, timezone, and ASN data.
-#[allow(unused)]
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct IpInfo {
     /// The IP address.
