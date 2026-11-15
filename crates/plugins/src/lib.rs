@@ -5,11 +5,12 @@
 //! This crate is the facade over those crates: its cargo features select which plugin crates are
 //! compiled in, preserving the feature names the host has always used.
 //!
-//! The `bundled_plugins!` list below is the single source of truth for that set. It generates:
+//! The `for_each_bundled_plugin!` list in `macros.rs` is the single source of truth for that
+//! set. It generates:
 //!
-//! - one re-export per plugin crate, so the crate is linked;
 //! - the [`BundledPlugin`] enum, with one variant per compiled-in plugin and every arm gated on
-//!   the same cargo feature as the crate;
+//!   the same cargo feature as the crate; each variant names its plugin's concrete type, which
+//!   is also what links that plugin's optional crate;
 //! - the static construction contract ([`PluginSet`](zeta_plugin::PluginSet)): name lookup,
 //!   settings validation and construction to a `LoadedPlugin<BundledPlugin>`;
 //! - [`BundledPlugin::NAMES`], the compiled-in names the configuration layer and the registration
@@ -40,12 +41,12 @@ pub use config::{PluginSection, PluginsConfig};
 mod macros;
 
 use macros::{
-    define_bundled_plugin_enum, for_each_bundled_plugin, impl_plugin_for_bundled_plugin,
-    impl_plugin_set_for_bundled_plugin, reexport_bundled_plugins,
+    declare_bundled_plugin_names, define_bundled_plugin_enum, for_each_bundled_plugin,
+    impl_plugin_for_bundled_plugin, impl_plugin_set_for_bundled_plugin,
 };
 
 // The single bundled-plugin list, expanded once per generated item. See `macros.rs`.
-for_each_bundled_plugin!(reexport_bundled_plugins);
+for_each_bundled_plugin!(declare_bundled_plugin_names);
 for_each_bundled_plugin!(define_bundled_plugin_enum);
 for_each_bundled_plugin!(impl_plugin_for_bundled_plugin);
 for_each_bundled_plugin!(impl_plugin_set_for_bundled_plugin);
@@ -300,8 +301,8 @@ mod tests {
     /// Adding a plugin touches five places across three files: the root workspace dependency,
     /// the facade dependency, the facade feature, the facade `all` list and the
     /// `for_each_bundled_plugin!` list. A missed entry either fails the build (the dependency,
-    /// the re-export) or silently ships a plugin that is never compiled (the `all` list) or
-    /// never named (the bundled-name list). This test turns the silent cases into a failure.
+    /// the generated variant) or silently ships a plugin that is never compiled (the `all` list)
+    /// or never named (the bundled-name list). This test turns the silent cases into a failure.
     #[test]
     fn every_plugin_crate_is_wired_into_the_facade() {
         let workspace =

@@ -7,9 +7,10 @@
 //! methods and their logic — is emitted unchanged beside it, with only the macro's own
 //! annotations stripped.
 //!
-//! The plugin is registered with the host statically: the facade's `bundled_plugins!` list names
-//! the crate and type, and the generated registry constructs it. Adding a plugin therefore needs
-//! its module, cargo feature and facade entry, not a runtime registration mechanism.
+//! The plugin is registered with the host statically: the facade's
+//! `for_each_bundled_plugin!` list names the crate and type, and the generated registry
+//! constructs it. Adding a plugin therefore needs its module, cargo feature and facade entry,
+//! not a runtime registration mechanism.
 //!
 //! ```
 //! use zeta_plugin::{Client, Context, Error, plugin, send_reply};

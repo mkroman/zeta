@@ -1,6 +1,6 @@
 //! Statically known plugin construction.
 //!
-//! The facade's `bundled_plugins!` macro generates a single enum with one variant per
+//! The facade's `for_each_bundled_plugin!` macro generates a single enum with one variant per
 //! compiled-in plugin, so the host needs no runtime registration mechanism:
 //! [`PluginSet::construct`] maps a configuration section's plugin name to the matching variant,
 //! and [`LoadedPlugin`] carries the name and subscriptions the runtime routes events with.
