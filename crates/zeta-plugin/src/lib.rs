@@ -61,7 +61,7 @@ pub use zeta_utils::error::Chain;
 // crates generally — can reference it as absolute `::zeta_plugin::…` paths without adding
 // dependencies of their own.
 pub use self::irc::{
-    context_reply, context_reply_with, labeled_reply, parse_or_usage, plain_reply, reply_lookup,
-    send_reply, send_reply_via, usage_line, write_labeled_reply_prefix,
+    labeled_reply, parse_or_usage, plain_reply, reply_lookup, send_reply, send_reply_via,
+    usage_line, write_labeled_reply_prefix,
 };
 pub use ::irc::client::Client;

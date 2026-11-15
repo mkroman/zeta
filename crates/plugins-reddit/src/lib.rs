@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_mirror::{MediaId, MirrorHandle};
-use zeta_plugin::irc::{context_reply, context_reply_with, labeled_reply, plain_reply, send_reply};
+use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
@@ -227,13 +227,9 @@ impl Reddit {
 fn submission_reply(error: &RedditError) -> String {
     const CONTEXT: &str = "could not fetch the submission details";
 
-    if matches!(
-        error,
-        RedditError::SubmissionNotFound | RedditError::InvalidId
-    ) {
-        context_reply_with(CONTEXT, error)
-    } else {
-        context_reply(CONTEXT)
+    match error {
+        RedditError::SubmissionNotFound | RedditError::InvalidId => format!("{CONTEXT}: {error}"),
+        _ => CONTEXT.to_owned(),
     }
 }
 
@@ -241,13 +237,11 @@ fn submission_reply(error: &RedditError) -> String {
 fn subreddit_reply(error: &RedditError) -> String {
     const CONTEXT: &str = "could not fetch the subreddit details";
 
-    if matches!(
-        error,
-        RedditError::SubredditNotFound | RedditError::InvalidSubreddit
-    ) {
-        context_reply_with(CONTEXT, error)
-    } else {
-        context_reply(CONTEXT)
+    match error {
+        RedditError::SubredditNotFound | RedditError::InvalidSubreddit => {
+            format!("{CONTEXT}: {error}")
+        }
+        _ => CONTEXT.to_owned(),
     }
 }
 
@@ -255,15 +249,11 @@ fn subreddit_reply(error: &RedditError) -> String {
 fn video_reply(error: &RedditError) -> String {
     const CONTEXT: &str = "could not resolve the video link";
 
-    if matches!(
-        error,
+    match error {
         RedditError::InvalidId
-            | RedditError::VideoRedirect
-            | RedditError::VideoRedirectsToNonSubmission
-    ) {
-        context_reply_with(CONTEXT, error)
-    } else {
-        context_reply(CONTEXT)
+        | RedditError::VideoRedirect
+        | RedditError::VideoRedirectsToNonSubmission => format!("{CONTEXT}: {error}"),
+        _ => CONTEXT.to_owned(),
     }
 }
 
@@ -271,13 +261,11 @@ fn video_reply(error: &RedditError) -> String {
 fn short_link_reply(error: &RedditError) -> String {
     const CONTEXT: &str = "could not resolve the shortened link";
 
-    if matches!(
-        error,
-        RedditError::RedirectRedditLink | RedditError::InvalidId | RedditError::InvalidSubreddit
-    ) {
-        context_reply_with(CONTEXT, error)
-    } else {
-        context_reply(CONTEXT)
+    match error {
+        RedditError::RedirectRedditLink
+        | RedditError::InvalidId
+        | RedditError::InvalidSubreddit => format!("{CONTEXT}: {error}"),
+        _ => CONTEXT.to_owned(),
     }
 }
 

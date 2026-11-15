@@ -107,23 +107,6 @@ pub fn plain_reply(message: impl fmt::Display) -> String {
     reply
 }
 
-/// Returns a fixed reply context.
-///
-/// Use this when the failure has no user-safe domain reason; the original error is logged
-/// instead of being sent to the channel.
-#[must_use]
-pub fn context_reply(context: &str) -> String {
-    context.to_owned()
-}
-
-/// Returns `context: reason` for a failure with a user-safe domain reason.
-///
-/// `reason` is the `Display` of a stable domain error variant, never an internal error.
-#[must_use]
-pub fn context_reply_with(context: &str, reason: &dyn fmt::Display) -> String {
-    format!("{context}: {reason}")
-}
-
 /// The label a derived usage line opens with.
 const USAGE_LABEL: &str = "Usage: ";
 
@@ -477,22 +460,6 @@ mod tests {
     fn plain_reply_prefix_is_the_whole_marker() {
         assert_eq!(plain_reply(""), PLAIN_REPLY_PREFIX);
         assert_eq!(PLAIN_REPLY_PREFIX, "\x0310> ");
-    }
-
-    #[test]
-    fn context_reply_is_the_context() {
-        assert_eq!(
-            context_reply("could not record the URL"),
-            "could not record the URL"
-        );
-    }
-
-    #[test]
-    fn context_reply_with_appends_the_reason() {
-        assert_eq!(
-            context_reply_with("could not record the URL", &"it has no host"),
-            "could not record the URL: it has no host"
-        );
     }
 
     #[test]
