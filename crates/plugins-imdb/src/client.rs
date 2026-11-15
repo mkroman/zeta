@@ -3,7 +3,7 @@
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, instrument};
 
 use super::Settings;
 use super::error::Error;
@@ -228,7 +228,6 @@ impl GraphQlClient {
                 .map(|error| error.message.unwrap_or_else(|| "unknown error".to_string()))
                 .collect::<Vec<_>>()
                 .join("; ");
-            warn!(imdb.errors = %messages, "graphql query failed");
 
             return Err(Error::GraphQL(messages));
         }

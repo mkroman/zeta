@@ -108,12 +108,17 @@ impl RustPlayground {
             command.channel(),
             self.evaluate(command.args()),
             |output| labeled_reply("Rust Playground", &output),
-            |error| labeled_reply("Rust Playground", error),
+            |error| evaluate_error_reply(&error),
         )
         .await?;
 
         Ok(())
     }
+}
+
+/// Formats a failed evaluation.
+fn evaluate_error_reply(_error: &Error) -> String {
+    labeled_reply("Rust Playground", "could not evaluate the expression")
 }
 
 impl RustPlayground {
@@ -209,6 +214,25 @@ mod tests {
             assert_eq!(settings.edition, "2021");
             assert_eq!(settings.max_output_length, 100);
         }
+    }
+
+    /// Builds an API failure whose body must never reach a reply.
+    fn api_error() -> Error {
+        http::ApiError::Status {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "secret body".to_owned(),
+        }
+    }
+
+    #[test]
+    fn failure_replies_hide_the_api_error_body() {
+        let reply = evaluate_error_reply(&api_error());
+
+        assert_eq!(
+            irc::strip_formatting(&reply),
+            "> Rust Playground: could not evaluate the expression"
+        );
+        assert!(!reply.contains("secret body"), "{reply}");
     }
 
     #[test]
