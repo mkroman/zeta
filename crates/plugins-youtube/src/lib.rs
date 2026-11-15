@@ -34,7 +34,7 @@ use plugins_shared::urls::youtube::URL_HOSTS;
 use zeta_cache::TtlCache;
 use zeta_http as http;
 use zeta_http::reqwest;
-use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, send_reply};
+use zeta_plugin::irc::{labeled_reply, plain_reply, send_lookup_reply, send_reply};
 use zeta_plugin::{
     Chain, Client, CommandEvent, Context, UrlEvent, ZetaError, plugin, resolve_secret,
 };
@@ -203,7 +203,7 @@ impl YouTube {
             return Ok(());
         }
 
-        reply_lookup(
+        send_lookup_reply(
             client,
             command.channel(),
             self.search(args),

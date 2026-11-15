@@ -14,7 +14,7 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
-use zeta_plugin::irc::{labeled_reply, reply_lookup};
+use zeta_plugin::irc::{labeled_reply, send_lookup_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_utils::irc;
 use zeta_utils::text::{ListJoinExt, TruncatableExt};
@@ -103,7 +103,7 @@ impl RustPlayground {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        reply_lookup(
+        send_lookup_reply(
             client,
             command.channel(),
             self.evaluate(command.args()),

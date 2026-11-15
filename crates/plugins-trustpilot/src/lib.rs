@@ -15,7 +15,7 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
-use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup};
+use zeta_plugin::irc::{labeled_reply, plain_reply, send_lookup_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
@@ -129,7 +129,7 @@ impl Trustpilot {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        reply_lookup(
+        send_lookup_reply(
             client,
             command.channel(),
             self.search(command.args()),

@@ -21,7 +21,7 @@ use zeta_http::reqwest::{
     self,
     header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
 };
-use zeta_plugin::irc::{labeled_reply, reply_lookup};
+use zeta_plugin::irc::{labeled_reply, send_lookup_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
 use zeta_utils::irc;
 use zeta_utils::settings;
@@ -101,7 +101,7 @@ impl GitHub {
 
         debug!(search.query = %query, "searching github");
 
-        reply_lookup(
+        send_lookup_reply(
             client,
             channel,
             self.search_repos(query),
