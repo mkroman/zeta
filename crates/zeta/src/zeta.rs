@@ -1,211 +1,35 @@
-//! The main process for communicating over IRC and managing state.
+//! The host process for communicating over IRC and managing state.
+//!
+//! [`Zeta`] owns the long-lived host state: it constructs the plugin registry from the
+//! configuration and runs the IRC connection loop. The lifecycle helpers live in sibling
+//! modules: `connection` for the connection setup and the incoming and outgoing paths, `signal`
+//! for the signal-driven shutdown, and `mirror` for the optional shared mirror's download
+//! manager. Cross-cutting lifecycle tests belong in `tests`.
+
+mod connection;
+#[cfg(feature = "mirror")]
+mod mirror;
+mod signal;
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 
 use irc::client::prelude::{Capability, Client};
-use tracing::{Instrument, debug, error, info, warn};
+use tracing::{Instrument, debug, info, warn};
 
 use crate::Error;
-use crate::config::{Config, IrcConfig};
+use crate::config::Config;
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE, STARTUP_GRACE};
 use zeta_plugin::Context;
 use zeta_plugin_runtime::{PluginRuntime, Registry};
 
 use plugins::BundledPlugin;
 
-/// The signal that triggered a graceful shutdown.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ShutdownSignal {
-    /// `SIGINT`, sent by `Ctrl-C`.
-    Interrupt,
-    /// `SIGTERM`, sent by a service manager or container orchestrator.
-    Terminate,
-}
-
-impl ShutdownSignal {
-    /// Returns the signal's conventional name, for logs.
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Interrupt => "SIGINT",
-            Self::Terminate => "SIGTERM",
-        }
-    }
-
-    /// Returns the process exit code conventionally associated with the signal.
-    const fn exit_code(self) -> i32 {
-        match self {
-            Self::Interrupt => 130,
-            Self::Terminate => 143,
-        }
-    }
-}
-
-/// Returns the first shutdown signal received by the process.
-///
-/// `SIGINT` (`Ctrl-C`) and, on unix, `SIGTERM` — e.g. sent by a container orchestrator deleting
-/// the pod — both trigger shutdown. The `SIGTERM` listener is best-effort: when it cannot be
-/// installed, only `SIGINT` triggers shutdown.
-async fn shutdown_signal() -> ShutdownSignal {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-
-        // Installation failure is ignored; shutdown still works through `SIGINT`.
-        if let Ok(mut sigterm) = signal(SignalKind::terminate()) {
-            let sigterm = async move { sigterm.recv().await };
-            tokio::pin!(sigterm);
-
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => return ShutdownSignal::Interrupt,
-                _ = &mut sigterm => return ShutdownSignal::Terminate,
-            }
-        }
-    }
-
-    if tokio::signal::ctrl_c().await.is_err() {
-        tracing::warn_span!("zeta.signal.install")
-            .in_scope(|| warn!("failed to install the SIGINT listener; shutting down anyway"));
-    }
-
-    ShutdownSignal::Interrupt
-}
-
-/// Returns the span covering one IRC connection's setup.
-///
-/// The span is bounded to the setup steps — DNS resolution, the TCP/TLS connection, capability
-/// negotiation and registration — and is not held for the connection's lifetime. The connection
-/// itself is not a span: a process- or connection-lifetime span never closes, so the exporter
-/// keeps buffering it. Every line and reply opens its own short span instead.
-fn connect_span(config: &IrcConfig) -> tracing::Span {
-    tracing::info_span!(
-        "irc.connect",
-        otel.kind = "client",
-        server.address = %config.hostname,
-        server.port = u64::from(config.resolved_port()),
-        network.transport = "tcp",
-        network.protocol.name = "irc",
-        irc.nickname = %config.nickname,
-    )
-}
-
-/// Drives the client's outgoing sink independently of the dispatch loop.
-///
-/// The sink is normally driven by the `ClientStream`'s polling, which would leave a queued
-/// `QUIT` unflushed after the dispatch loop stops. Driving it separately writes sent messages
-/// to the socket as they are queued.
-///
-/// Returns the task's handle so the caller can supervise the write path and wait for the final
-/// flush after the last client handle is dropped.
-///
-/// # Panics
-///
-/// Panics if the outgoing future is unavailable — only possible if `stream()` had already been
-/// called on the client.
-fn drive_outgoing(client: &mut Client) -> tokio::task::JoinHandle<()> {
-    let outgoing = client
-        .outgoing()
-        .expect("the outgoing future is only available before the stream is taken");
-
-    // The failure gets a short span of its own: a task-lifetime span would never be exported
-    // until shutdown, and the OpenTelemetry layer needs a current span for the message.
-    tokio::spawn(async move {
-        if let Err(error) = outgoing.await {
-            let span = tracing::error_span!("irc.outgoing.error");
-            span.in_scope(
-                || error!(exception.message = %error, "the IRC connection write path failed"),
-            );
-        }
-    })
-}
-
-/// Dispatches incoming IRC messages as events to the plugins that registered interest, until
-/// the stream ends.
-///
-/// # Errors
-///
-/// Returns any IRC protocol error that ends the stream, and [`Error::IrcDisconnected`] when the
-/// server sends `ERROR` or closes the stream. A closed connection is reported as an error so the
-/// process exits non-zero rather than looking like a successful run to its supervisor.
-async fn dispatch_messages(
-    stream: &mut irc::client::ClientStream,
-    runtime: &mut PluginRuntime<BundledPlugin>,
-) -> Result<(), Error> {
-    use futures::stream::StreamExt;
-
-    while let Some(message) = stream.next().await.transpose()? {
-        // `ERROR` carries the server's reason for closing the connection. It is not a `Raw`
-        // command and is not routed, so the runtime never sees it; the host logs it in its own
-        // `irc.error` span. The OpenTelemetry layer drops events that are not in the context of
-        // a span, and the span is at info level, not debug, so an `info` filter cannot be what
-        // keeps the reason out of the backend.
-        //
-        // Every line the dispatcher can deliver gets its `irc.dispatch` span — and the
-        // `irc.raw` trace — from the dispatcher. PING, PONG, numerics and lines no subscription
-        // can receive have no span.
-        if let irc::proto::Command::ERROR(reason) = &message.command {
-            let span = tracing::info_span!("irc.error", irc.command = "ERROR");
-            span.in_scope(|| {
-                warn!(
-                    zeta.shutdown.reason = %reason,
-                    "the IRC server closed the connection"
-                );
-            });
-
-            return Err(Error::IrcDisconnected {
-                reason: reason.clone(),
-            });
-        }
-
-        runtime.dispatch(message);
-    }
-
-    tracing::warn_span!("irc.stream.ended").in_scope(|| warn!("the IRC message stream ended"));
-
-    Err(Error::IrcDisconnected {
-        reason: "the server closed the connection".to_owned(),
-    })
-}
-
-/// Exits the process immediately when a second shutdown signal arrives.
-///
-/// The signal handlers stay installed after the first signal is received, so a second one
-/// resolves here instead of terminating the process with the default handler.
-fn exit_on_second_signal() {
-    tokio::spawn(async move {
-        let signal = shutdown_signal().await;
-
-        // The span closes as soon as the message is logged; the task then exits the process.
-        let span = tracing::warn_span!("zeta.signal.second", signal = signal.name());
-        span.in_scope(|| warn!("received a second shutdown signal; exiting now"));
-
-        std::process::exit(signal.exit_code());
-    });
-}
-
-/// Logs the signal that triggered the shutdown and arms the forced exit for a second one.
-///
-/// `run` has no process-lifetime span of its own, and the OpenTelemetry layer drops events that
-/// are not in a span, so the one-off diagnostic gets a short span here.
-fn note_signal(signal: ShutdownSignal) {
-    tracing::info_span!("zeta.signal", signal = signal.name()).in_scope(|| info!("shutting down"));
-
-    // Another signal during the grace period forces an immediate exit.
-    exit_on_second_signal();
-}
-
-/// Starts the download manager of the shared mirror, when one is published.
-///
-/// The mirror is published to the context's shared state during construction; plugins pick up
-/// their handles from there, and the host starts the manager so the first mirrored URL does not
-/// pay for the manager's synchronous filesystem setup.
-///
-/// Returns whether the manager is running; this is `false` when no mirror is published or its
-/// download directory could not be created, in which case mirroring stays disabled.
+use self::connection::{connect_span, dispatch_messages, drive_outgoing};
 #[cfg(feature = "mirror")]
-fn start_mirror(shared: &zeta_plugin::SharedState) -> bool {
-    shared
-        .get::<zeta_mirror::Mirror>()
-        .is_some_and(|mirror| mirror.start())
-}
+use self::mirror::start_mirror;
+use self::signal::{exit_on_second_signal, note_signal, shutdown_signal};
 
 /// The main IRC bot struct that manages connection state and message handling.
 pub struct Zeta {
@@ -470,104 +294,5 @@ impl Zeta {
         }
 
         dispatch_error.map_or_else(|| Ok(()), Err)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A mirror whose manager can be started without network access.
-    #[cfg(feature = "mirror")]
-    fn test_mirror(download_dir: &std::path::Path) -> Arc<zeta_mirror::Mirror> {
-        let config = zeta_mirror::MirrorConfig {
-            download_dir: Some(download_dir.to_path_buf()),
-            s3_access_key_id: Some("access".to_string()),
-            s3_secret_access_key: Some("secret".into()),
-            s3_bucket_name: Some("bucket".to_string()),
-            ..zeta_mirror::MirrorConfig::default()
-        };
-
-        Arc::new(
-            zeta_mirror::Mirror::from_config(&config)
-                .expect("the test configuration should be valid"),
-        )
-    }
-
-    #[cfg(feature = "mirror")]
-    #[tokio::test]
-    async fn start_mirror_starts_the_published_manager() {
-        let dir = tempfile::tempdir().unwrap();
-        let shared = zeta_plugin::SharedState::new();
-
-        assert!(
-            !start_mirror(&shared),
-            "Nothing is published, so there is nothing to start."
-        );
-
-        shared.publish(test_mirror(dir.path()));
-        assert!(
-            start_mirror(&shared),
-            "startup should start the published mirror's manager"
-        );
-
-        assert!(start_mirror(&shared), "A second startup call is a no-op.");
-    }
-
-    #[test]
-    fn connect_span_records_server_and_network_attributes() {
-        use tracing::subscriber::with_default;
-        use tracing_subscriber::prelude::*;
-        use zeta_test_support::SpanRecorder;
-
-        let recorder = SpanRecorder::default();
-        let subscriber = tracing_subscriber::registry().with(recorder.clone());
-        let config = IrcConfig {
-            hostname: "irc.example.com".to_owned(),
-            port: Some(6697),
-            nickname: "zeta".to_owned(),
-            ..IrcConfig::default()
-        };
-
-        with_default(subscriber, || drop(connect_span(&config)));
-
-        let spans = recorder.spans();
-        let span = spans
-            .iter()
-            .find(|span| span.name() == "irc.connect")
-            .expect("the connection setup span should be recorded");
-
-        assert_eq!(span.field("otel.kind"), Some("client"));
-        assert_eq!(span.field("server.address"), Some("irc.example.com"));
-        assert_eq!(span.field("server.port"), Some("6697"));
-        assert_eq!(span.field("network.transport"), Some("tcp"));
-        assert_eq!(span.field("network.protocol.name"), Some("irc"));
-        assert_eq!(span.field("irc.nickname"), Some("zeta"));
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn shutdown_signal_responds_to_sigterm() {
-        use futures::task::noop_waker;
-        use std::task::Poll;
-
-        let mut signal = Box::pin(shutdown_signal());
-
-        // Poll once with a no-op waker: the first poll installs the `SIGINT` and `SIGTERM`
-        // listeners, so the signal below can never arrive while the default disposition is
-        // still active — which would terminate the whole test process.
-        let waker = noop_waker();
-        let mut context = std::task::Context::from_waker(&waker);
-
-        assert_eq!(signal.as_mut().poll(&mut context), Poll::Pending);
-
-        std::process::Command::new("kill")
-            .args(["-s", "TERM", &std::process::id().to_string()])
-            .status()
-            .expect("could not send SIGTERM");
-
-        let received = signal.await;
-
-        assert_eq!(received, ShutdownSignal::Terminate);
     }
 }
