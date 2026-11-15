@@ -3263,7 +3263,6 @@ name = "plugins-imdb"
 version = "0.0.0"
 dependencies = [
  "clap",
- "num-format",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3451,7 +3450,6 @@ name = "plugins-spotify"
 version = "0.0.0"
 dependencies = [
  "base64 0.23.1",
- "num-format",
  "serde",
  "similar-asserts",
  "tracing",
@@ -3479,7 +3477,6 @@ dependencies = [
 name = "plugins-thingiverse"
 version = "0.0.0"
 dependencies = [
- "num-format",
  "serde",
  "similar-asserts",
  "thiserror 2.0.21",
@@ -3567,7 +3564,6 @@ name = "plugins-twitch"
 version = "0.0.0"
 dependencies = [
  "irc",
- "num-format",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -3622,7 +3618,6 @@ name = "plugins-youtube"
 version = "0.0.0"
 dependencies = [
  "htmlize",
- "num-format",
  "plugins-shared",
  "serde",
  "thiserror 2.0.21",
@@ -6374,6 +6369,7 @@ name = "zeta-utils"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "num-format",
  "time",
 ]
 

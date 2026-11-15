@@ -15,7 +15,6 @@
 use std::fmt::Write;
 
 use base64::prelude::*;
-use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
@@ -27,7 +26,7 @@ use zeta_http::reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, MessageEvent, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
-use zeta_utils::text::{self, ListJoinExt};
+use zeta_utils::text::{self, ListJoinExt, format_number};
 
 mod model;
 
@@ -198,7 +197,7 @@ impl Spotify {
                         let name = irc::unstyle_text(&artist.name);
                         let genres: Vec<_> = artist.genres.iter().map(|genre| irc::unstyle_text(genre)).collect();
                         let joined = genres.oxford_join();
-                        let followers = artist.followers.total.to_formatted_string(&Locale::en);
+                        let followers = format_number(artist.followers.total);
 
                         let mut msg = format!("\x0f{name}\x0310 is");
                         if genres.is_empty() {
@@ -241,7 +240,7 @@ impl Spotify {
                         );
 
                         if followers > 0 {
-                            let followers_fmt = followers.to_formatted_string(&Locale::en);
+                            let followers_fmt = format_number(followers);
                             let _ = write!(msg, " with \x0f{followers_fmt}\x0310 followers");
                         }
 

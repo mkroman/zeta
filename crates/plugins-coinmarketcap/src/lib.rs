@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use zeta_cache::TtlCache;
-use zeta_plugin::irc::{plain_reply, send_reply};
+use zeta_plugin::irc::{plain_reply, send_reply, usage_line};
 use zeta_plugin::{
     Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin, plugin_err,
     resolve_secret,
@@ -120,8 +120,8 @@ struct QuoteOpts {
     currency: Option<String>,
 }
 
-/// The usage hint for the `.cc` command.
-const CC_USAGE: &str = "Usage: .cc \x0f<symbol> [currency]";
+/// The argument hint for the `.cc` command's usage line.
+const CC_USAGE_HINT: &str = "<symbol> [currency]";
 
 /// Convert a cryptocurrency price into fiat currency.
 #[derive(Parser, Debug)]
@@ -277,7 +277,11 @@ impl CoinMarketCap {
         let opts = match CC.parse_shell::<CoinOpts>(args) {
             Ok(opts) if !opts.coin.trim().is_empty() => opts,
             _ => {
-                send_reply(client, channel, plain_reply(CC_USAGE))?;
+                send_reply(
+                    client,
+                    channel,
+                    plain_reply(usage_line(CC.trigger(), CC_USAGE_HINT)),
+                )?;
                 return Ok(());
             }
         };
@@ -309,7 +313,7 @@ impl CoinMarketCap {
             send_reply(
                 client,
                 channel,
-                plain_reply(format_args!("Usage: {} \x0f[currency]", command.trigger())),
+                plain_reply(usage_line(command.trigger(), "[currency]")),
             )?;
             return Ok(());
         };

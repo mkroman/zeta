@@ -6,12 +6,11 @@
 use std::fmt::Write;
 use std::sync::OnceLock;
 
-use num_format::{Locale, ToFormattedString};
 use zeta_plugin::irc::{BOLD, COLOR, REPLY_MARKER, RESET};
 use zeta_utils::irc;
 
 use super::model::{Person, Title};
-use zeta_utils::text::TruncatableExt;
+use zeta_utils::text::{TruncatableExt, format_number};
 
 /// The prefix all IMDb replies start with.
 ///
@@ -68,10 +67,7 @@ pub fn format_title(title: &Title) -> String {
         let _ = write!(
             message,
             " (\x0f{}\x0310 votes)",
-            title
-                .votes
-                .unwrap_or_default()
-                .to_formatted_string(&Locale::en)
+            format_number(title.votes.unwrap_or_default())
         );
     }
 

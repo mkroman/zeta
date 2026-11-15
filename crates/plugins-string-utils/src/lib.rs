@@ -10,7 +10,7 @@
 use std::fmt::Write;
 use std::sync::Once;
 
-use zeta_plugin::irc::{RESET, plain_reply, send_reply};
+use zeta_plugin::irc::{plain_reply, send_reply, usage_line};
 use zeta_plugin::{Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin};
 
 mod unicode;
@@ -30,7 +30,7 @@ const UNICODE: CommandSpec = CommandSpec::new(".uni", "Show a character's Unicod
 struct Command {
     /// The registered command.
     spec: CommandSpec,
-    /// The arguments shown after the trigger in the usage line.
+    /// The argument hint shown after the trigger in the usage line.
     usage: &'static str,
     /// Renders one reply body from the argument text.
     render: fn(&str) -> String,
@@ -40,27 +40,27 @@ struct Command {
 const COMMANDS: [Command; 5] = [
     Command {
         spec: BYTES,
-        usage: " <byte..>",
+        usage: "<byte..>",
         render: str_to_hex,
     },
     Command {
         spec: LENGTH,
-        usage: " <string>",
+        usage: "<string>",
         render: character_count,
     },
     Command {
         spec: ORD,
-        usage: " <chars..>",
+        usage: "<chars..>",
         render: code_points,
     },
     Command {
         spec: REVERSE,
-        usage: " <string>",
+        usage: "<string>",
         render: reverse,
     },
     Command {
         spec: UNICODE,
-        usage: " <chars>",
+        usage: "<chars>",
         render: unicode::unicode_details,
     },
 ];
@@ -132,11 +132,8 @@ impl StringUtils {
     /// The usage line of `command`, or `None` when it is not a command of this plugin.
     fn usage_line(command: CommandSpec) -> Option<String> {
         let definition = Self::find(command)?;
-        Some(format!(
-            "Usage: {}{RESET}{}",
-            definition.spec.trigger(),
-            definition.usage
-        ))
+
+        Some(usage_line(definition.spec.trigger(), definition.usage))
     }
 }
 

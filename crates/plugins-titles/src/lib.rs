@@ -10,8 +10,6 @@
 
 mod metadata;
 
-use std::collections::HashSet;
-use std::fmt::Write as _;
 use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -24,11 +22,10 @@ use zeta_http::WreqError;
 use zeta_http::wreq;
 use zeta_http::wreq::redirect::Policy;
 use zeta_plugin::irc::{
-    BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, plain_reply, send_reply, send_reply_via,
+    LABELED_PREFIX_BYTES, PLAIN_REPLY_PREFIX, REPLY_MARKER, plain_reply, send_reply,
+    send_reply_via, write_labeled_reply_prefix,
 };
-use zeta_plugin::{
-    Client, Context, PluginCatalog, UrlEvent, UrlScope, ZetaError, plugin, plugin_err,
-};
+use zeta_plugin::{Client, Context, PluginCatalog, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrlRef;
 use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
@@ -37,10 +34,6 @@ use metadata::{PageMetadata, fetch_metadata};
 
 /// The separator between a page's title and its description.
 const CONTENT_SEPARATOR: &str = " — ";
-
-/// The bytes a labeled reply prefix writes besides its label.
-const LABELED_PREFIX_BYTES: usize =
-    REPLY_MARKER.len() + RESET.len() + 2 * BOLD.len() + COLOR.len() + 3;
 
 /// File extensions that we avoid requesting to save time and bandwidth.
 const BINARY_EXTENSIONS: &[&str] = &[
@@ -104,55 +97,13 @@ pub struct Titles {
     ///
     /// The catalog is published once, before any plugin task starts, so the handle stays valid
     /// for the process lifetime. Once a handle is cached, a replacement published later is not
-    /// observed.
+    /// observed. The catalog indexes the exact hosts that other plugins handle, so the per-URL
+    /// check does not walk every entry.
     catalog: OnceLock<Arc<PluginCatalog>>,
-    /// The hosts advertised by the cached catalog, indexed for the per-URL check.
-    ///
-    /// Built once alongside the catalog: the handler checks every posted URL, and scanning every
-    /// catalog entry for every link does not scale with the number of plugins.
-    handled_hosts: OnceLock<Arc<CatalogHosts>>,
     /// Bounds how many fetches are in flight at once.
     ///
     /// Shared rather than cloned per URL: the permits are the plugin's concurrency budget.
     fetches: Arc<Semaphore>,
-}
-
-/// The hosts the plugin catalog advertises as handled, indexed for exact lookups.
-#[derive(Debug, Default)]
-struct CatalogHosts {
-    /// The lowercased hosts of every [`UrlScope::Hosts`] entry.
-    ///
-    /// [`UrlScope::Any`] and [`UrlScope::None`] entries advertise no specific hosts and are not
-    /// indexed, matching [`CatalogEntry::handles_host`](zeta_plugin::CatalogEntry::handles_host).
-    hosts: HashSet<String>,
-}
-
-impl CatalogHosts {
-    /// Builds the host index from the hosts advertised in `catalog`.
-    fn from_catalog(catalog: &PluginCatalog) -> Self {
-        let hosts = catalog
-            .entries
-            .iter()
-            .filter_map(|entry| match entry.url_scope {
-                UrlScope::Hosts(hosts) => Some(hosts),
-                // `Any`, `None` and scopes added after this plugin was written advertise no
-                // specific host; only exact host registrations are a reason to skip a link.
-                _ => None,
-            })
-            .flatten()
-            .map(|host| host.to_ascii_lowercase())
-            .collect();
-
-        Self { hosts }
-    }
-
-    /// Returns whether a plugin advertises `host` as handled.
-    ///
-    /// `host` comes from [`Url::host_str`], which the URL parser already lowercases; the indexed
-    /// hosts are lowercased when the index is built.
-    fn contains(&self, host: &str) -> bool {
-        self.hosts.contains(host)
-    }
 }
 
 #[plugin(name = "titles", settings = Settings, urls(any))]
@@ -169,7 +120,6 @@ impl Titles {
             client,
             settings: Arc::new(settings.clone()),
             catalog: OnceLock::new(),
-            handled_hosts: OnceLock::new(),
             fetches: Arc::new(Semaphore::new(FETCH_CONCURRENCY)),
         })
     }
@@ -205,11 +155,9 @@ impl Titles {
         }
 
         // The checks run on the borrowed URL, before the `Arc` clones needed by the spawned task.
-        let handled_hosts = self.handled_hosts(ctx);
+        let catalog = self.catalog(ctx);
 
-        if is_ignored_host(url, &self.settings.ignored_hosts)
-            || is_catalog_handled(url, handled_hosts)
-        {
+        if is_ignored_host(url, &self.settings.ignored_hosts) || is_catalog_handled(url, catalog) {
             debug!(
                 url.full = %RedactedUrlRef::from_url(url),
                 "skipping url handled by another plugin"
@@ -235,24 +183,12 @@ impl Titles {
 }
 
 impl Titles {
-    /// Caches `catalog` and the host index derived from it.
+    /// Caches `catalog`.
     ///
-    /// The catalog is published once, so the first snapshot wins; the host index is always built
-    /// from the cached snapshot, never from a later one.
+    /// The catalog is published once, so the first snapshot wins and a replacement published
+    /// later is not observed.
     fn cache_catalog(&self, catalog: Arc<PluginCatalog>) {
         let _ = self.catalog.set(catalog);
-        self.index_hosts();
-    }
-
-    /// Builds the host index from the cached catalog when it has not been built yet.
-    fn index_hosts(&self) {
-        if self.handled_hosts.get().is_none()
-            && let Some(catalog) = self.catalog.get()
-        {
-            let _ = self
-                .handled_hosts
-                .set(Arc::new(CatalogHosts::from_catalog(catalog)));
-        }
     }
 
     /// Returns the catalog of registered plugins.
@@ -269,18 +205,6 @@ impl Titles {
         }
 
         self.catalog.get().map(Arc::as_ref)
-    }
-
-    /// Returns the hosts the cached catalog advertises as handled.
-    ///
-    /// Indexed once with the catalog, so the per-URL check does not walk every catalog entry.
-    fn handled_hosts(&self, ctx: &Context) -> Option<&CatalogHosts> {
-        if self.handled_hosts.get().is_none() {
-            let _ = self.catalog(ctx);
-            self.index_hosts();
-        }
-
-        self.handled_hosts.get().map(Arc::as_ref)
     }
 
     /// Processes a single extracted URL by spawning a task that fetches the page and posts its
@@ -308,7 +232,7 @@ impl Titles {
                         );
 
                         if let Err(send_error) =
-                            send_reply_via(&sender, &channel, format!("{REPLY_MARKER} {error}"))
+                            send_reply_via(&sender, &channel, plain_reply(error))
                         {
                             warn!(exception.message = %send_error, "could not send fetch error");
                         }
@@ -359,20 +283,14 @@ fn is_ignored_host(url: &Url, ignored_hosts: &[String]) -> bool {
 
 /// Whether the host of `url` is declared as handled by a plugin in the catalog.
 ///
-/// Only [`UrlScope::Hosts`] entries count: a plugin registered for every URL ([`UrlScope::Any`])
-/// advertises no specific hosts and is not a reason for titles to skip a link. Hosts are matched
-/// exactly after ASCII-lowercasing both sides.
+/// Only exact host registrations count: a plugin registered for every URL advertises no specific
+/// hosts and is not a reason for titles to skip a link.
 #[must_use]
-fn is_catalog_handled(url: &Url, handled_hosts: Option<&CatalogHosts>) -> bool {
-    let Some(handled_hosts) = handled_hosts else {
-        return false;
-    };
-
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-
-    handled_hosts.contains(host)
+fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
+    catalog.is_some_and(|catalog| {
+        url.host_str()
+            .is_some_and(|host| catalog.handles_host(host))
+    })
 }
 
 /// Whether the path of `url` looks like binary content.
@@ -441,12 +359,8 @@ fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Optio
         let label = site.as_deref().unwrap_or_else(|| host_name(url));
 
         let mut message = String::with_capacity(LABELED_PREFIX_BYTES + label.len() + capacity);
-        // The same bytes as `zeta_utils::irc::labeled_reply_prefix`, written into the reply
-        // buffer instead of into a temporary string.
-        let _ = write!(
-            message,
-            "{REPLY_MARKER}{RESET}{BOLD} {label}:{BOLD}{COLOR} "
-        );
+        // Written into the reply buffer instead of into a temporary string.
+        write_labeled_reply_prefix(&mut message, label);
 
         message
     } else {
@@ -607,17 +521,17 @@ mod tests {
             &["youtube.com", "youtu.be"],
         )));
 
-        let handled_hosts = titles
-            .handled_hosts(&ctx)
-            .expect("the host index is cached with the catalog");
+        let catalog = titles
+            .catalog(&ctx)
+            .expect("the catalog is cached during load");
 
         assert!(is_catalog_handled(
             &Url::parse("https://www.imdb.com/title/tt1375666").unwrap(),
-            Some(handled_hosts)
+            Some(catalog)
         ));
         assert!(!is_catalog_handled(
             &Url::parse("https://youtu.be/dQw4w9WgXcQ").unwrap(),
-            Some(handled_hosts)
+            Some(catalog)
         ));
     }
 
@@ -668,13 +582,13 @@ mod tests {
         // The load hook never runs when a test calls the handler directly.
         let titles = Titles::new(&ctx, &Settings::default()).expect("titles plugin builds");
 
-        let handled_hosts = titles
-            .handled_hosts(&ctx)
-            .expect("the host index is resolved from shared state");
+        let catalog = titles
+            .catalog(&ctx)
+            .expect("the catalog is resolved from shared state");
 
         assert!(is_catalog_handled(
             &Url::parse("https://www.imdb.com/title/tt1375666").unwrap(),
-            Some(handled_hosts)
+            Some(catalog)
         ));
 
         // The fallback is cached too, so later events do not consult shared state again.
@@ -683,9 +597,7 @@ mod tests {
             &["youtube.com", "youtu.be"],
         )));
 
-        let cached = titles
-            .handled_hosts(&ctx)
-            .expect("the host index is cached");
+        let cached = titles.catalog(&ctx).expect("the catalog is cached");
 
         assert!(!is_catalog_handled(
             &Url::parse("https://youtu.be/dQw4w9WgXcQ").unwrap(),
@@ -699,7 +611,6 @@ mod tests {
         let titles = Titles::new(&ctx, &Settings::default()).expect("titles plugin builds");
 
         assert!(titles.catalog(&ctx).is_none());
-        assert!(titles.handled_hosts(&ctx).is_none());
     }
 
     #[test]
@@ -744,23 +655,21 @@ mod tests {
             CatalogEntry::new("titles".to_owned(), Vec::new(), UrlScope::Any),
             CatalogEntry::new("none".to_owned(), Vec::new(), UrlScope::None),
         ]);
-        let handled_hosts = CatalogHosts::from_catalog(&catalog);
-
         assert!(is_catalog_handled(
             &Url::parse("https://www.imdb.com/title/tt1375666").unwrap(),
-            Some(&handled_hosts)
+            Some(&catalog)
         ));
         assert!(is_catalog_handled(
             &Url::parse("https://IMDB.com/title/tt1375666").unwrap(),
-            Some(&handled_hosts)
+            Some(&catalog)
         ));
         assert!(!is_catalog_handled(
             &Url::parse("https://maero.dk").unwrap(),
-            Some(&handled_hosts)
+            Some(&catalog)
         ));
         assert!(!is_catalog_handled(
             &Url::parse("https://example.com").unwrap(),
-            Some(&handled_hosts)
+            Some(&catalog)
         ));
         assert!(!is_catalog_handled(
             &Url::parse("https://maero.dk").unwrap(),

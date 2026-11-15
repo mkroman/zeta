@@ -11,7 +11,6 @@
 
 use std::fmt::{self, Display};
 
-use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use url::Url;
@@ -22,6 +21,7 @@ use zeta_http::reqwest::header::AUTHORIZATION;
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
+use zeta_utils::text::format_number;
 
 /// The Thingiverse hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
@@ -172,14 +172,14 @@ impl Display for Thing {
             " thing"
         };
 
-        let likes = self.like_count.to_formatted_string(&Locale::en);
+        let likes = format_number(self.like_count);
         let like_noun = if self.like_count == 1 {
             "like"
         } else {
             "likes"
         };
 
-        let downloads = self.download_count.to_formatted_string(&Locale::en);
+        let downloads = format_number(self.download_count);
         let dl_noun = if self.download_count == 1 {
             "download"
         } else {
@@ -192,7 +192,7 @@ impl Display for Thing {
         )?;
 
         if self.collect_count > 0 {
-            let collects = self.collect_count.to_formatted_string(&Locale::en);
+            let collects = format_number(self.collect_count);
             let coll_noun = if self.collect_count == 1 {
                 "collection"
             } else {

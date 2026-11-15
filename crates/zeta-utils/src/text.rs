@@ -3,6 +3,8 @@
 use std::borrow::Cow;
 use std::fmt::{self, Write as _};
 
+use num_format::{Locale, ToFormattedString};
+
 mod article;
 
 pub use article::indefinite_article;
@@ -370,6 +372,15 @@ pub fn pluralize(count: usize, noun: &str) -> String {
     format!("{count} {noun}{suffix}")
 }
 
+/// Formats `value` with thousands separators, using the English grouping convention.
+///
+/// Counts shown in replies — followers, views, votes — are routinely in the millions, where
+/// `1,234,567` reads faster than the bare digits.
+#[must_use]
+pub fn format_number(value: u64) -> String {
+    value.to_formatted_string(&Locale::en)
+}
+
 /// Collapses runs of whitespace in `value` into single spaces, trimming the result.
 ///
 /// Text assembled from web pages carries line breaks and repeated spaces that an IRC message
@@ -587,6 +598,15 @@ mod tests {
                 .join_with_separators(", ", " and "),
             "a, b and c"
         );
+    }
+
+    #[test]
+    fn formats_numbers_with_thousands_separators() {
+        assert_eq!(format_number(0), "0");
+        assert_eq!(format_number(999), "999");
+        assert_eq!(format_number(1_000), "1,000");
+        assert_eq!(format_number(1_234_567), "1,234,567");
+        assert_eq!(format_number(u64::MAX), "18,446,744,073,709,551,615");
     }
 
     #[test]
