@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_mirror::{MediaId, Mirror, MirrorHandle};
-use zeta_plugin::Context;
 use zeta_plugin::irc::{plain_reply, send_reply, send_reply_via};
+use zeta_plugin::{Chain, Context};
 
 /// The mirror configuration shared by the mirroring plugins.
 ///
@@ -57,8 +57,9 @@ impl MirrorSettings {
 /// Without a configured mirror this is a no-op, leaving the plugin to its non-mirroring
 /// behavior. If the media has already been mirrored, the existing link is sent immediately;
 /// otherwise the download and upload happen in a background task that replies with the link once
-/// it is ready. A failed mirror check is logged and leaves the channel without a reply. The
-/// channel is shared as an `Arc<str>` because the reply callback outlives this call.
+/// it is ready. A failed mirror check is logged and leaves the channel without a reply, and so is
+/// a failed send in either reply path. The channel is shared as an `Arc<str>` because the reply
+/// callback outlives this call.
 pub async fn ensure_mirrored_if_configured(
     mirror: Option<&MirrorHandle>,
     url: &str,
@@ -76,19 +77,23 @@ pub async fn ensure_mirrored_if_configured(
     let on_mirrored = {
         let channel = Arc::clone(&channel);
         move |link: String| {
-            let _ = send_reply_via(&sender, &channel, plain_reply(link));
+            if let Err(error) = send_reply_via(&sender, &channel, plain_reply(link)) {
+                warn!(exception.message = %error, "could not send the mirrored link");
+            }
         }
     };
 
     match mirror.ensure_mirrored(url, id, on_mirrored).await {
         Ok(Some(link)) => {
-            let _ = send_reply(client, &channel, plain_reply(&link));
+            if let Err(error) = send_reply(client, &channel, plain_reply(&link)) {
+                warn!(exception.message = %error, "could not send the mirrored link");
+            }
         }
         Ok(None) => {}
         Err(error) => {
             warn!(
                 media.id = %id,
-                exception.message = %error,
+                exception.message = %Chain(&error),
                 "could not check if the media is already mirrored"
             );
         }
