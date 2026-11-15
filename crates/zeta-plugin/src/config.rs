@@ -9,23 +9,51 @@ use serde::de::DeserializeOwned;
 #[cfg(feature = "http")]
 use zeta_http::HttpConfig;
 
+use crate::hostmask::Hostmasks;
+
 /// The subset of the host configuration plugins can see through their context.
 ///
 /// This is deliberately narrower than the host's configuration: per-plugin settings are handed
 /// to each plugin through its constructor, and host-only sections (database, tracing, the IRC
 /// connection, the media mirror) never reach plugin code.
+///
+/// The host builds this once at startup, so the admin hostmasks of `[irc].admin_hostmasks` are
+/// compiled into a single [`Hostmasks`] matcher. Plugins clone that matcher instead of compiling
+/// the configured list themselves, which also logs the "no admin hostmasks configured" warning
+/// exactly once.
 #[derive(Clone, Debug, Default)]
 pub struct HostConfig {
     /// HTTP configuration for the shared client
     /// ([`Context::http`](crate::Context::http)) and for plugins that build their own clients.
     #[cfg(feature = "http")]
     pub http: HttpConfig,
-    /// Hostmasks of admin users, in `nick!user@hostname` form, where any of the three
-    /// components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or `*!*@example.com`.
+    /// The admin hostmasks, compiled once by the host at startup.
+    admins: Hostmasks,
+}
+
+impl HostConfig {
+    /// Builds the plugin-visible configuration from the host's sections.
     ///
-    /// Mirrored from the host's `[irc].admin_hostmasks` for plugins that authorize
-    /// administrative commands.
-    pub admin_hostmasks: Vec<String>,
+    /// `admins` is the matcher the host compiled from `[irc].admin_hostmasks` at startup, so
+    /// every plugin matches senders against the same patterns.
+    #[must_use]
+    pub const fn new(#[cfg(feature = "http")] http: HttpConfig, admins: Hostmasks) -> Self {
+        Self {
+            #[cfg(feature = "http")]
+            http,
+            admins,
+        }
+    }
+
+    /// Returns the compiled admin hostmasks of `[irc].admin_hostmasks`.
+    ///
+    /// A sender is an admin when its `nick!user@host` matches one of the configured patterns,
+    /// where any of the three components may contain wildcards (`*` or `?`), e.g. `mk!mk@*` or
+    /// `*!*@example.com`. With no hostmasks configured, nobody is an admin.
+    #[must_use]
+    pub const fn admins(&self) -> &Hostmasks {
+        &self.admins
+    }
 }
 
 /// Deserializes `value` into `T`, collecting the keys that `T` did not recognize.

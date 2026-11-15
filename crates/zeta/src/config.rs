@@ -24,6 +24,7 @@ use figment::{
 };
 use miette::{IntoDiagnostic, WrapErr};
 use serde::Deserialize;
+use zeta_plugin::Hostmasks;
 
 pub use self::database::DbConfig;
 pub use self::irc::{IrcChannelConfig, IrcConfig, IrcTlsConfig};
@@ -35,10 +36,12 @@ pub use zeta_mirror::MirrorConfig;
 /// The plugin-visible subset of the configuration, as carried on the plugins' context.
 impl From<&Config> for zeta_plugin::config::HostConfig {
     fn from(config: &Config) -> Self {
-        Self {
-            http: config.http.clone(),
-            admin_hostmasks: config.irc.admin_hostmasks.clone(),
-        }
+        // Compiling the admin hostmasks here, once at startup, keeps every plugin that
+        // authorizes administrative commands from compiling the same list again — and turns the
+        // no-hostmasks warning into a single startup line instead of one per plugin.
+        let admins = Hostmasks::compile(&config.irc.admin_hostmasks, "run admin commands");
+
+        Self::new(config.http.clone(), admins)
     }
 }
 

@@ -86,7 +86,7 @@ impl FilterPlugin {
         ctx.shared()
             .publish(Arc::new(FilterHandle::new(service.clone())));
 
-        let admins = Hostmasks::compile(&ctx.config().admin_hostmasks, "manage filters");
+        let admins = ctx.config().admins().clone();
 
         Ok(Self { service, admins })
     }
