@@ -33,6 +33,7 @@ use zeta_plugin::{
     plugin_err, resolve_secret,
 };
 use zeta_utils::irc;
+use zeta_utils::text::TruncatableExt;
 
 use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat};
 use coinmarketcap::{Client as CmcClient, ClientOptions, Error};
@@ -362,15 +363,17 @@ impl CoinMarketCap {
         Ok(())
     }
 
-    /// Replies with the message of a failed coin lookup, logging unexpected failures.
+    /// Replies with the reply-grade message for a failed coin lookup, logging unexpected
+    /// failures.
     fn reply_error(client: &Client, channel: &str, err: &Error) -> Result<(), ZetaError> {
         // Unknown coins and unsupported currencies are user errors: they are replied to
-        // verbatim, without logging. Anything else is unexpected and worth a warning.
+        // verbatim, without logging. Anything else is unexpected and worth a warning; the
+        // operator-grade chain is logged because the client logs the failed request at debug.
         if !matches!(err, Error::NotFound | Error::InvalidCurrency(_)) {
             warn!(exception.message = %Chain(err), "coin lookup failed");
         }
 
-        send_reply(client, channel, plain_reply(err.to_string()))?;
+        send_reply(client, channel, plain_reply(reply_message(err)))?;
 
         Ok(())
     }
@@ -459,6 +462,42 @@ impl CoinMarketCap {
     }
 }
 
+/// The longest unsupported-currency value echoed in a reply, in characters.
+const MAX_CURRENCY_CHARS: usize = 16;
+
+/// Formats the reply-grade sentence for a failed coin lookup.
+///
+/// The client [`Error`]'s `Display` is operator-facing: [`Error::Api`] carries the API's own
+/// error message and [`Error::Deserialize`] the parse detail, neither of which a channel may
+/// see. Only the unsupported currency — a value the user typed — is echoed back, styled out and
+/// bounded so it cannot break or restyle the reply line.
+fn reply_message(err: &Error) -> String {
+    let Error::InvalidCurrency(currency) = err else {
+        return reply_context(err).to_owned();
+    };
+
+    format!(
+        "unsupported currency: {}",
+        irc::unstyle_text(currency).truncate_within(MAX_CURRENCY_CHARS, "…")
+    )
+}
+
+/// The fixed reply sentence for a failed coin lookup that echoes no API-provided text.
+const fn reply_context(err: &Error) -> &'static str {
+    match err {
+        Error::NotFound => "no such coin",
+        Error::InvalidCurrency(_) => "unsupported currency",
+        Error::Api(_) => "could not retrieve the coin information",
+        Error::Build(_) | Error::Request(_) => "could not reach the CoinMarketCap API",
+        Error::InvalidApiKey(_) => "the CoinMarketCap API key is invalid",
+        Error::Deserialize(_) => "could not parse the response from CoinMarketCap",
+        // `coinmarketcap::Error` is `#[non_exhaustive]` and lives in another crate, so an
+        // exhaustive match is impossible here. A variant added there gets this fixed sentence
+        // until it is given wording of its own; `reply_error` still logs it as unexpected.
+        _ => "could not look up the coin",
+    }
+}
+
 /// Parses and validates the optional conversion currency of a command invocation.
 ///
 /// The input is sanitized before validation, so an unsupported currency can be echoed back to
@@ -484,7 +523,8 @@ fn parse_currency(
 mod tests {
     use super::*;
     use zeta_plugin::{ArgsError, Registered};
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
+    use zeta_test_support::{refused_get, settings_tests};
 
     /// Builds a coin list for cache tests.
     fn test_coins() -> Vec<Coin> {
@@ -674,6 +714,101 @@ mod tests {
         assert_eq!(
             parse_currency(Some("\u{4}FF0000usd"), "EUR", is_valid).unwrap(),
             "USD"
+        );
+    }
+
+    #[test]
+    fn maps_lookup_failures_to_reply_grade_messages() {
+        // A newline is not a valid header value, so the client rejects the key.
+        let invalid_api_key =
+            CmcClient::try_new("bad\nkey").expect_err("the api key is not a header value");
+
+        let cases = [
+            (Error::NotFound, "no such coin"),
+            (
+                Error::InvalidCurrency("xyz".to_string()),
+                "unsupported currency: xyz",
+            ),
+            (
+                Error::Api("secret body".to_string()),
+                "could not retrieve the coin information",
+            ),
+            (invalid_api_key, "the CoinMarketCap API key is invalid"),
+        ];
+
+        for (err, expected) in cases {
+            assert_eq!(reply_message(&err), expected, "{err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn maps_transport_failures_to_reply_grade_messages() {
+        let (error, _) = refused_get("secret").await;
+        let build = Error::Build(error.into());
+        assert_eq!(
+            reply_message(&build),
+            "could not reach the CoinMarketCap API"
+        );
+
+        let (error, _) = refused_get("secret").await;
+        let request = Error::Request(error.into());
+        assert_eq!(
+            reply_message(&request),
+            "could not reach the CoinMarketCap API"
+        );
+    }
+
+    #[tokio::test]
+    async fn maps_deserialize_failures_to_a_reply_grade_message() {
+        let server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200).set_body_string("{"))
+            .mount(&server)
+            .await;
+
+        let client =
+            CmcClient::try_new_with_base("test-api-key", &ClientOptions::default(), &server.uri())
+                .unwrap();
+        let err = client.fiat_map().await.expect_err("malformed json");
+
+        assert_eq!(
+            reply_message(&err),
+            "could not parse the response from CoinMarketCap"
+        );
+    }
+
+    #[test]
+    fn keeps_api_text_out_of_the_reply() {
+        let err = Error::Api("secret body".to_string());
+        let reply = plain_reply(reply_message(&err));
+
+        assert_eq!(
+            reply,
+            plain_reply("could not retrieve the coin information")
+        );
+        assert!(!reply.contains("secret body"), "{reply:?}");
+    }
+
+    #[test]
+    fn sanitizes_the_currency_in_unsupported_currency_replies() {
+        // The color code and its parameters must not survive into the reply.
+        let err = Error::InvalidCurrency("\u{3}10xyz\u{f}".to_string());
+        let reply = reply_message(&err);
+
+        assert_eq!(reply, "unsupported currency: xyz");
+        assert!(!reply.chars().any(char::is_control), "{reply:?}");
+        assert!(!reply.contains('\u{3}'), "{reply:?}");
+    }
+
+    #[test]
+    fn bounds_the_currency_in_unsupported_currency_replies() {
+        let err = Error::InvalidCurrency("A".repeat(100));
+        let reply = reply_message(&err);
+
+        assert!(reply.ends_with('…'), "{reply:?}");
+        assert_eq!(
+            reply.chars().count(),
+            "unsupported currency: ".chars().count() + MAX_CURRENCY_CHARS
         );
     }
 
