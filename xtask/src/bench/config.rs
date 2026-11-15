@@ -123,6 +123,15 @@ pub struct Waiver {
 /// Accepted regressions. Add an entry in the pull request that accepts the regression so the
 /// trade-off is reviewed and stays visible in the report.
 pub const WAIVERS: &[Waiver] = &[
+    Waiver {
+        benchmark: "bench_pipeline",
+        case: Some("url"),
+        metric: Metric::Ir,
+        reason: "The structured `Error` variants change the generated handler's `Result` \
+                 layout; the url case is +80 Ir while the command case is -95 Ir and the \
+                 suite total is -0.05%.",
+        expires: Some("2027-05-01"),
+    },
     // Waiver {
     //     benchmark: "bench_oxford_join_filtered_iterator",
     //     case: Some("sixty_four_items"),
