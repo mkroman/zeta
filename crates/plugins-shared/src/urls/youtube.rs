@@ -80,7 +80,7 @@ fn parse_youtu_be_url(url: &Url) -> Option<UrlKind<'_>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::assert_parses;
+    use zeta_test_support::{assert_parses, assert_url_hosts_cover};
 
     impl UrlKind<'_> {
         /// Copies the ids out of the parsed URL, so a test can name the expected value before
@@ -211,16 +211,6 @@ mod tests {
             ("www.youtube.com", "/watch?v=dQw4w9WgXcQ"),
         ];
 
-        assert_eq!(cases.len(), URL_HOSTS.len());
-
-        for (host, path) in cases {
-            assert!(URL_HOSTS.contains(&host), "{host} is not advertised");
-
-            let url = Url::parse(&format!("https://{host}{path}")).unwrap();
-            assert!(
-                parse_youtube_url(&url).is_some(),
-                "{host}{path} is advertised but does not classify"
-            );
-        }
+        assert_url_hosts_cover(URL_HOSTS, &cases, |url| parse_youtube_url(url).is_some());
     }
 }

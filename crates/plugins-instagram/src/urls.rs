@@ -214,7 +214,7 @@ fn is_valid_shortcode(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::assert_parses;
+    use zeta_test_support::{assert_parses, assert_url_hosts_cover};
 
     #[test]
     // The table-driven cases below are re-wrapped by rustfmt, which stretches the function
@@ -467,16 +467,6 @@ mod tests {
             ("www.instagram.com", "/p/DdUGmgAifcq"),
         ];
 
-        assert_eq!(cases.len(), URL_HOSTS.len());
-
-        for (host, path) in cases {
-            assert!(URL_HOSTS.contains(&host), "{host} is not advertised");
-
-            let url = Url::parse(&format!("https://{host}{path}")).unwrap();
-            assert!(
-                parse_instagram_url(&url).is_some(),
-                "{host}{path} is advertised but does not classify"
-            );
-        }
+        assert_url_hosts_cover(URL_HOSTS, &cases, |url| parse_instagram_url(url).is_some());
     }
 }

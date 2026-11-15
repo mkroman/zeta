@@ -369,6 +369,37 @@ pub fn assert_parses<T: std::fmt::Debug + PartialEq>(
     }
 }
 
+/// Asserts that every advertised URL host has a case and that `parse` accepts it.
+///
+/// `cases` pairs each advertised host with a path it must classify. The lengths must match, so
+/// a host added to `hosts` without a case (or a stale case) fails the test.
+///
+/// # Panics
+///
+/// Panics when the counts differ, a case names an unadvertised host, the constructed URL does
+/// not parse, or `parse` rejects it.
+pub fn assert_url_hosts_cover(
+    hosts: &[&str],
+    cases: &[(&str, &str)],
+    parse: impl Fn(&Url) -> bool,
+) {
+    assert_eq!(
+        cases.len(),
+        hosts.len(),
+        "every advertised host needs a case"
+    );
+
+    for (host, path) in cases {
+        assert!(hosts.contains(host), "{host} is not advertised");
+
+        let url = Url::parse(&format!("https://{host}{path}")).expect("test URL parses");
+        assert!(
+            parse(&url),
+            "{host}{path} is advertised but does not classify"
+        );
+    }
+}
+
 /// Generates the three settings tests shared by every plugin with a configuration section.
 ///
 /// Expands to a `default_settings` test asserting the values produced by [`Default`], a
@@ -467,6 +498,7 @@ macro_rules! assert_empty {
 mod tests {
     // The gate is load-bearing: with `http` off, no test below uses anything from `super`, and
     // a fully-unused glob import warns.
+    use super::assert_url_hosts_cover;
     #[cfg(feature = "http")]
     use super::*;
 
@@ -499,6 +531,27 @@ mod tests {
             .expect("the panic payload is a string");
 
         assert!(message.contains("#zeta must have no strays"), "{message}");
+    }
+
+    #[test]
+    fn assert_url_hosts_cover_checks_every_advertised_host() {
+        let hosts = ["example.com", "www.example.com"];
+        let cases = [("example.com", "/"), ("www.example.com", "/path")];
+
+        assert_url_hosts_cover(&hosts, &cases, |url| url.scheme() == "https");
+
+        let panic = std::panic::catch_unwind(|| {
+            assert_url_hosts_cover(&hosts, &cases[..1], |_| true);
+        })
+        .expect_err("a missing case must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(
+            message.contains("every advertised host needs a case"),
+            "{message}"
+        );
     }
 
     #[cfg(feature = "http")]

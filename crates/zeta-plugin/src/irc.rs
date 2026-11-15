@@ -18,8 +18,9 @@ use crate::command::{ArgsError, ArgsMode};
 use crate::event::CommandEvent;
 
 pub use zeta_utils::irc::{
-    BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply, labeled_reply_prefix,
-    plain_reply, unstyle_text, usage_line, write_labeled_reply_prefix,
+    BOLD, COLOR, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, context_reply, context_reply_with,
+    labeled_reply, labeled_reply_prefix, plain_reply, unstyle_text, usage_line,
+    write_labeled_reply_prefix,
 };
 
 /// Sends each non-empty usage line as its own `PRIVMSG`.

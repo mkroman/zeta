@@ -14,7 +14,9 @@ use dendanskeordbog::DictionaryDocument;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use zeta_plugin::irc::{labeled_reply_prefix, plain_reply, reply_lookup, unstyle_text};
+use zeta_plugin::irc::{
+    context_reply, labeled_reply_prefix, plain_reply, reply_lookup, unstyle_text,
+};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
 
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
@@ -45,19 +47,12 @@ impl Default for Settings {
 /// A missing entry and a `404` are no results; every other failure is reduced to the context,
 /// because the caller logs the error.
 fn lookup_reply(error: &dendanskeordbog::Error) -> String {
-    const NO_RESULTS: &str = "No results found";
     const CONTEXT: &str = "could not look up the word";
 
-    let no_results = match error {
-        dendanskeordbog::Error::MissingElement(_) => true,
-        dendanskeordbog::Error::Status(status) => status.as_u16() == 404,
-        _ => false,
-    };
-
-    if no_results {
-        NO_RESULTS.to_owned()
+    if error.is_not_found() {
+        context_reply("No results found")
     } else {
-        CONTEXT.to_owned()
+        context_reply(CONTEXT)
     }
 }
 

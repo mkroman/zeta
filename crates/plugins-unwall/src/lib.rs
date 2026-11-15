@@ -47,7 +47,8 @@ use tracing::{debug, warn};
 
 use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{
-    COLOR, RESET, labeled_reply, parse_or_usage, plain_reply, send_reply, send_reply_via,
+    COLOR, RESET, context_reply, labeled_reply, parse_or_usage, plain_reply, send_reply,
+    send_reply_via,
 };
 use zeta_plugin::{
     ArgsMode, Client, CommandEvent, CommandSpec, Context, Hostmasks, Sender, Subscriptions,
@@ -161,7 +162,7 @@ struct Info {
 fn resolve_reply(error: &Error) -> String {
     match error {
         Error::Status(_) | Error::InvalidUrl => error.to_string(),
-        _ => "could not unwall the article".to_owned(),
+        _ => context_reply("could not unwall the article"),
     }
 }
 

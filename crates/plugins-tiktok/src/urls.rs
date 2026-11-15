@@ -105,7 +105,7 @@ fn is_valid_short_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::assert_parses;
+    use zeta_test_support::{assert_parses, assert_url_hosts_cover};
 
     #[test]
     fn test_parse_urls() {
@@ -215,16 +215,6 @@ mod tests {
             ("www.tiktok.com", "/@dailymail/video/7541501431543532814"),
         ];
 
-        assert_eq!(cases.len(), URL_HOSTS.len());
-
-        for (host, path) in cases {
-            assert!(URL_HOSTS.contains(&host), "{host} is not advertised");
-
-            let url = Url::parse(&format!("https://{host}{path}")).unwrap();
-            assert!(
-                parse_tiktok_url(&url).is_some(),
-                "{host}{path} is advertised but does not classify"
-            );
-        }
+        assert_url_hosts_cover(URL_HOSTS, &cases, |url| parse_tiktok_url(url).is_some());
     }
 }

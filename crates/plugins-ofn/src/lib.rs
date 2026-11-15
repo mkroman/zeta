@@ -30,7 +30,7 @@ use url::Url;
 
 use self::service::OfnService;
 use zeta_plugin::database::Attribution;
-use zeta_plugin::irc::{labeled_reply, send_reply};
+use zeta_plugin::irc::{context_reply, context_reply_with, labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_utils::duration::TimeInWordsExt;
 
@@ -39,9 +39,11 @@ use zeta_utils::duration::TimeInWordsExt;
 /// A URL without a host names the domain reason; a database failure is reduced to the context,
 /// because the caller logs the error.
 fn record_reply(error: &Error) -> String {
+    const CONTEXT: &str = "could not record the URL";
+
     match error {
-        Error::InsertUrlNoHost => "could not record the URL: it has no host".to_owned(),
-        Error::Database(_) => "could not record the URL".to_owned(),
+        Error::InsertUrlNoHost => context_reply_with(CONTEXT, &"it has no host"),
+        Error::Database(_) => context_reply(CONTEXT),
     }
 }
 
