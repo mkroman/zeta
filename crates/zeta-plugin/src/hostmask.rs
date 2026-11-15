@@ -10,7 +10,11 @@ use wildmatch::WildMatch;
 use crate::event::Sender;
 
 /// The compiled admin hostmasks of `[irc] admin_hostmasks`.
-#[derive(Debug, Default)]
+///
+/// The host compiles the configured list once at startup and hands the matcher to the plugins
+/// through [`HostConfig::admins`](crate::HostConfig::admins); cloning it shares the compiled
+/// patterns instead of compiling the list again.
+#[derive(Clone, Debug, Default)]
 pub struct Hostmasks(Vec<WildMatch>);
 
 impl Hostmasks {

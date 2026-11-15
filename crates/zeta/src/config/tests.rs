@@ -11,6 +11,7 @@ use figment::{
     Figment,
     providers::{Format, Toml},
 };
+use zeta_plugin::Sender;
 use zeta_test_support::assert_empty;
 
 use super::*;
@@ -178,5 +179,11 @@ fn host_config_mirrors_the_visible_subset() {
     let host = zeta_plugin::config::HostConfig::from(&config);
 
     assert_eq!(host.http, config.http);
-    assert_eq!(host.admin_hostmasks, ["mk!mk@*"]);
+
+    // The host compiles the configured masks once; the plugin-visible config exposes the
+    // matcher rather than the raw strings.
+    let admins = host.admins();
+
+    assert!(admins.matches(Sender::new("mk", "mk", "example.com")));
+    assert!(!admins.matches(Sender::new("someone", "else", "example.com")));
 }
