@@ -211,14 +211,14 @@ impl CoinMarketCap {
     ) -> Result<Self, ZetaError> {
         let api_key = resolve_secret(settings.api_key.as_deref(), "COINMARKETCAP_API_KEY")?;
         let mut options = ClientOptions::default();
-        options.timeout = Some(ctx.config.http.timeout);
-        options.user_agent = Some(ctx.config.http.user_agent.clone());
+        options.timeout = Some(ctx.config().http.timeout);
+        options.user_agent = Some(ctx.config().http.user_agent.clone());
         let client =
             Arc::new(CmcClient::try_new_with_options(api_key, &options).map_err(plugin_err)?);
 
         // The keyed CoinMarketCap client is published for other plugins to reuse, e.g. the
         // rink plugin's live cryptocurrency units.
-        ctx.shared.publish(Arc::clone(&client));
+        ctx.shared().publish(Arc::clone(&client));
 
         for (command, _) in COIN_COMMANDS {
             subscriptions.command(*command);
@@ -578,7 +578,7 @@ mod tests {
 
         <CoinMarketCap as Registered>::new(&ctx, &settings, &mut subscriptions).unwrap();
 
-        assert!(ctx.shared.get::<CmcClient>().is_some());
+        assert!(ctx.shared().get::<CmcClient>().is_some());
     }
 
     /// The default cache lifetime, as configured in [`Settings::default`].

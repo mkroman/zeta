@@ -59,7 +59,7 @@ impl<P> Registry<P> {
             })
             .collect();
 
-        ctx.shared.publish(Arc::new(PluginCatalog::new(entries)));
+        ctx.shared().publish(Arc::new(PluginCatalog::new(entries)));
     }
 
     /// Returns the number of plugins that were successfully initialized.
@@ -231,7 +231,7 @@ mod tests {
         registry.publish_catalog(&ctx);
 
         let catalog = ctx
-            .shared
+            .shared()
             .get::<PluginCatalog>()
             .expect("the catalog should be published");
 

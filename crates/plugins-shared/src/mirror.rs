@@ -43,7 +43,7 @@ impl MirrorSettings {
     #[must_use]
     pub fn resolve(&self, ctx: &Context, plugin_name: &str) -> Option<MirrorHandle> {
         MirrorHandle::resolve(
-            ctx.shared.get::<Mirror>(),
+            ctx.shared().get::<Mirror>(),
             plugin_name,
             self.prefix.as_deref(),
             self.public_url_base.as_deref(),

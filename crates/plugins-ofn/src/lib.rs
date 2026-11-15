@@ -105,7 +105,7 @@ impl Ofn {
 impl Ofn {
     fn new(ctx: &Context) -> Result<Self, ZetaError> {
         Ok(Self {
-            service: OfnService::new(ctx.db.clone()),
+            service: OfnService::new(ctx.db().clone()),
         })
     }
 

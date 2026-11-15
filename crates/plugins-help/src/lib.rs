@@ -38,7 +38,7 @@ impl Help {
         let channel = command.channel();
         let args = command.args();
 
-        let Some(catalog) = ctx.shared.get::<PluginCatalog>() else {
+        let Some(catalog) = ctx.shared().get::<PluginCatalog>() else {
             send_reply(
                 client,
                 channel,

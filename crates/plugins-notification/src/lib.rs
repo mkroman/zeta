@@ -65,7 +65,7 @@ impl NotificationPlugin {
         subscriptions.command(NOTIFY);
 
         Ok(Self {
-            service: NotificationService::new(ctx.db.clone(), settings),
+            service: NotificationService::new(ctx.db().clone(), settings),
         })
     }
 
