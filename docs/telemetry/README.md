@@ -125,8 +125,9 @@ the disconnect reason, but no messaging attributes, because a server `ERROR` is 
 
 - A command replies once: the outcome, or a user-facing failure. A failure carries a stable
   domain reason when one exists (`subreddit not found`, `not a usable article URL`) and a
-  fixed string otherwise. Never reply with the raw `Display` of an `ApiError`, `DbError`,
-  `sqlx::Error`, raw transport internals, HTTP-body detail, or serde error.
+  fixed string otherwise. Never reply with the raw `Display` of an `ApiError`, `sqlx::Error`,
+  raw transport internals, HTTP-body detail, or serde error. `DbError` is reply-grade
+  (`could not load alerts`); its `sqlx` detail stays in `source()`, for the operator log only.
 - Reply text is formatted at the reply site, not by a reply error type: a safe domain variant
   contributes its `#[error]` `Display` (or a fixed reason where the API text is too terse), and
   an internal failure falls back to the operation's context alone. The original error is logged
