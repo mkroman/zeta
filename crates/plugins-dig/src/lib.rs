@@ -25,7 +25,7 @@ use thiserror::Error;
 use tracing::{Instrument, debug};
 
 use zeta_plugin::irc::{labeled_reply, labeled_reply_prefix, send_reply};
-use zeta_plugin::{BoxError, Client, Context, ZetaError, plugin};
+use zeta_plugin::{BoxError, Chain, Client, Context, ZetaError, plugin};
 use zeta_utils::irc;
 
 /// Settings for the dig plugin, from its `[plugins.dig]` configuration section.
@@ -80,7 +80,9 @@ pub struct Opts {
 #[derive(Error, Debug)]
 pub enum Error {
     /// The domain could not be resolved through the configured nameservers.
-    #[error("could not resolve domain: {0}")]
+    ///
+    /// `Display` is reply-grade; the resolver detail stays in the source chain.
+    #[error("could not resolve the domain")]
     Resolve(#[source] NetError),
 }
 
@@ -141,6 +143,7 @@ impl Dig {
                 }
             }
             Err(err) => {
+                debug!(exception.message = %Chain(&err), "dns lookup failed");
                 send_reply(client, channel, labeled_reply("Dig", err.to_string()))?;
             }
         }
@@ -245,6 +248,20 @@ mod tests {
     fn parses_record_types_case_insensitively() {
         assert_eq!(record_type_from_str("mx").unwrap(), RecordType::MX);
         assert!(record_type_from_str("nope").is_err());
+    }
+
+    #[test]
+    fn resolve_errors_display_a_reply_grade_sentence() {
+        let error = Error::Resolve(NetError::Msg("resolver detail".to_owned()));
+
+        assert_eq!(error.to_string(), "could not resolve the domain");
+        assert!(!error.to_string().contains("resolver detail"));
+
+        let source = std::error::Error::source(&error)
+            .expect("the resolver detail stays in the source chain")
+            .to_string();
+
+        assert!(source.contains("resolver detail"), "{source}");
     }
 
     settings_tests! {

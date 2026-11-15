@@ -15,6 +15,11 @@ use crate::json;
 use crate::{BoxFuture, RequestError};
 
 /// The errors produced when sending a request and parsing its JSON response.
+///
+/// [`Display`](std::fmt::Display) is reply-grade: it names the failure without the response
+/// body or parse detail, so a plugin may pass it to a channel. The operator detail stays out
+/// of the message: [`ApiError::Status`] keeps its body in the field, [`ApiError::Deserialize`]
+/// in `source()`.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ApiError {
@@ -35,7 +40,11 @@ pub enum ApiError {
         body: String,
     },
     /// The response body could not be parsed as JSON.
-    #[error("could not deserialize response: {0}")]
+    ///
+    /// `Display` is reply-grade; the serde path and detail stay in `source()`. [`parse_response`]
+    /// parses through [`json::from_str`], which logs the failure with the bounded body at error
+    /// level, so the operator detail is not lost when the source chain is not rendered.
+    #[error("could not parse the response")]
     Deserialize(#[source] json::Error),
 }
 
@@ -279,4 +288,25 @@ pub async fn get_text(request: reqwest::RequestBuilder) -> Result<String, ApiErr
     let response = send(request).await?;
 
     parse_text(response).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_errors_display_a_reply_grade_sentence() {
+        let parse_error = json::from_str::<serde_json::Value>("<html>not json</html>")
+            .expect_err("the body is not JSON");
+        let error = ApiError::Deserialize(parse_error);
+
+        let display = error.to_string();
+        let source = std::error::Error::source(&error)
+            .expect("the serde detail stays in the source chain")
+            .to_string();
+
+        assert_eq!(display, "could not parse the response");
+        assert!(!source.is_empty(), "the source carries the serde detail");
+        assert!(!display.contains(&source), "{display}");
+    }
 }

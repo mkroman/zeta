@@ -20,7 +20,7 @@ use zeta_http as http;
 use zeta_http::oauth::Credentials;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
-use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
+use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text::{format_number, pluralize_noun};
 
@@ -60,7 +60,9 @@ pub struct Twitch {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// The Twitch API returned an error response.
-    #[error(transparent)]
+    ///
+    /// `Display` is reply-grade; the underlying failure stays in the source chain.
+    #[error("the twitch request failed")]
     Api(#[from] http::ApiError),
     /// An irc error occurred while sending the reply.
     #[error("irc error: {0}")]
@@ -161,7 +163,7 @@ impl Twitch {
             };
 
             if let Err(e) = result {
-                warn!(exception.message = %e, "twitch plugin error");
+                warn!(exception.message = %Chain(&e), "twitch plugin error");
             }
         }
 
@@ -268,6 +270,21 @@ impl Twitch {
 mod tests {
     use super::*;
     use zeta_test_support::settings_tests;
+
+    #[test]
+    fn api_failures_display_a_reply_grade_sentence() {
+        let error = Error::Api(http::ApiError::Status {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "secret body".to_owned(),
+        });
+
+        assert_eq!(error.to_string(), "the twitch request failed");
+        assert!(!error.to_string().contains("secret body"));
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "the api failure stays in the source chain"
+        );
+    }
 
     settings_tests! {
         Settings,
