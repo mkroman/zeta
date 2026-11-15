@@ -7,8 +7,10 @@ pub type ParseError = serde_path_to_error::Error<serde_json::Error>;
 
 /// Errors that can occur during coin lookups.
 ///
-/// The [`Display`](std::fmt::Display) representation of each variant is the message that is
-/// replied to the channel.
+/// The [`Display`](std::fmt::Display) representation is the operator-facing message: it may
+/// carry the API's own error text or the detail of a failed parse, so it belongs in a log line.
+/// Reply paths map the failure to reply-grade wording instead — see the CoinMarketCap plugin's
+/// `reply_message` — and never send this `Display` to a channel.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
