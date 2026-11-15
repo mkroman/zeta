@@ -95,7 +95,7 @@ impl Imdb {
     ) -> Result<Self, ZetaError> {
         subscriptions.command(COMMAND);
 
-        let client = GraphQlClient::try_new(settings, &ctx.config().http).map_err(plugin_err)?;
+        let client = GraphQlClient::try_new(settings, ctx.config().http()).map_err(plugin_err)?;
 
         Ok(Self { client })
     }

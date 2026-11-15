@@ -149,7 +149,7 @@ impl Context {
     #[must_use]
     pub fn http(&self) -> &reqwest::Client {
         self.http
-            .get_or_init(|| zeta_http::build_client(&self.config.http))
+            .get_or_init(|| zeta_http::build_client(self.config.http()))
     }
 }
 

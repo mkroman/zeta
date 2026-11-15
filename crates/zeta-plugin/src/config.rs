@@ -21,12 +21,15 @@ use crate::hostmask::Hostmasks;
 /// compiled into a single [`Hostmasks`] matcher. Plugins clone that matcher instead of compiling
 /// the configured list themselves, which also logs the "no admin hostmasks configured" warning
 /// exactly once.
+///
+/// The configuration is read through accessors rather than fields: [`HostConfig::http`] returns
+/// the HTTP settings and [`HostConfig::admins`] the compiled admin hostmasks.
 #[derive(Clone, Debug, Default)]
 pub struct HostConfig {
     /// HTTP configuration for the shared client
     /// ([`Context::http`](crate::Context::http)) and for plugins that build their own clients.
     #[cfg(feature = "http")]
-    pub http: HttpConfig,
+    http: HttpConfig,
     /// The admin hostmasks, compiled once by the host at startup.
     admins: Hostmasks,
 }
@@ -43,6 +46,17 @@ impl HostConfig {
             http,
             admins,
         }
+    }
+
+    /// Returns the HTTP configuration for the shared client
+    /// ([`Context::http`](crate::Context::http)) and for plugins that build their own clients.
+    ///
+    /// The values come from the host's `[http]` section and are validated at startup, so a plugin
+    /// can apply the same timeout and user agent to a client it builds itself.
+    #[cfg(feature = "http")]
+    #[must_use]
+    pub const fn http(&self) -> &HttpConfig {
+        &self.http
     }
 
     /// Returns the compiled admin hostmasks of `[irc].admin_hostmasks`.
