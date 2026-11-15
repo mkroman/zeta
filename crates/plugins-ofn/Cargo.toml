@@ -13,11 +13,11 @@ default = []
 [dependencies]
 clap.workspace = true
 plugins-shared = { workspace = true }
-sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }
+sqlx = { workspace = true, features = ["migrate", "macros", "chrono"] }
 thiserror.workspace = true
 tracing.workspace = true
 url.workspace = true
-zeta-plugin = { workspace = true, default-features = false, features = ["database"] }
+zeta-plugin = { workspace = true, features = ["database"] }
 zeta-url = { workspace = true }
 zeta-utils = { workspace = true, features = ["chrono"] }
 

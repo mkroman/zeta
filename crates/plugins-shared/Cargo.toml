@@ -19,11 +19,11 @@ tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 zeta-mirror = { workspace = true, optional = true }
-zeta-plugin = { workspace = true, default-features = false, optional = true }
+zeta-plugin = { workspace = true, optional = true }
 zeta-url = { workspace = true }
 
 [dev-dependencies]
-zeta-test-support = { workspace = true, default-features = false }
+zeta-test-support = { workspace = true }
 
 [lints]
 workspace = true

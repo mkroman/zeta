@@ -18,19 +18,19 @@ native-tls = ["coinmarketcap/native-tls"]
 native-tls-vendored = ["coinmarketcap/native-tls-vendored"]
 
 [dependencies]
-coinmarketcap = { path = "../coinmarketcap", default-features = false }
+coinmarketcap = { workspace = true }
 humantime-serde.workspace = true
-rink-core = { git = "https://codeberg.org/tiffany/rink", rev = "61be392a0d605ea6c4192934134683d63fbe7f7d", features = ["bundle-files", "serde_json"] }
+rink-core = { workspace = true, features = ["bundle-files", "serde_json"] }
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 zeta-cache = { workspace = true }
-zeta-http = { workspace = true, default-features = false, features = ["http"] }
-zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
+zeta-http = { workspace = true, features = ["http"] }
+zeta-plugin = { workspace = true, features = ["http"] }
 zeta-utils = { workspace = true }
 
 [dev-dependencies]
-zeta-test-support = { workspace = true }
+zeta-test-support = { workspace = true, features = ["context", "http"] }
 
 [lints]
 workspace = true

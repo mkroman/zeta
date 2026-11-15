@@ -16,18 +16,18 @@ native-tls-vendored = ["reddit/native-tls-vendored"]
 [dependencies]
 irc.workspace = true
 plugins-shared = { workspace = true, features = ["mirror"] }
-reddit = { path = "../reddit" }
+reddit = { workspace = true }
 secrecy.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 zeta-mirror = { workspace = true }
-zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
+zeta-plugin = { workspace = true, features = ["http"] }
 zeta-utils = { workspace = true }
 
 [dev-dependencies]
 serde_json.workspace = true
-zeta-test-support = { workspace = true }
+zeta-test-support = { workspace = true, features = ["context", "http"] }
 
 [lints]
 workspace = true

@@ -120,55 +120,55 @@ all = [
 
 [dependencies]
 figment.workspace = true
-plugins-alert = { path = "../plugins-alert", default-features = false, optional = true }
-plugins-chaturbate = { path = "../plugins-chaturbate", default-features = false, optional = true }
-plugins-choices = { path = "../plugins-choices", default-features = false, optional = true }
-plugins-coinmarketcap = { path = "../plugins-coinmarketcap", default-features = false, optional = true }
-plugins-dendanskeordbog = { path = "../plugins-dendanskeordbog", default-features = false, optional = true }
-plugins-dig = { path = "../plugins-dig", default-features = false, optional = true }
-plugins-filter = { path = "../plugins-filter", default-features = false, optional = true }
-plugins-gay = { path = "../plugins-gay", default-features = false, optional = true }
-plugins-geoip = { path = "../plugins-geoip", default-features = false, optional = true }
-plugins-github = { path = "../plugins-github", default-features = false, optional = true }
-plugins-health = { path = "../plugins-health", default-features = false, optional = true }
-plugins-help = { path = "../plugins-help", default-features = false, optional = true }
-plugins-howlongtobeat = { path = "../plugins-howlongtobeat", default-features = false, optional = true }
-plugins-imdb = { path = "../plugins-imdb", default-features = false, optional = true }
-plugins-instagram = { path = "../plugins-instagram", default-features = false, optional = true }
-plugins-isitopen = { path = "../plugins-isitopen", default-features = false, optional = true }
-plugins-kagi = { path = "../plugins-kagi", default-features = false, optional = true }
-plugins-notification = { path = "../plugins-notification", default-features = false, optional = true }
-plugins-ofn = { path = "../plugins-ofn", default-features = false, optional = true }
-plugins-openweathermap = { path = "../plugins-openweathermap", default-features = false, optional = true }
-plugins-pornhub = { path = "../plugins-pornhub", default-features = false, optional = true }
-plugins-reddit = { path = "../plugins-reddit", default-features = false, optional = true }
-plugins-rink = { path = "../plugins-rink", default-features = false, optional = true }
-plugins-rust-playground = { path = "../plugins-rust-playground", default-features = false, optional = true }
-plugins-spotify = { path = "../plugins-spotify", default-features = false, optional = true }
-plugins-string-utils = { path = "../plugins-string-utils", default-features = false, optional = true }
-plugins-thingiverse = { path = "../plugins-thingiverse", default-features = false, optional = true }
-plugins-tiktok = { path = "../plugins-tiktok", default-features = false, optional = true }
-plugins-titles = { path = "../plugins-titles", default-features = false, optional = true }
-plugins-trustpilot = { path = "../plugins-trustpilot", default-features = false, optional = true }
-plugins-tvmaze = { path = "../plugins-tvmaze", default-features = false, optional = true }
-plugins-twitch = { path = "../plugins-twitch", default-features = false, optional = true }
-plugins-unwall = { path = "../plugins-unwall", default-features = false, optional = true }
-plugins-urban-dictionary = { path = "../plugins-urban-dictionary", default-features = false, optional = true }
-plugins-youtube = { path = "../plugins-youtube", default-features = false, optional = true }
+plugins-alert = { workspace = true, optional = true }
+plugins-chaturbate = { workspace = true, optional = true }
+plugins-choices = { workspace = true, optional = true }
+plugins-coinmarketcap = { workspace = true, optional = true }
+plugins-dendanskeordbog = { workspace = true, optional = true }
+plugins-dig = { workspace = true, optional = true }
+plugins-filter = { workspace = true, optional = true }
+plugins-gay = { workspace = true, optional = true }
+plugins-geoip = { workspace = true, optional = true }
+plugins-github = { workspace = true, optional = true }
+plugins-health = { workspace = true, optional = true }
+plugins-help = { workspace = true, optional = true }
+plugins-howlongtobeat = { workspace = true, optional = true }
+plugins-imdb = { workspace = true, optional = true }
+plugins-instagram = { workspace = true, optional = true }
+plugins-isitopen = { workspace = true, optional = true }
+plugins-kagi = { workspace = true, optional = true }
+plugins-notification = { workspace = true, optional = true }
+plugins-ofn = { workspace = true, optional = true }
+plugins-openweathermap = { workspace = true, optional = true }
+plugins-pornhub = { workspace = true, optional = true }
+plugins-reddit = { workspace = true, optional = true }
+plugins-rink = { workspace = true, optional = true }
+plugins-rust-playground = { workspace = true, optional = true }
+plugins-spotify = { workspace = true, optional = true }
+plugins-string-utils = { workspace = true, optional = true }
+plugins-thingiverse = { workspace = true, optional = true }
+plugins-tiktok = { workspace = true, optional = true }
+plugins-titles = { workspace = true, optional = true }
+plugins-trustpilot = { workspace = true, optional = true }
+plugins-tvmaze = { workspace = true, optional = true }
+plugins-twitch = { workspace = true, optional = true }
+plugins-unwall = { workspace = true, optional = true }
+plugins-urban-dictionary = { workspace = true, optional = true }
+plugins-youtube = { workspace = true, optional = true }
 serde.workspace = true
 # Embeds `migrations/` for the `database` feature; the host's feature selection supplies the
 # database driver and runtime.
-sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros"], optional = true }
+sqlx = { workspace = true, features = ["migrate", "macros"], optional = true }
 tracing.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin = { workspace = true }
 zeta-plugin-runtime = { workspace = true }
 
 [dev-dependencies]
-plugins-dig = { path = "../plugins-dig" }
+plugins-dig = { workspace = true }
 serde_json.workspace = true
-syn = { version = "=3.0.10", default-features = false, features = ["derive", "full", "parsing"] }
+syn = { workspace = true, features = ["derive", "full", "parsing"] }
 tokio.workspace = true
-zeta-test-support = { workspace = true }
+zeta-test-support = { workspace = true, features = ["context", "http"] }
 
 [lints]
 workspace = true

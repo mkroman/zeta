@@ -16,11 +16,11 @@ hickory-resolver.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin = { workspace = true }
 zeta-utils = { workspace = true }
 
 [dev-dependencies]
-zeta-test-support = { workspace = true }
+zeta-test-support = { workspace = true, features = ["context", "http"] }
 
 [lints]
 workspace = true

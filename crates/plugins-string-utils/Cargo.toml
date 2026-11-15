@@ -12,13 +12,13 @@ default = []
 
 [dependencies]
 tracing.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin = { workspace = true }
 zeta-unicode = { workspace = true }
 zeta-utils = { workspace = true }
 
 [dev-dependencies]
 tokio.workspace = true
-zeta-test-support = { workspace = true }
+zeta-test-support = { workspace = true, features = ["context", "http"] }
 
 [lints]
 workspace = true

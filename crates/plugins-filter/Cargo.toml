@@ -14,19 +14,19 @@ default = []
 arc-swap.workspace = true
 clap.workspace = true
 foldhash.workspace = true
-sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }
+sqlx = { workspace = true, features = ["migrate", "macros", "chrono"] }
 thiserror.workspace = true
 tracing.workspace = true
 url.workspace = true
 wildmatch.workspace = true
-zeta-plugin = { workspace = true, default-features = false, features = ["database"] }
+zeta-plugin = { workspace = true, features = ["database"] }
 zeta-url = { workspace = true }
 zeta-utils = { workspace = true }
 
 [dev-dependencies]
-allocation-counter = "=0.8.1"
+allocation-counter = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
-zeta-test-support = { workspace = true }
+zeta-test-support = { workspace = true, features = ["context", "http"] }
 
 [lints]
 workspace = true

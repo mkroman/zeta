@@ -12,9 +12,9 @@ default = ["database"]
 database = ["zeta-plugin/database"]
 
 [dependencies]
-memory-stats = "1.2.0"
+memory-stats = { workspace = true }
 tokio.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin = { workspace = true }
 
 [dev-dependencies]
 wildmatch.workspace = true

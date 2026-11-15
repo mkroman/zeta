@@ -19,11 +19,11 @@ chrono.workspace = true
 clap.workspace = true
 irc = { workspace = true, features = ["channel-lists"] }
 miette.workspace = true
-rand_mt = "6"
+rand_mt = { workspace = true }
 sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin = { workspace = true }
 
 [lints]
 workspace = true

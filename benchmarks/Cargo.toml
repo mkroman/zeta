@@ -12,9 +12,9 @@ irc.workspace = true
 time = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin = { workspace = true }
 zeta-plugin-runtime = { workspace = true }
-zeta-test-support = { workspace = true, default-features = false, features = [
+zeta-test-support = { workspace = true, features = [
     "context",
 ] }
 zeta-utils = { workspace = true, features = ["chrono", "time"] }

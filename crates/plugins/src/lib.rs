@@ -294,28 +294,41 @@ mod tests {
         plugins
     }
 
-    /// Every `plugins-*` crate must be wired into the facade everywhere Cargo cannot derive it.
+    /// Every `plugins-*` crate must be wired into the workspace and the facade everywhere
+    /// Cargo cannot derive it.
     ///
-    /// Adding a plugin touches four places across two files; a missed entry either fails the
-    /// build (the dependency, the re-export) or silently ships a plugin that is never compiled
-    /// (the `all` list) or never named (the bundled-name list). This test turns the silent cases
-    /// into a failure.
+    /// Adding a plugin touches five places across three files: the root workspace dependency,
+    /// the facade dependency, the facade feature, the facade `all` list and the
+    /// `for_each_bundled_plugin!` list. A missed entry either fails the build (the dependency,
+    /// the re-export) or silently ships a plugin that is never compiled (the `all` list) or
+    /// never named (the bundled-name list). This test turns the silent cases into a failure.
     #[test]
     fn every_plugin_crate_is_wired_into_the_facade() {
+        let workspace =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"))
+                .expect("read the workspace manifest");
         let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
             .expect("read the facade manifest");
         let list = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/macros.rs"))
             .expect("read the facade macros");
-        // Normalize whitespace so the list's column alignment does not affect the check.
+        // Normalize whitespace so the lists' column alignment does not affect the check.
+        let workspace = workspace.split_whitespace().collect::<Vec<_>>().join(" ");
+        let manifest = manifest.split_whitespace().collect::<Vec<_>>().join(" ");
         let list = list.split_whitespace().collect::<Vec<_>>().join(" ");
 
         for plugin in plugin_crates() {
             let snake = plugin.replace('-', "_");
 
             assert!(
+                workspace.contains(&format!(
+                    "plugins-{plugin} = {{ path = \"crates/plugins-{plugin}\", \
+                     default-features = false }}"
+                )),
+                "`{plugin}` is missing its workspace dependency in Cargo.toml"
+            );
+            assert!(
                 manifest.contains(&format!(
-                    "plugins-{plugin} = {{ path = \"../plugins-{plugin}\", default-features = \
-                     false, optional = true }}"
+                    "plugins-{plugin} = {{ workspace = true, optional = true }}"
                 )),
                 "`{plugin}` is missing its optional dependency in crates/plugins/Cargo.toml"
             );
