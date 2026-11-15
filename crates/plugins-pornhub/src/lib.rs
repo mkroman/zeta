@@ -31,8 +31,10 @@ pub struct PornHub {
 /// Errors that can occur when interacting with the PornHub API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// The request failed, or the response could not be handled.
-    #[error(transparent)]
+    /// The request to PornHub failed, or its response could not be handled.
+    ///
+    /// `Display` is reply-grade; the underlying failure stays in the source chain.
+    #[error("the pornhub request failed")]
     Api(#[from] http::ApiError),
     /// The requested video does not exist.
     #[error("resource not found")]
@@ -225,4 +227,29 @@ impl PornHub {
 #[must_use]
 pub fn is_pornhub_video_url(url: &Url) -> bool {
     url.path() == "/view_video.php"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds an API failure whose body must never reach a log line or a reply.
+    fn api_error() -> Error {
+        Error::Api(http::ApiError::Status {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "secret body".to_owned(),
+        })
+    }
+
+    #[test]
+    fn api_failures_display_a_reply_grade_sentence() {
+        let error = api_error();
+
+        assert_eq!(error.to_string(), "the pornhub request failed");
+        assert!(!error.to_string().contains("secret body"));
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "the api failure stays in the source chain"
+        );
+    }
 }
