@@ -56,8 +56,8 @@ impl Kagi {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
         let token = resolve_secret(settings.session_token.as_deref(), "KAGI_SESSION_TOKEN")?;
         let mut options = kagi::ClientOptions::default();
-        options.timeout = Some(ctx.config().http.timeout);
-        options.user_agent = Some(ctx.config().http.user_agent.clone());
+        options.timeout = Some(ctx.config().http().timeout);
+        options.user_agent = Some(ctx.config().http().user_agent.clone());
         options.session_duration = Some(settings.session_duration);
         options.language = Some(settings.language.clone());
         let client = kagi::Client::try_new_with_options(token, options).map_err(plugin_err)?;

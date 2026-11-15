@@ -98,10 +98,10 @@ pub struct Titles {
 #[plugin(name = "titles", settings = Settings, urls(any))]
 impl Titles {
     fn new(ctx: &Context, settings: &Settings) -> Result<Self, ZetaError> {
-        let client = http::emulated::builder(Some(&ctx.config().http.user_agent))
+        let client = http::emulated::builder(Some(&ctx.config().http().user_agent))
             .map_err(plugin_err)?
             .redirect(Policy::limited(settings.max_redirects))
-            .timeout(ctx.config().http.timeout)
+            .timeout(ctx.config().http().timeout)
             .build()
             .map_err(|error| plugin_err(WreqError::from(error)))?;
 

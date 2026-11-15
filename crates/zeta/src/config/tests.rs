@@ -178,7 +178,7 @@ fn host_config_mirrors_the_visible_subset() {
 
     let host = zeta_plugin::config::HostConfig::from(&config);
 
-    assert_eq!(host.http, config.http);
+    assert_eq!(host.http(), &config.http);
 
     // The host compiles the configured masks once; the plugin-visible config exposes the
     // matcher rather than the raw strings.

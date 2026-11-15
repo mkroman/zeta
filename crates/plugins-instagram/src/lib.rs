@@ -168,7 +168,7 @@ impl Instagram {
         let client = http::emulated::builder(None)
             .map_err(plugin_err)?
             .redirect(Policy::limited(4))
-            .timeout(ctx.config().http.timeout)
+            .timeout(ctx.config().http().timeout)
             .build()
             .map_err(|error| plugin_err(WreqError::from(error)))?;
 
