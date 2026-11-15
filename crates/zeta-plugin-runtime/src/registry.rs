@@ -12,7 +12,7 @@ use std::sync::Arc;
 use figment::value::Value;
 use tracing::{debug, error, warn};
 
-use zeta_plugin::{CatalogEntry, Context, Error, LoadedPlugin, PluginCatalog, PluginSet};
+use zeta_plugin::{CatalogEntry, Chain, Context, Error, LoadedPlugin, PluginCatalog, PluginSet};
 
 /// Plugin registry.
 pub struct Registry<P> {
@@ -122,7 +122,7 @@ where
     fn fail(&mut self, name: &'static str, error: Error) {
         warn!(
             zeta.plugin.name = %name,
-            exception.message = %error,
+            exception.message = %Chain(&error),
             "failed to initialize plugin"
         );
         self.failed_plugins.push((name, error));

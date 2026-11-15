@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{Instrument, Span, debug, error, warn};
 
-use zeta_plugin::{Context, Plugin};
+use zeta_plugin::{Chain, Context, Plugin};
 
 use crate::dispatch::Envelope;
 
@@ -84,7 +84,9 @@ where
             let _ = startup.send(());
 
             if let Err(error) = loaded {
-                load_span.in_scope(|| warn!(exception.message = %error, "plugin failed to load"));
+                load_span.in_scope(
+                    || warn!(exception.message = %Chain(&error), "plugin failed to load"),
+                );
 
                 return;
             }
@@ -110,7 +112,7 @@ where
                             // error event keeps it.
                             error!(
                                 zeta.plugin.name = %name,
-                                exception.message = %error,
+                                exception.message = %Chain(&error),
                                 "plugin error during event handling"
                             );
                         }
@@ -146,7 +148,9 @@ where
                 .instrument(span.clone())
                 .await
             {
-                span.in_scope(|| warn!(exception.message = %error, "plugin error during shutdown"));
+                span.in_scope(|| {
+                    warn!(exception.message = %Chain(&error), "plugin error during shutdown");
+                });
             }
 
             if let Some(payload) = panic {
@@ -176,12 +180,85 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    use tracing_subscriber::prelude::*;
 
     use super::*;
     use zeta_plugin::event::MessageEvent;
-    use zeta_plugin::{Error, Event};
+    use zeta_plugin::{Error, Event, plugin_err};
     use zeta_test_support::{Recording, RecordingPlugin, publish_recording, test_context};
+
+    /// A writer that collects everything logged through it, for assertions.
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("log buffer lock")
+                .extend_from_slice(buf);
+
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// The deepest error in a failing handler's chain.
+    #[derive(Debug)]
+    struct TransportDetail;
+
+    impl std::fmt::Display for TransportDetail {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("connection refused")
+        }
+    }
+
+    impl std::error::Error for TransportDetail {}
+
+    /// A lookup error whose source is [`TransportDetail`], as a client error would be.
+    #[derive(Debug)]
+    struct LookupFailed(TransportDetail);
+
+    impl std::fmt::Display for LookupFailed {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("lookup failed")
+        }
+    }
+
+    impl std::error::Error for LookupFailed {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    /// A plugin whose message handler fails with an error that carries a source chain.
+    struct FailingHandler;
+
+    #[allow(clippy::unused_async_trait_impl)]
+    impl Plugin for FailingHandler {
+        async fn handle<'a>(
+            &'a self,
+            _: &'a Context,
+            _: &'a Client,
+            _: &'a Event,
+        ) -> Result<(), Error> {
+            Err(plugin_err(LookupFailed(TransportDetail)))
+        }
+    }
 
     /// A plugin whose message handler panics, recording that the shutdown hook still ran.
     struct PanickingPlugin {
@@ -264,6 +341,69 @@ mod tests {
             .expect("the recording lock is not poisoned");
 
         assert_eq!(*log, ["message", "message", "shutdown"]);
+    }
+
+    /// The handler-error log carries the whole source chain: the short `Display` is the sentence a
+    /// channel may see, while the client's detail is what an operator needs to diagnose it.
+    #[tokio::test]
+    async fn handler_error_log_includes_the_source_chain() {
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(buffer.clone()),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let ctx = Arc::new(test_context());
+        let client = Arc::new(zeta_test_support::mock_client().await);
+
+        let (sender, receiver) = mpsc::channel(8);
+        let task = PluginTask::spawn(
+            "failing",
+            FailingHandler,
+            Arc::clone(&ctx),
+            Arc::clone(&client),
+            receiver,
+            Arc::new(OnceLock::new()),
+            oneshot::channel().0,
+        );
+
+        let message = irc::proto::Message::new(None, "PRIVMSG", vec!["#test", "hello"])
+            .expect("message should parse");
+
+        sender
+            .send(Envelope {
+                event: Event::Message(MessageEvent::new(Arc::new(message))),
+                span: Span::none(),
+            })
+            .await
+            .expect("task should be running");
+
+        drop(sender);
+
+        let (_, handle) = task.into_handle();
+        handle
+            .await
+            .expect("the failing handler exits the task cleanly");
+
+        let log = String::from_utf8(
+            buffer
+                .0
+                .lock()
+                .expect("the log buffer lock is not poisoned")
+                .clone(),
+        )
+        .expect("the log output is UTF-8");
+
+        assert!(
+            log.contains("plugin error during event handling"),
+            "logged: {log}"
+        );
+        assert!(
+            log.contains("Plugin error: lookup failed: connection refused"),
+            "the log should carry the source chain, logged: {log}"
+        );
     }
 
     #[tokio::test]
