@@ -164,7 +164,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the sites could not be inserted or reloaded.
-    #[instrument(name = "unwall.site.add", skip_all, err)]
+    #[instrument(name = "unwall.site.add", skip_all)]
     pub async fn add_sites(&self, hosts: &[String], nickname: &str) -> Result<(), Error> {
         for host in hosts {
             self.repo.insert_site(host, nickname).await?;
@@ -180,7 +180,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the sites could not be deleted or reloaded.
-    #[instrument(name = "unwall.site.remove", skip_all, err, fields(unwall.site.pattern = %pattern))]
+    #[instrument(name = "unwall.site.remove", skip_all, fields(unwall.site.pattern = %pattern))]
     pub async fn remove_matching(&self, pattern: &str) -> Result<Vec<String>, Error> {
         let mut affected: Vec<String> = {
             let covered = self.covered.load();
@@ -214,7 +214,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the statistics could not be queried.
-    #[instrument(name = "unwall.statistics", skip_all, err)]
+    #[instrument(name = "unwall.statistics", skip_all)]
     pub async fn statistics(&self) -> Result<Statistics, Error> {
         self.repo.statistics(Utc::now().date_naive()).await
     }
@@ -224,7 +224,7 @@ impl UnwallService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the statistics could not be queried.
-    #[instrument(name = "unwall.host.statistics", skip_all, err)]
+    #[instrument(name = "unwall.host.statistics", skip_all)]
     pub async fn host_statistics(&self, host: &str) -> Result<Option<HostStatistics>, Error> {
         self.repo
             .host_statistics(&host.trim().to_ascii_lowercase(), Utc::now().date_naive())

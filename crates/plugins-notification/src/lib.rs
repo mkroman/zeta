@@ -15,13 +15,13 @@ pub use service::NotificationService;
 
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
-use tracing::{error, warn};
+use tracing::warn;
 
 use zeta_plugin::database::Attribution;
 use zeta_plugin::irc::{COLOR, RESET, labeled_reply, plain_reply, send_reply, unstyle_text};
 use zeta_plugin::{
-    Client, CommandEvent, CommandSpec, Context, MessageEvent, Subscriptions, ZetaError, plugin,
-    plugin_err,
+    Chain, Client, CommandEvent, CommandSpec, Context, MessageEvent, Subscriptions, ZetaError,
+    plugin, plugin_err,
 };
 
 /// The `.notify` command.
@@ -113,7 +113,14 @@ impl NotificationPlugin {
                 "Notification",
                 format_args!("{target} already has {max} pending notifications in this channel"),
             ),
-            Err(_) => labeled_reply("Notification", "could not store the notification"),
+            Err(error) => {
+                warn!(
+                    exception.message = %Chain(&error),
+                    "could not store the notification"
+                );
+
+                labeled_reply("Notification", "could not store the notification")
+            }
         };
 
         send_reply(client, channel, message)?;
@@ -179,8 +186,8 @@ impl NotificationPlugin {
                     .collect::<Vec<_>>();
 
                 if let Err(err) = self.service.delete_ids(&sent_ids).await {
-                    error!(
-                        exception.message = ?err,
+                    warn!(
+                        exception.message = %Chain(&err),
                         notification.count = sent_ids.len(),
                         "could not delete delivered notifications"
                     );

@@ -214,7 +214,7 @@ fn is_valid_shortcode(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::assert_parses;
+    use zeta_test_support::{assert_parses, assert_url_hosts_cover};
 
     #[test]
     // The table-driven cases below are re-wrapped by rustfmt, which stretches the function
@@ -450,5 +450,22 @@ mod tests {
         assert_eq!(MediaKind::from_segment("reel"), Some(MediaKind::Reel));
         assert_eq!(MediaKind::from_segment("tv"), Some(MediaKind::Tv));
         assert_eq!(MediaKind::from_segment("stories"), None);
+    }
+
+    /// Every advertised host has exactly one case, and the parser accepts it.
+    #[test]
+    fn url_hosts_cover_the_classified_hosts() {
+        let cases = [
+            ("instagram.com", "/p/DdUGmgAifcq"),
+            ("instagr.am", "/nike/"),
+            (
+                "l.instagram.com",
+                "/?u=https%3A%2F%2Fwww.instagram.com%2Fp%2FDdUGmgAifcq%2F",
+            ),
+            ("m.instagram.com", "/p/DdUGmgAifcq"),
+            ("www.instagram.com", "/p/DdUGmgAifcq"),
+        ];
+
+        assert_url_hosts_cover(URL_HOSTS, &cases, |url| parse_instagram_url(url).is_some());
     }
 }

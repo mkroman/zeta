@@ -80,7 +80,7 @@ fn parse_youtu_be_url(url: &Url) -> Option<UrlKind<'_>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::assert_parses;
+    use zeta_test_support::{assert_parses, assert_url_hosts_cover};
 
     impl UrlKind<'_> {
         /// Copies the ids out of the parsed URL, so a test can name the expected value before
@@ -199,5 +199,17 @@ mod tests {
             ("https://youtube.com/watch", None),
             ("https://youtube.com/playlist", None),
         ]);
+    }
+
+    /// Every advertised host has exactly one case, and the parser accepts it.
+    #[test]
+    fn url_hosts_cover_the_classified_hosts() {
+        let cases = [
+            ("youtu.be", "/dQw4w9WgXcQ"),
+            ("youtube.com", "/watch?v=dQw4w9WgXcQ"),
+            ("www.youtube.com", "/watch?v=dQw4w9WgXcQ"),
+        ];
+
+        assert_url_hosts_cover(URL_HOSTS, &cases, |url| parse_youtube_url(url).is_some());
     }
 }

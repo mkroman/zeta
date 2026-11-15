@@ -50,7 +50,7 @@ use zeta_plugin::irc::{
     COLOR, RESET, labeled_reply, parse_or_usage, plain_reply, send_reply, send_reply_via,
 };
 use zeta_plugin::{
-    ArgsMode, Client, CommandEvent, CommandSpec, Context, Hostmasks, Sender, Subscriptions,
+    ArgsMode, Chain, Client, CommandEvent, CommandSpec, Context, Hostmasks, Sender, Subscriptions,
     UrlEvent, ZetaError, plugin, plugin_err,
 };
 use zeta_utils::duration::TimeInWordsExt;
@@ -154,6 +154,18 @@ struct Info {
     host: String,
 }
 
+/// Formats a failed article resolution.
+///
+/// A rejected article, an unusable URL, and a reply-grade transport failure reuse the error's
+/// own user-facing text; every other failure is reduced to the context, because the caller logs
+/// the error.
+fn resolve_reply(error: &Error) -> String {
+    match error {
+        Error::Status(_) | Error::InvalidUrl | Error::Request(_) => error.to_string(),
+        Error::Database(_) | Error::BaseUrl(_) => "could not unwall the article".to_owned(),
+    }
+}
+
 /// Unwall plugin.
 ///
 /// Unwalls covered paywalled news links posted in a channel and manages the covered sites.
@@ -229,13 +241,16 @@ impl Unwall {
         }
 
         if let Err(error) = self.service.add_sites(&hosts, nickname).await {
+            warn!(
+                exception.message = %Chain(&error),
+                unwall.site.count = hosts.len(),
+                "could not add the unwall sites"
+            );
+
             send_reply(
                 client,
                 channel,
-                labeled_reply(
-                    NAME,
-                    format_args!("could not add the sites:{RESET} {error}"),
-                ),
+                labeled_reply(NAME, "could not add the sites."),
             )?;
 
             return Ok(());
@@ -275,13 +290,15 @@ impl Unwall {
         let removed = match self.service.remove_matching(&pattern).await {
             Ok(removed) => removed,
             Err(error) => {
+                warn!(
+                    exception.message = %Chain(&error),
+                    "could not remove the unwall sites"
+                );
+
                 send_reply(
                     client,
                     channel,
-                    labeled_reply(
-                        NAME,
-                        format_args!("could not remove the sites:{RESET} {error}"),
-                    ),
+                    labeled_reply(NAME, "could not remove the sites."),
                 )?;
 
                 return Ok(());
@@ -346,10 +363,14 @@ impl Unwall {
                     stats.urls, stats.hosts, stats.users, stats.urls_today
                 ),
             ),
-            Err(error) => labeled_reply(
-                NAME,
-                format_args!("could not load the statistics:{RESET} {error}"),
-            ),
+            Err(error) => {
+                warn!(
+                    exception.message = %Chain(&error),
+                    "could not load the unwall statistics"
+                );
+
+                labeled_reply(NAME, "could not load the statistics.")
+            }
         };
 
         send_reply(client, channel, response)?;
@@ -376,10 +397,14 @@ impl Unwall {
                 NAME,
                 format_args!("No unwalled links for{RESET} {host}{COLOR}."),
             ),
-            Err(error) => labeled_reply(
-                NAME,
-                format_args!("could not load the statistics:{RESET} {error}"),
-            ),
+            Err(error) => {
+                warn!(
+                    exception.message = %Chain(&error),
+                    "could not load the unwall statistics"
+                );
+
+                labeled_reply(NAME, "could not load the statistics.")
+            }
         };
 
         send_reply(client, channel, response)?;
@@ -445,17 +470,13 @@ impl Unwall {
                     }
                     Err(error) => {
                         warn!(
-                            exception.message = %error,
+                            exception.message = %Chain(&error),
                             "could not unwall the article"
                         );
 
-                        if let Err(error) = send_reply_via(
-                            &irc,
-                            &channel,
-                            plain_reply(format_args!(
-                                "could not unwall the article:{RESET} {error}"
-                            )),
-                        ) {
+                        let reply = resolve_reply(&error);
+
+                        if let Err(error) = send_reply_via(&irc, &channel, plain_reply(reply)) {
                             warn!(exception.message = %error, "could not send the unwall failure");
                         }
                     }
@@ -614,5 +635,42 @@ mod tests {
             join_and(&["a".into(), "b".into(), "c".into()]),
             format!("{RESET}a{COLOR},{RESET} b{COLOR} and{RESET} c")
         );
+    }
+
+    /// Returns a request failure with a reply-grade `Display`.
+    fn request_error() -> Error {
+        let error = zeta_http::reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        Error::Request(zeta_http::RequestError::from(error))
+    }
+
+    #[test]
+    fn resolve_reply_uses_the_domain_text() {
+        assert_eq!(
+            resolve_reply(&Error::Status(503)),
+            "unwall could not fetch the article (HTTP 503)"
+        );
+        assert_eq!(
+            resolve_reply(&Error::InvalidUrl),
+            "not a usable article URL"
+        );
+    }
+
+    #[test]
+    fn resolve_reply_surfaces_a_reply_grade_request_error() {
+        let error = request_error();
+
+        assert_eq!(resolve_reply(&error), error.to_string());
+    }
+
+    #[test]
+    fn resolve_reply_hides_internal_errors() {
+        let reply = resolve_reply(&Error::BaseUrl(url::ParseError::EmptyHost));
+
+        assert_eq!(reply, "could not unwall the article");
+        assert!(!reply.contains("base URL"));
     }
 }

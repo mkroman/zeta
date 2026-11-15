@@ -83,7 +83,7 @@ fn is_valid_username(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::assert_parses;
+    use zeta_test_support::{assert_parses, assert_url_hosts_cover};
 
     #[test]
     fn test_parse_twitch_urls() {
@@ -151,5 +151,17 @@ mod tests {
                 ("https://clips.twitch.tv/", None),
             ],
         );
+    }
+
+    /// Every advertised host has exactly one case, and the parser accepts it.
+    #[test]
+    fn url_hosts_cover_the_classified_hosts() {
+        let cases = [
+            ("clips.twitch.tv", "/AbrasiveFurryDolphGJ7K8WfDb4g"),
+            ("twitch.tv", "/lirik"),
+            ("www.twitch.tv", "/lirik"),
+        ];
+
+        assert_url_hosts_cover(URL_HOSTS, &cases, |url| parse_twitch_url(url).is_some());
     }
 }

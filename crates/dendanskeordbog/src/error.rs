@@ -47,3 +47,41 @@ pub enum Error {
     #[error("could not find element using selector: {0}")]
     MissingElement(String),
 }
+
+impl Error {
+    /// Returns `true` when the dictionary returned a `404 Not Found` for the queried word.
+    ///
+    /// A `404` means the word has no entry; a missing page element is a page-structure failure,
+    /// and every other error is a real failure.
+    #[cfg(feature = "client")]
+    #[must_use]
+    pub fn is_not_found(&self) -> bool {
+        match self {
+            Self::Status(status) => *status == reqwest::StatusCode::NOT_FOUND,
+            _ => false,
+        }
+    }
+}
+
+#[cfg(all(test, feature = "client"))]
+mod tests {
+    use reqwest::StatusCode;
+
+    use super::*;
+
+    #[test]
+    fn is_not_found_rejects_a_missing_element() {
+        assert!(!Error::MissingElement("head".to_owned()).is_not_found());
+    }
+
+    #[test]
+    fn is_not_found_matches_a_404() {
+        assert!(Error::Status(StatusCode::NOT_FOUND).is_not_found());
+        assert!(!Error::Status(StatusCode::INTERNAL_SERVER_ERROR).is_not_found());
+    }
+
+    #[test]
+    fn is_not_found_rejects_internal_errors() {
+        assert!(!Error::Parse("boom".to_owned()).is_not_found());
+    }
+}

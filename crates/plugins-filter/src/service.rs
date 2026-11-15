@@ -63,7 +63,7 @@ impl FilterService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the filter could not be inserted into the database.
-    #[instrument(name = "filter.add", skip_all, err)]
+    #[instrument(name = "filter.add", skip_all)]
     pub async fn add(&self, filter: NewFilter) -> Result<Filter, Error> {
         let filter = self.repo.insert(filter).await?;
 
@@ -83,7 +83,7 @@ impl FilterService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the filters could not be deleted from the database.
-    #[instrument(name = "filter.delete", skip_all, err)]
+    #[instrument(name = "filter.delete", skip_all)]
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         let removed = self.repo.delete_ids(ids).await?;
 

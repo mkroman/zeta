@@ -105,7 +105,7 @@ fn is_valid_short_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::assert_parses;
+    use zeta_test_support::{assert_parses, assert_url_hosts_cover};
 
     #[test]
     fn test_parse_urls() {
@@ -203,5 +203,17 @@ mod tests {
                 id: "7551042261212056854".to_string(),
             })
         );
+    }
+
+    /// Every advertised host has exactly one case, and the parser accepts it.
+    #[test]
+    fn url_hosts_cover_the_classified_hosts() {
+        let cases = [
+            ("tiktok.com", "/@user123"),
+            ("vm.tiktok.com", "/ZNdgoKow7/"),
+            ("www.tiktok.com", "/@dailymail/video/7541501431543532814"),
+        ];
+
+        assert_url_hosts_cover(URL_HOSTS, &cases, |url| parse_tiktok_url(url).is_some());
     }
 }

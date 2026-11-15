@@ -12,6 +12,7 @@
 //! port"), so connecting to it always fails in the connect phase: Linux refuses it, while other
 //! kernels reject the address. Wiremock is re-exported for everything else.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(feature = "http")]
 use std::time::Duration;
@@ -369,6 +370,50 @@ pub fn assert_parses<T: std::fmt::Debug + PartialEq>(
     }
 }
 
+/// Asserts that every advertised host has exactly one case and the parser accepts it.
+///
+/// `cases` pairs each advertised host with a path it must classify. Both lists must be unique
+/// and have the same length, so a duplicate case cannot stand in for a missing host.
+///
+/// # Panics
+///
+/// Panics when either list has duplicates, the counts differ, a case names an unadvertised
+/// host, the constructed URL does not parse, or `parse` rejects it.
+pub fn assert_url_hosts_cover(
+    hosts: &[&str],
+    cases: &[(&str, &str)],
+    parse: impl Fn(&Url) -> bool,
+) {
+    let mut unique_hosts = HashSet::with_capacity(hosts.len());
+    for host in hosts {
+        assert!(
+            unique_hosts.insert(*host),
+            "{host} is advertised more than once"
+        );
+    }
+
+    let mut unique_cases = HashSet::with_capacity(cases.len());
+    for (host, _) in cases {
+        assert!(unique_cases.insert(*host), "{host} has more than one case");
+    }
+
+    assert_eq!(
+        cases.len(),
+        hosts.len(),
+        "every advertised host needs a case"
+    );
+
+    for (host, path) in cases {
+        assert!(hosts.contains(host), "{host} is not advertised");
+
+        let url = Url::parse(&format!("https://{host}{path}")).expect("test URL parses");
+        assert!(
+            parse(&url),
+            "{host}{path} is advertised but does not classify"
+        );
+    }
+}
+
 /// Generates the three settings tests shared by every plugin with a configuration section.
 ///
 /// Expands to a `default_settings` test asserting the values produced by [`Default`], a
@@ -467,6 +512,7 @@ macro_rules! assert_empty {
 mod tests {
     // The gate is load-bearing: with `http` off, no test below uses anything from `super`, and
     // a fully-unused glob import warns.
+    use super::assert_url_hosts_cover;
     #[cfg(feature = "http")]
     use super::*;
 
@@ -499,6 +545,58 @@ mod tests {
             .expect("the panic payload is a string");
 
         assert!(message.contains("#zeta must have no strays"), "{message}");
+    }
+
+    #[test]
+    fn assert_url_hosts_cover_checks_every_advertised_host() {
+        let hosts = ["example.com", "www.example.com"];
+        let cases = [("example.com", "/"), ("www.example.com", "/path")];
+
+        assert_url_hosts_cover(&hosts, &cases, |url| url.scheme() == "https");
+
+        let panic = std::panic::catch_unwind(|| {
+            assert_url_hosts_cover(&hosts, &cases[..1], |_| true);
+        })
+        .expect_err("a missing case must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(
+            message.contains("every advertised host needs a case"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn assert_url_hosts_cover_rejects_duplicate_hosts_and_cases() {
+        let panic = std::panic::catch_unwind(|| {
+            assert_url_hosts_cover(
+                &["example.com", "example.com"],
+                &[("example.com", "/")],
+                |_| true,
+            );
+        })
+        .expect_err("a duplicate advertised host must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(message.contains("advertised more than once"), "{message}");
+
+        let panic = std::panic::catch_unwind(|| {
+            assert_url_hosts_cover(
+                &["example.com", "www.example.com"],
+                &[("example.com", "/"), ("example.com", "/path")],
+                |_| true,
+            );
+        })
+        .expect_err("a duplicate case must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(message.contains("has more than one case"), "{message}");
     }
 
     #[cfg(feature = "http")]

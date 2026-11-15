@@ -157,8 +157,9 @@ impl Tiktok {
 
         if self.settings.post_summary
             && let Some(summary) = format_summary(&embed, self.settings.title_length)
+            && let Err(error) = send_reply(client, channel, plain_reply(&summary))
         {
-            let _ = send_reply(client, channel, plain_reply(&summary));
+            warn!(exception.message = %error, "could not send the tiktok summary");
         }
 
         let Some(mirror) = self.mirror.as_ref() else {
