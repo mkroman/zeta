@@ -99,7 +99,7 @@ impl NotificationService {
     /// Returns [`Error::TooManyPending`] if the target already has the maximum number of pending
     /// notifications in the channel, or [`Error::Database`] if the notification could not be
     /// inserted into the database.
-    #[instrument(name = "notification.create", skip_all, err)]
+    #[instrument(name = "notification.create", skip_all)]
     pub async fn create(&self, notification: NewNotification) -> Result<Notification, Error> {
         if self.max_pending_per_target > 0 {
             let pending = self
@@ -183,7 +183,7 @@ impl NotificationService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the notifications could not be deleted from the database.
-    #[instrument(name = "notification.delete", skip_all, err)]
+    #[instrument(name = "notification.delete", skip_all)]
     pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         if ids.is_empty() {
             return Ok(0);

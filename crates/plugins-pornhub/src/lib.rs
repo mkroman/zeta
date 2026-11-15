@@ -14,7 +14,7 @@ use url::Url;
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{plain_reply, send_reply};
-use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin};
+use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_utils::irc;
 
 /// The hostname for PornHub URLs.
@@ -152,7 +152,14 @@ impl PornHub {
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
         if let Err(error) = self.process_url(url.url(), url.channel(), client).await {
-            debug!(exception.message = %error, "could not process url");
+            match &error {
+                Error::NotFound => {
+                    debug!(exception.message = %Chain(&error), "could not process url");
+                }
+                Error::Api(_) | Error::InvalidResponse => {
+                    warn!(exception.message = %Chain(&error), "could not process url");
+                }
+            }
         }
 
         Ok(())

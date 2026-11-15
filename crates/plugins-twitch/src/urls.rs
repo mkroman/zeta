@@ -153,8 +153,7 @@ mod tests {
         );
     }
 
-    /// Every host the plugin subscribes to is one the parser classifies, and vice versa: a host
-    /// in `URL_HOSTS` that the parser rejects would receive events it never handles.
+    /// Every advertised host has exactly one case, and the parser accepts it.
     #[test]
     fn url_hosts_cover_the_classified_hosts() {
         let cases = [

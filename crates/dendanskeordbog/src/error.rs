@@ -49,15 +49,14 @@ pub enum Error {
 }
 
 impl Error {
-    /// Returns `true` when the dictionary has no entry for the queried word.
+    /// Returns `true` when the dictionary returned a `404 Not Found` for the queried word.
     ///
-    /// A missing page element and a `404 Not Found` response both mean the word has no entry;
-    /// every other error is a real failure.
+    /// A `404` means the word has no entry; a missing page element is a page-structure failure,
+    /// and every other error is a real failure.
     #[cfg(feature = "client")]
     #[must_use]
     pub fn is_not_found(&self) -> bool {
         match self {
-            Self::MissingElement(_) => true,
             Self::Status(status) => *status == reqwest::StatusCode::NOT_FOUND,
             _ => false,
         }
@@ -71,8 +70,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_not_found_matches_a_missing_entry() {
-        assert!(Error::MissingElement("head".to_owned()).is_not_found());
+    fn is_not_found_rejects_a_missing_element() {
+        assert!(!Error::MissingElement("head".to_owned()).is_not_found());
     }
 
     #[test]

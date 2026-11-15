@@ -42,11 +42,11 @@ impl Default for Settings {
 
 /// Formats a failed dictionary lookup.
 ///
-/// A missing entry and a `404` are no results; every other failure is reduced to the context,
-/// because the caller logs the error.
+/// A `404` means the word has no entry; every other failure, including a missing page element,
+/// is reduced to the context, because the caller logs the error.
 fn lookup_reply(error: &dendanskeordbog::Error) -> String {
     if error.is_not_found() {
-        "No results found".to_owned()
+        "No results".to_owned()
     } else {
         "could not look up the word".to_owned()
     }
@@ -171,10 +171,10 @@ mod tests {
     }
 
     #[test]
-    fn lookup_reply_maps_a_missing_entry_to_no_results() {
+    fn lookup_reply_treats_a_missing_element_as_a_failure() {
         let reply = lookup_reply(&dendanskeordbog::Error::MissingElement("head".to_owned()));
 
-        assert_eq!(reply, "No results found");
+        assert_eq!(reply, "could not look up the word");
     }
 
     #[test]

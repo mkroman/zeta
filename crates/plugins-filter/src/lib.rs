@@ -37,7 +37,7 @@ use tracing::{debug, warn};
 
 use zeta_plugin::irc::{labeled_reply, parse_or_usage, send_reply};
 use zeta_plugin::{
-    ArgsMode, Client, CommandEvent, CommandSpec, Context, FilterHandle, Hostmasks, Sender,
+    ArgsMode, Chain, Client, CommandEvent, CommandSpec, Context, FilterHandle, Hostmasks, Sender,
     Subscriptions, ZetaError, plugin, plugin_err,
 };
 use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
@@ -346,7 +346,7 @@ impl FilterPlugin {
                 Ok(filter) => added.push(filter),
                 Err(error) => {
                     warn!(
-                        exception.message = %error,
+                        exception.message = %Chain(&error),
                         filter.count = total,
                         "could not add the filter"
                     );
@@ -432,7 +432,10 @@ impl FilterPlugin {
                 Ok(1) => format!("Removed {}.", describe(&filter)),
                 Ok(_) => format!("No filter with id {id}."),
                 Err(error) => {
-                    warn!(exception.message = %error, "could not delete the filter");
+                    warn!(
+                        exception.message = %Chain(&error),
+                        "could not delete the filter"
+                    );
 
                     "could not delete the filter".to_owned()
                 }
@@ -503,7 +506,7 @@ impl FilterPlugin {
             ),
             Err(error) => {
                 warn!(
-                    exception.message = %error,
+                    exception.message = %Chain(&error),
                     filter.count = ids.len(),
                     "could not delete the filters"
                 );

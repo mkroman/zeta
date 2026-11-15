@@ -12,6 +12,7 @@
 //! port"), so connecting to it always fails in the connect phase: Linux refuses it, while other
 //! kernels reject the address. Wiremock is re-exported for everything else.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(feature = "http")]
 use std::time::Duration;
@@ -369,20 +370,33 @@ pub fn assert_parses<T: std::fmt::Debug + PartialEq>(
     }
 }
 
-/// Asserts that every advertised URL host has a case and that `parse` accepts it.
+/// Asserts that every advertised host has exactly one case and the parser accepts it.
 ///
-/// `cases` pairs each advertised host with a path it must classify. The lengths must match, so
-/// a host added to `hosts` without a case (or a stale case) fails the test.
+/// `cases` pairs each advertised host with a path it must classify. Both lists must be unique
+/// and have the same length, so a duplicate case cannot stand in for a missing host.
 ///
 /// # Panics
 ///
-/// Panics when the counts differ, a case names an unadvertised host, the constructed URL does
-/// not parse, or `parse` rejects it.
+/// Panics when either list has duplicates, the counts differ, a case names an unadvertised
+/// host, the constructed URL does not parse, or `parse` rejects it.
 pub fn assert_url_hosts_cover(
     hosts: &[&str],
     cases: &[(&str, &str)],
     parse: impl Fn(&Url) -> bool,
 ) {
+    let mut unique_hosts = HashSet::with_capacity(hosts.len());
+    for host in hosts {
+        assert!(
+            unique_hosts.insert(*host),
+            "{host} is advertised more than once"
+        );
+    }
+
+    let mut unique_cases = HashSet::with_capacity(cases.len());
+    for (host, _) in cases {
+        assert!(unique_cases.insert(*host), "{host} has more than one case");
+    }
+
     assert_eq!(
         cases.len(),
         hosts.len(),
@@ -552,6 +566,37 @@ mod tests {
             message.contains("every advertised host needs a case"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn assert_url_hosts_cover_rejects_duplicate_hosts_and_cases() {
+        let panic = std::panic::catch_unwind(|| {
+            assert_url_hosts_cover(
+                &["example.com", "example.com"],
+                &[("example.com", "/")],
+                |_| true,
+            );
+        })
+        .expect_err("a duplicate advertised host must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(message.contains("advertised more than once"), "{message}");
+
+        let panic = std::panic::catch_unwind(|| {
+            assert_url_hosts_cover(
+                &["example.com", "www.example.com"],
+                &[("example.com", "/"), ("example.com", "/path")],
+                |_| true,
+            );
+        })
+        .expect_err("a duplicate case must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("the panic payload is a string");
+
+        assert!(message.contains("has more than one case"), "{message}");
     }
 
     #[cfg(feature = "http")]

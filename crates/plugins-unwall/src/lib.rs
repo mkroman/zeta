@@ -50,7 +50,7 @@ use zeta_plugin::irc::{
     COLOR, RESET, labeled_reply, parse_or_usage, plain_reply, send_reply, send_reply_via,
 };
 use zeta_plugin::{
-    ArgsMode, Client, CommandEvent, CommandSpec, Context, Hostmasks, Sender, Subscriptions,
+    ArgsMode, Chain, Client, CommandEvent, CommandSpec, Context, Hostmasks, Sender, Subscriptions,
     UrlEvent, ZetaError, plugin, plugin_err,
 };
 use zeta_utils::duration::TimeInWordsExt;
@@ -156,12 +156,13 @@ struct Info {
 
 /// Formats a failed article resolution.
 ///
-/// A rejected article and an unusable URL reuse the error's own user-facing text; every other
-/// failure is reduced to the context, because the caller logs the error.
+/// A rejected article, an unusable URL, and a reply-grade transport failure reuse the error's
+/// own user-facing text; every other failure is reduced to the context, because the caller logs
+/// the error.
 fn resolve_reply(error: &Error) -> String {
     match error {
-        Error::Status(_) | Error::InvalidUrl => error.to_string(),
-        _ => "could not unwall the article".to_owned(),
+        Error::Status(_) | Error::InvalidUrl | Error::Request(_) => error.to_string(),
+        Error::Database(_) | Error::BaseUrl(_) => "could not unwall the article".to_owned(),
     }
 }
 
@@ -241,7 +242,7 @@ impl Unwall {
 
         if let Err(error) = self.service.add_sites(&hosts, nickname).await {
             warn!(
-                exception.message = %error,
+                exception.message = %Chain(&error),
                 unwall.site.count = hosts.len(),
                 "could not add the unwall sites"
             );
@@ -289,7 +290,10 @@ impl Unwall {
         let removed = match self.service.remove_matching(&pattern).await {
             Ok(removed) => removed,
             Err(error) => {
-                warn!(exception.message = %error, "could not remove the unwall sites");
+                warn!(
+                    exception.message = %Chain(&error),
+                    "could not remove the unwall sites"
+                );
 
                 send_reply(
                     client,
@@ -360,7 +364,10 @@ impl Unwall {
                 ),
             ),
             Err(error) => {
-                warn!(exception.message = %error, "could not load the unwall statistics");
+                warn!(
+                    exception.message = %Chain(&error),
+                    "could not load the unwall statistics"
+                );
 
                 labeled_reply(NAME, "could not load the statistics.")
             }
@@ -391,7 +398,10 @@ impl Unwall {
                 format_args!("No unwalled links for{RESET} {host}{COLOR}."),
             ),
             Err(error) => {
-                warn!(exception.message = %error, "could not load the unwall statistics");
+                warn!(
+                    exception.message = %Chain(&error),
+                    "could not load the unwall statistics"
+                );
 
                 labeled_reply(NAME, "could not load the statistics.")
             }
@@ -460,7 +470,7 @@ impl Unwall {
                     }
                     Err(error) => {
                         warn!(
-                            exception.message = %error,
+                            exception.message = %Chain(&error),
                             "could not unwall the article"
                         );
 
@@ -627,6 +637,16 @@ mod tests {
         );
     }
 
+    /// Returns a request failure with a reply-grade `Display`.
+    fn request_error() -> Error {
+        let error = zeta_http::reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        Error::Request(zeta_http::RequestError::from(error))
+    }
+
     #[test]
     fn resolve_reply_uses_the_domain_text() {
         assert_eq!(
@@ -637,6 +657,13 @@ mod tests {
             resolve_reply(&Error::InvalidUrl),
             "not a usable article URL"
         );
+    }
+
+    #[test]
+    fn resolve_reply_surfaces_a_reply_grade_request_error() {
+        let error = request_error();
+
+        assert_eq!(resolve_reply(&error), error.to_string());
     }
 
     #[test]
