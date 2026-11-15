@@ -27,9 +27,9 @@ pub use assertions::{assert_parses, assert_url_hosts_cover};
 pub use context::{Recording, RecordingPlugin, mock_client, publish_recording, test_context};
 #[cfg(feature = "database")]
 pub use database::MIGRATOR;
-pub use http::{assert_redactions, assert_timeout_redactions, refused_address};
 #[cfg(feature = "http")]
-pub use http::{not_found_server, refused_get, timeout_error, wiremock};
+pub use http::{api_error, not_found_server, refused_get, timeout_error, wiremock};
+pub use http::{assert_redactions, assert_timeout_redactions, refused_address};
 #[cfg(feature = "spans")]
 pub use spans::{RecordedSpan, SpanRecorder};
 

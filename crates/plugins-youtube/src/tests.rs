@@ -1,9 +1,7 @@
 //! Tests for settings, URL recognition, and reply formatting.
 
-use zeta_http as http;
-use zeta_http::reqwest;
 use zeta_plugin::Chain;
-use zeta_test_support::settings_tests;
+use zeta_test_support::{api_error, settings_tests};
 use zeta_utils::irc;
 
 use super::format::{format_video_message, search_error_reply, video_error_reply};
@@ -55,16 +53,6 @@ fn test_video(
     }
 }
 
-/// Returns an API failure for the reply-mapper tests.
-fn api_error() -> Error {
-    let error = reqwest::Client::new()
-        .get("not a url")
-        .build()
-        .expect_err("a relative URL cannot be built into a request");
-
-    Error::Api(http::ApiError::from(http::RequestError::from(error)))
-}
-
 #[test]
 fn formats_search_failures() {
     assert_eq!(
@@ -76,7 +64,7 @@ fn formats_search_failures() {
 
 #[test]
 fn api_failures_keep_their_source_for_logs() {
-    let error = api_error();
+    let error: Error = api_error();
     let message = Chain(&error).to_string();
 
     assert!(
