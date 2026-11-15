@@ -8,10 +8,10 @@ use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tracing::{Level, debug};
-use zeta_http::RequestFailure as _;
 use zeta_http::json;
+use zeta_http::{RequestError, RequestFailure as _};
 
-use crate::error::{Error, RequestError};
+use crate::error::Error;
 use crate::model::{Coin, CoinQuery, Envelope, Fiat, Listing, QuoteData};
 
 /// Base URL of the CoinMarketCap Pro API.
@@ -381,23 +381,5 @@ mod tests {
         let err = api_error(StatusCode::INTERNAL_SERVER_ERROR, "<html>oops</html>");
 
         assert!(err.to_string().contains("500"), "{err:?}");
-    }
-
-    #[tokio::test]
-    async fn request_errors_redact_the_url_but_keep_the_cause() {
-        let (error, address) = zeta_test_support::refused_get("key=secret").await;
-
-        let error = RequestError::from(error);
-
-        zeta_test_support::assert_redactions(
-            &error.to_string(),
-            error.full(),
-            &format!("{error:?}"),
-            &address,
-            "key=secret",
-        );
-
-        // The chain ends at the wrapper, so nothing that walks `source()` can reach a raw error.
-        assert!(std::error::Error::source(&error).is_none(), "{error:?}");
     }
 }
