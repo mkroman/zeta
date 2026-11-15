@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use tracing::warn;
 
+use crate::Chain;
 use crate::event::Sender;
 
 /// Database connection pool.
@@ -32,14 +33,16 @@ pub const LOAD_BACKOFF: Duration = Duration::from_millis(250);
 /// without a retry (and the plugin task logs that error).
 ///
 /// The delay starts at [`LOAD_BACKOFF`] and doubles after each failed attempt, for
-/// [`LOAD_ATTEMPTS`] attempts in total.
+/// [`LOAD_ATTEMPTS`] attempts in total. Each failed attempt logs `exception.message` through
+/// [`Chain`], so the source detail of an error whose [`Display`](std::fmt::Display) is
+/// reply-grade — like [`DbError`] — still reaches the operator log.
 ///
 /// # Errors
 ///
 /// Returns the error of the last failed `load` attempt.
 pub async fn load_with_retry<E, F, Fut>(mut load: F) -> Result<(), E>
 where
-    E: std::fmt::Display,
+    E: std::error::Error + 'static,
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<(), E>>,
 {
@@ -52,7 +55,7 @@ where
                 warn!(
                     zeta.plugin.load.attempt = attempt,
                     zeta.plugin.load.max_attempts = LOAD_ATTEMPTS,
-                    exception.message = %error,
+                    exception.message = %Chain(&error),
                     "startup load failed; retrying"
                 );
 
@@ -135,8 +138,13 @@ pub async fn delete_ids(
 }
 
 /// A failed database operation, naming the affected entity.
+///
+/// [`Display`](std::fmt::Display) is reply-grade: `could not {stage} {entity}`, a sentence a
+/// channel may see because it carries no SQL or driver text. The [`sqlx::Error`] stays in
+/// [`source`](std::error::Error::source) as operator-grade detail; log it through [`Chain`],
+/// never by interpolating the error into a reply.
 #[derive(Debug, thiserror::Error)]
-#[error("could not {stage} {entity}: {source}")]
+#[error("could not {stage} {entity}")]
 pub struct DbError {
     stage: &'static str,
     entity: &'static str,
@@ -241,6 +249,18 @@ mod tests {
 
     use super::*;
 
+    /// A failed load attempt that carries its attempt number.
+    #[derive(Debug)]
+    struct LoadError(u32);
+
+    impl std::fmt::Display for LoadError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "attempt {}", self.0)
+        }
+    }
+
+    impl std::error::Error for LoadError {}
+
     /// A transient load failure is retried with a doubled delay: 250 ms, then 500 ms, before the
     /// third attempt succeeds.
     #[tokio::test(start_paused = true)]
@@ -254,7 +274,7 @@ mod tests {
 
             async move {
                 if attempt < 3 {
-                    Err(format!("attempt {attempt}"))
+                    Err(LoadError(attempt))
                 } else {
                     Ok(())
                 }
@@ -282,12 +302,15 @@ mod tests {
         let result = load_with_retry(|| {
             let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
 
-            async move { Err::<(), _>(format!("attempt {attempt}")) }
+            async move { Err::<(), _>(LoadError(attempt)) }
         })
         .await;
 
         assert_eq!(attempts.load(Ordering::SeqCst), LOAD_ATTEMPTS);
-        assert_eq!(result.unwrap_err(), format!("attempt {LOAD_ATTEMPTS}"));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("attempt {LOAD_ATTEMPTS}")
+        );
         assert!(
             started.elapsed() >= Duration::from_millis(1_750),
             "250 ms + 500 ms + 1 s of backoff, elapsed {:?}",
@@ -295,8 +318,9 @@ mod tests {
         );
     }
 
+    /// `Display` is the reply-grade sentence and the sqlx detail stays in the source chain.
     #[test]
-    fn db_error_display_and_source_match_the_manual_impl() {
+    fn db_error_display_is_reply_grade_and_the_source_carries_the_detail() {
         let cases = [
             ("load", DbError::load("alert", sqlx::Error::RowNotFound)),
             ("insert", DbError::insert("alert", sqlx::Error::RowNotFound)),
@@ -304,11 +328,8 @@ mod tests {
         ];
 
         for (stage, error) in cases {
-            // The manual `Display` wrote `could not {stage} {entity}: {source}`.
-            assert_eq!(
-                error.to_string(),
-                format!("could not {stage} alert: {}", error.source)
-            );
+            // A channel may see `Display`: it names the failure without the sqlx text.
+            assert_eq!(error.to_string(), format!("could not {stage} alert"));
 
             // A field named `source` is the error's source, as the manual impl returned it.
             let source = std::error::Error::source(&error).expect("the sqlx error is the source");
@@ -317,6 +338,13 @@ mod tests {
                 &raw const *source,
                 &raw const error.source,
             ));
+
+            // The operator log recovers the sqlx detail through the chain.
+            assert!(
+                Chain(&error)
+                    .to_string()
+                    .contains(&sqlx::Error::RowNotFound.to_string())
+            );
         }
     }
 }
