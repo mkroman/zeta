@@ -45,7 +45,7 @@ pub use train::{
     BaselineComparison, Candidate, Error as TrainError, ImageLayout, SectionRecord, TrainOutput,
     VERIFICATION_CHECKS, train, verify,
 };
-pub use ucd::{InputError, InputPaths, Inputs, read_inputs, read_version};
+pub use ucd::{InputError, InputPaths, Inputs, read_inputs};
 
 mod error;
 mod manifest;

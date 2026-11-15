@@ -105,9 +105,96 @@ pub const INPUTS: &[InputSpec] = &[
     EMOJI_TEST,
 ];
 
+/// The parsed `<stem>-<major>.<minor>.<patch>.txt` release header of a UCD text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UcdVersionHeader {
+    /// The first 32 lines carry no header for the requested stem.
+    Missing,
+    /// A header matched the stem but its version is malformed; the line is verbatim.
+    Malformed(String),
+    /// The Unicode version the file advertises.
+    Found((u8, u8, u8)),
+}
+
+/// The parsed `# Version: <major>.<minor>` header of `emoji-test.txt`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EmojiVersionHeader {
+    /// The first 32 lines carry no `# Version:` header.
+    Missing,
+    /// A header matched but its version is malformed; the line is verbatim.
+    Malformed(String),
+    /// The Emoji version the file advertises.
+    Found((u8, u8)),
+}
+
+/// Parses the `# <stem>-<major>.<minor>.<patch>.txt` release header of a UCD text.
+///
+/// Only the first 32 lines are scanned, and the first line that starts with `# `, carries
+/// `stem` and ends in `.txt` decides the result: a bad version on that line is
+/// [`UcdVersionHeader::Malformed`], not a reason to keep looking. A leading byte-order mark is
+/// ignored, so a BOM-prefixed file parses like a plain one. `stem` is the file name without
+/// `.txt`, for example `DerivedName`.
+#[must_use]
+pub fn ucd_version_header(text: &str, stem: &str) -> UcdVersionHeader {
+    for line in text.lines().take(32) {
+        let line = line.trim_prefix('\u{feff}').trim_end();
+        let Some(rest) = line.strip_prefix("# ") else {
+            continue;
+        };
+        let Some(rest) = rest
+            .strip_prefix(stem)
+            .and_then(|rest| rest.strip_prefix('-'))
+        else {
+            continue;
+        };
+        let Some(rest) = rest.strip_suffix(".txt") else {
+            continue;
+        };
+        let parts: Vec<&str> = rest.split('.').collect();
+        if parts.len() != 3 {
+            return UcdVersionHeader::Malformed(line.to_owned());
+        }
+        let mut version = [0u8; 3];
+        for (slot, part) in version.iter_mut().zip(&parts) {
+            let Ok(part) = part.parse() else {
+                return UcdVersionHeader::Malformed(line.to_owned());
+            };
+            *slot = part;
+        }
+        return UcdVersionHeader::Found(version.into());
+    }
+    UcdVersionHeader::Missing
+}
+
+/// Parses the `# Version: <major>.<minor>` header of `emoji-test.txt`.
+///
+/// `emoji-test.txt` does not use the `<stem>-<version>.txt` form and has no patch component.
+/// Only the first 32 lines are scanned; a leading byte-order mark is ignored.
+#[must_use]
+pub fn emoji_version_header(text: &str) -> EmojiVersionHeader {
+    for line in text.lines().take(32) {
+        let line = line.trim_prefix('\u{feff}').trim_end();
+        let Some(rest) = line.strip_prefix("# Version:") else {
+            continue;
+        };
+        let mut parts = rest.trim().split('.');
+        let (Some(major), Some(minor), None) = (parts.next(), parts.next(), parts.next()) else {
+            return EmojiVersionHeader::Malformed(line.to_owned());
+        };
+        let (Ok(major), Ok(minor)) = (major.parse(), minor.parse()) else {
+            return EmojiVersionHeader::Malformed(line.to_owned());
+        };
+        return EmojiVersionHeader::Found((major, minor));
+    }
+    EmojiVersionHeader::Missing
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{INPUTS, InputSpec};
+    use super::{
+        EmojiVersionHeader, INPUTS, InputSpec, UcdVersionHeader, emoji_version_header,
+        ucd_version_header,
+    };
 
     #[test]
     fn every_fetch_path_is_an_accepted_candidate() {
@@ -136,5 +223,58 @@ mod tests {
             fetch_path: "b/missing.txt",
         };
         assert_eq!(missing.candidates_before_fetch(), ["a/missing.txt"]);
+    }
+
+    #[test]
+    fn ucd_headers_parse_every_outcome() {
+        assert_eq!(
+            ucd_version_header("0041; LATIN CAPITAL LETTER A\n", "DerivedName"),
+            UcdVersionHeader::Missing
+        );
+        assert_eq!(
+            ucd_version_header("\u{feff}# DerivedName-18.0.0.txt\n", "DerivedName"),
+            UcdVersionHeader::Found((18, 0, 0))
+        );
+        assert_eq!(
+            ucd_version_header("# NameAliases-18.0.0.txt\n", "DerivedName"),
+            UcdVersionHeader::Missing,
+            "a header for another stem is not this file's header"
+        );
+        assert_eq!(
+            ucd_version_header("# DerivedName-18.0.txt\n", "DerivedName"),
+            UcdVersionHeader::Malformed("# DerivedName-18.0.txt".to_owned())
+        );
+        assert_eq!(
+            ucd_version_header("# DerivedName-18.x.0.txt\n", "DerivedName"),
+            UcdVersionHeader::Malformed("# DerivedName-18.x.0.txt".to_owned())
+        );
+        assert_eq!(
+            ucd_version_header(
+                "# DerivedName-17.0.0.txt\n# DerivedName-18.0.0.txt\n",
+                "DerivedName"
+            ),
+            UcdVersionHeader::Found((17, 0, 0)),
+            "the first matching header decides"
+        );
+    }
+
+    #[test]
+    fn emoji_test_headers_parse_every_outcome() {
+        assert_eq!(
+            emoji_version_header("# emoji-test.txt\n"),
+            EmojiVersionHeader::Missing
+        );
+        assert_eq!(
+            emoji_version_header("\u{feff}# Version: 16.0  \r\n"),
+            EmojiVersionHeader::Found((16, 0))
+        );
+        assert_eq!(
+            emoji_version_header("# Version: 16.0.1\n"),
+            EmojiVersionHeader::Malformed("# Version: 16.0.1".to_owned())
+        );
+        assert_eq!(
+            emoji_version_header("# Version: 16\n"),
+            EmojiVersionHeader::Malformed("# Version: 16".to_owned())
+        );
     }
 }

@@ -20,6 +20,15 @@ pub const TONE_NAMES: [&str; 5] = [
 
 const _: () = assert!(TONES.len() == TONE_NAMES.len());
 
+/// The tone-formatting rules the trainer tries, in priority order.
+///
+/// Rule `1` inserts the tone phrase after the first `": "` and rule `2` appends it; rules `3`
+/// and `4` place it the same way but collapse consecutive duplicate tones (see
+/// [`format_toned`]). When several rules reproduce every published variant of a base, the first
+/// one here wins; the runtime only replays the rule the trainer stored, so this order is
+/// build-side only.
+pub const TONE_RULE_PRIORITY: [u8; 4] = [3, 1, 4, 2];
+
 /// Longest canonical emoji key, in bytes.
 ///
 /// The runtime keeps a fixed scratch buffer of this size; the generator rejects a stored key
@@ -31,6 +40,18 @@ pub const MAX_CPS: usize = 16;
 
 /// The `U+200D` zero-width joiner.
 pub const ZWJ: u32 = 0x200D;
+
+/// The emoji-style variation selector, `U+FE0F`.
+///
+/// Emoji keys are canonicalized by dropping this code point, because Unicode lists the same
+/// sequence with and without it.
+pub const VARIATION_SELECTOR_16: u32 = 0xFE0F;
+
+/// The UTF-8 encoding of [`VARIATION_SELECTOR_16`]: `EF B8 8F`.
+///
+/// The runtime canonicalizes keys at the byte level, so it strips this byte run instead of
+/// decoding the sequence first.
+pub const VARIATION_SELECTOR_16_UTF8: [u8; 3] = [0xEF, 0xB8, 0x8F];
 
 /// The number of bits the rule id occupies in a packed emoji entry.
 pub const RULE_BITS: u32 = 4;
@@ -282,6 +303,18 @@ pub const fn is_tone(cp: u32) -> bool {
     tone_index(cp).is_some()
 }
 
+/// The canonical form of an emoji sequence: every [`VARIATION_SELECTOR_16`] removed.
+///
+/// The trainer canonicalizes keys with this before deduplicating them, so a sequence that
+/// Unicode lists both with and without the selector collapses onto one entry.
+#[must_use]
+pub fn canonical_emoji_cps(cps: &[u32]) -> Vec<u32> {
+    cps.iter()
+        .copied()
+        .filter(|&cp| cp != VARIATION_SELECTOR_16)
+        .collect()
+}
+
 /// The indices into [`TONES`] of the skin-tone code points in `cps`, in order.
 ///
 /// Returns the indices and their count in a fixed-capacity array, so a lookup with at most two
@@ -521,6 +554,25 @@ mod tests {
         }
         assert!(!is_tone(0x1F3FA));
         assert!(!is_tone(0x1F400));
+    }
+
+    #[test]
+    fn canonical_keys_drop_the_variation_selector() {
+        assert_eq!(
+            canonical_emoji_cps(&[0x2764, VARIATION_SELECTOR_16]),
+            [0x2764]
+        );
+        assert_eq!(canonical_emoji_cps(&[]), []);
+        let mut buffer = [0u8; 4];
+        let encoded = char::from_u32(VARIATION_SELECTOR_16)
+            .expect("the variation selector is a scalar value")
+            .encode_utf8(&mut buffer);
+        assert_eq!(encoded.as_bytes(), VARIATION_SELECTOR_16_UTF8);
+    }
+
+    #[test]
+    fn tone_rule_priority_prefers_the_deduplicating_insertion() {
+        assert_eq!(TONE_RULE_PRIORITY, [3, 1, 4, 2]);
     }
 
     #[test]

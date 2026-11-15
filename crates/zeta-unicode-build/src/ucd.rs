@@ -3,13 +3,16 @@
 //! Inputs are discovered through the shared [`InputSpec`] candidate lists instead of a fixed
 //! path, so the generator accepts both the flat vendored layout (`data/DerivedName.txt`) and
 //! the layout of an extracted Unicode release (`data/ucd/extracted/DerivedName.txt`,
-//! `data/ucd/emoji/emoji-test.txt`). A missing file reports every path that was tried.
+//! `data/ucd/emoji/emoji-test.txt`). A missing file reports every path that was tried. The
+//! release headers are parsed with the shared [`ucd_version_header`] and
+//! [`emoji_version_header`] helpers, so the trainer and `cargo xtask` read them the same way.
 
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 use zeta_unicode_format::{
-    DERIVED_NAME, EMOJI_TEST, GENERAL_CATEGORY, InputSpec, NAME_ALIASES, NAMED_SEQUENCES,
+    DERIVED_NAME, EMOJI_TEST, EmojiVersionHeader, GENERAL_CATEGORY, InputSpec, NAME_ALIASES,
+    NAMED_SEQUENCES, UcdVersionHeader, emoji_version_header, ucd_version_header,
 };
 
 /// The first Unicode release whose UCD ships `NamedSequences.txt` (4.1.0 introduced it).
@@ -234,24 +237,6 @@ pub fn read_inputs(data_dir: &Path) -> Result<Inputs, InputError> {
     })
 }
 
-/// Reads only the Unicode version advertised by `DerivedName.txt`.
-///
-/// This is the cheap probe a build script can use before selecting a training profile; it does
-/// not read the other inputs.
-///
-/// # Errors
-///
-/// Returns [`InputError`] when `DerivedName.txt` is missing, cannot be read, or has no valid
-/// version header.
-pub fn read_version(data_dir: &Path) -> Result<(u8, u8, u8), InputError> {
-    let path =
-        find_input(data_dir, &DERIVED_NAME).ok_or_else(|| InputError::MissingDerivedName {
-            tried: candidates(data_dir, &DERIVED_NAME),
-        })?;
-    let text = read_file(&path)?;
-    header_version(DERIVED_NAME.file, &text, &path)
-}
-
 /// Finds the first existing candidate for `spec`.
 fn find_input(data_dir: &Path, spec: &InputSpec) -> Option<PathBuf> {
     spec.candidates
@@ -310,82 +295,36 @@ fn check_version(
 
 /// Reads the `# <Stem>-<major>.<minor>.<patch>.txt` header shared by the UCD files.
 fn header_version(file: &'static str, text: &str, path: &Path) -> Result<(u8, u8, u8), InputError> {
-    let stem = file.trim_suffix(".txt");
-    for line in text.lines().take(32) {
-        let line = line.trim_prefix('\u{feff}').trim_end();
-        let Some(rest) = line.strip_prefix("# ") else {
-            continue;
-        };
-        let Some(rest) = rest
-            .strip_prefix(stem)
-            .and_then(|rest| rest.strip_prefix('-'))
-        else {
-            continue;
-        };
-        let Some(rest) = rest.strip_suffix(".txt") else {
-            continue;
-        };
-        let parts: Vec<&str> = rest.split('.').collect();
-        if parts.len() != 3 {
-            return Err(InputError::MalformedVersion {
-                file,
-                path: path.to_path_buf(),
-                header: line.to_owned(),
-            });
-        }
-        let mut version = [0u8; 3];
-        for (slot, part) in version.iter_mut().zip(&parts) {
-            *slot = part.parse().map_err(|_| InputError::MalformedVersion {
-                file,
-                path: path.to_path_buf(),
-                header: line.to_owned(),
-            })?;
-        }
-        return Ok(version.into());
+    match ucd_version_header(text, file.trim_suffix(".txt")) {
+        UcdVersionHeader::Found(version) => Ok(version),
+        UcdVersionHeader::Malformed(header) => Err(InputError::MalformedVersion {
+            file,
+            path: path.to_path_buf(),
+            header,
+        }),
+        UcdVersionHeader::Missing => Err(InputError::MissingVersion {
+            file,
+            path: path.to_path_buf(),
+        }),
     }
-    Err(InputError::MissingVersion {
-        file,
-        path: path.to_path_buf(),
-    })
 }
 
 /// Reads the `# Version: <major>.<minor>` header of `emoji-test.txt`.
 ///
 /// `emoji-test.txt` does not use the `<Stem>-<version>.txt` form and has no patch component.
 fn emoji_test_version(text: &str, path: &Path) -> Result<(u8, u8), InputError> {
-    for line in text.lines().take(32) {
-        let line = line.trim_prefix('\u{feff}');
-        let Some(rest) = line.strip_prefix("# Version:") else {
-            continue;
-        };
-        let mut parts = rest.trim().split('.');
-        let (Some(major), Some(minor), None) = (parts.next(), parts.next(), parts.next()) else {
-            return Err(InputError::MalformedVersion {
-                file: EMOJI_TEST.file,
-                path: path.to_path_buf(),
-                header: line.to_owned(),
-            });
-        };
-        let Ok(major) = major.parse() else {
-            return Err(InputError::MalformedVersion {
-                file: EMOJI_TEST.file,
-                path: path.to_path_buf(),
-                header: line.to_owned(),
-            });
-        };
-        let Ok(minor) = minor.parse() else {
-            return Err(InputError::MalformedVersion {
-                file: EMOJI_TEST.file,
-                path: path.to_path_buf(),
-                header: line.to_owned(),
-            });
-        };
-        return Ok((major, minor));
+    match emoji_version_header(text) {
+        EmojiVersionHeader::Found(version) => Ok(version),
+        EmojiVersionHeader::Malformed(header) => Err(InputError::MalformedVersion {
+            file: EMOJI_TEST.file,
+            path: path.to_path_buf(),
+            header,
+        }),
+        EmojiVersionHeader::Missing => Err(InputError::MissingVersion {
+            file: EMOJI_TEST.file,
+            path: path.to_path_buf(),
+        }),
     }
-    Err(InputError::MissingVersion {
-        file: EMOJI_TEST.file,
-        path: path.to_path_buf(),
-    })
 }
 
 /// Formats a version for an error message.
@@ -679,15 +618,5 @@ mod tests {
         assert_eq!(inputs.version, (18, 0, 0));
         let parsed: Vec<_> = records(&inputs.names).collect();
         assert_eq!(parsed, vec![(2, "0041; LATIN CAPITAL LETTER A")]);
-    }
-
-    #[test]
-    fn read_version_matches_the_full_reader() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        flat_18(dir.path());
-        assert_eq!(
-            read_version(dir.path()).expect("version"),
-            read_inputs(dir.path()).expect("inputs").version
-        );
     }
 }
