@@ -31,10 +31,11 @@ use std::collections::BTreeMap;
 use bytes::BufMut;
 
 use zeta_unicode_format::{
-    MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, RuleContext, TONE_NAMES, TONES, ZWJ, clock_name,
-    encode_cps, family_word, format_toned, is_tone, join_family, keycap_word, pack_bits,
-    pair_phrase, plural, rule_name, swap_person, tone_phrase, tone_positions, ucd_mask_name,
-    write_varint,
+    EMOJI_STREAM_COUNT, EMOJI_TONE_CODE_BITS, EMOJI_TONE_MASK_BITS, MAX_CPS, MAX_KEY,
+    MAX_RULE_ARGUMENT, Rule, RuleContext, TONE_NAMES, TONE_RULE_PRIORITY, TONES, ZWJ,
+    canonical_emoji_cps, clock_name, encode_cps, family_word, format_toned, is_tone, join_family,
+    keycap_word, pack_bits, pair_phrase, plural, rule_name, swap_person, tone_phrase,
+    tone_positions, ucd_mask_name, write_varint,
 };
 
 use zeta_unicode_format::huffman;
@@ -129,7 +130,12 @@ pub fn canonical_entries(emoji_text: &str, named_text: &str) -> Vec<EmojiEntry> 
     // Canonicalize: strip U+FE0F, keeping the highest-precedence name per canonical key.
     let mut canonical: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
     for (cps, (rank, name)) in &all {
-        keep_best(&mut canonical, canonical_cps(cps), *rank, name.clone());
+        keep_best(
+            &mut canonical,
+            canonical_emoji_cps(cps),
+            *rank,
+            name.clone(),
+        );
     }
 
     let mut kept: BTreeMap<Vec<u32>, (String, u8, u8)> = BTreeMap::new();
@@ -169,7 +175,7 @@ pub fn canonical_entries(emoji_text: &str, named_text: &str) -> Vec<EmojiEntry> 
         };
 
         if rule == 0 {
-            for candidate in [3u8, 1, 4, 2] {
+            for candidate in TONE_RULE_PRIORITY {
                 if group.iter().all(|(tones, variant_name, _)| {
                     format_toned(candidate, &base_name, tones) == *variant_name
                 }) {
@@ -471,8 +477,14 @@ fn encode_payload(
         mask_stream,
         decoded_keys,
         decoded_names,
-        tone_codes: pack_bits(entries.iter().map(|entry| entry.tone_code), 3),
-        tone_masks: pack_bits(entries.iter().map(|entry| entry.tone_mask), 2),
+        tone_codes: pack_bits(
+            entries.iter().map(|entry| entry.tone_code),
+            EMOJI_TONE_CODE_BITS,
+        ),
+        tone_masks: pack_bits(
+            entries.iter().map(|entry| entry.tone_mask),
+            EMOJI_TONE_MASK_BITS,
+        ),
         key_bytes,
         literal_bytes,
     }
@@ -483,12 +495,13 @@ fn assemble(entries: usize, literals: usize, payload: &Payload) -> Vec<u8> {
     let mut section = Vec::new();
     section.put_u16_le(u16::try_from(entries).expect("entry count"));
     section.put_u16_le(u16::try_from(literals).expect("literal count"));
-    for (raw, coded, order) in [
-        (&payload.key_raw, &payload.key_stream, 1u8),
+    let streams: [(&[u8], &[u8], u8); EMOJI_STREAM_COUNT] = [
+        (&payload.key_raw, &payload.key_stream, 1),
         (&payload.name_raw, &payload.name_stream, 0),
         (&payload.rule_raw, &payload.rule_stream, 0),
         (&payload.mask_raw, &payload.mask_stream, 0),
-    ] {
+    ];
+    for (raw, coded, order) in streams {
         section.put_u16_le(u16::try_from(raw.len()).expect("raw length"));
         section.put_u16_le(u16::try_from(coded.len()).expect("coded length"));
         section.push(order);
@@ -842,13 +855,13 @@ fn parse_emoji(emoji_text: &str, named_text: &str) -> BTreeMap<Vec<u32>, (u8, St
     }
 
     let emoji_keys: std::collections::BTreeSet<Vec<u32>> =
-        entries.keys().map(|cps| canonical_cps(cps)).collect();
+        entries.keys().map(|cps| canonical_emoji_cps(cps)).collect();
     for (number, line) in records(named_text) {
         let (name, cps) = line
             .split_once(';')
             .unwrap_or_else(|| panic!("line {number}: {line}"));
         let cps = parse_code_points(cps, number);
-        if !emoji_keys.contains(&canonical_cps(&cps)) {
+        if !emoji_keys.contains(&canonical_emoji_cps(&cps)) {
             continue;
         }
         keep_best(&mut entries, cps, 3, name.trim().to_owned());
@@ -866,11 +879,6 @@ fn is_emoji_version(word: &str) -> bool {
         part.is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
     };
     numeric(parts.next()) && numeric(parts.next()) && parts.next().is_none()
-}
-
-/// The canonical key of a sequence: `U+FE0F` removed.
-fn canonical_cps(cps: &[u32]) -> Vec<u32> {
-    cps.iter().copied().filter(|&cp| cp != 0xFE0F).collect()
 }
 
 /// Keeps the higher-precedence name; a tie keeps the later entry.
@@ -898,7 +906,7 @@ fn store_verbatim(kept: &mut BTreeMap<Vec<u32>, (String, u8, u8)>, group: &[Tone
 /// Reconstructs a base entry for a tone-variant group whose base Unicode does not list.
 fn derive_base(group: &[ToneVariant]) -> Option<(String, u8)> {
     let (tones, first_name, _) = group.first()?;
-    [3u8, 1, 4, 2].into_iter().find_map(|rule| {
+    TONE_RULE_PRIORITY.into_iter().find_map(|rule| {
         let base = strip_phrase(rule, first_name, tones)?;
         group
             .iter()
@@ -937,7 +945,7 @@ fn code_points(key: &str) -> Vec<u32> {
 
 #[cfg(test)]
 mod tests {
-    use zeta_unicode_format::unpack_bits;
+    use zeta_unicode_format::{EMOJI_DESCRIPTOR_LEN, unpack_bits};
 
     use super::*;
 
@@ -976,13 +984,13 @@ mod tests {
             }
         }
         let emoji_keys: std::collections::BTreeSet<Vec<u32>> =
-            ranked.keys().map(|cps| canonical_cps(cps)).collect();
+            ranked.keys().map(|cps| canonical_emoji_cps(cps)).collect();
         for (number, line) in records(NAMED) {
             let (name, cps) = line
                 .split_once(';')
                 .unwrap_or_else(|| panic!("line {number}: {line}"));
             let cps = parse_code_points(cps, number);
-            if !emoji_keys.contains(&canonical_cps(&cps)) {
+            if !emoji_keys.contains(&canonical_emoji_cps(&cps)) {
                 continue;
             }
             match ranked.get(&cps) {
@@ -995,7 +1003,7 @@ mod tests {
 
         let mut canonical: BTreeMap<Vec<u32>, (u8, String)> = BTreeMap::new();
         for (cps, (rank, name)) in &ranked {
-            let cps = canonical_cps(cps);
+            let cps = canonical_emoji_cps(cps);
             match canonical.get(&cps) {
                 Some((best, _)) if *best > *rank => {}
                 _ => {
@@ -1032,7 +1040,7 @@ mod tests {
                 (name.clone(), 0)
             } else {
                 let derived = group.first().and_then(|(tones, first, _)| {
-                    [3u8, 1, 4, 2].into_iter().find_map(|rule| {
+                    TONE_RULE_PRIORITY.into_iter().find_map(|rule| {
                         let phrase = tone_phrase(rule, tones);
                         let base = match rule {
                             2 | 4 => first
@@ -1057,7 +1065,7 @@ mod tests {
                 (derived, derived_rule)
             };
             if rule == 0 {
-                for candidate in [3u8, 1, 4, 2] {
+                for candidate in TONE_RULE_PRIORITY {
                     if group.iter().all(|(tones, variant, _)| {
                         format_toned(candidate, &base_name, tones) == *variant
                     }) {
@@ -1116,12 +1124,12 @@ mod tests {
         let literal_count = usize::from(u16::from_le_bytes([section[2], section[3]]));
         let mut descriptors = Vec::new();
         let mut at = 4usize;
-        for _ in 0..4 {
+        for _ in 0..EMOJI_STREAM_COUNT {
             let raw = usize::from(u16::from_le_bytes([section[at], section[at + 1]]));
             let coded = usize::from(u16::from_le_bytes([section[at + 2], section[at + 3]]));
             let order = section[at + 4];
             descriptors.push((raw, coded, order));
-            at += 5;
+            at += EMOJI_DESCRIPTOR_LEN;
         }
         let mut streams = Vec::new();
         for &(raw, coded, order) in &descriptors {
@@ -1190,15 +1198,19 @@ mod tests {
         }
         assert_eq!(usize::from(literal), literal_count);
         assert_eq!(mask_at, mask_raw.len());
-        let tone_codes_len = (count * 3).div_ceil(8);
+        let tone_codes_len = (count * EMOJI_TONE_CODE_BITS).div_ceil(8);
         let tone_codes = section[at..at + tone_codes_len].to_vec();
         at += tone_codes_len;
         let tone_masks = section[at..].to_vec();
         let tone_codes = (0..count)
-            .map(|index| unpack_bits(&tone_codes, index, 3).expect("a packed tone code"))
+            .map(|index| {
+                unpack_bits(&tone_codes, index, EMOJI_TONE_CODE_BITS).expect("a packed tone code")
+            })
             .collect();
         let tone_masks = (0..count)
-            .map(|index| unpack_bits(&tone_masks, index, 2).expect("a packed tone mask"))
+            .map(|index| {
+                unpack_bits(&tone_masks, index, EMOJI_TONE_MASK_BITS).expect("a packed tone mask")
+            })
             .collect();
         Decoded {
             keys,

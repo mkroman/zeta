@@ -19,7 +19,7 @@
 use bytes::Buf;
 use zeta_unicode_format::huffman;
 use zeta_unicode_format::{
-    GC_ID_BITS, GC_ID_MASK, GC_PAGES, GC_SHIFT, GC_SHORT_NAMES, UNICODE_END,
+    GC_ID_BITS, GC_ID_MASK, GC_PAGES, GC_SECTION_HEADER_LEN, GC_SHIFT, GC_SHORT_NAMES, UNICODE_END,
 };
 
 /// The parsed general-category section.
@@ -29,9 +29,6 @@ pub struct Gc {
     /// Packed page-relative run start and category id, sorted by start.
     records: Vec<u16>,
 }
-
-/// The fixed section header: run count, start lengths, and two stream orders.
-const HEADER: usize = 2 + 2 + 2 + 1 + 2 + 1;
 
 impl Gc {
     /// Parses and decodes a general-category section.
@@ -50,7 +47,7 @@ impl Gc {
             return None;
         }
 
-        let starts_at = HEADER;
+        let starts_at = GC_SECTION_HEADER_LEN;
         let cats_at = starts_at.checked_add(starts_coded)?;
         let end = cats_at.checked_add(cats_coded)?;
         if end != section.len() {

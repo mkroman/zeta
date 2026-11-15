@@ -1,4 +1,4 @@
-//! The Nomina wire layout: image header, section ids and name-table constants.
+//! The Nomina wire layout: image header, section ids, section framing and name-table constants.
 //!
 //! These constants are the contract between `zeta_unicode_build::nomina` and the runtime
 //! decoders in `zeta_unicode`. Both crates import them from here instead of spelling the same
@@ -43,6 +43,18 @@ pub const EMOJI: usize = 1;
 pub const GC: usize = 2;
 /// The section id of the `*` patterns.
 pub const PATTERNS: usize = 3;
+
+/// The number of Huffman-coded streams an emoji section stores.
+pub const EMOJI_STREAM_COUNT: usize = 4;
+
+/// Bytes per emoji stream descriptor: `u16 raw_len | u16 coded_len | u8 order`.
+pub const EMOJI_DESCRIPTOR_LEN: usize = 2 + 2 + 1;
+
+/// The width of one packed emoji tone-formatting rule, in bits.
+pub const EMOJI_TONE_CODE_BITS: usize = 3;
+
+/// The width of one packed emoji published-tone-count mask, in bits.
+pub const EMOJI_TONE_MASK_BITS: usize = 2;
 
 /// Byte 13 of the header selects how the name section front-codes its entries.
 ///
@@ -187,6 +199,12 @@ const _: () = assert!(GC_PAGE_SHIFT as u32 == GC_SHIFT);
 /// This is one more than [`UNICODE_END`] needs, so the runtime's page directory carries a
 /// final sentinel entry and the run search on the last page has an upper bound.
 pub const GC_PAGES: usize = (UNICODE_LIMIT as usize >> GC_SHIFT) + 1;
+
+/// Bytes in the general-category section header.
+///
+/// The header is `u16 run_count | u16 starts_raw_len | u16 starts_coded_len | u8 starts_order |
+/// u16 cats_coded_len | u8 cats_order`; both Huffman streams follow it.
+pub const GC_SECTION_HEADER_LEN: usize = 2 + 2 + 2 + 1 + 2 + 1;
 
 /// The low bits of a general-category record holding the category id.
 pub const GC_ID_BITS: u32 = 5;

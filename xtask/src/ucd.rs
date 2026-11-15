@@ -9,7 +9,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use zeta_unicode_format::{DERIVED_NAME, EMOJI_TEST, INPUTS};
+use zeta_unicode_format::{
+    DERIVED_NAME, EMOJI_TEST, EmojiVersionHeader, INPUTS, UcdVersionHeader, emoji_version_header,
+    ucd_version_header,
+};
 
 use crate::cli::FetchUcdArgs;
 use crate::error::{Error, Result};
@@ -239,15 +242,19 @@ fn default_emoji_version(version: &str) -> &str {
 
 #[must_use]
 fn has_derived_name_version(contents: &str, version: &str) -> bool {
-    let marker = format!("# DerivedName-{version}");
-    contents.lines().any(|line| line.contains(&marker))
+    matches!(
+        ucd_version_header(contents, "DerivedName"),
+        UcdVersionHeader::Found(found)
+            if format!("{}.{}.{}", found.0, found.1, found.2) == version
+    )
 }
 
 #[must_use]
 fn has_emoji_version(contents: &str, version: &str) -> bool {
-    let expected = format!("# Version: {version}");
-    let contents = contents.strip_prefix('\u{feff}').unwrap_or(contents);
-    contents.lines().any(|line| line.trim_end() == expected)
+    matches!(
+        emoji_version_header(contents),
+        EmojiVersionHeader::Found(found) if format!("{}.{}", found.0, found.1) == version
+    )
 }
 
 #[must_use]

@@ -27,10 +27,6 @@ use crate::ucd::{hex_u32, records};
 /// The general category range table: `(start, end, table id)`.
 pub type GcRange = (u32, u32, u8);
 
-/// The fixed section header: run count, start lengths, and two stream orders.
-#[cfg(test)]
-const HEADER: usize = 2 + 2 + 2 + 1 + 2 + 1;
-
 /// Counters and measured sizes for one general-category section build.
 #[derive(Clone, Debug, Default)]
 pub struct GcStats {
@@ -244,6 +240,8 @@ fn general_category_id(letter: &str) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    use zeta_unicode_format::GC_SECTION_HEADER_LEN;
+
     use super::*;
 
     const DERIVED_GC: &str = include_str!("../../../zeta-unicode/data/DerivedGeneralCategory.txt");
@@ -284,8 +282,9 @@ mod tests {
         let starts_order = section[6];
         let cats_coded = usize::from(u16::from_le_bytes([section[7], section[8]]));
         let cats_order = section[9];
-        let coded_starts = &section[HEADER..HEADER + starts_coded];
-        let cats_stream = &section[HEADER + starts_coded..HEADER + starts_coded + cats_coded];
+        let coded_starts = &section[GC_SECTION_HEADER_LEN..GC_SECTION_HEADER_LEN + starts_coded];
+        let cats_stream = &section[GC_SECTION_HEADER_LEN + starts_coded
+            ..GC_SECTION_HEADER_LEN + starts_coded + cats_coded];
         let starts = huffman::decode(coded_starts, starts_raw, starts_order).expect("starts");
         let cats = huffman::decode(cats_stream, count, cats_order).expect("cats");
         let mut runs = Vec::with_capacity(count);
@@ -349,7 +348,7 @@ mod tests {
     fn a_truncated_section_is_rejected_by_the_round_trip() {
         let (section, _) = build(DERIVED_GC);
         // The encoder's own decode already ran; this pins the section length arithmetic.
-        assert_eq!(section.len(), HEADER + 2_140 + 1_710);
+        assert_eq!(section.len(), GC_SECTION_HEADER_LEN + 2_140 + 1_710);
         assert_eq!(
             usize::from(u16::from_le_bytes([section[0], section[1]])),
             4_202

@@ -22,12 +22,10 @@ use std::cmp::Ordering;
 use bytes::Buf;
 use zeta_unicode_format::huffman;
 use zeta_unicode_format::{
-    MAX_CPS, MAX_KEY, Rule, RuleContext, encode_cps, format_toned, is_tone, rule_name,
-    rule_needs_sequence, tone_indices, unpack_bits,
+    EMOJI_STREAM_COUNT, EMOJI_TONE_CODE_BITS, EMOJI_TONE_MASK_BITS, MAX_CPS, MAX_KEY, Rule,
+    RuleContext, VARIATION_SELECTOR_16, VARIATION_SELECTOR_16_UTF8, encode_cps, format_toned,
+    is_tone, rule_name, rule_needs_sequence, tone_indices, unpack_bits,
 };
-
-/// Four stream descriptors of `u16 raw_len | u16 coded_len | u8 order`.
-const STREAM_COUNT: usize = 4;
 
 /// The longest chain of rule expansions a name may take.
 ///
@@ -99,8 +97,8 @@ impl Emoji {
         if literal_count > count {
             return None;
         }
-        let mut descriptors = Vec::with_capacity(STREAM_COUNT);
-        for _ in 0..STREAM_COUNT {
+        let mut descriptors = Vec::with_capacity(EMOJI_STREAM_COUNT);
+        for _ in 0..EMOJI_STREAM_COUNT {
             let raw_len = usize::from(header.try_get_u16_le().ok()?);
             let coded_len = usize::from(header.try_get_u16_le().ok()?);
             let order = header.try_get_u8().ok()?;
@@ -110,14 +108,14 @@ impl Emoji {
             descriptors.push((raw_len, coded_len, order));
         }
         let mut at = section.len().checked_sub(header.remaining())?;
-        let mut streams = Vec::with_capacity(STREAM_COUNT);
+        let mut streams = Vec::with_capacity(EMOJI_STREAM_COUNT);
         for &(raw_len, coded_len, order) in &descriptors {
             let coded = section.get(at..at.checked_add(coded_len)?)?;
             streams.push(huffman::decode(coded, raw_len, order)?);
             at += coded_len;
         }
-        let tone_codes_len = count.checked_mul(3)?.div_ceil(8);
-        let tone_masks_len = count.checked_mul(2)?.div_ceil(8);
+        let tone_codes_len = count.checked_mul(EMOJI_TONE_CODE_BITS)?.div_ceil(8);
+        let tone_masks_len = count.checked_mul(EMOJI_TONE_MASK_BITS)?.div_ceil(8);
         let tone_codes = section.get(at..at.checked_add(tone_codes_len)?)?.to_vec();
         at += tone_codes_len;
         let tone_masks = section.get(at..at.checked_add(tone_masks_len)?)?.to_vec();
@@ -205,7 +203,9 @@ impl Emoji {
         let first = chars.next()?;
         // A lone skin-tone component is an entry; a tone or variation selector in front of
         // anything else is not a sequence.
-        if chars.next().is_some() && (is_tone(u32::from(first)) || first == '\u{FE0F}') {
+        if chars.next().is_some()
+            && (is_tone(u32::from(first)) || u32::from(first) == VARIATION_SELECTOR_16)
+        {
             return None;
         }
         if !self.may_start(leading) {
@@ -284,12 +284,12 @@ impl Emoji {
 
     /// Returns the 3-bit tone formatting rule of entry `index`.
     fn tone_code(&self, index: usize) -> Option<u8> {
-        unpack_bits(&self.tone_codes, index, 3)
+        unpack_bits(&self.tone_codes, index, EMOJI_TONE_CODE_BITS)
     }
 
     /// Returns the 2-bit published-tone-count mask of entry `index`.
     fn tone_mask(&self, index: usize) -> Option<u8> {
-        unpack_bits(&self.tone_masks, index, 2)
+        unpack_bits(&self.tone_masks, index, EMOJI_TONE_MASK_BITS)
     }
 
     /// Materializes the name of entry `index`.
@@ -479,16 +479,14 @@ fn push_utf8(cp: u32, out: &mut Vec<u8>) -> Option<()> {
     Some(())
 }
 
-/// Strips `U+FE0F` (`EF B8 8F`) into `buffer` without allocating.
+/// Strips the UTF-8 bytes of [`VARIATION_SELECTOR_16`] into `buffer` without allocating.
 fn canonical_key<'a>(key: &[u8], buffer: &'a mut [u8; MAX_KEY]) -> Option<&'a [u8]> {
+    let marker = VARIATION_SELECTOR_16_UTF8;
     let mut used = 0usize;
     let mut index = 0usize;
     while index < key.len() {
-        if key[index] == 0xEF
-            && key.get(index + 1) == Some(&0xB8)
-            && key.get(index + 2) == Some(&0x8F)
-        {
-            index += 3;
+        if key[index..].starts_with(&marker) {
+            index += marker.len();
             continue;
         }
         *buffer.get_mut(used)? = *key.get(index)?;
@@ -622,8 +620,8 @@ mod tests {
         }
         let codes: Vec<u8> = tones.iter().map(|&(code, _)| code).collect();
         let masks: Vec<u8> = tones.iter().map(|&(_, mask)| mask).collect();
-        out.extend_from_slice(&pack_bits(codes, 3));
-        out.extend_from_slice(&pack_bits(masks, 2));
+        out.extend_from_slice(&pack_bits(codes, EMOJI_TONE_CODE_BITS));
+        out.extend_from_slice(&pack_bits(masks, EMOJI_TONE_MASK_BITS));
         out
     }
 
