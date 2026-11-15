@@ -65,9 +65,9 @@
 //! `p == 0`; every middle byte then selects the next context. The first name of a block-local
 //! block always has `p == 0`; a global block's checkpoint supplies the predecessor.
 //!
-//! The block offsets make a lookup decode at most one block. A sequential cursor
-//! (in the runtime) additionally resumes inside a block, which is what makes `.uni`-style
-//! increasing-id walks decode every entry once.
+//! The block offsets make a lookup decode at most one block. A sequential cursor in the shared
+//! decoder additionally resumes inside a block, which is what makes `.uni`-style increasing-id
+//! walks decode every entry once.
 //!
 //! The global layout is smaller at every measured shift (32/64/128/256); at 32 names it is
 //! 184,467 B versus block-local's 205,441 B, with the same random-lookup latency.
@@ -86,11 +86,11 @@
 
 use bytes::BufMut;
 
-use zeta_unicode_format::huffman::{BitReader, BitWriter, Codebook};
+use zeta_unicode_format::huffman::{BitWriter, Codebook};
 use zeta_unicode_format::{
-    HANGUL_COUNT, HANGUL_END, HANGUL_START, MAX_NAME_BYTES, MAX_NAME_MODELS, NAME_INDEX_HEADER_LEN,
+    HANGUL_COUNT, HANGUL_END, HANGUL_START, MAX_NAME_MODELS, NAME_INDEX_HEADER_LEN,
     NAME_MODEL_DIRECTORY_ENTRY_LEN, NAME_PAGE_COUNT, NAME_PAGE_DIRECTORY_ENTRY_LEN,
-    NAME_PAGE_SHIFT, NAME_RUN_LEN, NameIndex, NameModels, write_hangul, write_pattern_name,
+    NAME_PAGE_SHIFT, NAME_RUN_LEN, NameDecoder, write_hangul, write_pattern_name,
 };
 
 use crate::ucd::Inputs;
@@ -856,7 +856,7 @@ pub fn verify_global_corpus(section: &[u8], corpus: &Corpus, block_shift: u8) {
 pub fn verify_corpus(section: &[u8], corpus: &Corpus, block_shift: u8, layout: NameLayout) {
     let mut decoded = Decoded::new(section, block_shift, layout);
     assert_eq!(
-        decoded.index.name_count,
+        decoded.name_count(),
         corpus.entries.len(),
         "the section's name count"
     );
@@ -908,30 +908,15 @@ fn pattern_name(pattern: &crate::nomina::patterns::Pattern, cp: u32) -> Option<S
     Some(name)
 }
 
-/// A decoder used only by the build-time verifier.
+/// The build-time verifier's view of a name section.
 ///
-/// It shares the section's structural parse with the runtime but keeps its own front-coding
-/// reconstruction: every prefix and suffix is replayed with explicit assertions, so a format
-/// disagreement in the entry encoding cannot pass verification.
+/// It wraps [`NameDecoder`], so verification decodes through the exact front-coding core the
+/// runtime links. Structural failures stop verification with an explicit `expect`; entry
+/// failures stay `Option`/`false` so the caller's assertions name the mismatching id instead of
+/// panicking inside the decoder.
 struct Decoded<'a> {
-    /// The validated run index and block offsets.
-    index: NameIndex<'a>,
-    /// The validated context models and bitstream.
-    models: NameModels<'a>,
-    /// The name layout.
-    layout: NameLayout,
-    /// The name-block shift.
-    shift: u32,
-    /// Scratch space for the current chain.
-    scratch: Vec<u8>,
-    /// Scratch for the shared suffix, copied before the middle overwrites it.
-    suffix_scratch: Vec<u8>,
-    /// The id whose name is in `scratch` (`usize::MAX` for none).
-    cache_id: usize,
-    /// The bit position just after that entry.
-    cache_bit: usize,
-    /// The length of that entry's text.
-    cache_len: usize,
+    /// The shared front-coding decoder.
+    decoder: NameDecoder<'a>,
 }
 
 impl<'a> Decoded<'a> {
@@ -941,151 +926,35 @@ impl<'a> Decoded<'a> {
             (MIN_BLOCK_SHIFT..=MAX_BLOCK_SHIFT).contains(&block_shift),
             "block shift {block_shift} is outside the supported range"
         );
-        let index = NameIndex::parse(section, block_shift)
-            .expect("the name section's header, runs or block offsets are invalid");
-        let models = NameModels::parse(section, index.models_at)
-            .expect("the name section's model area is invalid");
         Self {
-            index,
-            models,
-            layout,
-            shift: u32::from(block_shift),
-            scratch: vec![0; MAX_NAME_BYTES],
-            suffix_scratch: vec![0; MAX_NAME_BYTES],
-            cache_id: usize::MAX,
-            cache_bit: 0,
-            cache_len: 0,
+            decoder: NameDecoder::new(section, block_shift, layout)
+                .expect("the name section's header, runs, model area or block offsets are invalid"),
         }
+    }
+
+    /// The number of names the section stores.
+    const fn name_count(&self) -> usize {
+        self.decoder.name_count()
     }
 
     /// The id of `cp`, using the page directory and runs.
     fn entry_id(&self, cp: u32) -> Option<usize> {
-        self.index
+        self.decoder
             .id_of(cp)
             .map(|id| usize::try_from(id).expect("a name id fits in usize"))
     }
 
     /// Decodes name `id`.
     fn name_by_id(&mut self, id: usize) -> Option<String> {
-        if id >= self.index.name_count {
-            return None;
-        }
-        if self.cache_id == id {
-            return String::from_utf8(self.scratch[..self.cache_len].to_vec()).ok();
-        }
-        let block_size = 1usize << self.shift;
-        let block = id >> self.shift;
-        let global = self.layout == NameLayout::Global;
-
-        let resume = self.cache_id != usize::MAX
-            && id > self.cache_id
-            && (id >> self.shift) == (self.cache_id >> self.shift);
-
-        let (first, bit) = if resume {
-            (self.cache_id + 1, self.cache_bit)
-        } else {
-            let bit_at = block * 4;
-            let bit_bytes = self
-                .index
-                .block_bits
-                .get(bit_at..)
-                .expect("block bit offset: truncated u32");
-            let bit = usize::try_from(u32::from_le_bytes(
-                bit_bytes
-                    .get(..4)
-                    .expect("block bit offset: truncated u32")
-                    .try_into()
-                    .expect("four bytes"),
-            ))
-            .expect("bit offset fits in usize");
-            (block * block_size, bit)
-        };
-        let mut length = if resume { self.cache_len } else { 0 };
-        let mut bits = BitReader::at(self.models.stream, bit);
-        if global && !resume && block > 0 {
-            length = self.decode_checkpoint(&mut bits)?;
-        }
-        for _ in first..=id {
-            length = self.decode_entry(&mut bits, length, global)?;
-        }
-        self.cache_id = id;
-        self.cache_bit = bits.position();
-        self.cache_len = length;
-        String::from_utf8(self.scratch[..length].to_vec()).ok()
-    }
-
-    /// Decodes the in-stream checkpoint name of a global block.
-    fn decode_checkpoint(&mut self, bits: &mut BitReader<'_>) -> Option<usize> {
-        let model = self.models.models.len().checked_sub(1)?;
-        let mut length = 0usize;
-        loop {
-            let byte = self.symbol(model, bits)?;
-            if byte == 0 {
-                break;
-            }
-            *self.scratch.get_mut(length)? = byte;
-            length += 1;
-        }
-        Some(length)
-    }
-
-    /// Decodes one front-coded entry, returning the new name length.
-    fn decode_entry(
-        &mut self,
-        bits: &mut BitReader<'_>,
-        length: usize,
-        global: bool,
-    ) -> Option<usize> {
-        let prefix = usize::from(self.symbol(0, bits)?);
-        assert!(prefix <= length, "prefix length {prefix} exceeds the name");
-        let suffix = if global {
-            usize::from(self.symbol(1, bits)?)
-        } else {
-            0
-        };
-        assert!(
-            suffix <= length - prefix,
-            "suffix length {suffix} exceeds the previous name"
-        );
-        if suffix > 0 {
-            let start = length - suffix;
-            self.suffix_scratch[..suffix].copy_from_slice(&self.scratch[start..length]);
-        }
-        let mut new_length = prefix;
-        let mut context = if prefix == 0 {
-            0
-        } else {
-            *self.scratch.get(prefix - 1)?
-        };
-        loop {
-            let model = usize::from(self.models.context[usize::from(context)]);
-            let byte = self.symbol(model, bits)?;
-            if byte == 0 {
-                break;
-            }
-            *self.scratch.get_mut(new_length)? = byte;
-            new_length += 1;
-            context = byte;
-        }
-        if suffix > 0 {
-            let end = new_length.checked_add(suffix)?;
-            self.scratch
-                .get_mut(new_length..end)?
-                .copy_from_slice(&self.suffix_scratch[..suffix]);
-            new_length = end;
-        }
-        Some(new_length)
+        let id = u32::try_from(id).ok()?;
+        let mut name = String::new();
+        self.decoder.write_id(id, &mut name).then_some(name)
     }
 
     /// The name of `cp`.
     fn name(&mut self, cp: u32) -> Option<String> {
         let id = self.entry_id(cp)?;
         self.name_by_id(id)
-    }
-
-    /// Decodes one canonical symbol.
-    fn symbol(&self, model: usize, bits: &mut BitReader<'_>) -> Option<u8> {
-        self.models.models.get(model)?.symbol(bits)
     }
 }
 

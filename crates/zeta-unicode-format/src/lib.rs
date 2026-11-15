@@ -14,6 +14,7 @@
 //!
 //! - [`layout`] — image header parsing, section ids, name-table constants and the Hangul name
 //!   generator;
+//! - [`decode`] — the front-coding name decoder shared by the runtime and the trainer;
 //! - [`gc`] — the general-category variants, their id order and both name tables;
 //! - [`inputs`] — the UCD files the trainer reads, their accepted paths and their release
 //!   headers;
@@ -26,6 +27,7 @@
 //! The items the runtime, trainer and tooling share are re-exported at the crate root; the
 //! module paths remain available for everything else.
 
+pub mod decode;
 pub mod emoji;
 pub mod gc;
 pub mod huffman;
@@ -34,6 +36,7 @@ pub mod layout;
 pub mod names;
 pub mod primitives;
 
+pub use decode::NameDecoder;
 pub use emoji::{
     MAX_CPS, MAX_KEY, MAX_RULE_ARGUMENT, Rule, RuleContext, TONE_NAMES, TONE_RULE_PRIORITY, TONES,
     VARIATION_SELECTOR_16, VARIATION_SELECTOR_16_UTF8, ZWJ, canonical_emoji_cps, clock_name,
