@@ -54,10 +54,10 @@ pub use error::WreqError;
 #[cfg(feature = "emulated")]
 pub(crate) use uri::RedactedUriRef;
 
-#[cfg(any(feature = "request", feature = "http"))]
-pub use client::send;
 #[cfg(feature = "http")]
 pub use client::{build_client, builder};
+#[cfg(any(feature = "request", feature = "http"))]
+pub use client::{client_builder, send};
 #[cfg(feature = "http")]
 pub use redirect::{RedirectError, redirect_location};
 #[cfg(feature = "http")]

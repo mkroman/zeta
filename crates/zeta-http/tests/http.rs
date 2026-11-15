@@ -1,8 +1,12 @@
 //! The public contract of the shared HTTP wrappers, exercised as an external consumer would:
-//! status classification, `404` mapping, and JSON and text decoding against a wiremock server.
+//! the builder policy the standalone API clients share, status classification, `404` mapping,
+//! and JSON and text decoding against a wiremock server.
 
 #![cfg(feature = "http")]
 
+use std::time::Duration;
+
+use reqwest::header::{HeaderValue, USER_AGENT};
 use serde_json::json;
 use zeta_http as http;
 use zeta_http::HttpConfig;
@@ -18,6 +22,81 @@ enum TestError {
     NotFound,
     #[error(transparent)]
     Api(#[from] ApiError),
+}
+
+#[tokio::test]
+async fn client_builder_keeps_a_redirect_as_the_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", "https://example.com/target?key=secret"),
+        )
+        .mount(&server)
+        .await;
+
+    // The standalone clients read the `Location` header, so the base must not follow it.
+    let client = http::client_builder(Duration::from_secs(30), None)
+        .build()
+        .expect("the client builds");
+    let response = client.get(server.uri()).send().await.expect("response");
+
+    assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+}
+
+#[tokio::test]
+async fn client_builder_sends_the_user_agent_only_when_given() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let with_agent = http::client_builder(Duration::from_secs(30), Some("test-agent/1.0"))
+        .build()
+        .expect("the client builds");
+    with_agent.get(server.uri()).send().await.expect("response");
+
+    let without_agent = http::client_builder(Duration::from_secs(30), None)
+        .build()
+        .expect("the client builds");
+    without_agent
+        .get(server.uri())
+        .send()
+        .await
+        .expect("response");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].headers.get(USER_AGENT),
+        Some(&HeaderValue::from_static("test-agent/1.0"))
+    );
+    assert!(requests[1].headers.get(USER_AGENT).is_none());
+}
+
+#[tokio::test]
+async fn client_builder_applies_the_timeout() {
+    let server = MockServer::start().await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
+        .mount(&server)
+        .await;
+
+    let client = http::client_builder(Duration::from_millis(100), None)
+        .build()
+        .expect("the client builds");
+    let error = client
+        .get(server.uri())
+        .send()
+        .await
+        .expect_err("the delayed response must time out");
+
+    assert!(error.is_timeout(), "{error:?}");
 }
 
 #[tokio::test]

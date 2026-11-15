@@ -6,7 +6,6 @@ use reqwest::header::{
     ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, HeaderValue, PRAGMA, REFERER, SET_COOKIE,
     UPGRADE_INSECURE_REQUESTS,
 };
-use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Mutex;
 use tracing::{Level, debug};
@@ -92,11 +91,8 @@ impl Client {
         let session_duration = options.session_duration.unwrap_or(SESSION_DURATION);
         let language = options.language.unwrap_or_else(|| LANGUAGE.to_string());
 
-        let client = reqwest::ClientBuilder::new()
+        let client = zeta_http::client_builder(timeout, Some(&user_agent))
             .cookie_store(true)
-            .redirect(Policy::none())
-            .timeout(timeout)
-            .user_agent(user_agent)
             .build()
             .map_err(|error| Error::BuildClient(error.into()))?;
 
