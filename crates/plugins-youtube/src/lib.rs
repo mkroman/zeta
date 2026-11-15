@@ -23,28 +23,26 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tokio::time::MissedTickBehavior;
-use tracing::{Instrument, debug, warn};
-use url::Url;
 
 use plugins_shared::urls::youtube::URL_HOSTS;
 use zeta_cache::TtlCache;
 use zeta_http as http;
 use zeta_http::reqwest;
-use zeta_plugin::irc::{labeled_reply, plain_reply, send_lookup_reply, send_reply};
-use zeta_plugin::{
-    Chain, Client, CommandEvent, Context, UrlEvent, ZetaError, plugin, resolve_secret,
-};
-use zeta_utils::duration;
-use zeta_utils::irc;
-use zeta_utils::text;
+use zeta_plugin::{Client, CommandEvent, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 
 mod api;
+mod categories;
+mod commands;
+mod format;
 mod model;
+mod urls;
 
+#[cfg(test)]
+mod tests;
+
+pub use format::SafeSearch;
 pub use model::{
     ApiListResponse, CategoriesResponse, Category, CategorySnippet, ContentDetails,
     LiveStreamingDetails, Search, SearchId, SearchListResponse, SearchSnippet, Snippet, Statistics,
@@ -52,41 +50,7 @@ pub use model::{
 };
 pub use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
 
-use self::api::fetch_video_categories;
-
-/// The time-to-live of the cached video categories.
-const CATEGORIES_TTL: Duration = Duration::from_hours(24);
-
-/// How often the categories task rechecks the cache for staleness.
-///
-/// A tick only fetches when the cached entry is missing or past its TTL, so the actual API
-/// calls happen at most once per [`CATEGORIES_TTL`]; the shorter check interval makes a failed
-/// fetch retry within an hour instead of after a full TTL.
-const CATEGORIES_CHECK_INTERVAL: Duration = Duration::from_hours(1);
-
-/// The safe search filter applied to YouTube search requests.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SafeSearch {
-    /// Do not filter search results.
-    #[default]
-    None,
-    /// Filter out content that is explicitly flagged as mature.
-    Moderate,
-    /// Filter out most potentially mature content.
-    Strict,
-}
-
-impl SafeSearch {
-    /// Returns the value of the `safeSearch` API parameter.
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Moderate => "moderate",
-            Self::Strict => "strict",
-        }
-    }
-}
+use self::categories::CATEGORIES_TTL;
 
 /// Settings for the youtube plugin, from its `[plugins.youtube]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -195,26 +159,10 @@ impl YouTube {
         client: &Client,
         command: &CommandEvent,
     ) -> Result<(), ZetaError> {
-        let args = command.args().trim();
-
-        // An invocation whose arguments are a YouTube URL resolves the video as a link instead
-        // of searching for the URL as a query. Other URLs are searchable text.
-        if is_youtube_url(args) {
-            return Ok(());
-        }
-
-        send_lookup_reply(
-            client,
-            command.channel(),
-            self.search(args),
-            search_reply,
-            |error| plain_reply(search_error_reply(&error)),
-        )
-        .await?;
-
-        Ok(())
+        commands::search_video(self, client, command).await
     }
 
+    /// Replies to a posted YouTube video link with the video's details.
     #[handler(url)]
     async fn handle_url(
         &self,
@@ -222,398 +170,6 @@ impl YouTube {
         client: &Client,
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
-        let (url, channel) = (url.url(), url.channel());
-
-        let Some(UrlKind::Video(video_id) | UrlKind::Short(video_id)) = parse_youtube_url(url)
-        else {
-            return Ok(());
-        };
-
-        let video = match self.get_video(&video_id).await {
-            Ok(video) => video,
-            Err(error) => {
-                send_reply(client, channel, plain_reply(video_error_reply(&error)))?;
-
-                return Ok(());
-            }
-        };
-
-        send_reply(client, channel, self.video_reply(&video))?;
-
-        Ok(())
-    }
-}
-
-/// Returns whether `text` is a YouTube URL.
-///
-/// The `.yt` command treats a YouTube URL as the link it stands for, while other text is an
-/// ordinary search query.
-#[must_use]
-fn is_youtube_url(text: &str) -> bool {
-    Url::parse(text.trim()).is_ok_and(|url| parse_youtube_url(&url).is_some())
-}
-
-impl YouTube {
-    /// Formats the reply for `video`, resolving its category and view count.
-    fn video_reply(&self, video: &Video) -> String {
-        let snippet = video.snippet.as_ref();
-        let category_id = snippet.map(|s| s.category_id.as_str());
-
-        // The map is refreshed by the task started on load; the read is
-        // stale-tolerant, so an unavailable API keeps serving the last known
-        // categories. Cloning the `Arc` lets the category title be borrowed
-        // after the closure instead of copied.
-        #[allow(clippy::redundant_closure_for_method_calls)] // a bare `Option::cloned` is ambiguous
-        let categories = self.video_categories.with_value(|cache| cache.cloned());
-        let category = categories
-            .as_deref()
-            .zip(category_id)
-            .and_then(|(categories, id)| categories.get(id))
-            .map_or("unknown category", |category| {
-                category.snippet.title.as_str()
-            });
-
-        let view_count = video
-            .statistics
-            .as_ref()
-            .and_then(|s| str::parse::<u64>(&s.view_count).ok())
-            .unwrap_or(0);
-
-        format_video_message(video, category, view_count)
-    }
-
-    /// Spawns the task that periodically refreshes the cached video categories.
-    ///
-    /// The task ticks once per [`CATEGORIES_CHECK_INTERVAL`], skipping missed ticks: a tick is
-    /// only an actual API call when the cached entry is missing or past its TTL, so the
-    /// categories are fetched at most once per [`CATEGORIES_TTL`] and a failed fetch is retried
-    /// on the next tick. Refresh failures are logged and leave the stale map in place.
-    fn start_categories_refresh(&self) {
-        let (client, api_key, region_code, cache) = (
-            self.client.clone(),
-            self.api_key.clone(),
-            self.region_code.clone(),
-            Arc::clone(&self.video_categories),
-        );
-
-        tokio::spawn(async move {
-            tracing::info_span!("video_category.refresh.start").in_scope(|| {
-                debug!("starting video category refresh task");
-            });
-
-            // The first tick completes immediately, populating the cache at startup.
-            let mut interval = tokio::time::interval(CATEGORIES_CHECK_INTERVAL);
-            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-            loop {
-                interval.tick().await;
-
-                async {
-                    let refreshed = cache
-                        .refresh(|| async {
-                            fetch_video_categories(&client, &api_key, &region_code)
-                                .await
-                                .map(Arc::new)
-                        })
-                        .await;
-
-                    if let Err(error) = refreshed {
-                        warn!(
-                            exception.message = %Chain(&error),
-                            "could not refresh video categories"
-                        );
-                    }
-                }
-                // The target stays under `zeta`: the tick parents the HTTP calls, and a plugin
-                // log filter must not leave them as trace roots of their own.
-                .instrument(tracing::info_span!(
-                    target: "zeta.plugins",
-                    "video_category.refresh"
-                ))
-                .await;
-            }
-        });
-    }
-}
-
-/// Decodes HTML entities in an API text field and unstyles it for an IRC reply.
-///
-/// YouTube HTML-escapes titles, channel names, and category names in both the search and
-/// videos responses.
-fn sanitize_html(text: &str) -> String {
-    irc::unstyle_text(&htmlize::unescape(text)).into_owned()
-}
-
-/// Formats the reply for the top video in a `.yt` search.
-fn search_reply(results: Vec<Search>) -> String {
-    results
-        .into_iter()
-        .find_map(|result| {
-            let id = result.id.video_id?;
-
-            Some((result.snippet, id))
-        })
-        .map_or_else(
-            || plain_reply("No results"),
-            |(snippet, id)| {
-                let title = sanitize_html(&snippet.title);
-
-                labeled_reply(
-                    "YouTube",
-                    format_args!("{title} - https://www.youtube.com/watch?v={id}"),
-                )
-            },
-        )
-}
-
-/// Formats a failed `.yt` search.
-fn search_error_reply(error: &Error) -> String {
-    const CONTEXT: &str = "could not search youtube";
-
-    match error {
-        Error::NoResults => format!("{CONTEXT}: {error}"),
-        Error::Api(_) => CONTEXT.to_owned(),
-    }
-}
-
-/// Formats a failed video lookup.
-fn video_error_reply(error: &Error) -> String {
-    const CONTEXT: &str = "could not look up the video";
-
-    match error {
-        Error::NoResults => format!("{CONTEXT}: {error}"),
-        Error::Api(_) => CONTEXT.to_owned(),
-    }
-}
-
-/// Formats the message describing `video`, using the resolved `category` and `view_count`.
-///
-/// Live and upcoming streams are described as live streams along with their category and
-/// current number of concurrent viewers (falling back to the total view count when
-/// unavailable), while regular videos include only their duration.
-fn format_video_message(video: &Video, category: &str, view_count: u64) -> String {
-    let snippet = video.snippet.as_ref();
-    let title = snippet.map_or_else(|| "‽".to_string(), |s| sanitize_html(&s.title));
-    let channel_name = snippet.map_or_else(
-        || "unknown channel".to_string(),
-        |s| sanitize_html(&s.channel_title),
-    );
-    let category = sanitize_html(category);
-    let view_count_formatted = text::format_number(view_count);
-    let view_noun = text::pluralize_noun(view_count, "view");
-
-    let is_live_stream =
-        snippet.is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
-
-    if is_live_stream {
-        let article = text::indefinite_article(&category);
-
-        if let Some(viewers) = video
-            .live_streaming_details
-            .as_ref()
-            .and_then(|details| details.concurrent_viewers.as_deref())
-            .and_then(|viewers| viewers.parse::<u64>().ok())
-        {
-            return plain_reply(format_args!(
-                "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
-                 {channel_name}\x0310 with\x0f {}\x0310 {}",
-                text::format_number(viewers),
-                text::pluralize_noun(viewers, "viewer"),
-            ));
-        }
-
-        return plain_reply(format_args!(
-            "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
-             {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 {view_noun}",
-        ));
-    }
-
-    let duration = video
-        .content_details
-        .as_ref()
-        .and_then(|details| duration::parse_iso8601_duration(&details.duration))
-        .map_or_else(|| "unknown duration".to_string(), duration::format_duration);
-    let article = text::indefinite_article(&duration);
-
-    plain_reply(format_args!(
-        "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
-         {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 {view_noun}",
-    ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use zeta_test_support::settings_tests;
-
-    settings_tests! {
-        Settings,
-        settings,
-        default: {
-            assert!(settings.api_key.is_none());
-            assert_eq!(settings.region_code, "US");
-            assert_eq!(settings.safe_search, SafeSearch::None);
-            assert!(settings.enable_command);
-        }
-        deserialize: {
-            "api_key": "secret",
-            "region_code": "DK",
-            "safe_search": "strict",
-            "enable_command": false,
-        } assert: {
-            assert_eq!(settings.api_key.as_deref(), Some("secret"));
-            assert_eq!(settings.region_code, "DK");
-            assert_eq!(settings.safe_search, SafeSearch::Strict);
-            assert!(!settings.enable_command);
-        }
-    }
-
-    /// Returns a video with the given live status, duration, and concurrent viewer count.
-    fn test_video(
-        live_broadcast_content: &str,
-        duration: Option<&str>,
-        concurrent_viewers: Option<&str>,
-    ) -> Video {
-        Video {
-            snippet: Some(Snippet {
-                title: "Test Video".to_string(),
-                channel_title: "Test Channel".to_string(),
-                category_id: "10".to_string(),
-                live_broadcast_content: live_broadcast_content.to_string(),
-            }),
-            statistics: None,
-            content_details: duration.map(|duration| ContentDetails {
-                duration: duration.to_string(),
-            }),
-            live_streaming_details: concurrent_viewers.map(|viewers| LiveStreamingDetails {
-                concurrent_viewers: Some(viewers.to_string()),
-            }),
-        }
-    }
-
-    /// Returns an API failure for the reply-mapper tests.
-    fn api_error() -> Error {
-        let error = reqwest::Client::new()
-            .get("not a url")
-            .build()
-            .expect_err("a relative URL cannot be built into a request");
-
-        Error::Api(http::ApiError::from(http::RequestError::from(error)))
-    }
-
-    #[test]
-    fn formats_search_failures() {
-        assert_eq!(
-            search_error_reply(&Error::NoResults),
-            "could not search youtube: no results"
-        );
-        assert_eq!(search_error_reply(&api_error()), "could not search youtube");
-    }
-
-    #[test]
-    fn api_failures_keep_their_source_for_logs() {
-        let error = api_error();
-        let message = Chain(&error).to_string();
-
-        assert!(
-            message.len() > error.to_string().len(),
-            "the log line keeps the source chain: {message}"
-        );
-    }
-
-    #[test]
-    fn formats_video_failures() {
-        assert_eq!(
-            video_error_reply(&Error::NoResults),
-            "could not look up the video: no results"
-        );
-        assert_eq!(
-            video_error_reply(&api_error()),
-            "could not look up the video"
-        );
-    }
-
-    #[test]
-    fn only_youtube_urls_are_treated_as_links_by_the_command() {
-        assert!(is_youtube_url("https://youtu.be/dQw4w9WgXcQ"));
-        assert!(is_youtube_url(
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        ));
-        assert!(is_youtube_url("https://youtube.com/shorts/l4s8y-O_ols"));
-
-        assert!(!is_youtube_url("https://example.com/watch?v=dQw4w9WgXcQ"));
-        assert!(!is_youtube_url("rust language"));
-        assert!(!is_youtube_url(""));
-    }
-
-    #[test]
-    fn formats_video_message() {
-        let video = test_video("none", Some("PT1H2M20S"), None);
-
-        assert_eq!(
-            format_video_message(&video, "Music", 123_456),
-            "\x0310> “\x0fTest Video\x0310” is a\x0f 1h 2m 20s\x0310 video by\x0f Test Channel\x0310 with\x0f 123,456\x0310 views",
-        );
-    }
-
-    #[test]
-    fn unescapes_html_entities_in_video_metadata() {
-        let mut video = test_video("none", Some("PT1H2M20S"), None);
-        let snippet = video
-            .snippet
-            .as_mut()
-            .expect("the test video has a snippet");
-        snippet.title = "Fish &amp; Chips".to_string();
-        snippet.channel_title = "Ben &amp; Jerry".to_string();
-
-        assert_eq!(
-            irc::strip_formatting(&format_video_message(&video, "Film &amp; Animation", 1)),
-            "> “Fish & Chips” is a 1h 2m 20s video by Ben & Jerry with 1 view",
-        );
-    }
-
-    #[test]
-    fn formats_video_message_variants() {
-        let cases = [
-            (
-                "unknown duration",
-                test_video("none", None, None),
-                "Music",
-                1,
-                "is an unknown duration video by Test Channel with 1 view",
-            ),
-            (
-                "live stream prefers concurrent viewers",
-                test_video("live", None, Some("1234")),
-                "Music",
-                42,
-                "is a Music live stream by Test Channel with 1,234 viewers",
-            ),
-            (
-                "vowel category takes an article",
-                test_video("live", None, Some("1234")),
-                "Education",
-                42,
-                "is an Education live stream by Test Channel with 1,234 viewers",
-            ),
-            (
-                "upcoming stream falls back to total views",
-                test_video("upcoming", None, None),
-                "Music",
-                42,
-                "is a Music live stream by Test Channel with 42 views",
-            ),
-        ];
-
-        for (case, video, category, view_count, expected) in cases {
-            let formatted =
-                irc::strip_formatting(&format_video_message(&video, category, view_count));
-
-            assert!(
-                formatted.starts_with("> “Test Video”"),
-                "{case}: {formatted}"
-            );
-            assert!(formatted.contains(expected), "{case}: {formatted}");
-        }
+        commands::handle_url(self, client, url).await
     }
 }
