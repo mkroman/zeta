@@ -38,7 +38,10 @@ const REPLY_BODY_RESERVE: usize = 256;
 
 /// The bytes [`write_labeled_reply_prefix`] writes besides the label: the marker, the reset, the
 /// two bold codes, the colour code, a space and the colon.
-const LABELED_PREFIX_BYTES: usize =
+///
+/// Callers that assemble a labeled reply in their own buffer can reserve this many bytes plus
+/// the label's length before calling [`write_labeled_reply_prefix`].
+pub const LABELED_PREFIX_BYTES: usize =
     REPLY_MARKER.len() + RESET.len() + BOLD.len() + 1 + 1 + BOLD.len() + COLOR.len() + 1;
 
 /// Writes `message` into `reply`.

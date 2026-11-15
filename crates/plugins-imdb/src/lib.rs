@@ -12,7 +12,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use zeta_plugin::irc::{parse_or_usage, send_reply};
+use zeta_plugin::irc::{parse_or_usage, reply_lookup, send_reply};
 use zeta_plugin::{
     ArgsMode, Client, CommandEvent, CommandSpec, Context, Subscriptions, UrlEvent, ZetaError,
     plugin, plugin_err,
@@ -139,8 +139,14 @@ impl Imdb {
             return Ok(());
         };
 
-        let lookup = self.client.title(&result.id).await;
-        Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
+        reply_lookup(
+            client,
+            channel,
+            self.client.title(&result.id),
+            |title| format_title(&title),
+            |error| format!("{} {error}", format::prefix()),
+        )
+        .await?;
 
         Ok(())
     }
@@ -159,32 +165,28 @@ impl Imdb {
             Some(Link::Title(id)) => {
                 debug!(imdb.title.id = %id, "fetching details for posted title link");
 
-                let lookup = self.client.title(&id).await;
-                Self::reply(client, channel, lookup.map(|title| format_title(&title)))?;
+                reply_lookup(
+                    client,
+                    channel,
+                    self.client.title(&id),
+                    |title| format_title(&title),
+                    |error| format!("{} {error}", format::prefix()),
+                )
+                .await?;
             }
             Some(Link::Person(id)) => {
                 debug!(imdb.person.id = %id, "fetching details for posted person link");
 
-                let lookup = self.client.person(&id).await;
-                Self::reply(client, channel, lookup.map(|person| format_person(&person)))?;
+                reply_lookup(
+                    client,
+                    channel,
+                    self.client.person(&id),
+                    |person| format_person(&person),
+                    |error| format!("{} {error}", format::prefix()),
+                )
+                .await?;
             }
             None => {}
-        }
-
-        Ok(())
-    }
-}
-
-impl Imdb {
-    /// Sends the result of an IMDb lookup to `channel`, formatting errors with the IMDb prefix.
-    fn reply(
-        client: &Client,
-        channel: &str,
-        result: Result<String, Error>,
-    ) -> Result<(), ZetaError> {
-        match result {
-            Ok(message) => send_reply(client, channel, message)?,
-            Err(err) => send_reply(client, channel, format!("{} {err}", format::prefix()))?,
         }
 
         Ok(())

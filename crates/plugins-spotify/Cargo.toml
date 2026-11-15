@@ -12,7 +12,6 @@ default = []
 
 [dependencies]
 base64 = "0.23.0"
-num-format = "0.4.4"
 serde.workspace = true
 tracing.workspace = true
 url.workspace = true

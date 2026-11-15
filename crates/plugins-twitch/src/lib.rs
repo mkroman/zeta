@@ -13,7 +13,6 @@
 //! the shared `TokenCache`. Missing credentials fail plugin initialization and the plugin is
 //! skipped at startup.
 
-use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -23,6 +22,7 @@ use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
+use zeta_utils::text::format_number;
 
 mod urls;
 
@@ -136,7 +136,7 @@ impl Twitch {
                         let title = irc::unstyle_text(&clip.title);
                         let broadcaster = irc::unstyle_text(&clip.broadcaster_name);
                         let creator = irc::unstyle_text(&clip.creator_name);
-                        let views = clip.view_count.to_formatted_string(&Locale::en);
+                        let views = format_number(clip.view_count);
 
                         format!(
                             "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 views"
@@ -148,7 +148,7 @@ impl Twitch {
                     self.handle_first("videos", &[("id", &id)], channel, client, |video: &Video| {
                         let title = irc::unstyle_text(&video.title);
                         let user = irc::unstyle_text(&video.user_name);
-                        let views = video.view_count.to_formatted_string(&Locale::en);
+                        let views = format_number(video.view_count);
 
                         format!(
                             "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 views"
@@ -216,7 +216,7 @@ impl Twitch {
             let user_login = irc::unstyle_text(&stream.user_login);
             let title = irc::unstyle_text(&stream.title);
             let game_name = irc::unstyle_text(&stream.game_name);
-            let viewers = stream.viewer_count.to_formatted_string(&Locale::en);
+            let viewers = format_number(stream.viewer_count);
 
             send_reply(
                 client,
