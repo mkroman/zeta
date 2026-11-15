@@ -9,8 +9,6 @@ use syn::{Ident, Type};
 
 use crate::args::{CommandArgs, UrlsArgs};
 
-use super::classify::pascal_case;
-
 /// The classified contents of a `#[plugin]` impl block.
 pub(super) struct Plugin {
     /// The plugin's name, from the required `name = "…"` argument.
@@ -100,6 +98,15 @@ pub(super) struct Handler {
     pub(super) span: Span,
     /// The method's `#[cfg]`/`#[cfg_attr]` attributes, copied to the forwarding method.
     pub(super) cfg: Vec<syn::Attribute>,
+}
+
+/// Returns `word` with its first character uppercased, for the `KEvent` type names.
+fn pascal_case(word: &str) -> String {
+    let mut characters = word.chars();
+
+    characters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(characters).collect()
+    })
 }
 
 /// Generates [`HandlerKind`] from one table of keywords.

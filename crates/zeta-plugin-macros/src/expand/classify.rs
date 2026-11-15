@@ -328,12 +328,3 @@ fn constructor_parameter(ty: &Type, settings: &str) -> Option<ConstructorParamet
         _ => None,
     }
 }
-
-/// Returns `word` with its first character uppercased, for the `KEvent` type names.
-pub(super) fn pascal_case(word: &str) -> String {
-    let mut characters = word.chars();
-
-    characters.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(characters).collect()
-    })
-}
