@@ -16,7 +16,7 @@ use tracing::{debug, warn};
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup};
-use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
+use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
 
@@ -93,8 +93,10 @@ struct NumberOfReviews {
 /// Errors that can occur during Trustpilot lookups.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// The API returned an error, e.g. a non-success status or an unparseable body.
-    #[error(transparent)]
+    /// The request to Trustpilot failed, or its response could not be handled.
+    ///
+    /// `Display` is reply-grade; the underlying failure stays in the source chain.
+    #[error("the trustpilot request failed")]
     Api(#[from] http::ApiError),
     /// The requested business was not found.
     #[error("business not found")]
@@ -132,18 +134,26 @@ impl Trustpilot {
             command.channel(),
             self.search(command.args()),
             |business| format_business(&business, &self.review_domain),
-            |error| match error {
-                Error::NotFound => plain_reply("No results found"),
-                Error::Api(error) => {
-                    warn!(exception.message = ?error, "trustpilot error");
-
-                    plain_reply("could not look up the business")
+            |error| {
+                // `zeta-http` already logs the failed request; only the lookup context is missing.
+                if matches!(error, Error::Api(_)) {
+                    warn!(exception.message = %Chain(&error), "trustpilot lookup failed");
                 }
+
+                plain_reply(lookup_reply(&error))
             },
         )
         .await?;
 
         Ok(())
+    }
+}
+
+/// Formats a failed `.tp` lookup, returning only literal channel wording.
+const fn lookup_reply(error: &Error) -> &'static str {
+    match error {
+        Error::NotFound => "no results found",
+        Error::Api(_) => "could not look up the business",
     }
 }
 
@@ -223,6 +233,36 @@ mod tests {
             assert_eq!(settings.api_key.as_deref(), Some("secret"));
             assert_eq!(settings.review_domain, "www");
         }
+    }
+
+    /// Builds an API failure whose body must never reach a reply.
+    fn api_error() -> Error {
+        Error::Api(http::ApiError::Status {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "secret body".to_owned(),
+        })
+    }
+
+    #[test]
+    fn formats_lookup_failures() {
+        assert_eq!(lookup_reply(&Error::NotFound), "no results found");
+        assert_eq!(lookup_reply(&api_error()), "could not look up the business");
+
+        let reply = lookup_reply(&api_error());
+
+        assert!(!reply.contains("secret body"), "{reply}");
+    }
+
+    #[test]
+    fn api_failures_display_a_reply_grade_sentence() {
+        let error = api_error();
+
+        assert_eq!(error.to_string(), "the trustpilot request failed");
+        assert!(!error.to_string().contains("secret body"));
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "the api failure stays in the source chain"
+        );
     }
 
     #[test]

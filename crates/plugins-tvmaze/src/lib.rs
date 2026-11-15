@@ -8,13 +8,13 @@
 //!
 //! The TVmaze API is public and needs no credentials. The plugin has no settings.
 use serde::Deserialize;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_http::reqwest::Url;
 use zeta_plugin::irc::{labeled_reply, reply_lookup};
-use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
+use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_url::RedactedUrl;
 use zeta_utils::duration::DistanceInWordsExt;
 use zeta_utils::irc;
@@ -25,8 +25,10 @@ const SINGLESEARCH_URL: &str = "https://api.tvmaze.com/singlesearch/shows";
 /// Errors that can occur while talking to the TVmaze API.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// The API request failed or its response could not be handled.
-    #[error(transparent)]
+    /// The request to TVmaze failed, or its response could not be handled.
+    ///
+    /// `Display` is reply-grade; the underlying failure stays in the source chain.
+    #[error("the tvmaze request failed")]
     Api(#[from] http::ApiError),
     /// No show matches the search query.
     #[error("resource not found")]
@@ -220,11 +222,16 @@ impl Tvmaze {
     /// Formats an error message for display.
     fn format_error_message(error: &Error) -> String {
         let content = match error {
-            Error::NotFound => "Show not found".to_string(),
-            Error::Api(_) => "Failed to fetch show information".to_string(),
+            Error::NotFound => "show not found",
+            Error::Api(_) => {
+                // `zeta-http` already logs the failed request; only the lookup context is missing.
+                warn!(exception.message = %Chain(error), "tvmaze lookup failed");
+
+                "could not fetch show information"
+            }
         };
 
-        Self::build_formatted_message(None, &content)
+        Self::build_formatted_message(None, content)
     }
 
     /// Builds the search URL with query parameters.
@@ -280,6 +287,36 @@ mod tests {
             }"#,
         )
         .expect("the api response should decode")
+    }
+
+    /// Builds an API failure whose body must never reach a reply.
+    fn api_error() -> Error {
+        Error::Api(http::ApiError::Status {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "secret body".to_owned(),
+        })
+    }
+
+    #[test]
+    fn formats_lookup_failures() {
+        let not_found = irc::strip_formatting(&Tvmaze::format_error_message(&Error::NotFound));
+        assert_eq!(not_found, "> TVmaze: show not found");
+
+        let api = irc::strip_formatting(&Tvmaze::format_error_message(&api_error()));
+        assert_eq!(api, "> TVmaze: could not fetch show information");
+        assert!(!api.contains("secret body"), "{api}");
+    }
+
+    #[test]
+    fn api_failures_display_a_reply_grade_sentence() {
+        let error = api_error();
+
+        assert_eq!(error.to_string(), "the tvmaze request failed");
+        assert!(!error.to_string().contains("secret body"));
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "the api failure stays in the source chain"
+        );
     }
 
     #[test]
