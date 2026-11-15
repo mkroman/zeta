@@ -12,12 +12,12 @@
 //! the plugin is skipped at startup.
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{plain_reply, send_reply};
-use zeta_plugin::{Client, Context, MessageEvent, ZetaError, plugin, resolve_secret};
+use zeta_plugin::{Chain, Client, Context, MessageEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 use zeta_utils::text;
 
@@ -48,14 +48,14 @@ pub struct IsItOpen {
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// The request failed, or the API response was unusable.
-    #[error(transparent)]
+    #[error("the places request failed")]
     Api(#[from] http::ApiError),
     /// No matching place was found, or the place has no opening hours.
     #[error("place not found")]
     NotFound,
-    /// The Google Maps API returned an error response.
-    #[error("api error: {0}")]
-    Places(String),
+    /// The Google Maps API returned an error status.
+    #[error("the places api returned an error")]
+    Places,
 }
 
 #[plugin(name = "isitopen", settings = Settings, messages)]
@@ -108,10 +108,13 @@ impl IsItOpen {
                 QueryAction::IsOpen => Self::format_is_open(&place, nick),
                 QueryAction::IsClosed => Self::format_is_closed(&place, nick),
             },
-            Err(Error::NotFound) => plain_reply("place not found"),
-            Err(e) => {
-                warn!(exception.message = ?e, "isitopen error");
-                plain_reply(e)
+            Err(error) => {
+                // `zeta-http` already logs a failed request; only the lookup context is missing.
+                if matches!(error, Error::Api(_)) {
+                    debug!(exception.message = %Chain(&error), "isitopen lookup failed");
+                }
+
+                plain_reply(lookup_reply(&error))
             }
         };
 
@@ -230,6 +233,16 @@ impl IsItOpen {
     }
 }
 
+/// Formats a failed place lookup.
+fn lookup_reply(error: &Error) -> String {
+    const CONTEXT: &str = "could not look up the place";
+
+    match error {
+        Error::NotFound => format!("{CONTEXT}: {error}"),
+        Error::Api(_) | Error::Places => CONTEXT.to_owned(),
+    }
+}
+
 /// Parses a Danish natural-language question about a place's opening hours.
 fn parse_query(query: &str) -> Option<(QueryAction, &str)> {
     let query = query.strip_suffix('?')?;
@@ -288,6 +301,30 @@ mod tests {
         } assert: {
             assert_eq!(settings.api_key.as_deref(), Some("secret"));
         }
+    }
+
+    /// Returns an API failure for the reply-mapper tests.
+    fn api_error() -> Error {
+        let error = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        Error::Api(http::ApiError::from(http::RequestError::from(error)))
+    }
+
+    #[test]
+    fn formats_lookup_failures() {
+        assert_eq!(
+            lookup_reply(&Error::NotFound),
+            "could not look up the place: place not found"
+        );
+        assert_eq!(lookup_reply(&Error::Places), "could not look up the place");
+
+        let reply = lookup_reply(&api_error());
+
+        assert_eq!(reply, "could not look up the place");
+        assert!(!reply.contains("request"));
     }
 
     #[test]

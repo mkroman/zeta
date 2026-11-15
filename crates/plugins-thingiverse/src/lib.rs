@@ -13,14 +13,14 @@ use std::fmt::{self, Display};
 
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::debug;
 use url::Url;
 
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_http::reqwest::header::AUTHORIZATION;
 use zeta_plugin::irc::{labeled_reply, send_reply};
-use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
+use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
 
 /// The Thingiverse hosts whose links this plugin handles.
@@ -53,7 +53,7 @@ pub enum Error {
     #[error("resource not found")]
     NotFound,
     /// The Thingiverse API returned an error response.
-    #[error(transparent)]
+    #[error("the thingiverse request failed")]
     Api(#[from] http::ApiError),
 }
 
@@ -107,10 +107,14 @@ impl Thingiverse {
 
             let message = match self.fetch_thing(thing_id).await {
                 Ok(thing) => labeled_reply("Thingiverse", thing.to_string()),
-                Err(Error::NotFound) => labeled_reply("Thingiverse", "Thing not found"),
-                Err(e) => {
-                    warn!(exception.message = ?e, "thingiverse api error");
-                    labeled_reply("Thingiverse", e)
+                Err(error) => {
+                    // `zeta-http` already logs a failed request; only the lookup context is
+                    // missing.
+                    if matches!(error, Error::Api(_)) {
+                        debug!(exception.message = %Chain(&error), "thingiverse lookup failed");
+                    }
+
+                    labeled_reply("Thingiverse", fetch_reply(&error))
                 }
             };
 
@@ -118,6 +122,16 @@ impl Thingiverse {
         }
 
         Ok(())
+    }
+}
+
+/// Formats a failed thing lookup.
+fn fetch_reply(error: &Error) -> String {
+    const CONTEXT: &str = "could not look up the thing";
+
+    match error {
+        Error::NotFound => format!("{CONTEXT}: {error}"),
+        Error::Api(_) => CONTEXT.to_owned(),
     }
 }
 
@@ -229,6 +243,25 @@ mod tests {
             download_count,
             collect_count,
         }
+    }
+
+    /// Returns an API failure for the reply-mapper tests.
+    fn api_error() -> Error {
+        let error = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        Error::Api(http::ApiError::from(http::RequestError::from(error)))
+    }
+
+    #[test]
+    fn formats_fetch_failures() {
+        assert_eq!(
+            fetch_reply(&Error::NotFound),
+            "could not look up the thing: resource not found"
+        );
+        assert_eq!(fetch_reply(&api_error()), "could not look up the thing");
     }
 
     #[test]

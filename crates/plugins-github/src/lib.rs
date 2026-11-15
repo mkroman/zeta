@@ -46,7 +46,7 @@ pub enum Error {
     #[error("invalid header value: {0}")]
     InvalidToken(#[from] reqwest::header::InvalidHeaderValue),
     /// The GitHub API returned an error response.
-    #[error(transparent)]
+    #[error("the github request failed")]
     Api(#[from] http::ApiError),
 }
 
@@ -111,12 +111,19 @@ impl GitHub {
                     Self::format_repo_details,
                 )
             },
-            |error| labeled_reply("GitHub", error),
+            |error| labeled_reply("GitHub", search_reply(&error)),
         )
         .await?;
 
         Ok(())
     }
+}
+
+/// Formats a failed `.gh` search; every variant is internal.
+fn search_reply(_error: &Error) -> String {
+    const CONTEXT: &str = "could not search github";
+
+    CONTEXT.to_owned()
 }
 
 impl GitHub {
@@ -215,6 +222,24 @@ mod tests {
         } assert: {
             assert_eq!(settings.token.as_deref(), Some("secret"));
         }
+    }
+
+    /// Returns an API failure for the reply-mapper tests.
+    fn api_error() -> Error {
+        let error = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        Error::Api(http::ApiError::from(RequestError::from(error)))
+    }
+
+    #[test]
+    fn formats_search_failures() {
+        let reply = search_reply(&api_error());
+
+        assert_eq!(reply, "could not search github");
+        assert!(!reply.contains("request"));
     }
 
     #[test]

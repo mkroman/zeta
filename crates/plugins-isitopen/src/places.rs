@@ -1,7 +1,7 @@
 //! The Google Places text search and place details client.
 
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::model::PlaceDetails;
 use super::{Error, IsItOpen};
@@ -45,7 +45,12 @@ impl IsItOpen {
             http::get_json(self.client.get(TEXTSEARCH_URL).query(&params)).await?;
 
         if search_res.status != "OK" && search_res.status != "ZERO_RESULTS" {
-            return Err(Error::Places(search_res.status));
+            warn!(
+                places.status = %search_res.status,
+                "the place search returned an error status"
+            );
+
+            return Err(Error::Places);
         }
 
         let place_id = search_res
@@ -63,7 +68,12 @@ impl IsItOpen {
             http::get_json(self.client.get(DETAILS_URL).query(&details_params)).await?;
 
         if details_res.status != "OK" {
-            return Err(Error::Places(details_res.status));
+            warn!(
+                places.status = %details_res.status,
+                "the place details returned an error status"
+            );
+
+            return Err(Error::Places);
         }
 
         // Google's place name is third-party text: strip formatting and line breaks once here

@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_plugin::irc::{labeled_reply, plain_reply, reply_lookup, unstyle_text};
-use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err, resolve_secret};
+use zeta_plugin::{
+    Chain, Client, CommandEvent, Context, ZetaError, plugin, plugin_err, resolve_secret,
+};
 
 /// Settings for the kagi plugin, from its `[plugins.kagi]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -92,7 +94,7 @@ impl Kagi {
                 )
             },
             |err| {
-                warn!(exception.message = %err, "kagi search failed");
+                warn!(exception.message = %Chain(&err), "kagi search failed");
                 plain_reply(err)
             },
         )
@@ -130,7 +132,7 @@ impl Kagi {
                 )
             },
             |err| {
-                warn!(exception.message = %err, "kagi image search failed");
+                warn!(exception.message = %Chain(&err), "kagi image search failed");
                 plain_reply(err)
             },
         )

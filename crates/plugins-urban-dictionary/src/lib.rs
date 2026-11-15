@@ -14,7 +14,7 @@ use tracing::debug;
 use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, labeled_reply_prefix, reply_lookup};
-use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
+use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin};
 use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
 
@@ -45,7 +45,12 @@ pub struct UrbanDictionary {
 }
 
 /// Errors that can occur during execution.
-pub type Error = http::ApiError;
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// The request to Urban Dictionary failed, or its response was unusable.
+    #[error("the urban dictionary request failed")]
+    Api(#[from] http::ApiError),
+}
 
 /// List of definitions.
 #[derive(Debug, Deserialize)]
@@ -117,12 +122,24 @@ impl UrbanDictionary {
                     |definition| format_definition(definition, self.settings.max_definition_length),
                 )
             },
-            |error| labeled_reply("Urban Dictionary", error),
+            |error| {
+                // `zeta-http` already logs a failed request; only the lookup context is missing.
+                debug!(exception.message = %Chain(&error), "urban dictionary lookup failed");
+
+                labeled_reply("Urban Dictionary", lookup_reply(&error))
+            },
         )
         .await?;
 
         Ok(())
     }
+}
+
+/// Formats a failed `.ud` lookup; every variant is an internal API failure.
+fn lookup_reply(_error: &Error) -> String {
+    const CONTEXT: &str = "could not look up the definition";
+
+    CONTEXT.to_owned()
 }
 
 /// Formats a definition for IRC, truncating its text to the configured maximum length.
@@ -196,6 +213,24 @@ mod tests {
         } assert: {
             assert_eq!(settings.max_definition_length, 100);
         }
+    }
+
+    /// Returns an API failure for the reply-mapper tests.
+    fn api_error() -> Error {
+        let error = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("a relative URL cannot be built into a request");
+
+        Error::Api(http::ApiError::from(http::RequestError::from(error)))
+    }
+
+    #[test]
+    fn formats_lookup_failures() {
+        let reply = lookup_reply(&api_error());
+
+        assert_eq!(reply, "could not look up the definition");
+        assert!(!reply.contains("request"));
     }
 
     #[test]

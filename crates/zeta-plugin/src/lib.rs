@@ -55,6 +55,7 @@ pub use plugin::{Plugin, Registered};
 pub use sqlx;
 pub use types::NoSettings;
 pub use zeta_plugin_macros::{instrument_database, plugin};
+pub use zeta_utils::error::Chain;
 
 // Re-exported through the crate root so the code the `#[plugin]` macro generates — and plugin
 // crates generally — can reference it as absolute `::zeta_plugin::…` paths without adding
