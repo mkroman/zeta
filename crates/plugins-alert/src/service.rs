@@ -18,7 +18,7 @@ use super::{
     model::{Alert, NewAlert},
     repository::AlertRepository,
 };
-use zeta_plugin::database::Database;
+use zeta_plugin::{Chain, database::Database};
 
 /// An alert scheduled for delivery, ordered by the time it is due.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,7 +236,10 @@ impl Scheduler {
             if tokio::time::Instant::now() >= next_sync {
                 async {
                     if let Err(err) = self.sync().await {
-                        warn!(exception.message = ?err, "could not sync alerts from database");
+                        warn!(
+                            exception.message = %Chain(&err),
+                            "could not sync alerts from database"
+                        );
                     }
                 }
                 .instrument(tracing::info_span!("alert.scheduler.sync"))
@@ -328,7 +331,7 @@ impl Scheduler {
 
         if let Err(err) = self.repo.delete_ids(&sent).await {
             warn!(
-                exception.message = ?err,
+                exception.message = %Chain(&err),
                 alert.count = due.len(),
                 "could not delete delivered alerts, they will be delivered again"
             );

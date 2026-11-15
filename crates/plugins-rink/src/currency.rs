@@ -11,7 +11,7 @@ use std::time::Duration;
 use rink_core::{Context as RinkContext, Value};
 use tracing::debug;
 
-use zeta_plugin::{ZetaError, plugin_err};
+use zeta_plugin::{Chain, ZetaError, plugin_err};
 
 use super::actor::Handle;
 use coinmarketcap::Client as CmcClient;
@@ -204,7 +204,7 @@ async fn fetch_crypto(
         Ok(listings) => Some(listings),
         Err(error) => {
             warn!(
-                exception.message = %error,
+                exception.message = %Chain(&error),
                 "could not refresh cryptocurrency listings; keeping the previous table"
             );
 

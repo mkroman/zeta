@@ -25,7 +25,7 @@ use zeta_plugin::irc::{
     LABELED_PREFIX_BYTES, PLAIN_REPLY_PREFIX, REPLY_MARKER, plain_reply, send_reply,
     send_reply_via, write_labeled_reply_prefix,
 };
-use zeta_plugin::{Client, Context, PluginCatalog, UrlEvent, ZetaError, plugin, plugin_err};
+use zeta_plugin::{Chain, Client, Context, PluginCatalog, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrlRef;
 use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
@@ -227,7 +227,7 @@ impl Titles {
                     Ok(metadata) => metadata,
                     Err(error) => {
                         warn!(
-                            exception.message = %error,
+                            exception.message = %Chain(&error),
                             "could not fetch page metadata"
                         );
 

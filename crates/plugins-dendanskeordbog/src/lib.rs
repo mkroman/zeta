@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use zeta_plugin::irc::{labeled_reply_prefix, plain_reply, send_lookup_reply, unstyle_text};
-use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
+use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin};
 
 /// Settings for the dendanskeordbog plugin, from its `[plugins.dendanskeordbog]` configuration
 /// section.
@@ -135,7 +135,7 @@ impl DenDanskeOrdbog {
             self.client.query(command.args()),
             |document| format_message(&document, &self.settings),
             |error| {
-                warn!(exception.message = %error, "ddo lookup failed");
+                warn!(exception.message = %Chain(&error), "ddo lookup failed");
 
                 plain_reply(lookup_reply(&error))
             },

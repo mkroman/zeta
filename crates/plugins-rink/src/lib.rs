@@ -56,7 +56,7 @@ use coinmarketcap::Client as CmcClient;
 use zeta_cache::TtlCache;
 use zeta_http::reqwest;
 use zeta_plugin::irc::send_reply;
-use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
+use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
 
 /// Calculator plugin using rink-rs.
 pub struct Rink {
@@ -247,7 +247,10 @@ impl Rink {
                         .await;
 
                     if let Err(error) = refreshed {
-                        warn!(exception.message = %error, "could not refresh currency data");
+                        warn!(
+                            exception.message = %Chain(&error),
+                            "could not refresh currency data"
+                        );
                     }
                 }
                 // The target stays under `zeta`: the tick parents the HTTP calls, and a plugin
@@ -343,7 +346,10 @@ impl Rink {
         };
 
         if let Err(error) = refreshed {
-            warn!(exception.message = %error, "could not refresh currency data");
+            warn!(
+                exception.message = %Chain(&error),
+                "could not refresh currency data"
+            );
         }
     }
 

@@ -47,7 +47,7 @@ use zeta_http::wreq;
 use zeta_http::wreq::redirect::Policy;
 use zeta_mirror::{MediaId, MirrorHandle};
 use zeta_plugin::irc::{plain_reply, send_reply};
-use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
+use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin, plugin_err};
 use zeta_url::RedactedUrl;
 use zeta_utils::irc;
 use zeta_utils::settings;
@@ -209,7 +209,7 @@ impl Instagram {
         url: &UrlEvent,
     ) -> Result<(), ZetaError> {
         if let Err(err) = self.process_url(url.url(), url.channel(), client).await {
-            warn!(exception.message = %err, "could not process url");
+            warn!(exception.message = %Chain(&err), "could not process url");
         }
 
         Ok(())
@@ -535,7 +535,7 @@ impl Instagram {
 
         debug!(
             url.full = %RedactedUrl::from_unparsed(url),
-            exception.message = %error,
+            exception.message = %Chain(&error),
             "could not fetch page metadata"
         );
 
@@ -554,7 +554,7 @@ impl Instagram {
             .inspect_err(|error| {
                 debug!(
                     url.full = %RedactedUrl::from_unparsed(url),
-                    exception.message = %error,
+                    exception.message = %Chain(error),
                     "the page request failed again"
                 );
             })

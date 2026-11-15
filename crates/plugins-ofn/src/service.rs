@@ -11,7 +11,7 @@ use super::{
     repository::OfnRepository,
 };
 use plugins_shared::urls::youtube::{UrlKind, parse_youtube_url};
-use zeta_plugin::database::Database;
+use zeta_plugin::{Chain, database::Database};
 use zeta_url::RedactedUrl;
 
 /// A URL history resource from the database, either a YouTube video or a generic URL record.
@@ -89,7 +89,7 @@ impl OfnService {
 
             if let Err(error) = self.repo.insert_youtube_video(&insert).await {
                 error!(
-                    exception.message = %error,
+                    exception.message = %Chain(&error),
                     "could not insert youtube record"
                 );
             } else {
@@ -109,7 +109,7 @@ impl OfnService {
 
         if let Err(error) = self.repo.insert_url(&insert).await {
             error!(
-                exception.message = %error,
+                exception.message = %Chain(&error),
                 "could not insert url record"
             );
         } else {
