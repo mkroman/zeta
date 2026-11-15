@@ -12,7 +12,6 @@ default = []
 
 [dependencies]
 clap.workspace = true
-num-format = "0.4.4"
 plugins-shared = { workspace = true }
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"] }
 thiserror.workspace = true
