@@ -13,19 +13,19 @@ database = ["zeta-plugin/database"]
 [dependencies]
 figment.workspace = true
 foldhash.workspace = true
-futures = "0.3.31"
+futures = { workspace = true }
 irc.workspace = true
 smallvec.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin = { workspace = true }
 zeta-url = { workspace = true }
 
 [dev-dependencies]
-allocation-counter = "=0.8.1"
+allocation-counter = { workspace = true }
 tracing-subscriber.workspace = true
-zeta-test-support = { workspace = true, default-features = false, features = ["context", "spans"] }
+zeta-test-support = { workspace = true, features = ["context", "spans"] }
 
 [lints]
 workspace = true

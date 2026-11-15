@@ -20,7 +20,7 @@ native-tls = ["reqwest/native-tls"]
 native-tls-vendored = ["reqwest/native-tls-vendored"]
 
 [dependencies]
-htmlize = { version = "1.1.0", features = ["unescape"] }
+htmlize = { workspace = true, features = ["unescape"] }
 reqwest = { workspace = true, features = ["json", "query"] }
 secrecy.workspace = true
 serde.workspace = true
@@ -30,8 +30,8 @@ thiserror.workspace = true
 tracing.workspace = true
 url.workspace = true
 
-zeta-http = { path = "../zeta-http", default-features = false, features = ["oauth"] }
-zeta-url = { path = "../zeta-url" }
+zeta-http = { workspace = true, features = ["oauth"] }
+zeta-url = { workspace = true }
 
 [dev-dependencies]
 tokio.workspace = true

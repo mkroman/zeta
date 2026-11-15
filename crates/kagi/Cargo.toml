@@ -28,7 +28,7 @@ deflate = ["reqwest/deflate"]
 zstd = ["reqwest/zstd"]
 
 [dependencies]
-htmlize = { version = "1.1.0", features = ["unescape"] }
+htmlize = { workspace = true, features = ["unescape"] }
 reqwest = { workspace = true, features = ["cookies"] }
 scraper.workspace = true
 secrecy.workspace = true
@@ -37,8 +37,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-zeta-http = { path = "../zeta-http", default-features = false, features = ["request"] }
-zeta-utils = { path = "../zeta-utils" }
+zeta-http = { workspace = true, features = ["request"] }
+zeta-utils = { workspace = true }
 
 [lints]
 workspace = true

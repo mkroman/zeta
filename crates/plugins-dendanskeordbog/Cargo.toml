@@ -14,13 +14,13 @@ native-tls = ["dendanskeordbog/native-tls"]
 native-tls-vendored = ["dendanskeordbog/native-tls-vendored"]
 
 [dependencies]
-dendanskeordbog = { path = "../dendanskeordbog", features = ["client", "log"] }
+dendanskeordbog = { workspace = true, features = ["client", "log"] }
 serde.workspace = true
 tracing.workspace = true
-zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
+zeta-plugin = { workspace = true, features = ["http"] }
 
 [dev-dependencies]
-zeta-test-support = { workspace = true }
+zeta-test-support = { workspace = true, features = ["context", "http"] }
 
 [lints]
 workspace = true

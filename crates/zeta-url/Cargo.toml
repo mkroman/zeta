@@ -12,7 +12,7 @@ smallvec.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-allocation-counter = "=0.8.1"
+allocation-counter = { workspace = true }
 
 [lints]
 workspace = true

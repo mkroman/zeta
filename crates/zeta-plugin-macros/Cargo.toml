@@ -13,7 +13,7 @@ proc-macro = true
 [dependencies]
 proc-macro2.workspace = true
 quote.workspace = true
-syn = { version = "3", default-features = false, features = [
+syn = { workspace = true, features = [
     "clone-impls",
     "derive",
     "full",
@@ -27,8 +27,8 @@ clap.workspace = true
 irc.workspace = true
 tokio.workspace = true
 trybuild.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
-zeta-test-support = { workspace = true, default-features = false, features = ["context"] }
+zeta-plugin = { workspace = true }
+zeta-test-support = { workspace = true, features = ["context"] }
 
 [lints]
 workspace = true

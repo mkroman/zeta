@@ -59,50 +59,51 @@ rustls = [
 [dependencies]
 clap.workspace = true
 figment.workspace = true
-futures = "0.3.31"
+futures = { workspace = true }
 humantime-serde.workspace = true
 irc.workspace = true
-miette = { version = "7.2.0", default-features = false, features = ["derive", "fancy-no-backtrace"] }
-opentelemetry = { version = "0.33.0", default-features = false, features = ["trace"] }
-opentelemetry-otlp = { version = "0.33.0", default-features = false, features = [
+miette.workspace = true
+opentelemetry = { workspace = true, features = ["trace"] }
+opentelemetry-otlp = { workspace = true, features = [
     "http-proto",
     "reqwest-client",
     "trace",
 ] }
-opentelemetry-resource-detectors = "0.13.0"
-opentelemetry-semantic-conventions = "0.33"
-opentelemetry_sdk = { version = "0.33.0", default-features = false, features = [
+opentelemetry-resource-detectors = { workspace = true }
+opentelemetry-semantic-conventions = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = [
     "experimental_trace_batch_span_processor_with_async_runtime",
     "rt-tokio",
     "trace",
 ] }
-plugins = { path = "../plugins", default-features = false }
-rustls = { version = "0.23.44", optional = true }
+plugins = { workspace = true }
+rustls = { workspace = true, optional = true }
 secrecy.workspace = true
 serde.workspace = true
-sqlx = { version = "0.9.0", default-features = false, features = ["migrate", "macros", "postgres", "chrono", "runtime-tokio"], optional = true }
+sqlx = { workspace = true, features = ["migrate", "macros", "chrono"], optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-opentelemetry = { version = "0.34.0", default-features = false }
+tracing-opentelemetry = { workspace = true }
 tracing-subscriber.workspace = true
 url.workspace = true
-zeta-http = { workspace = true, default-features = false }
+zeta-http = { workspace = true }
 zeta-mirror = { workspace = true, optional = true }
 # The host always carries the HTTP configuration in the plugin context, whether or not any
 # plugin needs the shared client.
-zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
+zeta-plugin = { workspace = true, features = ["http"] }
 zeta-plugin-runtime = { workspace = true }
 zeta-url = { workspace = true }
 
 [dev-dependencies]
-# The in-memory exporter pins the `otel.*` contract once, at the export boundary.
+# The in-memory exporter pins the `otel.*` contract once, at the export boundary. The exact
+# pin is deliberately not inherited from the `0.33.0` workspace requirement.
 opentelemetry_sdk = { version = "=0.33.1", default-features = false, features = [
     "testing",
     "trace",
 ] }
 tempfile.workspace = true
-zeta-test-support = { workspace = true, features = ["spans"] }
+zeta-test-support = { workspace = true, features = ["context", "http", "spans"] }
 
 [lints]
 workspace = true

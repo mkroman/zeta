@@ -15,14 +15,14 @@ serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tracing.workspace = true
-zeta-http = { workspace = true, default-features = false, features = ["http"] }
-zeta-plugin = { workspace = true, default-features = false, features = ["http"] }
+zeta-http = { workspace = true, features = ["http"] }
+zeta-plugin = { workspace = true, features = ["http"] }
 zeta-url = { workspace = true }
 zeta-utils = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 serde_json.workspace = true
-similar-asserts = "=2.0.0"
+similar-asserts = { workspace = true }
 
 [lints]
 workspace = true

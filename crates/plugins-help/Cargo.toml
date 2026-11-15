@@ -12,7 +12,7 @@ default = []
 
 [dependencies]
 clap.workspace = true
-zeta-plugin = { workspace = true, default-features = false }
+zeta-plugin = { workspace = true }
 zeta-utils = { workspace = true }
 
 [lints]
