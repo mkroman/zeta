@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use figment::value::{Dict, Value};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
-use zeta_plugin::PluginSet;
+use zeta_plugin::{Chain, PluginSet};
 
 use crate::BundledPlugin;
 
@@ -148,7 +148,11 @@ impl<'de> Deserialize<'de> for PluginsConfig {
                     unknown_setting_keys
                         .extend(unknown_keys.into_iter().map(|key| (name.clone(), key)));
                 }
-                Some(Err(error)) => return Err(D::Error::custom(error)),
+                Some(Err(error)) => {
+                    // `zeta_plugin::Error`'s `Display` is reply-grade, so render the source chain
+                    // explicitly: a configuration error must keep its detail for the operator.
+                    return Err(D::Error::custom(Chain(&error)));
+                }
                 // A bundled plugin compiled out of this build is known and stays out of
                 // `unknown`; every other name is a likely typo.
                 None if !crate::BUNDLED_PLUGIN_NAMES.contains(&name.as_str()) => {
@@ -358,7 +362,11 @@ enabled = false
         let error = extract("[plugins.dig]\nnameservers = \"1.1.1.1\"\n")
             .expect_err("invalid nameservers type should be rejected");
 
-        assert!(error.to_string().contains("dig"), "{error}");
+        let message = error.to_string();
+        assert!(message.contains("dig"), "{message}");
+        // The serde detail survives the conversion to a `figment` error, so the operator can
+        // see which value is wrong.
+        assert!(message.contains("invalid type"), "{message}");
     }
 
     #[test]

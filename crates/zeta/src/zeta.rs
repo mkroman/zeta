@@ -56,11 +56,10 @@ impl Zeta {
         // The per-plugin sections are handed to the plugins through their constructors; the
         // context's config only carries global configuration.
         let plugins = config.take_plugins();
-        let context = Arc::new(Context::new(
-            #[cfg(feature = "database")]
-            db,
-            zeta_plugin::config::HostConfig::from(&config),
-        ));
+        let context = Context::new(zeta_plugin::config::HostConfig::from(&config));
+        #[cfg(feature = "database")]
+        let context = context.with_database(db);
+        let context = Arc::new(context);
 
         // The shared mirror is published before any plugin is registered, so the plugins that
         // mirror media can pick it up through their constructors. Mirroring stays disabled when

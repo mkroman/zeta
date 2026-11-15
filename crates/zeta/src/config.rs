@@ -41,7 +41,7 @@ impl From<&Config> for zeta_plugin::config::HostConfig {
         // no-hostmasks warning into a single startup line instead of one per plugin.
         let admins = Hostmasks::compile(&config.irc.admin_hostmasks, "run admin commands");
 
-        Self::new(config.http.clone(), admins)
+        Self::new(admins).with_http(config.http.clone())
     }
 }
 

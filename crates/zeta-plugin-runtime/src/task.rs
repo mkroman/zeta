@@ -290,10 +290,22 @@ mod tests {
     /// A plugin whose `loaded` hook fails, modelling a plugin that gives up at startup.
     struct FailingLoader;
 
+    /// The startup error [`FailingLoader`] gives up with.
+    #[derive(Debug)]
+    struct LoadFailed;
+
+    impl std::fmt::Display for LoadFailed {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("load failed")
+        }
+    }
+
+    impl std::error::Error for LoadFailed {}
+
     #[allow(clippy::unused_async_trait_impl)]
     impl Plugin for FailingLoader {
         async fn loaded<'a>(&'a mut self, _: &'a Context, _: &'a Client) -> Result<(), Error> {
-            Err(Error::Message("load failed".to_owned()))
+            Err(plugin_err(LoadFailed))
         }
     }
 
