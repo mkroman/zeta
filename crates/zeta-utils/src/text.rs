@@ -363,13 +363,24 @@ fn join_list_into<I, T>(
     let _ = write!(out, "{pending}");
 }
 
+/// Returns `noun` with a trailing `s` appended unless `count` is one — e.g. `"view"` or
+/// `"views"`. The count itself is formatted separately, so replies can group digits with
+/// [`format_number`].
+#[must_use]
+pub fn pluralize_noun(count: u64, noun: &str) -> String {
+    let suffix = if count == 1 { "" } else { "s" };
+
+    format!("{noun}{suffix}")
+}
+
 /// Formats `count` with `noun`, pluralized by a trailing `s` unless `count` is one — e.g.
 /// `"1 filter"` or `"3 filters"`.
 #[must_use]
 pub fn pluralize(count: usize, noun: &str) -> String {
-    let suffix = if count == 1 { "" } else { "s" };
-
-    format!("{count} {noun}{suffix}")
+    format!(
+        "{count} {}",
+        pluralize_noun(u64::try_from(count).unwrap_or(u64::MAX), noun)
+    )
 }
 
 /// Formats `value` with thousands separators, using the English grouping convention.
@@ -607,6 +618,13 @@ mod tests {
         assert_eq!(format_number(1_000), "1,000");
         assert_eq!(format_number(1_234_567), "1,234,567");
         assert_eq!(format_number(u64::MAX), "18,446,744,073,709,551,615");
+    }
+
+    #[test]
+    fn pluralizes_nouns_without_the_count() {
+        assert_eq!(pluralize_noun(0, "view"), "views");
+        assert_eq!(pluralize_noun(1, "view"), "view");
+        assert_eq!(pluralize_noun(20_000, "view"), "views");
     }
 
     #[test]

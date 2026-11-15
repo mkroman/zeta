@@ -21,7 +21,7 @@ use zeta_http::reqwest::header::AUTHORIZATION;
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
-use zeta_utils::text::format_number;
+use zeta_utils::text::{format_number, pluralize_noun};
 
 /// The Thingiverse hosts whose links this plugin handles.
 const URL_HOSTS: &[&str] = &["thingiverse.com", "www.thingiverse.com"];
@@ -173,18 +173,10 @@ impl Display for Thing {
         };
 
         let likes = format_number(self.like_count);
-        let like_noun = if self.like_count == 1 {
-            "like"
-        } else {
-            "likes"
-        };
+        let like_noun = pluralize_noun(self.like_count, "like");
 
         let downloads = format_number(self.download_count);
-        let dl_noun = if self.download_count == 1 {
-            "download"
-        } else {
-            "downloads"
-        };
+        let dl_noun = pluralize_noun(self.download_count, "download");
 
         write!(
             f,
@@ -193,11 +185,7 @@ impl Display for Thing {
 
         if self.collect_count > 0 {
             let collects = format_number(self.collect_count);
-            let coll_noun = if self.collect_count == 1 {
-                "collection"
-            } else {
-                "collections"
-            };
+            let coll_noun = pluralize_noun(self.collect_count, "collection");
             write!(f, " and is part of\x0f {collects}\x0310 {coll_noun}")?;
         }
 

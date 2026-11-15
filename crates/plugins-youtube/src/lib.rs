@@ -400,6 +400,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
     );
     let category = sanitize_html(category);
     let view_count_formatted = text::format_number(view_count);
+    let view_noun = text::pluralize_noun(view_count, "view");
 
     let is_live_stream =
         snippet.is_some_and(|s| matches!(s.live_broadcast_content.as_str(), "live" | "upcoming"));
@@ -415,14 +416,15 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
         {
             return plain_reply(format_args!(
                 "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
-                 {channel_name}\x0310 with\x0f {}\x0310 viewers",
+                 {channel_name}\x0310 with\x0f {}\x0310 {}",
                 text::format_number(viewers),
+                text::pluralize_noun(viewers, "viewer"),
             ));
         }
 
         return plain_reply(format_args!(
             "“\x0f{title}\x0310” is {article}\x0f {category}\x0310 live stream by\x0f \
-             {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
+             {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 {view_noun}",
         ));
     }
 
@@ -435,7 +437,7 @@ fn format_video_message(video: &Video, category: &str, view_count: u64) -> Strin
 
     plain_reply(format_args!(
         "“\x0f{title}\x0310” is {article}\x0f {duration}\x0310 video by\x0f \
-         {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 views",
+         {channel_name}\x0310 with\x0f {view_count_formatted}\x0310 {view_noun}",
     ))
 }
 
@@ -566,7 +568,7 @@ mod tests {
 
         assert_eq!(
             irc::strip_formatting(&format_video_message(&video, "Film &amp; Animation", 1)),
-            "> “Fish & Chips” is a 1h 2m 20s video by Ben & Jerry with 1 views",
+            "> “Fish & Chips” is a 1h 2m 20s video by Ben & Jerry with 1 view",
         );
     }
 
@@ -578,7 +580,7 @@ mod tests {
                 test_video("none", None, None),
                 "Music",
                 1,
-                "is an unknown duration video by Test Channel with 1 views",
+                "is an unknown duration video by Test Channel with 1 view",
             ),
             (
                 "live stream prefers concurrent viewers",

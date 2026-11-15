@@ -22,7 +22,7 @@ use zeta_http::reqwest;
 use zeta_plugin::irc::{labeled_reply, plain_reply, send_reply};
 use zeta_plugin::{Client, Context, UrlEvent, ZetaError, plugin, resolve_secret};
 use zeta_utils::irc;
-use zeta_utils::text::format_number;
+use zeta_utils::text::{format_number, pluralize_noun};
 
 mod urls;
 
@@ -137,9 +137,10 @@ impl Twitch {
                         let broadcaster = irc::unstyle_text(&clip.broadcaster_name);
                         let creator = irc::unstyle_text(&clip.creator_name);
                         let views = format_number(clip.view_count);
+                        let view_noun = pluralize_noun(clip.view_count, "view");
 
                         format!(
-                            "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 views"
+                            "“\x0f{title}\x0310” is a clip of\x0f {broadcaster}\x0310 clipped by\x0f {creator}\x0310 with\x0f {views}\x0310 {view_noun}"
                         )
                     })
                     .await
@@ -149,9 +150,10 @@ impl Twitch {
                         let title = irc::unstyle_text(&video.title);
                         let user = irc::unstyle_text(&video.user_name);
                         let views = format_number(video.view_count);
+                        let view_noun = pluralize_noun(video.view_count, "view");
 
                         format!(
-                            "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 views"
+                            "“\x0f{title}\x0310” is a video by\x0f {user}\x0310 with\x0f {views}\x0310 {view_noun}"
                         )
                     })
                     .await

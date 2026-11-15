@@ -23,6 +23,7 @@ use zeta_plugin::{
     Chain, Client, CommandEvent, CommandSpec, Context, MessageEvent, Subscriptions, ZetaError,
     plugin, plugin_err,
 };
+use zeta_utils::text::pluralize_noun;
 
 /// The `.notify` command.
 const NOTIFY: CommandSpec =
@@ -109,10 +110,14 @@ impl NotificationPlugin {
 
         let message = match self.service.create(notification).await {
             Ok(_) => plain_reply("The notification has been stored."),
-            Err(Error::TooManyPending(max)) => labeled_reply(
-                "Notification",
-                format_args!("{target} already has {max} pending notifications in this channel"),
-            ),
+            Err(Error::TooManyPending(max)) => {
+                let noun = pluralize_noun(u64::try_from(max).unwrap_or(u64::MAX), "notification");
+
+                labeled_reply(
+                    "Notification",
+                    format_args!("{target} already has {max} pending {noun} in this channel"),
+                )
+            }
             Err(error) => {
                 warn!(
                     exception.message = %Chain(&error),

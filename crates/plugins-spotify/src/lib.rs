@@ -198,6 +198,7 @@ impl Spotify {
                         let genres: Vec<_> = artist.genres.iter().map(|genre| irc::unstyle_text(genre)).collect();
                         let joined = genres.oxford_join();
                         let followers = format_number(artist.followers.total);
+                        let follower_noun = text::pluralize_noun(artist.followers.total, "follower");
 
                         let mut msg = format!("\x0f{name}\x0310 is");
                         if genres.is_empty() {
@@ -206,7 +207,10 @@ impl Spotify {
                             let article = text::indefinite_article(&joined);
                             let _ = write!(msg, " {article} {joined}");
                         }
-                        let _ = write!(msg, " artist with \x0f{followers}\x0310 followers");
+                        let _ = write!(
+                            msg,
+                            " artist with \x0f{followers}\x0310 {follower_noun}"
+                        );
 
                         if include_url {
                             let _ = write!(msg, " - {}", artist.external_urls.spotify);
@@ -225,7 +229,8 @@ impl Spotify {
                     client,
                     |playlist: &Playlist, include_url| {
                         let name = irc::unstyle_text(&playlist.name);
-                        let total_tracks = playlist.tracks.total;
+                        let total_tracks = format_number(playlist.tracks.total);
+                        let track_noun = text::pluralize_noun(playlist.tracks.total, "track");
                         let owner = irc::unstyle_text(
                             playlist
                                 .owner
@@ -236,12 +241,16 @@ impl Spotify {
                         let followers = playlist.followers.total;
 
                         let mut msg = format!(
-                            "\x0f{name}\x0310 is a playlist with\x0f {total_tracks}\x0310 tracks curated by\x0f {owner}\x0310"
+                            "\x0f{name}\x0310 is a playlist with\x0f {total_tracks}\x0310 {track_noun} curated by\x0f {owner}\x0310"
                         );
 
                         if followers > 0 {
                             let followers_fmt = format_number(followers);
-                            let _ = write!(msg, " with \x0f{followers_fmt}\x0310 followers");
+                            let follower_noun = text::pluralize_noun(followers, "follower");
+                            let _ = write!(
+                                msg,
+                                " with \x0f{followers_fmt}\x0310 {follower_noun}"
+                            );
                         }
 
                         if include_url {
