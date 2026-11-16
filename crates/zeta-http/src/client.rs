@@ -15,7 +15,7 @@ use zeta_url::RedactedUrlRef;
 
 #[cfg(feature = "http")]
 use crate::HttpConfig;
-use crate::{BoxFuture, RequestError, RequestFailure};
+use crate::{BoxFuture, RequestError};
 
 /// The client span of a response, carried in its extensions so the body read and the parse run
 /// inside the span the request opened.

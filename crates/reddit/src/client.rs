@@ -9,7 +9,6 @@ use serde_json::Error as JsonError;
 use serde_path_to_error::Error as ErrorWithSerdePath;
 use tracing::{Level, debug, instrument, trace};
 use url::Url;
-use zeta_http::RequestFailure as _;
 use zeta_http::json;
 use zeta_http::oauth::{TokenCache, TokenResponse};
 use zeta_url::RedactedUrl;

@@ -47,8 +47,6 @@ pub mod oauth;
 pub use config::HttpConfig;
 #[cfg(any(feature = "request", feature = "http"))]
 pub use error::RequestError;
-#[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
-pub use error::RequestFailure;
 #[cfg(feature = "emulated")]
 pub use error::WreqError;
 #[cfg(feature = "emulated")]
