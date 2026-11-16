@@ -16,7 +16,7 @@ pub(super) struct CommandTarget {
 
 /// What [`EventIndex::dispatch`] should do with a message's IRC command.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CommandRoute {
+pub(crate) enum CommandRoute {
     /// A channel message: commands, messages, or URLs may match.
     Privmsg,
     /// A flag-based event kind.

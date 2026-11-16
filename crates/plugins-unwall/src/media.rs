@@ -19,7 +19,7 @@ const NETWORK_ID: &str = "irc.rwx.im:6697";
 ///
 /// A first mirror runs server-side for up to `submit_timeout`, so one message with many covered
 /// links must not fan out into an unbounded number of requests against the rate-limited API.
-pub const SUBMIT_CONCURRENCY: usize = 4;
+pub(crate) const SUBMIT_CONCURRENCY: usize = 4;
 
 impl Unwall {
     /// Submits a covered article to unwall.app in a task of its own, replying with the reader
@@ -102,7 +102,7 @@ impl Unwall {
 /// A rejected article, an unusable URL, and a reply-grade transport failure reuse the error's
 /// own user-facing text; every other failure is reduced to the context, because the caller logs
 /// the error.
-pub fn resolve_reply(error: &Error) -> String {
+pub(crate) fn resolve_reply(error: &Error) -> String {
     match error {
         Error::Status(_) | Error::InvalidUrl | Error::Request(_) => error.to_string(),
         Error::Database(_) | Error::BaseUrl(_) => "could not unwall the article".to_owned(),

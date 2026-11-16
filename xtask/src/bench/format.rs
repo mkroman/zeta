@@ -3,12 +3,12 @@
 use std::cmp::Ordering;
 
 #[must_use]
-pub fn number(value: Option<u64>) -> String {
+pub(crate) fn number(value: Option<u64>) -> String {
     value.map_or_else(|| "—".to_owned(), group_digits)
 }
 
 #[must_use]
-pub fn signed(value: Option<i64>) -> String {
+pub(crate) fn signed(value: Option<i64>) -> String {
     match value {
         None => "—".to_owned(),
         Some(0) => "0".to_owned(),
@@ -19,7 +19,7 @@ pub fn signed(value: Option<i64>) -> String {
 
 /// Format an integer with thousands separators, for readable instruction counts.
 #[must_use]
-pub fn group_digits(value: u64) -> String {
+pub(crate) fn group_digits(value: u64) -> String {
     let digits = value.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, character) in digits.chars().enumerate() {
@@ -32,7 +32,7 @@ pub fn group_digits(value: u64) -> String {
 }
 
 #[must_use]
-pub fn percent(value: Option<f64>) -> String {
+pub(crate) fn percent(value: Option<f64>) -> String {
     match value {
         None => "—".to_owned(),
         Some(value) if value.is_infinite() && value.is_sign_positive() => "new".to_owned(),
@@ -44,7 +44,7 @@ pub fn percent(value: Option<f64>) -> String {
 
 /// Compare case ids naturally so `case_2` sorts before `case_10`.
 #[must_use]
-pub fn natural_cmp(left: &str, right: &str) -> Ordering {
+pub(crate) fn natural_cmp(left: &str, right: &str) -> Ordering {
     let mut left = left.char_indices().peekable();
     let mut right = right.char_indices().peekable();
 

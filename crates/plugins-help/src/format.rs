@@ -32,7 +32,7 @@ const SEPARATOR: &str = "\x0310,\x0f ";
 /// An empty query shows a usage hint and an index of every plugin that handles commands, a
 /// plugin name lists its commands, and a command name shows the command's description, usage and
 /// arguments.
-pub fn messages(catalog: &PluginCatalog, query: &str) -> Vec<String> {
+pub(crate) fn messages(catalog: &PluginCatalog, query: &str) -> Vec<String> {
     if query.is_empty() {
         return index_messages(catalog);
     }
@@ -53,11 +53,11 @@ pub fn messages(catalog: &PluginCatalog, query: &str) -> Vec<String> {
 }
 
 /// Formats the header of a help reply, with `subject` appended inside the bold heading.
-pub fn heading(subject: &str) -> String {
+pub(crate) fn heading(subject: &str) -> String {
     format!("{REPLY_MARKER}{RESET}{BOLD} Help{subject}{BOLD}")
 }
 
 /// Formats `s` in the muted scaffolding color.
-pub fn gray(s: &str) -> String {
+pub(crate) fn gray(s: &str) -> String {
     format!("{COLOR}{s}{RESET}")
 }

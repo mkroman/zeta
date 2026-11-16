@@ -261,7 +261,7 @@ impl Unwall {
 
 /// Joins `items` with cyan commas and a final cyan `and`, each item emphasized in the default
 /// color: `\x0fa\x0310, \x0fb\x0310 and\x0f c`.
-pub fn join_and(items: &[String]) -> String {
+pub(crate) fn join_and(items: &[String]) -> String {
     let mut joined = String::new();
 
     for (index, item) in items.iter().enumerate() {

@@ -3,7 +3,7 @@
 use zeta_http::RequestError;
 
 /// The JSON response body could not be parsed.
-pub type ParseError = serde_path_to_error::Error<serde_json::Error>;
+pub(crate) type ParseError = serde_path_to_error::Error<serde_json::Error>;
 
 /// Errors that can occur during coin lookups.
 ///

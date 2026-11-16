@@ -25,7 +25,7 @@ use irc::proto::Message;
 
 // `telemetry` classifies routes through `CommandRoute`, and both modules live inside this
 // private module, so the re-export stays crate-internal.
-pub use command::CommandRoute;
+pub(crate) use command::CommandRoute;
 pub use envelope::Envelope;
 pub use index::EventIndex;
 

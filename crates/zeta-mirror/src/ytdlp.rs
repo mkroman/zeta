@@ -22,7 +22,7 @@ use std::{
 use futures::future::BoxFuture;
 use serde::Deserialize;
 
-pub use progress::Progress;
+pub(crate) use progress::Progress;
 
 /// The default command used to run `yt-dlp`.
 const DEFAULT_COMMAND: &str = "yt-dlp";
@@ -32,7 +32,7 @@ const COMMAND_ENV: &str = "ZETA_YTDLP_COMMAND";
 
 /// Errors that can occur while downloading with `yt-dlp`.
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub(crate) enum Error {
     /// An I/O error occurred.
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
@@ -55,7 +55,7 @@ pub enum Error {
 
 /// A downloaded file as reported by `yt-dlp`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
-pub struct DownloadedFile {
+pub(crate) struct DownloadedFile {
     /// The path of the downloaded file.
     pub filepath: PathBuf,
     /// The video codec of the downloaded file, if known.
@@ -65,7 +65,7 @@ pub struct DownloadedFile {
 impl DownloadedFile {
     /// Returns the name of the downloaded file.
     #[must_use]
-    pub fn filename(&self) -> Option<String> {
+    pub(crate) fn filename(&self) -> Option<String> {
         self.filepath
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
@@ -74,7 +74,7 @@ impl DownloadedFile {
 
     /// Returns whether the video codec is unsupported by browsers (i.e. not h264).
     #[must_use]
-    pub fn is_unsupported_codec(&self) -> bool {
+    pub(crate) fn is_unsupported_codec(&self) -> bool {
         self.vcodec
             .as_deref()
             .is_some_and(|vcodec| vcodec != "h264" && !vcodec.starts_with("avc1"))
@@ -89,7 +89,7 @@ struct JsonDump {
 
 /// A runner for `yt-dlp`.
 #[derive(Clone, Debug)]
-pub struct YtDlp {
+pub(crate) struct YtDlp {
     /// The command to execute.
     command: String,
     /// The maximum size of a video to download.
@@ -100,7 +100,7 @@ pub struct YtDlp {
 
 /// Options for constructing a [`YtDlp`] runner.
 #[derive(Clone, Debug)]
-pub struct YtDlpOptions {
+pub(crate) struct YtDlpOptions {
     /// The command to execute.
     ///
     /// Falls back to the `ZETA_YTDLP_COMMAND` environment variable, and to `yt-dlp` when
@@ -115,7 +115,7 @@ pub struct YtDlpOptions {
 impl YtDlp {
     /// Creates a new runner from the given options.
     #[must_use]
-    pub fn new(options: YtDlpOptions) -> Self {
+    pub(crate) fn new(options: YtDlpOptions) -> Self {
         Self {
             command: zeta_utils::settings::resolve_optional_setting(
                 options.command.as_deref(),
@@ -132,7 +132,7 @@ impl YtDlp {
 ///
 /// This is the seam the download manager's tests substitute a fake into, so they can drive the
 /// failure, success and ordering paths without shelling out to a `yt-dlp` stand-in.
-pub trait Downloader: Send + Sync + 'static {
+pub(crate) trait Downloader: Send + Sync + 'static {
     /// Downloads the media at `url` into `output_dir`, naming the files after `id` and streaming
     /// progress updates to `on_progress`.
     ///

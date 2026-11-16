@@ -104,7 +104,7 @@ fn resolve_secret(value: Option<&str>, name: &str) -> Result<String, Error> {
 
 /// Client for uploading mirrored files to an S3-compatible bucket.
 #[derive(Clone)]
-pub struct S3 {
+pub(crate) struct S3 {
     /// The HTTP client used for requests.
     client: Client,
     /// The S3 access key id.
@@ -138,7 +138,7 @@ impl S3 {
     /// # Errors
     ///
     /// Returns an error if a required value is missing or a configured value is invalid.
-    pub fn try_new(config: &MirrorConfig) -> Result<Self, Error> {
+    pub(crate) fn try_new(config: &MirrorConfig) -> Result<Self, Error> {
         let access_key_id = resolve_secret(config.s3_access_key_id.as_deref(), "S3_ACCESS_KEY_ID")?;
         let secret_access_key = resolve_secret(
             config
@@ -197,7 +197,7 @@ impl S3 {
             error.type = tracing::field::Empty,
         )
     )]
-    pub async fn object_exists(&self, key: &str) -> Result<bool, Error> {
+    pub(crate) async fn object_exists(&self, key: &str) -> Result<bool, Error> {
         let result = self.head_object(key).await;
 
         record_error(&result);
@@ -223,7 +223,7 @@ impl S3 {
             error.type = tracing::field::Empty,
         )
     )]
-    pub async fn upload_file(&self, path: &Path, key: &str) -> Result<(), Error> {
+    pub(crate) async fn upload_file(&self, path: &Path, key: &str) -> Result<(), Error> {
         let result = self.put_file(path, key).await;
 
         record_error(&result);

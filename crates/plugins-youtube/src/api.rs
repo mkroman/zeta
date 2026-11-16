@@ -71,7 +71,7 @@ impl YouTube {
 ///
 /// Returns [`Error::Api`] if the request failed or the response could not be parsed, and
 /// [`Error::NoResults`] if the API returned no categories.
-pub async fn fetch_video_categories(
+pub(crate) async fn fetch_video_categories(
     client: &reqwest::Client,
     api_key: &str,
     region_code: &str,

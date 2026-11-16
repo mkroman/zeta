@@ -20,7 +20,7 @@ impl FilterRepository {
     ///
     /// Returns [`Error::Insert`] if the filter could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "filters")]
-    pub async fn insert(&self, filter: NewFilter) -> Result<Filter, Error> {
+    pub(crate) async fn insert(&self, filter: NewFilter) -> Result<Filter, Error> {
         trace!("inserting filter into database");
 
         sqlx::query_as(
@@ -48,7 +48,7 @@ impl FilterRepository {
     ///
     /// Returns [`Error::Load`] if the filters could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "filters")]
-    pub async fn list(&self) -> Result<Vec<Filter>, Error> {
+    pub(crate) async fn list(&self) -> Result<Vec<Filter>, Error> {
         trace!("loading filters from database");
 
         sqlx::query_as(
@@ -67,7 +67,7 @@ impl FilterRepository {
     ///
     /// Returns [`Error::Delete`] if the filters could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "filters")]
-    pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
+    pub(crate) async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         trace!(filter.ids = ?ids, "deleting filters from database");
 
         zeta_plugin::database::delete_ids(&self.db, "filters", ids)

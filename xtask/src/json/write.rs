@@ -9,7 +9,7 @@ use super::Value;
 
 /// Serialize a value without insignificant whitespace.
 #[must_use]
-pub fn to_string(value: &Value) -> String {
+pub(crate) fn to_string(value: &Value) -> String {
     let mut output = String::new();
     write_value(value, &mut output, None);
     output
@@ -17,7 +17,7 @@ pub fn to_string(value: &Value) -> String {
 
 /// Serialize a value with two-space indentation.
 #[must_use]
-pub fn to_string_pretty(value: &Value) -> String {
+pub(crate) fn to_string_pretty(value: &Value) -> String {
     let mut output = String::new();
     write_value(value, &mut output, Some(0));
     output

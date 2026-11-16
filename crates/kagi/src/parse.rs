@@ -16,7 +16,7 @@ use crate::{BASE_URL, ImageResult, SearchResult};
 /// Messages arrive either framed as standard server-sent events or as `Tag:JSON_BODY\0\n`
 /// chunks; in both cases each message carries a tag and a JSON payload.
 #[derive(Deserialize, Debug)]
-pub struct KagiMessage {
+pub(crate) struct KagiMessage {
     /// The message tag (e.g., "search", "search.info", "meta").
     /// This is extracted from the wire prefix or the JSON body.
     tag: String,
@@ -47,14 +47,14 @@ struct JsonSearchResult {
 ///
 /// Panics if the static [`BASE_URL`] is not a valid URL.
 #[must_use]
-pub fn url_with_query(path: &str, params: &[(&str, &str)]) -> reqwest::Url {
+pub(crate) fn url_with_query(path: &str, params: &[(&str, &str)]) -> reqwest::Url {
     reqwest::Url::parse_with_params(&format!("{BASE_URL}{path}"), params)
         .expect("the static base url always produces a valid url")
 }
 
 /// Extracts the `window.sse_nonce` value from the raw HTML content.
 #[must_use]
-pub fn extract_nonce(html: &str) -> Option<String> {
+pub(crate) fn extract_nonce(html: &str) -> Option<String> {
     const MARKER: &str = "window.sse_nonce";
 
     html.match_indices(MARKER).find_map(|(index, _)| {
@@ -75,7 +75,7 @@ pub fn extract_nonce(html: &str) -> Option<String> {
 /// server responded with the standard server-sent event framing or the legacy null-delimited
 /// wire format.
 #[must_use]
-pub fn parse_stream(raw_body: &str) -> Vec<KagiMessage> {
+pub(crate) fn parse_stream(raw_body: &str) -> Vec<KagiMessage> {
     if raw_body.lines().any(|line| line.starts_with("data:")) {
         parse_sse_stream(raw_body)
     } else {
@@ -147,7 +147,7 @@ fn payload_content(message: &KagiMessage) -> Option<&str> {
 }
 
 #[must_use]
-pub fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResult> {
+pub(crate) fn parse_search_result_messages(messages: &[KagiMessage]) -> Vec<SearchResult> {
     // Prefer the structured results payload when the server provides one.
     for message in messages
         .iter()
@@ -257,7 +257,7 @@ fn parse_search_results_html(html: &str) -> Vec<SearchResult> {
 }
 
 #[must_use]
-pub fn parse_image_result_messages(messages: &[KagiMessage]) -> Vec<ImageResult> {
+pub(crate) fn parse_image_result_messages(messages: &[KagiMessage]) -> Vec<ImageResult> {
     let mut result: Vec<ImageResult> = Vec::new();
 
     for content in messages

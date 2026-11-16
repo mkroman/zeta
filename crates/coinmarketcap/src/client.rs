@@ -15,7 +15,7 @@ use crate::error::Error;
 use crate::model::{Coin, CoinQuery, Envelope, Fiat, Listing, QuoteData};
 
 /// Base URL of the CoinMarketCap Pro API.
-pub const API_BASE_URL: &str = "https://pro-api.coinmarketcap.com";
+pub(crate) const API_BASE_URL: &str = "https://pro-api.coinmarketcap.com";
 
 /// The HTTP header that carries the CoinMarketCap API key on requests.
 const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-cmc_pro_api_key");

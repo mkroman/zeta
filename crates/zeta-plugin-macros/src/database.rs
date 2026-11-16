@@ -76,7 +76,7 @@ impl Parse for Arguments {
 }
 
 /// Expands `#[instrument_database(...)]` on a repository method.
-pub fn expand(arguments: TokenStream, item: TokenStream) -> TokenStream {
+pub(crate) fn expand(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let arguments = match syn::parse2::<Arguments>(arguments) {
         Ok(arguments) => arguments,
         Err(error) => return error.to_compile_error(),

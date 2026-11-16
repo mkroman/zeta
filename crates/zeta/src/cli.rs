@@ -4,7 +4,7 @@ use clap::Parser;
 
 /// Zeta IRC bot
 #[derive(Parser, Debug)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// the path to the config file
     #[arg(short = 'c', long, default_value = "config.toml")]
     pub config_path: PathBuf,

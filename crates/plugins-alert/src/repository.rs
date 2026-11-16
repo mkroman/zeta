@@ -21,7 +21,7 @@ impl AlertRepository {
     ///
     /// Returns [`Error::Insert`] if the alert could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "alerts")]
-    pub async fn insert(&self, alert: NewAlert) -> Result<Alert, Error> {
+    pub(crate) async fn insert(&self, alert: NewAlert) -> Result<Alert, Error> {
         trace!("inserting alert into database");
 
         sqlx::query_as(
@@ -48,7 +48,7 @@ impl AlertRepository {
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "alerts")]
-    pub async fn list_due_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<Alert>, Error> {
+    pub(crate) async fn list_due_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<Alert>, Error> {
         trace!(alert.cutoff = ?cutoff, "loading alerts from database");
 
         sqlx::query_as(
@@ -69,7 +69,11 @@ impl AlertRepository {
     ///
     /// Returns [`Error::Load`] if the alerts could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "alerts")]
-    pub async fn list_for(&self, channel: &str, nickname: &str) -> Result<Vec<Alert>, Error> {
+    pub(crate) async fn list_for(
+        &self,
+        channel: &str,
+        nickname: &str,
+    ) -> Result<Vec<Alert>, Error> {
         trace!(
             irc.channel = %channel,
             irc.sender.nick = %nickname,
@@ -95,7 +99,7 @@ impl AlertRepository {
     ///
     /// Returns [`Error::Delete`] if the alerts could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "alerts")]
-    pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
+    pub(crate) async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         trace!(alert.ids = ?ids, "deleting alerts from database");
 
         zeta_plugin::database::delete_ids(&self.db, "alerts", ids)

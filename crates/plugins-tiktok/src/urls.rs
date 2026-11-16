@@ -12,11 +12,11 @@ const TIKTOK_STANDARD_HOST: &str = "tiktok.com";
 const TIKTOK_WWW_HOST: &str = "www.tiktok.com";
 
 /// The TikTok hosts whose links this plugin handles.
-pub const URL_HOSTS: &[&str] = &[TIKTOK_STANDARD_HOST, TIKTOK_SHORT_HOST, TIKTOK_WWW_HOST];
+pub(crate) const URL_HOSTS: &[&str] = &[TIKTOK_STANDARD_HOST, TIKTOK_SHORT_HOST, TIKTOK_WWW_HOST];
 
 /// A TikTok link, identified by what it points at.
 #[derive(Eq, PartialEq, Debug)]
-pub enum TiktokLink {
+pub(crate) enum TiktokLink {
     /// A video link, identified by its channel slug and video id.
     Video {
         /// The channel slug, e.g. `@dailymail`, or the anonymous bare `@` that short links
@@ -33,20 +33,20 @@ pub enum TiktokLink {
 
 /// Returns the canonical URL for the given video.
 #[must_use]
-pub fn video_url(channel: &str, video_id: &str) -> String {
+pub(crate) fn video_url(channel: &str, video_id: &str) -> String {
     format!("https://www.tiktok.com/{channel}/video/{video_id}")
 }
 
 /// Returns the short URL for the given id, used when resolving redirects.
 #[must_use]
-pub fn short_url(id: &str) -> String {
+pub(crate) fn short_url(id: &str) -> String {
     format!("https://{TIKTOK_SHORT_HOST}/{id}/")
 }
 
 /// Parses the given `url` into a [`TiktokLink`], returning `None` if it isn't a TikTok link or
 /// contains invalid components.
 #[must_use]
-pub fn parse_tiktok_url(url: &Url) -> Option<TiktokLink> {
+pub(crate) fn parse_tiktok_url(url: &Url) -> Option<TiktokLink> {
     match url.host_str()? {
         TIKTOK_STANDARD_HOST | TIKTOK_WWW_HOST => parse_tiktok_com_url(url),
         TIKTOK_SHORT_HOST => parse_shortened_tiktok_url(url),

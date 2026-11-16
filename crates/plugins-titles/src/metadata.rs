@@ -26,7 +26,7 @@ const MAX_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
 
 /// Page title and OpenGraph metadata extracted from a document head.
 #[derive(Debug, Default)]
-pub struct PageMetadata {
+pub(crate) struct PageMetadata {
     /// The contents of the first `<title>` element.
     pub title: Option<String>,
     /// The `content` of the first `og:title` meta tag.
@@ -161,7 +161,7 @@ impl TokenSink for HeadSink {
 
 /// Errors that can occur while fetching a page.
 #[derive(Debug, Error)]
-pub enum Error {
+pub(crate) enum Error {
     /// The page request failed or returned an unsuccessful status.
     #[error(transparent)]
     Response(#[from] ResponseError),
@@ -184,7 +184,10 @@ impl From<wreq::Error> for Error {
 /// # Errors
 ///
 /// Returns an error if the request fails or the server returns an unsuccessful response.
-pub async fn fetch_metadata(client: &wreq::Client, url: &Url) -> Result<PageMetadata, Error> {
+pub(crate) async fn fetch_metadata(
+    client: &wreq::Client,
+    url: &Url,
+) -> Result<PageMetadata, Error> {
     use futures::StreamExt;
 
     let response = http::emulated::send(client.get(url.as_str())).await?;

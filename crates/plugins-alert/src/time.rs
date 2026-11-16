@@ -20,7 +20,7 @@ pub enum ParseTimeError {
 /// The message and datetime are separated by the last occurrence of `at` or `in`, so messages
 /// containing either word are handled correctly. Returns `None` if either part is missing.
 #[must_use]
-pub fn split_args(args: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_args(args: &str) -> Option<(&str, &str)> {
     let index = rfind_ignore_case(args, " at ").max(rfind_ignore_case(args, " in "))?;
 
     let message = &args[..index];
@@ -46,7 +46,10 @@ fn rfind_ignore_case(s: &str, needle: &str) -> Option<usize> {
 ///
 /// Returns [`ParseTimeError::Ambiguous`] if the expression could not be parsed, or
 /// [`ParseTimeError::Past`] if the expression contains a date that occurs in the past.
-pub fn parse_time(spec: &str, now: DateTime<Local>) -> Result<DateTime<Utc>, ParseTimeError> {
+pub(crate) fn parse_time(
+    spec: &str,
+    now: DateTime<Local>,
+) -> Result<DateTime<Utc>, ParseTimeError> {
     // Tolerate a leading article in the datetime expression, e.g. "at the weekend".
     let spec = strip_article(spec.trim());
 

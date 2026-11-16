@@ -44,7 +44,7 @@ fn otel_resource_detectors() -> Vec<Box<dyn ResourceDetector>> {
 /// by handing that worker's core to another thread. On a current-thread runtime the flush blocks
 /// the only thread, as documented on the type.
 #[must_use = "dropping the guard immediately shuts the tracer provider down"]
-pub struct TelemetryGuard {
+pub(crate) struct TelemetryGuard {
     /// The provider to shut down, or `None` when OpenTelemetry is disabled.
     provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
 }
@@ -74,7 +74,7 @@ impl Drop for TelemetryGuard {
     }
 }
 
-pub fn try_init(tracing: &config::TracingConfig) -> miette::Result<TelemetryGuard> {
+pub(crate) fn try_init(tracing: &config::TracingConfig) -> miette::Result<TelemetryGuard> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 

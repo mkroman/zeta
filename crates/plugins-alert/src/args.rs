@@ -5,17 +5,17 @@ use clap::Parser;
 use zeta_plugin::CommandSpec;
 
 /// The `.alert` command.
-pub const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
+pub(crate) const ALERT: CommandSpec = CommandSpec::with_args::<Opts>(
     ".alert",
     "Schedule an alert to be posted later, or list pending alerts",
 );
 
 /// The usage hint for the `.alert` command.
-pub const USAGE: &str = "Usage: .alert\x0f [-l] <message> <in|at> <datetime>";
+pub(crate) const USAGE: &str = "Usage: .alert\x0f [-l] <message> <in|at> <datetime>";
 
 /// Schedule an alert to be posted later, or list pending alerts.
 #[derive(Parser, Debug)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// list your pending alerts in this channel
     #[arg(short = 'l', long)]
     pub(super) list: bool,

@@ -26,7 +26,7 @@ const BINARY_EXTENSIONS: &[&str] = &[
 ///
 /// Every fetch streams a response and parks a blocking thread for its HTML tokenizer, so an
 /// unbounded number of URLs posted in quick succession would exhaust the blocking pool.
-pub const FETCH_CONCURRENCY: usize = 8;
+pub(crate) const FETCH_CONCURRENCY: usize = 8;
 
 impl Titles {
     /// Caches `catalog`.
@@ -103,7 +103,7 @@ impl Titles {
 ///
 /// CTCP messages do not reach the plugin at all — they are their own event kind.
 #[must_use]
-pub fn should_ignore(text: &str) -> bool {
+pub(crate) fn should_ignore(text: &str) -> bool {
     // Messages that look like command invocations, e.g. `.gis`.
     if text.starts_with('.')
         && text
@@ -119,7 +119,7 @@ pub fn should_ignore(text: &str) -> bool {
 
 /// Whether the host of `url` is configured as ignored.
 #[must_use]
-pub fn is_ignored_host(url: &Url, ignored_hosts: &[String]) -> bool {
+pub(crate) fn is_ignored_host(url: &Url, ignored_hosts: &[String]) -> bool {
     url.host_str().is_some_and(|host| {
         ignored_hosts
             .iter()
@@ -132,7 +132,7 @@ pub fn is_ignored_host(url: &Url, ignored_hosts: &[String]) -> bool {
 /// Only exact host registrations count: a plugin registered for every URL advertises no specific
 /// hosts and is not a reason for titles to skip a link.
 #[must_use]
-pub fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
+pub(crate) fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
     catalog.is_some_and(|catalog| {
         url.host_str()
             .is_some_and(|host| catalog.handles_host(host))
@@ -141,7 +141,7 @@ pub fn is_catalog_handled(url: &Url, catalog: Option<&PluginCatalog>) -> bool {
 
 /// Whether the path of `url` looks like binary content.
 #[must_use]
-pub fn is_binary_url(url: &Url) -> bool {
+pub(crate) fn is_binary_url(url: &Url) -> bool {
     zeta_url::last_path_segment(url).is_some_and(|segment| {
         BINARY_EXTENSIONS
             .iter()
@@ -151,7 +151,7 @@ pub fn is_binary_url(url: &Url) -> bool {
 
 /// Whether `haystack` ends with `needle`, ignoring ASCII case and without allocating.
 #[must_use]
-pub fn ends_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+pub(crate) fn ends_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
     let Some(start) = haystack.len().checked_sub(needle.len()) else {
         return false;
     };

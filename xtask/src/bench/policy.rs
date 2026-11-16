@@ -8,7 +8,7 @@ use crate::bench::model::{Benchmark, RunSummary, Tier};
 
 /// The overall verdict for a run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Verdict {
+pub(crate) enum Verdict {
     Ok,
     Regressed,
     Warning,
@@ -18,7 +18,7 @@ pub enum Verdict {
 
 impl Verdict {
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Ok => "ok",
             Self::Regressed => "regressed",
@@ -30,7 +30,7 @@ impl Verdict {
 
     /// Checks API conclusion.
     #[must_use]
-    pub const fn conclusion(self) -> &'static str {
+    pub(crate) const fn conclusion(self) -> &'static str {
         match self {
             Self::Ok => "success",
             Self::Regressed | Self::Error => "failure",
@@ -40,14 +40,14 @@ impl Verdict {
 }
 
 /// One commit status per suite.
-pub struct Status {
+pub(crate) struct Status {
     pub state: String,
     pub description: String,
 }
 
 /// Count benchmarks per tier.
 #[must_use]
-pub fn counts(benchmarks: &[Benchmark]) -> BTreeMap<Tier, usize> {
+pub(crate) fn counts(benchmarks: &[Benchmark]) -> BTreeMap<Tier, usize> {
     let mut counts = BTreeMap::new();
     for benchmark in benchmarks {
         *counts.entry(benchmark.tier).or_insert(0) += 1;
@@ -57,7 +57,7 @@ pub fn counts(benchmarks: &[Benchmark]) -> BTreeMap<Tier, usize> {
 
 /// Sum new and old `Ir` counts per suite (orientation only, never gated).
 #[must_use]
-pub fn suite_totals(benchmarks: &[Benchmark]) -> BTreeMap<String, (u64, u64)> {
+pub(crate) fn suite_totals(benchmarks: &[Benchmark]) -> BTreeMap<String, (u64, u64)> {
     let mut totals = BTreeMap::<String, (u64, u64)>::new();
     for benchmark in benchmarks {
         let (Some(old), Some(new)) = (benchmark.ir.old, benchmark.ir.new) else {
@@ -71,7 +71,7 @@ pub fn suite_totals(benchmarks: &[Benchmark]) -> BTreeMap<String, (u64, u64)> {
 }
 
 /// Assign a verdict tier and the human-readable reasons to `benchmark`.
-pub fn classify(benchmark: &mut Benchmark, waivers: &[Waiver]) {
+pub(crate) fn classify(benchmark: &mut Benchmark, waivers: &[Waiver]) {
     let policy = &config::POLICY;
 
     if benchmark.ir.old.is_none() {
@@ -166,7 +166,7 @@ pub fn classify(benchmark: &mut Benchmark, waivers: &[Waiver]) {
 
 /// Decide the overall verdict for a run.
 #[must_use]
-pub fn verdict(run: &RunSummary) -> Verdict {
+pub(crate) fn verdict(run: &RunSummary) -> Verdict {
     let counts = counts(&run.benchmarks);
     if run.exit_code != 0 && run.exit_code != 3 {
         return Verdict::Error;
@@ -185,7 +185,7 @@ pub fn verdict(run: &RunSummary) -> Verdict {
 
 /// Build one commit status per dynamically discovered suite.
 #[must_use]
-pub fn statuses(run: &RunSummary) -> BTreeMap<String, Status> {
+pub(crate) fn statuses(run: &RunSummary) -> BTreeMap<String, Status> {
     let verdict = verdict(run);
     let mut payload = BTreeMap::new();
 

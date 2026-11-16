@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 use crate::workspace_root;
 
 /// A parsed command line.
-pub enum Invocation {
+pub(crate) enum Invocation {
     /// Print usage for the topic and exit successfully.
     Help(HelpTopic),
     /// Run a task.
@@ -20,20 +20,20 @@ pub enum Invocation {
 
 /// The usage text a help request refers to.
 #[derive(Clone, Copy)]
-pub enum HelpTopic {
+pub(crate) enum HelpTopic {
     TopLevel,
     Bench,
 }
 
 /// A top-level xtask task.
-pub enum Command {
+pub(crate) enum Command {
     Bench(BenchCommand),
     FetchUcd(FetchUcdArgs),
 }
 
 impl Command {
     /// Run this command.
-    pub fn run(self) -> Result<()> {
+    pub(crate) fn run(self) -> Result<()> {
         match self {
             Self::Bench(command) => crate::bench::run(command),
             Self::FetchUcd(args) => crate::ucd::run(&args),
@@ -42,7 +42,7 @@ impl Command {
 }
 
 /// Arguments for `fetch-ucd`.
-pub struct FetchUcdArgs {
+pub(crate) struct FetchUcdArgs {
     pub version: String,
     pub dest: PathBuf,
     pub emoji_version: Option<String>,
@@ -62,7 +62,7 @@ impl FetchUcdArgs {
 }
 
 /// A `cargo xtask bench` task and its validated arguments.
-pub enum BenchCommand {
+pub(crate) enum BenchCommand {
     Metadata(MetadataArgs),
     CheckConfig(CheckConfigArgs),
     Report(ReportArgs),
@@ -72,7 +72,7 @@ pub enum BenchCommand {
 }
 
 /// Arguments for `bench metadata`.
-pub struct MetadataArgs {
+pub(crate) struct MetadataArgs {
     pub output: PathBuf,
     pub toolchain: String,
 }
@@ -88,7 +88,7 @@ impl MetadataArgs {
 }
 
 /// Arguments for `bench check-config`.
-pub struct CheckConfigArgs {
+pub(crate) struct CheckConfigArgs {
     pub summaries: PathBuf,
 }
 
@@ -102,7 +102,7 @@ impl CheckConfigArgs {
 }
 
 /// Arguments for `bench report`.
-pub struct ReportArgs {
+pub(crate) struct ReportArgs {
     pub summaries: PathBuf,
     pub baseline_metadata: PathBuf,
     pub current_metadata: PathBuf,
@@ -147,7 +147,7 @@ impl ReportArgs {
 }
 
 /// Arguments for `bench gate`.
-pub struct GateArgs {
+pub(crate) struct GateArgs {
     pub verdict: PathBuf,
 }
 
@@ -161,7 +161,7 @@ impl GateArgs {
 }
 
 /// Arguments for `bench has-regressions`.
-pub struct HasRegressionsArgs {
+pub(crate) struct HasRegressionsArgs {
     pub verdict: PathBuf,
 }
 
@@ -175,7 +175,7 @@ impl HasRegressionsArgs {
 }
 
 /// Arguments for `bench post-report`.
-pub struct PostReportArgs {
+pub(crate) struct PostReportArgs {
     pub verdict: PathBuf,
     pub report: PathBuf,
     pub dry_run: bool,
@@ -193,7 +193,7 @@ impl PostReportArgs {
 }
 
 /// Parse the arguments passed after the `cargo xtask` alias.
-pub fn parse(arguments: &[String]) -> Result<Invocation> {
+pub(crate) fn parse(arguments: &[String]) -> Result<Invocation> {
     let Some((task, rest)) = arguments.split_first() else {
         print_usage(HelpTopic::TopLevel);
         return Err(Error::new(
@@ -234,7 +234,7 @@ fn parse_bench(arguments: &[String]) -> Result<Invocation> {
 }
 
 /// Print the usage text for `topic`.
-pub fn print_usage(topic: HelpTopic) {
+pub(crate) fn print_usage(topic: HelpTopic) {
     match topic {
         HelpTopic::TopLevel => println!(
             "Usage: cargo xtask <command>

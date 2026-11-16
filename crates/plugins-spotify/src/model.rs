@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 #[derive(Deserialize)]
-pub struct Track {
+pub(crate) struct Track {
     pub(super) name: String,
     pub(super) artists: Vec<ArtistSimple>,
     pub(super) album: AlbumSimple,
@@ -11,14 +11,14 @@ pub struct Track {
 }
 
 #[derive(Deserialize)]
-pub struct Album {
+pub(crate) struct Album {
     pub(super) name: String,
     pub(super) artists: Vec<ArtistSimple>,
     pub(super) external_urls: ExternalUrls,
 }
 
 #[derive(Deserialize)]
-pub struct Artist {
+pub(crate) struct Artist {
     pub(super) name: String,
     pub(super) genres: Vec<String>,
     pub(super) followers: Followers,
@@ -26,7 +26,7 @@ pub struct Artist {
 }
 
 #[derive(Deserialize)]
-pub struct Playlist {
+pub(crate) struct Playlist {
     pub(super) name: String,
     pub(super) owner: Owner,
     pub(super) followers: Followers,
@@ -35,32 +35,32 @@ pub struct Playlist {
 }
 
 #[derive(Deserialize)]
-pub struct ArtistSimple {
+pub(crate) struct ArtistSimple {
     pub(super) name: String,
 }
 
 #[derive(Deserialize)]
-pub struct AlbumSimple {
+pub(crate) struct AlbumSimple {
     pub(super) name: String,
 }
 
 #[derive(Deserialize)]
-pub struct ExternalUrls {
+pub(crate) struct ExternalUrls {
     pub(super) spotify: String,
 }
 
 #[derive(Deserialize)]
-pub struct Followers {
+pub(crate) struct Followers {
     pub(super) total: u64,
 }
 
 #[derive(Deserialize)]
-pub struct Owner {
+pub(crate) struct Owner {
     pub(super) display_name: Option<String>,
     pub(super) id: String,
 }
 
 #[derive(Deserialize)]
-pub struct PlaylistTracks {
+pub(crate) struct PlaylistTracks {
     pub(super) total: u64,
 }

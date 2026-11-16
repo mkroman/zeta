@@ -26,7 +26,7 @@ fn is_hostname(input: &str) -> bool {
 ///
 /// Returns [`None`] for anything else — paths, schemes, spaces, or empty labels.
 #[must_use]
-pub fn normalize_site(input: &str) -> Option<String> {
+pub(crate) fn normalize_site(input: &str) -> Option<String> {
     const WILDCARD: &str = "*.";
 
     let input = input.trim().to_lowercase();
@@ -47,7 +47,7 @@ pub fn normalize_site(input: &str) -> Option<String> {
 /// An exact entry matches the host and its `www.` variant; a `*.domain` wildcard matches the
 /// bare domain and every subdomain.
 #[must_use]
-pub fn matches_site(candidate: &str, site: &str) -> bool {
+pub(crate) fn matches_site(candidate: &str, site: &str) -> bool {
     let Some(domain) = site.strip_prefix("*.") else {
         return candidate.eq_ignore_ascii_case(site)
             || zeta_url::strip_www(candidate).eq_ignore_ascii_case(site);

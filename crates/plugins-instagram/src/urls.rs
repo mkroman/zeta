@@ -19,7 +19,7 @@ const INSTAGRAM_AM: &str = "instagr.am";
 const L_INSTAGRAM_COM: &str = "l.instagram.com";
 
 /// The Instagram hosts whose links this plugin handles.
-pub const URL_HOSTS: &[&str] = &[
+pub(crate) const URL_HOSTS: &[&str] = &[
     INSTAGRAM_COM,
     INSTAGRAM_AM,
     L_INSTAGRAM_COM,
@@ -34,7 +34,7 @@ const RESERVED_SEGMENTS: &[&str] = &[
 
 /// An Instagram link, identified by what it points at.
 #[derive(Eq, PartialEq, Debug)]
-pub enum InstagramLink {
+pub(crate) enum InstagramLink {
     /// A media post — a feed post, reel, or IGTV video — identified by its shortcode.
     Media {
         /// The kind of media the link points at.
@@ -58,7 +58,7 @@ pub enum InstagramLink {
 
 /// The kind of media an Instagram link points at.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub enum MediaKind {
+pub(crate) enum MediaKind {
     /// A standard feed post: photos, videos, or a carousel.
     Post,
     /// A short-form vertical video.
@@ -104,20 +104,20 @@ impl MediaKind {
 /// The canonical URL is built on the standard host; the mirror and metadata requests always use
 /// it, no matter which host the link was posted with.
 #[must_use]
-pub fn media_url(kind: MediaKind, id: &str) -> String {
+pub(crate) fn media_url(kind: MediaKind, id: &str) -> String {
     format!("https://www.instagram.com/{}/{}", kind.segment(), id)
 }
 
 /// Returns the canonical URL for the given story.
 #[must_use]
-pub fn story_url(username: &str, id: &str) -> String {
+pub(crate) fn story_url(username: &str, id: &str) -> String {
     format!("https://www.instagram.com/stories/{username}/{id}")
 }
 
 /// Parses the given `url` into an [`InstagramLink`], returning `None` if it isn't an Instagram
 /// link or contains invalid components.
 #[must_use]
-pub fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
+pub(crate) fn parse_instagram_url(url: &Url) -> Option<InstagramLink> {
     let host = url.host_str()?;
 
     // `instagr.am` serves the same path structure as the standard hosts, but links that don't

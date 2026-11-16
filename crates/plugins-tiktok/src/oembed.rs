@@ -12,7 +12,7 @@ const TIKTOK_OEMBED_API: &str = "https://www.tiktok.com/oembed";
 
 /// The oEmbed response for a TikTok video.
 #[derive(Debug, Eq, PartialEq, Deserialize)]
-pub struct OEmbed {
+pub(crate) struct OEmbed {
     /// The resource type.
     pub r#type: String,
     /// The oEmbed version number.
@@ -44,20 +44,20 @@ impl OEmbed {
     /// The oEmbed endpoint returns these placeholder author values when the video is private, in
     /// which case the video should be ignored.
     #[must_use]
-    pub fn is_privacy_restricted(&self) -> bool {
+    pub(crate) fn is_privacy_restricted(&self) -> bool {
         self.author_name.as_deref() == Some("@")
             && self.author_url.as_deref() == Some("https://www.tiktok.com/")
     }
 }
 
-pub type Error = http::ApiError;
+pub(crate) type Error = http::ApiError;
 
 /// Fetches the oEmbed details for the given video `url`.
 ///
 /// # Errors
 ///
 /// Returns an error if the request fails or TikTok returns an invalid response.
-pub async fn fetch(http_client: &reqwest::Client, url: &str) -> Result<OEmbed, Error> {
+pub(crate) async fn fetch(http_client: &reqwest::Client, url: &str) -> Result<OEmbed, Error> {
     debug!(url.full = %RedactedUrl::from_unparsed(url), "fetching oembed data");
 
     http::get_json(http_client.get(TIKTOK_OEMBED_API).query(&[("url", url)])).await

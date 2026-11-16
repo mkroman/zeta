@@ -27,7 +27,7 @@ use crate::task::PluginTask;
 /// handler that never returns — would otherwise grow with every event it subscribes to. The
 /// dispatcher never blocks on the mailbox: a full one drops the event and warns at most once per
 /// warning interval, and the plugin is not evicted.
-pub const MAILBOX_CAPACITY: usize = 4_096;
+pub(crate) const MAILBOX_CAPACITY: usize = 4_096;
 
 /// The running plugins: their dispatch index and their tasks.
 pub struct PluginRuntime<P> {

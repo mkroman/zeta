@@ -8,7 +8,7 @@ use url::Url;
 
 /// Returns the object key for the given file name under `prefix`.
 #[must_use]
-pub fn object_key(prefix: &str, filename: &str) -> String {
+pub(crate) fn object_key(prefix: &str, filename: &str) -> String {
     match prefix.trim_end_matches('/') {
         "" => filename.to_string(),
         prefix => format!("{prefix}/{filename}"),
@@ -17,7 +17,7 @@ pub fn object_key(prefix: &str, filename: &str) -> String {
 
 /// Returns the public URL for the given id, using the given base URL.
 #[must_use]
-pub fn public_url_for(base: &Url, id: &str) -> String {
+pub(crate) fn public_url_for(base: &Url, id: &str) -> String {
     let mut url = base.clone();
     url.set_fragment(Some(id));
     url.to_string()

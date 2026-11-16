@@ -71,7 +71,7 @@ fn unknown_option(ident: &Ident, noun: &str, expected: &[&str]) -> syn::Error {
 }
 
 /// The arguments of the `#[plugin(...)]` container attribute.
-pub struct PluginArgs {
+pub(crate) struct PluginArgs {
     /// The required plugin name, e.g. `"dig"`.
     pub name: LitStr,
     /// The plugin's settings type; `NoSettings` when absent.
@@ -84,7 +84,7 @@ pub struct PluginArgs {
 
 /// The `urls(...)` container argument.
 #[derive(Clone)]
-pub enum UrlsArgs {
+pub(crate) enum UrlsArgs {
     /// Every URL posted in any channel.
     Any,
     /// The URLs whose host is in the given expression (`&[&str]`).
@@ -152,7 +152,7 @@ impl Parse for PluginArgs {
 }
 
 /// The arguments of a `#[command(...)]` method attribute.
-pub struct CommandArgs {
+pub(crate) struct CommandArgs {
     /// The command trigger as users type it, e.g. `.dig`.
     pub trigger: LitStr,
     /// The user-facing description shown by the host's help command.

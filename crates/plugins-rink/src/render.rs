@@ -32,7 +32,7 @@ impl Style {
 }
 
 /// Renders a successful evaluation's markup spans as a one-line IRC reply.
-pub fn render_reply(reply: &QueryReply) -> String {
+pub(crate) fn render_reply(reply: &QueryReply) -> String {
     render(reply, false)
 }
 
@@ -45,7 +45,7 @@ fn render_error(error: &QueryError) -> String {
 }
 
 /// Formats a failed evaluation as the labeled `Error: <message>` reply body.
-pub fn error_message(error: &QueryError) -> String {
+pub(crate) fn error_message(error: &QueryError) -> String {
     format!("Error: {}", render_error(error))
 }
 

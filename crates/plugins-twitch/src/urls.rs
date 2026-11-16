@@ -3,20 +3,20 @@
 use url::Url;
 
 /// The Twitch.tv hostname.
-pub const TWITCH_HOST: &str = "twitch.tv";
+pub(crate) const TWITCH_HOST: &str = "twitch.tv";
 
 /// The www-prefixed Twitch.tv hostname.
-pub const TWITCH_WWW_HOST: &str = "www.twitch.tv";
+pub(crate) const TWITCH_WWW_HOST: &str = "www.twitch.tv";
 
 /// The hostname of Twitch clip URLs.
-pub const CLIPS_HOST: &str = "clips.twitch.tv";
+pub(crate) const CLIPS_HOST: &str = "clips.twitch.tv";
 
 /// The Twitch hosts whose links this plugin handles.
-pub const URL_HOSTS: &[&str] = &[CLIPS_HOST, TWITCH_HOST, TWITCH_WWW_HOST];
+pub(crate) const URL_HOSTS: &[&str] = &[CLIPS_HOST, TWITCH_HOST, TWITCH_WWW_HOST];
 
 /// The type of Twitch resource found in a URL.
 #[derive(Debug, Eq, PartialEq)]
-pub enum UrlKind {
+pub(crate) enum UrlKind {
     /// A live stream, identified by its channel login.
     Stream(String),
     /// A clip, identified by its id.
@@ -29,7 +29,7 @@ pub enum UrlKind {
 /// returning `None` for URLs that match none of the resource kinds — including channel
 /// subpaths.
 #[must_use]
-pub fn parse_twitch_url(url: &Url) -> Option<UrlKind> {
+pub(crate) fn parse_twitch_url(url: &Url) -> Option<UrlKind> {
     match url.host_str()? {
         TWITCH_HOST | TWITCH_WWW_HOST => parse_twitch_tv_url(url),
         CLIPS_HOST => parse_clips_url(url),

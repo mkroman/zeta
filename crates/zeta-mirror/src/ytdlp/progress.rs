@@ -9,7 +9,7 @@ const PROGRESS_PREFIX: &str = "zeta-dl";
 
 /// A progress update of a running download, as reported by `yt-dlp`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Progress {
+pub(crate) struct Progress {
     /// The number of bytes downloaded so far.
     pub downloaded: Option<u64>,
     /// The total size of the download in bytes, if known or estimated upfront.
@@ -24,7 +24,7 @@ impl Progress {
     /// Returns the downloaded fraction of the total size, if the total size is known.
     #[allow(clippy::cast_precision_loss)]
     #[must_use]
-    pub fn fraction(&self) -> Option<f64> {
+    pub(crate) fn fraction(&self) -> Option<f64> {
         let total = self.total? as f64;
         let downloaded = self.downloaded.unwrap_or_default() as f64;
 

@@ -12,7 +12,7 @@ use zeta_plugin::irc::{COLOR, PLAIN_REPLY_PREFIX, RESET, unstyle_text};
 /// Formats a coin quote as an IRC message, e.g.:
 ///
 /// `\x0310> Bitcoin (\x0fBTC\x0310) is currently trading at\x0f $97231.50\x0310 (...)`
-pub fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String {
+pub(crate) fn format_quote(quote: &QuoteData, currency: &str, sign: Option<&str>) -> String {
     let name = unstyle_text(&quote.name);
     let symbol = unstyle_text(&quote.symbol);
 
