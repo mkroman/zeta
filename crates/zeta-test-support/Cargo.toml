@@ -17,7 +17,8 @@ context = ["database", "dep:irc", "dep:zeta-plugin", "zeta-plugin/database"]
 # The HTTP transport helpers: connection-refused, timeout, and 404 servers, and the API-error
 # fixture.
 http = ["dep:reqwest", "dep:wiremock", "dep:zeta-http", "zeta-http/http"]
-# The `tracing` span recorder shared by dispatch and telemetry span tests.
+# The `tracing` helpers: the span recorder shared by dispatch and telemetry span tests, and the
+# log-capture writer.
 spans = ["dep:tracing", "dep:tracing-subscriber"]
 
 [dependencies]

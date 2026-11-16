@@ -190,7 +190,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
     use std::time::Duration;
 
     use tracing_subscriber::prelude::*;
@@ -198,34 +197,9 @@ mod tests {
     use super::*;
     use zeta_plugin::event::MessageEvent;
     use zeta_plugin::{Error, Event, plugin_err};
-    use zeta_test_support::{Recording, RecordingPlugin, publish_recording, test_context};
-
-    /// A writer that collects everything logged through it, for assertions.
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for LogBuffer {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .expect("log buffer lock")
-                .extend_from_slice(buf);
-
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
-        type Writer = Self;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
+    use zeta_test_support::{
+        LogBuffer, Recording, RecordingPlugin, publish_recording, test_context,
+    };
 
     /// The deepest error in a failing handler's chain.
     #[derive(Debug)]
