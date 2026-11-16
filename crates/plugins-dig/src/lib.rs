@@ -24,9 +24,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use tracing::{Instrument, debug};
 
+use zeta_plugin::irc;
 use zeta_plugin::irc::{labeled_reply, labeled_reply_prefix, send_reply};
 use zeta_plugin::{BoxError, Chain, Client, Context, ZetaError, plugin};
-use zeta_utils::irc;
 
 /// Settings for the dig plugin, from its `[plugins.dig]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]

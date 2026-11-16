@@ -3,10 +3,10 @@
 //! Plugin replies follow a common visual convention: a teal `>` marker (mIRC color 10), an
 //! optional bold plugin name, and the message body with values emphasized by switching between
 //! the reply color and the default color. The formatting helpers that produce those byte
-//! sequences live in [`zeta_utils::irc`], next to the other IRC formatting helpers, and are
-//! re-exported here so plugin code can keep importing them from this module. What remains here
-//! are the helpers that need the plugin vocabulary: sending a finished reply without the copies
-//! [`Client::send_privmsg`] makes, and replying with a failed argument parse's usage lines.
+//! sequences live in [`zeta_irc`] and are re-exported here, so this module is the plugin-facing
+//! import path for them. What remains here are the helpers that need the plugin vocabulary:
+//! sending a finished reply without the copies [`Client::send_privmsg`] makes, and replying with
+//! a failed argument parse's usage lines.
 
 use std::future::Future;
 
@@ -23,9 +23,11 @@ use crate::event::CommandEvent;
 /// direct `irc` dependency; plugins otherwise only see the plugin API's re-exported vocabulary.
 pub use ::irc::error::Error as IrcError;
 
-pub use zeta_utils::irc::{
-    BOLD, COLOR, LABELED_PREFIX_BYTES, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET, labeled_reply,
-    labeled_reply_prefix, plain_reply, unstyle_text, usage_line, write_labeled_reply_prefix,
+pub use zeta_irc::{
+    BOLD, COLOR, LABELED_PREFIX_BYTES, MAX_LISTING_LENGTH, PLAIN_REPLY_PREFIX, REPLY_MARKER, RESET,
+    append_entries_with_more, append_entries_within_budget, labeled_reply, labeled_reply_prefix,
+    plain_reply, strip_control_chars, strip_formatting, strip_nick_prefix, unstyle_text,
+    usage_line, write_labeled_reply_prefix,
 };
 
 /// Sends each non-empty usage line as its own `PRIVMSG`.

@@ -14,8 +14,8 @@ mod render;
 #[cfg(test)]
 mod tests;
 
+use zeta_plugin::irc::MAX_LISTING_LENGTH;
 use zeta_plugin::irc::PLAIN_REPLY_PREFIX;
-use zeta_utils::irc::MAX_LISTING_LENGTH;
 
 use self::grouping::GroupedEntries;
 use self::render::SUFFIX;

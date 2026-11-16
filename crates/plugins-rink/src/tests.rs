@@ -2,9 +2,9 @@
 
 use super::*;
 use crate::actor::Rewrite;
+use zeta_plugin::irc;
 use zeta_plugin::{Registered, Subscriptions};
 use zeta_test_support::settings_tests;
-use zeta_utils::irc;
 
 use crate::test_support::{
     TEST_CURRENCY_DATA, currency_server, evaluate, listings_server, offline_plugin,

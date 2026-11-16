@@ -4,8 +4,8 @@
 use super::*;
 
 use clap::CommandFactory;
+use zeta_plugin::irc::{self, MAX_LISTING_LENGTH};
 use zeta_plugin::{NoSettings, Registered};
-use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
 use zeta_utils::text;
 
 use crate::args::{Add, Delete, Opts, Subcommand};

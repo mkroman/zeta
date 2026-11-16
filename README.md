@@ -18,6 +18,7 @@ leaf crates below both.
 | `zeta-plugin-runtime` | Plugin registry, event dispatch and grace-bounded shutdown. |
 | `plugins-shared` | The few helpers used by more than one bundled plugin (URL matchers, mirror replies). |
 | `zeta-http` | HTTP wrappers, browser emulation, OAuth2, transport-error redaction. |
+| `zeta-irc` | IRC reply formatting, addressing and line budgets. |
 | `zeta-mirror` | Media mirroring: `yt-dlp` downloads uploaded to S3. |
 | `zeta-cache` | TTL cache and keyed cache APIs. |
 | `zeta-url` | URL extraction, path validation and redaction. |

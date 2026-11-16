@@ -1,0 +1,14 @@
+[package]
+name = "zeta-irc"
+version = "0.0.0"
+rust-version.workspace = true
+edition.workspace = true
+description = "IRC reply formatting, addressing, and line budget helpers for the zeta IRC bot."
+license.workspace = true
+repository.workspace = true
+
+[dev-dependencies]
+zeta-utils = { workspace = true }
+
+[lints]
+workspace = true

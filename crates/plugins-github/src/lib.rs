@@ -21,9 +21,9 @@ use zeta_http::reqwest::{
     self,
     header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue},
 };
+use zeta_plugin::irc;
 use zeta_plugin::irc::{labeled_reply, send_lookup_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, plugin_err};
-use zeta_utils::irc;
 use zeta_utils::settings;
 
 /// Settings for the github plugin, from its `[plugins.github]` configuration section.

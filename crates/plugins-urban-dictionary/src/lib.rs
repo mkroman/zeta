@@ -13,9 +13,9 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
+use zeta_plugin::irc;
 use zeta_plugin::irc::{labeled_reply, labeled_reply_prefix, send_lookup_reply};
 use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin};
-use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
 
 /// The endpoint definitions are looked up against.

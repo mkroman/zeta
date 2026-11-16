@@ -4,8 +4,8 @@ use super::*;
 
 use similar_asserts::assert_eq;
 use url::Url;
+use zeta_plugin::irc;
 use zeta_test_support::settings_tests;
-use zeta_utils::irc;
 
 use crate::format::format_summary;
 use crate::media::proxy_media_url;

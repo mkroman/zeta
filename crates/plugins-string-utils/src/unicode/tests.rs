@@ -1,8 +1,8 @@
 //! Tests for the `.uni` renderer: exact control codes, grouping and byte budgets.
 
+use zeta_plugin::irc::MAX_LISTING_LENGTH;
 use zeta_plugin::irc::{BOLD, RESET, plain_reply};
 use zeta_unicode::general_category;
-use zeta_utils::irc::MAX_LISTING_LENGTH;
 
 use super::entry::{Entry, character_name_into};
 use super::grouping::{MAX_GROUPING_CHARS, grouped_entries};

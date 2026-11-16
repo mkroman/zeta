@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn unstyle_text_matches_the_staged_pipeline() {
-        use crate::text::collapse_whitespace;
+        use zeta_utils::text::collapse_whitespace;
 
         let cases = [
             "",

@@ -179,7 +179,7 @@ mod tests {
     use crate::actor::Rewrite;
     use crate::currency::build_context;
     use crate::test_support::{currency_server, evaluate, offline_plugin, test_plugin};
-    use zeta_utils::irc;
+    use zeta_plugin::irc;
 
     #[tokio::test]
     async fn classify_case_corrects_unresolvable_units() {

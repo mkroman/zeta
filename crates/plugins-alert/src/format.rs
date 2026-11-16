@@ -4,8 +4,8 @@ use chrono::Datelike;
 use rand::prelude::IteratorRandom;
 use sqlx::types::chrono::{DateTime, Local};
 
+use zeta_plugin::irc::{self, MAX_LISTING_LENGTH};
 use zeta_plugin::irc::{COLOR, RESET, labeled_reply, unstyle_text};
-use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
 use zeta_utils::text::TruncatableExt;
 
 use super::model::Alert;

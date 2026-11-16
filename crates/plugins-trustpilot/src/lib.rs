@@ -14,10 +14,10 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
+use zeta_plugin::irc;
 use zeta_plugin::irc::{labeled_reply, plain_reply, send_lookup_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
 use zeta_url::RedactedUrl;
-use zeta_utils::irc;
 use zeta_utils::text::format_number;
 
 /// The business-unit search endpoint reviews are looked up against.

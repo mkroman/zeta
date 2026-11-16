@@ -113,7 +113,7 @@ fn render_spans(out: &mut String, style: &mut Style, error: bool, spans: &[Span<
 mod tests {
     use crate::actor::Rewrite;
     use crate::test_support::{evaluate, offline_plugin};
-    use zeta_utils::irc;
+    use zeta_plugin::irc;
 
     #[tokio::test]
     async fn numeric_results_render_the_value_in_the_default_color() {

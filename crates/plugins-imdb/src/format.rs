@@ -6,8 +6,8 @@
 use std::fmt::Write;
 use std::sync::OnceLock;
 
+use zeta_plugin::irc;
 use zeta_plugin::irc::{BOLD, COLOR, REPLY_MARKER, RESET};
-use zeta_utils::irc;
 
 use super::model::{Person, Title};
 use zeta_utils::text::{TruncatableExt, format_number};

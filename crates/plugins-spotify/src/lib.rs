@@ -23,9 +23,9 @@ use zeta_http as http;
 use zeta_http::oauth::Credentials;
 use zeta_http::reqwest;
 use zeta_http::reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use zeta_plugin::irc;
 use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, MessageEvent, UrlEvent, ZetaError, plugin, resolve_secret};
-use zeta_utils::irc;
 use zeta_utils::text::{self, ListJoinExt, format_number};
 
 mod model;
