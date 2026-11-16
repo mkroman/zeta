@@ -93,7 +93,7 @@ impl Client {
         let response = request.send().await.map_err(|error| {
             let error = RequestError::from(error);
             #[cfg(feature = "log")]
-            let error = zeta_http::RequestFailure::logged(error, tracing::Level::DEBUG);
+            let error = error.logged(tracing::Level::DEBUG);
             Error::Request(error)
         })?;
 
@@ -104,7 +104,7 @@ impl Client {
         let body = response.text().await.map_err(|error| {
             let error = RequestError::from(error);
             #[cfg(feature = "log")]
-            let error = zeta_http::RequestFailure::logged(error, tracing::Level::DEBUG);
+            let error = error.logged(tracing::Level::DEBUG);
             Error::Request(error)
         })?;
 

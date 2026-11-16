@@ -8,8 +8,8 @@ use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tracing::{Level, debug};
+use zeta_http::RequestError;
 use zeta_http::json;
-use zeta_http::{RequestError, RequestFailure as _};
 
 use crate::error::Error;
 use crate::model::{Coin, CoinQuery, Envelope, Fiat, Listing, QuoteData};

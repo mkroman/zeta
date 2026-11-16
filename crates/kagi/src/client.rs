@@ -9,7 +9,6 @@ use reqwest::header::{
 use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Mutex;
 use tracing::{Level, debug};
-use zeta_http::RequestFailure as _;
 
 use crate::{
     BASE_URL, ClientOptions, Error, HTTP_TIMEOUT, ImageResult, LANGUAGE, RequestError,

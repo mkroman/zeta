@@ -16,7 +16,8 @@
 ///
 /// [`Display`](std::fmt::Display) is the short, classified rendering a channel reply needs
 /// (`could not connect (api.example.com)`), while [`RequestError::full`] is what a log line
-/// gets: error kind, source chain and redacted URL. [`std::error::Error::source`] reports no
+/// gets: error kind, source chain and redacted URL — [`RequestError::logged`] reports the
+/// failed request once, at the caller's level. [`std::error::Error::source`] reports no
 /// source — the chain is already rendered by `full()`, and returning it would print it twice.
 #[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
 mod request {
@@ -123,43 +124,6 @@ mod request {
         }
     }
 
-    /// The redacted fields a failed request is logged with.
-    ///
-    /// Implemented by [`TransportError`] (exported as `RequestError`/`WreqError`), so any client
-    /// holding one can log a failed request through [`RequestFailure::logged`].
-    pub trait RequestFailure {
-        /// Returns the request URL without its query string, fragment, or userinfo, if the
-        /// error carries one.
-        fn redacted_url(&self) -> Option<&RedactedUrl>;
-
-        /// Returns the [`error.type`] value for this failure.
-        ///
-        /// [`error.type`]: https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
-        fn error_type(&self) -> &'static str;
-
-        /// Returns the full rendering — error kind, source chain and redacted URL — for a log
-        /// line.
-        fn full(&self) -> &str;
-
-        /// Logs the failed request once, at `level`, when the error names its URL, and returns
-        /// it.
-        ///
-        /// The event carries `url.full` (redacted), `error.type` and `exception.message`, so a
-        /// caller that only reports the short [`Display`](std::fmt::Display) rendering still
-        /// leaves one line naming the request that failed.
-        #[must_use]
-        fn logged(self, level: Level) -> Self
-        where
-            Self: Sized,
-        {
-            if let Some(url) = self.redacted_url() {
-                log_failure(level, url, self.error_type(), self.full());
-            }
-
-            self
-        }
-    }
-
     /// Logs a failed request at `level`; a tracing callsite needs a constant level, so the
     /// dynamic one is mapped to the matching macro.
     fn log_failure(level: Level, url: &RedactedUrl, error_type: &'static str, message: &str) {
@@ -194,20 +158,6 @@ mod request {
                 exception.message = message,
                 "request failed"
             ),
-        }
-    }
-
-    impl RequestFailure for TransportError {
-        fn redacted_url(&self) -> Option<&RedactedUrl> {
-            self.url.as_ref()
-        }
-
-        fn error_type(&self) -> &'static str {
-            Self::error_type(self)
-        }
-
-        fn full(&self) -> &str {
-            &self.detail
         }
     }
 
@@ -332,6 +282,21 @@ mod request {
         pub const fn is_request(&self) -> bool {
             self.request
         }
+
+        /// Logs the failed request once, at `level`, when the error names its URL, and returns
+        /// it.
+        ///
+        /// The event carries `url.full` (redacted), `error.type` and `exception.message`, so a
+        /// caller that only reports the short [`Display`](std::fmt::Display) rendering still
+        /// leaves one line naming the request that failed.
+        #[must_use]
+        pub fn logged(self, level: Level) -> Self {
+            if let Some(url) = self.url() {
+                log_failure(level, url, self.error_type(), self.full());
+            }
+
+            self
+        }
     }
 
     #[cfg(any(feature = "request", feature = "http"))]
@@ -365,9 +330,6 @@ mod request {
 /// [`Debug`](std::fmt::Debug) and the source chain are free of credentials by construction.
 #[cfg(any(feature = "request", feature = "http"))]
 pub use request::TransportError as RequestError;
-
-#[cfg(any(feature = "request", feature = "http", feature = "emulated"))]
-pub use request::RequestFailure;
 
 /// The transport-error wrapper of the browser-emulated `wreq` client.
 ///
